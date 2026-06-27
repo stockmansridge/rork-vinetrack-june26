@@ -1,0 +1,78 @@
+name: Deploy Supabase Edge Functions — VineTrack
+
+on:
+  workflow_dispatch:
+    inputs:
+      function:
+        description: "Function to deploy"
+        required: true
+        default: "davis-proxy"
+        type: choice
+        options:
+          - davis-proxy
+          - wunderground-proxy
+          - open-meteo-proxy
+          - all
+
+env:
+  SUPABASE_PROJECT_REF: tbafuqwruefgkbyxrxyb
+
+jobs:
+  deploy:
+    name: Deploy Edge Function
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Verify Supabase CLI
+        run: supabase --version
+
+      - name: Deploy davis-proxy
+        if: ${{ github.event.inputs.function == 'davis-proxy' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          supabase functions deploy davis-proxy \
+            --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deploy wunderground-proxy
+        if: ${{ github.event.inputs.function == 'wunderground-proxy' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          supabase functions deploy wunderground-proxy \
+            --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deploy open-meteo-proxy
+        if: ${{ github.event.inputs.function == 'open-meteo-proxy' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          supabase functions deploy open-meteo-proxy \
+            --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deploy all functions
+        if: ${{ github.event.inputs.function == 'all' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          for fn in supabase/functions/*/; do
+            name=$(basename "$fn")
+            if [ "$name" = "_shared" ]; then continue; fi
+            echo "Deploying $name..."
+            supabase functions deploy "$name" \
+              --project-ref "$SUPABASE_PROJECT_REF"
+          done
+
+      - name: Summary
+        run: |
+          echo "### Deployment complete" >> $GITHUB_STEP_SUMMARY
+          echo "- Project: \`$SUPABASE_PROJECT_REF\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Function(s): \`${{ github.event.inputs.function }}\`" >> $GITHUB_STEP_SUMMARY
