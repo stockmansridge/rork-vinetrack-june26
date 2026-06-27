@@ -45,6 +45,10 @@ nonisolated struct VineyardMachine: Codable, Identifiable, Sendable, Hashable {
     /// it; calculated usage is never auto-applied.
     var fuelUsageLPerHour: Double
     var notes: String?
+    /// Optional manufacturer serial number. Free text, nullable.
+    var serialNumber: String?
+    /// Optional vehicle identification number (VIN). Free text, nullable.
+    var vinNumber: String?
     /// The originating tractor id when this machine was backfilled from
     /// `public.tractors`. Nil for natively-created machines.
     var legacyTractorId: UUID?
@@ -68,6 +72,8 @@ nonisolated struct VineyardMachine: Codable, Identifiable, Sendable, Hashable {
         availableForJobCosting: Bool = false,
         fuelUsageLPerHour: Double = 0,
         notes: String? = nil,
+        serialNumber: String? = nil,
+        vinNumber: String? = nil,
         legacyTractorId: UUID? = nil
     ) {
         self.id = id
@@ -78,12 +84,15 @@ nonisolated struct VineyardMachine: Codable, Identifiable, Sendable, Hashable {
         self.availableForJobCosting = availableForJobCosting
         self.fuelUsageLPerHour = fuelUsageLPerHour
         self.notes = notes
+        self.serialNumber = serialNumber
+        self.vinNumber = vinNumber
         self.legacyTractorId = legacyTractorId
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
         case id, vineyardId, name, machineType, fuelTrackingEnabled
-        case availableForJobCosting, fuelUsageLPerHour, notes, legacyTractorId
+        case availableForJobCosting, fuelUsageLPerHour, notes
+        case serialNumber, vinNumber, legacyTractorId
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -96,6 +105,8 @@ nonisolated struct VineyardMachine: Codable, Identifiable, Sendable, Hashable {
         availableForJobCosting = try container.decodeIfPresent(Bool.self, forKey: .availableForJobCosting) ?? false
         fuelUsageLPerHour = try container.decodeIfPresent(Double.self, forKey: .fuelUsageLPerHour) ?? 0
         notes = try container.decodeIfPresent(String.self, forKey: .notes)
+        serialNumber = try container.decodeIfPresent(String.self, forKey: .serialNumber)
+        vinNumber = try container.decodeIfPresent(String.self, forKey: .vinNumber)
         legacyTractorId = try container.decodeIfPresent(UUID.self, forKey: .legacyTractorId)
     }
 }

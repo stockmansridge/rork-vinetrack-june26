@@ -259,6 +259,8 @@ nonisolated struct BackendSprayEquipment: Codable, Sendable, Identifiable {
     let vineyardId: UUID
     let name: String?
     let tankCapacityLitres: Double?
+    let serialNumber: String?
+    let vinNumber: String?
     let createdAt: Date?
     let updatedAt: Date?
     let deletedAt: Date?
@@ -269,6 +271,8 @@ nonisolated struct BackendSprayEquipment: Codable, Sendable, Identifiable {
         case vineyardId = "vineyard_id"
         case name
         case tankCapacityLitres = "tank_capacity_litres"
+        case serialNumber = "serial_number"
+        case vinNumber = "vin_number"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
@@ -281,6 +285,8 @@ nonisolated struct BackendSprayEquipmentUpsert: Encodable, Sendable {
     let vineyardId: UUID
     let name: String
     let tankCapacityLitres: Double
+    let serialNumber: String?
+    let vinNumber: String?
     let createdBy: UUID?
     let clientUpdatedAt: Date
 
@@ -289,6 +295,8 @@ nonisolated struct BackendSprayEquipmentUpsert: Encodable, Sendable {
         case vineyardId = "vineyard_id"
         case name
         case tankCapacityLitres = "tank_capacity_litres"
+        case serialNumber = "serial_number"
+        case vinNumber = "vin_number"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
     }
@@ -301,6 +309,8 @@ extension BackendSprayEquipment {
             vineyardId: e.vineyardId,
             name: e.name,
             tankCapacityLitres: e.tankCapacityLitres,
+            serialNumber: e.serialNumber,
+            vinNumber: e.vinNumber,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
         )
@@ -311,7 +321,9 @@ extension BackendSprayEquipment {
             id: id,
             vineyardId: vineyardId,
             name: name ?? "",
-            tankCapacityLitres: tankCapacityLitres ?? 0
+            tankCapacityLitres: tankCapacityLitres ?? 0,
+            serialNumber: serialNumber,
+            vinNumber: vinNumber
         )
     }
 }
@@ -326,6 +338,8 @@ nonisolated struct BackendTractor: Codable, Sendable, Identifiable {
     let model: String?
     let modelYear: Int?
     let fuelUsageLPerHour: Double?
+    let serialNumber: String?
+    let vinNumber: String?
     let createdAt: Date?
     let updatedAt: Date?
     let deletedAt: Date?
@@ -339,6 +353,8 @@ nonisolated struct BackendTractor: Codable, Sendable, Identifiable {
         case model
         case modelYear = "model_year"
         case fuelUsageLPerHour = "fuel_usage_l_per_hour"
+        case serialNumber = "serial_number"
+        case vinNumber = "vin_number"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
@@ -354,6 +370,8 @@ nonisolated struct BackendTractorUpsert: Encodable, Sendable {
     let model: String
     let modelYear: Int?
     let fuelUsageLPerHour: Double
+    let serialNumber: String?
+    let vinNumber: String?
     let createdBy: UUID?
     let clientUpdatedAt: Date
 
@@ -365,6 +383,8 @@ nonisolated struct BackendTractorUpsert: Encodable, Sendable {
         case model
         case modelYear = "model_year"
         case fuelUsageLPerHour = "fuel_usage_l_per_hour"
+        case serialNumber = "serial_number"
+        case vinNumber = "vin_number"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
     }
@@ -380,6 +400,8 @@ extension BackendTractor {
             model: t.model,
             modelYear: t.modelYear,
             fuelUsageLPerHour: t.fuelUsageLPerHour,
+            serialNumber: t.serialNumber,
+            vinNumber: t.vinNumber,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
         )
@@ -393,7 +415,9 @@ extension BackendTractor {
             brand: brand ?? "",
             model: model ?? "",
             modelYear: modelYear,
-            fuelUsageLPerHour: fuelUsageLPerHour ?? 0
+            fuelUsageLPerHour: fuelUsageLPerHour ?? 0,
+            serialNumber: serialNumber,
+            vinNumber: vinNumber
         )
     }
 }
@@ -409,6 +433,8 @@ nonisolated struct BackendVineyardMachine: Codable, Sendable, Identifiable {
     let availableForJobCosting: Bool?
     let fuelUsageLPerHour: Double?
     let notes: String?
+    let serialNumber: String?
+    let vinNumber: String?
     let legacyTractorId: UUID?
     let createdAt: Date?
     let updatedAt: Date?
@@ -424,6 +450,8 @@ nonisolated struct BackendVineyardMachine: Codable, Sendable, Identifiable {
         case availableForJobCosting = "available_for_job_costing"
         case fuelUsageLPerHour = "fuel_usage_l_per_hour"
         case notes
+        case serialNumber = "serial_number"
+        case vinNumber = "vin_number"
         case legacyTractorId = "legacy_tractor_id"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
@@ -441,6 +469,8 @@ nonisolated struct BackendVineyardMachineUpsert: Encodable, Sendable {
     let availableForJobCosting: Bool
     let fuelUsageLPerHour: Double
     let notes: String?
+    let serialNumber: String?
+    let vinNumber: String?
     let legacyTractorId: UUID?
     let createdBy: UUID?
     let clientUpdatedAt: Date
@@ -454,6 +484,8 @@ nonisolated struct BackendVineyardMachineUpsert: Encodable, Sendable {
         case availableForJobCosting = "available_for_job_costing"
         case fuelUsageLPerHour = "fuel_usage_l_per_hour"
         case notes
+        case serialNumber = "serial_number"
+        case vinNumber = "vin_number"
         case legacyTractorId = "legacy_tractor_id"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
@@ -471,6 +503,8 @@ extension BackendVineyardMachine {
             availableForJobCosting: m.availableForJobCosting,
             fuelUsageLPerHour: m.fuelUsageLPerHour,
             notes: m.notes,
+            serialNumber: m.serialNumber,
+            vinNumber: m.vinNumber,
             legacyTractorId: m.legacyTractorId,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
@@ -487,6 +521,8 @@ extension BackendVineyardMachine {
             availableForJobCosting: availableForJobCosting ?? false,
             fuelUsageLPerHour: fuelUsageLPerHour ?? 0,
             notes: notes,
+            serialNumber: serialNumber,
+            vinNumber: vinNumber,
             legacyTractorId: legacyTractorId
         )
     }
@@ -860,6 +896,7 @@ nonisolated struct BackendEquipmentItem: Codable, Sendable, Identifiable {
     let make: String?
     let model: String?
     let serialNumber: String?
+    let vinNumber: String?
     let notes: String?
     let createdBy: UUID?
     let updatedBy: UUID?
@@ -876,6 +913,7 @@ nonisolated struct BackendEquipmentItem: Codable, Sendable, Identifiable {
         case make
         case model
         case serialNumber = "serial_number"
+        case vinNumber = "vin_number"
         case notes
         case createdBy = "created_by"
         case updatedBy = "updated_by"
@@ -894,6 +932,7 @@ nonisolated struct BackendEquipmentItem: Codable, Sendable, Identifiable {
         self.make = try c.decodeIfPresent(String.self, forKey: .make)
         self.model = try c.decodeIfPresent(String.self, forKey: .model)
         self.serialNumber = try c.decodeIfPresent(String.self, forKey: .serialNumber)
+        self.vinNumber = try c.decodeIfPresent(String.self, forKey: .vinNumber)
         self.notes = try c.decodeIfPresent(String.self, forKey: .notes)
         self.createdBy = try c.decodeIfPresent(UUID.self, forKey: .createdBy)
         self.updatedBy = try c.decodeIfPresent(UUID.self, forKey: .updatedBy)
@@ -918,6 +957,7 @@ nonisolated struct BackendEquipmentItemUpsert: Encodable, Sendable {
     let make: String?
     let model: String?
     let serialNumber: String?
+    let vinNumber: String?
     let notes: String
     let createdBy: UUID?
     let updatedBy: UUID?
@@ -931,6 +971,7 @@ nonisolated struct BackendEquipmentItemUpsert: Encodable, Sendable {
         case make
         case model
         case serialNumber = "serial_number"
+        case vinNumber = "vin_number"
         case notes
         case createdBy = "created_by"
         case updatedBy = "updated_by"
@@ -953,6 +994,7 @@ extension BackendEquipmentItem {
             make: item.make,
             model: item.model,
             serialNumber: item.serialNumber,
+            vinNumber: item.vinNumber,
             notes: item.notes,
             createdBy: createdBy,
             updatedBy: updatedBy,
@@ -969,6 +1011,7 @@ extension BackendEquipmentItem {
             make: make,
             model: model,
             serialNumber: serialNumber,
+            vinNumber: vinNumber,
             notes: notes ?? ""
         )
     }

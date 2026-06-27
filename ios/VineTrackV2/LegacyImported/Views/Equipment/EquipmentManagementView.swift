@@ -1,5 +1,18 @@
 import SwiftUI
 
+/// Shared compact subtitle for an equipment asset's optional Serial / VIN
+/// identifiers. Returns nil when neither is set so callers can hide the row.
+func equipmentIdentifierSubtitle(serialNumber: String?, vinNumber: String?) -> String? {
+    var parts: [String] = []
+    if let serial = serialNumber?.trimmingCharacters(in: .whitespaces), !serial.isEmpty {
+        parts.append("S/N \(serial)")
+    }
+    if let vin = vinNumber?.trimmingCharacters(in: .whitespaces), !vin.isEmpty {
+        parts.append("VIN \(vin)")
+    }
+    return parts.isEmpty ? nil : parts.joined(separator: " · ")
+}
+
 struct EquipmentManagementView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.accessControl) private var accessControl
@@ -141,6 +154,10 @@ struct EquipmentManagementView: View {
 struct EquipmentRow: View {
     let equipment: SprayEquipmentItem
 
+    private var identifier: String? {
+        equipmentIdentifierSubtitle(serialNumber: equipment.serialNumber, vinNumber: equipment.vinNumber)
+    }
+
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
@@ -150,6 +167,11 @@ struct EquipmentRow: View {
                 Label("\(String(format: "%.0f", equipment.tankCapacityLitres)) L tank", systemImage: "drop.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let identifier {
+                    Text(identifier)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
             Spacer()
             Image(systemName: "chevron.right")
@@ -163,6 +185,10 @@ struct EquipmentRow: View {
 struct TractorRow: View {
     let tractor: Tractor
 
+    private var identifier: String? {
+        equipmentIdentifierSubtitle(serialNumber: tractor.serialNumber, vinNumber: tractor.vinNumber)
+    }
+
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
@@ -172,6 +198,11 @@ struct TractorRow: View {
                 Label("\(String(format: "%.1f", tractor.fuelUsageLPerHour)) L/hr fuel usage", systemImage: "fuelpump.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let identifier {
+                    Text(identifier)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
             Spacer()
             Image(systemName: "chevron.right")
@@ -230,12 +261,16 @@ struct EquipmentFormSheet: View {
 
     @State private var name: String = ""
     @State private var tankCapacity: String = ""
+    @State private var serialNumber: String = ""
+    @State private var vinNumber: String = ""
 
     init(equipment: SprayEquipmentItem?) {
         self.equipment = equipment
         if let e = equipment {
             _name = State(initialValue: e.name)
             _tankCapacity = State(initialValue: String(format: "%.0f", e.tankCapacityLitres))
+            _serialNumber = State(initialValue: e.serialNumber ?? "")
+            _vinNumber = State(initialValue: e.vinNumber ?? "")
         }
     }
 
@@ -260,6 +295,14 @@ struct EquipmentFormSheet: View {
                 } header: {
                     Text("Tank Capacity (litres)")
                 }
+
+                Section("Identification (optional)") {
+                    TextField("Serial number", text: $serialNumber)
+                        .autocorrectionDisabled()
+                    TextField("VIN number", text: $vinNumber)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.characters)
+                }
             }
             .navigationTitle(equipment == nil ? "New Equipment" : "Edit Equipment")
             .navigationBarTitleDisplayMode(.inline)
@@ -280,12 +323,21 @@ struct EquipmentFormSheet: View {
 
     private func save() {
         let capacity = Double(tankCapacity) ?? 0
+        let trimmedSerial = serialNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedVin = vinNumber.trimmingCharacters(in: .whitespacesAndNewlines)
         if var existing = equipment {
             existing.name = name
             existing.tankCapacityLitres = capacity
+            existing.serialNumber = trimmedSerial.isEmpty ? nil : trimmedSerial
+            existing.vinNumber = trimmedVin.isEmpty ? nil : trimmedVin
             store.updateSprayEquipment(existing)
         } else {
-            store.addSprayEquipment(SprayEquipmentItem(name: name, tankCapacityLitres: capacity))
+            store.addSprayEquipment(SprayEquipmentItem(
+                name: name,
+                tankCapacityLitres: capacity,
+                serialNumber: trimmedSerial.isEmpty ? nil : trimmedSerial,
+                vinNumber: trimmedVin.isEmpty ? nil : trimmedVin
+            ))
         }
     }
 }
@@ -302,6 +354,8 @@ struct TractorFormSheet: View {
     @State private var model: String = ""
     @State private var modelYearText: String = ""
     @State private var fuelUsage: String = ""
+    @State private var serialNumber: String = ""
+    @State private var vinNumber: String = ""
     @State private var fuelLookupLoading: Bool = false
 
     /// One of three mutually-exclusive lookup outcomes, shown as an inline
@@ -322,6 +376,8 @@ struct TractorFormSheet: View {
             _model = State(initialValue: t.model)
             _modelYearText = State(initialValue: t.modelYear.map { String($0) } ?? "")
             _fuelUsage = State(initialValue: String(format: "%.1f", t.fuelUsageLPerHour))
+            _serialNumber = State(initialValue: t.serialNumber ?? "")
+            _vinNumber = State(initialValue: t.vinNumber ?? "")
         }
     }
 
@@ -373,6 +429,14 @@ struct TractorFormSheet: View {
 
                 if let outcome = lookupOutcome {
                     lookupOutcomeSection(outcome)
+                }
+
+                Section("Identification (optional)") {
+                    TextField("Serial number", text: $serialNumber)
+                        .autocorrectionDisabled()
+                    TextField("VIN number", text: $vinNumber)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.characters)
                 }
             }
             .navigationTitle(tractor == nil ? "New Tractor" : "Edit Tractor")
@@ -567,15 +631,21 @@ struct TractorFormSheet: View {
     private func save() {
         let usage = Double(fuelUsage) ?? 0
         let displayName = "\(brand) \(model)".trimmingCharacters(in: .whitespaces)
+        let trimmedSerial = serialNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedVin = vinNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        let serial = trimmedSerial.isEmpty ? nil : trimmedSerial
+        let vin = trimmedVin.isEmpty ? nil : trimmedVin
         if var existing = tractor {
             existing.brand = brand
             existing.model = model
             existing.modelYear = parsedYear
             existing.name = displayName
             existing.fuelUsageLPerHour = usage
+            existing.serialNumber = serial
+            existing.vinNumber = vin
             store.updateTractor(existing)
         } else {
-            store.addTractor(Tractor(name: displayName, brand: brand, model: model, modelYear: parsedYear, fuelUsageLPerHour: usage))
+            store.addTractor(Tractor(name: displayName, brand: brand, model: model, modelYear: parsedYear, fuelUsageLPerHour: usage, serialNumber: serial, vinNumber: vin))
         }
         // Push immediately so other devices see the change without waiting for
         // a scene-phase active event or vineyard switch.

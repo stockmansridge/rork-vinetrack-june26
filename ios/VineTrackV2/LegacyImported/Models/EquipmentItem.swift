@@ -14,6 +14,8 @@ nonisolated struct EquipmentItem: Codable, Identifiable, Sendable, Hashable {
     var make: String?
     var model: String?
     var serialNumber: String?
+    /// Optional vehicle identification number (VIN). Free text, nullable.
+    var vinNumber: String?
     var notes: String
 
     init(
@@ -24,6 +26,7 @@ nonisolated struct EquipmentItem: Codable, Identifiable, Sendable, Hashable {
         make: String? = nil,
         model: String? = nil,
         serialNumber: String? = nil,
+        vinNumber: String? = nil,
         notes: String = ""
     ) {
         self.id = id
@@ -33,11 +36,12 @@ nonisolated struct EquipmentItem: Codable, Identifiable, Sendable, Hashable {
         self.make = make
         self.model = model
         self.serialNumber = serialNumber
+        self.vinNumber = vinNumber
         self.notes = notes
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
-        case id, vineyardId, name, category, make, model, serialNumber, notes
+        case id, vineyardId, name, category, make, model, serialNumber, vinNumber, notes
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -49,6 +53,7 @@ nonisolated struct EquipmentItem: Codable, Identifiable, Sendable, Hashable {
         make = try c.decodeIfPresent(String.self, forKey: .make)
         model = try c.decodeIfPresent(String.self, forKey: .model)
         serialNumber = try c.decodeIfPresent(String.self, forKey: .serialNumber)
+        vinNumber = try c.decodeIfPresent(String.self, forKey: .vinNumber)
         notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
     }
 

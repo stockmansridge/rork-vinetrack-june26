@@ -133,6 +133,11 @@ struct VineyardMachineRow: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                if let identifier = equipmentIdentifierSubtitle(serialNumber: machine.serialNumber, vinNumber: machine.vinNumber) {
+                    Text(identifier)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
                 if machine.legacyTractorId != nil {
                     Text("Managed in Tractors")
                         .font(.caption2)
@@ -169,6 +174,8 @@ struct VineyardMachineFormSheet: View {
     @State private var availableForJobCosting: Bool = true
     @State private var fuelUsage: String = ""
     @State private var notes: String = ""
+    @State private var serialNumber: String = ""
+    @State private var vinNumber: String = ""
 
     init(machine: VineyardMachine?) {
         self.machine = machine
@@ -179,6 +186,8 @@ struct VineyardMachineFormSheet: View {
             _availableForJobCosting = State(initialValue: m.availableForJobCosting)
             _fuelUsage = State(initialValue: m.hasFuelUsageRate ? String(format: "%.1f", m.fuelUsageLPerHour) : "")
             _notes = State(initialValue: m.notes ?? "")
+            _serialNumber = State(initialValue: m.serialNumber ?? "")
+            _vinNumber = State(initialValue: m.vinNumber ?? "")
         }
     }
 
@@ -221,6 +230,14 @@ struct VineyardMachineFormSheet: View {
                     Text("Leave blank if not set. Fuel usage is calculated between full fills with valid meter readings; this default is only used when you deliberately set it.")
                 }
 
+                Section("Identification (optional)") {
+                    TextField("Serial number", text: $serialNumber)
+                        .autocorrectionDisabled()
+                    TextField("VIN number", text: $vinNumber)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.characters)
+                }
+
                 Section {
                     TextField("Notes", text: $notes, axis: .vertical)
                         .lineLimit(2...5)
@@ -249,6 +266,10 @@ struct VineyardMachineFormSheet: View {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         let usage = Double(fuelUsage.trimmingCharacters(in: .whitespaces)) ?? 0
         let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSerial = serialNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedVin = vinNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        let serial = trimmedSerial.isEmpty ? nil : trimmedSerial
+        let vin = trimmedVin.isEmpty ? nil : trimmedVin
         if var existing = machine {
             existing.name = trimmedName
             existing.machineType = machineType
@@ -256,6 +277,8 @@ struct VineyardMachineFormSheet: View {
             existing.availableForJobCosting = availableForJobCosting
             existing.fuelUsageLPerHour = usage
             existing.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
+            existing.serialNumber = serial
+            existing.vinNumber = vin
             store.updateVineyardMachine(existing)
         } else {
             // Never create a legacy tractor link for natively-created machines.
@@ -265,7 +288,9 @@ struct VineyardMachineFormSheet: View {
                 fuelTrackingEnabled: fuelTrackingEnabled,
                 availableForJobCosting: availableForJobCosting,
                 fuelUsageLPerHour: usage,
-                notes: trimmedNotes.isEmpty ? nil : trimmedNotes
+                notes: trimmedNotes.isEmpty ? nil : trimmedNotes,
+                serialNumber: serial,
+                vinNumber: vin
             ))
         }
         // Push immediately so other devices and the Fuel Log picker stay current.

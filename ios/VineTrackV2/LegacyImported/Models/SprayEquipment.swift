@@ -5,21 +5,29 @@ nonisolated struct SprayEquipmentItem: Codable, Identifiable, Sendable, Hashable
     var vineyardId: UUID
     var name: String
     var tankCapacityLitres: Double
+    /// Optional manufacturer serial number. Free text, nullable.
+    var serialNumber: String?
+    /// Optional vehicle identification number (VIN). Free text, nullable.
+    var vinNumber: String?
 
     init(
         id: UUID = UUID(),
         vineyardId: UUID = UUID(),
         name: String = "",
-        tankCapacityLitres: Double = 0
+        tankCapacityLitres: Double = 0,
+        serialNumber: String? = nil,
+        vinNumber: String? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
         self.name = name
         self.tankCapacityLitres = tankCapacityLitres
+        self.serialNumber = serialNumber
+        self.vinNumber = vinNumber
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
-        case id, vineyardId, name, tankCapacityLitres
+        case id, vineyardId, name, tankCapacityLitres, serialNumber, vinNumber
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -28,6 +36,8 @@ nonisolated struct SprayEquipmentItem: Codable, Identifiable, Sendable, Hashable
         vineyardId = try container.decode(UUID.self, forKey: .vineyardId)
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
         tankCapacityLitres = try container.decodeIfPresent(Double.self, forKey: .tankCapacityLitres) ?? 0
+        serialNumber = try container.decodeIfPresent(String.self, forKey: .serialNumber)
+        vinNumber = try container.decodeIfPresent(String.self, forKey: .vinNumber)
     }
 }
 
@@ -39,6 +49,10 @@ nonisolated struct Tractor: Codable, Identifiable, Sendable, Hashable {
     var model: String
     var modelYear: Int?
     var fuelUsageLPerHour: Double
+    /// Optional manufacturer serial number. Free text, nullable.
+    var serialNumber: String?
+    /// Optional vehicle identification number (VIN). Free text, nullable.
+    var vinNumber: String?
 
     var displayName: String {
         let combined = "\(brand) \(model)".trimmingCharacters(in: .whitespaces)
@@ -52,7 +66,9 @@ nonisolated struct Tractor: Codable, Identifiable, Sendable, Hashable {
         brand: String = "",
         model: String = "",
         modelYear: Int? = nil,
-        fuelUsageLPerHour: Double = 0
+        fuelUsageLPerHour: Double = 0,
+        serialNumber: String? = nil,
+        vinNumber: String? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -61,10 +77,12 @@ nonisolated struct Tractor: Codable, Identifiable, Sendable, Hashable {
         self.model = model
         self.modelYear = modelYear
         self.fuelUsageLPerHour = fuelUsageLPerHour
+        self.serialNumber = serialNumber
+        self.vinNumber = vinNumber
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
-        case id, vineyardId, name, brand, model, modelYear, fuelUsageLPerHour
+        case id, vineyardId, name, brand, model, modelYear, fuelUsageLPerHour, serialNumber, vinNumber
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -76,6 +94,8 @@ nonisolated struct Tractor: Codable, Identifiable, Sendable, Hashable {
         model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
         modelYear = try container.decodeIfPresent(Int.self, forKey: .modelYear)
         fuelUsageLPerHour = try container.decodeIfPresent(Double.self, forKey: .fuelUsageLPerHour) ?? 0
+        serialNumber = try container.decodeIfPresent(String.self, forKey: .serialNumber)
+        vinNumber = try container.decodeIfPresent(String.self, forKey: .vinNumber)
     }
 }
 

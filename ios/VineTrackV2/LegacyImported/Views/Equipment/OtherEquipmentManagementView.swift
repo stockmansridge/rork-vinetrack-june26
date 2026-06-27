@@ -98,6 +98,7 @@ private struct OtherEquipmentRow: View {
         if let make = item.make?.trimmingCharacters(in: .whitespaces), !make.isEmpty { parts.append(make) }
         if let model = item.model?.trimmingCharacters(in: .whitespaces), !model.isEmpty { parts.append(model) }
         if let serial = item.serialNumber?.trimmingCharacters(in: .whitespaces), !serial.isEmpty { parts.append("S/N \(serial)") }
+        if let vin = item.vinNumber?.trimmingCharacters(in: .whitespaces), !vin.isEmpty { parts.append("VIN \(vin)") }
         return parts.joined(separator: " · ")
     }
 
@@ -134,6 +135,7 @@ struct OtherEquipmentFormSheet: View {
     @State private var make: String = ""
     @State private var model: String = ""
     @State private var serial: String = ""
+    @State private var vinNumber: String = ""
     @State private var notes: String = ""
 
     init(item: EquipmentItem?, onSaved: ((EquipmentItem) -> Void)? = nil) {
@@ -144,6 +146,7 @@ struct OtherEquipmentFormSheet: View {
             _make = State(initialValue: i.make ?? "")
             _model = State(initialValue: i.model ?? "")
             _serial = State(initialValue: i.serialNumber ?? "")
+            _vinNumber = State(initialValue: i.vinNumber ?? "")
             _notes = State(initialValue: i.notes)
         }
     }
@@ -166,7 +169,11 @@ struct OtherEquipmentFormSheet: View {
                 Section("Details (optional)") {
                     TextField("Make", text: $make)
                     TextField("Model", text: $model)
-                    TextField("Serial Number", text: $serial)
+                    TextField("Serial number", text: $serial)
+                        .autocorrectionDisabled()
+                    TextField("VIN number", text: $vinNumber)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.characters)
                 }
 
                 Section("Notes (optional)") {
@@ -200,6 +207,7 @@ struct OtherEquipmentFormSheet: View {
         let trimmedMake = make.trimmingCharacters(in: .whitespaces)
         let trimmedModel = model.trimmingCharacters(in: .whitespaces)
         let trimmedSerial = serial.trimmingCharacters(in: .whitespaces)
+        let trimmedVin = vinNumber.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let result: EquipmentItem
@@ -208,6 +216,7 @@ struct OtherEquipmentFormSheet: View {
             existing.make = trimmedMake.isEmpty ? nil : trimmedMake
             existing.model = trimmedModel.isEmpty ? nil : trimmedModel
             existing.serialNumber = trimmedSerial.isEmpty ? nil : trimmedSerial
+            existing.vinNumber = trimmedVin.isEmpty ? nil : trimmedVin
             existing.notes = trimmedNotes
             store.updateEquipmentItem(existing)
             result = existing
@@ -218,6 +227,7 @@ struct OtherEquipmentFormSheet: View {
                 make: trimmedMake.isEmpty ? nil : trimmedMake,
                 model: trimmedModel.isEmpty ? nil : trimmedModel,
                 serialNumber: trimmedSerial.isEmpty ? nil : trimmedSerial,
+                vinNumber: trimmedVin.isEmpty ? nil : trimmedVin,
                 notes: trimmedNotes
             )
             store.addEquipmentItem(newItem)
