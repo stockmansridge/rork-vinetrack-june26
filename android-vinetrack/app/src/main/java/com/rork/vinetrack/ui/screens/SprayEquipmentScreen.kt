@@ -197,6 +197,11 @@ private fun SprayEquipmentRow(
                         fontWeight = FontWeight.Medium,
                     )
                 }
+                val ids = listOfNotNull(
+                    equipment.serialNumber?.trim()?.takeIf { it.isNotEmpty() }?.let { "S/N $it" },
+                    equipment.vinNumber?.trim()?.takeIf { it.isNotEmpty() }?.let { "VIN $it" },
+                ).joinToString(" · ")
+                if (ids.isNotEmpty()) Text(ids, color = vine.textSecondary, fontSize = 12.sp)
             }
             if (canManage) {
                 IconButton(onClick = onDelete) {
@@ -222,6 +227,8 @@ private fun SprayEquipmentFormSheet(
     var capacity by remember {
         mutableStateOf(existing?.tankCapacityLitres?.takeIf { it > 0 }?.let { trimCapacity(it) } ?: "")
     }
+    var serial by remember { mutableStateOf(existing?.serialNumber ?: "") }
+    var vin by remember { mutableStateOf(existing?.vinNumber ?: "") }
     var saving by remember { mutableStateOf(false) }
 
     fun save() {
@@ -232,6 +239,8 @@ private fun SprayEquipmentFormSheet(
         val input = SprayEquipmentRepository.EquipmentInput(
             name = trimmedName,
             tankCapacityLitres = capacity.toCapacityDouble() ?: 0.0,
+            serialNumber = serial.trim().takeIf { it.isNotEmpty() },
+            vinNumber = vin.trim().takeIf { it.isNotEmpty() },
         )
         val cb: (Boolean) -> Unit = { ok -> saving = false; if (ok) onDismiss() }
         if (isEdit) vm.updateSprayEquipment(existing!!.id, input, cb) else vm.createSprayEquipment(input, cb)
@@ -263,6 +272,20 @@ private fun SprayEquipmentFormSheet(
                 placeholder = { Text("e.g. 400") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = serial,
+                onValueChange = { serial = it },
+                label = { Text("Serial number (optional)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = vin,
+                onValueChange = { vin = it },
+                label = { Text("VIN number (optional)") },
+                singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(

@@ -33,6 +33,8 @@ class SprayEquipmentRepository(private val session: SessionStore) {
     data class EquipmentInput(
         val name: String,
         val tankCapacityLitres: Double,
+        val serialNumber: String?,
+        val vinNumber: String?,
     )
 
     @Serializable
@@ -41,6 +43,8 @@ class SprayEquipmentRepository(private val session: SessionStore) {
         @SerialName("vineyard_id") val vineyardId: String,
         val name: String,
         @SerialName("tank_capacity_litres") val tankCapacityLitres: Double,
+        @SerialName("serial_number") val serialNumber: String?,
+        @SerialName("vin_number") val vinNumber: String?,
         @SerialName("created_by") val createdBy: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
@@ -49,6 +53,8 @@ class SprayEquipmentRepository(private val session: SessionStore) {
     private data class EquipmentPatch(
         val name: String,
         @SerialName("tank_capacity_litres") val tankCapacityLitres: Double,
+        @SerialName("serial_number") val serialNumber: String?,
+        @SerialName("vin_number") val vinNumber: String?,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
@@ -66,6 +72,8 @@ class SprayEquipmentRepository(private val session: SessionStore) {
                 vineyardId = vineyardId,
                 name = input.name,
                 tankCapacityLitres = input.tankCapacityLitres,
+                serialNumber = input.serialNumber,
+                vinNumber = input.vinNumber,
                 createdBy = session.userId,
                 clientUpdatedAt = nowIso(),
             )
@@ -85,6 +93,8 @@ class SprayEquipmentRepository(private val session: SessionStore) {
             val patch = EquipmentPatch(
                 name = input.name,
                 tankCapacityLitres = input.tankCapacityLitres,
+                serialNumber = input.serialNumber,
+                vinNumber = input.vinNumber,
                 clientUpdatedAt = nowIso(),
             )
             val response = SupabaseClient.http.patch(SupabaseClient.restUrl("spray_equipment?id=eq.$id")) {

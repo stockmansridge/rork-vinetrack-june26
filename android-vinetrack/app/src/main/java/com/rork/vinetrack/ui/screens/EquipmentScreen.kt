@@ -381,6 +381,11 @@ private fun MachineRow(machine: VineyardMachine, fmt: RegionFormatter, canEdit: 
                         Text(fmt.formatFuelRatePerHour(machine.fuelUsageLPerHour ?: 0.0), color = vine.textSecondary, fontSize = 11.sp)
                     }
                 }
+                val ids = listOfNotNull(
+                    machine.serialNumber?.trim()?.takeIf { it.isNotEmpty() }?.let { "S/N $it" },
+                    machine.vinNumber?.trim()?.takeIf { it.isNotEmpty() }?.let { "VIN $it" },
+                ).joinToString(" · ")
+                if (ids.isNotEmpty()) Text(ids, color = vine.textSecondary, fontSize = 11.sp)
                 if (machine.isLegacyTractor && machine.machineType != "tractor") {
                     Text("Managed in Tractors", color = vine.textSecondary, fontSize = 11.sp)
                 }
@@ -407,6 +412,8 @@ private fun MachineFormSheet(
     var fuelTracking by remember { mutableStateOf(existing?.fuelTrackingEnabled ?: true) }
     var jobCosting by remember { mutableStateOf(existing?.availableForJobCosting ?: false) }
     var fuelRate by remember { mutableStateOf(existing?.fuelUsageLPerHour?.takeIf { it > 0 }?.let { trimNum(it) } ?: "") }
+    var serial by remember { mutableStateOf(existing?.serialNumber ?: "") }
+    var vin by remember { mutableStateOf(existing?.vinNumber ?: "") }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var saving by remember { mutableStateOf(false) }
 
@@ -421,6 +428,8 @@ private fun MachineFormSheet(
             availableForJobCosting = jobCosting,
             fuelUsageLPerHour = fuelRate.replace(',', '.').toDoubleOrNull() ?: 0.0,
             notes = notes.trim().takeIf { it.isNotEmpty() },
+            serialNumber = serial.trim().takeIf { it.isNotEmpty() },
+            vinNumber = vin.trim().takeIf { it.isNotEmpty() },
         )
         val cb: (Boolean) -> Unit = { ok -> saving = false; if (ok) onDismiss() }
         if (existing == null) vm.createVineyardMachine(input, cb) else vm.updateVineyardMachine(existing.id, input, cb)
@@ -462,6 +471,14 @@ private fun MachineFormSheet(
                 label = { Text("Default fuel usage (L/hr)") }, placeholder = { Text("Optional — e.g. 6.5") },
                 singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = serial, onValueChange = { serial = it },
+                label = { Text("Serial number (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = vin, onValueChange = { vin = it },
+                label = { Text("VIN number (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
                 value = notes, onValueChange = { notes = it },
@@ -603,6 +620,7 @@ private fun OtherEquipmentFormSheet(
     var make by remember { mutableStateOf(existing?.make ?: "") }
     var model by remember { mutableStateOf(existing?.model ?: "") }
     var serial by remember { mutableStateOf(existing?.serialNumber ?: "") }
+    var vin by remember { mutableStateOf(existing?.vinNumber ?: "") }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var saving by remember { mutableStateOf(false) }
     val canSave = name.trim().isNotEmpty() && !saving
@@ -614,6 +632,7 @@ private fun OtherEquipmentFormSheet(
             make = make.trim().takeIf { it.isNotEmpty() },
             model = model.trim().takeIf { it.isNotEmpty() },
             serialNumber = serial.trim().takeIf { it.isNotEmpty() },
+            vinNumber = vin.trim().takeIf { it.isNotEmpty() },
             notes = notes.trim(),
         )
         val cb: (Boolean) -> Unit = { ok -> saving = false; if (ok) onDismiss() }
@@ -638,6 +657,7 @@ private fun OtherEquipmentFormSheet(
             OutlinedTextField(value = make, onValueChange = { make = it }, label = { Text("Make (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = model, onValueChange = { model = it }, label = { Text("Model (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = serial, onValueChange = { serial = it }, label = { Text("Serial number (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = vin, onValueChange = { vin = it }, label = { Text("VIN number (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes (optional)") }, modifier = Modifier.fillMaxWidth())
             Button(
                 onClick = { save() }, enabled = canSave, modifier = Modifier.fillMaxWidth(),

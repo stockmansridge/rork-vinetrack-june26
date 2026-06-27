@@ -669,6 +669,8 @@ data class VineyardMachine(
     @SerialName("fuel_usage_l_per_hour") val fuelUsageLPerHour: Double? = null,
     val notes: String? = null,
     @SerialName("legacy_tractor_id") val legacyTractorId: String? = null,
+    @SerialName("serial_number") val serialNumber: String? = null,
+    @SerialName("vin_number") val vinNumber: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     /** Display name, falling back to the machine-type label when unnamed. */
@@ -707,6 +709,7 @@ data class EquipmentItem(
     val make: String? = null,
     val model: String? = null,
     @SerialName("serial_number") val serialNumber: String? = null,
+    @SerialName("vin_number") val vinNumber: String? = null,
     val notes: String = "",
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
@@ -1255,6 +1258,8 @@ data class SprayEquipment(
     @SerialName("vineyard_id") val vineyardId: String,
     val name: String = "",
     @SerialName("tank_capacity_litres") val tankCapacityLitres: Double? = null,
+    @SerialName("serial_number") val serialNumber: String? = null,
+    @SerialName("vin_number") val vinNumber: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     val displayName: String get() = name.trim().takeIf { it.isNotBlank() } ?: "Spray equipment"

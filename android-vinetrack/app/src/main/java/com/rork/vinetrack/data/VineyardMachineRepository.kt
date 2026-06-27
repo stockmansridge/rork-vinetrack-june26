@@ -39,6 +39,8 @@ class VineyardMachineRepository(private val session: SessionStore) {
         val availableForJobCosting: Boolean,
         val fuelUsageLPerHour: Double,
         val notes: String?,
+        val serialNumber: String?,
+        val vinNumber: String?,
     )
 
     @Serializable
@@ -51,6 +53,8 @@ class VineyardMachineRepository(private val session: SessionStore) {
         @SerialName("available_for_job_costing") val availableForJobCosting: Boolean,
         @SerialName("fuel_usage_l_per_hour") val fuelUsageLPerHour: Double,
         val notes: String?,
+        @SerialName("serial_number") val serialNumber: String?,
+        @SerialName("vin_number") val vinNumber: String?,
         @SerialName("created_by") val createdBy: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
@@ -63,6 +67,8 @@ class VineyardMachineRepository(private val session: SessionStore) {
         @SerialName("available_for_job_costing") val availableForJobCosting: Boolean,
         @SerialName("fuel_usage_l_per_hour") val fuelUsageLPerHour: Double,
         val notes: String?,
+        @SerialName("serial_number") val serialNumber: String?,
+        @SerialName("vin_number") val vinNumber: String?,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
@@ -84,6 +90,8 @@ class VineyardMachineRepository(private val session: SessionStore) {
                 availableForJobCosting = input.availableForJobCosting,
                 fuelUsageLPerHour = input.fuelUsageLPerHour,
                 notes = input.notes,
+                serialNumber = input.serialNumber,
+                vinNumber = input.vinNumber,
                 createdBy = session.userId,
                 clientUpdatedAt = nowIso(),
             )
@@ -107,6 +115,8 @@ class VineyardMachineRepository(private val session: SessionStore) {
                 availableForJobCosting = input.availableForJobCosting,
                 fuelUsageLPerHour = input.fuelUsageLPerHour,
                 notes = input.notes,
+                serialNumber = input.serialNumber,
+                vinNumber = input.vinNumber,
                 clientUpdatedAt = nowIso(),
             )
             val response = SupabaseClient.http.patch(SupabaseClient.restUrl("vineyard_machines?id=eq.$id")) {

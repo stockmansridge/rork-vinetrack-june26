@@ -35,6 +35,7 @@ class EquipmentItemRepository(private val session: SessionStore) {
         val make: String?,
         val model: String?,
         val serialNumber: String?,
+        val vinNumber: String?,
         val notes: String,
     )
 
@@ -47,6 +48,7 @@ class EquipmentItemRepository(private val session: SessionStore) {
         val make: String?,
         val model: String?,
         @SerialName("serial_number") val serialNumber: String?,
+        @SerialName("vin_number") val vinNumber: String?,
         val notes: String,
         @SerialName("created_by") val createdBy: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
@@ -58,6 +60,7 @@ class EquipmentItemRepository(private val session: SessionStore) {
         val make: String?,
         val model: String?,
         @SerialName("serial_number") val serialNumber: String?,
+        @SerialName("vin_number") val vinNumber: String?,
         val notes: String,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
@@ -92,6 +95,7 @@ class EquipmentItemRepository(private val session: SessionStore) {
                 make = input.make,
                 model = input.model,
                 serialNumber = input.serialNumber,
+                vinNumber = input.vinNumber,
                 notes = input.notes,
                 createdBy = session.userId,
                 clientUpdatedAt = nowIso(),
@@ -114,6 +118,7 @@ class EquipmentItemRepository(private val session: SessionStore) {
                 make = input.make,
                 model = input.model,
                 serialNumber = input.serialNumber,
+                vinNumber = input.vinNumber,
                 notes = input.notes,
                 clientUpdatedAt = nowIso(),
             )
