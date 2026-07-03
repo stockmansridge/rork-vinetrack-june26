@@ -31,17 +31,17 @@
 
 do $$
 declare
-  -- >>> EDIT THESE <<<
-  _demo_email  text := 'REPLACE_ME@example.com';                          -- auth user created in STEP 1
-  _vineyard_id uuid := '00000000-0000-0000-0000-000000000000'::uuid;      -- public.vineyards.id to attach to
+  -- >>> EDIT THESE IF NEEDED <<<
+  _demo_email  text := 'demo@vinetrack.com.au';                           -- auth user created in STEP 1
+  _vineyard_id uuid := 'fe952afe-437f-4be7-8cbf-fdd8e630411c'::uuid;      -- public.vineyards.id to attach to
   _role        text := 'operator';                                        -- owner | manager | supervisor | operator
 
   _user_id       uuid;
   _vineyard_name text;
 begin
-  -- Guards: refuse to run with un-edited placeholders.
-  if _demo_email = 'REPLACE_ME@example.com' then
-    raise exception 'Set _demo_email before running.';
+  -- Guards: refuse to run with obviously invalid values.
+  if _demo_email is null or _demo_email = '' or position('@' in _demo_email) = 0 then
+    raise exception 'Set _demo_email to a valid email before running.';
   end if;
   if _vineyard_id = '00000000-0000-0000-0000-000000000000'::uuid then
     raise exception 'Set _vineyard_id before running. Find one with: select id, name from public.vineyards where deleted_at is null order by created_at desc;';
@@ -92,7 +92,7 @@ end $$;
 -- from public.vineyard_members vm
 -- join public.vineyards v on v.id = vm.vineyard_id
 -- join auth.users u on u.id = vm.user_id
--- where lower(u.email) = lower('REPLACE_ME@example.com');
+-- where lower(u.email) = lower('demo@vinetrack.com.au');
 
 -- =====================================================================
 -- Cleanup (when the demo account is retired)
@@ -100,5 +100,5 @@ end $$;
 -- 1) Remove the membership:
 --   delete from public.vineyard_members vm
 --   using auth.users u
---   where vm.user_id = u.id and lower(u.email) = lower('REPLACE_ME@example.com');
+--   where vm.user_id = u.id and lower(u.email) = lower('demo@vinetrack.com.au');
 -- 2) Delete the user in Dashboard -> Authentication -> Users (cascades to profiles).
