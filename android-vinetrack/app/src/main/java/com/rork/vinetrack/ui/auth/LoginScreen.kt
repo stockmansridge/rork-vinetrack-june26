@@ -35,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -356,9 +357,35 @@ private fun ResetField(
         singleLine = true,
         visualTransformation = if (isSecure) PasswordVisualTransformation() else VisualTransformation.None,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        colors = loginFieldColors(),
         modifier = Modifier.fillMaxWidth(),
     )
 }
+
+/**
+ * Explicit light-surface colors for the login/reset text fields.
+ * These fields always sit on a white card, so they must not inherit
+ * dark-theme defaults (white text on white = unreadable).
+ */
+@Composable
+private fun loginFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = Color(0xFF111111),
+    unfocusedTextColor = Color(0xFF111111),
+    disabledTextColor = Color(0xFF111111).copy(alpha = 0.6f),
+    cursorColor = VineColors.Primary,
+    focusedContainerColor = Color.Transparent,
+    unfocusedContainerColor = Color.Transparent,
+    focusedBorderColor = VineColors.Primary,
+    unfocusedBorderColor = Color(0xFF055224).copy(alpha = 0.35f),
+    focusedLabelColor = VineColors.Primary,
+    unfocusedLabelColor = Color(0xFF055224).copy(alpha = 0.75f),
+    focusedPlaceholderColor = Color(0xFF111111).copy(alpha = 0.4f),
+    unfocusedPlaceholderColor = Color(0xFF111111).copy(alpha = 0.4f),
+    selectionColors = androidx.compose.foundation.text.selection.TextSelectionColors(
+        handleColor = VineColors.Primary,
+        backgroundColor = VineColors.Primary.copy(alpha = 0.3f),
+    ),
+)
 
 @Composable
 private fun ResetPrimaryButton(label: String, enabled: Boolean, onClick: () -> Unit) {
@@ -491,6 +518,7 @@ private fun LoginField(
         singleLine = true,
         visualTransformation = if (isSecure && !showSecure) PasswordVisualTransformation() else VisualTransformation.None,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        colors = loginFieldColors(),
         modifier = Modifier.fillMaxWidth(),
     )
 }
