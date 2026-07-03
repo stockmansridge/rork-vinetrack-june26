@@ -75,6 +75,7 @@ import com.rork.vinetrack.data.FuelPurchaseRepository
 import com.rork.vinetrack.data.SprayProgramCsvImporter
 import com.rork.vinetrack.data.SprayRecordCreateSync
 import com.rork.vinetrack.data.SprayRecordDeleteSync
+import com.rork.vinetrack.data.SprayJobTemplateRepository
 import com.rork.vinetrack.data.SprayRecordRepository
 import com.rork.vinetrack.data.SprayRecordUpdateSync
 import com.rork.vinetrack.data.TripDeleteSync
@@ -304,6 +305,13 @@ data class AppUiState(
     /** Vineyard-scoped custom Trip Functions (active + archived) for the picker and Settings. */
     val vineyardTripFunctions: List<VineyardTripFunction> = emptyList(),
     val sprayRecords: List<SprayRecord> = emptyList(),
+    /**
+     * Read-only portal spray templates from `spray_jobs` (is_template = true,
+     * deleted_at IS NULL), mapped to in-memory [SprayRecord] templates. Never
+     * written back to `spray_records`; surfaced in the Templates tab and the
+     * "new record from template" prefill flow.
+     */
+    val sprayJobTemplates: List<SprayRecord> = emptyList(),
     val sprayEquipment: List<SprayEquipment> = emptyList(),
     val savedChemicals: List<SavedChemical> = emptyList(),
     /** Shared Saved Inputs library (seed/fertiliser/etc.) backing seeding-trip costing. */
@@ -599,6 +607,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val workTaskRepo = WorkTaskRepository(session)
     private val workTaskLineRepo = WorkTaskLineRepository(session)
     private val sprayRepo = SprayRecordRepository(session)
+    private val sprayJobTemplateRepo = SprayJobTemplateRepository(session)
     private val savedChemicalRepo = SavedChemicalRepository(session)
     private val savedInputRepo = SavedInputRepository(session)
     private val operatorCategoryRepo = OperatorCategoryRepository(session)
@@ -3007,7 +3016,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         session.selectedVineyardId = id
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), workTaskPaddocks = emptyList(), growthStageImages = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), workTaskPaddocks = emptyList(), growthStageImages = emptyList()) }
         loadedLogoKey = null
         // Apply the cached region settings instantly so units/currency render
         // correctly on first paint, then refresh from the backend below.
@@ -9307,6 +9316,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 domainCache.loadSpray(userId, vineyardId)?.also { sprayFromCache = true } ?: emptyList()
             }
         }
+        // Portal spray templates (spray_jobs, is_template = true) are a read-only
+        // reference list created in the Lovable admin portal; soft-fail to the
+        // existing list, then to the server-snapshot cache so templates stay
+        // available offline after first sync.
+        var sprayTemplatesFromServer = false
+        val sprayJobTemplates = try {
+            sprayJobTemplateRepo.listTemplates(vineyardId).also { sprayTemplatesFromServer = true }
+        } catch (e: Exception) {
+            _ui.value.sprayJobTemplates.ifEmpty {
+                domainCache.loadSprayTemplates(userId, vineyardId) ?: emptyList()
+            }
+        }
         // Spray equipment is an optional reference list backing the spray form
         // picker; soft-fail to the existing list (or empty).
         val sprayEquipment = try {
@@ -9443,6 +9464,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (yieldSessionsFromServer) domainCache.saveYieldSessions(userId, vineyardId, yieldSessions)
         if (fuelFromServer) domainCache.saveFuel(userId, vineyardId, fuelLogs)
         if (sprayFromServer) domainCache.saveSpray(userId, vineyardId, sprayRecords)
+        if (sprayTemplatesFromServer) domainCache.saveSprayTemplates(userId, vineyardId, sprayJobTemplates)
         if (workTasksFromServer) domainCache.saveWorkTasks(userId, vineyardId, workTasks)
         // Pending-write restart hydration (Stage O-1): overlay any unresolved
         // outbox markers for the selected vineyard so offline creates/edits/
@@ -9509,6 +9531,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 operatorCategories = operatorCategories,
                 vineyardTripFunctions = vineyardTripFunctions,
                 sprayRecords = overlaidSpray,
+                sprayJobTemplates = sprayJobTemplates,
                 sprayEquipment = sprayEquipment,
                 savedChemicals = savedChemicals,
                 savedInputs = savedInputs,

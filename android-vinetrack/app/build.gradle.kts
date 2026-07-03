@@ -61,10 +61,19 @@ android {
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
     }
 
+    signingConfigs {
+        create("rorkPlayUpload") {
+            storeFile = file("/home/user/rork-app/android-vinetrack/app/play-upload-key.jks")
+            storePassword = "rork-play-upload"
+            keyAlias = "upload"
+            keyPassword = "rork-play-upload"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("rorkPlayUpload")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

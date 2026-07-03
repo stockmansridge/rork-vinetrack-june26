@@ -204,6 +204,20 @@ class DomainCacheRepository(context: Context) {
     fun spraySyncedAt(userId: String?, vineyardId: String): Long? =
         if (ownerMatches(userId)) store.spraySyncedAt(vineyardId) else null
 
+    // MARK: - Portal spray templates by vineyard (spray_jobs, is_template = true)
+
+    /** Save portal templates from a successful online fetch, claiming the cache for [userId]. */
+    fun saveSprayTemplates(userId: String?, vineyardId: String, templates: List<SprayRecord>) {
+        ensureOwner(userId)
+        store.saveSprayTemplates(vineyardId, templates, System.currentTimeMillis())
+    }
+
+    /** Cached portal templates for the vineyard, or null if absent / owned by someone else. */
+    fun loadSprayTemplates(userId: String?, vineyardId: String): List<SprayRecord>? {
+        if (!ownerMatches(userId) || store.sprayTemplatesSyncedAt(vineyardId) == null) return null
+        return store.loadSprayTemplates(vineyardId)
+    }
+
     // MARK: - Work-task headers by vineyard (Stage P-3 — vineyard-scoped header cache)
 
     /** Save work-task headers from a successful online fetch, claiming the cache for [userId]. */

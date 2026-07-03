@@ -11,6 +11,7 @@ struct SprayTripSetupSheet: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(TripTrackingService.self) private var tracking
     @Environment(NewBackendAuthService.self) private var auth
+    @Environment(SprayJobTemplateService.self) private var portalTemplates
     @Environment(\.dismiss) private var dismiss
 
     @State private var showProgramPicker: Bool = false
@@ -18,8 +19,13 @@ struct SprayTripSetupSheet: View {
     @State private var showTemplatePicker: Bool = false
     @State private var prefillTemplate: SprayRecord?
 
+    /// Legacy templates stored in `spray_records` plus portal templates from
+    /// `spray_jobs` (Lovable-created, read-only), deduped by id.
     private var activeTemplates: [SprayRecord] {
-        store.sprayRecords.filter { $0.isTemplate }
+        let local = store.sprayRecords.filter { $0.isTemplate }
+        let localIds = Set(local.map(\.id))
+        let portal = portalTemplates.templateRecords.filter { !localIds.contains($0.id) }
+        return local + portal
     }
 
     private var nonTemplateRecords: [SprayRecord] {
@@ -113,6 +119,10 @@ struct SprayTripSetupSheet: View {
             }) {
                 SprayCalculatorView(prefillRecord: prefillTemplate)
             }
+            .task {
+                // Offline-safe hydration of portal templates for this vineyard.
+                portalTemplates.loadCached(for: store.selectedVineyardId)
+            }
         }
     }
 
@@ -184,6 +194,7 @@ private struct SprayTripSetupCard: View {
 
 struct SprayTripProgramPickerSheet: View {
     @Environment(MigratedDataStore.self) private var store
+    @Environment(SprayJobTemplateService.self) private var portalTemplates
     @Environment(\.dismiss) private var dismiss
 
     let onSelect: (SprayRecord) -> Void
@@ -205,8 +216,10 @@ struct SprayTripProgramPickerSheet: View {
     }
 
     private var templateRecords: [SprayRecord] {
-        store.sprayRecords
-            .filter { $0.isTemplate }
+        let local = store.sprayRecords.filter { $0.isTemplate }
+        let localIds = Set(local.map(\.id))
+        let portal = portalTemplates.templateRecords.filter { !localIds.contains($0.id) }
+        return (local + portal)
             .sorted { $0.sprayReference.lowercased() < $1.sprayReference.lowercased() }
     }
 
@@ -375,6 +388,7 @@ private struct SprayTripProgramRow: View {
 /// prefill flow — the source template is never mutated.
 struct SprayTemplatePickerSheet: View {
     @Environment(MigratedDataStore.self) private var store
+    @Environment(SprayJobTemplateService.self) private var portalTemplates
     @Environment(\.dismiss) private var dismiss
 
     let onSelect: (SprayRecord) -> Void
@@ -382,8 +396,11 @@ struct SprayTemplatePickerSheet: View {
     private var activeTemplates: [SprayRecord] {
         // Soft-deleted templates are removed locally during sync, so filtering
         // by `isTemplate` is equivalent to `is_template = true AND deleted_at IS NULL`.
-        store.sprayRecords
-            .filter { $0.isTemplate }
+        // Portal templates (spray_jobs) are fetched with the same filter server-side.
+        let local = store.sprayRecords.filter { $0.isTemplate }
+        let localIds = Set(local.map(\.id))
+        let portal = portalTemplates.templateRecords.filter { !localIds.contains($0.id) }
+        return (local + portal)
             .sorted { $0.sprayReference.lowercased() < $1.sprayReference.lowercased() }
     }
 

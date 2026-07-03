@@ -170,6 +170,7 @@ fun SpraysScreen(
     var prefillFromTemplate by remember { mutableStateOf<SprayRecord?>(null) }
 
     val selected = state.sprayRecords.firstOrNull { it.id == selectedId }
+        ?: state.sprayJobTemplates.firstOrNull { it.id == selectedId }
 
     if (calculating) {
         androidx.activity.compose.BackHandler { calculating = false }
@@ -306,9 +307,13 @@ private fun SprayListView(
     val hasSearch = query.isNotEmpty()
 
     val all = remember(state.sprayRecords) { state.sprayRecords }
-    val templates = remember(state.sprayRecords, query) {
-        state.sprayRecords.asSequence()
-            .filter { it.isTemplate }
+    // Templates merge two sources: legacy templates stored in spray_records and
+    // read-only portal templates from spray_jobs (Lovable-created), deduped by id.
+    val templates = remember(state.sprayRecords, state.sprayJobTemplates, query) {
+        val local = state.sprayRecords.asSequence().filter { it.isTemplate }
+        val localIds = local.map { it.id }.toSet()
+        val portal = state.sprayJobTemplates.asSequence().filter { it.id !in localIds }
+        (local + portal)
             .filter { query.isEmpty() || sprayTemplateMatches(it, query) }
             .sortedBy { it.displayLabel.lowercase() }
             .toList()
@@ -791,7 +796,11 @@ private fun SprayDetailView(
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
+    // Portal templates (spray_jobs) are read-only on mobile: no edit, no delete.
+    val isPortalTemplate = state.sprayRecords.none { it.id == recordId } &&
+        state.sprayJobTemplates.any { it.id == recordId }
     val record = state.sprayRecords.firstOrNull { it.id == recordId }
+        ?: state.sprayJobTemplates.firstOrNull { it.id == recordId }
     var confirmDelete by remember { mutableStateOf(false) }
     var starting by remember { mutableStateOf(false) }
 
@@ -830,7 +839,9 @@ private fun SprayDetailView(
                 },
                 actions = {
                     IconButton(onClick = { exportPdf() }) { Icon(Icons.Filled.PictureAsPdf, contentDescription = "Export as PDF") }
-                    IconButton(onClick = { onEdit(record) }) { Icon(Icons.Filled.Edit, contentDescription = "Edit record") }
+                    if (!isPortalTemplate) {
+                        IconButton(onClick = { onEdit(record) }) { Icon(Icons.Filled.Edit, contentDescription = "Edit record") }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
@@ -1168,9 +1179,19 @@ private fun SprayDetailView(
                 }
             }
 
-            TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive)
-                Text(if (record.isTemplate) "  Delete template" else "  Delete spray record", color = VineColors.Destructive)
+            if (isPortalTemplate) {
+                Text(
+                    "This template is managed in the admin portal.",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+            } else {
+                TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive)
+                    Text(if (record.isTemplate) "  Delete template" else "  Delete spray record", color = VineColors.Destructive)
+                }
             }
             Spacer(Modifier.height(8.dp))
         }

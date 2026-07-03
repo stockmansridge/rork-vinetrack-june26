@@ -12,6 +12,7 @@ struct NewMainTabView: View {
     @Environment(PaddockSyncService.self) private var paddockSync
     @Environment(TripSyncService.self) private var tripSync
     @Environment(SprayRecordSyncService.self) private var sprayRecordSync
+    @Environment(SprayJobTemplateService.self) private var sprayJobTemplateService
     @Environment(ButtonConfigSyncService.self) private var buttonConfigSync
     @Environment(SavedChemicalSyncService.self) private var savedChemicalSync
     @Environment(SavedSprayPresetSyncService.self) private var savedSprayPresetSync
@@ -98,6 +99,7 @@ struct NewMainTabView: View {
             paddockSync.configure(store: store, auth: auth)
             tripSync.configure(store: store, auth: auth)
             sprayRecordSync.configure(store: store, auth: auth)
+            sprayJobTemplateService.configure(store: store, auth: auth)
             buttonConfigSync.configure(store: store, auth: auth)
             savedChemicalSync.configure(store: store, auth: auth)
             savedSprayPresetSync.configure(store: store, auth: auth)
@@ -126,6 +128,9 @@ struct NewMainTabView: View {
             Task { await appNoticeService.refresh() }
         }
         .task(id: store.selectedVineyardId) {
+            // Hydrate portal spray templates from the offline cache immediately
+            // (network-independent) so the template picker works offline.
+            sprayJobTemplateService.loadCached(for: store.selectedVineyardId)
             await accessControl.refresh(for: store.selectedVineyardId, auth: auth)
             await runFullSweep(alertRefresh: .generate)
         }
@@ -224,6 +229,7 @@ struct NewMainTabView: View {
         await paddockSync.syncPaddocksForSelectedVineyard()
         await tripSync.syncTripsForSelectedVineyard()
         await sprayRecordSync.syncSprayRecordsForSelectedVineyard()
+        await sprayJobTemplateService.syncForSelectedVineyard()
         await buttonConfigSync.syncButtonConfigForSelectedVineyard()
         await savedChemicalSync.syncForSelectedVineyard()
         await savedSprayPresetSync.syncForSelectedVineyard()

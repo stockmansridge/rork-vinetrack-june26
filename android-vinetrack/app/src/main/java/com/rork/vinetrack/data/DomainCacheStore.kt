@@ -204,6 +204,21 @@ class DomainCacheStore(context: Context) {
 
     fun spraySyncedAt(vineyardId: String): Long? = readTimestamp(keySprayAt(vineyardId))
 
+    // MARK: - Portal spray templates by vineyard (spray_jobs, is_template = true)
+
+    /** Cached portal templates, already mapped to read-only [SprayRecord] values. */
+    fun loadSprayTemplates(vineyardId: String): List<SprayRecord> =
+        decode(prefs.getString(keySprayTemplates(vineyardId), null), spraySerializer)
+
+    fun saveSprayTemplates(vineyardId: String, templates: List<SprayRecord>, syncedAt: Long) {
+        prefs.edit {
+            putString(keySprayTemplates(vineyardId), json.encodeToString(spraySerializer, templates))
+            putLong(keySprayTemplatesAt(vineyardId), syncedAt)
+        }
+    }
+
+    fun sprayTemplatesSyncedAt(vineyardId: String): Long? = readTimestamp(keySprayTemplatesAt(vineyardId))
+
     // MARK: - Work-task headers by vineyard (Stage P-3 — vineyard-scoped header cache)
 
     fun loadWorkTasks(vineyardId: String): List<WorkTask> =
@@ -291,6 +306,8 @@ class DomainCacheStore(context: Context) {
     private fun keyFuelAt(vineyardId: String) = "fuel_at_$vineyardId"
     private fun keySpray(vineyardId: String) = "spray_$vineyardId"
     private fun keySprayAt(vineyardId: String) = "spray_at_$vineyardId"
+    private fun keySprayTemplates(vineyardId: String) = "spray_job_templates_$vineyardId"
+    private fun keySprayTemplatesAt(vineyardId: String) = "spray_job_templates_at_$vineyardId"
     private fun keyWorkTask(vineyardId: String) = "worktask_$vineyardId"
     private fun keyWorkTaskAt(vineyardId: String) = "worktask_at_$vineyardId"
     private fun keyLabour(workTaskId: String) = "worktask_labour_$workTaskId"
