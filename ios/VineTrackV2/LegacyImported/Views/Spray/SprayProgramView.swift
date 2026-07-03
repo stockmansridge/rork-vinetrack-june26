@@ -16,6 +16,7 @@ nonisolated enum SprayStatusFilter: String, CaseIterable, Sendable {
 struct SprayProgramView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(SprayRecordSyncService.self) private var sprayRecordSync
+    @Environment(SprayJobTemplateService.self) private var portalTemplates
     @Environment(\.accessControl) private var accessControl
 
     @State private var selectedRecord: SprayRecord?
@@ -52,8 +53,14 @@ struct SprayProgramView: View {
         return records
     }
 
+    /// Merged template list: legacy templates stored in `spray_records` plus
+    /// read-only portal templates from `spray_jobs` (Lovable-created), deduped
+    /// by id — the same source the Start from Template pickers use.
     private var templateRecords: [SprayRecord] {
-        var records = store.sprayRecords.filter { $0.isTemplate }
+        let local = store.sprayRecords.filter { $0.isTemplate }
+        let localIds = Set(local.map(\.id))
+        let portal = portalTemplates.templateRecords.filter { !localIds.contains($0.id) }
+        var records = local + portal
         if !searchText.isEmpty {
             records = records.filter { record in
                 let chemicalNames = record.tanks.flatMap { $0.chemicals }.map { $0.name }.joined(separator: " ")
@@ -62,6 +69,12 @@ struct SprayProgramView: View {
             }
         }
         return records.sorted { $0.sprayReference.lowercased() < $1.sprayReference.lowercased() }
+    }
+
+    /// Portal templates come from `spray_jobs` and are read-only on mobile.
+    private func isPortalTemplate(_ record: SprayRecord) -> Bool {
+        !store.sprayRecords.contains(where: { $0.id == record.id }) &&
+            portalTemplates.templateRecords.contains(where: { $0.id == record.id })
     }
 
     private func recordStatus(_ record: SprayRecord) -> SprayStatusFilter {
@@ -122,6 +135,11 @@ struct SprayProgramView: View {
             }
             .navigationTitle("Spray Program")
             .searchable(text: $searchText, prompt: "Search spray records")
+            .onAppear {
+                // Hydrate portal templates from the offline cache so the
+                // Templates tab is populated even before the next network sync.
+                portalTemplates.loadCached(for: store.selectedVineyardId)
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 12) {
@@ -171,7 +189,7 @@ struct SprayProgramView: View {
                     ContentUnavailableView {
                         Label("No Templates", systemImage: "doc.on.doc")
                     } description: {
-                        Text("Mark a spray record as a template to reuse it for future trips.")
+                        Text("Create templates in the admin portal or mark a spray record as a template to reuse it for future spray jobs.")
                     }
                 } else if statusFilter != .templates && filteredRecords.isEmpty && templateRecords.isEmpty {
                     ContentUnavailableView {
@@ -313,6 +331,12 @@ struct SprayProgramView: View {
                             .foregroundStyle(VineyardTheme.olive)
                     }
 
+                    if isPortalTemplate(record) {
+                        Label("Admin portal template", systemImage: "lock")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
                     let chemicalNames = record.tanks.flatMap { $0.chemicals }
                         .map { $0.name }
                         .filter { !$0.isEmpty }
@@ -343,7 +367,8 @@ struct SprayProgramView: View {
             .contentShape(Rectangle())
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            if accessControl?.canDelete ?? false {
+            // Portal templates are managed in the admin portal — no delete on mobile.
+            if (accessControl?.canDelete ?? false) && !isPortalTemplate(record) {
                 Button(role: .destructive) {
                     recordToDelete = record
                 } label: {

@@ -525,7 +525,7 @@ private fun SprayListView(
                         EmptyState(
                             icon = Icons.Filled.ContentCopy,
                             title = "No Templates",
-                            message = "Mark a spray record as a template to reuse it for future trips.",
+                            message = "Create templates in the admin portal or mark a spray record as a template to reuse it for future spray jobs.",
                         )
                     }
                 }

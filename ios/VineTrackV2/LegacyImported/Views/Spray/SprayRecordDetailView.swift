@@ -5,6 +5,7 @@ struct SprayRecordDetailView: View {
     let record: SprayRecord
     @Environment(MigratedDataStore.self) private var store
     @Environment(SprayRecordSyncService.self) private var sprayRecordSync
+    @Environment(SprayJobTemplateService.self) private var portalTemplates
     @Environment(\.accessControl) private var accessControl
     @Environment(\.dismiss) private var dismiss
     @State private var showEditSheet: Bool = false
@@ -18,6 +19,13 @@ struct SprayRecordDetailView: View {
 
     private var tripForRecord: Trip? {
         store.trips.first(where: { $0.id == record.tripId })
+    }
+
+    /// Portal templates come from `spray_jobs` and are read-only on mobile:
+    /// no edit, no template toggle. They are managed in the admin portal.
+    private var isPortalTemplate: Bool {
+        !store.sprayRecords.contains(where: { $0.id == record.id }) &&
+            portalTemplates.templateRecords.contains(where: { $0.id == record.id })
     }
 
     private var canViewFinancials: Bool {
@@ -133,15 +141,17 @@ struct SprayRecordDetailView: View {
                 }
                 RecordSyncBadge(state: RecordSyncState.forSprayRecord(record.id, spraySync: sprayRecordSync))
                 Spacer()
-                Button {
-                    showEditSheet = true
-                } label: {
-                    Image(systemName: "pencil")
-                        .font(.headline)
-                        .foregroundStyle(VineyardTheme.leafGreen)
-                        .padding(10)
-                        .background(VineyardTheme.leafGreen.opacity(0.12))
-                        .clipShape(Circle())
+                if !isPortalTemplate {
+                    Button {
+                        showEditSheet = true
+                    } label: {
+                        Image(systemName: "pencil")
+                            .font(.headline)
+                            .foregroundStyle(VineyardTheme.leafGreen)
+                            .padding(10)
+                            .background(VineyardTheme.leafGreen.opacity(0.12))
+                            .clipShape(Circle())
+                    }
                 }
             }
             RecordSyncFailureHint(state: RecordSyncState.forSprayRecord(record.id, spraySync: sprayRecordSync))
@@ -155,34 +165,54 @@ struct SprayRecordDetailView: View {
         store.sprayRecords.first(where: { $0.id == record.id }) ?? record
     }
 
+    @ViewBuilder
     private var templateCard: some View {
-        let binding = Binding<Bool>(
-            get: { currentRecord.isTemplate },
-            set: { newValue in
-                var updated = currentRecord
-                updated.isTemplate = newValue
-                store.updateSprayRecord(updated)
-            }
-        )
-
-        return cardContainer {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "doc.on.doc")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Template")
-                        .font(.headline)
-                    Text("Mark as template to reuse for future trips")
-                        .font(.subheadline)
+        if isPortalTemplate {
+            cardContainer {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "lock.doc")
+                        .font(.title3)
                         .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Admin portal template")
+                            .font(.headline)
+                        Text("This template is managed in the admin portal. Use it to start a new spray job — it can't be edited here.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-                Spacer()
-                Toggle("", isOn: binding)
-                    .labelsHidden()
-                    .tint(VineyardTheme.leafGreen)
+            }
+        } else {
+            let binding = Binding<Bool>(
+                get: { currentRecord.isTemplate },
+                set: { newValue in
+                    var updated = currentRecord
+                    updated.isTemplate = newValue
+                    store.updateSprayRecord(updated)
+                }
+            )
+
+            cardContainer {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Template")
+                            .font(.headline)
+                        Text("Mark as template to reuse for future trips")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Toggle("", isOn: binding)
+                        .labelsHidden()
+                        .tint(VineyardTheme.leafGreen)
+                }
             }
         }
     }
