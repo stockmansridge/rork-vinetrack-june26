@@ -71,7 +71,7 @@ enum class ToolRoute(
 ) {
     Pins("Pins", "Map markers & issues", Icons.Filled.LocationOn, VineColors.Orange, ToolGroup.Vineyard),
     Blocks("Blocks", "Paddocks & rows", Icons.Filled.Grass, VineColors.LeafGreen, ToolGroup.Vineyard),
-    Growth("Growth & Varieties", "Phenology & catalog", Icons.Filled.Spa, VineColors.LeafGreen, ToolGroup.Vineyard),
+    Growth("Growth Stage Records", "Phenology records", Icons.Filled.Spa, VineColors.LeafGreen, ToolGroup.Vineyard),
     GrowthStageImages("Growth Stage Images", "E-L reference photos", Icons.Filled.PhotoLibrary, VineColors.LeafGreen, ToolGroup.Vineyard),
     GrowthStageConfig("E-L Growth Stages", "Enable stages for recording", Icons.Filled.Checklist, VineColors.LeafGreen, ToolGroup.Vineyard),
     Irrigation("Irrigation", "Water planning", Icons.Filled.Opacity, VineColors.Cyan, ToolGroup.Vineyard),

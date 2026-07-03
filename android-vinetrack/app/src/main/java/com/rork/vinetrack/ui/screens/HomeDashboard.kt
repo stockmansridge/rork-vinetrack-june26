@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -184,6 +185,7 @@ private fun DashboardContent(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
+                .statusBarsPadding()
                 .padding(vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
@@ -216,8 +218,6 @@ private fun DashboardContent(
             )
 
             OverviewSection(state, onOpenMap)
-
-            RipenessWatchTile(state = state, onClick = { onOpenTool(ToolRoute.OptimalRipeness) })
 
             OperationalToolsSection(onOpenTab = onOpenTab, onOpenTool = onOpenTool)
 
@@ -863,9 +863,10 @@ private fun OperationalToolsSection(onOpenTab: (MainTab) -> Unit, onOpenTool: (T
         ToolItem("Fuel Log", "Record tractor fuel fills", Icons.Filled.LocalGasStation, VineColors.Pink) { onOpenTool(ToolRoute.FuelLog) },
         ToolItem("Irrigation Advisor", "Water planning", Icons.Filled.Opacity, VineColors.Cyan) { onOpenTool(ToolRoute.Irrigation) },
         ToolItem("Disease Risk", "Downy/Powdery/Botrytis", Icons.Filled.Coronavirus, VineColors.LeafGreen) { onOpenTool(ToolRoute.DiseaseRisk) },
-        ToolItem("Optimal Ripeness", "GDD & harvest window", Icons.Filled.Thermostat, VineColors.Orange) { onOpenTool(ToolRoute.OptimalRipeness) },
         ToolItem("Yields", "Forecasting, Sampling & Recording", Icons.Filled.Scale, VineColors.Orange) { onOpenTool(ToolRoute.Yield) },
-        ToolItem("Growth & Varieties", "Phenology & catalog", Icons.Filled.Spa, VineColors.LeafGreen) { onOpenTool(ToolRoute.Growth) },
+        ToolItem("Growth Stage Records", "Phenology records", Icons.Filled.Spa, VineColors.LeafGreen) { onOpenTool(ToolRoute.Growth) },
+        ToolItem("Optimal Ripeness", "GDD & harvest window", Icons.Filled.Thermostat, VineColors.Orange) { onOpenTool(ToolRoute.OptimalRipeness) },
+        ToolItem("Cost Reports", "Season, block & variety", Icons.Filled.Payments, VineColors.Indigo) { onOpenTool(ToolRoute.CostReports) },
     )
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -923,7 +924,6 @@ private fun ManagementSection(onOpenTool: (ToolRoute) -> Unit) {
     val tools = listOf(
         ToolItem("Manage Users", "Team & roles", Icons.Filled.Group, VineColors.Info) { onOpenTool(ToolRoute.TeamAccess) },
         ToolItem("Vineyard Setup", "Blocks & rows", Icons.Filled.Settings, VineColors.TextSecondaryLight) { onOpenTool(ToolRoute.Blocks) },
-        ToolItem("Cost Reports", "Season, block & variety", Icons.Filled.Payments, VineColors.Indigo) { onOpenTool(ToolRoute.CostReports) },
     )
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),

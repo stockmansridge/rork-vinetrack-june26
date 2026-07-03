@@ -12,6 +12,9 @@ plugins {
  *   1. The build environment (System.getenv) — how the Rork CI passes EXPO_PUBLIC_* values.
  *   2. Gradle project properties (-P flags / gradle.properties).
  *   3. local.properties on the build machine.
+ *   4. The Rork-managed Config.kt constants (populated with the project's
+ *      public environment values), so keys that must land in the merged
+ *      AndroidManifest (e.g. the Google Maps key) always resolve at build time.
  * Returns an empty string when nothing is found so the APK always compiles.
  */
 val localProperties = Properties().apply {
@@ -21,11 +24,24 @@ val localProperties = Properties().apply {
     }
 }
 
+val rorkConfigKtText: String = file("src/main/java/com/rork/vinetrack/Config.kt")
+    .takeIf { it.exists() }
+    ?.readText()
+    ?: ""
+
+fun configKtValue(key: String): String =
+    Regex("const val $key\\s*=\\s*\"([^\"]*)\"")
+        .find(rorkConfigKtText)
+        ?.groupValues?.get(1)
+        ?.trim()
+        ?: ""
+
 fun resolveBuildConfigValue(vararg keys: String): String {
     for (key in keys) {
         System.getenv(key)?.takeIf { it.isNotBlank() }?.let { return it.trim() }
         (project.findProperty(key) as? String)?.takeIf { it.isNotBlank() }?.let { return it.trim() }
         localProperties.getProperty(key)?.takeIf { it.isNotBlank() }?.let { return it.trim() }
+        configKtValue(key).takeIf { it.isNotBlank() }?.let { return it }
     }
     return ""
 }
