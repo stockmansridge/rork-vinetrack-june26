@@ -193,6 +193,7 @@ import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.TripSyncBadge
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
+import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
@@ -1466,6 +1467,7 @@ private fun ActiveTripHud(
     val cameraPositionState = rememberCameraPositionState()
     var followUser by remember { mutableStateOf(true) }
     var hybrid by remember { mutableStateOf(true) }
+    var hudMapLoaded by remember { mutableStateOf(false) }
 
     val bearing = state.latestBearingDegrees
     val speedKmh = state.latestSpeedMetresPerSecond?.let { (it * 3.6).coerceAtLeast(0.0) }
@@ -1476,6 +1478,14 @@ private fun ActiveTripHud(
         if (current != null) {
             runCatching { cameraPositionState.move(CameraUpdateFactory.newLatLngZoom(current, 18f)) }
         }
+    }
+    // No GPS fix yet: frame the trip's block geometry so the operator sees the
+    // vineyard instead of a world-default camera. Follow mode takes over as
+    // soon as the first fix arrives.
+    LaunchedEffect(hudMapLoaded, current == null, blocks) {
+        if (!hudMapLoaded || current != null) return@LaunchedEffect
+        val pts = blocks.flatMap { it.polygonPoints ?: emptyList() }.mapNotNull { it.toLatLng() }
+        cameraPositionState.fitToContent(points = pts, paddingPx = 120, singlePointZoom = 16f)
     }
     // Follow-the-driver: animate to the live fix (with course heading) while
     // follow mode is engaged. Developer animations don't flip us out of follow.
@@ -1529,6 +1539,7 @@ private fun ActiveTripHud(
                 compassEnabled = false,
                 myLocationButtonEnabled = false,
             ),
+            onMapLoaded = { hudMapLoaded = true },
         ) {
             blocks.forEach { block ->
                 val poly = block.polygonPoints?.mapNotNull { it.toLatLng() } ?: emptyList()
@@ -3365,10 +3376,19 @@ private fun EditTripSheet(
 @Composable
 private fun TripPathMap(path: List<LatLng>, blocks: List<Paddock>) {
     val cameraPositionState = rememberCameraPositionState()
-    val bounds = remember(path) {
-        val b = LatLngBounds.builder()
-        path.forEach { b.include(it) }
-        runCatching { b.build() }.getOrNull()
+    var mapLoaded by remember { mutableStateOf(false) }
+
+    // Frame the recorded track once the map is laid out (falling back to the
+    // trip's block geometry when there is no track), re-framing if the data
+    // arrives after the map loads.
+    LaunchedEffect(mapLoaded, path, blocks) {
+        if (!mapLoaded) return@LaunchedEffect
+        val pts = path.ifEmpty {
+            blocks.filter { it.hasGeometry }
+                .flatMap { it.polygonPoints ?: emptyList() }
+                .mapNotNull { it.toLatLng() }
+        }
+        cameraPositionState.fitToContent(points = pts, paddingPx = 80)
     }
 
     Box(
@@ -3387,11 +3407,7 @@ private fun TripPathMap(path: List<LatLng>, blocks: List<Paddock>) {
                 scrollGesturesEnabled = true,
                 zoomGesturesEnabled = true,
             ),
-            onMapLoaded = {
-                if (bounds != null) {
-                    runCatching { cameraPositionState.move(CameraUpdateFactory.newLatLngBounds(bounds, 80)) }
-                }
-            },
+            onMapLoaded = { mapLoaded = true },
         ) {
             // Subtle block context behind the track.
             blocks.filter { it.hasGeometry }.forEach { block ->

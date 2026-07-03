@@ -73,10 +73,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapType
@@ -95,6 +93,7 @@ import com.rork.vinetrack.data.model.damageFactor
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -444,13 +443,14 @@ private fun RecordDamageView(
 
     val blockPoly = remember(paddock.id) { paddock.polygonPoints?.map { LatLng(it.latitude, it.longitude) } ?: emptyList() }
     val cameraPositionState = rememberCameraPositionState()
+    var mapLoaded by remember { mutableStateOf(false) }
 
-    LaunchedEffect(paddock.id) {
+    // Frame the block only once the map has a measured size — bounds updates
+    // fail silently on an unmeasured map, leaving the camera at 0,0.
+    LaunchedEffect(mapLoaded, paddock.id) {
+        if (!mapLoaded) return@LaunchedEffect
         val pts = blockPoly.ifEmpty { livePoints }
-        if (pts.isNotEmpty()) {
-            val b = LatLngBounds.builder().apply { pts.forEach { include(it) } }.build()
-            runCatching { cameraPositionState.move(CameraUpdateFactory.newLatLngBounds(b, 140)) }
-        }
+        cameraPositionState.fitToContent(points = pts, paddingPx = 140)
     }
 
     Scaffold(
@@ -480,6 +480,7 @@ private fun RecordDamageView(
                     properties = MapProperties(mapType = MapType.HYBRID),
                     uiSettings = MapUiSettings(zoomControlsEnabled = false, mapToolbarEnabled = false),
                     onMapClick = { latLng -> verts.add(MarkerState(position = latLng)) },
+                    onMapLoaded = { mapLoaded = true },
                 ) {
                     if (blockPoly.size >= 3) {
                         Polygon(

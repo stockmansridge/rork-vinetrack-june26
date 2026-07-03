@@ -55,10 +55,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapType
@@ -75,6 +73,7 @@ import com.rork.vinetrack.data.model.PaddockVarietyAllocation
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.SectionHeader
+import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
@@ -475,18 +474,18 @@ private fun BoundarySection(
 ) {
     val vine = LocalVineColors.current
     val camera = rememberCameraPositionState()
+    var mapLoaded by remember { mutableStateOf(false) }
     var framed by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        if (framed) return@LaunchedEffect
+    // Frame only after the map has a measured size — a bounds update on an
+    // unmeasured map fails silently and leaves the camera at 0,0.
+    LaunchedEffect(mapLoaded) {
+        if (!mapLoaded || framed) return@LaunchedEffect
         val pts = boundary.map { it.position }
-        when {
-            pts.size >= 2 -> {
-                val b = LatLngBounds.builder().apply { pts.forEach { include(it) } }.build()
-                runCatching { camera.move(CameraUpdateFactory.newLatLngBounds(b, 120)) }
-            }
-            pts.size == 1 -> camera.move(CameraUpdateFactory.newLatLngZoom(pts.first(), 17f))
-            vineyardCenter != null -> camera.move(CameraUpdateFactory.newLatLngZoom(vineyardCenter, 16f))
+        if (pts.isNotEmpty()) {
+            camera.fitToContent(points = pts, paddingPx = 120, singlePointZoom = 17f)
+        } else if (vineyardCenter != null) {
+            camera.fitToContent(points = listOf(vineyardCenter), singlePointZoom = 16f)
         }
         framed = true
     }
@@ -521,6 +520,7 @@ private fun BoundarySection(
                     tiltGesturesEnabled = false,
                 ),
                 onMapClick = { boundary.add(MarkerState(it)) },
+                onMapLoaded = { mapLoaded = true },
             ) {
                 val poly by remember { derivedStateOf { boundary.map { it.position } } }
                 if (poly.size >= 3) {

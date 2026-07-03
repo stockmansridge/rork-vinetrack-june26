@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Timeline
@@ -49,7 +50,6 @@ import androidx.compose.ui.unit.sp
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.LatLngBounds
 import com.rork.vinetrack.data.MapDefaults
 import com.rork.vinetrack.data.MapStyle
 import com.rork.vinetrack.data.model.CoordinatePoint
@@ -57,6 +57,8 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.EmptyState
+import com.rork.vinetrack.ui.components.fitToContent
+import com.rork.vinetrack.ui.components.isValidMapCoordinate
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import com.google.maps.android.compose.GoogleMap
@@ -107,6 +109,7 @@ private fun Paddock.centroid(): LatLng? {
 private fun Pin.latLng(): LatLng? {
     val lat = latitude ?: return null
     val lng = longitude ?: return null
+    if (!isValidMapCoordinate(lat, lng)) return null
     return LatLng(lat, lng)
 }
 
@@ -173,28 +176,28 @@ fun VineyardMapContent(
     // Resolve each pin's configured colour (iOS nameColorMap parity).
     val colorMap = remember(state.repairButtons, state.growthButtons) { pinColorMap(state) }
 
-    // Build the region that frames all mapped content.
-    val bounds = remember(blocks, locatedPins, state.selectedVineyard) {
-        val builder = LatLngBounds.builder()
-        var included = 0
-        blocks.forEach { block ->
-            block.polygonPoints?.forEach { builder.include(it.toLatLng()); included++ }
+    // Points that frame the mapped content: pins first, then block geometry,
+    // then the vineyard's saved location as a last resort (iOS parity).
+    val framePoints = remember(blocks, locatedPins, state.selectedVineyard) {
+        val pinPoints = locatedPins.mapNotNull { it.latLng() }
+        if (pinPoints.isNotEmpty()) return@remember pinPoints
+        val geometry = blocks.flatMap { block ->
+            (block.polygonPoints ?: emptyList())
+                .filter { isValidMapCoordinate(it.latitude, it.longitude) }
+                .map { it.toLatLng() }
         }
-        locatedPins.forEach { pin -> pin.latLng()?.let { builder.include(it); included++ } }
-        if (included == 0) {
-            val v = state.selectedVineyard
-            val lat = v?.latitude
-            val lng = v?.longitude
-            if (lat != null && lng != null) {
-                builder.include(LatLng(lat, lng))
-                included++
-            }
+        if (geometry.isNotEmpty()) return@remember geometry
+        val v = state.selectedVineyard
+        if (isValidMapCoordinate(v?.latitude, v?.longitude)) {
+            listOf(LatLng(v?.latitude ?: 0.0, v?.longitude ?: 0.0))
+        } else {
+            emptyList()
         }
-        if (included > 0) runCatching { builder.build() }.getOrNull() else null
     }
 
     val cameraPositionState = rememberCameraPositionState()
     var mode by remember { mutableStateOf(if (defaults.overview3D) MapMode.Overview else MapMode.TopDown) }
+    var mapLoaded by remember { mutableStateOf(false) }
     var hasFramed by remember { mutableStateOf(false) }
 
     // Session-only overlay visibility, seeded from persisted Settings defaults.
@@ -203,9 +206,19 @@ fun VineyardMapContent(
     var showRowLines by remember(defaults.showRowLines) { mutableStateOf(defaults.showRowLines) }
     var showBlockLabels by remember(defaults.showBlockLabels) { mutableStateOf(defaults.showBlockLabels) }
 
-    // Frame the content once the map is laid out.
-    LaunchedEffect(bounds) {
-        hasFramed = false
+    // Frame the content once the map is laid out, and re-frame when the
+    // mapped content changes (vineyard switch, pin filters, data arriving
+    // after the map loaded). User pans never trigger this — it is keyed only
+    // on the content, not the camera.
+    LaunchedEffect(mapLoaded, framePoints) {
+        if (!mapLoaded || framePoints.isEmpty()) return@LaunchedEffect
+        cameraPositionState.fitToContent(
+            points = framePoints,
+            paddingPx = 120,
+            singlePointZoom = 17f,
+            animate = hasFramed,
+        )
+        hasFramed = true
     }
 
     // Re-apply tilt whenever the mode changes, preserving centre and zoom.
@@ -225,7 +238,7 @@ fun VineyardMapContent(
         }
     }
 
-    if (bounds == null) {
+    if (framePoints.isEmpty()) {
         Box(modifier.padding(16.dp), contentAlignment = Alignment.Center) {
             EmptyState(
                 icon = Icons.Filled.Map,
@@ -247,12 +260,7 @@ fun VineyardMapContent(
                     tiltGesturesEnabled = true,
                     rotationGesturesEnabled = true,
                 ),
-                onMapLoaded = {
-                    runCatching {
-                        cameraPositionState.move(CameraUpdateFactory.newLatLngBounds(bounds, 120))
-                    }
-                    hasFramed = true
-                },
+                onMapLoaded = { mapLoaded = true },
             ) {
                 // Hide labels when zoomed out to keep the map readable and cheap.
                 // derivedStateOf only flips the markers when crossing the threshold.
@@ -343,6 +351,34 @@ fun VineyardMapContent(
                     .align(Alignment.BottomStart)
                     .padding(start = 12.dp, bottom = 16.dp),
             )
+
+            // Re-centre on the mapped content after a manual pan/zoom.
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 12.dp, bottom = 16.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .clickable {
+                        scope.launch {
+                            cameraPositionState.fitToContent(
+                                points = framePoints,
+                                paddingPx = 120,
+                                singlePointZoom = 17f,
+                                animate = true,
+                            )
+                        }
+                    }
+                    .padding(11.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.GpsFixed,
+                    contentDescription = "Re-centre map",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
 
             // Helpful note if no Maps key is configured for this build.
             AnimatedVisibility(

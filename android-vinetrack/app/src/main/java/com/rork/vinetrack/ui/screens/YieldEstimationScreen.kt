@@ -87,6 +87,7 @@ import com.rork.vinetrack.data.model.YieldEstimationSession
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
@@ -614,11 +615,11 @@ private fun SamplePreviewMap(
         blocks.flatMap { it.polygonPoints ?: emptyList() }.map { LatLng(it.latitude, it.longitude) } +
             session.sampleSites.map { LatLng(it.latitude, it.longitude) }
     }
-    androidx.compose.runtime.LaunchedEffect(allPoints.size) {
-        if (allPoints.isNotEmpty()) {
-            val b = LatLngBounds.builder().apply { allPoints.forEach { include(it) } }.build()
-            runCatching { camera.move(CameraUpdateFactory.newLatLngBounds(b, 120)) }
-        }
+    var mapLoaded by remember { mutableStateOf(false) }
+    // Frame only after the map has a measured size; re-frame when content changes.
+    androidx.compose.runtime.LaunchedEffect(mapLoaded, allPoints) {
+        if (!mapLoaded) return@LaunchedEffect
+        camera.fitToContent(points = allPoints, paddingPx = 120)
     }
     Box(modifier = Modifier.fillMaxWidth().height(300.dp).clip(RoundedCornerShape(14.dp))) {
         GoogleMap(
@@ -626,6 +627,7 @@ private fun SamplePreviewMap(
             cameraPositionState = camera,
             properties = MapProperties(mapType = MapType.HYBRID),
             uiSettings = MapUiSettings(zoomControlsEnabled = false, mapToolbarEnabled = false),
+            onMapLoaded = { mapLoaded = true },
         ) {
             blocks.forEach { block ->
                 val pts = block.polygonPoints?.map { LatLng(it.latitude, it.longitude) } ?: emptyList()
@@ -686,13 +688,20 @@ private fun YieldSamplingMapScreen(
     var recordingSite by remember { mutableStateOf<SampleSite?>(null) }
 
     val camera = rememberCameraPositionState()
+    var samplingMapLoaded by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(Unit) {
         here = tracker.currentLocation()
-        val pts = session.sampleSites.map { LatLng(it.latitude, it.longitude) }
-        if (pts.isNotEmpty()) {
-            val b = LatLngBounds.builder().apply { pts.forEach { include(it) } }.build()
-            runCatching { camera.move(CameraUpdateFactory.newLatLngBounds(b, 120)) }
+    }
+    // Frame the sample sites (falling back to the selected blocks' geometry)
+    // once the map is laid out.
+    androidx.compose.runtime.LaunchedEffect(samplingMapLoaded, session.sampleSites) {
+        if (!samplingMapLoaded) return@LaunchedEffect
+        val pts = session.sampleSites.map { LatLng(it.latitude, it.longitude) }.ifEmpty {
+            blocks.filter { session.isPaddockSelected(it.id) }
+                .flatMap { it.polygonPoints ?: emptyList() }
+                .map { LatLng(it.latitude, it.longitude) }
         }
+        camera.fitToContent(points = pts, paddingPx = 120)
     }
 
     val unrecorded = session.sampleSites.filter { !it.isRecorded }
@@ -721,6 +730,7 @@ private fun YieldSamplingMapScreen(
                     cameraPositionState = camera,
                     properties = MapProperties(mapType = MapType.HYBRID, isMyLocationEnabled = tracker.hasPermission),
                     uiSettings = MapUiSettings(zoomControlsEnabled = false, mapToolbarEnabled = false),
+                    onMapLoaded = { samplingMapLoaded = true },
                 ) {
                     blocks.filter { session.isPaddockSelected(it.id) }.forEach { block ->
                         val pts = block.polygonPoints?.map { LatLng(it.latitude, it.longitude) } ?: emptyList()

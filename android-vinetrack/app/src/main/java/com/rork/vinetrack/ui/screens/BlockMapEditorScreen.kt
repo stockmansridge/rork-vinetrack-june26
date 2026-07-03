@@ -46,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
@@ -55,9 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.LatLngBounds
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapType
@@ -72,7 +71,9 @@ import com.google.maps.android.compose.rememberMarkerState
 import com.rork.vinetrack.data.calculateRowLines
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.theme.VineColors
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -116,22 +117,23 @@ fun BlockMapEditorScreen(
 ) {
     var mode by remember { mutableStateOf(EditorMode.Boundary) }
     var showTip by remember { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
     val camera = rememberCameraPositionState()
+    var mapLoaded by remember { mutableStateOf(false) }
     var framed by remember { mutableStateOf(false) }
 
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
-    LaunchedEffect(Unit) {
-        if (framed) return@LaunchedEffect
+    // Frame only after the map has a measured size — a bounds update on an
+    // unmeasured map fails silently and leaves the camera at 0,0.
+    LaunchedEffect(mapLoaded) {
+        if (!mapLoaded || framed) return@LaunchedEffect
         val pts = boundary.map { it.position }
-        when {
-            pts.size >= 2 -> {
-                val b = LatLngBounds.builder().apply { pts.forEach { include(it) } }.build()
-                runCatching { camera.move(CameraUpdateFactory.newLatLngBounds(b, 140)) }
-            }
-            pts.size == 1 -> camera.move(CameraUpdateFactory.newLatLngZoom(pts.first(), 18f))
-            vineyardCenter != null -> camera.move(CameraUpdateFactory.newLatLngZoom(vineyardCenter, 16f))
+        if (pts.isNotEmpty()) {
+            camera.fitToContent(points = pts, paddingPx = 140, singlePointZoom = 18f)
+        } else if (vineyardCenter != null) {
+            camera.fitToContent(points = listOf(vineyardCenter), singlePointZoom = 16f)
         }
         framed = true
     }
@@ -159,6 +161,7 @@ fun BlockMapEditorScreen(
             onMapClick = { latLng ->
                 if (mode == EditorMode.Boundary) boundary.add(MarkerState(latLng))
             },
+            onMapLoaded = { mapLoaded = true },
         ) {
             // Context: other blocks already mapped in this vineyard.
             otherBlocks.forEach { other ->
@@ -241,12 +244,13 @@ fun BlockMapEditorScreen(
                 SegmentedToggle(mode = mode, onChange = { mode = it })
                 Spacer(Modifier.weight(1f))
                 GlassCircleButton(Icons.Filled.GpsFixed, "Recenter") {
-                    val pts = boundary.map { it.position }
-                    if (pts.size >= 2) {
-                        val b = LatLngBounds.builder().apply { pts.forEach { include(it) } }.build()
-                        runCatching { camera.move(CameraUpdateFactory.newLatLngBounds(b, 140)) }
-                    } else if (vineyardCenter != null) {
-                        camera.move(CameraUpdateFactory.newLatLngZoom(vineyardCenter, 16f))
+                    scope.launch {
+                        val pts = boundary.map { it.position }
+                        if (pts.isNotEmpty()) {
+                            camera.fitToContent(points = pts, paddingPx = 140, singlePointZoom = 18f, animate = true)
+                        } else if (vineyardCenter != null) {
+                            camera.fitToContent(points = listOf(vineyardCenter), singlePointZoom = 16f, animate = true)
+                        }
                     }
                 }
             }
