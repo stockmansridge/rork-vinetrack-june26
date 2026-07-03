@@ -8,11 +8,14 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
@@ -75,6 +78,19 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.AddCircle
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.FormatListNumbered
+import androidx.compose.material.icons.filled.Gesture
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.SyncAlt
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.filled.Timelapse
 import androidx.compose.material.icons.filled.Timer
@@ -101,6 +117,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldColors
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Switch
@@ -125,6 +144,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
@@ -159,6 +180,7 @@ import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.builtInTripFunctions
 import com.rork.vinetrack.data.model.formatTripDuration
+import com.rork.vinetrack.data.model.slugifyTripFunction
 import com.rork.vinetrack.data.model.tripFunctionDisplayName
 import com.rork.vinetrack.data.model.VineyardMember
 import com.rork.vinetrack.data.model.resolveTripMachineName
@@ -2127,6 +2149,32 @@ private fun TripRowPlanSummaryCard(trip: Trip) {
     }
 }
 
+/** Undervine weeding method subtypes (iOS `TripFunction.undervineWeedingSubtypes` parity). */
+private val undervineWeedingSubtypeFunctions: List<Pair<String, String>> = listOf(
+    "undervineMowing" to "Mowing",
+    "undervineMulticlean" to "Multiclean",
+    "undervineRollHacke" to "Roll Hacke",
+    "undervineDisc" to "Undervine Disc",
+    "undervineKnifing" to "Undervine Knifing",
+)
+
+/** Icon for each tracking pattern card (mirrors the iOS `TrackingPattern.icon` intent). */
+private fun trackingPatternIcon(pattern: TrackingPattern): ImageVector = when (pattern) {
+    TrackingPattern.SEQUENTIAL -> Icons.Filled.FormatListNumbered
+    TrackingPattern.EVERY_SECOND_ROW -> Icons.Filled.SwapVert
+    TrackingPattern.FIVE_THREE -> Icons.Filled.Shuffle
+    TrackingPattern.UP_AND_BACK -> Icons.Filled.Repeat
+    TrackingPattern.TWO_ROW_UP_BACK -> Icons.Filled.SyncAlt
+    TrackingPattern.CUSTOM -> Icons.Filled.Tune
+    TrackingPattern.FREE_DRIVE -> Icons.Filled.Gesture
+}
+
+/**
+ * Start Maintenance Trip sheet — iOS `StartTripSheet` parity. Card-based
+ * guided setup: hero intro, multi-block selector, trip function + Add,
+ * trip title, tracking pattern cards, start path & direction, proposed row
+ * sequence preview, machine, operator, and a validated Start Trip button.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun StartTripSheet(
@@ -2139,40 +2187,104 @@ private fun StartTripSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     var paddockIds by remember { mutableStateOf<List<String>>(emptyList()) }
-    val paddockId: String? = paddockIds.firstOrNull()
-    var functionRaw by remember { mutableStateOf(builtInTripFunctions.first().first) }
-    val selectableFunctions = remember(state.vineyardTripFunctions) {
-        builtInTripFunctions + state.vineyardTripFunctions
+    var functionRaw by remember { mutableStateOf("slashing") }
+    var title by remember { mutableStateOf("") }
+    var pattern by remember { mutableStateOf(TrackingPattern.SEQUENTIAL) }
+    var startPath by remember { mutableStateOf(0.5) }
+    var directionHigherFirst by remember { mutableStateOf(true) }
+    var machineId by remember { mutableStateOf<String?>(null) }
+    var machineDefaulted by remember { mutableStateOf(false) }
+    var startEngineHoursText by remember { mutableStateOf("") }
+    var operatorName by remember { mutableStateOf(state.userDisplayName ?: "") }
+    var saving by remember { mutableStateOf(false) }
+    var showBlockPicker by remember { mutableStateOf(false) }
+    var showAddFunction by remember { mutableStateOf(false) }
+    var functionMenu by remember { mutableStateOf(false) }
+    var machineMenu by remember { mutableStateOf(false) }
+    var pathMenu by remember { mutableStateOf(false) }
+
+    // Selected blocks sorted lowest-row-first (iOS `rowOrderSort` parity).
+    val selectedPaddocks = remember(state.paddocks, paddockIds) {
+        state.paddocks.filter { it.id in paddockIds }
+            .sortedWith(TripRowSequencePlanner.rowOrderComparator)
+    }
+    val hasRowGeometry = TripRowSequencePlanner.hasAnyRowGeometry(selectedPaddocks)
+
+    // Clamp/snap the start path whenever the block selection changes.
+    LaunchedEffect(paddockIds) {
+        startPath = if (selectedPaddocks.isEmpty()) {
+            0.5
+        } else {
+            TripRowSequencePlanner.clampedStartPath(startPath, selectedPaddocks)
+        }
+    }
+
+    // Machines available for job costing (iOS `availableMachines` parity),
+    // defaulting once to the most recently used machine or the only one.
+    val machines = remember(state.machines) { state.machines.filter { it.availableForJobCosting } }
+    LaunchedEffect(machines) {
+        if (!machineDefaulted && machines.isNotEmpty()) {
+            machineDefaulted = true
+            val availableIds = machines.map { it.id }.toSet()
+            val recent = state.trips
+                .filter { it.machineId != null }
+                .sortedByDescending { it.startEpochMs ?: 0L }
+                .firstOrNull { it.machineId in availableIds }
+                ?.machineId
+            machineId = recent ?: machines.singleOrNull()?.id
+        }
+    }
+
+    val builtinOptions = remember { builtInTripFunctions.sortedBy { it.second.lowercase() } }
+    val customOptions = remember(state.vineyardTripFunctions) {
+        state.vineyardTripFunctions
             .filter { it.isSelectable }
             .sortedBy { it.label.lowercase() }
             .map { it.tripFunctionKey to it.label }
     }
-    var operator by remember { mutableStateOf("") }
-    var operatorUserId by remember { mutableStateOf<String?>(null) }
-    var operatorCategoryId by remember { mutableStateOf<String?>(null) }
-    var title by remember { mutableStateOf("") }
-    var machineId by remember { mutableStateOf<String?>(null) }
-    var workTaskId by remember { mutableStateOf<String?>(null) }
-    var startEngineHoursText by remember { mutableStateOf("") }
-    var saving by remember { mutableStateOf(false) }
-    var functionMenu by remember { mutableStateOf(false) }
+    val selectedFunctionLabel = (builtinOptions + undervineWeedingSubtypeFunctions + customOptions)
+        .firstOrNull { it.first == functionRaw }?.second ?: "Select function"
+    val canManageFunctions = state.currentRole == "owner" || state.currentRole == "manager"
+
+    val sequence = remember(selectedPaddocks, pattern, startPath, directionHigherFirst) {
+        if (!hasRowGeometry || pattern == TrackingPattern.FREE_DRIVE) {
+            emptyList()
+        } else {
+            TripRowSequencePlanner.generateSequence(selectedPaddocks, pattern, startPath, directionHigherFirst)
+        }
+    }
+    val canStart = paddockIds.isNotEmpty()
 
     fun start() {
         if (saving) return
         saving = true
-        val paddock = state.paddocks.firstOrNull { it.id == paddockId }
+        val primary = selectedPaddocks.firstOrNull()
+        val paddockName = when {
+            selectedPaddocks.size > 1 -> selectedPaddocks.joinToString(", ") { it.name }
+            else -> primary?.name
+        }
+        val effectivePattern = if (hasRowGeometry) pattern else TrackingPattern.FREE_DRIVE
+        val machine = machines.firstOrNull { it.id == machineId }
+        val engineHours = if (machineId != null) {
+            startEngineHoursText.trim().replace(",", ".").toDoubleOrNull()?.takeIf { it >= 0 }
+        } else {
+            null
+        }
         vm.startTrip(
-            paddockId = paddockId,
-            paddockName = paddock?.name,
-            paddockIds = paddockIds,
-            personName = operator.trim(),
+            paddockId = primary?.id,
+            paddockName = paddockName,
+            paddockIds = selectedPaddocks.map { it.id },
+            personName = operatorName.trim(),
             tripFunction = functionRaw,
             tripTitle = title.trim(),
             machineId = machineId,
-            workTaskId = workTaskId,
-            operatorUserId = operatorUserId,
-            operatorCategoryId = operatorCategoryId,
-            startEngineHours = startEngineHoursText.trim().replace(",", ".").toDoubleOrNull(),
+            tractorId = machine?.legacyTractorId,
+            workTaskId = null,
+            operatorUserId = state.currentUserId,
+            operatorCategoryId = state.members.firstOrNull { it.userId == state.currentUserId }?.operatorCategoryId,
+            startEngineHours = engineHours,
+            trackingPattern = effectivePattern.rawValue,
+            rowSequence = sequence,
         ) { ok ->
             saving = false
             if (ok) vm.activeTripIdOrNull()?.let(onStarted)
@@ -2183,101 +2295,750 @@ private fun StartTripSheet(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { _ -> start() } // start regardless; tracking begins if any permission granted
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = vine.appBackground,
+    ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            Text("Start a trip", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
-
-            // Operation type
-            ExposedDropdownMenuBox(expanded = functionMenu, onExpandedChange = { functionMenu = it }) {
-                OutlinedTextField(
-                    value = selectableFunctions.firstOrNull { it.first == functionRaw }?.second ?: "Trip",
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Operation") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = functionMenu) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+            // Header: Cancel + centred title (iOS nav-bar parity).
+            Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
+                    Text("Cancel", color = VineColors.Primary, fontSize = 15.sp)
+                }
+                Text(
+                    "Start Maintenance Trip",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = vine.textPrimary,
+                    modifier = Modifier.align(Alignment.Center),
                 )
-                ExposedDropdownMenu(expanded = functionMenu, onDismissRequest = { functionMenu = false }) {
-                    selectableFunctions.forEach { (raw, label) ->
-                        DropdownMenuItem(text = { Text(label) }, onClick = { functionRaw = raw; functionMenu = false })
+            }
+
+            // Hero / intro
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(76.dp)
+                        .clip(CircleShape)
+                        .background(VineColors.EarthBrown.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.Build,
+                        contentDescription = null,
+                        tint = VineColors.EarthBrown,
+                        modifier = Modifier.size(34.dp),
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text("Maintenance Trip", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                Text(
+                    "Track a general vineyard trip with row guidance",
+                    fontSize = 14.sp,
+                    color = vine.textSecondary,
+                    textAlign = TextAlign.Center,
+                )
+            }
+
+            // BLOCK
+            StartTripSection("Block", Icons.Filled.GridView, VineColors.LeafGreen) {
+                val (blockTitle, blockSubtitle) = when {
+                    selectedPaddocks.size == 1 -> {
+                        val p = selectedPaddocks.first()
+                        val rows = p.rows.orEmpty().map { it.number }.sorted()
+                        val range = if (rows.isEmpty()) "Rows not configured" else TripRowSequencePlanner.compactRowRangeLabel(rows)
+                        p.name to listOfNotNull(range, p.primaryVarietyName).joinToString(" · ")
+                    }
+                    selectedPaddocks.isNotEmpty() ->
+                        "${selectedPaddocks.size} blocks selected" to selectedPaddocks.joinToString(", ") { it.name }
+                    else ->
+                        "No blocks selected" to "Tap to choose one or more blocks (optional)"
+                }
+                StartTripSelectorCard(
+                    icon = Icons.Filled.Grass,
+                    tint = VineColors.LeafGreen,
+                    title = blockTitle,
+                    subtitle = blockSubtitle,
+                    onClick = { showBlockPicker = true },
+                )
+                if (selectedPaddocks.size == 1 && !selectedPaddocks.first().rows.isNullOrEmpty()) {
+                    val p = selectedPaddocks.first()
+                    val rows = p.rows.orEmpty().map { it.number }.sorted()
+                    StartTripStatsRow(
+                        listOf(
+                            "${p.rowCount}" to TripRowSequencePlanner.compactRowRangeLabel(rows),
+                            "%.2f".format(p.areaHectares) to "Hectares",
+                            "${p.effectiveVineCount}" to "Vines",
+                        ),
+                    )
+                } else if (selectedPaddocks.size > 1) {
+                    StartTripStatsRow(
+                        listOf(
+                            "${selectedPaddocks.size}" to "Blocks",
+                            "%.2f".format(selectedPaddocks.sumOf { it.areaHectares }) to "Hectares",
+                            "${selectedPaddocks.sumOf { it.rowCount }}" to "Rows",
+                            "${selectedPaddocks.sumOf { it.effectiveVineCount }}" to "Vines",
+                        ),
+                    )
+                }
+            }
+
+            // TRIP FUNCTION
+            StartTripSection("Trip Function", Icons.Filled.Build, VineColors.EarthBrown) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.weight(1f)) {
+                        StartTripSelectorCard(
+                            icon = tripFunctionIcon(functionRaw),
+                            tint = VineColors.EarthBrown,
+                            title = "Function",
+                            subtitle = selectedFunctionLabel,
+                            onClick = { functionMenu = true },
+                        )
+                        DropdownMenu(expanded = functionMenu, onDismissRequest = { functionMenu = false }) {
+                            StartTripMenuHeader("Built-in")
+                            builtinOptions.forEach { (raw, label) ->
+                                StartTripMenuItem(label, raw == functionRaw) { functionRaw = raw; functionMenu = false }
+                            }
+                            StartTripMenuHeader("Undervine Weeding")
+                            undervineWeedingSubtypeFunctions.forEach { (raw, label) ->
+                                StartTripMenuItem(label, raw == functionRaw) { functionRaw = raw; functionMenu = false }
+                            }
+                            if (customOptions.isNotEmpty()) {
+                                StartTripMenuHeader("Custom")
+                                customOptions.forEach { (raw, label) ->
+                                    StartTripMenuItem(label, raw == functionRaw) { functionRaw = raw; functionMenu = false }
+                                }
+                            }
+                        }
+                    }
+                    val addTint = if (canManageFunctions) VineColors.LeafGreen else vine.textSecondary.copy(alpha = 0.5f)
+                    Column(
+                        modifier = Modifier
+                            .size(width = 60.dp, height = 56.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(vine.cardBackground)
+                            .clickable(enabled = canManageFunctions) { showAddFunction = true },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(
+                            Icons.Filled.AddCircle,
+                            contentDescription = "Add function",
+                            tint = addTint,
+                            modifier = Modifier.size(22.dp),
+                        )
+                        Text("Add", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = addTint)
+                    }
+                }
+                Text(
+                    if (canManageFunctions) {
+                        "Need another job type? Add or edit trip functions in Settings."
+                    } else {
+                        "Ask an Owner or Manager to add trip functions in Settings."
+                    },
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+                TextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    placeholder = {
+                        Text(
+                            if (functionRaw == "other") "Trip title (required)" else "Trip title (optional)",
+                            color = vine.textSecondary,
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(Icons.Filled.Notes, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(20.dp))
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = startTripFieldColors(vine.cardBackground),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            // TRACKING PATTERN
+            StartTripSection("Tracking Pattern", Icons.Filled.SwapVert, VineColors.Purple) {
+                TrackingPattern.entries.forEach { p ->
+                    StartTripPatternCard(pattern = p, selected = pattern == p) { pattern = p }
+                }
+            }
+
+            if (hasRowGeometry && pattern != TrackingPattern.FREE_DRIVE) {
+                // START PATH & DIRECTION
+                StartTripSection("Start Path & Direction", Icons.Filled.SwapVert, VineColors.Info) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Icon(Icons.Filled.Info, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(13.dp))
+                        Text(
+                            "Row guidance follows ${if (selectedPaddocks.size > 1) "all selected blocks" else "selected block"} " +
+                                "(${TripRowSequencePlanner.combinedRangeLabel(selectedPaddocks)} · ${TripRowSequencePlanner.combinedPathsLabel(selectedPaddocks)})",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
+                    Box {
+                        StartTripSelectorCard(
+                            icon = Icons.Filled.Route,
+                            tint = VineColors.Info,
+                            title = "Start path",
+                            subtitle = TripRowSequencePlanner.pathMenuLabel(startPath, selectedPaddocks),
+                            onClick = { pathMenu = true },
+                        )
+                        DropdownMenu(expanded = pathMenu, onDismissRequest = { pathMenu = false }) {
+                            TripRowSequencePlanner.availablePaths(selectedPaddocks).forEach { path ->
+                                StartTripMenuItem(
+                                    TripRowSequencePlanner.pathMenuLabel(path, selectedPaddocks),
+                                    kotlin.math.abs(path - startPath) < 0.01,
+                                ) { startPath = path; pathMenu = false }
+                            }
+                        }
+                    }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(vine.cardBackground)
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("Sequence direction", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            StartTripDirectionChip("Higher to lower", !directionHigherFirst, Modifier.weight(1f)) {
+                                directionHigherFirst = false
+                            }
+                            StartTripDirectionChip("Lower to higher", directionHigherFirst, Modifier.weight(1f)) {
+                                directionHigherFirst = true
+                            }
+                        }
+                    }
+                }
+
+                // PROPOSED ROW SEQUENCE
+                StartTripSection("Proposed Row Sequence", Icons.Filled.FormatListNumbered, VineColors.Purple) {
+                    TripRowSequencePlanner.patternPreviewNote(pattern)?.let { note ->
+                        Text(note, fontSize = 12.sp, color = vine.textSecondary)
+                    }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(vine.cardBackground)
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        if (sequence.isEmpty()) {
+                            Text("No sequence available for the current selection.", fontSize = 12.sp, color = vine.textSecondary)
+                        } else {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Top) {
+                                Icon(
+                                    Icons.Filled.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = VineColors.Purple,
+                                    modifier = Modifier.size(13.dp),
+                                )
+                                Text(
+                                    TripRowSequencePlanner.sequencePreviewText(sequence),
+                                    fontSize = 12.sp,
+                                    color = vine.textPrimary,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Text(
+                                "${sequence.size} path${if (sequence.size == 1) "" else "s"} planned",
+                                fontSize = 11.sp,
+                                color = vine.textSecondary,
+                            )
+                        }
                     }
                 }
             }
 
-            // Blocks (multi-select)
-            MultiBlockPicker(
-                paddocks = state.paddocks,
-                selectedIds = paddockIds,
-                onToggle = { id ->
-                    paddockIds = if (id in paddockIds) paddockIds - id else paddockIds + id
-                },
-            )
-
-            OperatorPicker(
-                state = state,
-                operatorUserId = operatorUserId,
-                operatorName = operator,
-                operatorCategoryId = operatorCategoryId,
-                onSelectMember = { member ->
-                    operatorUserId = member?.userId
-                    if (member != null) {
-                        operator = member.name
-                        if (operatorCategoryId == null) operatorCategoryId = member.operatorCategoryId
+            if (pattern == TrackingPattern.FREE_DRIVE) {
+                StartTripSection("Free Drive", Icons.Filled.Gesture, VineColors.Cyan) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(vine.cardBackground)
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Filled.Info, contentDescription = null, tint = VineColors.Cyan, modifier = Modifier.size(18.dp))
+                            Text("No planned row sequence", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                        }
+                        Text(
+                            "Drive freely — the app detects the row/path you are in from GPS, ticks it off when covered, and keeps recording distance, pins and trip history. No wrong-row warnings.",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
                     }
-                },
-                onOperatorNameChange = { operator = it },
-                onSelectCategory = { operatorCategoryId = it },
-            )
+                }
+            }
 
-            MachinePicker(state = state, selectedId = machineId, onSelect = { machineId = it })
-            WorkTaskPicker(state = state, selectedId = workTaskId, onSelect = { workTaskId = it })
-
-            OutlinedTextField(
-                value = title,
-                onValueChange = { title = it },
-                label = { Text("Notes / title (optional)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            OutlinedTextField(
-                value = startEngineHoursText,
-                onValueChange = { startEngineHoursText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                label = { Text("Start engine hours (optional)") },
-                placeholder = { Text("e.g. 1240.5") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Text(
-                "Your path is recorded with GPS while the app is open. Background tracking is coming soon.",
-                fontSize = 12.sp,
-                color = vine.textSecondary,
-            )
-
-            Button(
-                onClick = {
-                    permLauncher.launch(
-                        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+            // MACHINE
+            StartTripSection("Machine", Icons.Filled.DirectionsCar, VineColors.Indigo) {
+                Box {
+                    StartTripSelectorCard(
+                        icon = Icons.Filled.DirectionsCar,
+                        tint = VineColors.Indigo,
+                        title = "Machine",
+                        subtitle = machines.firstOrNull { it.id == machineId }?.displayName
+                            ?: if (machines.isEmpty()) "No vineyard machines configured" else "No machine selected",
+                        onClick = { if (machines.isNotEmpty()) machineMenu = true },
                     )
-                },
-                enabled = !saving,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                    DropdownMenu(expanded = machineMenu, onDismissRequest = { machineMenu = false }) {
+                        StartTripMenuItem("No machine", machineId == null) { machineId = null; machineMenu = false }
+                        machines.forEach { m ->
+                            StartTripMenuItem(m.displayName, machineId == m.id) { machineId = m.id; machineMenu = false }
+                        }
+                    }
+                }
+                if (machines.isEmpty()) {
+                    Text(
+                        "Add vineyard machines in Equipment to enable fuel cost estimates.",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                } else if (machineId == null) {
+                    Text(
+                        "Optional — select a machine so fuel cost can be estimated.",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                }
+                if (machineId != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(vine.cardBackground)
+                            .padding(horizontal = 14.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(Icons.Filled.Speed, contentDescription = null, tint = VineColors.Indigo, modifier = Modifier.size(20.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("Start engine hours", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                            Text("Optional — for accurate fuel use", fontSize = 12.sp, color = vine.textSecondary)
+                        }
+                        TextField(
+                            value = startEngineHoursText,
+                            onValueChange = { startEngineHoursText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
+                            placeholder = { Text("hrs", color = vine.textSecondary) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            colors = startTripFieldColors(vine.cardBackground),
+                            modifier = Modifier.width(96.dp),
+                        )
+                    }
+                }
+            }
+
+            // OPERATOR
+            StartTripSection("Operator", Icons.Filled.Person, VineColors.Orange) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(vine.cardBackground)
+                        .padding(start = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(Icons.Filled.Person, contentDescription = null, tint = VineColors.Orange, modifier = Modifier.size(26.dp))
+                    TextField(
+                        value = operatorName,
+                        onValueChange = { operatorName = it },
+                        placeholder = { Text("Name (optional)", color = vine.textSecondary) },
+                        singleLine = true,
+                        colors = startTripFieldColors(vine.cardBackground),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+
+            // START TRIP
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                if (saving) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
-                } else {
-                    Icon(Icons.Filled.PlayArrow, contentDescription = null)
-                    Text("  Start trip")
+                Button(
+                    onClick = {
+                        permLauncher.launch(
+                            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                        )
+                    },
+                    enabled = canStart && !saving,
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = VineColors.Primary,
+                        disabledContainerColor = vine.textSecondary.copy(alpha = 0.3f),
+                        disabledContentColor = Color.White,
+                    ),
+                ) {
+                    if (saving) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
+                    } else {
+                        Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                        Text("  Start Trip", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                if (!canStart) {
+                    Text(
+                        "Select at least one block to start the trip.",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
                 }
             }
         }
     }
+
+    if (showBlockPicker) {
+        StartTripBlockPickerDialog(
+            paddocks = state.paddocks.sortedBy { it.name.lowercase() },
+            selectedIds = paddockIds,
+            onToggle = { id -> paddockIds = if (id in paddockIds) paddockIds - id else paddockIds + id },
+            onDismiss = { showBlockPicker = false },
+        )
+    }
+
+    if (showAddFunction) {
+        StartTripAddFunctionDialog(
+            vm = vm,
+            onDismiss = { showAddFunction = false },
+            onCreated = { key -> functionRaw = key },
+        )
+    }
+}
+
+/** Uppercase section header with a tinted icon (iOS `sectionContainer` parity). */
+@Composable
+private fun StartTripSection(
+    title: String,
+    icon: ImageVector,
+    tint: Color,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(15.dp))
+            Text(
+                title.uppercase(),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.5.sp,
+                color = vine.textSecondary,
+            )
+        }
+        content()
+    }
+}
+
+/** Rounded white selector card with icon tile, title, subtitle and chevron. */
+@Composable
+private fun StartTripSelectorCard(
+    icon: ImageVector,
+    tint: Color,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(vine.cardBackground)
+            .clickable(onClick = onClick)
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(tint.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+            Text(subtitle, fontSize = 12.sp, color = vine.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        Icon(
+            Icons.Filled.UnfoldMore,
+            contentDescription = null,
+            tint = vine.textSecondary.copy(alpha = 0.7f),
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+/** Tracking pattern option card with purple selected styling (iOS `patternRow` parity). */
+@Composable
+private fun StartTripPatternCard(pattern: TrackingPattern, selected: Boolean, onClick: () -> Unit) {
+    val vine = LocalVineColors.current
+    val accent = VineColors.Purple
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(vine.cardBackground)
+            .border(
+                BorderStroke(1.5.dp, if (selected) accent.copy(alpha = 0.5f) else Color.Transparent),
+                RoundedCornerShape(12.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background((if (selected) accent else vine.textSecondary).copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                trackingPatternIcon(pattern),
+                contentDescription = null,
+                tint = if (selected) accent else vine.textSecondary,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(pattern.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+            Text(pattern.subtitle, fontSize = 12.sp, color = vine.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        Icon(
+            if (selected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+            contentDescription = null,
+            tint = if (selected) accent else vine.textSecondary.copy(alpha = 0.5f),
+            modifier = Modifier.size(24.dp),
+        )
+    }
+}
+
+/** Two-option segmented chip for the sequence direction picker. */
+@Composable
+private fun StartTripDirectionChip(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) VineColors.Info.copy(alpha = 0.15f) else vine.appBackground)
+            .border(
+                BorderStroke(1.dp, if (selected) VineColors.Info.copy(alpha = 0.5f) else vine.cardBorder),
+                RoundedCornerShape(8.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            color = if (selected) VineColors.Info else vine.textSecondary,
+        )
+    }
+}
+
+/** Evenly divided block stats strip (iOS `blockStatsRow` parity). */
+@Composable
+private fun StartTripStatsRow(cells: List<Pair<String, String>>) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(vine.cardBackground)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        cells.forEachIndexed { index, (value, label) ->
+            if (index > 0) {
+                Box(Modifier.width(0.5.dp).height(32.dp).background(vine.cardBorder))
+            }
+            Column(
+                modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(value, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                Text(label, fontSize = 10.sp, color = vine.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+/** Small uppercase group label inside a dropdown menu. */
+@Composable
+private fun StartTripMenuHeader(label: String) {
+    val vine = LocalVineColors.current
+    Text(
+        label.uppercase(),
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = vine.textSecondary,
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+    )
+}
+
+/** Dropdown row with a trailing checkmark on the selected option. */
+@Composable
+private fun StartTripMenuItem(label: String, selected: Boolean, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(label) },
+        trailingIcon = if (selected) {
+            { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
+        } else {
+            null
+        },
+        onClick = onClick,
+    )
+}
+
+/** Borderless field colors so text inputs blend into their card. */
+@Composable
+private fun startTripFieldColors(container: Color): TextFieldColors = TextFieldDefaults.colors(
+    focusedContainerColor = container,
+    unfocusedContainerColor = container,
+    disabledContainerColor = container,
+    focusedIndicatorColor = Color.Transparent,
+    unfocusedIndicatorColor = Color.Transparent,
+    disabledIndicatorColor = Color.Transparent,
+)
+
+/** Multi-select block picker (iOS `MultiPaddockPickerSheet` parity). */
+@Composable
+private fun StartTripBlockPickerDialog(
+    paddocks: List<Paddock>,
+    selectedIds: List<String>,
+    onToggle: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select Blocks") },
+        text = {
+            if (paddocks.isEmpty()) {
+                Text("No blocks available. Add blocks in Vineyard Setup.")
+            } else {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    paddocks.forEach { p ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onToggle(p.id) }
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(checked = p.id in selectedIds, onCheckedChange = { onToggle(p.id) })
+                            Column(Modifier.padding(start = 4.dp)) {
+                                Text(p.name, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = vine.textPrimary)
+                                val rows = p.rows.orEmpty().map { it.number }.sorted()
+                                Text(
+                                    if (rows.isEmpty()) "Rows not configured" else TripRowSequencePlanner.compactRowRangeLabel(rows),
+                                    fontSize = 12.sp,
+                                    color = vine.textSecondary,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
+}
+
+/** Create a custom vineyard trip function and select it (iOS `AddCustomTripFunctionSheet` parity). */
+@Composable
+private fun StartTripAddFunctionDialog(
+    vm: AppViewModel,
+    onDismiss: () -> Unit,
+    onCreated: (String) -> Unit,
+) {
+    var label by remember { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Trip Function") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Create a custom job type for this vineyard. It appears in the Function list on all devices.", fontSize = 13.sp)
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it },
+                    label = { Text("Function name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = label.trim().isNotEmpty() && !saving,
+                onClick = {
+                    saving = true
+                    val slug = slugifyTripFunction(label.trim())
+                    vm.createTripFunction(label.trim()) { ok ->
+                        saving = false
+                        if (ok) {
+                            onCreated("custom:$slug")
+                            onDismiss()
+                        }
+                    }
+                },
+            ) { Text(if (saving) "Adding…" else "Add") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

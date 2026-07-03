@@ -3940,11 +3940,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         tripFunction: String?,
         tripTitle: String?,
         machineId: String? = null,
+        tractorId: String? = null,
         workTaskId: String? = null,
         operatorUserId: String? = null,
         operatorCategoryId: String? = null,
         startEngineHours: Double? = null,
         paddockIds: List<String> = emptyList(),
+        trackingPattern: String? = null,
+        rowSequence: List<Double> = emptyList(),
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
@@ -3967,10 +3970,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             tripFunction = tripFunction?.ifBlank { null },
             tripTitle = tripTitle?.ifBlank { null },
             machineId = machineId,
+            tractorId = tractorId,
             workTaskId = workTaskId,
             operatorUserId = operatorUserId,
             operatorCategoryId = operatorCategoryId,
             startEngineHours = startEngineHours,
+            trackingPattern = trackingPattern?.ifBlank { null },
+            rowSequence = rowSequence,
+            sequenceIndex = 0,
+            currentRowNumber = rowSequence.getOrNull(0),
+            nextRowNumber = rowSequence.getOrNull(1),
             clientUpdatedAt = startTime,
         )
         // Known offline: start locally and queue the create marker; no network.
@@ -3990,6 +3999,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     tripFunction = tripFunction?.ifBlank { null },
                     tripTitle = tripTitle?.ifBlank { null },
                     machineId = machineId,
+                    tractorId = tractorId,
                     workTaskId = workTaskId,
                     operatorUserId = operatorUserId,
                     operatorCategoryId = operatorCategoryId,
@@ -3999,8 +4009,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     startTime = startTime,
                     clientUpdatedAt = startTime,
                 )
-                _ui.update { it.copy(trips = listOf(created) + it.trips, tripBusy = false) }
-                beginTracking(created)
+                // Seed the planned row sequence chosen on the Start sheet
+                // (iOS `StartTripSheet` parity). Non-fatal: if the row-plan
+                // patch fails the trip still starts — the local copy keeps the
+                // plan so row guidance works, and TripRowSync reconciles later.
+                val seeded = if (!trackingPattern.isNullOrBlank()) {
+                    try {
+                        tripRepo.updateTripRowPlan(
+                            id = created.id,
+                            trackingPattern = trackingPattern,
+                            rowSequence = rowSequence,
+                        )
+                    } catch (e: Exception) {
+                        created.copy(
+                            trackingPattern = trackingPattern,
+                            rowSequence = rowSequence,
+                            sequenceIndex = 0,
+                            currentRowNumber = rowSequence.getOrNull(0),
+                            nextRowNumber = rowSequence.getOrNull(1),
+                        )
+                    }
+                } else {
+                    created
+                }
+                _ui.update { it.copy(trips = listOf(seeded) + it.trips, tripBusy = false) }
+                beginTracking(seeded)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(tripBusy = false) }

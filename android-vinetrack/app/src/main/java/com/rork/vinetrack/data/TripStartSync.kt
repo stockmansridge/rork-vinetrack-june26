@@ -25,11 +25,13 @@ import kotlinx.serialization.json.Json
  * marker, the Stage D-1 row marker, the Stage E-1 tank marker, the Stage B-2-1
  * end marker, or the broad [PendingEntityType.TRIP].
  *
- * Marker payload: only the scalar insert fields (vineyard/paddock/job/operator
- * identity, start time, start engine hours) plus the sync stamp. NEVER path
- * points, distance, row coverage, row-plan, tank sessions, completion/end
- * fields, delete fields or fuel logs — those land via their own markers / the
- * live server row.
+ * Marker payload: the scalar insert fields (vineyard/paddock/job/operator
+ * identity, start time, start engine hours) plus the planned row-plan setup
+ * chosen on the Start sheet (tracking pattern + row sequence) and the sync
+ * stamp. NEVER path points, distance, row coverage, tank sessions,
+ * completion/end fields, delete fields or fuel logs — those land via their
+ * own markers / the live server row. The row plan is seeded via a follow-up
+ * non-fatal [TripRepository.updateTripRowPlan] once the row exists.
  *
  * Replay ordering (mandatory): this coordinator runs FIRST, before
  * metadata/GPS/row/tank/end, because the server row must exist before any
@@ -69,11 +71,14 @@ class TripStartSync(
         val tripFunction: String? = null,
         val tripTitle: String? = null,
         val machineId: String? = null,
+        val tractorId: String? = null,
         val workTaskId: String? = null,
         val operatorUserId: String? = null,
         val operatorCategoryId: String? = null,
         val startTime: String,
         val startEngineHours: Double? = null,
+        val trackingPattern: String? = null,
+        val rowSequence: List<Double> = emptyList(),
         val clientUpdatedAt: String,
         val savedAt: Long,
     )
@@ -105,11 +110,14 @@ class TripStartSync(
                 tripFunction = trip.tripFunction,
                 tripTitle = trip.tripTitle,
                 machineId = trip.machineId,
+                tractorId = trip.tractorId,
                 workTaskId = trip.workTaskId,
                 operatorUserId = trip.operatorUserId,
                 operatorCategoryId = trip.operatorCategoryId,
                 startTime = trip.startTime ?: java.time.Instant.now().toString(),
                 startEngineHours = trip.startEngineHours,
+                trackingPattern = trip.trackingPattern,
+                rowSequence = trip.rowSequence,
                 clientUpdatedAt = java.time.Instant.now().toString(),
                 savedAt = System.currentTimeMillis(),
             ),
@@ -172,6 +180,7 @@ class TripStartSync(
                         tripFunction = payload.tripFunction,
                         tripTitle = payload.tripTitle,
                         machineId = payload.machineId,
+                        tractorId = payload.tractorId,
                         workTaskId = payload.workTaskId,
                         operatorUserId = payload.operatorUserId,
                         operatorCategoryId = payload.operatorCategoryId,
@@ -181,8 +190,22 @@ class TripStartSync(
                         startTime = payload.startTime,
                         clientUpdatedAt = payload.clientUpdatedAt,
                     )
+                    // Seed the planned row sequence chosen on the Start sheet.
+                    // Non-fatal: the trip row exists either way, and local row
+                    // guidance already runs from the provisional trip's plan.
+                    val seeded = if (!payload.trackingPattern.isNullOrBlank()) {
+                        runCatching {
+                            tripRepo.updateTripRowPlan(
+                                id = created.id,
+                                trackingPattern = payload.trackingPattern,
+                                rowSequence = payload.rowSequence,
+                            )
+                        }.getOrDefault(created)
+                    } else {
+                        created
+                    }
                     pending.remove(write.id)
-                    onSynced(created)
+                    onSynced(seeded)
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to start the trip.")
                 } catch (e: BackendError.Server) {
