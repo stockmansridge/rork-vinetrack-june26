@@ -76,6 +76,7 @@ final class NewBackendAuthService {
                 )
                 if !trimmedName.isEmpty {
                     userName = trimmedName
+                    cacheDisplayName(trimmedName, for: userId)
                 }
             } else {
                 errorMessage = "Check your email to confirm your account, then sign in."
@@ -100,7 +101,10 @@ final class NewBackendAuthService {
                         fullName: nameToSave,
                         email: user.email.isEmpty ? nil : user.email
                     )
-                    if let nameToSave { userName = nameToSave }
+                    if let nameToSave {
+                        userName = nameToSave
+                        cacheDisplayName(nameToSave, for: userId)
+                    }
                 }
                 await refreshProfile()
             }
@@ -241,6 +245,7 @@ final class NewBackendAuthService {
         do {
             try await profileRepository.upsertMyProfile(fullName: trimmed, email: userEmail)
             userName = trimmed
+            cacheDisplayName(trimmed, for: userId)
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -280,7 +285,17 @@ final class NewBackendAuthService {
             isSignedIn = true
             userId = user.id
             userEmail = user.email
-            userName = user.displayName.isEmpty ? user.email : user.displayName
+            // Prefer the locally cached server profile name over the email
+            // placeholder so an offline launch still shows the user's name.
+            // The server profile (profiles.full_name) remains the source of
+            // truth and overrides this in refreshProfile().
+            let resolved = user.displayName.isEmpty ? user.email : user.displayName
+            if resolved.isEmpty || resolved == user.email,
+               let cached = cachedDisplayName(for: user.id), !cached.isEmpty {
+                userName = cached
+            } else {
+                userName = resolved
+            }
             userCreatedAt = user.createdAt
         } else {
             isSignedIn = false
@@ -297,11 +312,38 @@ final class NewBackendAuthService {
                 userEmail = profile.email
                 if let fullName = profile.fullName, !fullName.isEmpty {
                     userName = fullName
+                    cacheDisplayName(fullName, for: userId)
                 }
                 defaultVineyardId = profile.defaultVineyardId
             }
         } catch {
             // Silent — profile fetch failure should not block sign-in flow.
+        }
+    }
+
+    // MARK: - Offline display-name cache
+    //
+    // The server profile (public.profiles.full_name) is the cross-platform
+    // source of truth for the display name. This cache exists purely so an
+    // offline session restore can show the user's name instead of their
+    // email; it is keyed by user id so it can never leak across accounts.
+
+    private nonisolated static func displayNameCacheKey(for userId: UUID) -> String {
+        "profile_display_name.\(userId.uuidString)"
+    }
+
+    private func cachedDisplayName(for userId: UUID) -> String? {
+        UserDefaults.standard.string(forKey: Self.displayNameCacheKey(for: userId))
+    }
+
+    private func cacheDisplayName(_ name: String?, for userId: UUID?) {
+        guard let userId else { return }
+        let key = Self.displayNameCacheKey(for: userId)
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmed, !trimmed.isEmpty {
+            UserDefaults.standard.set(trimmed, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
         }
     }
 

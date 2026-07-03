@@ -289,6 +289,12 @@ data class AppUiState(
     /** The user's preferred default vineyard (auto-selected on launch). */
     val defaultVineyardId: String? = null,
     /**
+     * The signed-in user's display name resolved from the server profile
+     * (`public.profiles.full_name` — cross-platform source of truth), seeded
+     * from the local offline cache until the server fetch completes.
+     */
+    val userDisplayName: String? = null,
+    /**
      * Region & units settings for the selected vineyard, controlling how values
      * are displayed across the app (currency, area, volume, fuel, distance,
      * spray rate). Defaults to the Australian preset so AU/NZ output is
@@ -1189,25 +1195,68 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         signOut()
     }
 
-    /** Display name from auth metadata, falling back to the email local-part. */
+    /**
+     * Display name resolved from the server profile (`profiles.full_name`),
+     * falling back to the locally cached copy, then the email local-part.
+     */
     val userName: String?
-        get() = auth.currentName?.takeIf { it.isNotBlank() }
+        get() = _ui.value.userDisplayName?.takeIf { it.isNotBlank() }
+            ?: auth.currentName?.takeIf { it.isNotBlank() }
             ?: auth.currentEmail?.substringBefore('@')?.takeIf { it.isNotBlank() }
 
     /** Saved display name (no email fallback) — null when none is set yet. */
-    val displayName: String? get() = auth.currentName?.takeIf { it.isNotBlank() }
+    val displayName: String?
+        get() = _ui.value.userDisplayName?.takeIf { it.isNotBlank() }
+            ?: auth.currentName?.takeIf { it.isNotBlank() }
 
     /**
-     * Update the signed-in user's display name in Supabase auth metadata.
-     * Mirrors iOS `EditDisplayNameView`. Calls back with success/failure.
+     * Update the signed-in user's display name. Writes to
+     * `public.profiles.full_name` (server source of truth shared with iOS and
+     * the web portal) and only reports success when the server write succeeds.
+     * The local session cache and auth metadata are then updated as
+     * offline-display/legacy mirrors.
      */
     fun updateDisplayName(name: String, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
+            val trimmed = name.trim()
+            if (trimmed.isEmpty()) {
+                onResult(false)
+                return@launch
+            }
             try {
-                auth.updateDisplayName(name)
+                profileRepo.updateFullName(trimmed)
+                session.userName = trimmed // offline display cache only
+                _ui.update { it.copy(userDisplayName = trimmed) }
+                // Best-effort: keep legacy auth metadata in step for older readers.
+                viewModelScope.launch { runCatching { auth.updateDisplayName(trimmed) } }
                 onResult(true)
             } catch (e: Exception) {
                 onResult(false)
+            }
+        }
+    }
+
+    /**
+     * Refresh the display name from the server profile
+     * (`public.profiles.full_name`). Called on login/session restore so a name
+     * set on another device or the web portal appears here. Seeds the UI from
+     * the local cache immediately, then adopts the server value when the fetch
+     * succeeds (offline keeps showing the cache). If the server has no name
+     * yet but this device has a legacy locally saved one (old auth-metadata
+     * flow), it is promoted to the server once so all platforms converge.
+     */
+    private fun refreshProfileDisplayName() {
+        _ui.update { it.copy(userDisplayName = auth.currentName?.takeIf { n -> n.isNotBlank() }) }
+        viewModelScope.launch {
+            val profile = runCatching { profileRepo.getMyProfile() }.getOrNull() ?: return@launch
+            val serverName = profile.fullName?.trim()?.takeIf { it.isNotEmpty() }
+            if (serverName != null) {
+                session.userName = serverName
+                _ui.update { it.copy(userDisplayName = serverName) }
+            } else {
+                // One-time backfill: migrate a legacy local-only name to the server.
+                val legacy = auth.currentName?.trim()?.takeIf { it.isNotEmpty() } ?: return@launch
+                runCatching { profileRepo.updateFullName(legacy) }
             }
         }
     }
@@ -2763,6 +2812,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 auth.signUp(name, email, password)
                 _auth.update { AuthFormState() }
                 if (session.hasSession) {
+                    // Persist the sign-up name to the server profile (mirrors iOS).
+                    val trimmedName = name.trim()
+                    if (trimmedName.isNotEmpty()) {
+                        viewModelScope.launch { runCatching { profileRepo.updateFullName(trimmedName) } }
+                    }
                     _ui.update { it.copy(route = AppRoute.VineyardLoading) }
                     loadVineyards()
                 } else {
@@ -2845,6 +2899,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun loadVineyards() {
         try {
             loadAdminStatus()
+            refreshProfileDisplayName()
             val vineyards = repo.listMyVineyards()
             // Write-through: a successful online list is cached for future
             // offline launch (Stage 6A). Cache-only — never hydrated yet.

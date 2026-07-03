@@ -196,9 +196,10 @@ fun SettingsScreen(
                             Icon(Icons.Filled.Person, contentDescription = null, tint = VineColors.Primary)
                         }
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(vm.displayName ?: vm.userEmail ?: "Signed in", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                            val accountName = state.userDisplayName?.takeIf { it.isNotBlank() } ?: vm.displayName
+                            Text(accountName ?: vm.userEmail ?: "Signed in", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                             Text(
-                                if (vm.displayName != null) (vm.userEmail ?: "VineTrack account") else "Tap to add your name",
+                                if (accountName != null) (vm.userEmail ?: "VineTrack account") else "Tap to add your name",
                                 fontSize = 13.sp,
                                 color = vine.textSecondary,
                             )
@@ -586,12 +587,16 @@ fun SettingsScreen(
     }
 
     if (showNameEditor) {
+        var nameSaveFailed by remember { mutableStateOf(false) }
         DisplayNameEditor(
-            currentName = vm.displayName ?: "",
+            currentName = state.userDisplayName?.takeIf { it.isNotBlank() } ?: vm.displayName ?: "",
+            saveFailed = nameSaveFailed,
             onDismiss = { showNameEditor = false },
             onSave = { newName ->
-                vm.updateDisplayName(newName) {}
-                showNameEditor = false
+                nameSaveFailed = false
+                vm.updateDisplayName(newName) { ok ->
+                    if (ok) showNameEditor = false else nameSaveFailed = true
+                }
             },
         )
     }
@@ -845,6 +850,7 @@ private fun DefaultField(label: String, value: String, onValueChange: (String) -
 @Composable
 private fun DisplayNameEditor(
     currentName: String,
+    saveFailed: Boolean,
     onDismiss: () -> Unit,
     onSave: (String) -> Unit,
 ) {
@@ -866,10 +872,17 @@ private fun DisplayNameEditor(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    "This name appears on records you create, such as pins, trips, and spray jobs.",
+                    "This name appears on records you create, such as pins, trips, and spray jobs. It syncs to all your devices.",
                     fontSize = 12.sp,
                     color = vine.textSecondary,
                 )
+                if (saveFailed) {
+                    Text(
+                        "Couldn't save your name. Check your connection and try again.",
+                        fontSize = 12.sp,
+                        color = VineColors.Destructive,
+                    )
+                }
             }
         },
         confirmButton = {
