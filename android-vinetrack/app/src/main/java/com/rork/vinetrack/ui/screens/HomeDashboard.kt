@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -429,14 +430,23 @@ private fun AppNoticesBanner(state: AppUiState, onDismiss: (String) -> Unit) {
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        // beyondViewportPageCount composes every notice up front so the pager
+        // sizes itself to the TALLEST card instead of clipping longer messages
+        // to the height of the first page. Shorter cards then stretch to match
+        // (fillMaxHeight) so all bars look evenly sized while swiping.
         HorizontalPager(
             state = pagerState,
             contentPadding = PaddingValues(horizontal = 16.dp),
             pageSpacing = 8.dp,
             verticalAlignment = Alignment.Top,
+            beyondViewportPageCount = notices.size,
         ) { page ->
             val notice = notices[page]
-            NoticeCard(notice = notice, onDismiss = { onDismiss(notice.id) })
+            NoticeCard(
+                notice = notice,
+                onDismiss = { onDismiss(notice.id) },
+                modifier = Modifier.fillMaxHeight(),
+            )
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -461,7 +471,11 @@ private fun AppNoticesBanner(state: AppUiState, onDismiss: (String) -> Unit) {
 }
 
 @Composable
-private fun NoticeCard(notice: AppNotice, onDismiss: () -> Unit) {
+private fun NoticeCard(
+    notice: AppNotice,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val vine = LocalVineColors.current
     val tint = when (notice.type) {
         AppNoticeType.INFO -> VineColors.Info
@@ -475,8 +489,10 @@ private fun NoticeCard(notice: AppNotice, onDismiss: () -> Unit) {
         AppNoticeType.SUCCESS -> Icons.Filled.CheckCircle
         AppNoticeType.CRITICAL -> Icons.Filled.Error
     }
+    // Min height keeps short notices visually even; the bar grows when the
+    // message needs more room instead of clipping it (no hard height here).
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 64.dp)
             .clip(RoundedCornerShape(12.dp))
@@ -493,8 +509,21 @@ private fun NoticeCard(notice: AppNotice, onDismiss: () -> Unit) {
             Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(notice.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(notice.message, fontSize = 12.sp, color = vine.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                notice.title,
+                fontSize = 14.sp,
+                lineHeight = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                notice.message,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                color = vine.textSecondary,
+            )
         }
         Box(
             modifier = Modifier
