@@ -1,5 +1,7 @@
 package com.rork.vinetrack.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -13,10 +15,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Opacity
 import androidx.compose.material.icons.filled.Refresh
@@ -30,10 +35,12 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -45,6 +52,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -65,6 +74,7 @@ import com.rork.vinetrack.data.model.IrrigationRecommendationResult
 import com.rork.vinetrack.data.model.IrrigationSettings
 import com.rork.vinetrack.data.model.IrrigationUrgency
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.SoilAwareV2Result
 import com.rork.vinetrack.data.model.SoilProfileInputs
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.BackNavIcon
@@ -79,11 +89,11 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Irrigation recommendation calculator. Mirrors the iOS calculator-only
- * surface: it combines a free 5-day Open-Meteo ETo + rainfall forecast with the
- * selected block's area / system rate and adjustable agronomy parameters to
- * suggest run-time hours. Nothing is written to the backend — there is no
- * irrigation table in the shared schema, matching iOS.
+ * Irrigation recommendation calculator. Mirrors the iOS advisor layout: the
+ * recommendation sits at the top of the page (forecast auto-loads like iOS),
+ * with the daily breakdown, recent rainfall, soil profile and calculation
+ * assumptions in compact collapsible cards below. Nothing is written to the
+ * backend — there is no irrigation table in the shared schema, matching iOS.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -123,6 +133,15 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
     var forecast by remember { mutableStateOf<IrrigationForecast?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var didAutoLoadForecast by remember { mutableStateOf(false) }
+
+    // Collapsible section state — lower-priority sections start collapsed so the
+    // recommendation is visible without excessive scrolling (mirrors iOS, where
+    // these live behind the Config sheet / DisclosureGroups).
+    var showBreakdown by remember { mutableStateOf(false) }
+    var showRainDetails by remember { mutableStateOf(false) }
+    var showSoilDetails by remember { mutableStateOf(false) }
+    var showAssumptions by remember { mutableStateOf(false) }
 
     // Recent measured rainfall (last 7 days), preferring the vineyard's persisted
     // station history and falling back to the Open-Meteo archive. Subtracted from
@@ -179,6 +198,33 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
         val lon = vineyard?.longitude ?: selectedPaddock?.centroid?.longitude
             ?: paddocks.firstNotNullOfOrNull { it.centroid }?.longitude
         if (lat != null && lon != null) Pair(lat, lon) else null
+    }
+
+    /** Fetches (or refreshes) the 5-day forecast and clears stale overrides. */
+    suspend fun refreshForecast() {
+        val loc = location ?: return
+        isLoading = true
+        errorMessage = null
+        try {
+            forecast = forecastRepo.fetchForecast(loc.first, loc.second)
+            etoOverrides = emptyMap()
+            rainOverrides = emptyMap()
+        } catch (e: Exception) {
+            errorMessage = e.message ?: "Could not load forecast."
+            forecast = null
+        } finally {
+            isLoading = false
+        }
+    }
+
+    // Auto-load the forecast once the location resolves, mirroring iOS
+    // (didAutoLoad + loadForecast on appear). Keeps the recommendation card at
+    // the top of the page populated without a manual "Load Forecast" tap.
+    LaunchedEffect(location) {
+        if (!didAutoLoadForecast && forecast == null && location != null) {
+            didAutoLoadForecast = true
+            refreshForecast()
+        }
     }
 
     // Pre-fill the application rate. For a single block use its drip system rate;
@@ -308,12 +354,15 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
         }
 
         LazyColumn(
-            contentPadding = PaddingValues(16.dp).let {
-                PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 12.dp, bottom = 32.dp)
-            },
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = 32.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // Setup wizard — shown only when items are incomplete.
+            // 1. Setup wizard — shown only when items are incomplete.
             if (incompleteWizardItems.isNotEmpty()) {
                 item {
                     VineyardCard {
@@ -322,9 +371,9 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                             Box(Modifier.size(8.dp))
                             Text("Finish irrigation setup", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                         }
-                        Box(Modifier.height(10.dp))
+                        Box(Modifier.height(8.dp))
                         incompleteWizardItems.forEach { item ->
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 3.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
                                 Box(
                                     modifier = Modifier.size(8.dp).clip(CircleShape).background(VineColors.Warning),
                                 )
@@ -336,11 +385,9 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                 }
             }
 
-            // Block picker + context
+            // 2. Block scope — compact picker with a single context line.
             item {
                 VineyardCard {
-                    SectionHeader("Block", onLight = true)
-                    Box(Modifier.height(8.dp))
                     var expanded by remember { mutableStateOf(false) }
                     ExposedDropdownMenuBox(
                         expanded = expanded,
@@ -350,7 +397,7 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                             value = if (useWholeVineyard) "Whole Vineyard" else (selectedPaddock?.name ?: "Select…"),
                             onValueChange = {},
                             readOnly = true,
-                            label = { Text("Scope") },
+                            label = { Text("Block") },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -376,169 +423,178 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                             }
                         }
                     }
-                    selectedPaddock?.let { p ->
-                        Box(Modifier.height(10.dp))
-                        InfoRow("Area", String.format(Locale.US, "%.2f ha", p.areaHectares))
-                        val mmHr = p.mmPerHour
-                        if (mmHr != null && mmHr > 0) {
-                            InfoRow("System rate", String.format(Locale.US, "%.2f mm/hr", mmHr))
-                        } else {
-                            Box(Modifier.height(4.dp))
-                            Text(
-                                "No drip system rate configured for this block — enter an application rate below.",
-                                fontSize = 12.sp,
-                                color = vine.textSecondary,
+                    Box(Modifier.height(6.dp))
+                    val contextLine = if (useWholeVineyard) {
+                        val totalArea = paddocks.sumOf { it.areaHectares }
+                        String.format(
+                            Locale.US,
+                            "%d block%s \u2022 %.2f ha \u2022 conservative average",
+                            paddocks.size,
+                            if (paddocks.size == 1) "" else "s",
+                            totalArea,
+                        )
+                    } else {
+                        val p = selectedPaddock
+                        when {
+                            p == null -> "Select a block to calculate."
+                            (p.mmPerHour ?: 0.0) > 0 -> String.format(
+                                Locale.US,
+                                "%.2f ha \u2022 system rate %.2f mm/hr",
+                                p.areaHectares,
+                                p.mmPerHour ?: 0.0,
+                            )
+                            else -> String.format(
+                                Locale.US,
+                                "%.2f ha \u2022 no system rate — set a rate in Calculation Assumptions",
+                                p.areaHectares,
                             )
                         }
                     }
-                    if (useWholeVineyard) {
-                        Box(Modifier.height(10.dp))
-                        val totalArea = paddocks.sumOf { it.areaHectares }
-                        InfoRow("Blocks", "${paddocks.size}")
-                        InfoRow("Total area", String.format(Locale.US, "%.2f ha", totalArea))
-                        Box(Modifier.height(4.dp))
-                        Text(
-                            "Conservative average across all blocks.",
-                            fontSize = 12.sp,
-                            color = vine.textSecondary,
+                    Text(contextLine, fontSize = 12.sp, color = vine.textSecondary)
+                }
+            }
+
+            // 3. Recommendation — the main output, kept near the top like iOS.
+            item {
+                RecommendationCard(
+                    result = result,
+                    rate = settings.irrigationApplicationRateMmPerHour,
+                    forecast = forecast,
+                    isLoading = isLoading,
+                    errorMessage = errorMessage,
+                    locationAvailable = location != null,
+                    onRefresh = { scope.launch { refreshForecast() } },
+                )
+            }
+
+            // 4. Daily breakdown — collapsible, like the iOS DisclosureGroup.
+            val breakdownResult = result
+            if (breakdownResult != null && breakdownResult.dailyBreakdown.isNotEmpty()) {
+                item {
+                    ExpandableCard(
+                        title = "Daily Breakdown",
+                        summary = String.format(
+                            Locale.US,
+                            "%d days \u2022 net deficit %.1f mm",
+                            breakdownResult.dailyBreakdown.size,
+                            breakdownResult.netDeficitMm,
+                        ),
+                        expanded = showBreakdown,
+                        onToggle = { showBreakdown = !showBreakdown },
+                    ) {
+                        DailyBreakdownContent(
+                            result = breakdownResult,
+                            etoOverrides = etoOverrides,
+                            rainOverrides = rainOverrides,
+                            onEditDay = { editingDayEpochMs = it },
                         )
                     }
                 }
             }
 
-            // Recent measured rainfall
+            // 5. Recent rainfall — collapsible with a one-line summary.
             item {
-                RecentRainfallCard(
-                    summary = recentRain,
-                    isLoading = isLoadingRecentRain,
-                    windowDays = recentRainDays,
-                )
-            }
-
-            // Soil profile
-            item {
-                SoilProfileSection(
-                    useWholeVineyard = useWholeVineyard,
-                    selectedPaddock = selectedPaddock,
-                    paddockProfile = paddockSoilProfile,
-                    vineyardProfile = vineyardDefaultSoilProfile,
-                    isLoading = isLoadingSoilProfile,
-                    canEdit = canEditSoil && state.selectedVineyardId != null,
-                    onEdit = { showSoilEditor = true },
-                )
-            }
-
-            // Forecast
-            item {
-                VineyardCard {
-                    SectionHeader("5-Day Forecast", onLight = true)
-                    Box(Modifier.height(8.dp))
-                    when {
-                        isLoading -> Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                            Box(Modifier.size(10.dp))
-                            Text("Loading 5-day forecast…", fontSize = 14.sp, color = vine.textSecondary)
-                        }
-                        errorMessage != null -> Text(
-                            errorMessage ?: "",
-                            fontSize = 13.sp,
-                            color = VineColors.Warning,
+                ExpandableCard(
+                    title = "Recent Rainfall",
+                    summary = when {
+                        isLoadingRecentRain && recentRain == null -> "Loading\u2026"
+                        recentRain != null -> String.format(
+                            Locale.US,
+                            "%.1f mm in the last %d days",
+                            recentRain?.totalMm ?: 0.0,
+                            recentRainDays,
                         )
-                        forecast != null -> {
-                            InfoRow("Source", forecast?.source ?: "")
-                            InfoRow("Days", "${forecast?.days?.size ?: 0}")
-                        }
-                        else -> Text(
-                            "Load a 5-day forecast to see a recommendation.",
-                            fontSize = 13.sp,
-                            color = vine.textSecondary,
-                        )
-                    }
-                    Box(Modifier.height(12.dp))
-                    OutlinedButton(
-                        onClick = {
-                            val loc = location ?: return@OutlinedButton
-                            scope.launch {
-                                isLoading = true
-                                errorMessage = null
-                                try {
-                                    forecast = forecastRepo.fetchForecast(loc.first, loc.second)
-                                    etoOverrides = emptyMap()
-                                    rainOverrides = emptyMap()
-                                } catch (e: Exception) {
-                                    errorMessage = e.message ?: "Could not load forecast."
-                                    forecast = null
-                                } finally {
-                                    isLoading = false
-                                }
-                            }
-                        },
-                        enabled = !isLoading && location != null,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Box(Modifier.size(8.dp))
-                        Text(if (forecast == null) "Load Forecast" else "Refresh Forecast")
-                    }
-                    if (location == null) {
-                        Box(Modifier.height(8.dp))
-                        Text(
-                            "Set your vineyard location, or map a block boundary, to load a forecast.",
-                            fontSize = 12.sp,
-                            color = vine.textSecondary,
-                        )
-                    }
-                    Box(Modifier.height(4.dp))
-                    Text(
-                        "Evapotranspiration (ETo) and rainfall are fetched from Open-Meteo. You can override each day below if needed.",
-                        fontSize = 11.sp,
-                        color = vine.textSecondary,
+                        else -> "Unavailable — set a vineyard location"
+                    },
+                    expanded = showRainDetails,
+                    onToggle = { showRainDetails = !showRainDetails },
+                ) {
+                    RecentRainfallContent(
+                        summary = recentRain,
+                        isLoading = isLoadingRecentRain,
+                        windowDays = recentRainDays,
                     )
                 }
             }
 
-            // Settings
+            // 6. Soil profile — collapsible summary + editor entry (NSW SEED
+            // lookup lives inside the editor sheet).
             item {
-                VineyardCard {
-                    SectionHeader("Irrigation Settings", onLight = true)
-                    Box(Modifier.height(8.dp))
+                val profile = if (useWholeVineyard) vineyardDefaultSoilProfile else paddockSoilProfile
+                ExpandableCard(
+                    title = if (useWholeVineyard) "Soil Profile (Whole Vineyard)" else "Soil Profile",
+                    summary = when {
+                        isLoadingSoilProfile && profile == null -> "Loading\u2026"
+                        profile != null -> profile.typedSoilClass?.fallbackLabel
+                            ?: profile.irrigationSoilClass?.replace("_", " ")?.replaceFirstChar { it.uppercase() }
+                            ?: "Profile set"
+                        else -> "Not set — add for soil-aware guidance"
+                    },
+                    expanded = showSoilDetails,
+                    onToggle = { showSoilDetails = !showSoilDetails },
+                ) {
+                    SoilProfileContent(
+                        useWholeVineyard = useWholeVineyard,
+                        profile = profile,
+                        isLoading = isLoadingSoilProfile,
+                        canEdit = canEditSoil && state.selectedVineyardId != null,
+                        onEdit = { showSoilEditor = true },
+                    )
+                }
+            }
+
+            // 7. Calculation assumptions — collapsible, like the iOS
+            // "Calculation assumptions & block settings" DisclosureGroup.
+            item {
+                ExpandableCard(
+                    title = "Calculation Assumptions",
+                    summary = String.format(
+                        Locale.US,
+                        "Rate %s mm/hr \u2022 Kc %s \u2022 Eff %s%%",
+                        if (appRateText.isBlank()) "—" else appRateText,
+                        kcText.ifBlank { "0.65" },
+                        efficiencyText.ifBlank { "90" },
+                    ),
+                    expanded = showAssumptions,
+                    onToggle = { showAssumptions = !showAssumptions },
+                ) {
                     val siteRate = (selectedPaddock?.mmPerHour ?: 0.0) > 0
                     SettingField(
                         label = "Application Rate (mm/hr)",
                         value = appRateText,
                         onValueChange = { appRateText = it },
-                        help = "How many millimetres of water your irrigation system applies to this block in one hour of running.",
+                        help = "Millimetres of water your system applies per hour of running.",
                         siteNote = if (siteRate) "Pre-filled from this block's system rate." else null,
                     )
                     SettingField(
                         label = "Crop Coefficient (Kc)",
                         value = kcText,
                         onValueChange = { kcText = it },
-                        help = "How thirsty the vines are compared to a reference grass. 0.65 is a typical mid-season value for wine grapes.",
+                        help = "Vine thirst vs reference grass. 0.65 is typical mid-season.",
                     )
                     SettingField(
                         label = "Irrigation Efficiency (%)",
                         value = efficiencyText,
                         onValueChange = { efficiencyText = it },
-                        help = "How much of the water you pump actually reaches the vine roots. Drip systems are typically around 90%.",
+                        help = "Share of pumped water reaching the roots. Drip \u2248 90%.",
                     )
                     SettingField(
                         label = "Rainfall Effectiveness (%)",
                         value = rainEffText,
                         onValueChange = { rainEffText = it },
-                        help = "How much of the forecast rainfall actually soaks in and is available to the vines. Typically around 80%.",
+                        help = "Share of rain that soaks in and is usable. Typically 80%.",
                     )
                     SettingField(
                         label = "Replacement (%)",
                         value = replacementText,
                         onValueChange = { replacementText = it },
-                        help = "How much of the water the vines use that you want to replace. 100% fully replaces it, lower values apply deficit irrigation.",
+                        help = "How much of vine water use to replace. 100% = full replacement.",
                     )
                     SettingField(
                         label = "Soil Buffer (mm)",
                         value = bufferText,
                         onValueChange = { bufferText = it },
-                        help = "Extra water already stored in the soil from earlier rain or irrigation. Subtracted from the deficit. Leave at 0 if unsure.",
+                        help = "Water already stored in the soil, subtracted from the deficit.",
                         isLast = true,
                     )
                     Box(Modifier.height(12.dp))
@@ -587,32 +643,6 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
                     if (confirmation != null) {
                         Box(Modifier.height(8.dp))
                         Text(confirmation, fontSize = 12.sp, color = VineColors.LeafGreen, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
-
-            // Result
-            if (result != null) {
-                result.v2?.let { v2 ->
-                    item { SoilAwareRecommendationCard(result, v2) }
-                }
-                item { RecommendationCard(result, settings.irrigationApplicationRateMmPerHour) }
-                item {
-                    DailyBreakdownCard(
-                        result = result,
-                        etoOverrides = etoOverrides,
-                        rainOverrides = rainOverrides,
-                        onEditDay = { editingDayEpochMs = it },
-                    )
-                }
-            } else if (settings.irrigationApplicationRateMmPerHour <= 0 && forecast != null) {
-                item {
-                    VineyardCard {
-                        Text(
-                            "Enter an application rate greater than 0 mm/hr to calculate.",
-                            fontSize = 13.sp,
-                            color = VineColors.Warning,
-                        )
                     }
                 }
             }
@@ -668,21 +698,348 @@ fun IrrigationScreen(state: AppUiState, modifier: Modifier = Modifier, onBack: (
     }
 }
 
+/**
+ * Card with a tap-to-expand header. The title takes the remaining width (never
+ * squeezing the trailing chevron) and an optional one-line summary is shown
+ * while collapsed so users can scan values without expanding.
+ */
 @Composable
-private fun RecentRainfallCard(
+private fun ExpandableCard(
+    title: String,
+    summary: String?,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val chevronRotation by animateFloatAsState(targetValue = if (expanded) 180f else 0f, label = "chevron")
+    VineyardCard {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onToggle),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                SectionHeader(title, onLight = true)
+                if (!expanded && summary != null) {
+                    Box(Modifier.height(2.dp))
+                    Text(summary, fontSize = 13.sp, color = vine.textPrimary, fontWeight = FontWeight.Medium)
+                }
+            }
+            Icon(
+                Icons.Filled.ExpandMore,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = vine.textSecondary,
+                modifier = Modifier.size(22.dp).rotate(chevronRotation),
+            )
+        }
+        AnimatedVisibility(visible = expanded) {
+            Column {
+                Box(Modifier.height(10.dp))
+                content()
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecommendationCard(
+    result: IrrigationRecommendationResult?,
+    rate: Double,
+    forecast: IrrigationForecast?,
+    isLoading: Boolean,
+    errorMessage: String?,
+    locationAvailable: Boolean,
+    onRefresh: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    VineyardCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.weight(1f)) { SectionHeader("Recommendation", onLight = true) }
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            } else {
+                IconButton(onClick = onRefresh, enabled = locationAvailable, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Filled.Refresh,
+                        contentDescription = "Refresh forecast",
+                        tint = if (locationAvailable) VineColors.PrimaryAccent else vine.textSecondary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+        }
+        Box(Modifier.height(6.dp))
+        when {
+            !locationAvailable -> Text(
+                "Set your vineyard location, or map a block boundary, to load a forecast.",
+                fontSize = 13.sp,
+                color = vine.textSecondary,
+            )
+            isLoading && forecast == null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Calculating recommendation\u2026", fontSize = 13.sp, color = vine.textSecondary)
+            }
+            errorMessage != null && forecast == null -> Column {
+                Text(errorMessage, fontSize = 13.sp, color = VineColors.Warning)
+                Box(Modifier.height(8.dp))
+                OutlinedButton(onClick = onRefresh) {
+                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Box(Modifier.size(6.dp))
+                    Text("Retry")
+                }
+            }
+            forecast != null && rate <= 0 -> Text(
+                "Enter an application rate greater than 0 mm/hr in Calculation Assumptions.",
+                fontSize = 13.sp,
+                color = VineColors.Warning,
+            )
+            result != null -> RecommendationResultBody(result = result, rate = rate, forecast = forecast)
+            else -> Text(
+                "Recommendation will appear once the forecast loads.",
+                fontSize = 13.sp,
+                color = vine.textSecondary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecommendationResultBody(
+    result: IrrigationRecommendationResult,
+    rate: Double,
+    forecast: IrrigationForecast?,
+) {
+    val vine = LocalVineColors.current
+    val needsIrrigation = result.netDeficitMm > 0
+    val dayCount = result.dailyBreakdown.size
+
+    // Soil-aware urgency banner (v2), shown compactly at the top of the result.
+    result.v2?.let { v2 ->
+        UrgencyBanner(v2)
+        Box(Modifier.height(10.dp))
+    }
+
+    if (needsIrrigation) {
+        Text("Recommended irrigation", fontSize = 12.sp, color = vine.textSecondary)
+        Text(
+            String.format(Locale.US, "%.1f hours", result.recommendedIrrigationHours),
+            fontSize = 30.sp,
+            fontWeight = FontWeight.Bold,
+            color = VineColors.LeafGreen,
+        )
+        Text(
+            "${hoursMinutes(result.recommendedIrrigationHours)} \u2022 over the next $dayCount days",
+            fontSize = 13.sp,
+            color = vine.textSecondary,
+        )
+    } else {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(20.dp))
+            Box(Modifier.size(8.dp))
+            Text("No irrigation needed", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+        }
+        Box(Modifier.height(4.dp))
+        Text(
+            "Forecast rainfall meets vine demand for the next $dayCount days.",
+            fontSize = 13.sp,
+            color = vine.textSecondary,
+        )
+    }
+
+    Box(Modifier.height(10.dp))
+    HorizontalDivider(color = vine.cardBorder)
+    Box(Modifier.height(8.dp))
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Metric("Crop use", String.format(Locale.US, "%.1f", result.forecastCropUseMm), modifier = Modifier.weight(1f))
+        Metric("Eff. rain", String.format(Locale.US, "%.1f", result.forecastEffectiveRainMm), modifier = Modifier.weight(1f))
+        Metric("Net deficit", String.format(Locale.US, "%.1f", result.netDeficitMm), modifier = Modifier.weight(1f))
+        Metric("To apply", String.format(Locale.US, "%.1f", result.grossIrrigationMm), modifier = Modifier.weight(1f))
+    }
+
+    if (result.recentActualRainMm > 0.0) {
+        Box(Modifier.height(6.dp))
+        Text(
+            String.format(Locale.US, "Includes %.1f mm recent measured rain.", result.recentActualRainMm),
+            fontSize = 11.sp,
+            color = VineColors.LeafGreen,
+        )
+    }
+
+    // Soil-aware detail (adjustment, advice, caution) below the stats.
+    result.v2?.let { v2 ->
+        if (v2.soilAdjusted) {
+            Box(Modifier.height(6.dp))
+            Text(
+                String.format(
+                    Locale.US,
+                    "Base demand %.0f mm \u2192 soil-adjusted %.0f mm",
+                    v2.baseGrossIrrigationMm,
+                    v2.soilAdjustedGrossMm,
+                ),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textPrimary,
+            )
+        }
+        v2.adjustmentReason?.let { reason ->
+            Box(Modifier.height(4.dp))
+            Text(reason, fontSize = 11.sp, color = vine.textSecondary)
+        }
+        result.soilAdviceText?.let { advice ->
+            Box(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.Top) {
+                Icon(Icons.Filled.Layers, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(14.dp))
+                Box(Modifier.size(6.dp))
+                Text(advice, fontSize = 11.sp, color = vine.textSecondary)
+            }
+        }
+        v2.cautionText?.let { caution ->
+            Box(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(VineColors.Warning.copy(alpha = 0.12f))
+                    .padding(10.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Icon(Icons.Filled.Opacity, contentDescription = null, tint = VineColors.Warning, modifier = Modifier.size(16.dp))
+                Box(Modifier.size(6.dp))
+                Text(caution, fontSize = 12.sp, color = vine.textPrimary)
+            }
+        }
+    }
+
+    Box(Modifier.height(8.dp))
+    Text(
+        String.format(
+            Locale.US,
+            "Forecast: %s \u2022 %d days \u2022 rate %.2f mm/hr",
+            forecast?.source ?: "—",
+            dayCount,
+            rate,
+        ),
+        fontSize = 11.sp,
+        color = vine.textSecondary,
+    )
+}
+
+@Composable
+private fun UrgencyBanner(v2: SoilAwareV2Result) {
+    val vine = LocalVineColors.current
+    val (urgencyColor, urgencyIcon) = when (v2.urgency) {
+        IrrigationUrgency.IrrigateNow -> VineColors.VineRed to Icons.Filled.WaterDrop
+        IrrigationUrgency.IrrigateSoon -> VineColors.Warning to Icons.Filled.WaterDrop
+        IrrigationUrgency.Monitor -> VineColors.Info to Icons.Filled.Opacity
+        IrrigationUrgency.DelayRainLikely -> VineColors.LeafGreen to Icons.Filled.Opacity
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(urgencyColor.copy(alpha = 0.12f))
+            .padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(32.dp).clip(CircleShape).background(urgencyColor.copy(alpha = 0.2f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(urgencyIcon, contentDescription = null, tint = urgencyColor, modifier = Modifier.size(18.dp))
+        }
+        Box(Modifier.size(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(v2.urgency.displayLabel, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = urgencyColor)
+            val depthLabel = if (v2.splitSuggested) {
+                String.format(Locale.US, "%.0f mm now \u00d7 %d events", v2.soilAdjustedGrossMm, v2.splitCount)
+            } else {
+                String.format(Locale.US, "Apply ~%.0f mm", v2.soilAdjustedGrossMm)
+            }
+            Text(depthLabel, fontSize = 12.sp, color = vine.textSecondary)
+        }
+    }
+}
+
+@Composable
+private fun DailyBreakdownContent(
+    result: IrrigationRecommendationResult,
+    etoOverrides: Map<Long, Double>,
+    rainOverrides: Map<Long, Double>,
+    onEditDay: (Long) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val dayFmt = remember { SimpleDateFormat("EEE d MMM", Locale.getDefault()) }
+    Column {
+        Text("Tap a day to override its forecast values.", fontSize = 11.sp, color = vine.textSecondary)
+        result.dailyBreakdown.forEachIndexed { index, day ->
+            val etoOverridden = etoOverrides.containsKey(day.dateEpochMs)
+            val rainOverridden = rainOverrides.containsKey(day.dateEpochMs)
+            if (index > 0) {
+                Box(Modifier.height(8.dp))
+                HorizontalDivider(color = vine.cardBorder)
+            }
+            Box(Modifier.height(8.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onEditDay(day.dateEpochMs) },
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        dayFmt.format(Date(day.dateEpochMs)),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary,
+                    )
+                    if (etoOverridden || rainOverridden) {
+                        Box(Modifier.size(6.dp))
+                        Icon(
+                            Icons.Filled.Edit,
+                            contentDescription = "Overridden",
+                            modifier = Modifier.size(12.dp),
+                            tint = VineColors.LeafGreen,
+                        )
+                    }
+                    Box(Modifier.weight(1f))
+                    Text(
+                        String.format(Locale.US, "%.1f mm deficit", day.dailyDeficitMm),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (day.dailyDeficitMm > 0) VineColors.VineRed else VineColors.LeafGreen,
+                    )
+                }
+                Box(Modifier.height(4.dp))
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Metric("ETo", String.format(Locale.US, "%.1f", day.forecastEToMm), highlight = etoOverridden, modifier = Modifier.weight(1f))
+                    Metric("Rain", String.format(Locale.US, "%.1f", day.forecastRainMm), highlight = rainOverridden, modifier = Modifier.weight(1f))
+                    Metric("Crop use", String.format(Locale.US, "%.1f", day.cropUseMm), modifier = Modifier.weight(1f))
+                    Metric("Eff. rain", String.format(Locale.US, "%.1f", day.effectiveRainMm), modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecentRainfallContent(
     summary: RecentRainfallSummary?,
     isLoading: Boolean,
     windowDays: Int,
 ) {
     val vine = LocalVineColors.current
-    VineyardCard {
-        SectionHeader("Recent Rainfall", onLight = true)
-        Box(Modifier.height(10.dp))
+    Column {
         when {
             isLoading && summary == null -> Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                 Box(Modifier.size(10.dp))
-                Text("Loading recent rainfall…", fontSize = 13.sp, color = vine.textSecondary)
+                Text("Loading recent rainfall\u2026", fontSize = 13.sp, color = vine.textSecondary)
             }
             summary != null -> {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -703,9 +1060,9 @@ private fun RecentRainfallCard(
                 Box(Modifier.height(4.dp))
                 Text(
                     if (summary.usedPersisted) {
-                        "Measured rainfall from your station is subtracted from the forecast deficit, so a recent storm reduces the recommendation."
+                        "Measured rainfall is subtracted from the forecast deficit, so a recent storm reduces the recommendation."
                     } else {
-                        "Modelled rainfall from the Open-Meteo archive is subtracted from the forecast deficit. Connect a weather station for station-recorded totals."
+                        "Modelled rainfall from the Open-Meteo archive is subtracted from the deficit. Connect a weather station for station-recorded totals."
                     },
                     fontSize = 11.sp,
                     color = vine.textSecondary,
@@ -721,41 +1078,31 @@ private fun RecentRainfallCard(
 }
 
 @Composable
-private fun SoilProfileSection(
+private fun SoilProfileContent(
     useWholeVineyard: Boolean,
-    selectedPaddock: Paddock?,
-    paddockProfile: BackendSoilProfile?,
-    vineyardProfile: BackendSoilProfile?,
+    profile: BackendSoilProfile?,
     isLoading: Boolean,
     canEdit: Boolean,
     onEdit: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val profile = if (useWholeVineyard) vineyardProfile else paddockProfile
-    VineyardCard {
-        SectionHeader(if (useWholeVineyard) "Soil Profile (Whole Vineyard)" else "Soil Profile", onLight = true)
-        Box(Modifier.height(10.dp))
+    Column {
         when {
             isLoading && profile == null -> Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                 Box(Modifier.size(10.dp))
-                Text("Loading soil profile…", fontSize = 13.sp, color = vine.textSecondary)
+                Text("Loading soil profile\u2026", fontSize = 13.sp, color = vine.textSecondary)
             }
             profile != null -> SoilProfileSummary(profile)
-            else -> {
-                Text(
-                    if (useWholeVineyard) "No vineyard soil profile yet" else "No soil profile set for this block",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = vine.textSecondary,
-                )
-                Box(Modifier.height(4.dp))
-                Text(
-                    "Add a soil profile to get soil-aware irrigation guidance.",
-                    fontSize = 12.sp,
-                    color = vine.textSecondary,
-                )
-            }
+            else -> Text(
+                if (useWholeVineyard) {
+                    "No vineyard soil profile yet. Add one to get soil-aware irrigation guidance."
+                } else {
+                    "No soil profile set for this block. Add one to get soil-aware irrigation guidance."
+                },
+                fontSize = 13.sp,
+                color = vine.textSecondary,
+            )
         }
         if (canEdit) {
             Box(Modifier.height(12.dp))
@@ -777,7 +1124,7 @@ private fun SoilProfileSection(
             if (profile?.source == "nsw_seed") {
                 "Soil information is estimated from NSW SEED mapping and may not reflect site-specific conditions."
             } else {
-                "Soil profile values feed the soil buffer and root-zone calculation. Editing requires Owner or Manager access."
+                "Soil values feed the soil buffer and root-zone calculation. Editing requires Owner or Manager access."
             },
             fontSize = 11.sp,
             color = vine.textSecondary,
@@ -802,7 +1149,7 @@ private fun SoilProfileSummary(soil: BackendSoilProfile) {
         )
     }
     Box(Modifier.height(8.dp))
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+    Row(modifier = Modifier.fillMaxWidth()) {
         SoilStat("AWC", soil.availableWaterCapacityMmPerM?.let { String.format(Locale.US, "%.0f mm/m", it) } ?: "—", Modifier.weight(1f))
         SoilStat("Root depth", soil.effectiveRootDepthM?.let { String.format(Locale.US, "%.2f m", it) } ?: "—", Modifier.weight(1f))
         SoilStat("Depletion", soil.managementAllowedDepletionPercent?.let { String.format(Locale.US, "%.0f%%", it) } ?: "—", Modifier.weight(1f))
@@ -814,7 +1161,7 @@ private fun SoilProfileSummary(soil: BackendSoilProfile) {
         Text(
             String.format(Locale.US, "Root-zone capacity %.0f mm \u2022 Readily available %.0f mm", rzc, raw),
             fontSize = 11.sp,
-            color = vine.textSecondary,
+            color = LocalVineColors.current.textSecondary,
         )
     }
 }
@@ -825,193 +1172,6 @@ private fun SoilStat(label: String, value: String, modifier: Modifier = Modifier
     Column(modifier = modifier) {
         Text(label, fontSize = 11.sp, color = vine.textSecondary)
         Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-    }
-}
-
-@Composable
-private fun SoilAwareRecommendationCard(
-    result: IrrigationRecommendationResult,
-    v2: com.rork.vinetrack.data.model.SoilAwareV2Result,
-) {
-    val vine = LocalVineColors.current
-    val (urgencyColor, urgencyIcon) = when (v2.urgency) {
-        IrrigationUrgency.IrrigateNow -> VineColors.VineRed to Icons.Filled.WaterDrop
-        IrrigationUrgency.IrrigateSoon -> VineColors.Warning to Icons.Filled.WaterDrop
-        IrrigationUrgency.Monitor -> VineColors.Info to Icons.Filled.Opacity
-        IrrigationUrgency.DelayRainLikely -> VineColors.LeafGreen to Icons.Filled.Opacity
-    }
-    VineyardCard {
-        SectionHeader("Soil-Aware Recommendation", onLight = true)
-        Box(Modifier.height(10.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
-                .background(urgencyColor.copy(alpha = 0.12f))
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier.size(36.dp).clip(CircleShape).background(urgencyColor.copy(alpha = 0.2f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(urgencyIcon, contentDescription = null, tint = urgencyColor, modifier = Modifier.size(20.dp))
-            }
-            Box(Modifier.size(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(v2.urgency.displayLabel, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = urgencyColor)
-                val depthLabel = if (v2.splitSuggested) {
-                    String.format(Locale.US, "%.0f mm now × %d events", v2.soilAdjustedGrossMm, v2.splitCount)
-                } else {
-                    String.format(Locale.US, "Apply ~%.0f mm", v2.soilAdjustedGrossMm)
-                }
-                Text(depthLabel, fontSize = 13.sp, color = vine.textSecondary)
-            }
-        }
-        if (v2.soilAdjusted) {
-            Box(Modifier.height(10.dp))
-            InfoRow("Base demand", String.format(Locale.US, "%.0f mm", v2.baseGrossIrrigationMm))
-            InfoRow("Soil-adjusted", String.format(Locale.US, "%.0f mm", v2.soilAdjustedGrossMm))
-        }
-        result.readilyAvailableWaterMm?.let { raw ->
-            InfoRow("Readily available water", String.format(Locale.US, "%.0f mm", raw))
-        }
-        v2.adjustmentReason?.let { reason ->
-            Box(Modifier.height(8.dp))
-            Text(reason, fontSize = 12.sp, color = vine.textSecondary)
-        }
-        result.soilAdviceText?.let { advice ->
-            Box(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.Top) {
-                Icon(Icons.Filled.Layers, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(16.dp))
-                Box(Modifier.size(6.dp))
-                Text(advice, fontSize = 12.sp, color = vine.textSecondary)
-            }
-        }
-        v2.cautionText?.let { caution ->
-            Box(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
-                    .background(VineColors.Warning.copy(alpha = 0.12f))
-                    .padding(10.dp),
-                verticalAlignment = Alignment.Top,
-            ) {
-                Icon(Icons.Filled.Opacity, contentDescription = null, tint = VineColors.Warning, modifier = Modifier.size(16.dp))
-                Box(Modifier.size(6.dp))
-                Text(caution, fontSize = 12.sp, color = vine.textPrimary)
-            }
-        }
-    }
-}
-
-@Composable
-private fun RecommendationCard(result: IrrigationRecommendationResult, rate: Double) {
-    val vine = LocalVineColors.current
-    VineyardCard {
-        SectionHeader("Recommendation", onLight = true)
-        Box(Modifier.height(10.dp))
-        Text("Recommended irrigation", fontSize = 12.sp, color = vine.textSecondary)
-        Text(
-            String.format(Locale.US, "%.1f hours", result.recommendedIrrigationHours),
-            fontSize = 30.sp,
-            fontWeight = FontWeight.Bold,
-            color = VineColors.LeafGreen,
-        )
-        Text(hoursMinutes(result.recommendedIrrigationHours), fontSize = 14.sp, color = vine.textSecondary)
-        Text("over the next 5 days", fontSize = 12.sp, color = vine.textSecondary)
-        Box(Modifier.height(12.dp))
-        HorizontalDivider(color = vine.cardBorder)
-        Box(Modifier.height(10.dp))
-        InfoRow("Forecast crop use", String.format(Locale.US, "%.1f mm", result.forecastCropUseMm))
-        InfoRow("Effective rainfall", String.format(Locale.US, "%.1f mm", result.forecastEffectiveRainMm))
-        if (result.recentActualRainMm > 0.0) {
-            InfoRow("Recent measured rain", String.format(Locale.US, "-%.1f mm", result.recentActualRainMm))
-        }
-        InfoRow("Net deficit", String.format(Locale.US, "%.1f mm", result.netDeficitMm))
-        InfoRow("Gross to apply", String.format(Locale.US, "%.1f mm", result.grossIrrigationMm))
-        InfoRow("Rate", String.format(Locale.US, "%.2f mm/hr", rate))
-    }
-}
-
-@Composable
-private fun DailyBreakdownCard(
-    result: IrrigationRecommendationResult,
-    etoOverrides: Map<Long, Double>,
-    rainOverrides: Map<Long, Double>,
-    onEditDay: (Long) -> Unit,
-) {
-    val vine = LocalVineColors.current
-    val dayFmt = remember { SimpleDateFormat("EEE d MMM", Locale.getDefault()) }
-    VineyardCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            SectionHeader("Daily Breakdown", onLight = true)
-            Text("Tap a day to override", fontSize = 11.sp, color = vine.textSecondary)
-        }
-        Box(Modifier.height(4.dp))
-        result.dailyBreakdown.forEachIndexed { index, day ->
-            val etoOverridden = etoOverrides.containsKey(day.dateEpochMs)
-            val rainOverridden = rainOverrides.containsKey(day.dateEpochMs)
-            if (index > 0) {
-                Box(Modifier.height(8.dp))
-                HorizontalDivider(color = vine.cardBorder)
-                Box(Modifier.height(8.dp))
-            } else {
-                Box(Modifier.height(8.dp))
-            }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onEditDay(day.dateEpochMs) },
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        dayFmt.format(Date(day.dateEpochMs)),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = vine.textPrimary,
-                    )
-                    if (etoOverridden || rainOverridden) {
-                        Box(Modifier.size(6.dp))
-                        Icon(
-                            Icons.Filled.Edit,
-                            contentDescription = "Overridden",
-                            modifier = Modifier.size(13.dp),
-                            tint = VineColors.LeafGreen,
-                        )
-                        Text(
-                            " Manual",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = VineColors.LeafGreen,
-                        )
-                    }
-                }
-                Text(
-                    String.format(Locale.US, "%.1f mm deficit", day.dailyDeficitMm),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (day.dailyDeficitMm > 0) VineColors.VineRed else VineColors.LeafGreen,
-                )
-            }
-            Box(Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Metric("ETo", String.format(Locale.US, "%.1f", day.forecastEToMm), highlight = etoOverridden)
-                Metric("Rain", String.format(Locale.US, "%.1f", day.forecastRainMm), highlight = rainOverridden)
-                Metric("Crop Use", String.format(Locale.US, "%.1f", day.cropUseMm))
-                Metric("Eff. Rain", String.format(Locale.US, "%.1f", day.effectiveRainMm))
-            }
-        }
     }
 }
 
@@ -1050,7 +1210,7 @@ private fun DayOverrideDialog(
                     label = { Text("ETo (mm)") },
                     placeholder = { Text(String.format(Locale.US, "%.1f", forecastEToMm)) },
                     singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
@@ -1065,7 +1225,7 @@ private fun DayOverrideDialog(
                     label = { Text("Rain (mm)") },
                     placeholder = { Text(String.format(Locale.US, "%.1f", forecastRainMm)) },
                     singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
@@ -1076,7 +1236,7 @@ private fun DayOverrideDialog(
             }
         },
         confirmButton = {
-            androidx.compose.material3.TextButton(onClick = {
+            TextButton(onClick = {
                 val eto = etoText.replace(",", ".").trim().toDoubleOrNull()
                 val rain = rainText.replace(",", ".").trim().toDoubleOrNull()
                 onSave(eto, rain)
@@ -1084,26 +1244,27 @@ private fun DayOverrideDialog(
         },
         dismissButton = {
             if (hasOverride) {
-                androidx.compose.material3.TextButton(onClick = onReset) {
+                TextButton(onClick = onReset) {
                     Text("Reset", color = VineColors.VineRed)
                 }
             } else {
-                androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
             }
         },
     )
 }
 
 @Composable
-private fun Metric(label: String, value: String, highlight: Boolean = false) {
+private fun Metric(label: String, value: String, highlight: Boolean = false, modifier: Modifier = Modifier) {
     val vine = LocalVineColors.current
-    Column {
-        Text(label, fontSize = 11.sp, color = vine.textSecondary)
+    Column(modifier = modifier) {
+        Text(label, fontSize = 11.sp, color = vine.textSecondary, maxLines = 1)
         Text(
             "$value mm",
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             color = if (highlight) VineColors.LeafGreen else vine.textPrimary,
+            maxLines = 1,
         )
     }
 }
@@ -1124,7 +1285,7 @@ private fun SettingField(
             onValueChange = onValueChange,
             label = { Text(label) },
             singleLine = true,
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             modifier = Modifier.fillMaxWidth(),
         )
         Box(Modifier.height(4.dp))
@@ -1132,7 +1293,7 @@ private fun SettingField(
         if (siteNote != null) {
             Text(siteNote, fontSize = 11.sp, color = VineColors.LeafGreen)
         }
-        if (!isLast) Box(Modifier.height(12.dp))
+        if (!isLast) Box(Modifier.height(10.dp))
     }
 }
 
