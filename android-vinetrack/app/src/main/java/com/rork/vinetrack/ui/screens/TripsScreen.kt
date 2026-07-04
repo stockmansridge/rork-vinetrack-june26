@@ -185,6 +185,7 @@ import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.Polygon
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.rork.vinetrack.data.AppPreferencesStore
 import com.rork.vinetrack.data.OperationPrefsStore
 import com.rork.vinetrack.data.RowAttachment
 import com.rork.vinetrack.data.TrackingPattern
@@ -1497,6 +1498,10 @@ private fun ActiveTripHud(
     // when the operator taps Recenter — GPS ticks never change zoom.
     var followZoom by remember { mutableFloatStateOf(18f) }
     var showRowChips by remember { mutableStateOf(true) }
+    // iOS canShowRowSides parity: the side chips are gated on the device-local
+    // "row tracking" preference in addition to the on-map toggle.
+    val hudContext = LocalContext.current
+    val rowTrackingEnabled = remember { AppPreferencesStore(hudContext).load().rowTrackingEnabled }
     var panelExpanded by remember { mutableStateOf(false) }
     // Repairs/Growth quick-pin launcher shown over the HUD (iOS sheet parity).
     var hudLauncherMode by remember { mutableStateOf<String?>(null) }
@@ -1769,7 +1774,7 @@ private fun ActiveTripHud(
         }
 
         // Left/right adjacent-row chips (iOS rowIndicatorOverlay parity).
-        if (showRowChips && leftRowLabel != null && rightRowLabel != null && currentBlock != null) {
+        if (showRowChips && rowTrackingEnabled && leftRowLabel != null && rightRowLabel != null && currentBlock != null) {
             RowSideChip(
                 isLeft = true,
                 label = leftRowLabel,
