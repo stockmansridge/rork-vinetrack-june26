@@ -179,17 +179,28 @@ fun VineyardMapContent(
     // Resolve each pin's configured colour (iOS nameColorMap parity).
     val colorMap = remember(state.repairButtons, state.growthButtons) { pinColorMap(state) }
 
-    // Points that frame the mapped content: pins first, then block geometry,
-    // then the vineyard's saved location as a last resort (iOS parity).
-    val framePoints = remember(blocks, locatedPins, state.selectedVineyard) {
-        val pinPoints = locatedPins.mapNotNull { it.latLng() }
-        if (pinPoints.isNotEmpty()) return@remember pinPoints
-        val geometry = blocks.flatMap { block ->
+    // Block geometry frames the map first (iOS parity): boundary polygons,
+    // then mapped row lines when no boundaries exist. Pins and the vineyard's
+    // saved location are only fallbacks when no block geometry is available.
+    val blockFramePoints = remember(state.paddocks) {
+        val boundaries = state.paddocks.flatMap { block ->
             (block.polygonPoints ?: emptyList())
                 .filter { isValidMapCoordinate(it.latitude, it.longitude) }
                 .map { it.toLatLng() }
         }
-        if (geometry.isNotEmpty()) return@remember geometry
+        if (boundaries.isNotEmpty()) return@remember boundaries
+        state.paddocks.flatMap { block ->
+            (block.rows ?: emptyList()).flatMap { row ->
+                listOfNotNull(row.startPoint, row.endPoint)
+                    .filter { isValidMapCoordinate(it.latitude, it.longitude) }
+                    .map { it.toLatLng() }
+            }
+        }
+    }
+    val framePoints = remember(blockFramePoints, locatedPins, state.selectedVineyard) {
+        if (blockFramePoints.isNotEmpty()) return@remember blockFramePoints
+        val pinPoints = locatedPins.mapNotNull { it.latLng() }
+        if (pinPoints.isNotEmpty()) return@remember pinPoints
         val v = state.selectedVineyard
         if (isValidMapCoordinate(v?.latitude, v?.longitude)) {
             listOf(LatLng(v?.latitude ?: 0.0, v?.longitude ?: 0.0))
@@ -202,6 +213,10 @@ fun VineyardMapContent(
     var mode by remember { mutableStateOf(if (defaults.overview3D) MapMode.Overview else MapMode.TopDown) }
     var mapLoaded by remember { mutableStateOf(false) }
     var hasFramed by remember { mutableStateOf(false) }
+    // Block geometry that produced the last auto-fit. After the initial fit,
+    // only a change in the block layout itself (vineyard switch, blocks
+    // loading after the map) re-frames — never pin refreshes or user pans.
+    var framedBlockGeometry by remember { mutableStateOf<List<LatLng>?>(null) }
     // Measured map size, used to keep a tapped pin visible above the detail sheet.
     var mapSizePx by remember { mutableStateOf(IntSize.Zero) }
 
@@ -211,12 +226,12 @@ fun VineyardMapContent(
     var showRowLines by remember(defaults.showRowLines) { mutableStateOf(defaults.showRowLines) }
     var showBlockLabels by remember(defaults.showBlockLabels) { mutableStateOf(defaults.showBlockLabels) }
 
-    // Frame the content once the map is laid out, and re-frame when the
-    // mapped content changes (vineyard switch, pin filters, data arriving
-    // after the map loaded). User pans never trigger this — it is keyed only
-    // on the content, not the camera.
+    // Frame the vineyard blocks once the map is laid out. After the initial
+    // fit, the camera only re-frames when block geometry itself changes; pin
+    // refreshes/filter changes and user pans never move it.
     LaunchedEffect(mapLoaded, framePoints) {
         if (!mapLoaded || framePoints.isEmpty()) return@LaunchedEffect
+        if (hasFramed && blockFramePoints == framedBlockGeometry) return@LaunchedEffect
         cameraPositionState.fitToContent(
             points = framePoints,
             paddingPx = 120,
@@ -224,6 +239,7 @@ fun VineyardMapContent(
             animate = hasFramed,
         )
         hasFramed = true
+        framedBlockGeometry = blockFramePoints
     }
 
     // Re-apply tilt whenever the mode changes, preserving centre and zoom.

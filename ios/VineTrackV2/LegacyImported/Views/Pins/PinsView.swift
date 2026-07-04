@@ -491,6 +491,7 @@ struct PinsMapView: View {
     @State private var position: MapCameraPosition = .automatic
     @State private var selectedPin: VinePin?
     @State private var hasSetInitialPosition: Bool = false
+    @State private var hasFramedBlocks: Bool = false
 
     private var pinIDs: [UUID] {
         pins.map { $0.id }
@@ -500,26 +501,56 @@ struct PinsMapView: View {
         store.paddocks.filter { $0.polygonPoints.count > 2 }
     }
 
-    private func regionForContent() -> MKCoordinateRegion? {
-        var allLats: [Double] = pins.map { $0.coordinate.latitude }
-        var allLons: [Double] = pins.map { $0.coordinate.longitude }
-
-        for paddock in allPaddocks {
-            for point in paddock.polygonPoints {
-                allLats.append(point.latitude)
-                allLons.append(point.longitude)
-            }
+    /// Coordinates describing the vineyard block layout. Boundary polygons come
+    /// first; mapped row geometry is used when no boundaries exist yet.
+    private var blockCoordinates: [CLLocationCoordinate2D] {
+        let boundaryCoords = allPaddocks.flatMap { paddock in
+            paddock.polygonPoints.map { $0.coordinate }
         }
+        if !boundaryCoords.isEmpty { return boundaryCoords }
+        return store.paddocks.flatMap { paddock in
+            paddock.rows.flatMap { [$0.startPoint.coordinate, $0.endPoint.coordinate] }
+        }
+    }
 
-        guard !allLats.isEmpty else { return nil }
-        guard let minLat = allLats.min(), let maxLat = allLats.max(),
-              let minLon = allLons.min(), let maxLon = allLons.max() else { return nil }
+    /// Cheap signature that changes when block geometry first loads or is edited.
+    private var blockGeometrySignature: Int {
+        blockCoordinates.count
+    }
+
+    /// Region framing the vineyard: block geometry first, saved pins only as a
+    /// fallback when no blocks are mapped.
+    private func regionForContent() -> MKCoordinateRegion? {
+        let blockCoords = blockCoordinates
+        let coords = blockCoords.isEmpty ? pins.map { $0.coordinate } : blockCoords
+        return Self.region(fitting: coords)
+    }
+
+    private static func region(fitting coords: [CLLocationCoordinate2D]) -> MKCoordinateRegion? {
+        guard !coords.isEmpty,
+              let minLat = coords.map({ $0.latitude }).min(),
+              let maxLat = coords.map({ $0.latitude }).max(),
+              let minLon = coords.map({ $0.longitude }).min(),
+              let maxLon = coords.map({ $0.longitude }).max() else { return nil }
         let center = CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2)
         let span = MKCoordinateSpan(
             latitudeDelta: max((maxLat - minLat) * 1.5, 0.002),
             longitudeDelta: max((maxLon - minLon) * 1.5, 0.002)
         )
         return MKCoordinateRegion(center: center, span: span)
+    }
+
+    /// Frames the map once when content first becomes available. Never moves
+    /// the camera again after the initial fit.
+    private func applyInitialFitIfNeeded(animated: Bool = false) {
+        guard !hasSetInitialPosition, let region = regionForContent() else { return }
+        if animated {
+            withAnimation { position = .region(region) }
+        } else {
+            position = .region(region)
+        }
+        hasSetInitialPosition = true
+        hasFramedBlocks = !blockCoordinates.isEmpty
     }
 
     private var offlineMap: some View {
@@ -658,25 +689,24 @@ struct PinsMapView: View {
             }
         }
         .onAppear {
-            if !hasSetInitialPosition, let region = regionForContent() {
-                position = .region(region)
-                hasSetInitialPosition = true
-            }
+            applyInitialFitIfNeeded()
         }
         .onChange(of: pinIDs) { _, _ in
-            if let region = regionForContent() {
-                withAnimation {
-                    position = .region(region)
-                }
-            }
+            // Pin refreshes never snap the camera — this only frames the map
+            // when it opened before any content had loaded.
+            applyInitialFitIfNeeded(animated: true)
+        }
+        .onChange(of: blockGeometrySignature) { _, newCount in
+            // Block geometry newly loaded or edited: frame the block group once.
+            guard newCount > 0, !hasFramedBlocks, let region = regionForContent() else { return }
+            withAnimation { position = .region(region) }
+            hasSetInitialPosition = true
+            hasFramedBlocks = true
         }
         .task {
             if !hasSetInitialPosition {
                 try? await Task.sleep(for: .milliseconds(100))
-                if let region = regionForContent() {
-                    position = .region(region)
-                    hasSetInitialPosition = true
-                }
+                applyInitialFitIfNeeded()
             }
         }
     }
