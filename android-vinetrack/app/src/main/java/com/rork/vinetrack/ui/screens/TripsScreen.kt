@@ -186,6 +186,7 @@ import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.Polygon
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.rork.vinetrack.ui.components.CurrentLocationPuck
 import com.rork.vinetrack.data.AppPreferencesStore
 import com.rork.vinetrack.data.OperationPrefsStore
 import com.rork.vinetrack.data.RowAttachment
@@ -1690,12 +1691,12 @@ private fun ActiveTripHud(
                 Polyline(points = path, color = VineColors.Cyan, width = 9f, zIndex = 1f)
             }
             current?.let {
-                Marker(
+                // Dot/puck for "where I am now" — never a pin, so the live
+                // position can't be confused with saved record pins.
+                CurrentLocationPuck(
                     state = MarkerState(position = it),
-                    rotation = bearing?.toFloat() ?: 0f,
-                    flat = true,
-                    anchor = Offset(0.5f, 0.5f),
-                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE),
+                    bearingDegrees = bearing?.toFloat(),
+                    zIndex = 2f,
                 )
             }
         }
