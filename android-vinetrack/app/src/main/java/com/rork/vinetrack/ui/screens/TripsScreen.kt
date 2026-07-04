@@ -136,7 +136,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -693,7 +693,7 @@ private enum class TripChoiceType { MAINTENANCE, SPRAY }
 @Composable
 private fun TripTypeChoiceSheet(onDismiss: () -> Unit, onSelect: (TripChoiceType) -> Unit) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
@@ -2455,7 +2455,7 @@ private fun StartTripSheet(
     onStarted: (String) -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
     var paddockIds by remember { mutableStateOf<List<String>>(emptyList()) }
     var functionRaw by remember { mutableStateOf("slashing") }
@@ -3977,7 +3977,7 @@ private fun StartTripAddFunctionDialog(
 @Composable
 private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, onEnded: () -> Unit) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     var notes by remember { mutableStateOf("") }
     var endEngineHoursText by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
@@ -4180,7 +4180,7 @@ private fun EditTripSheet(
     onSaved: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
     var paddockIds by remember { mutableStateOf(trip.effectivePaddockIds) }
     val paddockId: String? = paddockIds.firstOrNull()
@@ -4385,7 +4385,7 @@ private fun SeedingDetailsSheet(
     onDismiss: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val existing = trip.seedingDetails
 
     var sowingDepth by remember { mutableStateOf(existing?.sowingDepthCm?.let { seedTrimNum(it) } ?: "") }

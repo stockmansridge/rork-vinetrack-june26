@@ -63,7 +63,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -980,7 +980,7 @@ private fun RecordYieldSheet(
     onSaved: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val paddocks = state.paddocks
 
     var year by remember { mutableIntStateOf(Calendar.getInstance().get(Calendar.YEAR)) }
@@ -1130,7 +1130,7 @@ private fun EstimateYieldSheet(
     onSaved: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val paddocks = state.paddocks
     val existingBlock = existing?.blocks?.firstOrNull()
 
@@ -1347,7 +1347,7 @@ private fun EditYieldActualsSheet(
     onSaved: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
     // Per-block actual yield text, seeded from the stored actuals.
     val actualsText = remember(record.id) {

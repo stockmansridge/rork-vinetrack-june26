@@ -31,7 +31,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -335,7 +335,7 @@ fun SyncStatusScreen(
     // or overwrite, and nothing here mutates the pending row.
     val sheetItem = detailItem
     if (sheetItem != null) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(
             onDismissRequest = { detailItem = null },
             sheetState = sheetState,

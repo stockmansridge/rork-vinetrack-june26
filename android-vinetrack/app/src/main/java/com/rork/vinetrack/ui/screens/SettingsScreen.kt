@@ -79,7 +79,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
@@ -980,7 +980,7 @@ private fun VineyardDetailSheet(
     onDismiss: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     // Owner/manager may edit name + country; only the owner may archive.
     val canEdit = state.currentRole == "owner" || state.currentRole == "manager"
     val isOwner = state.currentRole == "owner"

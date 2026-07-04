@@ -31,7 +31,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -549,7 +549,7 @@ private fun ReassignSheet(
     onConfirm: (vineyardId: String, paddockId: String?) -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     var selected by remember { mutableStateOf<String?>(null) }
     var keepPaddock by remember { mutableStateOf(true) }
 

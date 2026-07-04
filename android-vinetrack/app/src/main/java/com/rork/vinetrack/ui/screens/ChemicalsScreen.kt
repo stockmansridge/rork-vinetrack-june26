@@ -53,7 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -391,7 +391,7 @@ private fun ChemicalFormSheet(
 ) {
     val vine = LocalVineColors.current
     val uriHandler = LocalUriHandler.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val isEdit = existing != null
 
     val existingPerHaId = existing?.rates?.firstOrNull { it.basis == CHEMICAL_RATE_PER_HECTARE }?.id
@@ -842,7 +842,7 @@ private fun ChemicalAILookupSheet(
     onSelect: (ChemicalInfoService.ChemicalSearchResult) -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     var query by remember { mutableStateOf(initialQuery) }
     var results by remember { mutableStateOf<List<ChemicalInfoService.ChemicalSearchResult>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }

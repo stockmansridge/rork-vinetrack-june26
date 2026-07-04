@@ -80,7 +80,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
@@ -942,7 +942,7 @@ private fun QuickPinDuplicateSheet(
     onCreateAnyway: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val existing = duplicate.existing
     val distLabel = String.format(java.util.Locale.US, "%.1f", duplicate.distanceM)
     val status = if (existing.isCompleted) "Completed" else "Open"
@@ -1026,7 +1026,7 @@ private fun AutoPhotoPromptSheet(
     onTakePhoto: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     var remaining by remember { mutableStateOf(3) }
     var responded by remember { mutableStateOf(false) }
 
@@ -1517,7 +1517,7 @@ private fun EditLauncherButtonsSheet(
 ) {
     val vine = LocalVineColors.current
     val canEdit = state.canEditLauncherButtons
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val source = if (mode == "Repairs") state.repairButtons else state.growthButtons
     var rows by remember(mode, source) { mutableStateOf(draftsFromConfig(mode, source)) }
     var expandedColorIndex by remember { mutableStateOf<Int?>(null) }
@@ -2288,7 +2288,7 @@ private fun PinEditSheet(
     onDelete: ((Boolean) -> Unit) -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     // Re-read the live pin so the photo section reflects uploads/removals.
     val existing = (target as? PinEditTarget.Existing)?.let { t ->
         state.pins.firstOrNull { it.id == t.pin.id } ?: t.pin
@@ -2667,7 +2667,7 @@ private fun PinDetailSheet(
     val vine = LocalVineColors.current
     // Half-height first so the tapped pin stays visible on the map; drag up for
     // the full details.
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = false)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,

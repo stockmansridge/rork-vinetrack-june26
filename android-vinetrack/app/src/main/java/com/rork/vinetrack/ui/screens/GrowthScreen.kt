@@ -63,7 +63,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -494,7 +494,7 @@ private fun EditGrapeVarietySheet(
     onDismiss: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val isEditing = variety != null
     val isCustom = variety?.isCustom == true
     var name by remember { mutableStateOf(variety?.displayName ?: "") }
@@ -873,7 +873,7 @@ private fun PhenologyEditSheet(
     onSaved: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
     var budburst by remember { mutableStateOf(parseIsoToEpochMs(block.budburstDate)) }
     var flowering by remember { mutableStateOf(parseIsoToEpochMs(block.floweringDate)) }
@@ -1263,7 +1263,7 @@ fun GrowthSheet(
     initialBlock: Paddock? = null,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
     // Stage reference photos available for this vineyard, keyed by E-L code, so
     // the picker can flag which stages have a high-res image to preview.

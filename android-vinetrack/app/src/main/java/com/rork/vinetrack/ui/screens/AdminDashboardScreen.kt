@@ -85,6 +85,7 @@ import com.rork.vinetrack.data.model.SystemFeatureFlagRow
 import com.rork.vinetrack.data.model.UserLoginActivityRow
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -1136,7 +1137,7 @@ private fun GrantUnlimitedSheet(
     }
     val canSubmit = selectedUser != null && selectedVineyardId != null && !isSubmitting
 
-    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = vine.cardBackground) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberGuardedSheetState(), containerColor = vine.cardBackground) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp),

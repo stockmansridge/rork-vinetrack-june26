@@ -54,7 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -415,7 +415,7 @@ private fun MachineFormSheet(
     val vine = LocalVineColors.current
     val context = LocalContext.current
     val aiSuggestionsEnabled = remember { AppPreferencesStore(context).load().aiSuggestionsEnabled }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     var name by remember { mutableStateOf(existing?.name ?: "") }
     var type by remember { mutableStateOf(existing?.machineType ?: if (forceTractor) "tractor" else "atv") }
     var typeMenu by remember { mutableStateOf(false) }
@@ -806,7 +806,7 @@ private fun OtherEquipmentFormSheet(
     onDelete: (() -> Unit)? = null,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     var name by remember { mutableStateOf(existing?.name ?: "") }
     var make by remember { mutableStateOf(existing?.make ?: "") }
     var model by remember { mutableStateOf(existing?.model ?: "") }
@@ -1034,7 +1034,7 @@ private fun FuelPurchaseFormSheet(
     onDelete: (() -> Unit)? = null,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     var volume by remember { mutableStateOf(existing?.volumeLitres?.takeIf { it > 0 }?.let { trimNum(it) } ?: "") }
     var cost by remember { mutableStateOf(existing?.totalCost?.takeIf { it > 0 }?.let { trimNum(it) } ?: "") }
     var saving by remember { mutableStateOf(false) }

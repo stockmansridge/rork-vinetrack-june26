@@ -31,7 +31,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -79,7 +79,7 @@ fun ButtonTemplatesSheet(
     val store = remember { ButtonTemplateStore(context) }
     val vineyardId = state.selectedVineyardId
     val canManage = state.canEditLauncherButtons
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
     var templates by remember(mode, vineyardId) {
         mutableStateOf(if (vineyardId != null) store.templates(vineyardId, mode) else emptyList())

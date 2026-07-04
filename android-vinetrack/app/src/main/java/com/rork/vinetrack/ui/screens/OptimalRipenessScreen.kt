@@ -50,7 +50,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -752,7 +752,7 @@ private fun FixBlockVarietiesSheet(
     onDismiss: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
     // De-duplicated managed varieties for the current vineyard, sorted by name.
     val managedVarieties = remember(state.grapeVarieties) {
@@ -966,7 +966,7 @@ private fun SetBudburstDatesSheet(
     onDismiss: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
     // Blocks whose effective reset point is Budburst (per-block override wins).
     val budburstBlocks = remember(state.paddocks, globalResetMode) {

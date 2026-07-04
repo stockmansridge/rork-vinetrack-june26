@@ -75,7 +75,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -974,7 +974,7 @@ private fun WorkTaskSheet(
     onSaved: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
     var taskType by remember { mutableStateOf(existing?.taskType ?: builtInWorkTaskTypes.first()) }
     // Multi-block selection (sql/051). Seed from the task's join rows when present,
@@ -1279,7 +1279,7 @@ private fun LabourLineSheet(
     onDismiss: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
     var categoryId by remember { mutableStateOf(existing?.operatorCategoryId) }
     var workerType by remember { mutableStateOf(existing?.workerType ?: "") }
@@ -1431,7 +1431,7 @@ private fun MachineLineSheet(
     onDismiss: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
     var machineId by remember { mutableStateOf(existing?.equipmentRefId) }
     var freeText by remember { mutableStateOf(if (existing?.equipmentRefId == null) existing?.equipmentNameSnapshot ?: "" else "") }

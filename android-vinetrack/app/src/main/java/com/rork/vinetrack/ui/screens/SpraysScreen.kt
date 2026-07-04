@@ -87,7 +87,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -626,7 +626,7 @@ private fun SprayImportPreviewSheet(
     onConfirm: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val rows = result.rows
     val templateCount = remember(rows) { rows.count { it.isTemplate } }
     val recordCount = rows.size - templateCount
@@ -1264,7 +1264,7 @@ private fun SpraySheet(
     onSaved: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     // When seeding from a template we prefill from `existing` but still create a
     // brand-new operational record (no id reuse, fresh date, not a template).
     val isEdit = existing != null && !fromTemplate

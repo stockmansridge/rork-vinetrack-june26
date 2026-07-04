@@ -30,7 +30,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
+import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -83,7 +83,7 @@ fun SoilProfileEditorSheet(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val repo = remember { SoilProfileRepository(SessionStore(context)) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
     val isVineyardLevel = paddockId == null
     val isAustralian = remember(vineyardCountry) {
