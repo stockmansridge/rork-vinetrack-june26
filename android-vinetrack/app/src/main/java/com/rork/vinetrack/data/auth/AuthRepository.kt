@@ -1,6 +1,10 @@
 package com.rork.vinetrack.data.auth
 
+import android.util.Base64
+import android.util.Log
 import com.rork.vinetrack.data.BackendError
+import com.rork.vinetrack.data.RefreshOutcome
+import com.rork.vinetrack.data.SessionTokenRefresher
 import com.rork.vinetrack.data.SupabaseClient
 import com.rork.vinetrack.data.model.AppUser
 import io.ktor.client.call.body
@@ -15,11 +19,22 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 
-class AuthRepository(private val session: SessionStore) {
+class AuthRepository(private val session: SessionStore) : SessionTokenRefresher {
+
+    init {
+        // Install the refresh hook so the shared HTTP client can transparently
+        // refresh an expired access token and retry the original request once.
+        SupabaseClient.sessionRefresher = this
+    }
 
     @Serializable
     private data class Credentials(val email: String, val password: String)
@@ -81,7 +96,75 @@ class AuthRepository(private val session: SessionStore) {
      */
     suspend fun restoreSession(): AppUser? = withContext(Dispatchers.IO) {
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
-        val refresh = session.refreshToken ?: return@withContext null
+        if (session.refreshToken == null) {
+            Log.d(TAG, "restoreSession: no persisted session")
+            return@withContext null
+        }
+        when (val result = performRefresh(session.accessToken)) {
+            is RefreshResult.Success -> result.user ?: cachedUser()
+            RefreshResult.Rejected -> null // session already cleared by performRefresh
+            RefreshResult.Transient -> cachedUser() // offline: stay signed in
+        }
+    }
+
+    /**
+     * Foreground/resume session check (parity with the iOS SDK's automatic
+     * revalidation). Refreshes the access token when it is missing, expired,
+     * or expiring within [FOREGROUND_SKEW_SECONDS]. Returns false only when
+     * the session is definitively invalid (refresh token rejected); network
+     * failures keep the user signed in for offline field work.
+     */
+    suspend fun ensureFreshSession(): Boolean = withContext(Dispatchers.IO) {
+        if (session.refreshToken == null) return@withContext false
+        val token = session.accessToken
+        val exp = token?.let { jwtExpiryEpochSeconds(it) }
+        val now = System.currentTimeMillis() / 1000
+        val needsRefresh = token == null || exp == null || exp - now < FOREGROUND_SKEW_SECONDS
+        if (!needsRefresh) {
+            Log.d(TAG, "Session healthy on resume (expires in ${(exp ?: 0) - now}s)")
+            return@withContext true
+        }
+        Log.d(TAG, "Stale session on resume (expires in ${exp?.minus(now)}s) — refreshing")
+        performRefresh(token) !is RefreshResult.Rejected
+    }
+
+    // --- SessionTokenRefresher (central HTTP refresh-and-retry hook) ---
+
+    override val sessionAccessToken: String? get() = session.accessToken
+
+    override fun accessTokenExpiresSoon(): Boolean {
+        val token = session.accessToken ?: return false
+        val exp = jwtExpiryEpochSeconds(token) ?: return false
+        return exp - System.currentTimeMillis() / 1000 < EXPIRY_SKEW_SECONDS
+    }
+
+    override suspend fun refreshAccessToken(): RefreshOutcome = withContext(Dispatchers.IO) {
+        when (performRefresh(session.accessToken)) {
+            is RefreshResult.Success -> RefreshOutcome.REFRESHED
+            RefreshResult.Rejected -> RefreshOutcome.REJECTED
+            RefreshResult.Transient -> RefreshOutcome.TRANSIENT
+        }
+    }
+
+    private sealed interface RefreshResult {
+        data class Success(val user: AppUser?) : RefreshResult
+        data object Rejected : RefreshResult
+        data object Transient : RefreshResult
+    }
+
+    /**
+     * Single-flight refresh-token exchange. [tokenBefore] is the access token
+     * the caller observed failing/expiring: if another caller already refreshed
+     * while we waited on the lock, the exchange is skipped and the fresh token
+     * is reused. Clears the session ONLY when the server actively rejects the
+     * refresh token — never on network/transient failures.
+     */
+    private suspend fun performRefresh(tokenBefore: String?): RefreshResult = refreshMutex.withLock {
+        if (tokenBefore != null && session.accessToken != tokenBefore) {
+            Log.d(TAG, "Session already refreshed by a concurrent request")
+            return@withLock RefreshResult.Success(cachedUser())
+        }
+        val refresh = session.refreshToken ?: return@withLock RefreshResult.Rejected
         try {
             val response = SupabaseClient.http.post(SupabaseClient.authUrl("token?grant_type=refresh_token")) {
                 anonHeaders()
@@ -89,17 +172,45 @@ class AuthRepository(private val session: SessionStore) {
                 setBody(RefreshBody(refresh))
             }
             when {
-                response.status.isSuccess() -> persist(response.body())
-                response.status.value in listOf(400, 401, 403) -> {
-                    // Refresh token rejected — sign out.
-                    session.clear()
-                    null
+                response.status.isSuccess() -> {
+                    val user = persist(response.body())
+                    if (user != null) {
+                        Log.d(TAG, "Session refresh succeeded")
+                        RefreshResult.Success(user)
+                    } else {
+                        // Success status but no tokens in the body — treat as
+                        // transient rather than destroying a possibly valid session.
+                        Log.w(TAG, "Session refresh returned no tokens — treating as transient")
+                        RefreshResult.Transient
+                    }
                 }
-                else -> cachedUser() // transient server error: stay signed in offline
+                response.status.value in listOf(400, 401, 403) -> {
+                    // Refresh token rejected — the session is truly invalid.
+                    Log.w(TAG, "Refresh token rejected (${response.status.value}) — clearing session")
+                    session.clear()
+                    RefreshResult.Rejected
+                }
+                else -> {
+                    Log.w(TAG, "Session refresh failed transiently (${response.status.value})")
+                    RefreshResult.Transient
+                }
             }
         } catch (e: Exception) {
             // Network failure — keep the user signed in using the cached session.
-            cachedUser()
+            Log.w(TAG, "Session refresh network failure: ${e.message}")
+            RefreshResult.Transient
+        }
+    }
+
+    /** Decode the `exp` claim from a JWT without verifying the signature. */
+    private fun jwtExpiryEpochSeconds(token: String): Long? {
+        return try {
+            val payload = token.split(".").getOrNull(1) ?: return null
+            val decoded = Base64.decode(payload, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+            val obj = SupabaseClient.json.parseToJsonElement(decoded.toString(Charsets.UTF_8)).jsonObject
+            obj["exp"]?.jsonPrimitive?.longOrNull
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -184,6 +295,8 @@ class AuthRepository(private val session: SessionStore) {
         headers { append("apikey", SupabaseClient.anonKey) }
     }
 
+    private val refreshMutex = Mutex()
+
     private fun persist(token: TokenResponse): AppUser? {
         val access = token.accessToken ?: return null
         val refresh = token.refreshToken ?: return null
@@ -214,5 +327,15 @@ class AuthRepository(private val session: SessionStore) {
         } catch (_: Exception) {
             "Invalid email or password."
         }
+    }
+
+    private companion object {
+        const val TAG = "VineTrackAuth"
+
+        /** Pre-send refresh margin for the HTTP interceptor. */
+        const val EXPIRY_SKEW_SECONDS = 60L
+
+        /** Foreground/resume refresh margin — refresh well before expiry. */
+        const val FOREGROUND_SKEW_SECONDS = 300L
     }
 }

@@ -187,6 +187,9 @@ enum class AppRoute { Restoring, Login, BiometricLock, VineyardLoading, Vineyard
  */
 private const val MAX_DISPLAY_ATTEMPTS = 8
 
+/** Minimum gap between foreground session checks (rapid start/stop cycles). */
+private const val FOREGROUND_CHECK_DEBOUNCE_MS = 30_000L
+
 enum class PendingSyncDisplayState(val label: String) {
     /** Enqueued, not yet attempted. */
     Pending("Waiting to sync"),
@@ -2860,7 +2863,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun signOut() {
+    fun signOut(message: String? = null) {
         viewModelScope.launch {
             try { auth.signOut() } catch (_: Exception) {}
             // Stage 8 — defence-in-depth: clear local offline-reliability data so
@@ -2872,8 +2875,88 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { domainCache.clearAll() }
             runCatching { activeTripStore.clear() }
             _ui.value = AppUiState(route = AppRoute.Login)
-            _auth.value = AuthFormState()
+            _auth.value = AuthFormState(error = message)
         }
+    }
+
+    /** Elapsed-time of the last foreground session check, to debounce rapid cycles. */
+    private var lastForegroundCheckMs = 0L
+
+    /**
+     * App returned to foreground. After long idle the persisted access token is
+     * likely expired — silently refresh it now (parity with the iOS SDK's
+     * automatic revalidation) so the user's next save succeeds instead of
+     * 401-ing into a logout. Routes to login ONLY when the refresh token is
+     * definitively rejected; network failures keep the user signed in for
+     * offline work. When the session is healthy and we're online, the ordered
+     * offline-write replay pipeline is re-kicked (each coordinator no-ops on an
+     * empty queue).
+     */
+    fun onAppForegrounded() {
+        val route = _ui.value.route
+        if (route == AppRoute.Restoring || route == AppRoute.Login) return
+        if (!session.hasSession) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastForegroundCheckMs < FOREGROUND_CHECK_DEBOUNCE_MS) return
+        lastForegroundCheckMs = now
+        viewModelScope.launch {
+            // Transient failures (network, server 5xx) must never log out —
+            // default to "still valid" on any unexpected error.
+            val valid = try { auth.ensureFreshSession() } catch (_: Exception) { true }
+            if (!valid) {
+                signOut("Your session expired. Please sign in again.")
+                return@launch
+            }
+            if (_ui.value.isOnline) replayAllPendingWrites()
+        }
+    }
+
+    /**
+     * Re-run the full ordered replay pipeline (same safe order as the
+     * reconnect path — trip start before dependent markers, then pins,
+     * records, and photos). Every coordinator is mutex-guarded and no-ops when
+     * its queue is empty, so this is cheap to call on app resume.
+     */
+    private fun replayAllPendingWrites() {
+        replayPendingPinCreates()
+        replayPendingPinCompletions()
+        replayPendingPinEdits()
+        replayPendingPinDeletes()
+        replayPendingTripStart()
+        replayPendingTripMetadata()
+        replayPendingTripSeeding()
+        replayPendingTripGps()
+        replayPendingTripRow()
+        replayPendingTripTank()
+        replayPendingTripEnd()
+        replayPendingTripDeletes()
+        replayPendingFuelCreates()
+        replayPendingFuelUpdates()
+        replayPendingFuelDeletes()
+        replayPendingSprayCreates()
+        replayPendingSprayUpdates()
+        replayPendingSprayDeletes()
+        replayPendingWorkTaskCreates()
+        replayPendingWorkTaskUpdates()
+        replayPendingWorkTaskLabour()
+        replayPendingWorkTaskMachine()
+        replayPendingWorkTaskPaddocks()
+        replayPendingWorkTaskDeletes()
+        replayPendingMaintenanceCreates()
+        replayPendingMaintenanceUpdates()
+        replayPendingMaintenanceDeletes()
+        replayPendingYieldCreates()
+        replayPendingYieldUpdates()
+        replayPendingYieldDeletes()
+        replayPendingGrowthCreates()
+        replayPendingGrowthUpdates()
+        replayPendingGrowthDeletes()
+        replayPendingDamageCreates()
+        replayPendingDamageUpdates()
+        replayPendingDamageDeletes()
+        replayPendingButtonConfig()
+        replayPendingYieldSessions()
+        replayPendingPinPhotos()
     }
 
     fun retryVineyardLoad() {
