@@ -230,7 +230,7 @@ struct YieldDeterminationCalculatorView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .navigationTitle("Yield Determination")
+        .navigationTitle("Yield Determination Calculator")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {

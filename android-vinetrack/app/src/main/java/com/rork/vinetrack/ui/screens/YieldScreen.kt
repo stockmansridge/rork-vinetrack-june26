@@ -318,7 +318,7 @@ private fun YieldHubView(
             YieldHubOptionRow(
                 icon = Icons.Filled.Calculate,
                 gradient = listOf(VineColors.Purple, VineColors.Pink),
-                title = "Yield Determination",
+                title = "Yield Determination Calculator",
                 subtitle = "Pruning bud-load potential",
                 detail = latestDetermination?.let { "Latest: ${state.regionFormatter.formatYieldPerArea(it)}" },
                 onClick = onDetermination,
@@ -471,7 +471,7 @@ private fun YieldDeterminationView(
         containerColor = vine.appBackground,
         topBar = {
             TopAppBar(
-                title = { Text("Yield Determination") },
+                title = { Text("Yield Determination Calculator") },
                 navigationIcon = { BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )

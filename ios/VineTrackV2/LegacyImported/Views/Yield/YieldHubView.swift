@@ -34,7 +34,7 @@ struct YieldHubView: View {
                         hubOption(
                             icon: "scalemass.fill",
                             iconGradient: [.purple, .pink],
-                            title: "Yield Determination",
+                            title: "Yield Determination Calculator",
                             subtitle: "Pruning bud-load potential",
                             detail: determinationDetail
                         )
