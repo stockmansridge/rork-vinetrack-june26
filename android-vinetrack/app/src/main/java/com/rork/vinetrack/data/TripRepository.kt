@@ -63,6 +63,7 @@ class TripRepository(private val session: SessionStore) {
         @SerialName("total_distance") val totalDistance: Double = 0.0,
         @SerialName("path_points") val pathPoints: List<CoordinatePoint> = emptyList(),
         @SerialName("start_engine_hours") val startEngineHours: Double? = null,
+        @SerialName("seeding_details") val seedingDetails: SeedingDetails? = null,
         @SerialName("created_by") val createdBy: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
@@ -240,6 +241,7 @@ class TripRepository(private val session: SessionStore) {
         id: String? = null,
         startTime: String? = null,
         clientUpdatedAt: String? = null,
+        seedingDetails: SeedingDetails? = null,
     ): Trip = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -261,6 +263,7 @@ class TripRepository(private val session: SessionStore) {
             operatorUserId = operatorUserId,
             operatorCategoryId = operatorCategoryId,
             startEngineHours = startEngineHours,
+            seedingDetails = seedingDetails,
             createdBy = session.userId,
             clientUpdatedAt = clientUpdatedAt ?: now,
         )

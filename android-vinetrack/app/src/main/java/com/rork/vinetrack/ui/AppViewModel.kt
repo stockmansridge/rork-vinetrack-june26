@@ -3948,6 +3948,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         paddockIds: List<String> = emptyList(),
         trackingPattern: String? = null,
         rowSequence: List<Double> = emptyList(),
+        seedingDetails: com.rork.vinetrack.data.model.SeedingDetails? = null,
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
@@ -3980,6 +3981,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             sequenceIndex = 0,
             currentRowNumber = rowSequence.getOrNull(0),
             nextRowNumber = rowSequence.getOrNull(1),
+            seedingDetails = seedingDetails,
             clientUpdatedAt = startTime,
         )
         // Known offline: start locally and queue the create marker; no network.
@@ -4008,6 +4010,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     id = tripId,
                     startTime = startTime,
                     clientUpdatedAt = startTime,
+                    seedingDetails = seedingDetails,
                 )
                 // Seed the planned row sequence chosen on the Start sheet
                 // (iOS `StartTripSheet` parity). Non-fatal: if the row-plan

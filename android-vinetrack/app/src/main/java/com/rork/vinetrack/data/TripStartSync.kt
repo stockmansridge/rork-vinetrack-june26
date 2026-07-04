@@ -4,6 +4,7 @@ import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
+import com.rork.vinetrack.data.model.SeedingDetails
 import com.rork.vinetrack.data.model.Trip
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.Serializable
@@ -79,6 +80,7 @@ class TripStartSync(
         val startEngineHours: Double? = null,
         val trackingPattern: String? = null,
         val rowSequence: List<Double> = emptyList(),
+        val seedingDetails: SeedingDetails? = null,
         val clientUpdatedAt: String,
         val savedAt: Long,
     )
@@ -118,6 +120,7 @@ class TripStartSync(
                 startEngineHours = trip.startEngineHours,
                 trackingPattern = trip.trackingPattern,
                 rowSequence = trip.rowSequence,
+                seedingDetails = trip.seedingDetails,
                 clientUpdatedAt = java.time.Instant.now().toString(),
                 savedAt = System.currentTimeMillis(),
             ),
@@ -189,6 +192,7 @@ class TripStartSync(
                         id = payload.tripId,
                         startTime = payload.startTime,
                         clientUpdatedAt = payload.clientUpdatedAt,
+                        seedingDetails = payload.seedingDetails,
                     )
                     // Seed the planned row sequence chosen on the Start sheet.
                     // Non-fatal: the trip row exists either way, and local row

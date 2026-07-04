@@ -27,6 +27,17 @@ data class SeedingBox(
             !meteringWheel.isNullOrBlank() ||
             seedVolumeKg != null ||
             gearboxSetting != null
+
+    /**
+     * Stricter than [hasAnyValue] — ignores default shutter/flap/wheel settings
+     * so an empty box isn't treated as a useful previous setup just because
+     * defaults were persisted (iOS `SeedingBox.hasMeaningfulValue` parity).
+     */
+    val hasMeaningfulValue: Boolean
+        get() = !mixName.isNullOrBlank() ||
+            (ratePerHa ?: 0.0) > 0 ||
+            (seedVolumeKg ?: 0.0) > 0 ||
+            (gearboxSetting ?: 0.0) > 0
 }
 
 @Serializable
@@ -70,4 +81,46 @@ data class SeedingDetails(
             backBox?.hasAnyValue == true ||
             sowingDepthCm != null ||
             mixLines?.any { it.hasAnyValue } == true
+
+    /**
+     * True only when at least one genuinely useful, operator-entered value
+     * exists — default-only box settings do NOT count (iOS parity). Gates the
+     * "Copy from previous seeding job" quality note on the Start Trip sheet.
+     */
+    val hasMeaningfulValue: Boolean
+        get() = frontBox?.hasMeaningfulValue == true ||
+            backBox?.hasMeaningfulValue == true ||
+            (sowingDepthCm ?: 0.0) > 0 ||
+            mixLines?.any { it.hasAnyValue } == true
+}
+
+/**
+ * Returns [lines] with any missing `percentOfMix` populated from `kgPerHa` as a
+ * percentage of the total kg/ha for the same seed box. Operator-entered
+ * percentages are preserved unchanged (iOS `fillCalculatedPercentOfMix` parity).
+ */
+fun fillCalculatedPercentOfMix(lines: List<SeedingMixLine>): List<SeedingMixLine> {
+    if (lines.isEmpty()) return lines
+    val totals = mutableMapOf<String, Double>()
+    for (line in lines) {
+        val kg = line.kgPerHa ?: continue
+        if (kg <= 0) continue
+        val key = line.seedBox?.takeIf { it.isNotEmpty() } ?: "_unspecified"
+        totals[key] = (totals[key] ?: 0.0) + kg
+    }
+    return lines.map { line ->
+        val kg = line.kgPerHa
+        if (line.percentOfMix == null && kg != null && kg > 0) {
+            val key = line.seedBox?.takeIf { it.isNotEmpty() } ?: "_unspecified"
+            val total = totals[key]
+            if (total != null && total > 0) {
+                val pct = (kg / total) * 100.0
+                line.copy(percentOfMix = kotlin.math.round(pct * 10) / 10)
+            } else {
+                line
+            }
+        } else {
+            line
+        }
+    }
 }

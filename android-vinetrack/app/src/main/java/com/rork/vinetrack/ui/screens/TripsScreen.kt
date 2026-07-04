@@ -46,6 +46,11 @@ import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DirectionsCar
@@ -123,6 +128,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -141,7 +147,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -177,6 +186,7 @@ import com.rork.vinetrack.data.model.SeedingBox
 import com.rork.vinetrack.data.model.SeedingDetails
 import com.rork.vinetrack.data.model.SeedingMixLine
 import com.rork.vinetrack.data.model.SprayRecord
+import com.rork.vinetrack.data.model.fillCalculatedPercentOfMix
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.builtInTripFunctions
 import com.rork.vinetrack.data.model.formatTripDuration
@@ -2214,6 +2224,32 @@ private fun StartTripSheet(
     var machineMenu by remember { mutableStateOf(false) }
     var pathMenu by remember { mutableStateOf(false) }
 
+    // Seeding Details (iOS `StartTripSheet` parity — only used when the
+    // selected trip function is Seeding). Box pickers default to the iOS
+    // defaults: Front 3/4-1-N, Rear Full-3-F.
+    var seedingExpanded by remember { mutableStateOf(false) }
+    var useFrontBox by remember { mutableStateOf(true) }
+    var useBackBox by remember { mutableStateOf(true) }
+    var seedFrontMix by remember { mutableStateOf("") }
+    var seedBackMix by remember { mutableStateOf("") }
+    var seedFrontRate by remember { mutableStateOf("") }
+    var seedBackRate by remember { mutableStateOf("") }
+    var sowingDepth by remember { mutableStateOf("") }
+    var seedFrontShutter by remember { mutableStateOf("3/4") }
+    var seedFrontFlap by remember { mutableStateOf("1") }
+    var seedFrontWheel by remember { mutableStateOf("N") }
+    var seedFrontVolume by remember { mutableStateOf("") }
+    var seedFrontGearbox by remember { mutableStateOf("") }
+    var seedBackShutter by remember { mutableStateOf("Full") }
+    var seedBackFlap by remember { mutableStateOf("3") }
+    var seedBackWheel by remember { mutableStateOf("F") }
+    var seedBackVolume by remember { mutableStateOf("") }
+    var seedBackGearbox by remember { mutableStateOf("") }
+    var seedMixLines by remember { mutableStateOf<List<SeedingMixLine>>(emptyList()) }
+    var copiedFromNote by remember { mutableStateOf<String?>(null) }
+    var copyMissing by remember { mutableStateOf(false) }
+    var copyFoundButEmpty by remember { mutableStateOf(false) }
+
     // Selected blocks sorted lowest-row-first (iOS `rowOrderSort` parity).
     val selectedPaddocks = remember(state.paddocks, paddockIds) {
         state.paddocks.filter { it.id in paddockIds }
@@ -2264,7 +2300,122 @@ private fun StartTripSheet(
             TripRowSequencePlanner.generateSequence(selectedPaddocks, pattern, startPath, directionHigherFirst)
         }
     }
-    val canStart = paddockIds.isNotEmpty()
+    val isSeedingSelected = functionRaw == "seeding"
+    val seedBoxesInvalid = isSeedingSelected && !useFrontBox && !useBackBox
+    val canStart = paddockIds.isNotEmpty() && !seedBoxesInvalid
+
+    /** iOS `buildSeedingDetails` parity — tolerant numeric parsing included. */
+    fun buildSeedingDetails(): SeedingDetails {
+        fun trimmedOrNull(s: String): String? = s.trim().ifBlank { null }
+        val front = if (useFrontBox) {
+            SeedingBox(
+                mixName = trimmedOrNull(seedFrontMix),
+                ratePerHa = parseSeedingNumber(seedFrontRate),
+                shutterSlide = trimmedOrNull(seedFrontShutter),
+                bottomFlap = trimmedOrNull(seedFrontFlap),
+                meteringWheel = trimmedOrNull(seedFrontWheel),
+                seedVolumeKg = parseSeedingNumber(seedFrontVolume),
+                gearboxSetting = parseSeedingNumber(seedFrontGearbox),
+            )
+        } else {
+            null
+        }
+        val back = if (useBackBox) {
+            SeedingBox(
+                mixName = trimmedOrNull(seedBackMix),
+                ratePerHa = parseSeedingNumber(seedBackRate),
+                shutterSlide = trimmedOrNull(seedBackShutter),
+                bottomFlap = trimmedOrNull(seedBackFlap),
+                meteringWheel = trimmedOrNull(seedBackWheel),
+                seedVolumeKg = parseSeedingNumber(seedBackVolume),
+                gearboxSetting = parseSeedingNumber(seedBackGearbox),
+            )
+        } else {
+            null
+        }
+        val lines = fillCalculatedPercentOfMix(seedMixLines.filter { it.hasAnyValue })
+        return SeedingDetails(
+            frontBox = front,
+            backBox = back,
+            sowingDepthCm = parseSeedingNumber(sowingDepth),
+            mixLines = lines.ifEmpty { null },
+        )
+    }
+
+    /**
+     * iOS `applyPreviousSeedingSetup` parity: find the most recent finished
+     * seeding trip, prefer one with genuinely useful operator-entered values,
+     * and copy its box toggles, box settings, sowing depth and mix lines into
+     * the form. Trip-specific fields (block, operator, pattern) are NOT copied.
+     */
+    fun applyPreviousSeedingSetup() {
+        val vineyardId = state.selectedVineyardId
+        val candidates = state.trips
+            .filter { t ->
+                val raw = t.tripFunction ?: return@filter false
+                (vineyardId == null || t.vineyardId == vineyardId) &&
+                    (raw == "seeding" || raw.lowercase().contains("seed")) &&
+                    !t.isActive && !t.isPaused
+            }
+            .sortedByDescending { it.endEpochMs ?: it.startEpochMs ?: 0L }
+        val chosen = candidates.firstOrNull { it.seedingDetails?.hasMeaningfulValue == true }
+            ?: candidates.firstOrNull { it.seedingDetails?.hasAnyValue == true }
+            ?: candidates.firstOrNull()
+        if (chosen == null) {
+            copyMissing = true
+            copyFoundButEmpty = false
+            copiedFromNote = null
+            return
+        }
+        val details = chosen.seedingDetails ?: SeedingDetails()
+        copyMissing = false
+        val isUseful = details.hasMeaningfulValue
+        copyFoundButEmpty = !isUseful
+
+        val front = details.frontBox
+        if (front != null) {
+            useFrontBox = true
+            seedFrontMix = front.mixName ?: ""
+            seedFrontRate = front.ratePerHa?.let(::seedTrimNum) ?: ""
+            front.shutterSlide?.takeIf { it.isNotEmpty() }?.let { seedFrontShutter = it }
+            front.bottomFlap?.takeIf { it.isNotEmpty() }?.let { seedFrontFlap = it }
+            front.meteringWheel?.takeIf { it.isNotEmpty() }?.let { seedFrontWheel = it }
+            seedFrontVolume = front.seedVolumeKg?.let(::seedTrimNum) ?: ""
+            seedFrontGearbox = front.gearboxSetting?.let(::seedTrimNum) ?: ""
+        } else {
+            useFrontBox = false
+        }
+        val back = details.backBox
+        if (back != null) {
+            useBackBox = true
+            seedBackMix = back.mixName ?: ""
+            seedBackRate = back.ratePerHa?.let(::seedTrimNum) ?: ""
+            back.shutterSlide?.takeIf { it.isNotEmpty() }?.let { seedBackShutter = it }
+            back.bottomFlap?.takeIf { it.isNotEmpty() }?.let { seedBackFlap = it }
+            back.meteringWheel?.takeIf { it.isNotEmpty() }?.let { seedBackWheel = it }
+            seedBackVolume = back.seedVolumeKg?.let(::seedTrimNum) ?: ""
+            seedBackGearbox = back.gearboxSetting?.let(::seedTrimNum) ?: ""
+        } else {
+            useBackBox = false
+        }
+        // Very early seeding records may have no boxes at all — keep the form
+        // usable by defaulting Front Box on after copy (iOS parity).
+        if (details.frontBox == null && details.backBox == null) useFrontBox = true
+        sowingDepth = details.sowingDepthCm?.let(::seedTrimNum) ?: ""
+        // Re-id copied mix lines so edits don't bleed into the source trip.
+        seedMixLines = details.mixLines.orEmpty().map { line ->
+            SeedingMixLine(
+                id = java.util.UUID.randomUUID().toString(),
+                name = line.name,
+                percentOfMix = line.percentOfMix,
+                seedBox = line.seedBox,
+                kgPerHa = line.kgPerHa,
+                supplierManufacturer = line.supplierManufacturer,
+            )
+        }
+        copiedFromNote = if (isUseful) describeCopiedSeedingTrip(chosen) else null
+        seedingExpanded = true
+    }
 
     fun start() {
         if (saving) return
@@ -2278,6 +2429,14 @@ private fun StartTripSheet(
         val machine = machines.firstOrNull { it.id == machineId }
         val engineHours = if (machineId != null) {
             startEngineHoursText.trim().replace(",", ".").toDoubleOrNull()?.takeIf { it >= 0 }
+        } else {
+            null
+        }
+        // Always persist seeding details when the function is Seeding (even if
+        // only box toggles) so "Copy from previous seeding job" works next time
+        // (iOS parity).
+        val seedingDetails = if (isSeedingSelected) {
+            buildSeedingDetails().takeIf { it.frontBox != null || it.backBox != null || it.hasAnyValue }
         } else {
             null
         }
@@ -2296,6 +2455,7 @@ private fun StartTripSheet(
             startEngineHours = engineHours,
             trackingPattern = effectivePattern.rawValue,
             rowSequence = sequence,
+            seedingDetails = seedingDetails,
         ) { ok ->
             saving = false
             if (ok) vm.activeTripIdOrNull()?.let(onStarted)
@@ -2482,6 +2642,162 @@ private fun StartTripSheet(
                     colors = startTripFieldColors(vine.cardBackground),
                     modifier = Modifier.fillMaxWidth(),
                 )
+            }
+
+            // SEEDING DETAILS — iOS parity: shown only when Seeding is selected.
+            if (isSeedingSelected) {
+                StartTripSection("Seeding Details", Icons.Filled.Grass, VineColors.LeafGreen) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(vine.cardBackground),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { seedingExpanded = !seedingExpanded }
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                "Optional details",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = vine.textPrimary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text("All fields optional", fontSize = 11.sp, color = vine.textSecondary)
+                            Icon(
+                                if (seedingExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                contentDescription = if (seedingExpanded) "Collapse" else "Expand",
+                                tint = VineColors.LeafGreen,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        if (seedingExpanded) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp),
+                            ) {
+                                // Copy from previous seeding job
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(vine.appBackground)
+                                            .clickable { applyPreviousSeedingSetup() }
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.ContentCopy,
+                                            contentDescription = null,
+                                            tint = VineColors.LeafGreen,
+                                            modifier = Modifier.size(20.dp),
+                                        )
+                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(
+                                                "Copy from previous seeding job",
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = vine.textPrimary,
+                                            )
+                                            Text(
+                                                "Reuse boxes, rates, depth and mix lines",
+                                                fontSize = 12.sp,
+                                                color = vine.textSecondary,
+                                            )
+                                        }
+                                    }
+                                    val note = copiedFromNote
+                                    if (note != null) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(14.dp))
+                                            Text(note, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = VineColors.LeafGreen)
+                                        }
+                                    } else if (copyFoundButEmpty) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Icon(Icons.Filled.Info, contentDescription = null, tint = VineColors.Warning, modifier = Modifier.size(14.dp))
+                                            Text(
+                                                "Previous seeding job found, but it has no useful saved setup.",
+                                                fontSize = 11.sp,
+                                                color = VineColors.Warning,
+                                            )
+                                        }
+                                    } else if (copyMissing) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Icon(Icons.Filled.Info, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(14.dp))
+                                            Text("No previous seeding setup found.", fontSize = 11.sp, color = vine.textSecondary)
+                                        }
+                                    }
+                                }
+
+                                StartTripSeedBoxToggle("Use Front Box", useFrontBox) { useFrontBox = it }
+                                StartTripSeedBoxToggle("Use Rear Box", useBackBox) { useBackBox = it }
+                                if (!useFrontBox && !useBackBox) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Icon(Icons.Filled.Warning, contentDescription = null, tint = VineColors.Warning, modifier = Modifier.size(14.dp))
+                                        Text(
+                                            "Enable at least one seed box for a Seeding trip.",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = VineColors.Warning,
+                                        )
+                                    }
+                                }
+
+                                // Main fields (iOS `seedingMainFields` parity)
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    if (useFrontBox) {
+                                        StartTripSeedingFieldRow("Seed/Fert mix — Front Box", seedFrontMix, { seedFrontMix = it }, "e.g. Ryecorn + Vetch", fieldBg = vine.appBackground)
+                                        StartTripSeedingFieldRow("Rate/ha — Front Box", seedFrontRate, { seedFrontRate = it }, "0", numeric = true, suffix = "kg/ha", fieldBg = vine.appBackground)
+                                    }
+                                    if (useBackBox) {
+                                        StartTripSeedingFieldRow("Seed/Fert mix — Rear Box", seedBackMix, { seedBackMix = it }, "e.g. Tic Beans", fieldBg = vine.appBackground)
+                                        StartTripSeedingFieldRow("Rate/ha — Rear Box", seedBackRate, { seedBackRate = it }, "0", numeric = true, suffix = "kg/ha", fieldBg = vine.appBackground)
+                                    }
+                                    StartTripSeedingFieldRow("Sowing depth", sowingDepth, { sowingDepth = it }, "0", numeric = true, suffix = "cm", fieldBg = vine.appBackground)
+                                }
+
+                                if (useFrontBox) {
+                                    StartTripSeedBoxCard(
+                                        title = "Front Box",
+                                        shutter = seedFrontShutter, onShutter = { seedFrontShutter = it },
+                                        flap = seedFrontFlap, onFlap = { seedFrontFlap = it },
+                                        wheel = seedFrontWheel, onWheel = { seedFrontWheel = it },
+                                        volume = seedFrontVolume, onVolume = { seedFrontVolume = it },
+                                        gearbox = seedFrontGearbox, onGearbox = { seedFrontGearbox = it },
+                                    )
+                                }
+                                if (useBackBox) {
+                                    StartTripSeedBoxCard(
+                                        title = "Rear Box",
+                                        shutter = seedBackShutter, onShutter = { seedBackShutter = it },
+                                        flap = seedBackFlap, onFlap = { seedBackFlap = it },
+                                        wheel = seedBackWheel, onWheel = { seedBackWheel = it },
+                                        volume = seedBackVolume, onVolume = { seedBackVolume = it },
+                                        gearbox = seedBackGearbox, onGearbox = { seedBackGearbox = it },
+                                    )
+                                }
+
+                                StartTripSeedMixCard(
+                                    lines = seedMixLines,
+                                    seedInputs = state.savedInputs.filter { input ->
+                                        input.inputType == "seed" &&
+                                            (state.selectedVineyardId == null || input.vineyardId == state.selectedVineyardId)
+                                    }.sortedBy { it.displayName.lowercase() },
+                                    onLinesChange = { seedMixLines = it },
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             // TRACKING PATTERN
@@ -2719,11 +3035,17 @@ private fun StartTripSheet(
                         Text("  Start Trip", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
-                if (!canStart) {
+                if (paddockIds.isEmpty()) {
                     Text(
                         "Select at least one block to start the trip.",
                         fontSize = 11.sp,
                         color = vine.textSecondary,
+                    )
+                } else if (seedBoxesInvalid) {
+                    Text(
+                        "Enable at least one seed box for a Seeding trip.",
+                        fontSize = 11.sp,
+                        color = VineColors.Warning,
                     )
                 }
             }
@@ -2959,6 +3281,355 @@ private fun startTripFieldColors(container: Color): TextFieldColors = TextFieldD
     unfocusedIndicatorColor = Color.Transparent,
     disabledIndicatorColor = Color.Transparent,
 )
+
+/**
+ * Tolerant numeric parser (iOS `parseNumber` parity): trims whitespace, accepts
+ * comma decimals, and strips common unit suffixes ("20 kg", "20kg/ha") so
+ * operator-entered values still persist correctly.
+ */
+private fun parseSeedingNumber(s: String): Double? {
+    val raw = s.trim()
+    if (raw.isEmpty()) return null
+    raw.replace(',', '.').toDoubleOrNull()?.let { return it }
+    val cleaned = raw.replace(',', '.').filter { it.isDigit() || it == '.' || it == '-' }
+    return cleaned.toDoubleOrNull()
+}
+
+/** iOS `describeCopiedTrip` parity: "Copied setup from Seeding — Block — Date". */
+private fun describeCopiedSeedingTrip(trip: Trip): String {
+    val epoch = trip.endEpochMs ?: trip.startEpochMs
+    val date = epoch?.let {
+        java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault()).format(java.util.Date(it))
+    }
+    val block = trip.paddockName?.trim().orEmpty()
+    return when {
+        block.isEmpty() && date == null -> "Copied setup from Seeding"
+        block.isEmpty() -> "Copied setup from Seeding — $date"
+        date == null -> "Copied setup from Seeding — $block"
+        else -> "Copied setup from Seeding — $block — $date"
+    }
+}
+
+/** iOS `boxToggleRow` parity — tinted seed-box enable toggle. */
+@Composable
+private fun StartTripSeedBoxToggle(title: String, checked: Boolean, onToggle: (Boolean) -> Unit) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(vine.appBackground)
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(Icons.Filled.Inventory2, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(18.dp))
+        Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, modifier = Modifier.weight(1f))
+        Switch(
+            checked = checked,
+            onCheckedChange = onToggle,
+            colors = SwitchDefaults.colors(checkedTrackColor = VineColors.LeafGreen),
+        )
+    }
+}
+
+/**
+ * Compact left-label field row (iOS `seedingTextField` / `seedingNumericField`
+ * parity). [fieldBg] lets nested cards alternate backgrounds like iOS's
+ * secondary/tertiary grouped fills.
+ */
+@Composable
+private fun StartTripSeedingFieldRow(
+    label: String,
+    value: String,
+    onChange: (String) -> Unit,
+    placeholder: String,
+    numeric: Boolean = false,
+    suffix: String? = null,
+    fieldBg: Color,
+) {
+    val vine = LocalVineColors.current
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, fontSize = 12.sp, color = vine.textSecondary, modifier = Modifier.width(128.dp))
+        Box(Modifier.weight(1f)) {
+            BasicTextField(
+                value = value,
+                onValueChange = { new ->
+                    onChange(if (numeric) new.filter { c -> c.isDigit() || c == '.' || c == ',' } else new)
+                },
+                singleLine = true,
+                textStyle = TextStyle(fontSize = 14.sp, color = vine.textPrimary),
+                cursorBrush = SolidColor(VineColors.Primary),
+                keyboardOptions = if (numeric) {
+                    KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                } else {
+                    KeyboardOptions.Default
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(fieldBg)
+                    .padding(horizontal = 10.dp, vertical = 10.dp),
+            )
+            if (value.isEmpty()) {
+                Text(
+                    placeholder,
+                    fontSize = 14.sp,
+                    color = vine.textSecondary.copy(alpha = 0.6f),
+                    maxLines = 1,
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .padding(horizontal = 10.dp),
+                )
+            }
+        }
+        if (suffix != null) {
+            Text(suffix, fontSize = 11.sp, color = vine.textSecondary)
+        }
+    }
+}
+
+/** Left-label segmented option row (iOS `seedingPicker` parity). */
+@Composable
+private fun StartTripSeedingChoiceRow(
+    label: String,
+    selection: String,
+    options: List<String>,
+    fieldBg: Color,
+    onSelect: (String) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, fontSize = 12.sp, color = vine.textSecondary, modifier = Modifier.width(128.dp))
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(fieldBg)
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            options.forEach { option ->
+                val selected = option == selection
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (selected) VineColors.LeafGreen else Color.Transparent)
+                        .clickable { onSelect(option) }
+                        .padding(vertical = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        option,
+                        fontSize = 12.sp,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (selected) Color.White else vine.textPrimary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Front/Rear seed box settings card (iOS `seedingBoxCard` parity). */
+@Composable
+private fun StartTripSeedBoxCard(
+    title: String,
+    shutter: String, onShutter: (String) -> Unit,
+    flap: String, onFlap: (String) -> Unit,
+    wheel: String, onWheel: (String) -> Unit,
+    volume: String, onVolume: (String) -> Unit,
+    gearbox: String, onGearbox: (String) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(vine.appBackground)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(title.uppercase(), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+        StartTripSeedingChoiceRow("Shutter Slide", shutter, listOf("3/4", "Full"), vine.cardBackground, onShutter)
+        StartTripSeedingChoiceRow("Bottom Flap", flap, listOf("1", "3"), vine.cardBackground, onFlap)
+        StartTripSeedingChoiceRow("Metering Wheel", wheel, listOf("N", "F"), vine.cardBackground, onWheel)
+        StartTripSeedingFieldRow("Volume of Seed", volume, onVolume, "0", numeric = true, suffix = "kg", fieldBg = vine.cardBackground)
+        StartTripSeedingFieldRow("Seed Rate Gearbox", gearbox, onGearbox, "0", numeric = true, fieldBg = vine.cardBackground)
+    }
+}
+
+/** Seed Mix Breakdown card with add/remove lines (iOS `seedingMixLinesCard` parity). */
+@Composable
+private fun StartTripSeedMixCard(
+    lines: List<SeedingMixLine>,
+    seedInputs: List<SavedInput>,
+    onLinesChange: (List<SeedingMixLine>) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(vine.appBackground)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "SEED MIX BREAKDOWN",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable {
+                        onLinesChange(lines + SeedingMixLine(id = java.util.UUID.randomUUID().toString(), seedBox = "Front"))
+                    }
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Icon(Icons.Filled.AddCircle, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(16.dp))
+                Text("Add line", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.LeafGreen)
+            }
+        }
+        if (lines.isEmpty()) {
+            Text("Optional. Tap Add line to record seed components.", fontSize = 11.sp, color = vine.textSecondary)
+        } else {
+            lines.forEachIndexed { index, line ->
+                StartTripSeedingMixLineCard(
+                    index = index,
+                    line = line,
+                    seedInputs = seedInputs,
+                    onChange = { updated -> onLinesChange(lines.toMutableList().also { it[index] = updated }) },
+                    onRemove = { onLinesChange(lines.toMutableList().also { it.removeAt(index) }) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * One editable seed mix line (iOS `seedingMixLineRow` parity): Saved Input
+ * link, name, % of mix, seed box, kg/ha and supplier. Numeric fields hold
+ * local text state keyed on the line id so decimal typing stays smooth.
+ */
+@Composable
+private fun StartTripSeedingMixLineCard(
+    index: Int,
+    line: SeedingMixLine,
+    seedInputs: List<SavedInput>,
+    onChange: (SeedingMixLine) -> Unit,
+    onRemove: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    var inputMenu by remember { mutableStateOf(false) }
+    var percentText by remember(line.id) { mutableStateOf(line.percentOfMix?.let(::seedTrimNum) ?: "") }
+    var kgText by remember(line.id) { mutableStateOf(line.kgPerHa?.let(::seedTrimNum) ?: "") }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(vine.cardBackground)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Line ${index + 1}",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onRemove, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Filled.Delete, contentDescription = "Remove line", tint = VineColors.Destructive, modifier = Modifier.size(16.dp))
+            }
+        }
+        // Saved Input link — picking one snapshots name + cost per unit.
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Saved Input", fontSize = 12.sp, color = vine.textSecondary, modifier = Modifier.width(128.dp))
+            Box(Modifier.weight(1f)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(vine.appBackground)
+                        .clickable { inputMenu = true }
+                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    val linked = seedInputs.firstOrNull { it.id == line.savedInputId }
+                    Text(
+                        linked?.displayName ?: "Manual entry",
+                        fontSize = 13.sp,
+                        color = if (linked == null) vine.textSecondary else vine.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Icon(Icons.Filled.UnfoldMore, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(14.dp))
+                }
+                DropdownMenu(expanded = inputMenu, onDismissRequest = { inputMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Manual entry") },
+                        onClick = {
+                            onChange(line.copy(savedInputId = null))
+                            inputMenu = false
+                        },
+                    )
+                    seedInputs.forEach { si ->
+                        DropdownMenuItem(
+                            text = { Text(si.displayName) },
+                            onClick = {
+                                onChange(
+                                    line.copy(
+                                        savedInputId = si.id,
+                                        name = si.name,
+                                        inputType = si.inputType,
+                                        unit = si.unit,
+                                        costPerUnit = si.costPerUnit,
+                                        supplierManufacturer = line.supplierManufacturer?.takeIf { it.isNotBlank() }
+                                            ?: si.supplier?.trim()?.takeIf { it.isNotBlank() },
+                                    ),
+                                )
+                                inputMenu = false
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        if (seedInputs.isEmpty()) {
+            Text(
+                "No saved seed inputs yet. Add them in Settings → Spray & Equipment → Saved Inputs.",
+                fontSize = 10.sp,
+                color = vine.textSecondary.copy(alpha = 0.7f),
+            )
+        }
+        StartTripSeedingFieldRow("Name", line.name ?: "", { onChange(line.copy(name = it.ifBlank { null })) }, "e.g. Ryecorn", fieldBg = vine.appBackground)
+        StartTripSeedingFieldRow(
+            "% of Mix", percentText,
+            { percentText = it; onChange(line.copy(percentOfMix = parseSeedingNumber(it))) },
+            "0", numeric = true, suffix = "%", fieldBg = vine.appBackground,
+        )
+        StartTripSeedingChoiceRow("Seed Box", line.seedBox ?: "Front", listOf("Front", "Back"), vine.appBackground) {
+            onChange(line.copy(seedBox = it))
+        }
+        StartTripSeedingFieldRow(
+            "Kg/ha", kgText,
+            { kgText = it; onChange(line.copy(kgPerHa = parseSeedingNumber(it))) },
+            "0", numeric = true, suffix = "kg/ha", fieldBg = vine.appBackground,
+        )
+        StartTripSeedingFieldRow("Supplier", line.supplierManufacturer ?: "", { onChange(line.copy(supplierManufacturer = it.ifBlank { null })) }, "Manufacturer", fieldBg = vine.appBackground)
+    }
+}
 
 /** Multi-select block picker (iOS `MultiPaddockPickerSheet` parity). */
 @Composable
