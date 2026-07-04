@@ -117,12 +117,20 @@ class TripRepository(private val session: SessionStore) {
      * `null` to clear them (the shared client drops nulls otherwise).
      */
 
-    /** Live progress autosave while a trip is active. */
+    /**
+     * Live progress autosave while a trip is active. The optional pause/resume
+     * timestamp arrays mirror the iOS `trips.pause_timestamps` /
+     * `resume_timestamps` columns used by `Trip.activeDuration`; null omits the
+     * column (shared client uses `explicitNulls = false`) so a caller that
+     * doesn't track them never clobbers server values.
+     */
     @Serializable
     private data class TripProgressPatch(
         @SerialName("path_points") val pathPoints: List<CoordinatePoint>,
         @SerialName("total_distance") val totalDistance: Double,
         @SerialName("is_paused") val isPaused: Boolean,
+        @SerialName("pause_timestamps") val pauseTimestamps: List<String>? = null,
+        @SerialName("resume_timestamps") val resumeTimestamps: List<String>? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
@@ -422,6 +430,8 @@ class TripRepository(private val session: SessionStore) {
         pathPoints: List<CoordinatePoint>,
         totalDistance: Double,
         isPaused: Boolean,
+        pauseTimestamps: List<String>? = null,
+        resumeTimestamps: List<String>? = null,
     ): Trip = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -429,6 +439,8 @@ class TripRepository(private val session: SessionStore) {
             pathPoints = pathPoints,
             totalDistance = totalDistance,
             isPaused = isPaused,
+            pauseTimestamps = pauseTimestamps,
+            resumeTimestamps = resumeTimestamps,
             clientUpdatedAt = nowIso(),
         )
         patchTrip(id, patch, token)
@@ -557,6 +569,8 @@ class TripRepository(private val session: SessionStore) {
         startEngineHours: Double?,
         clientUpdatedAt: String,
         paddockIds: List<String> = emptyList(),
+        pauseTimestamps: List<String>? = null,
+        resumeTimestamps: List<String>? = null,
     ): Trip = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -575,6 +589,14 @@ class TripRepository(private val session: SessionStore) {
             put("operator_user_id", operatorUserId?.let { JsonPrimitive(it) } ?: JsonNull)
             put("operator_category_id", operatorCategoryId?.let { JsonPrimitive(it) } ?: JsonNull)
             put("is_paused", JsonPrimitive(isPaused))
+            // Pause/resume stamps ride along only when the caller tracks them
+            // (iOS `Trip.activeDuration` parity) — never cleared by omission.
+            if (pauseTimestamps != null) {
+                put("pause_timestamps", buildJsonArray { pauseTimestamps.forEach { add(JsonPrimitive(it)) } })
+            }
+            if (resumeTimestamps != null) {
+                put("resume_timestamps", buildJsonArray { resumeTimestamps.forEach { add(JsonPrimitive(it)) } })
+            }
             if (startEngineHours != null) put("start_engine_hours", JsonPrimitive(startEngineHours))
             put("client_updated_at", JsonPrimitive(clientUpdatedAt))
         }

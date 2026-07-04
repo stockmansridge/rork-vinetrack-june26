@@ -69,6 +69,13 @@ class TripMetadataSync(
         val operatorUserId: String? = null,
         val operatorCategoryId: String? = null,
         val isPaused: Boolean = false,
+        /**
+         * Pause/resume stamps captured with the queued pause/resume edit (iOS
+         * `Trip.activeDuration` parity). Null on legacy payloads — the replay
+         * then omits the columns so it never clears server values.
+         */
+        val pauseTimestamps: List<String>? = null,
+        val resumeTimestamps: List<String>? = null,
         val startEngineHours: Double? = null,
         val clientUpdatedAt: String,
         val baseClientUpdatedAt: String? = null,
@@ -110,6 +117,8 @@ class TripMetadataSync(
                 operatorUserId = trip.operatorUserId,
                 operatorCategoryId = trip.operatorCategoryId,
                 isPaused = trip.isPaused,
+                pauseTimestamps = trip.pauseTimestamps,
+                resumeTimestamps = trip.resumeTimestamps,
                 startEngineHours = trip.startEngineHours,
                 clientUpdatedAt = java.time.Instant.now().toString(),
                 baseClientUpdatedAt = preservedBase,
@@ -205,6 +214,8 @@ class TripMetadataSync(
                         startEngineHours = payload.startEngineHours,
                         clientUpdatedAt = payload.clientUpdatedAt,
                         paddockIds = payload.paddockIds,
+                        pauseTimestamps = payload.pauseTimestamps,
+                        resumeTimestamps = payload.resumeTimestamps,
                     )
                     pending.remove(write.id)
                     onSynced(trip)

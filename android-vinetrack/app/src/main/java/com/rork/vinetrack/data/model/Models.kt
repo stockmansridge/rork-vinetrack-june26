@@ -486,24 +486,33 @@ data class Trip(
      * time (i.e. still active) and no start, otherwise measures to now.
      */
     val activeDurationSeconds: Long?
-        get() {
-            val start = startEpochMs ?: return null
-            val end = endEpochMs ?: System.currentTimeMillis()
-            val pauses = pauseTimestamps.orEmpty().mapNotNull { parseIsoToEpochMs(it) }
-            val resumes = resumeTimestamps.orEmpty().mapNotNull { parseIsoToEpochMs(it) }
-            var total = 0L
-            var lastStart = start
-            for (i in pauses.indices) {
-                total += pauses[i] - lastStart
-                if (i < resumes.size) {
-                    lastStart = resumes[i]
-                } else {
-                    return total / 1000
-                }
+        get() = activeDurationSecondsAt(System.currentTimeMillis())
+
+    /**
+     * Pause-aware active duration measured against an explicit "now" instant —
+     * the live-timer variant of [activeDurationSeconds] so a ticking UI clock
+     * can pass its own frame time. An open pause (more pause stamps than resume
+     * stamps) freezes the total at the pause moment, exactly like iOS
+     * `Trip.activeDuration`.
+     */
+    fun activeDurationSecondsAt(nowEpochMs: Long): Long? {
+        val start = startEpochMs ?: return null
+        val end = endEpochMs ?: nowEpochMs
+        val pauses = pauseTimestamps.orEmpty().mapNotNull { parseIsoToEpochMs(it) }
+        val resumes = resumeTimestamps.orEmpty().mapNotNull { parseIsoToEpochMs(it) }
+        var total = 0L
+        var lastStart = start
+        for (i in pauses.indices) {
+            total += pauses[i] - lastStart
+            if (i < resumes.size) {
+                lastStart = resumes[i]
+            } else {
+                return (total / 1000).coerceAtLeast(0)
             }
-            total += end - lastStart
-            return total / 1000
         }
+        total += end - lastStart
+        return (total / 1000).coerceAtLeast(0)
+    }
 }
 
 /**

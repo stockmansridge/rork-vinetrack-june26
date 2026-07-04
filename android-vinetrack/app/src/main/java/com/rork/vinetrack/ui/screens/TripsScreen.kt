@@ -4884,12 +4884,14 @@ private fun Divider(color: Color) {
     Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(color))
 }
 
-/** Live elapsed seconds for an active trip, holding still while paused. */
-private fun liveDurationSeconds(trip: Trip, nowMs: Long): Long {
-    val start = trip.startEpochMs ?: return 0L
-    val end = if (trip.isActive) nowMs else (trip.endEpochMs ?: nowMs)
-    return ((end - start) / 1000).coerceAtLeast(0)
-}
+/**
+ * Live elapsed seconds for an active trip, excluding paused intervals — the
+ * ticking-clock counterpart of [Trip.activeDurationSeconds] (iOS
+ * `Trip.activeDuration` parity). An open pause freezes the value at the pause
+ * moment, so the timer holds still while paused and resumes without a jump.
+ */
+private fun liveDurationSeconds(trip: Trip, nowMs: Long): Long =
+    trip.activeDurationSecondsAt(nowMs) ?: 0L
 
 /** HH:MM:SS style for the live timer. */
 private fun clockDuration(seconds: Long): String {

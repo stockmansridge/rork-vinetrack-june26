@@ -4232,9 +4232,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Pause or resume GPS capture for the active trip. */
+    /**
+     * Pause or resume GPS capture for the active trip. Mirrors iOS
+     * `TripTrackingService.pauseTrip`/`resumeTrip`: alongside the `is_paused`
+     * flag it appends a `pause_timestamps`/`resume_timestamps` entry so the
+     * active timer, end-trip duration, and cost estimates exclude paused time
+     * (`Trip.activeDuration` parity).
+     */
     fun setTripPaused(tripId: String, paused: Boolean) {
-        _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == tripId) it.copy(isPaused = paused) else it }) }
+        val nowIso = java.time.Instant.now().toString()
+        _ui.update { st ->
+            st.copy(
+                trips = st.trips.map { t ->
+                    if (t.id != tripId) return@map t
+                    when {
+                        paused && !t.isPaused -> t.copy(
+                            isPaused = true,
+                            pauseTimestamps = t.pauseTimestamps.orEmpty() + nowIso,
+                        )
+                        !paused && t.isPaused -> t.copy(
+                            isPaused = false,
+                            resumeTimestamps = t.resumeTimestamps.orEmpty() + nowIso,
+                        )
+                        else -> t
+                    }
+                },
+            )
+        }
         persistActiveTripSnapshot()
         val trip = _ui.value.trips.firstOrNull { it.id == tripId } ?: return
         // Stage B-1: when offline, queue the pause/resume as a scalar edit so it
@@ -4246,8 +4270,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             try {
-                tripRepo.saveProgress(tripId, trip.pathPoints ?: emptyList(), trip.totalDistance ?: 0.0, paused)
+                tripRepo.saveProgress(
+                    tripId,
+                    trip.pathPoints ?: emptyList(),
+                    trip.totalDistance ?: 0.0,
+                    trip.isPaused,
+                    pauseTimestamps = trip.pauseTimestamps.orEmpty(),
+                    resumeTimestamps = trip.resumeTimestamps.orEmpty(),
+                )
             } catch (_: Exception) {
+                // Autosave-style write; a lost pause PATCH is recovered by the
+                // next progress save or the queued metadata edit on reconnect.
+                val current = _ui.value.trips.firstOrNull { it.id == tripId }
+                if (current != null && current.isActive) tripMetadataSync.enqueue(current)
             }
         }
     }
@@ -4680,7 +4715,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             try {
-                tripRepo.saveProgress(tripId, points, distance, paused)
+                tripRepo.saveProgress(
+                    tripId,
+                    points,
+                    distance,
+                    paused,
+                    pauseTimestamps = trip.pauseTimestamps.orEmpty(),
+                    resumeTimestamps = trip.resumeTimestamps.orEmpty(),
+                )
             } catch (_: Exception) {
                 // Server autosave failed while we believed we were online. Queue a
                 // marker so the progress is merged/replayed on reconnect rather
@@ -4814,6 +4856,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             pathPoints = if (useLocalPath) local.pathPoints else server.pathPoints,
             totalDistance = if (useLocalPath) local.totalDistance else server.totalDistance,
             isPaused = local.isPaused,
+            pauseTimestamps = local.pauseTimestamps,
+            resumeTimestamps = local.resumeTimestamps,
             completedPaths = local.completedPaths,
             skippedPaths = local.skippedPaths,
             trackingPattern = local.trackingPattern,
