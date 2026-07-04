@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -3999,49 +4000,64 @@ private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, on
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        // Scrollable review content with the Finish button pinned below it, so the
+        // confirmation action is always reachable even with long row lists.
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .imePadding()
+                .navigationBarsPadding()
+                .padding(bottom = 16.dp),
         ) {
-            Text("End trip", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
-            Text("Add any completion notes before finishing.", fontSize = 13.sp, color = vine.textSecondary)
+            Column(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text("End trip", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                Text("Add any completion notes before finishing.", fontSize = 13.sp, color = vine.textSecondary)
 
-            if (hasRowPlan) {
-                EndTripRowReview(
-                    sequence = sequence,
-                    completedSet = completedSet,
-                    skippedSet = skippedSet,
-                    missedPaths = missedPaths,
-                    reviewCompletes = reviewCompletes,
+                if (hasRowPlan) {
+                    EndTripRowReview(
+                        sequence = sequence,
+                        completedSet = completedSet,
+                        skippedSet = skippedSet,
+                        missedPaths = missedPaths,
+                        reviewCompletes = reviewCompletes,
+                    )
+                }
+
+                OutlinedTextField(
+                    value = endEngineHoursText,
+                    onValueChange = { endEngineHoursText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
+                    label = { Text("End engine hours (optional)") },
+                    placeholder = {
+                        Text(trip.startEngineHours?.let { "Start was ${formatEngineHours(it)}" } ?: "e.g. 1246.0")
+                    },
+                    singleLine = true,
+                    isError = engineHoursInvalid,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (engineHoursInvalid) {
+                    Text(
+                        "End hours can't be lower than the start reading (${formatEngineHours(trip.startEngineHours ?: 0.0)}). Fix or clear it to finish.",
+                        fontSize = 12.sp,
+                        color = VineColors.Destructive,
+                    )
+                }
+
+                OutlinedTextField(
+                    value = notes,
+                    onValueChange = { notes = it },
+                    label = { Text("Completion notes (optional)") },
+                    modifier = Modifier.fillMaxWidth().height(110.dp),
                 )
             }
 
-            OutlinedTextField(
-                value = endEngineHoursText,
-                onValueChange = { endEngineHoursText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                label = { Text("End engine hours (optional)") },
-                placeholder = {
-                    Text(trip.startEngineHours?.let { "Start was ${formatEngineHours(it)}" } ?: "e.g. 1246.0")
-                },
-                singleLine = true,
-                isError = engineHoursInvalid,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (engineHoursInvalid) {
-                Text(
-                    "End hours can't be lower than the start reading (${formatEngineHours(trip.startEngineHours ?: 0.0)}). Fix or clear it to finish.",
-                    fontSize = 12.sp,
-                    color = VineColors.Destructive,
-                )
-            }
-
-            OutlinedTextField(
-                value = notes,
-                onValueChange = { notes = it },
-                label = { Text("Completion notes (optional)") },
-                modifier = Modifier.fillMaxWidth().height(110.dp),
-            )
+            Spacer(Modifier.height(16.dp))
             Button(
                 onClick = {
                     saving = true
