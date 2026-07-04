@@ -2,6 +2,7 @@ package com.rork.vinetrack.ui.screens
 
 import android.Manifest
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,6 +38,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
@@ -56,6 +59,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.LocalDrink
@@ -69,6 +73,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Route
@@ -92,6 +97,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.SyncAlt
 import androidx.compose.material.icons.filled.Tune
@@ -133,20 +139,26 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.SolidColor
@@ -174,6 +186,7 @@ import com.google.maps.android.compose.Polygon
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.rork.vinetrack.data.OperationPrefsStore
+import com.rork.vinetrack.data.RowAttachment
 import com.rork.vinetrack.data.TrackingPattern
 import com.rork.vinetrack.data.TripCostEstimator
 import com.rork.vinetrack.data.TripCsvExporter
@@ -209,6 +222,8 @@ import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import java.text.DateFormatSymbols
 import java.text.SimpleDateFormat
@@ -1476,8 +1491,25 @@ private fun ActiveTripHud(
     }
     val cameraPositionState = rememberCameraPositionState()
     var followUser by remember { mutableStateOf(true) }
+    // Map orientation: false = north-up (iOS default), true = heading-facing.
+    var headingUp by remember { mutableStateOf(false) }
+    // Zoom held stable across follow updates. Re-captured from the camera only
+    // when the operator taps Recenter — GPS ticks never change zoom.
+    var followZoom by remember { mutableFloatStateOf(18f) }
+    var showRowChips by remember { mutableStateOf(true) }
+    var panelExpanded by remember { mutableStateOf(false) }
+    // Repairs/Growth quick-pin launcher shown over the HUD (iOS sheet parity).
+    var hudLauncherMode by remember { mutableStateOf<String?>(null) }
     var hybrid by remember { mutableStateOf(true) }
     var hudMapLoaded by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    // Measured overlay heights feed the map contentPadding so the Google
+    // watermark/controls stay visible and follow-centre sits in the clear area.
+    var topOverlayHeightPx by remember { mutableIntStateOf(0) }
+    var bottomPanelHeightPx by remember { mutableIntStateOf(0) }
+    val topOverlayHeight = with(density) { topOverlayHeightPx.toDp() }
+    val bottomPanelHeight = with(density) { bottomPanelHeightPx.toDp() }
 
     val bearing = state.latestBearingDegrees
     val speedKmh = state.latestSpeedMetresPerSecond?.let { (it * 3.6).coerceAtLeast(0.0) }
@@ -1497,19 +1529,28 @@ private fun ActiveTripHud(
         val pts = blocks.flatMap { it.polygonPoints ?: emptyList() }.mapNotNull { it.toLatLng() }
         cameraPositionState.fitToContent(points = pts, paddingPx = 120, singlePointZoom = 16f)
     }
-    // Follow-the-driver: animate to the live fix (with course heading) while
-    // follow mode is engaged. Developer animations don't flip us out of follow.
-    LaunchedEffect(current, bearing, followUser) {
-        val target = current
-        if (followUser && target != null) {
-            val zoom = cameraPositionState.position.zoom.takeIf { it > 2f } ?: 18f
-            val pos = CameraPosition.Builder()
-                .target(target)
-                .zoom(zoom)
-                .bearing(bearing?.toFloat() ?: cameraPositionState.position.bearing)
-                .tilt(35f)
-                .build()
-            runCatching { cameraPositionState.animate(CameraUpdateFactory.newCameraPosition(pos), 600) }
+    // Follow-the-driver on a fixed ~1Hz cadence with a STABLE zoom. This is the
+    // zoom-jitter fix: the old effect restarted an animation on every GPS or
+    // bearing tick and re-read the zoom mid-flight, feeding transient values
+    // back into the next camera target so the map appeared to zoom out and
+    // back in. Now recentring only moves lat/lng (plus bearing in heading-up
+    // mode); zoom/tilt stay fixed and bounds-fitting never runs while tracking.
+    val liveTarget by rememberUpdatedState(current)
+    val liveBearing by rememberUpdatedState(bearing)
+    LaunchedEffect(followUser, headingUp) {
+        if (!followUser) return@LaunchedEffect
+        while (isActive) {
+            val target = liveTarget
+            if (target != null) {
+                val pos = CameraPosition.Builder()
+                    .target(target)
+                    .zoom(followZoom)
+                    .bearing(if (headingUp) (liveBearing?.toFloat() ?: cameraPositionState.position.bearing) else 0f)
+                    .tilt(if (headingUp) 45f else 0f)
+                    .build()
+                runCatching { cameraPositionState.animate(CameraUpdateFactory.newCameraPosition(pos), 700) }
+            }
+            delay(350)
         }
     }
     // A manual pan/zoom drops us into free mode until the operator recenters.
@@ -1538,6 +1579,75 @@ private fun ActiveTripHud(
     val offPlan = livePath != null && plannedPath != null &&
         kotlin.math.abs(livePath - plannedPath) >= 0.5 && !trip.isPaused
 
+    // ---- Left/right row labels (iOS rowIndicatorOverlay parity) ----
+    // Block the tractor is currently inside, falling back to the trip's blocks.
+    val currentBlock = remember(blocks, current) {
+        blocks.firstOrNull { RowAttachment.containsPoint(it, current?.latitude, current?.longitude) }
+            ?: blocks.firstOrNull()
+    }
+    // Travel bearing latched with hysteresis so the labels don't flicker while
+    // turning at headlands or on GPS jitter (mirrors iOS updateTravelBearing):
+    // only accept samples roughly along the row vector, and flip the lock only
+    // after 3 consecutive opposite samples.
+    var lockedTravelBearing by remember { mutableStateOf<Double?>(null) }
+    var bearingFlipSamples by remember { mutableIntStateOf(0) }
+    LaunchedEffect(bearing, currentBlock?.rowDirection) {
+        val b = bearing ?: return@LaunchedEffect
+        val rowDir = currentBlock?.rowDirection ?: return@LaunchedEffect
+        var diffToRow = b - rowDir
+        while (diffToRow < 0) diffToRow += 360
+        while (diffToRow >= 360) diffToRow -= 360
+        val alongRow = diffToRow < 45 || diffToRow > 315 || (diffToRow > 135 && diffToRow < 225)
+        if (!alongRow) return@LaunchedEffect
+        val locked = lockedTravelBearing
+        if (locked == null) {
+            lockedTravelBearing = b
+            bearingFlipSamples = 0
+            return@LaunchedEffect
+        }
+        var diffToLocked = b - locked
+        while (diffToLocked < 0) diffToLocked += 360
+        while (diffToLocked >= 360) diffToLocked -= 360
+        if (diffToLocked > 135 && diffToLocked < 225) {
+            bearingFlipSamples += 1
+            if (bearingFlipSamples >= 3) {
+                lockedTravelBearing = b
+                bearingFlipSamples = 0
+            }
+        } else {
+            bearingFlipSamples = 0
+        }
+    }
+    val pathForLabels = livePath ?: plannedPath
+    val travelingAlongRow = run {
+        val locked = lockedTravelBearing
+        val rowDir = currentBlock?.rowDirection
+        if (locked == null || rowDir == null) {
+            true
+        } else {
+            var diff = locked - rowDir
+            while (diff < 0) diff += 360
+            while (diff >= 360) diff -= 360
+            diff < 90 || diff > 270
+        }
+    }
+    val maxSequenceRow = remember(trip.rowSequence) {
+        trip.rowSequence.maxOfOrNull { kotlin.math.ceil(it).toInt() }
+    }
+    fun sideLabel(row: Int): String = when {
+        row < 1 -> "Start"
+        maxSequenceRow != null && row > maxSequenceRow -> "End"
+        else -> "Row $row"
+    }
+    val leftRowLabel = pathForLabels?.let { p ->
+        val lower = kotlin.math.floor(p).toInt()
+        sideLabel(if (travelingAlongRow) lower + 1 else lower)
+    }
+    val rightRowLabel = pathForLabels?.let { p ->
+        val lower = kotlin.math.floor(p).toInt()
+        sideLabel(if (travelingAlongRow) lower else lower + 1)
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
@@ -1549,6 +1659,7 @@ private fun ActiveTripHud(
                 compassEnabled = false,
                 myLocationButtonEnabled = false,
             ),
+            contentPadding = PaddingValues(top = topOverlayHeight, bottom = bottomPanelHeight),
             onMapLoaded = { hudMapLoaded = true },
         ) {
             blocks.forEach { block ->
@@ -1582,6 +1693,7 @@ private fun ActiveTripHud(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
+                .onSizeChanged { topOverlayHeightPx = it.height }
                 .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent)))
                 .statusBarsPadding()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -1606,24 +1718,78 @@ private fun ActiveTripHud(
                 HudStat(Icons.Filled.Speed, speedKmh?.let { "%.0f".format(it) } ?: "\u2014", "km/h", Modifier.weight(1f))
             }
             HudGpsPill(accuracy)
+            // Repairs / Growth quick-pin actions (iOS tripInfoBar parity).
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HudActionPill(Icons.Filled.Place, "Repairs", VineColors.Orange, Modifier.weight(1f)) { hudLauncherMode = "Repairs" }
+                HudActionPill(Icons.Filled.Place, "Growth", VineColors.LeafGreen, Modifier.weight(1f)) { hudLauncherMode = "Growth" }
+            }
         }
 
-        // Map controls (recenter / map type) docked on the right edge.
+        // Map controls docked top-right below the stat bar (iOS mapControls
+        // parity) so they never sit behind the bottom panel.
         Column(
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = topOverlayHeight + 12.dp, end = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             HudCircleButton(
                 if (followUser) Icons.Filled.NearMe else Icons.Filled.MyLocation,
                 "Recenter",
                 active = followUser,
-                onClick = { followUser = true },
+                onClick = {
+                    // Respect the operator's manual zoom when re-engaging follow.
+                    val z = cameraPositionState.position.zoom
+                    followZoom = if (z in 14f..21f) z else 18f
+                    followUser = true
+                },
+            )
+            HudCircleButton(
+                if (headingUp) Icons.Filled.Navigation else Icons.Filled.Explore,
+                if (headingUp) "Switch to north-up" else "Switch to heading-up",
+                active = headingUp,
+                onClick = {
+                    headingUp = !headingUp
+                    if (!headingUp && !followUser) {
+                        // Flatten to north-up in place without touching zoom.
+                        val flat = CameraPosition.Builder(cameraPositionState.position).bearing(0f).tilt(0f).build()
+                        scope.launch {
+                            runCatching { cameraPositionState.animate(CameraUpdateFactory.newCameraPosition(flat), 400) }
+                        }
+                    }
+                },
+            )
+            HudCircleButton(
+                Icons.Filled.SwapHoriz,
+                "Toggle row labels",
+                active = showRowChips,
+                onClick = { showRowChips = !showRowChips },
             )
             HudCircleButton(Icons.Filled.Layers, "Map type", onClick = { hybrid = !hybrid })
         }
 
-        // Bottom control panel.
-        Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+        // Left/right adjacent-row chips (iOS rowIndicatorOverlay parity).
+        if (showRowChips && leftRowLabel != null && rightRowLabel != null && currentBlock != null) {
+            RowSideChip(
+                isLeft = true,
+                label = leftRowLabel,
+                modifier = Modifier.align(Alignment.CenterStart).padding(start = 12.dp),
+            )
+            RowSideChip(
+                isLeft = false,
+                label = rightRowLabel,
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
+            )
+        }
+
+        // Bottom control panel — compact by default so the map stays the
+        // primary focus; secondary controls expand on demand.
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .onSizeChanged { bottomPanelHeightPx = it.height },
+        ) {
             if (offPlan && plannedPath != null) {
                 Row(
                     modifier = Modifier
@@ -1650,11 +1816,11 @@ private fun ActiveTripHud(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 360.dp)
+                        .heightIn(max = 340.dp)
                         .verticalScroll(rememberScrollState())
-                        .padding(16.dp)
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
                         .navigationBarsPadding(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     if (trip.rowSequence.isNotEmpty() || livePath != null) {
                         RowGuidanceBar(
@@ -1671,7 +1837,12 @@ private fun ActiveTripHud(
                             fontSize = 12.sp,
                         )
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val isSprayTrip = linkedSpray != null ||
+                        trip.tripFunction == "spraying" ||
+                        (trip.totalTanks ?: 0) > 0 ||
+                        trip.tankSessions.isNotEmpty()
+                    val hasSecondaryControls = !trip.isPaused && (trip.rowSequence.isNotEmpty() || isSprayTrip)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedButton(
                             onClick = { vm.setTripPaused(trip.id, !trip.isPaused) },
                             enabled = !state.tripBusy,
@@ -1689,21 +1860,94 @@ private fun ActiveTripHud(
                             Icon(Icons.Filled.Stop, contentDescription = null)
                             Text("  End")
                         }
+                        if (hasSecondaryControls) {
+                            OutlinedButton(
+                                onClick = { panelExpanded = !panelExpanded },
+                                modifier = Modifier.height(40.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp),
+                            ) {
+                                Icon(
+                                    if (panelExpanded) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
+                                    contentDescription = if (panelExpanded) "Hide trip controls" else "More trip controls",
+                                )
+                            }
+                        }
                     }
-                    if (trip.rowSequence.isNotEmpty() && !trip.isPaused) {
-                        Divider(vine.cardBorder)
-                        RowCoverageControls(vm = vm, trip = trip, busy = state.tripBusy)
-                    }
-                    val isSprayTrip = linkedSpray != null ||
-                        trip.tripFunction == "spraying" ||
-                        (trip.totalTanks ?: 0) > 0 ||
-                        trip.tankSessions.isNotEmpty()
-                    if (isSprayTrip && !trip.isPaused) {
-                        Divider(vine.cardBorder)
-                        TankSessionControls(vm = vm, trip = trip, linkedSpray = linkedSpray, busy = state.tripBusy)
+                    if (panelExpanded && !trip.isPaused) {
+                        if (trip.rowSequence.isNotEmpty()) {
+                            Divider(vine.cardBorder)
+                            RowCoverageControls(vm = vm, trip = trip, busy = state.tripBusy)
+                        }
+                        if (isSprayTrip) {
+                            Divider(vine.cardBorder)
+                            TankSessionControls(vm = vm, trip = trip, linkedSpray = linkedSpray, busy = state.tripBusy)
+                        }
                     }
                 }
             }
+        }
+
+        // Repairs/Growth quick-pin launcher over the HUD — mirrors the iOS
+        // RepairsGrowthView sheets. Back (or Cancel) returns to the live map.
+        hudLauncherMode?.let { mode ->
+            BackHandler { hudLauncherMode = null }
+            Surface(modifier = Modifier.fillMaxSize(), color = vine.appBackground) {
+                PinCategoryLauncherScreen(
+                    vm = vm,
+                    state = state,
+                    initialMode = mode,
+                    onBack = { hudLauncherMode = null },
+                    onOpenList = { hudLauncherMode = null },
+                )
+            }
+        }
+    }
+}
+
+/** Tinted Repairs/Growth quick-action pill in the HUD top bar (iOS parity). */
+@Composable
+private fun HudActionPill(
+    icon: ImageVector,
+    label: String,
+    tint: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(tint.copy(alpha = 0.35f))
+            .clickable(onClick = onClick)
+            .padding(vertical = 9.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** Left/right adjacent-row chip overlaid on the live map (iOS rowChip parity). */
+@Composable
+private fun RowSideChip(isLeft: Boolean, label: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .width(78.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            if (isLeft) Icons.AutoMirrored.Filled.ArrowBack else Icons.AutoMirrored.Filled.ArrowForward,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(14.dp),
+        )
+        AnimatedContent(targetState = label, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "rowSide") { v ->
+            Text(v, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
         }
     }
 }
