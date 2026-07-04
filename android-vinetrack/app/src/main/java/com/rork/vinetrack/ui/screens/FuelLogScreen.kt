@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
@@ -598,6 +599,32 @@ private fun FuelSheet(
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
+                )
+            }
+
+            // Auto-calc: litres × cost per litre → total. Explicit action only —
+            // never overwrites a manually entered receipt total on its own, and
+            // the total field stays editable afterwards. Zero cost per litre is
+            // allowed (internal transfers / free fuel).
+            val costPerLitreValue = costPerLitreText.replace(',', '.').toDoubleOrNull()
+            val canCalculateTotal = litres > 0 && costPerLitreValue != null && costPerLitreValue >= 0
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        val cpl = costPerLitreValue ?: return@OutlinedButton
+                        totalCostText = String.format(Locale.US, "%.2f", (litres * cpl).coerceAtLeast(0.0))
+                    },
+                    enabled = canCalculateTotal,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Filled.Calculate, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Text("  Calculate total")
+                }
+                Text(
+                    if (canCalculateTotal) "Total = litres × cost per litre. You can still edit the total after calculating."
+                    else "Enter litres and cost per litre to calculate the total.",
+                    color = vine.textSecondary,
+                    fontSize = 12.sp,
                 )
             }
 

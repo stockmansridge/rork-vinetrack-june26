@@ -232,6 +232,14 @@ struct FuelFillFormSheet: View {
     private var engineHours: Double? { engineHoursText.isEmpty ? nil : Double(engineHoursText) }
     private var isValid: Bool { litres > 0 }
 
+    private var costPerLitre: Double? { Double(costPerLitreText.replacingOccurrences(of: ",", with: ".")) }
+    /// Auto-calc needs litres > 0 and a non-negative cost per litre. Zero cost
+    /// is allowed (internal transfers / free fuel).
+    private var canCalculateTotal: Bool {
+        guard litres > 0, let cpl = costPerLitre else { return false }
+        return cpl >= 0
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -328,18 +336,30 @@ struct FuelFillFormSheet: View {
             Text("L/hr is most accurate when both this fill and the previous fill were to the same tank level (full).")
         }
 
-        Section("Cost (optional)") {
+        Section {
             HStack {
                 Text("$").foregroundStyle(.secondary)
                 TextField("Cost per litre", text: $costPerLitreText)
                     .keyboardType(.decimalPad)
                 Text("/L").foregroundStyle(.secondary)
             }
+            Button {
+                calculateTotal()
+            } label: {
+                Label("Calculate total", systemImage: "equal.circle")
+            }
+            .disabled(!canCalculateTotal)
             HStack {
                 Text("$").foregroundStyle(.secondary)
                 TextField("Total cost", text: $totalCostText)
                     .keyboardType(.decimalPad)
             }
+        } header: {
+            Text("Cost (optional)")
+        } footer: {
+            Text(canCalculateTotal || !totalCostText.isEmpty
+                 ? "Total = litres × cost per litre. You can still edit the total after calculating."
+                 : "Enter litres and cost per litre to calculate the total.")
         }
 
         Section("Notes (optional)") {
@@ -428,6 +448,13 @@ struct FuelFillFormSheet: View {
         case .unrealisticRate: return "exclamationmark.triangle.fill"
         case .notFilledToFull: return "drop"
         }
+    }
+
+    /// Fills the total cost field from litres × cost per litre. Explicit user
+    /// action only — never overwrites a manually entered receipt total on its own.
+    private func calculateTotal() {
+        guard litres > 0, let cpl = costPerLitre, cpl >= 0 else { return }
+        totalCostText = String(format: "%.2f", max(0, litres * cpl))
     }
 
     private func save() {
