@@ -65,6 +65,7 @@ class AppPreferencesStore(context: Context) {
             putString(KEY_TZ, value.timezone)
         }
         _displayModeFlow.value = value.displayMode
+        _keepScreenAwakeFlow.value = value.keepScreenAwake
     }
 
     companion object {
@@ -81,9 +82,20 @@ class AppPreferencesStore(context: Context) {
         /** Process-wide display mode, observed by the root theme to switch live. */
         val displayModeFlow: StateFlow<DisplayMode> = _displayModeFlow.asStateFlow()
 
-        /** Seeds [displayModeFlow] from persisted prefs. Call once at app start. */
+        private val _keepScreenAwakeFlow = MutableStateFlow(AppPreferences.factory.keepScreenAwake)
+
+        /**
+         * Process-wide "keep screen awake during trips" preference, observed by
+         * the active trip screen so a mid-trip toggle applies immediately
+         * (mirrors iOS `ScreenAwakeManager.preferenceDidChange`).
+         */
+        val keepScreenAwakeFlow: StateFlow<Boolean> = _keepScreenAwakeFlow.asStateFlow()
+
+        /** Seeds the process-wide flows from persisted prefs. Call once at app start. */
         fun seedDisplayMode(context: Context) {
-            _displayModeFlow.value = AppPreferencesStore(context).load().displayMode
+            val loaded = AppPreferencesStore(context).load()
+            _displayModeFlow.value = loaded.displayMode
+            _keepScreenAwakeFlow.value = loaded.keepScreenAwake
         }
     }
 }
