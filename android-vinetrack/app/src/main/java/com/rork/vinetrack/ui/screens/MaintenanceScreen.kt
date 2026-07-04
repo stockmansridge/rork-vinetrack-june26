@@ -370,7 +370,7 @@ private fun MaintenanceDetailView(
                     DetailRowM(Icons.Filled.Schedule, "Date", formatMaintDate(log.startEpochMs) ?: "—", VineColors.Cyan)
                     log.machineHours?.takeIf { it > 0 }?.let {
                         DividerM(vine.cardBorder)
-                        DetailRowM(Icons.Filled.Speed, "Engine hours", "${trimNum(it)} h", VineColors.Indigo)
+                        DetailRowM(Icons.Filled.Speed, "Machine hours", "${trimNum(it)} h", VineColors.Indigo)
                     }
                     if (log.hours > 0) {
                         DividerM(vine.cardBorder)
@@ -636,7 +636,7 @@ private fun MaintenanceSheet(
                 OutlinedTextField(
                     value = machineHoursText,
                     onValueChange = { machineHoursText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                    label = { Text("Engine hours") },
+                    label = { Text("Machine hours") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),

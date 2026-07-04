@@ -79,7 +79,7 @@ struct MaintenanceLogListView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(store.maintenanceLogs.count) record\(store.maintenanceLogs.count == 1 ? "" : "s")")
                     .font(.headline)
-                Text(String(format: "%.1f total hours logged", totalHours))
+                Text(String(format: "%.1f total labour hours logged", totalHours))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -130,7 +130,7 @@ struct MaintenanceLogListView: View {
                 )
                 hourMetric(
                     value: totalHours,
-                    label: "Hours",
+                    label: "Labour Hours",
                     icon: "clock.fill",
                     color: VineyardTheme.olive
                 )
@@ -232,7 +232,7 @@ struct MaintenanceLogListView: View {
                         alignment: .leading,
                         spacing: 6
                     ) {
-                        rowMetric(label: "Hours", value: String(format: "%.1f h", log.hours))
+                        rowMetric(label: "Labour Hours", value: String(format: "%.1f h", log.hours))
 
                         if let mh = log.machineHours, mh > 0 {
                             rowMetric(label: "Machine", value: String(format: "%.0f mh", mh))

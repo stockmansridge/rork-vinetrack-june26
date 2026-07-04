@@ -161,7 +161,7 @@ struct AddEditMaintenanceLogView: View {
                 Section("Service Details") {
                     DatePicker("Date", selection: $date, displayedComponents: .date)
                     HStack {
-                        Text("Hours")
+                        Text("Labour Hours")
                         Spacer()
                         TextField("0", text: $hours)
                             .keyboardType(.decimalPad)

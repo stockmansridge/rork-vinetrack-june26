@@ -81,7 +81,7 @@ struct MaintenanceLogDetailView: View {
             Text("Service Details")
                 .font(.headline)
 
-            detailRow(label: "Hours", value: String(format: "%.1f hrs", currentLog.hours), icon: "clock.fill", color: VineyardTheme.olive)
+            detailRow(label: "Labour Hours", value: String(format: "%.1f hrs", currentLog.hours), icon: "clock.fill", color: VineyardTheme.olive)
 
             if let mh = currentLog.machineHours {
                 detailRow(label: "Machine Hours", value: String(format: "%.1f", mh), icon: "gauge.with.dots.needle.67percent", color: VineyardTheme.earthBrown)
