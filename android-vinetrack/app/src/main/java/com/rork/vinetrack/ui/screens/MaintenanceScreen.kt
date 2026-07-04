@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,11 +23,13 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -57,6 +60,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MenuAnchorType
@@ -80,10 +84,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.MaintenanceLogRepository
@@ -564,6 +571,11 @@ private fun MaintenanceSheet(
     val resolvedName = equipment?.name ?: itemName.trim()
     val canSave = resolvedName.isNotBlank() && !saving
 
+    // Financial fields are gated by role, matching iOS (owner/manager only).
+    val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
+    val costTotal = (partsCostText.replace(',', '.').toDoubleOrNull() ?: 0.0) +
+        (labourCostText.replace(',', '.').toDoubleOrNull() ?: 0.0)
+
     fun save() {
         if (!canSave) return
         saving = true
@@ -667,23 +679,44 @@ private fun MaintenanceSheet(
                 modifier = Modifier.fillMaxWidth().height(80.dp),
             )
 
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = partsCostText,
-                    onValueChange = { partsCostText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                    label = { Text("Parts cost") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.weight(1f),
-                )
-                OutlinedTextField(
-                    value = labourCostText,
-                    onValueChange = { labourCostText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                    label = { Text("Labour cost") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.weight(1f),
-                )
+            // Costs — iOS-parity stacked card: Parts Cost, Labour Cost, auto Total.
+            if (canViewFinancials) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Costs", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(vine.cardBackground, RoundedCornerShape(12.dp))
+                            .border(1.dp, vine.cardBorder, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 16.dp),
+                    ) {
+                        CostInputRowM(
+                            label = "Parts Cost",
+                            value = partsCostText,
+                            onValueChange = { partsCostText = it },
+                        )
+                        HorizontalDivider(color = vine.cardBorder)
+                        CostInputRowM(
+                            label = "Labour Cost",
+                            value = labourCostText,
+                            onValueChange = { labourCostText = it },
+                        )
+                        HorizontalDivider(color = vine.cardBorder)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Total", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                formatMoneyExact(costTotal),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = VineColors.EarthBrown,
+                            )
+                        }
+                    }
+                }
             }
 
             MaintenancePhotoSection(
@@ -912,4 +945,45 @@ private fun trimNum(value: Double): String =
 private fun formatMoney(value: Double): String {
     val rounded = if (value % 1.0 == 0.0) "%,d".format(value.toLong()) else "%,.2f".format(value)
     return "$$rounded"
+}
+
+/** Always-two-decimals money display, used for the form's auto Total row. */
+private fun formatMoneyExact(value: Double): String = "$%,.2f".format(value)
+
+/**
+ * iOS-style editable cost row: label on the left, "$" prefix plus a right-aligned
+ * inline decimal field on the right. Blank input is treated as 0 by the caller.
+ */
+@Composable
+private fun CostInputRowM(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, fontSize = 15.sp, color = vine.textPrimary)
+        Spacer(Modifier.weight(1f))
+        Text("$ ", fontSize = 15.sp, color = vine.textSecondary)
+        BasicTextField(
+            value = value,
+            onValueChange = { input -> onValueChange(input.filter { c -> c.isDigit() || c == '.' || c == ',' }) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            textStyle = TextStyle(fontSize = 15.sp, color = vine.textPrimary, textAlign = TextAlign.End),
+            cursorBrush = SolidColor(VineColors.PrimaryAccent),
+            modifier = Modifier.width(96.dp),
+            decorationBox = { innerTextField ->
+                Box(contentAlignment = Alignment.CenterEnd) {
+                    if (value.isEmpty()) {
+                        Text("0.00", fontSize = 15.sp, color = vine.textSecondary.copy(alpha = 0.5f))
+                    }
+                    innerTextField()
+                }
+            },
+        )
+    }
 }
