@@ -186,74 +186,88 @@ struct MaintenanceLogListView: View {
         Button {
             selectedLog = log
         } label: {
-            HStack(spacing: 14) {
-                VStack {
-                    Image(systemName: "gearshape.fill")
-                        .font(.title3)
-                        .foregroundStyle(.white)
-                }
-                .frame(width: 44, height: 44)
-                .background(VineyardTheme.earthBrown.gradient, in: .rect(cornerRadius: 12))
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "gearshape.fill")
+                    .font(.title3)
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(VineyardTheme.earthBrown.gradient, in: .rect(cornerRadius: 12))
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(store.resolvedMaintenanceItemName(log))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(store.resolvedMaintenanceItemName(log))
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
 
-                    HStack(spacing: 6) {
+                        Spacer(minLength: 8)
+
+                        if log.invoicePhotoData != nil {
+                            Image(systemName: "doc.text.image")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Text(fmt.formatDate(log.date))
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+
+                    if !log.workCompleted.isEmpty {
                         Text(log.workCompleted)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
                     }
 
-                    HStack(spacing: 8) {
-                        Label(String(format: "%.1fh", log.hours), systemImage: "clock")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                    LazyVGrid(
+                        columns: [
+                            GridItem(.flexible(), alignment: .leading),
+                            GridItem(.flexible(), alignment: .leading)
+                        ],
+                        alignment: .leading,
+                        spacing: 6
+                    ) {
+                        rowMetric(label: "Hours", value: String(format: "%.1f h", log.hours))
 
-                        if let mh = log.machineHours {
-                            Text("•")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                            Label(String(format: "%.0f mh", mh), systemImage: "gauge.with.dots.needle.67percent")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                        if let mh = log.machineHours, mh > 0 {
+                            rowMetric(label: "Machine", value: String(format: "%.0f mh", mh))
                         }
 
-                        if log.totalCost > 0 && (accessControl?.canViewFinancials ?? false) {
-                            Text("•")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                            Text(fmt.formatCurrency(log.totalCost))
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(VineyardTheme.earthBrown)
-                        }
-
-                        if log.invoicePhotoData != nil {
-                            Text("•")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                            Image(systemName: "doc.text.image")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                        if accessControl?.canViewFinancials ?? false {
+                            rowMetric(label: "Parts", value: fmt.formatCurrency(log.partsCost))
+                            rowMetric(label: "Labour", value: fmt.formatCurrency(log.labourCost))
+                            rowMetric(label: "Total", value: fmt.formatCurrency(log.totalCost), emphasized: true)
                         }
                     }
-                }
-
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(fmt.formatDate(log.date))
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
                 }
             }
             .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
         }
         .buttonStyle(.plain)
+    }
+
+    /// Compact label + value pair used in the log row metric grid. Values
+    /// never wrap character-by-character: single line, tail-truncated label,
+    /// slight scale-down for long currency amounts.
+    private func rowMetric(label: String, value: String, emphasized: Bool = false) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(value)
+                .font(.caption.weight(emphasized ? .bold : .semibold).monospacedDigit())
+                .foregroundStyle(emphasized ? VineyardTheme.earthBrown : .primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
     }
 
     private var emptyState: some View {
