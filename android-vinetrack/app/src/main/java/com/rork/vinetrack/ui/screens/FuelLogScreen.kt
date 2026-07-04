@@ -68,7 +68,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.FuelLogRepository
+import com.rork.vinetrack.data.VineyardMachineRepository
 import com.rork.vinetrack.data.model.TractorFuelLog
+import com.rork.vinetrack.data.model.VineyardMachine
 import com.rork.vinetrack.data.model.FuelRateResult
 import com.rork.vinetrack.data.model.fuelLogGroupKey
 import com.rork.vinetrack.data.model.fuelRate
@@ -297,13 +299,24 @@ private fun FuelMeta(icon: ImageVector, text: String) {
 
 /**
  * Post-save "Fuel Fill Saved" step, mirroring the iOS calculated-rate summary.
- * Read-only: shows the derived L/hr and engine-hours delta, plus a hint when a
- * rate could not be computed. (Applying it as a machine default is iOS-only for
- * now, since Android has no machine-update write path.)
+ * Shows the derived L/hr and engine-hours delta, plus — for owners/managers
+ * with a linked machine — an explicit "use as machine default" action so real
+ * fuel-log data can refine the machine's average fuel usage over time. The
+ * machine's stored rate is never changed without the user choosing to.
  */
 @Composable
-private fun FuelSavedSummary(rate: FuelRateResult, hoursDelta: Double?, onDone: () -> Unit) {
+private fun FuelSavedSummary(
+    vm: AppViewModel,
+    rate: FuelRateResult,
+    hoursDelta: Double?,
+    machine: VineyardMachine?,
+    canApplyDefault: Boolean,
+    onDone: () -> Unit,
+) {
     val vine = LocalVineColors.current
+    var applying by remember { mutableStateOf(false) }
+    var applied by remember { mutableStateOf(false) }
+    var applyError by remember { mutableStateOf<String?>(null) }
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -342,6 +355,60 @@ private fun FuelSavedSummary(rate: FuelRateResult, hoursDelta: Double?, onDone: 
                     "Litres per hour could not be calculated for this fill. Add engine hours on consecutive fills for the same machine to track fuel use.",
                     color = vine.textSecondary, fontSize = 13.sp,
                 )
+            }
+        }
+
+        val lph = rate.litresPerHour
+        if (lph != null && machine != null && canApplyDefault) {
+            VineyardCard {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (applied) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(18.dp))
+                            Text(
+                                "Updated ${machine.displayName} default to ${trimNum(lph)} L/hr",
+                                color = VineColors.LeafGreen, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = {
+                                applying = true
+                                applyError = null
+                                val input = VineyardMachineRepository.MachineInput(
+                                    name = machine.name,
+                                    machineType = machine.machineType ?: "tractor",
+                                    fuelTrackingEnabled = machine.fuelTrackingEnabled,
+                                    availableForJobCosting = machine.availableForJobCosting,
+                                    fuelUsageLPerHour = lph,
+                                    notes = machine.notes,
+                                    serialNumber = machine.serialNumber,
+                                    vinNumber = machine.vinNumber,
+                                )
+                                vm.updateVineyardMachine(machine.id, input) { ok ->
+                                    applying = false
+                                    if (ok) applied = true
+                                    else applyError = "Couldn't update the machine default. Check your connection and try again."
+                                }
+                            },
+                            enabled = !applying,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            if (applying) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.size(8.dp))
+                                Text("Updating…")
+                            } else {
+                                Text("Use ${trimNum(lph)} L/hr as machine default")
+                            }
+                        }
+                        applyError?.let { Text(it, color = VineColors.Destructive, fontSize = 12.sp) }
+                        Text(
+                            "The machine's default fuel rate is only changed if you choose to update it here.",
+                            color = vine.textSecondary, fontSize = 11.sp,
+                        )
+                    }
+                }
             }
         }
 
@@ -439,8 +506,11 @@ private fun FuelSheet(
         val savedSummary = savedRate
         if (savedSummary != null) {
             FuelSavedSummary(
+                vm = vm,
                 rate = savedSummary,
                 hoursDelta = savedHoursDelta,
+                machine = machine,
+                canApplyDefault = canManageSetup && machine?.isLegacyTractor == false,
                 onDone = onSaved,
             )
             return@ModalBottomSheet

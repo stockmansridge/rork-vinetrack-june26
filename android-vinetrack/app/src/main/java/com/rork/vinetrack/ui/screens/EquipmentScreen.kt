@@ -26,7 +26,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Agriculture
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.LocalGasStation
@@ -35,6 +37,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -56,10 +59,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -67,8 +72,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.AppPreferencesStore
 import com.rork.vinetrack.data.EquipmentItemRepository
 import com.rork.vinetrack.data.FuelPurchaseRepository
+import com.rork.vinetrack.data.TractorFuelLookupService
 import com.rork.vinetrack.data.VineyardMachineRepository
 import com.rork.vinetrack.data.model.EquipmentItem
 import com.rork.vinetrack.data.RegionFormatter
@@ -90,6 +97,7 @@ import java.text.SimpleDateFormat
 import java.time.Instant
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 /**
  * Equipment area — mirrors the iOS `EquipmentManagementView` hub. Owners and
@@ -405,6 +413,8 @@ private fun MachineFormSheet(
     onDelete: (() -> Unit)? = null,
 ) {
     val vine = LocalVineColors.current
+    val context = LocalContext.current
+    val aiSuggestionsEnabled = remember { AppPreferencesStore(context).load().aiSuggestionsEnabled }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var name by remember { mutableStateOf(existing?.name ?: "") }
     var type by remember { mutableStateOf(existing?.machineType ?: if (forceTractor) "tractor" else "atv") }
@@ -470,8 +480,20 @@ private fun MachineFormSheet(
                 value = fuelRate, onValueChange = { fuelRate = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
                 label = { Text("Default fuel usage (L/hr)") }, placeholder = { Text("Optional — e.g. 6.5") },
                 singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                supportingText = {
+                    Text(
+                        if (existing == null) "Used to estimate trip and machinery costs. This can be updated from fuel logs and trip history over time."
+                        else "You can manually edit this, estimate it with AI, or let fuel logs and trip history refine it over time.",
+                    )
+                },
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (type == "tractor" && aiSuggestionsEnabled) {
+                TractorAiFuelLookup(
+                    machineName = name,
+                    onApply = { lph -> fuelRate = trimNum(lph) },
+                )
+            }
             OutlinedTextField(
                 value = serial, onValueChange = { serial = it },
                 label = { Text("Serial number (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
@@ -497,6 +519,175 @@ private fun MachineFormSheet(
             }
         }
     }
+}
+
+// MARK: - AI fuel lookup (tractors)
+
+/**
+ * AI fuel-use estimate for the tractor form — mirrors the iOS `TractorFormSheet`
+ * lookup flow. The user confirms the make/model (prefilled from the machine
+ * name), runs the lookup, and must explicitly apply a match; nothing is saved
+ * until they tap Save on the form itself.
+ */
+@Composable
+private fun TractorAiFuelLookup(
+    machineName: String,
+    onApply: (Double) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val vine = LocalVineColors.current
+    val scope = rememberCoroutineScope()
+    // Prefill make/model from the machine name (e.g. "John Deere 5075E").
+    var make by remember(machineName) {
+        mutableStateOf(guessTractorMake(machineName))
+    }
+    var model by remember(machineName) {
+        mutableStateOf(guessTractorModel(machineName))
+    }
+    var yearText by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    var outcome by remember { mutableStateOf<TractorFuelLookupService.LookupOutcome?>(null) }
+
+    val canSearch = !loading && make.trim().isNotEmpty() && model.trim().isNotEmpty()
+
+    fun runLookup() {
+        if (!canSearch) return
+        loading = true
+        outcome = null
+        scope.launch {
+            val year = yearText.trim().toIntOrNull()?.takeIf { it in 1900..2100 }
+            outcome = TractorFuelLookupService().lookupFuelUsage(make, model, year)
+            loading = false
+        }
+    }
+
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = VineColors.Indigo, modifier = Modifier.size(16.dp))
+            Text("AI fuel lookup", color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = make, onValueChange = { make = it },
+                label = { Text("Make") }, placeholder = { Text("John Deere") },
+                singleLine = true, modifier = Modifier.weight(1f),
+            )
+            OutlinedTextField(
+                value = model, onValueChange = { model = it },
+                label = { Text("Model") }, placeholder = { Text("5075E") },
+                singleLine = true, modifier = Modifier.weight(1f),
+            )
+        }
+        OutlinedTextField(
+            value = yearText, onValueChange = { yearText = it.filter { c -> c.isDigit() }.take(4) },
+            label = { Text("Year (optional)") }, placeholder = { Text("2018") },
+            singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = { runLookup() }, enabled = canSearch, modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = VineColors.Indigo),
+        ) {
+            if (loading) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                Spacer(Modifier.size(8.dp))
+                Text("Searching…")
+            } else {
+                Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.size(6.dp))
+                Text(if (outcome != null) "Search Again" else "Estimate Fuel Use")
+            }
+        }
+        Text(
+            "AI estimates are approximate — actual fuel use varies by load, terrain, implement, speed, and conditions.",
+            color = vine.textSecondary, fontSize = 11.sp,
+        )
+        when (val o = outcome) {
+            is TractorFuelLookupService.LookupOutcome.Match -> AiLookupResultCard(
+                title = "Tractor match found",
+                titleColor = VineColors.LeafGreen,
+                result = o.result,
+                enteredLabel = "$make $model".trim(),
+                onApply = { onApply(o.result.fuelUsageLPerHour); outcome = null },
+                onDismiss = { outcome = null },
+            )
+            is TractorFuelLookupService.LookupOutcome.Uncertain -> AiLookupResultCard(
+                title = "Uncertain match — please verify",
+                titleColor = VineColors.Warning,
+                result = o.result,
+                enteredLabel = "$make $model".trim(),
+                onApply = { onApply(o.result.fuelUsageLPerHour); outcome = null },
+                onDismiss = { outcome = null },
+            )
+            is TractorFuelLookupService.LookupOutcome.NoMatch -> VineyardCard {
+                Text(o.message + " You can enter the fuel rate manually.", color = vine.textSecondary, fontSize = 13.sp)
+            }
+            is TractorFuelLookupService.LookupOutcome.Unavailable -> VineyardCard {
+                Text(o.message, color = VineColors.Warning, fontSize = 13.sp)
+            }
+            null -> Unit
+        }
+    }
+}
+
+/** Confirmation panel for an AI match — the estimate is only applied on tap. */
+@Composable
+private fun AiLookupResultCard(
+    title: String,
+    titleColor: Color,
+    result: TractorFuelLookupService.FuelLookupResult,
+    enteredLabel: String,
+    onApply: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    VineyardCard {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = titleColor, modifier = Modifier.size(16.dp))
+                Text(title, color = titleColor, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Text(result.matchedLabel(fallback = enteredLabel), color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text("Estimated fuel use: ${trimNum(result.fuelUsageLPerHour)} L/hr", color = vine.textPrimary, fontSize = 13.sp)
+            result.confidence?.takeIf { it.isNotBlank() }?.let {
+                Text("Confidence: ${it.replaceFirstChar { c -> c.uppercase() }}", color = vine.textSecondary, fontSize = 11.sp)
+            }
+            result.notes?.takeIf { it.isNotBlank() }?.let {
+                Text(it, color = vine.textSecondary, fontSize = 11.sp)
+            }
+            Text("Please confirm this looks correct before saving.", color = vine.textSecondary, fontSize = 11.sp)
+            Spacer(Modifier.size(2.dp))
+            Button(
+                onClick = onApply, modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+            ) { Text("Use this match") }
+            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                Text("Edit manually", color = vine.textSecondary)
+            }
+        }
+    }
+}
+
+/** Multi-word tractor brands recognised when splitting a machine name. */
+private val multiWordTractorMakes = listOf(
+    "john deere", "new holland", "massey ferguson", "case ih",
+)
+
+private fun guessTractorMake(name: String): String {
+    val trimmed = name.trim()
+    if (trimmed.isEmpty()) return ""
+    val lower = trimmed.lowercase()
+    multiWordTractorMakes.firstOrNull { lower.startsWith(it) }?.let {
+        return trimmed.take(it.length)
+    }
+    return trimmed.split(" ").first()
+}
+
+private fun guessTractorModel(name: String): String {
+    val trimmed = name.trim()
+    if (trimmed.isEmpty()) return ""
+    val make = guessTractorMake(trimmed)
+    return trimmed.removePrefix(make).trim()
 }
 
 // MARK: - Other Equipment
