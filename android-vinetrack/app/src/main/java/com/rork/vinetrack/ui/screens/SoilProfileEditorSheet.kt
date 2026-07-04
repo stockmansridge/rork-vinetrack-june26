@@ -46,6 +46,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.NSWSeedError
+import com.rork.vinetrack.data.RegionSettingsStore
 import com.rork.vinetrack.data.SoilProfileRepository
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.BackendSoilProfile
@@ -86,9 +87,23 @@ fun SoilProfileEditorSheet(
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
     val isVineyardLevel = paddockId == null
-    val isAustralian = remember(vineyardCountry) {
-        val c = vineyardCountry?.trim()?.lowercase().orEmpty()
-        c == "au" || c == "aus" || c == "australia"
+    // iOS parity: iOS resolves the vineyard country from its local store, which
+    // falls back to the legacy locally-migrated value when the backend
+    // `vineyards.country` column is null — so iOS still shows the NSW SEED
+    // lookup for Australian vineyards whose backend row never had a country
+    // recorded. Android has no legacy store, so when the explicit country is
+    // blank we fall back to the vineyard's Region & Units country (synced from
+    // the server, defaults to AU). This also matches the edge function's
+    // best-effort gate, which allows lookups for vineyards without an explicit
+    // country and only rejects explicitly non-Australian ones.
+    val isAustralian = remember(vineyardId, vineyardCountry) {
+        val explicit = vineyardCountry?.trim()?.lowercase().orEmpty()
+        if (explicit.isNotEmpty()) {
+            explicit == "au" || explicit == "aus" || explicit == "australia"
+        } else {
+            val regionCountry = RegionSettingsStore(context).load(vineyardId).countryCode
+            regionCountry.trim().uppercase(Locale.US) == "AU"
+        }
     }
     val showNSWSeed = canEdit && !isVineyardLevel && isAustralian
 
