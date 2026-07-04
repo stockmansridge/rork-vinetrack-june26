@@ -44,7 +44,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.android.gms.maps.CameraUpdateFactory
@@ -157,8 +159,9 @@ fun VineyardMapScreen(
  * as the standalone Vineyard Map and as the Pins tab's Map view mode. Renders the
  * given [pins] over satellite imagery with block boundaries, row lines and labels.
  * Read-only — switching display modes performs no database writes. When
- * [onPinClick] is supplied, tapping a pin marker invokes it (e.g. to open the pin
- * editor); otherwise the marker shows its default info-window callout.
+ * [onPinClick] is supplied, tapping a pin marker centres it in the upper half of
+ * the map (so a bottom detail sheet never hides it) and invokes the callback;
+ * otherwise the marker shows its default info-window callout.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -199,6 +202,8 @@ fun VineyardMapContent(
     var mode by remember { mutableStateOf(if (defaults.overview3D) MapMode.Overview else MapMode.TopDown) }
     var mapLoaded by remember { mutableStateOf(false) }
     var hasFramed by remember { mutableStateOf(false) }
+    // Measured map size, used to keep a tapped pin visible above the detail sheet.
+    var mapSizePx by remember { mutableStateOf(IntSize.Zero) }
 
     // Session-only overlay visibility, seeded from persisted Settings defaults.
     // Toggling here affects only the current map session (no writes to MapPrefsStore).
@@ -251,7 +256,7 @@ fun VineyardMapContent(
 
     Box(modifier) {
         GoogleMap(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().onSizeChanged { mapSizePx = it },
                 cameraPositionState = cameraPositionState,
                 properties = MapProperties(mapType = defaults.style.toMapType()),
                 uiSettings = MapUiSettings(
@@ -326,7 +331,30 @@ fun VineyardMapContent(
                             color = pinColor(pin, colorMap),
                             snippet = snippet,
                             faded = sync.hasAny,
-                            onPinClick = onPinClick,
+                            onPinClick = onPinClick?.let { cb ->
+                                { tapped: Pin ->
+                                    // Keep the tapped pin visible above the bottom
+                                    // detail sheet: centre it at the current zoom,
+                                    // then nudge the camera down-screen so the pin
+                                    // sits in the upper half of the map. No zoom
+                                    // change, no jump.
+                                    scope.launch {
+                                        runCatching {
+                                            cameraPositionState.animate(
+                                                CameraUpdateFactory.newLatLng(position),
+                                                300,
+                                            )
+                                            if (mapSizePx.height > 0) {
+                                                cameraPositionState.animate(
+                                                    CameraUpdateFactory.scrollBy(0f, mapSizePx.height * 0.18f),
+                                                    200,
+                                                )
+                                            }
+                                        }
+                                    }
+                                    cb(tapped)
+                                }
+                            },
                         )
                     }
                 }

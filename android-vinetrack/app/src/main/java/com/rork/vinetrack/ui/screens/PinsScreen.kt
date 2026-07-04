@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Directions
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.GridView
@@ -94,6 +95,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -137,6 +139,9 @@ fun PinsScreen(
     val vine = LocalVineColors.current
     val context = LocalContext.current
     var editing by remember { mutableStateOf<PinEditTarget?>(null) }
+    // Pin selected from a map marker tap — shows the detail bottom sheet first
+    // (iOS PinDetailSheet parity); the edit form only opens from its Edit action.
+    var detailPinId by rememberSaveable { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     // Map / List / Stats, mirroring the iOS segmented picker.
@@ -299,7 +304,7 @@ fun PinsScreen(
                     state = state,
                     pins = visiblePins,
                     modifier = Modifier.fillMaxSize(),
-                    onPinClick = { editing = PinEditTarget.Existing(it) },
+                    onPinClick = { detailPinId = it.id },
                 )
                 PinsViewMode.List -> PinsListMode(
                     vm = vm,
@@ -331,6 +336,37 @@ fun PinsScreen(
             vm, state, target,
             onDismiss = { editing = null },
             onConfirmation = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } },
+        )
+    }
+
+    // Selected-pin detail sheet (map tap → summary first, iOS parity). Resolved
+    // fresh from state so completion/photo/sync changes update live; if the pin
+    // is deleted while open, the sheet closes itself.
+    val detailPin = detailPinId?.let { id -> state.pins.firstOrNull { it.id == id } }
+    if (detailPinId != null && detailPin == null) {
+        LaunchedEffect(detailPinId) { detailPinId = null }
+    }
+    if (detailPin != null) {
+        PinDetailSheet(
+            vm = vm,
+            pin = detailPin,
+            color = pinColor(detailPin, colorMap),
+            paddockName = state.paddocks.firstOrNull { it.id == detailPin.paddockId }?.name,
+            sync = state.pinSyncState(detailPin.id),
+            canDelete = state.currentRole in setOf("owner", "manager", "supervisor"),
+            photoBusy = uploadingPinId == detailPin.id,
+            onDismiss = { detailPinId = null },
+            onEdit = {
+                detailPinId = null
+                editing = PinEditTarget.Existing(detailPin)
+            },
+            onDirections = { openDirections(detailPin) },
+            onPhoto = {
+                photoTarget = detailPin
+                photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            },
+            onToggle = { vm.togglePinCompleted(detailPin) },
+            onDelete = { deleteTarget = detailPin },
         )
     }
 
@@ -2601,4 +2637,246 @@ private fun PinPhotoSection(
             }
         }
     }
+}
+
+// MARK: Selected-pin detail sheet (map tap), iOS PinDetailSheet parity.
+
+/**
+ * Bottom sheet shown when a pin marker is tapped on the map (iOS
+ * `PinDetailSheet` parity). The map stays visible behind it; the sheet shows
+ * the pin's summary, quick actions, photo, notes and details. The full edit
+ * form only opens from the explicit Edit action.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PinDetailSheet(
+    vm: AppViewModel,
+    pin: Pin,
+    color: Color,
+    paddockName: String?,
+    sync: PinSyncState,
+    canDelete: Boolean,
+    photoBusy: Boolean,
+    onDismiss: () -> Unit,
+    onEdit: () -> Unit,
+    onDirections: () -> Unit,
+    onPhoto: () -> Unit,
+    onToggle: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    // Half-height first so the tapped pin stays visible on the map; drag up for
+    // the full details.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = vine.cardBackground,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            // Header: coloured disc + title + sync state + row-attachment context.
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(Brush.verticalGradient(listOf(color, color.copy(alpha = 0.8f)))),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (pin.isCompleted) {
+                        Icon(Icons.Filled.Check, contentDescription = "Completed", tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
+                }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            pin.displayTitle,
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = vine.textPrimary,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        PinHeaderSyncIcon(sync = sync, tint = vine.textSecondary)
+                    }
+                    pin.rowAttachmentLabel?.let {
+                        Text(it, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = VineColors.LeafGreen)
+                    }
+                    pin.rowAttachmentDetail?.let {
+                        Text(it, fontSize = 12.sp, color = vine.textSecondary)
+                    }
+                    pin.heading?.let {
+                        Text("Facing ${compassAbbrev(it)}", fontSize = 12.sp, color = vine.textSecondary)
+                    }
+                }
+            }
+
+            // Type + status chips.
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                val isGrowth = pin.mode?.contains("growth", ignoreCase = true) == true
+                StatusBadge(if (isGrowth) "Growth" else "Repair", if (isGrowth) GrowthColor else RepairColor)
+                StatusBadge(if (pin.isCompleted) "Done" else "Open", if (pin.isCompleted) VineColors.Success else VineColors.Warning)
+                if (sync.hasAny && !sync.needsAttention) StatusBadge("Pending sync", VineColors.Warning)
+                if (sync.needsAttention) StatusBadge("Needs attention", VineColors.Destructive)
+            }
+
+            // Quick actions (iOS ActionButton row parity, plus explicit Edit).
+            Row(modifier = Modifier.fillMaxWidth()) {
+                PinActionButton(Icons.Filled.Edit, "Edit", VineColors.Primary, modifier = Modifier.weight(1f), onClick = onEdit)
+                PinActionButton(Icons.Filled.Directions, "Directions", VineColors.LeafGreen, modifier = Modifier.weight(1f), onClick = onDirections)
+                PinActionButton(Icons.Filled.PhotoCamera, "Photo", VineColors.Purple, modifier = Modifier.weight(1f), busy = photoBusy, onClick = onPhoto)
+                PinActionButton(
+                    icon = Icons.Filled.CheckCircle,
+                    label = if (pin.isCompleted) "Undo" else "Complete",
+                    color = if (pin.isCompleted) VineColors.Warning else VineColors.Success,
+                    modifier = Modifier.weight(1f),
+                    onClick = onToggle,
+                )
+                if (canDelete) {
+                    PinActionButton(Icons.Filled.Delete, "Delete", VineColors.Destructive, modifier = Modifier.weight(1f), onClick = onDelete)
+                }
+            }
+
+            // Photo preview (hidden entirely when the pin has no photo).
+            if (pin.hasPhoto) {
+                PinDetailPhoto(vm = vm, photoPath = pin.photoPath)
+            }
+
+            // Notes preview.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(vine.textSecondary.copy(alpha = 0.08f))
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("Notes", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+                Text(
+                    pin.notes?.takeIf { it.isNotBlank() } ?: "No notes",
+                    fontSize = 14.sp,
+                    color = if (pin.notes.isNullOrBlank()) vine.textSecondary else vine.textPrimary,
+                )
+            }
+
+            // Details (iOS Details section parity).
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(vine.textSecondary.copy(alpha = 0.08f))
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("Details", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+                PinDetailRow("Block", paddockName ?: "\u2014")
+                pin.pinRowNumber?.let { PinDetailRow("On row", "Row ${rowText(it)}") }
+                if (pin.drivingRowNumber != null || pin.heading != null || pin.pinSide != null || pin.side != null) {
+                    PinDetailRow("Driving path", pinFacingLine(pin))
+                }
+                pin.heading?.let { PinDetailRow("Facing", "${compassAbbrev(it)} (${it.roundToInt()}\u00b0)") }
+                PinDetailRow("Created", pinCreatedText(pin))
+                pin.latitude?.let { PinDetailRow("Latitude", String.format(java.util.Locale.US, "%.6f", it)) }
+                pin.longitude?.let { PinDetailRow("Longitude", String.format(java.util.Locale.US, "%.6f", it)) }
+                PinDetailRow("Status", if (pin.isCompleted) "Completed" else "Active")
+            }
+
+            // Completion context (iOS Completion section parity).
+            if (pin.isCompleted) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(vine.textSecondary.copy(alpha = 0.08f))
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("Completion", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+                    completedByLabel(pin)?.let { PinDetailRow("Completed by", it) }
+                    parseIsoMillis(pin.completedAt)?.let {
+                        PinDetailRow("Completed", pinDateTimeFormat.format(java.util.Date(it)))
+                    }
+                }
+            }
+
+            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Done") }
+        }
+    }
+}
+
+/** Label/value row used in the pin detail sheet's Details card. */
+@Composable
+private fun PinDetailRow(label: String, value: String) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, fontSize = 14.sp, color = vine.textSecondary)
+        Text(
+            value,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            color = vine.textPrimary,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            modifier = Modifier.padding(start = 16.dp),
+        )
+    }
+}
+
+/**
+ * Read-only photo preview inside the pin detail sheet. Loads the signed URL on
+ * demand and collapses quietly when the photo can't be fetched (e.g. offline).
+ */
+@Composable
+private fun PinDetailPhoto(vm: AppViewModel, photoPath: String?) {
+    val vine = LocalVineColors.current
+    var signedUrl by remember(photoPath) { mutableStateOf<String?>(null) }
+    var unavailable by remember(photoPath) { mutableStateOf(false) }
+    LaunchedEffect(photoPath) {
+        signedUrl = null
+        unavailable = false
+        if (!photoPath.isNullOrBlank()) {
+            vm.requestPinPhotoUrl(photoPath) { url ->
+                signedUrl = url
+                unavailable = url.isNullOrBlank()
+            }
+        }
+    }
+    if (unavailable) return
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(190.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(vine.textSecondary.copy(alpha = 0.08f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        val url = signedUrl
+        if (url != null) {
+            AsyncImage(
+                model = url,
+                contentDescription = "Pin photo",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = vine.textSecondary)
+        }
+    }
+}
+
+/** Completed-by label, hiding raw UUID values (iOS resolveDisplayName parity). */
+private fun completedByLabel(pin: Pin): String? {
+    val raw = pin.completedBy?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+    val uuidRegex = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+    return raw.takeUnless { uuidRegex.matches(it) }
 }
