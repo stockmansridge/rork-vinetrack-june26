@@ -53,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -68,11 +69,14 @@ import com.google.maps.android.compose.Polygon
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.google.maps.android.compose.rememberMarkerState
+import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.calculateRowLines
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.ui.components.MapMyLocationButton
 import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.theme.VineColors
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.cos
@@ -121,6 +125,9 @@ fun BlockMapEditorScreen(
     val camera = rememberCameraPositionState()
     var mapLoaded by remember { mutableStateOf(false) }
     var framed by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var hasLocationPerm by remember { mutableStateOf(LocationTracker(context).hasPermission) }
+    var locationMessage by remember { mutableStateOf<String?>(null) }
 
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -150,11 +157,12 @@ fun BlockMapEditorScreen(
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
             cameraPositionState = camera,
-            properties = MapProperties(mapType = MapType.HYBRID),
+            properties = MapProperties(mapType = MapType.HYBRID, isMyLocationEnabled = hasLocationPerm),
             uiSettings = MapUiSettings(
                 zoomControlsEnabled = false,
                 mapToolbarEnabled = false,
                 compassEnabled = false,
+                myLocationButtonEnabled = false,
                 tiltGesturesEnabled = false,
                 rotationGesturesEnabled = false,
             ),
@@ -243,15 +251,38 @@ fun BlockMapEditorScreen(
                 Spacer(Modifier.weight(1f))
                 SegmentedToggle(mode = mode, onChange = { mode = it })
                 Spacer(Modifier.weight(1f))
-                GlassCircleButton(Icons.Filled.GpsFixed, "Recenter") {
-                    scope.launch {
-                        val pts = boundary.map { it.position }
-                        if (pts.isNotEmpty()) {
-                            camera.fitToContent(points = pts, paddingPx = 140, singlePointZoom = 18f, animate = true)
-                        } else if (vineyardCenter != null) {
-                            camera.fitToContent(points = listOf(vineyardCenter), singlePointZoom = 16f, animate = true)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MapMyLocationButton(
+                        camera = camera,
+                        onMessage = { locationMessage = it },
+                        onPermissionGranted = { hasLocationPerm = true },
+                    )
+                    GlassCircleButton(Icons.Filled.GpsFixed, "Recenter") {
+                        scope.launch {
+                            val pts = boundary.map { it.position }
+                            if (pts.isNotEmpty()) {
+                                camera.fitToContent(points = pts, paddingPx = 140, singlePointZoom = 18f, animate = true)
+                            } else if (vineyardCenter != null) {
+                                camera.fitToContent(points = listOf(vineyardCenter), singlePointZoom = 16f, animate = true)
+                            }
                         }
                     }
+                }
+            }
+
+            locationMessage?.let { msg ->
+                LaunchedEffect(msg) {
+                    delay(3500)
+                    locationMessage = null
+                }
+                Box(
+                    modifier = Modifier
+                        .padding(top = 10.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xCC1C1C1E))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                ) {
+                    Text(msg, color = Color.White, fontSize = 12.sp)
                 }
             }
 

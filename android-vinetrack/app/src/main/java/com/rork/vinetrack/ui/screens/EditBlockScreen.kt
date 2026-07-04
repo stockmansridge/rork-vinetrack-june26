@@ -51,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -66,12 +67,14 @@ import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.Polygon
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.calculateRowLines
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PaddockVarietyAllocation
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.components.MapMyLocationButton
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -79,6 +82,7 @@ import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.time.Instant
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
 private val EditAmber = Color(0xFFFF9500)
 
@@ -476,6 +480,9 @@ private fun BoundarySection(
     val camera = rememberCameraPositionState()
     var mapLoaded by remember { mutableStateOf(false) }
     var framed by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    var hasLocationPerm by remember { mutableStateOf(LocationTracker(context).hasPermission) }
+    var locationMessage by remember { mutableStateOf<String?>(null) }
 
     // Frame only after the map has a measured size — a bounds update on an
     // unmeasured map fails silently and leaves the camera at 0,0.
@@ -512,10 +519,11 @@ private fun BoundarySection(
             GoogleMap(
                 modifier = Modifier.fillMaxSize(),
                 cameraPositionState = camera,
-                properties = MapProperties(mapType = MapType.HYBRID),
+                properties = MapProperties(mapType = MapType.HYBRID, isMyLocationEnabled = hasLocationPerm),
                 uiSettings = MapUiSettings(
                     zoomControlsEnabled = false,
                     mapToolbarEnabled = false,
+                    myLocationButtonEnabled = false,
                     rotationGesturesEnabled = false,
                     tiltGesturesEnabled = false,
                 ),
@@ -559,6 +567,28 @@ private fun BoundarySection(
                         Spacer(Modifier.height(6.dp))
                         Text("Tap the map to add boundary points", color = Color.White, fontSize = 13.sp)
                     }
+                }
+            }
+            MapMyLocationButton(
+                camera = camera,
+                onMessage = { locationMessage = it },
+                onPermissionGranted = { hasLocationPerm = true },
+                modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
+            )
+            locationMessage?.let { msg ->
+                LaunchedEffect(msg) {
+                    delay(3500)
+                    locationMessage = null
+                }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(10.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xCC1C1C1E))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Text(msg, color = Color.White, fontSize = 12.sp)
                 }
             }
         }
