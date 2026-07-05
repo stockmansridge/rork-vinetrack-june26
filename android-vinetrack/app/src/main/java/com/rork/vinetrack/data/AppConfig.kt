@@ -25,6 +25,15 @@ object AppConfig {
     private const val FALLBACK_SUPABASE_ANON_KEY =
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRiYWZ1cXdydWVmZ2tieXhyeHliIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyOTY0NDcsImV4cCI6MjA5Mjg3MjQ0N30.tvOzn1ketbd0zYJWDujh_DGcWVDeitJaoVWw3aqtuRw"
 
+    /**
+     * Google OAuth WEB client ID — a public identifier (not a secret), safe to
+     * ship in the client just like the Supabase anon key. Used as the
+     * Credential Manager serverClientId; must be listed in the Supabase Google
+     * provider's authorized client IDs.
+     */
+    private const val FALLBACK_GOOGLE_WEB_CLIENT_ID =
+        "529457473857-la1vk1ibirs5if7dj3n5lap2u8admgmi.apps.googleusercontent.com"
+
     val supabaseUrl: String
         get() = resolve("SUPABASE_URL", "EXPO_PUBLIC_SUPABASE_URL")
             ?.trimEnd('/')
@@ -142,6 +151,7 @@ object AppConfig {
     private fun fallbackValue(key: String): String? = when (key) {
         "SUPABASE_URL", "EXPO_PUBLIC_SUPABASE_URL" -> FALLBACK_SUPABASE_URL
         "SUPABASE_ANON_KEY", "EXPO_PUBLIC_SUPABASE_ANON_KEY" -> FALLBACK_SUPABASE_ANON_KEY
+        "GOOGLE_WEB_CLIENT_ID", "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID" -> FALLBACK_GOOGLE_WEB_CLIENT_ID
         else -> null
     }
 
