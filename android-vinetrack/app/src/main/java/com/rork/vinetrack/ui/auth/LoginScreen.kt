@@ -223,12 +223,23 @@ fun LoginScreen(
 
                     // iOS parity: the "or" divider + federated sign-in button sit
                     // directly below the primary action, above the footer links —
-                    // the same slot Sign in with Apple occupies on iOS.
-                    if (AppConfig.isGoogleSignInConfigured) {
-                        OrDivider()
-                        GoogleSignInButton(
-                            enabled = !state.isLoading,
-                            onClick = { onGoogleSignIn(activityContext) },
+                    // the same slot Sign in with Apple occupies on iOS. The button
+                    // is ALWAYS rendered (both Sign In and Sign Up modes); if the
+                    // Google client ID didn't land in this build, tapping it shows
+                    // a clear "not configured" error instead of silently hiding.
+                    OrDivider()
+                    GoogleSignInButton(
+                        enabled = !state.isLoading,
+                        onClick = { onGoogleSignIn(activityContext) },
+                    )
+                    if (BuildConfig.DEBUG && !AppConfig.isGoogleSignInConfigured) {
+                        Text(
+                            "DEBUG · Google client ID missing — set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID",
+                            color = Color(0xFFFFD54F),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
 
