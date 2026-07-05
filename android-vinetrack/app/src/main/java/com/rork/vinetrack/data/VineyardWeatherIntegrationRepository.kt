@@ -55,12 +55,62 @@ data class VineyardWeatherIntegration(
 )
 
 /**
+ * A nearby Weather Underground PWS returned by the `weather-nearby-stations`
+ * edge function. Mirrors the iOS `WeatherNearbyStationsService.Station`.
+ */
+@Serializable
+data class NearbyWuStation(
+    val stationId: String,
+    val name: String? = null,
+    val distanceKm: Double? = null,
+)
+
+/**
  * Read/write path for the shared per-vineyard weather integration rows
  * (WillyWeather location, Weather Underground PWS, Davis WeatherLink). Backed
  * by the `get_/save_/delete_vineyard_weather_integration` RPCs (sql/021).
  * Any member may read; save/delete enforce owner/manager server-side.
  */
 class VineyardWeatherIntegrationRepository(private val session: SessionStore) {
+
+    @Serializable
+    private data class NearbyArgs(val lat: Double, val lon: Double)
+
+    @Serializable
+    private data class NearbyResponse(
+        val stations: List<NearbyWuStation> = emptyList(),
+        val error: String? = null,
+    )
+
+    /**
+     * Find nearby Weather Underground PWS stations via the
+     * `weather-nearby-stations` edge function (keeps `WUNDERGROUND_API_KEY`
+     * server-side). Returns the 10 closest stations, sorted by distance,
+     * mirroring the iOS `WundergroundStationPickerSheet`.
+     */
+    suspend fun nearbyStations(lat: Double, lon: Double): List<NearbyWuStation> =
+        withContext(Dispatchers.IO) {
+            requireConfig()
+            val token = session.accessToken ?: SupabaseClient.anonKey
+            val response = SupabaseClient.http.post(
+                SupabaseClient.functionUrl("weather-nearby-stations")
+            ) {
+                authHeaders(token)
+                contentType(ContentType.Application.Json)
+                setBody(NearbyArgs(lat, lon))
+            }
+            val text = response.bodyAsText()
+            if (!response.status.isSuccess()) {
+                val message = runCatching {
+                    SupabaseClient.json.decodeFromString(NearbyResponse.serializer(), text).error
+                }.getOrNull()
+                throw BackendError.Server(response.status.value, message ?: text)
+            }
+            val parsed = SupabaseClient.json.decodeFromString(NearbyResponse.serializer(), text)
+            parsed.stations
+                .sortedBy { it.distanceKm ?: Double.MAX_VALUE }
+                .take(10)
+        }
 
     @Serializable
     private data class Lookup(

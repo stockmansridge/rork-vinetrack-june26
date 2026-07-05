@@ -49,12 +49,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.PersistedRainfallRepository
 import com.rork.vinetrack.data.RainDay
 import com.rork.vinetrack.data.RainForecastBundle
 import com.rork.vinetrack.data.RainForecastRepository
+import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.theme.LocalVineColors
@@ -111,7 +114,9 @@ private fun RainAndForecastContent(
 ) {
     val vine = LocalVineColors.current
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val repo = remember { RainForecastRepository() }
+    val persistedRepo = remember { PersistedRainfallRepository(SessionStore(context)) }
 
     val paddocks = remember(state.paddocks, state.selectedVineyardId) {
         val vid = state.selectedVineyardId
@@ -128,6 +133,8 @@ private fun RainAndForecastContent(
     val windCautionThresholdKmh = 15.0
 
     var bundle by remember { mutableStateOf<RainForecastBundle?>(null) }
+    var persistedHistory by remember { mutableStateOf<List<HistoryDay>?>(null) }
+    var persistedTodayMm by remember { mutableStateOf<Double?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var hasLoaded by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -136,6 +143,8 @@ private fun RainAndForecastContent(
         val loc = location ?: run {
             hasLoaded = true
             bundle = null
+            persistedHistory = null
+            persistedTodayMm = null
             return
         }
         scope.launch {
@@ -145,10 +154,34 @@ private fun RainAndForecastContent(
                 bundle = repo.fetch(loc.first, loc.second, pastDays = 30, forecastDays = 7)
             } catch (e: Exception) {
                 errorMessage = e.message ?: "Could not load rain forecast."
-            } finally {
-                isLoading = false
-                hasLoaded = true
             }
+            // Persisted station-sourced rainfall (`rainfall_daily`) — the same
+            // shared records iOS and the portal show, with per-day source
+            // labels (Manual/Davis/Wunderground/Open-Meteo). Falls back to the
+            // raw Open-Meteo history when unavailable.
+            val vid = state.selectedVineyardId
+            var rows: List<HistoryDay>? = null
+            var todayPersisted: Double? = null
+            if (vid != null) {
+                try {
+                    val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                    val cal = Calendar.getInstance()
+                    val todayKey = fmt.format(cal.time)
+                    cal.add(Calendar.DAY_OF_YEAR, -29)
+                    val fromKey = fmt.format(cal.time)
+                    val persisted = persistedRepo.fetchDailyRainfall(vid, fromKey, todayKey)
+                    if (persisted.isNotEmpty()) {
+                        rows = persisted.map { HistoryDay(it.date, it.rainfallMm ?: 0.0, it.source) }
+                        todayPersisted = persisted.firstOrNull { it.date == todayKey }?.rainfallMm
+                    }
+                } catch (_: Exception) {
+                    rows = null
+                }
+            }
+            persistedHistory = rows
+            persistedTodayMm = todayPersisted
+            isLoading = false
+            hasLoaded = true
         }
     }
 
@@ -180,8 +213,15 @@ private fun RainAndForecastContent(
         val rain24h = days.firstOrNull()?.rainMm ?: 0.0
         val rain48h = days.take(2).sumOf { it.rainMm }
         val rain7d = days.take(7).sumOf { it.rainMm }
-        val todayMm = bundle?.todayMm
+        // Prefer the recorded station rainfall for today (like iOS), falling
+        // back to the forecast value.
+        val todayMm = persistedTodayMm ?: bundle?.todayMm
         val hasLocation = location != null
+        val fallbackKeyFmt = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
+        val historyDays: List<HistoryDay> = persistedHistory
+            ?: (bundle?.history ?: emptyList()).map {
+                HistoryDay(fallbackKeyFmt.format(Date(it.dateEpochMs)), it.rainMm, "open_meteo")
+            }
 
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),
@@ -240,8 +280,7 @@ private fun RainAndForecastContent(
 
             item {
                 RainfallHistorySection(
-                    history = bundle?.history ?: emptyList(),
-                    source = bundle?.source,
+                    history = historyDays,
                     isLoading = isLoading,
                     hasLoaded = hasLoaded,
                 )
@@ -460,10 +499,16 @@ private fun ForecastRow(day: RainDay, warningThresholdKmh: Double, cautionThresh
 
 // MARK: - Rainfall history section
 
+/**
+ * One display row of recent rainfall history with its per-day source, sourced
+ * from the shared `rainfall_daily` records (or Open-Meteo as fallback).
+ * [dateKey] is a "yyyy-MM-dd" calendar-day string.
+ */
+private data class HistoryDay(val dateKey: String, val rainMm: Double, val source: String?)
+
 @Composable
 private fun RainfallHistorySection(
-    history: List<RainDay>,
-    source: String?,
+    history: List<HistoryDay>,
     isLoading: Boolean,
     hasLoaded: Boolean,
 ) {
@@ -473,7 +518,7 @@ private fun RainfallHistorySection(
             Text("Recent rainfall", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, modifier = Modifier.weight(1f))
             Text("Last 30 days", fontSize = 11.sp, color = vine.textSecondary)
         }
-        val rainDays = remember(history) { history.filter { it.rainMm > 0 }.sortedByDescending { it.dateEpochMs } }
+        val rainDays = remember(history) { history.filter { it.rainMm > 0 }.sortedByDescending { it.dateKey } }
         when {
             isLoading && history.isEmpty() -> LoadingCard("Loading rainfall…")
             rainDays.isEmpty() -> Box(
@@ -498,8 +543,8 @@ private fun RainfallHistorySection(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(fullDateLabel(day.dateEpochMs), fontSize = 14.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
-                        Text(prettySource(source), fontSize = 12.sp, color = vine.textSecondary, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 1)
+                        Text(displayDateKey(day.dateKey), fontSize = 14.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
+                        Text(prettySource(day.source), fontSize = 12.sp, color = vine.textSecondary, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 1)
                         Text("%.1f mm".format(day.rainMm), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.End)
                     }
                     if (index < rainDays.lastIndex) {
@@ -662,8 +707,13 @@ private fun dayLabel(epochMs: Long): String {
 private fun dateLabel(epochMs: Long): String =
     SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(epochMs))
 
-private fun fullDateLabel(epochMs: Long): String =
-    SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(epochMs))
+/** Formats a "yyyy-MM-dd" calendar-day key as "dd/MM/yyyy" for display. */
+private fun displayDateKey(dateKey: String): String = try {
+    val parsed = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(dateKey)
+    if (parsed != null) SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(parsed) else dateKey
+} catch (_: Exception) {
+    dateKey
+}
 
 private fun startOfDay(epochMs: Long): Long {
     val cal = Calendar.getInstance()

@@ -64,6 +64,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.NearbyWuStation
 import com.rork.vinetrack.data.RainfallHistoryBackfillRepository
 import com.rork.vinetrack.data.VineyardWeatherIntegration
 import com.rork.vinetrack.data.VineyardWeatherIntegrationRepository
@@ -72,6 +73,7 @@ import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.components.WuNearbyStationsFinder
 import com.rork.vinetrack.ui.main.ToolRoute
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
@@ -114,6 +116,18 @@ fun WeatherSetupWizardScreen(
 
     val vineyardId = state.selectedVineyardId
     val canEdit = state.currentRole == "owner" || state.currentRole == "manager"
+
+    // Search location for nearby WU stations, matching the iOS priority:
+    // vineyard latitude/longitude → block/paddock centroid.
+    val vineyard = state.vineyards.firstOrNull { it.id == vineyardId }
+    val searchCoordinates = remember(vineyard, state.paddocks, vineyardId) {
+        val paddockCentroid = state.paddocks
+            .filter { vineyardId == null || it.vineyardId == vineyardId }
+            .firstNotNullOfOrNull { it.centroid }
+        val lat = vineyard?.latitude ?: paddockCentroid?.latitude
+        val lon = vineyard?.longitude ?: paddockCentroid?.longitude
+        if (lat != null && lon != null && (lat != 0.0 || lon != 0.0)) Pair(lat, lon) else null
+    }
 
     var step by remember { mutableIntStateOf(WxStep.Intro.ordinal) }
 
@@ -200,6 +214,20 @@ fun WeatherSetupWizardScreen(
                         integration = wuIntegration,
                         vineyardId = vineyardId,
                         backfillRepo = backfillRepo,
+                        coordinates = searchCoordinates,
+                        onFindNearby = { lat, lon -> integrationRepo.nearbyStations(lat, lon) },
+                        onSelectNearby = { station ->
+                            if (vineyardId != null) {
+                                integrationRepo.saveStation(
+                                    vineyardId = vineyardId,
+                                    provider = WeatherIntegrationProvider.WUNDERGROUND,
+                                    stationId = station.stationId,
+                                    stationName = station.name?.trim()?.takeIf { it.isNotEmpty() },
+                                    hasRain = true,
+                                )
+                                reload()
+                            }
+                        },
                         onSaveStation = { id, name ->
                             scope.launch {
                                 if (vineyardId != null) {
@@ -402,6 +430,9 @@ private fun WundergroundStep(
     integration: VineyardWeatherIntegration?,
     vineyardId: String?,
     backfillRepo: RainfallHistoryBackfillRepository,
+    coordinates: Pair<Double, Double>?,
+    onFindNearby: suspend (Double, Double) -> List<NearbyWuStation>,
+    onSelectNearby: suspend (NearbyWuStation) -> Unit,
     onSaveStation: (String, String?) -> Unit,
     onBackfilled: (Int) -> Unit,
 ) {
@@ -423,6 +454,12 @@ private fun WundergroundStep(
         if (canEdit) {
             VineyardCard {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    WuNearbyStationsFinder(
+                        coordinates = coordinates,
+                        enabled = canEdit,
+                        onSearch = onFindNearby,
+                        onSelect = onSelectNearby,
+                    )
                     OutlinedTextField(
                         value = stationId,
                         onValueChange = { stationId = it },

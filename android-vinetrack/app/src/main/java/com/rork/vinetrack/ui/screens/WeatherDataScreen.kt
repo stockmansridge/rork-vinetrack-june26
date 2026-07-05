@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.DavisSensorSummary
 import com.rork.vinetrack.data.DavisStation
 import com.rork.vinetrack.data.DavisWeatherLinkRepository
+import com.rork.vinetrack.data.NearbyWuStation
 import com.rork.vinetrack.data.OpenMeteoGapFillResult
 import com.rork.vinetrack.data.RainfallHistoryBackfillRepository
 import com.rork.vinetrack.data.VineyardWeatherIntegration
@@ -78,6 +79,7 @@ import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.components.WuNearbyStationsFinder
 import com.rork.vinetrack.ui.main.ToolRoute
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
@@ -127,6 +129,17 @@ fun WeatherDataScreen(
     val vineyardId = state.selectedVineyardId
     val vineyard = state.vineyards.firstOrNull { it.id == vineyardId }
     val canEdit = state.currentRole == "owner" || state.currentRole == "manager"
+
+    // Search location for nearby WU stations, matching the iOS priority:
+    // vineyard latitude/longitude → block/paddock centroid.
+    val searchCoordinates = remember(vineyard, state.paddocks, vineyardId) {
+        val paddockCentroid = state.paddocks
+            .filter { vineyardId == null || it.vineyardId == vineyardId }
+            .firstNotNullOfOrNull { it.centroid }
+        val lat = vineyard?.latitude ?: paddockCentroid?.latitude
+        val lon = vineyard?.longitude ?: paddockCentroid?.longitude
+        if (lat != null && lon != null && (lat != 0.0 || lon != 0.0)) Pair(lat, lon) else null
+    }
 
     var showWizard by remember { mutableStateOf(false) }
     if (showWizard) {
@@ -302,6 +315,20 @@ fun WeatherDataScreen(
                 wuIntegration = wuIntegration,
                 davisIntegration = davisIntegration,
                 canEdit = canEdit,
+                coordinates = searchCoordinates,
+                onFindNearby = { lat, lon -> integrationRepo.nearbyStations(lat, lon) },
+                onSelectNearby = { station ->
+                    if (vineyardId != null) {
+                        integrationRepo.saveStation(
+                            vineyardId = vineyardId,
+                            provider = WeatherIntegrationProvider.WUNDERGROUND,
+                            stationId = station.stationId,
+                            stationName = station.name?.trim()?.takeIf { it.isNotEmpty() },
+                            hasRain = true,
+                        )
+                        reload()
+                    }
+                },
                 onSaveStation = { stationId, stationName ->
                     scope.launch {
                         try {
@@ -701,6 +728,9 @@ private fun LocalObservationSection(
     wuIntegration: VineyardWeatherIntegration?,
     davisIntegration: VineyardWeatherIntegration?,
     canEdit: Boolean,
+    coordinates: Pair<Double, Double>?,
+    onFindNearby: suspend (Double, Double) -> List<NearbyWuStation>,
+    onSelectNearby: suspend (NearbyWuStation) -> Unit,
     onSaveStation: (String, String?) -> Unit,
     onClearStation: () -> Unit,
 ) {
@@ -719,7 +749,7 @@ private fun LocalObservationSection(
                     Text("Weather Underground PWS", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                     Text(
                         if (current != null) "Station ${current.stationId}" + (current.stationName?.let { " · $it" } ?: "")
-                        else "Use a nearby personal weather station for recent rainfall.",
+                        else "No weather station selected. Find a nearby Weather Underground station or enter a saved station ID to improve vineyard forecasting.",
                         fontSize = 12.sp,
                         color = vine.textSecondary,
                     )
@@ -730,6 +760,12 @@ private fun LocalObservationSection(
                 RowDividerWx(vine.cardBorder)
                 if (editing || current == null) {
                     Column(modifier = Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        WuNearbyStationsFinder(
+                            coordinates = coordinates,
+                            enabled = canEdit,
+                            onSearch = onFindNearby,
+                            onSelect = onSelectNearby,
+                        )
                         OutlinedTextField(
                             value = stationId,
                             onValueChange = { stationId = it },
