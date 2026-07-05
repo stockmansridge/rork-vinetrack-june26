@@ -37,6 +37,18 @@ object AppConfig {
         get() = supabaseAnonKey.isNotBlank()
 
     /**
+     * Google OAuth WEB client ID (a public identifier, not a secret) used as
+     * the Credential Manager serverClientId. Must also be listed in the
+     * Supabase Google provider's authorized client IDs so the id_token grant
+     * accepts tokens minted for it.
+     */
+    val googleWebClientId: String
+        get() = resolve("GOOGLE_WEB_CLIENT_ID", "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID") ?: ""
+
+    val isGoogleSignInConfigured: Boolean
+        get() = googleWebClientId.isNotBlank()
+
+    /**
      * Emits a safe, one-line diagnostic about the runtime Supabase config.
      * Never prints the key itself — only presence flags, the resolved URL,
      * and the anon key length so we can confirm the build-injected values are
@@ -136,6 +148,7 @@ object AppConfig {
     private fun buildConfigValue(key: String): String? = when (key) {
         "SUPABASE_URL", "EXPO_PUBLIC_SUPABASE_URL" -> BuildConfig.SUPABASE_URL
         "SUPABASE_ANON_KEY", "EXPO_PUBLIC_SUPABASE_ANON_KEY" -> BuildConfig.SUPABASE_ANON_KEY
+        "GOOGLE_WEB_CLIENT_ID", "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID" -> BuildConfig.GOOGLE_WEB_CLIENT_ID
         else -> null
     }
 }

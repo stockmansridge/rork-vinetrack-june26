@@ -75,6 +75,15 @@ android {
         )
         buildConfigField("String", "MAPS_API_KEY", "\"$mapsApiKey\"")
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
+
+        // Google OAuth WEB client ID (public value) used by Credential Manager
+        // as the serverClientId so the returned ID token is accepted by
+        // Supabase's id_token grant. Never a secret.
+        val googleWebClientId = resolveBuildConfigValue(
+            "GOOGLE_WEB_CLIENT_ID",
+            "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID",
+        )
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
     }
 
     signingConfigs {
@@ -140,6 +149,9 @@ dependencies {
     implementation(libs.androidx.exifinterface)
     implementation(libs.androidx.biometric)
     implementation(libs.androidx.fragment.ktx)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services)
+    implementation(libs.googleid)
     debugImplementation(libs.androidx.ui.tooling)
     testImplementation(libs.junit)
 }

@@ -53,6 +53,13 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
     )
 
     @Serializable
+    private data class IdTokenBody(
+        val provider: String,
+        @SerialName("id_token") val idToken: String,
+        val nonce: String? = null,
+    )
+
+    @Serializable
     private data class RecoveryBody(val email: String)
 
     @Serializable
@@ -220,6 +227,25 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
             anonHeaders()
             contentType(ContentType.Application.Json)
             setBody(Credentials(email.trim(), password))
+        }
+        if (!response.status.isSuccess()) throw authError(response)
+        persist(response.body()) ?: throw BackendError.Server(response.status.value, response.bodyAsText())
+    }
+
+    /**
+     * Exchange a Google ID token for a Supabase session (GoTrue
+     * `POST /auth/v1/token?grant_type=id_token`), mirroring the iOS
+     * `signInWithApple` id_token flow. [nonce] is the RAW nonce whose SHA-256
+     * was sent to Google — GoTrue hashes it and compares against the token's
+     * nonce claim. Supabase links the Google identity to an existing account
+     * with the same verified email, so no duplicate user is created.
+     */
+    suspend fun signInWithGoogleIdToken(idToken: String, nonce: String?): AppUser = withContext(Dispatchers.IO) {
+        if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
+        val response = SupabaseClient.http.post(SupabaseClient.authUrl("token?grant_type=id_token")) {
+            anonHeaders()
+            contentType(ContentType.Application.Json)
+            setBody(IdTokenBody(provider = "google", idToken = idToken, nonce = nonce))
         }
         if (!response.status.isSuccess()) throw authError(response)
         persist(response.body()) ?: throw BackendError.Server(response.status.value, response.bodyAsText())

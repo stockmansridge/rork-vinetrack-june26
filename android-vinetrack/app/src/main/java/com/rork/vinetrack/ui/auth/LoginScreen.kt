@@ -52,6 +52,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -78,9 +79,11 @@ fun LoginScreen(
     state: AuthFormState,
     onSignIn: (String, String) -> Unit,
     onSignUp: (String, String, String) -> Unit,
+    onGoogleSignIn: (android.content.Context) -> Unit,
     onForgotPassword: (String, (Boolean) -> Unit) -> Unit,
     onResetPassword: (String, String, String, (Boolean, String?) -> Unit) -> Unit,
 ) {
+    val activityContext = LocalContext.current
     var mode by remember { mutableStateOf(Mode.SignIn) }
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
@@ -218,6 +221,17 @@ fun LoginScreen(
                         }
                     }
 
+                    // iOS parity: the "or" divider + federated sign-in button sit
+                    // directly below the primary action, above the footer links —
+                    // the same slot Sign in with Apple occupies on iOS.
+                    if (AppConfig.isGoogleSignInConfigured) {
+                        OrDivider()
+                        GoogleSignInButton(
+                            enabled = !state.isLoading,
+                            onClick = { onGoogleSignIn(activityContext) },
+                        )
+                    }
+
                     if (mode == Mode.SignIn) {
                         TextButton(onClick = { showReset = true }) {
                             Text("Forgot password?", color = Color(0xFFEFEBB8), fontWeight = FontWeight.Medium)
@@ -256,6 +270,52 @@ fun LoginScreen(
                 password = newPassword
                 showReset = false
             },
+        )
+    }
+}
+
+@Composable
+private fun OrDivider() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.weight(1f).height(1.dp).background(Color.White.copy(alpha = 0.42f)))
+        Text("or", color = Color.White.copy(alpha = 0.9f), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        Box(Modifier.weight(1f).height(1.dp).background(Color.White.copy(alpha = 0.42f)))
+    }
+}
+
+/**
+ * "Continue with Google" — Google-branded light button (white surface,
+ * multicolour G, dark label), matching the prominence and shape of the
+ * primary action buttons on this screen and the iOS Apple sign-in button.
+ */
+@Composable
+private fun GoogleSignInButton(enabled: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .shadow(14.dp, RoundedCornerShape(15.dp), clip = false)
+            .clip(RoundedCornerShape(15.dp))
+            .background(if (enabled) Color.White else Color.White.copy(alpha = 0.7f))
+            .clickable(enabled = enabled) { onClick() },
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Image(
+            painter = painterResource(R.drawable.ic_google_g),
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            "Continue with Google",
+            color = Color(0xFF1F1F1F),
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 16.sp,
         )
     }
 }

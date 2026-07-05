@@ -65,6 +65,7 @@ fun RootScreen() {
             state = authState,
             onSignIn = vm::signIn,
             onSignUp = vm::signUp,
+            onGoogleSignIn = vm::signInWithGoogle,
             onForgotPassword = { email, cb -> vm.sendPasswordReset(email, cb) },
             onResetPassword = { email, pin, newPassword, cb ->
                 vm.resetPasswordWithPin(email, pin, newPassword, cb)

@@ -1,11 +1,15 @@
 package com.rork.vinetrack.ui
 
 import android.app.Application
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.credentials.ClearCredentialStateRequest
+import androidx.credentials.CredentialManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import android.net.Uri
+import com.rork.vinetrack.data.auth.GoogleSignInHelper
 import com.rork.vinetrack.data.BackendError
 import com.rork.vinetrack.data.ButtonConfigRepository
 import com.rork.vinetrack.data.ButtonConfigUpdateSync
@@ -2808,6 +2812,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Native Google sign-in (Credential Manager → Supabase id_token grant),
+     * mirroring the iOS Sign in with Apple flow. On success the user lands in
+     * the exact same bootstrap as email/password sign-in (vineyard loading,
+     * profile, memberships, roles). Supabase links the Google identity to an
+     * existing account with the same verified email, so no orphan profile is
+     * created. [activityContext] must be the Activity context hosting the
+     * login screen — Credential Manager needs it to present its UI.
+     */
+    fun signInWithGoogle(activityContext: Context) {
+        viewModelScope.launch {
+            _auth.update { it.copy(isLoading = true, error = null) }
+            when (val result = GoogleSignInHelper.signIn(activityContext)) {
+                is GoogleSignInHelper.SignInResult.Cancelled ->
+                    _auth.update { it.copy(isLoading = false) }
+                is GoogleSignInHelper.SignInResult.Failure ->
+                    _auth.update { it.copy(isLoading = false, error = result.message) }
+                is GoogleSignInHelper.SignInResult.Success -> {
+                    try {
+                        auth.signInWithGoogleIdToken(result.idToken, result.rawNonce)
+                        _auth.update { AuthFormState() }
+                        // Keep the saved biometric email in step with the active account.
+                        if (biometricStore.isEnabled) biometricStore.savedEmail = auth.currentEmail
+                        _ui.update { it.copy(route = AppRoute.VineyardLoading) }
+                        loadVineyards()
+                    } catch (e: BackendError.Server) {
+                        _auth.update { it.copy(isLoading = false, error = e.body.ifBlank { "Google sign-in failed." }) }
+                    } catch (e: BackendError) {
+                        _auth.update { it.copy(isLoading = false, error = e.message) }
+                    } catch (e: Exception) {
+                        _auth.update { it.copy(isLoading = false, error = "Couldn't reach the server. Check your connection.") }
+                    }
+                }
+            }
+        }
+    }
+
     fun signUp(name: String, email: String, password: String) {
         viewModelScope.launch {
             _auth.update { it.copy(isLoading = true, error = null) }
@@ -2874,6 +2915,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { pendingPhotos.clearAll() }
             runCatching { domainCache.clearAll() }
             runCatching { activeTripStore.clear() }
+            // Best-effort: clear Credential Manager sign-in state so a signed-out
+            // (or switched) user isn't silently re-selected by Google next time.
+            runCatching {
+                CredentialManager.create(getApplication())
+                    .clearCredentialState(ClearCredentialStateRequest())
+            }
             _ui.value = AppUiState(route = AppRoute.Login)
             _auth.value = AuthFormState(error = message)
         }
