@@ -33,6 +33,33 @@ data class WillyWeatherLocation(
 )
 
 /**
+ * One day of normalised WillyWeather forecast data returned by the
+ * `willyweather-proxy` edge function (`fetch_forecast` action). Mirrors the
+ * iOS `WillyWeatherForecastDay` and the JSON contract in
+ * `supabase/functions/willyweather-proxy/index.ts`.
+ */
+@Serializable
+data class WillyWeatherForecastDay(
+    /** Local calendar day, "yyyy-MM-dd". */
+    val date: String,
+    @SerialName("rain_mm") val rainMm: Double? = null,
+    @SerialName("rain_probability") val rainProbability: Double? = null,
+    @SerialName("temp_min_c") val tempMinC: Double? = null,
+    @SerialName("temp_max_c") val tempMaxC: Double? = null,
+    @SerialName("wind_kmh_max") val windKmhMax: Double? = null,
+    @SerialName("et0_mm") val et0Mm: Double? = null,
+)
+
+/** Result of the `fetch_forecast` proxy action. Mirrors iOS `WillyWeatherForecastResult`. */
+@Serializable
+data class WillyWeatherForecastResult(
+    val source: String = "WillyWeather",
+    @SerialName("location_id") val locationId: String? = null,
+    @SerialName("location_name") val locationName: String? = null,
+    val days: List<WillyWeatherForecastDay> = emptyList(),
+)
+
+/**
  * Client for the `willyweather-proxy` edge function. The WillyWeather API key
  * is global (server-side) — the device only manages the per-vineyard forecast
  * provider preference (stored on `vineyards.forecast_provider`) and the
@@ -110,6 +137,22 @@ class WillyWeatherRepository(private val session: SessionStore) {
                 location.latitude?.let { put("latitude", JsonPrimitive(it)) }
                 location.longitude?.let { put("longitude", JsonPrimitive(it)) }
             })
+        }
+
+    /**
+     * Fetch the normalised WillyWeather daily forecast for the vineyard's
+     * configured location. Throws when WillyWeather is not configured, the
+     * location is missing, or the upstream API fails — callers fall back to
+     * Open-Meteo, mirroring the iOS `IrrigationForecastService`.
+     */
+    suspend fun fetchForecast(vineyardId: String, days: Int = 7): WillyWeatherForecastResult =
+        withContext(Dispatchers.IO) {
+            val body = invoke(buildJsonObject {
+                put("vineyardId", JsonPrimitive(vineyardId))
+                put("action", JsonPrimitive("fetch_forecast"))
+                put("days", JsonPrimitive(days.coerceIn(1, 7)))
+            })
+            SupabaseClient.json.decodeFromString(WillyWeatherForecastResult.serializer(), body)
         }
 
     /** Remove the vineyard's WillyWeather location. Owner/manager only. */

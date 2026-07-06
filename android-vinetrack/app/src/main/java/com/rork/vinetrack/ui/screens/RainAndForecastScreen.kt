@@ -57,6 +57,9 @@ import com.rork.vinetrack.data.PersistedRainfallRepository
 import com.rork.vinetrack.data.RainDay
 import com.rork.vinetrack.data.RainForecastBundle
 import com.rork.vinetrack.data.RainForecastRepository
+import com.rork.vinetrack.data.VineyardWeatherIntegrationRepository
+import com.rork.vinetrack.data.WeatherIntegrationProvider
+import com.rork.vinetrack.data.WillyWeatherRepository
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.BackNavIcon
@@ -116,7 +119,10 @@ private fun RainAndForecastContent(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val repo = remember { RainForecastRepository() }
-    val persistedRepo = remember { PersistedRainfallRepository(SessionStore(context)) }
+    val sessionStore = remember { SessionStore(context) }
+    val persistedRepo = remember { PersistedRainfallRepository(sessionStore) }
+    val wwRepo = remember { WillyWeatherRepository(sessionStore) }
+    val integrationRepo = remember { VineyardWeatherIntegrationRepository(sessionStore) }
 
     val paddocks = remember(state.paddocks, state.selectedVineyardId) {
         val vid = state.selectedVineyardId
@@ -135,6 +141,13 @@ private fun RainAndForecastContent(
     var bundle by remember { mutableStateOf<RainForecastBundle?>(null) }
     var persistedHistory by remember { mutableStateOf<List<HistoryDay>?>(null) }
     var persistedTodayMm by remember { mutableStateOf<Double?>(null) }
+    // WillyWeather forecast override — non-null when the shared server-side
+    // provider preference resolved to WillyWeather and the proxy returned
+    // forecast days. Mirrors iOS `IrrigationForecastService`.
+    var wwForecast by remember { mutableStateOf<List<RainDay>?>(null) }
+    var wwSource by remember { mutableStateOf<String?>(null) }
+    // Non-blocking reason the forecast fell back to Open-Meteo, if any.
+    var fallbackNote by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var hasLoaded by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -150,16 +163,63 @@ private fun RainAndForecastContent(
         scope.launch {
             isLoading = true
             errorMessage = null
+            wwForecast = null
+            wwSource = null
+            fallbackNote = null
+
+            // 1. Try WillyWeather first when the shared server-side provider
+            //    preference selects it (willyweather, or auto with a configured
+            //    location) — same priority as iOS. Open-Meteo below remains the
+            //    transparent fallback and still supplies rainfall history.
+            val vid = state.selectedVineyardId
+            if (vid != null) {
+                val provider = runCatching { wwRepo.getProviderPreference(vid) }.getOrDefault("auto")
+                if (provider != "open_meteo") {
+                    val hasWillyLocation = runCatching {
+                        integrationRepo.fetch(vid, WeatherIntegrationProvider.WILLY_WEATHER)
+                            ?.stationId?.isNotEmpty() == true
+                    }.getOrDefault(false)
+                    val shouldTryWilly = provider == "willyweather" || (provider == "auto" && hasWillyLocation)
+                    if (shouldTryWilly) {
+                        try {
+                            val result = wwRepo.fetchForecast(vid, days = 7)
+                            val dayFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                            val mapped = result.days.mapNotNull { d ->
+                                val date = runCatching { dayFmt.parse(d.date) }.getOrNull()
+                                    ?: return@mapNotNull null
+                                RainDay(
+                                    dateEpochMs = date.time,
+                                    rainMm = d.rainMm ?: 0.0,
+                                    windKmhMax = d.windKmhMax,
+                                )
+                            }
+                            if (mapped.isNotEmpty()) {
+                                wwForecast = mapped
+                                wwSource = result.source
+                            } else {
+                                fallbackNote = "WillyWeather returned no forecast days — using Open-Meteo."
+                            }
+                        } catch (_: Exception) {
+                            fallbackNote = "Using Open-Meteo forecast because WillyWeather is unavailable."
+                        }
+                    } else if (provider == "willyweather") {
+                        fallbackNote = "WillyWeather is selected but not yet configured for this vineyard — using Open-Meteo."
+                    }
+                }
+            }
+
+            // 2. Open-Meteo — forecast fallback plus recent rainfall history.
             try {
                 bundle = repo.fetch(loc.first, loc.second, pastDays = 30, forecastDays = 7)
             } catch (e: Exception) {
-                errorMessage = e.message ?: "Could not load rain forecast."
+                if (wwForecast == null) {
+                    errorMessage = e.message ?: "Could not load rain forecast."
+                }
             }
             // Persisted station-sourced rainfall (`rainfall_daily`) — the same
             // shared records iOS and the portal show, with per-day source
             // labels (Manual/Davis/Wunderground/Open-Meteo). Falls back to the
             // raw Open-Meteo history when unavailable.
-            val vid = state.selectedVineyardId
             var rows: List<HistoryDay>? = null
             var todayPersisted: Double? = null
             if (vid != null) {
@@ -209,13 +269,15 @@ private fun RainAndForecastContent(
             )
         },
     ) { padding ->
-        val days = bundle?.forecast ?: emptyList()
+        // WillyWeather forecast wins when available; Open-Meteo is the fallback.
+        val days = wwForecast ?: bundle?.forecast ?: emptyList()
+        val forecastSource = if (wwForecast != null) wwSource else bundle?.source
         val rain24h = days.firstOrNull()?.rainMm ?: 0.0
         val rain48h = days.take(2).sumOf { it.rainMm }
         val rain7d = days.take(7).sumOf { it.rainMm }
         // Prefer the recorded station rainfall for today (like iOS), falling
         // back to the forecast value.
-        val todayMm = persistedTodayMm ?: bundle?.todayMm
+        val todayMm = persistedTodayMm ?: days.firstOrNull()?.rainMm
         val hasLocation = location != null
         val fallbackKeyFmt = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
         val historyDays: List<HistoryDay> = persistedHistory
@@ -268,7 +330,8 @@ private fun RainAndForecastContent(
             item {
                 DailyForecastSection(
                     days = days,
-                    source = bundle?.source,
+                    source = forecastSource,
+                    fallbackNote = fallbackNote,
                     hasLocation = hasLocation,
                     isLoading = isLoading,
                     hasLoaded = hasLoaded,
@@ -426,6 +489,7 @@ private fun SummaryTile(title: String, value: String, icon: ImageVector, tint: C
 private fun DailyForecastSection(
     days: List<RainDay>,
     source: String?,
+    fallbackNote: String?,
     hasLocation: Boolean,
     isLoading: Boolean,
     hasLoaded: Boolean,
@@ -444,6 +508,14 @@ private fun DailyForecastSection(
             if (sourceLabel != null) {
                 Text("Forecast source: $sourceLabel", fontSize = 11.sp, color = vine.textSecondary, maxLines = 1)
             }
+        }
+        if (fallbackNote != null && days.isNotEmpty()) {
+            Text(
+                fallbackNote,
+                fontSize = 11.sp,
+                color = VineColors.Orange,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
         }
         when {
             !hasLocation -> UnavailableCard("Rain forecast is currently unavailable.", onOpenWeatherSettings)
