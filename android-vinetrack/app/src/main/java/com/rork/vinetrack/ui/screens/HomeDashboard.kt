@@ -31,7 +31,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ChevronRight
@@ -57,7 +59,10 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -190,7 +195,14 @@ private fun DashboardContent(
                 .padding(vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            HeaderRow(state.selectedVineyard, state.selectedVineyardLogo, syncing = state.isLoadingVineyardData, onRefresh = { vm.refresh() })
+            HeaderRow(
+                vineyard = state.selectedVineyard,
+                logo = state.selectedVineyardLogo,
+                vineyards = state.vineyards,
+                syncing = state.isLoadingVineyardData,
+                onRefresh = { vm.refresh() },
+                onSelectVineyard = { vm.selectVineyard(it) },
+            )
 
             state.activeTrip?.let { active ->
                 ActiveTripCard(active, onClick = { onOpenTab(MainTab.Trip) })
@@ -234,7 +246,19 @@ private fun DashboardContent(
 }
 
 @Composable
-private fun HeaderRow(vineyard: Vineyard?, logo: android.graphics.Bitmap?, syncing: Boolean, onRefresh: () -> Unit) {
+private fun HeaderRow(
+    vineyard: Vineyard?,
+    logo: android.graphics.Bitmap?,
+    vineyards: List<Vineyard>,
+    syncing: Boolean,
+    onRefresh: () -> Unit,
+    onSelectVineyard: (String) -> Unit,
+) {
+    // The switcher is only interactive when the user belongs to more than one
+    // vineyard (matches the portal rule). Single-vineyard users see a plain,
+    // finished-looking header with no dropdown affordance.
+    val canSwitch = vineyards.size > 1
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -258,14 +282,77 @@ private fun HeaderRow(vineyard: Vineyard?, logo: android.graphics.Bitmap?, synci
                 Text("\uD83C\uDF47", fontSize = 20.sp)
             }
         }
-        Text(
-            vineyard?.name ?: "No Vineyard",
-            color = Color.White,
-            fontSize = 22.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-        )
+        if (canSwitch) {
+            Box(modifier = Modifier.weight(1f)) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { menuOpen = true }
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        vineyard?.name ?: "Select vineyard",
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Icon(
+                        Icons.Filled.ArrowDropDown,
+                        contentDescription = "Switch vineyard",
+                        tint = Color.White.copy(alpha = 0.9f),
+                        modifier = Modifier.size(26.dp),
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                ) {
+                    vineyards.forEach { v ->
+                        val isCurrent = v.id == vineyard?.id
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    v.name,
+                                    fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            leadingIcon = {
+                                if (isCurrent) {
+                                    Icon(
+                                        Icons.Filled.Check,
+                                        contentDescription = "Current vineyard",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                } else {
+                                    Spacer(Modifier.size(20.dp))
+                                }
+                            },
+                            onClick = {
+                                menuOpen = false
+                                if (!isCurrent) onSelectVineyard(v.id)
+                            },
+                        )
+                    }
+                }
+            }
+        } else {
+            Text(
+                vineyard?.name ?: "No Vineyard",
+                color = Color.White,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         SyncStatusChip(syncing = syncing, onRefresh = onRefresh)
     }
 }

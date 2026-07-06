@@ -625,12 +625,46 @@ private struct NewHomeTabView: View {
                         .frame(width: 22, height: 22)
                 }
             }
-            Text(store.selectedVineyard?.name ?? "No Vineyard")
-                .font(.title2.weight(.bold))
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            // The vineyard name is a switcher only when the user belongs to
+            // more than one vineyard (portal parity). Single-vineyard users
+            // see a plain, finished-looking title with no dropdown affordance.
+            if store.vineyards.count > 1 {
+                Menu {
+                    ForEach(store.vineyards, id: \.id) { vineyard in
+                        Button {
+                            guard vineyard.id != store.selectedVineyardId else { return }
+                            store.selectVineyard(vineyard)
+                        } label: {
+                            if vineyard.id == store.selectedVineyardId {
+                                Label(vineyard.name, systemImage: "checkmark")
+                            } else {
+                                Text(vineyard.name)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(store.selectedVineyard?.name ?? "Select vineyard")
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                        Image(systemName: "chevron.down")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+                    }
+                }
+                .accessibilityLabel("Switch vineyard. Current: \(store.selectedVineyard?.name ?? "none selected")")
+            } else {
+                Text(store.selectedVineyard?.name ?? "No Vineyard")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
             Spacer(minLength: 8)
             HomeSyncStatusChip()
         }
