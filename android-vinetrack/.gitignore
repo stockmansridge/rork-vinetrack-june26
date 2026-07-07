@@ -21,6 +21,12 @@ local.properties
 *.class
 *.log
 
+# Signing — the Play upload keystore is injected by the Rork AAB export at
+# build time and must never live in the repo (its absolute sandbox path
+# breaks the export build environment).
+*.jks
+*.keystore
+
 # IDE
 .idea/
 *.iml
