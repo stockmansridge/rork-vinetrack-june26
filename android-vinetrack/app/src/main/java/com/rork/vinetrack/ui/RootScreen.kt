@@ -35,11 +35,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rork.vinetrack.ui.auth.BiometricLockScreen
 import com.rork.vinetrack.ui.auth.LoginScreen
 import com.rork.vinetrack.ui.auth.OnboardingScreen
-import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.LoginVineyardBackground
 import com.rork.vinetrack.ui.main.MainScaffold
+import com.rork.vinetrack.ui.screens.NoVineyardMembershipScreen
 import com.rork.vinetrack.ui.theme.VineColors
-import androidx.compose.material.icons.filled.Spa
 
 @Composable
 fun RootScreen() {
@@ -81,7 +80,13 @@ fun RootScreen() {
             onRetry = vm::retryVineyardLoad,
             onSignOut = vm::signOut,
         )
-        AppRoute.NoVineyards -> NoVineyardsScreen(onSignOut = vm::signOut)
+        AppRoute.NoVineyards -> NoVineyardMembershipScreen(
+            onCreateVineyard = vm::createVineyard,
+            onCheckForAccess = vm::checkForVineyardAccess,
+            onAcceptInvitation = vm::acceptVineyardInvitation,
+            onDeclineInvitation = vm::declineVineyardInvitation,
+            onSignOut = vm::signOut,
+        )
         AppRoute.Main ->
             if (!state.onboardingCompleted) OnboardingScreen(onComplete = vm::completeOnboarding)
             else MainScaffold(vm, state)
@@ -138,19 +143,3 @@ private fun LoadFailedScreen(onRetry: () -> Unit, onSignOut: () -> Unit) {
     }
 }
 
-@Composable
-private fun NoVineyardsScreen(onSignOut: () -> Unit) {
-    Box(
-        Modifier.fillMaxSize().background(VineColors.AppBackgroundLight),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            EmptyState(
-                icon = Icons.Filled.Spa,
-                title = "No vineyards yet",
-                message = "You're not a member of any vineyard yet. Ask an owner to invite you, or create one from the web portal.",
-            )
-            TextButton(onClick = onSignOut) { Text("Sign out", color = VineColors.TextSecondaryLight) }
-        }
-    }
-}

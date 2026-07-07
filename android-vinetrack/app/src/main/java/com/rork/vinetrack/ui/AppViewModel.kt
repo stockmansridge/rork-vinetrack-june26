@@ -3014,6 +3014,100 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * First-login onboarding: create a vineyard via `create_vineyard_with_owner`
+     * (same RPC as iOS `EditVineyardSheet`), select it, then run the normal
+     * vineyard load so the app routes straight into Main. [onResult] receives
+     * success + an optional user-friendly error message.
+     */
+    fun createVineyard(name: String, country: String?, onResult: (Boolean, String?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val created = repo.createVineyard(name.trim(), country?.trim()?.ifBlank { null })
+                session.selectedVineyardId = created.id
+                loadVineyards()
+                onResult(true, null)
+            } catch (e: BackendError.Unauthorized) {
+                signOut()
+                onResult(false, null)
+            } catch (_: Exception) {
+                onResult(
+                    false,
+                    "Couldn't create the vineyard. Check your connection and try again.",
+                )
+            }
+        }
+    }
+
+    /**
+     * First-login onboarding: re-check vineyard access ("Check for Invites",
+     * parity with iOS `WaitingForInviteView.runCheck`). If memberships now
+     * exist the full vineyard load runs and the app routes into Main
+     * automatically. Otherwise pending invitations addressed to the signed-in
+     * user's email are returned so the screen can offer Accept / Decline.
+     */
+    fun checkForVineyardAccess(
+        onResult: (foundVineyards: Boolean, pendingInvitations: List<Invitation>, errorMessage: String?) -> Unit,
+    ) {
+        viewModelScope.launch {
+            try {
+                val vineyards = repo.listMyVineyards()
+                if (vineyards.isNotEmpty()) {
+                    loadVineyards()
+                    onResult(true, emptyList(), null)
+                    return@launch
+                }
+                val email = session.userEmail?.trim()?.lowercase().orEmpty()
+                val invites = runCatching { teamRepo.listMyPendingInvitations() }
+                    .getOrDefault(emptyList())
+                    .filter { it.status.equals("pending", ignoreCase = true) }
+                    .filter { email.isEmpty() || it.email.equals(email, ignoreCase = true) }
+                    .distinctBy { it.vineyardId }
+                onResult(false, invites, null)
+            } catch (e: BackendError.Unauthorized) {
+                signOut()
+            } catch (_: Exception) {
+                onResult(
+                    false,
+                    emptyList(),
+                    "Couldn't check memberships. Check your connection and try again.",
+                )
+            }
+        }
+    }
+
+    /**
+     * Accepts a pending invitation (`accept_invitation` RPC, parity with iOS
+     * `BackendVineyardListView.accept`), selects the invited vineyard and runs
+     * the normal vineyard load so the app proceeds into Main.
+     */
+    fun acceptVineyardInvitation(invitation: Invitation, onResult: (Boolean, String?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                teamRepo.acceptInvitation(invitation.id)
+                session.selectedVineyardId = invitation.vineyardId
+                loadVineyards()
+                onResult(true, null)
+            } catch (e: BackendError.Unauthorized) {
+                signOut()
+                onResult(false, null)
+            } catch (_: Exception) {
+                onResult(
+                    false,
+                    "Couldn't accept the invitation. Check your connection and try again.",
+                )
+            }
+        }
+    }
+
+    /** Declines a pending invitation (`decline_invitation` RPC, parity with iOS). */
+    fun declineVineyardInvitation(invitation: Invitation, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val ok = runCatching { teamRepo.declineInvitation(invitation.id) }.isSuccess
+            onResult(ok)
+        }
+    }
+
+    /**
      * Resolve platform System Admin status for the signed-in user (parity with
      * iOS `SystemAdminService.refresh`). Best-effort and non-fatal: a failure
      * leaves [AppUiState.isSystemAdmin] false so the Admin entry stays hidden.

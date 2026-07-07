@@ -43,6 +43,62 @@ class TeamRepository(private val session: SessionStore) {
             }
         }
 
+    /**
+     * Pending invitations visible to the signed-in user (RLS-scoped), joined to
+     * the vineyard name. Mirrors the iOS `listPendingInvitations()` (no
+     * vineyard filter) used by the first-login / waiting-for-invite flow;
+     * callers filter to the user's own email client-side, exactly like iOS.
+     */
+    suspend fun listMyPendingInvitations(): List<Invitation> = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val path = "invitations?select=*,vineyards(name)&status=eq.pending&order=created_at.desc"
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl(path)) {
+            authHeaders(token)
+        }
+        when {
+            response.status.isSuccess() -> response.body()
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
+    /**
+     * Accepts an invitation via the `accept_invitation` RPC. Ensures the
+     * caller's `profiles` row exists first (id + email upsert), mirroring the
+     * iOS `SupabaseTeamRepository.acceptInvitation` — the RPC links the
+     * membership to the profile, so a first-login user without a profile row
+     * would otherwise fail.
+     */
+    suspend fun acceptInvitation(invitationId: String): Unit = withContext(Dispatchers.IO) {
+        ensureMyProfileExists()
+        rpc("accept_invitation", InvitationIdArg(invitationId))
+    }
+
+    /** Declines an invitation via the `decline_invitation` RPC (mirrors iOS). */
+    suspend fun declineInvitation(invitationId: String): Unit = withContext(Dispatchers.IO) {
+        rpc("decline_invitation", InvitationIdArg(invitationId))
+    }
+
+    /** Upserts the caller's `profiles` row (id + email) so RPCs that join to it succeed. */
+    private suspend fun ensureMyProfileExists() = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val userId = session.userId ?: throw BackendError.Unauthorized
+        val email = session.userEmail?.trim().orEmpty()
+        val response = SupabaseClient.http.post(SupabaseClient.restUrl("profiles?on_conflict=id")) {
+            authHeaders(token)
+            headers { append("Prefer", "resolution=merge-duplicates,return=minimal") }
+            contentType(ContentType.Application.Json)
+            setBody(ProfileUpsertArg(id = userId, email = email))
+        }
+        when {
+            response.status.isSuccess() -> Unit
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
     suspend fun updateMemberRole(vineyardId: String, userId: String, role: String) =
         rpc("update_member_role", UpdateRoleArgs(vineyardId, userId, role))
 
@@ -137,6 +193,14 @@ class TeamRepository(private val session: SessionStore) {
         @SerialName("p_new_owner_id") val newOwnerId: String,
         @SerialName("p_remove_old_owner") val removeOldOwner: Boolean,
     )
+
+    @Serializable
+    private data class InvitationIdArg(
+        @SerialName("p_invitation_id") val invitationId: String,
+    )
+
+    @Serializable
+    private data class ProfileUpsertArg(val id: String, val email: String)
 
     @Serializable
     private data class CreateInvitationArgs(

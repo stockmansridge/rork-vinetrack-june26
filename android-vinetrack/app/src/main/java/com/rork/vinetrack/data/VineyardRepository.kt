@@ -48,6 +48,35 @@ class VineyardRepository(private val session: SessionStore) {
         get("vineyards?select=*&deleted_at=is.null&order=name.asc")
     }
 
+    /**
+     * Creates a vineyard and makes the caller its owner via the SECURITY
+     * DEFINER `create_vineyard_with_owner` RPC — the exact contract used by the
+     * iOS `SupabaseVineyardRepository.createVineyard` (`p_name` / `p_country`).
+     * Returns the created vineyard row.
+     */
+    suspend fun createVineyard(name: String, country: String?): Vineyard =
+        withContext(Dispatchers.IO) {
+            if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("create_vineyard_with_owner")) {
+                headers {
+                    append("apikey", SupabaseClient.anonKey)
+                    append("Authorization", "Bearer $token")
+                }
+                contentType(ContentType.Application.Json)
+                setBody(CreateVineyardArg(name = name, country = country))
+            }
+            when {
+                response.status.isSuccess() -> {
+                    val rows: List<Vineyard> = response.body()
+                    rows.firstOrNull()
+                        ?: throw BackendError.Server(response.status.value, "empty response")
+                }
+                response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+                else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            }
+        }
+
     suspend fun listPaddocks(vineyardId: String): List<Paddock> = withContext(Dispatchers.IO) {
         get("paddocks?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=name.asc")
     }
@@ -426,6 +455,12 @@ class VineyardRepository(private val session: SessionStore) {
         @SerialName("p_longitude") val longitude: Double?,
         @SerialName("p_elevation_metres") val elevationMetres: Double?,
         @SerialName("p_timezone") val timezone: String?,
+    )
+
+    @Serializable
+    private data class CreateVineyardArg(
+        @SerialName("p_name") val name: String,
+        @SerialName("p_country") val country: String?,
     )
 
     @Serializable
