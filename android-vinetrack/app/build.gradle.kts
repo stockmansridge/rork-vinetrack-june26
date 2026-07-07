@@ -98,6 +98,10 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Debug signing for normal APK/device builds. Rork injects the
+            // persistent project upload key automatically when exporting an
+            // AAB for Play Console — never hardcode a keystore here (an
+            // absolute sandbox path breaks the export build environment).
             signingConfig = signingConfigs.getByName("rorkPlayUpload")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
