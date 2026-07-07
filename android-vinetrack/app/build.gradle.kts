@@ -54,8 +54,8 @@ android {
         applicationId = "com.rork.vinetrack"
         minSdk = 24
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.0.4"
+        versionCode = 5
+        versionName = "0.0.5"
 
         val supabaseUrl = resolveBuildConfigValue(
             "SUPABASE_URL",
