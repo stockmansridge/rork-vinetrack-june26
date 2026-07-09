@@ -32,6 +32,16 @@ class SessionStore(context: Context) {
         get() = prefs.getString(KEY_NAME, null)
         set(value) = prefs.edit { putString(KEY_NAME, value) }
 
+    /**
+     * ISO timestamp the Supabase auth user was created (auth `created_at`).
+     * Cached so the 3-month initial free-access window (parity with iOS
+     * `SubscriptionService.isInInitialFreeAccessPeriod`) can be evaluated on an
+     * offline launch too.
+     */
+    var userCreatedAt: String?
+        get() = prefs.getString(KEY_CREATED_AT, null)
+        set(value) = prefs.edit { putString(KEY_CREATED_AT, value) }
+
     var selectedVineyardId: String?
         get() = prefs.getString(KEY_SELECTED_VINEYARD, null)
         set(value) = prefs.edit { putString(KEY_SELECTED_VINEYARD, value) }
@@ -47,7 +57,14 @@ class SessionStore(context: Context) {
 
     val hasSession: Boolean get() = !accessToken.isNullOrBlank() && !refreshToken.isNullOrBlank()
 
-    fun save(accessToken: String, refreshToken: String, userId: String?, email: String?, name: String? = null) {
+    fun save(
+        accessToken: String,
+        refreshToken: String,
+        userId: String?,
+        email: String?,
+        name: String? = null,
+        createdAt: String? = null,
+    ) {
         // If a *different* user is signing in, drop the previous user's cached
         // vineyard selection/default so it can't leak into the new session.
         // We track ownership with a dedicated key that survives `clear()` (which
@@ -61,6 +78,7 @@ class SessionStore(context: Context) {
             putString(KEY_USER_ID, userId)
             putString(KEY_EMAIL, email)
             if (name != null) putString(KEY_NAME, name)
+            if (createdAt != null) putString(KEY_CREATED_AT, createdAt)
             if (userId != null) putString(KEY_VINEYARD_CACHE_OWNER, userId)
             if (isDifferentUser) {
                 remove(KEY_SELECTED_VINEYARD)
@@ -76,6 +94,7 @@ class SessionStore(context: Context) {
             remove(KEY_USER_ID)
             remove(KEY_EMAIL)
             remove(KEY_NAME)
+            remove(KEY_CREATED_AT)
             // Keep selected/default vineyard so the SAME user re-logging in
             // restores their context. KEY_VINEYARD_CACHE_OWNER is also kept so
             // a different user signing in next is detected by save() and the
@@ -89,6 +108,7 @@ class SessionStore(context: Context) {
         const val KEY_USER_ID = "user_id"
         const val KEY_EMAIL = "user_email"
         const val KEY_NAME = "user_name"
+        const val KEY_CREATED_AT = "user_created_at"
         const val KEY_SELECTED_VINEYARD = "selected_vineyard_id"
         const val KEY_DEFAULT_VINEYARD = "default_vineyard_id"
         const val KEY_VINEYARD_CACHE_OWNER = "vineyard_cache_owner"

@@ -84,6 +84,14 @@ android {
             "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID",
         )
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
+
+        // RevenueCat Android public SDK key (goog_…). A PUBLIC client key —
+        // never the secret API key. Mirrors iOS AppConfig.revenueCatIOSAPIKey.
+        val revenueCatAndroidKey = resolveBuildConfigValue(
+            "REVENUECAT_ANDROID_API_KEY",
+            "EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY",
+        )
+        buildConfigField("String", "REVENUECAT_ANDROID_API_KEY", "\"$revenueCatAndroidKey\"")
     }
 
     signingConfigs {
@@ -156,6 +164,7 @@ dependencies {
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play.services)
     implementation(libs.googleid)
+    implementation(libs.revenuecat.purchases)
     debugImplementation(libs.androidx.ui.tooling)
     testImplementation(libs.junit)
 }

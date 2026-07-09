@@ -1,5 +1,6 @@
 package com.rork.vinetrack.ui
 
+import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.graphics.Bitmap
@@ -9,8 +10,16 @@ import androidx.credentials.CredentialManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import android.net.Uri
+import com.revenuecat.purchases.Package as RcPackage
+import com.revenuecat.purchases.PackageType
 import com.rork.vinetrack.data.auth.GoogleSignInHelper
 import com.rork.vinetrack.data.BackendError
+import com.rork.vinetrack.data.VineTrackAccessRepository
+import com.rork.vinetrack.data.model.parseIsoToEpochMs
+import com.rork.vinetrack.data.subscription.EntitlementVerificationStore
+import com.rork.vinetrack.data.subscription.PaywallPackageUi
+import com.rork.vinetrack.data.subscription.RevenueCatManager
+import com.rork.vinetrack.data.subscription.SubscriptionUiState
 import com.rork.vinetrack.data.ButtonConfigRepository
 import com.rork.vinetrack.data.ButtonConfigUpdateSync
 import com.rork.vinetrack.data.ConnectivityObserver
@@ -175,7 +184,7 @@ import java.time.Instant
 import java.util.UUID
 
 /** Top-level startup route, mirrors the iOS NewBackendRootView state machine. */
-enum class AppRoute { Restoring, Login, BiometricLock, VineyardLoading, VineyardLoadFailed, NoVineyards, Main }
+enum class AppRoute { Restoring, Login, BiometricLock, VineyardLoading, VineyardLoadFailed, NoVineyards, Paywall, Main }
 
 /**
  * Derived display state for an unresolved outbox entry (Tier-A Stage F-1).
@@ -646,6 +655,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val accountDeletionRepo = AccountDeletionRepository(session)
     private val regionSettingsStore = RegionSettingsStore(app)
     private val regionSettingsRepo = RegionSettingsRepository(session)
+
+    // --- Subscription / access gate (parity with iOS SubscriptionService +
+    // VineTrackAccessResolver). RevenueCat sells only the Google Play Solo
+    // yearly plan; Team/Enterprise/portal-trial access comes from Supabase. ---
+    private val revenueCat = RevenueCatManager(app)
+    private val vineTrackAccessRepo = VineTrackAccessRepository(session)
+    private val entitlementStore = EntitlementVerificationStore(app)
+
+    private val _subscription = MutableStateFlow(SubscriptionUiState())
+    val subscription: StateFlow<SubscriptionUiState> = _subscription.asStateFlow()
+
+    /** Live RevenueCat packages of the current offering, keyed by package id. */
+    private var rcPackages: Map<String, RcPackage> = emptyMap()
 
     /**
      * Platform System Admin data layer (parity with iOS `SupabaseAdminRepository`
@@ -2907,6 +2929,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun signOut(message: String? = null) {
         viewModelScope.launch {
             try { auth.signOut() } catch (_: Exception) {}
+            // Reset RevenueCat identity so one user's subscription state never
+            // leaks into another login (iOS parity: subscription.logout()).
+            runCatching { revenueCat.logOut() }
+            _subscription.value = SubscriptionUiState()
+            rcPackages = emptyMap()
             // Stage 8 — defence-in-depth: clear local offline-reliability data so
             // no pending/cache state for the signed-out account lingers on the
             // device. Local-only (no server/Storage deletes, no replay); cleanup
@@ -3011,6 +3038,271 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(route = AppRoute.VineyardLoading) }
             loadVineyards()
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Subscription / access gate (parity with iOS SubscriptionService +
+    // VineTrackAccessResolver)
+    // ------------------------------------------------------------------
+
+    /**
+     * Resolve effective VineTrack access. Never throws. Resolution order
+     * (Android port of the iOS gate + resolver contract):
+     *   A. Supabase `get_my_vinetrack_access()` — Team / Enterprise / internal /
+     *      legacy / portal-trial access unlocks directly.
+     *   B. RevenueCat `pro` entitlement (Solo, appUserID = Supabase user id).
+     *   C. Initial 3-month free-access window from account creation.
+     *   D. Offline grace — a previously verified subscriber keeps access for
+     *      30 days when the device can't reach RevenueCat/Supabase.
+     */
+    private suspend fun resolveVineTrackAccess(): Boolean {
+        val userId = session.userId
+        val online = _ui.value.isOnline
+
+        // A. Supabase backend entitlement. RPC failure must never block an
+        //    existing subscriber — fall through to RevenueCat.
+        var backendChecked = false
+        try {
+            val access = vineTrackAccessRepo.fetchMyAccess()
+            backendChecked = true
+            if (access != null && access.grantsAppAccess) {
+                entitlementStore.recordVerification(
+                    userId, true, "supabase:${access.accessSourceLabel}",
+                )
+                return true
+            }
+        } catch (_: Exception) {
+            // Offline / RPC missing / transient — fall back to RevenueCat.
+        }
+
+        // B. RevenueCat Solo entitlement (identified with the Supabase user id).
+        var rcChecked = false
+        val info = if (userId != null) revenueCat.logIn(userId) else revenueCat.customerInfo()
+        if (info != null) {
+            rcChecked = true
+            installCustomerInfoListener()
+            if (revenueCat.isEntitled(info)) {
+                if (online) {
+                    entitlementStore.recordVerification(userId, true, revenueCat.productStatus(info))
+                }
+                return true
+            }
+        }
+
+        // C. Initial 3-month free-access window (iOS parity).
+        if (isInInitialFreeAccessPeriod()) return true
+
+        // D. Offline grace window for previously verified subscribers.
+        if (!online && isWithinOfflineGracePeriod(userId)) return true
+
+        // Record a negative verification ONLY when both online checks actually
+        // completed — a failure-derived "not subscribed" must never shrink the
+        // offline grace window (iOS parity).
+        if (online && backendChecked && rcChecked) {
+            entitlementStore.recordVerification(userId, false, null)
+        }
+        // Couldn't verify anything (e.g. flaky network mid-check): honour the
+        // local grace/free window rather than locking a valid user out.
+        if (!backendChecked && !rcChecked) return hasLocalOfflineAccess()
+        return false
+    }
+
+    /** Local-only access check for offline launches — no network calls. */
+    private fun hasLocalOfflineAccess(): Boolean =
+        isInInitialFreeAccessPeriod() || isWithinOfflineGracePeriod(session.userId)
+
+    /** True inside the 3-month free window from auth account creation (iOS parity). */
+    private fun isInInitialFreeAccessPeriod(): Boolean {
+        val createdMs = parseIsoToEpochMs(session.userCreatedAt) ?: return false
+        val cal = java.util.Calendar.getInstance()
+        cal.timeInMillis = createdMs
+        cal.add(java.util.Calendar.MONTH, 3)
+        return System.currentTimeMillis() < cal.timeInMillis
+    }
+
+    /**
+     * True when a previously *entitled* online verification for this user is
+     * within the 30-day offline grace window (iOS parity: only a verification
+     * that granted access extends offline access).
+     */
+    private fun isWithinOfflineGracePeriod(userId: String?): Boolean {
+        val snapshot = entitlementStore.load(userId) ?: return false
+        if (!snapshot.wasEntitled) return false
+        val graceEndMs = snapshot.lastVerifiedAtMs +
+            RevenueCatManager.OFFLINE_GRACE_DAYS * 86_400_000L
+        return System.currentTimeMillis() < graceEndMs
+    }
+
+    /**
+     * Observe pushed CustomerInfo updates so a purchase/renewal completed
+     * outside the paywall flow (or a pending payment settling) unlocks the app
+     * immediately (iOS parity: customerInfoStream).
+     */
+    private fun installCustomerInfoListener() {
+        revenueCat.setCustomerInfoListener { info ->
+            if (revenueCat.isEntitled(info) && _ui.value.route == AppRoute.Paywall) {
+                entitlementStore.recordVerification(session.userId, true, revenueCat.productStatus(info))
+                _ui.update { it.copy(route = AppRoute.Main) }
+            }
+        }
+    }
+
+    /** Refresh the paywall's offering/packages (safe when Play isn't set up yet). */
+    fun refreshPaywall() {
+        viewModelScope.launch {
+            _subscription.update {
+                it.copy(isLoading = true, lastError = null, isOffline = !_ui.value.isOnline)
+            }
+            if (!revenueCat.configureIfNeeded()) {
+                rcPackages = emptyMap()
+                _subscription.update {
+                    it.copy(isLoading = false, isConfigured = false, packages = emptyList())
+                }
+                return@launch
+            }
+            // Make sure RevenueCat is identified before fetching the offering.
+            session.userId?.let { revenueCat.logIn(it) }
+            installCustomerInfoListener()
+            val offering = revenueCat.currentOffering()
+            val packages = offering?.availablePackages.orEmpty()
+            rcPackages = packages.associateBy { it.identifier }
+            _subscription.update {
+                it.copy(
+                    isLoading = false,
+                    isConfigured = true,
+                    isOffline = !_ui.value.isOnline,
+                    packages = packages.map(::toPaywallPackage),
+                )
+            }
+        }
+    }
+
+    /**
+     * Re-run the full access resolution (e.g. after being added to a Team plan
+     * in the portal), refreshing the paywall when access is still missing.
+     */
+    fun recheckSubscriptionAccess() {
+        viewModelScope.launch {
+            _subscription.update { it.copy(isLoading = true, lastError = null) }
+            val hasAccess = resolveVineTrackAccess()
+            if (hasAccess) {
+                _subscription.update { it.copy(isLoading = false) }
+                if (_ui.value.route == AppRoute.Paywall) {
+                    _ui.update { it.copy(route = AppRoute.Main) }
+                }
+            } else {
+                refreshPaywall()
+            }
+        }
+    }
+
+    /** Launch the Google Play purchase flow for the selected paywall package. */
+    fun purchaseSubscription(activity: Activity, packageId: String) {
+        val rcPackage = rcPackages[packageId] ?: return
+        viewModelScope.launch {
+            _subscription.update { it.copy(isPurchasing = true, lastError = null) }
+            when (val outcome = revenueCat.purchase(activity, rcPackage)) {
+                is RevenueCatManager.PurchaseOutcome.Unlocked -> {
+                    entitlementStore.recordVerification(
+                        session.userId, true, revenueCat.productStatus(outcome.info),
+                    )
+                    _subscription.update { it.copy(isPurchasing = false) }
+                    if (_ui.value.route == AppRoute.Paywall) {
+                        _ui.update { it.copy(route = AppRoute.Main) }
+                    }
+                }
+                is RevenueCatManager.PurchaseOutcome.NotEntitled -> _subscription.update {
+                    it.copy(
+                        isPurchasing = false,
+                        lastError = "Purchase completed but access hasn't activated yet. Try Restore Purchases in a moment.",
+                    )
+                }
+                RevenueCatManager.PurchaseOutcome.Cancelled ->
+                    _subscription.update { it.copy(isPurchasing = false) }
+                is RevenueCatManager.PurchaseOutcome.Failure -> _subscription.update {
+                    it.copy(isPurchasing = false, lastError = outcome.message)
+                }
+            }
+        }
+    }
+
+    /** Restore Google Play purchases for the signed-in user (iOS parity). */
+    fun restoreSubscriptionPurchases() {
+        viewModelScope.launch {
+            _subscription.update { it.copy(isRestoring = true, lastError = null) }
+            val info = revenueCat.restore()
+            if (info != null && revenueCat.isEntitled(info)) {
+                entitlementStore.recordVerification(
+                    session.userId, true, revenueCat.productStatus(info),
+                )
+                _subscription.update { it.copy(isRestoring = false) }
+                if (_ui.value.route == AppRoute.Paywall) {
+                    _ui.update { it.copy(route = AppRoute.Main) }
+                }
+            } else {
+                _subscription.update {
+                    it.copy(
+                        isRestoring = false,
+                        lastError = if (info == null) {
+                            "Couldn't reach Google Play. Check your connection and try again."
+                        } else {
+                            "No active subscription found to restore."
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Map a RevenueCat package to display state. Price and trial length come
+     * from Play product metadata where available; the 3-month wording is the
+     * fallback (matches the iOS paywall copy).
+     */
+    private fun toPaywallPackage(rcPackage: RcPackage): PaywallPackageUi {
+        val product = rcPackage.product
+        val identifier = rcPackage.identifier.lowercase()
+        val productTitle = product.title
+        val lowerTitle = productTitle.lowercase()
+        val isAnnual = rcPackage.packageType == PackageType.ANNUAL ||
+            identifier.contains("year") || identifier.contains("annual") ||
+            lowerTitle.contains("year") || lowerTitle.contains("annual")
+        val isMonthly = !isAnnual && (
+            rcPackage.packageType == PackageType.MONTHLY ||
+                identifier.contains("month") || lowerTitle.contains("month")
+            )
+        val price = product.price.formatted
+        val trialText = product.subscriptionOptions?.freeTrial
+            ?.freePhase?.billingPeriod?.let(::formatBillingPeriod) ?: "3 months"
+        val title = when {
+            isAnnual -> "Annual plan"
+            isMonthly -> "Monthly plan"
+            else -> productTitle
+        }
+        val renewalLine = when {
+            isAnnual -> "$trialText free, then $price/year"
+            isMonthly -> "$trialText free, then $price/month"
+            else -> "$trialText free, then $price"
+        }
+        return PaywallPackageUi(
+            packageId = rcPackage.identifier,
+            title = title,
+            renewalLine = renewalLine,
+            productTitle = productTitle,
+        )
+    }
+
+    /** "3 months", "14 days", "1 year" — human-readable Play billing period. */
+    private fun formatBillingPeriod(period: com.revenuecat.purchases.models.Period): String {
+        val unit = when (period.unit) {
+            com.revenuecat.purchases.models.Period.Unit.DAY -> "day"
+            com.revenuecat.purchases.models.Period.Unit.WEEK -> "week"
+            com.revenuecat.purchases.models.Period.Unit.MONTH -> "month"
+            com.revenuecat.purchases.models.Period.Unit.YEAR -> "year"
+            else -> return "3 months"
+        }
+        val plural = if (period.value == 1) unit else "${unit}s"
+        return "${period.value} $plural"
     }
 
     /**
@@ -3158,6 +3450,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 else -> vineyards.firstOrNull()?.id
             }
             session.selectedVineyardId = selected
+            // Access gate (iOS parity): only evaluated once the user genuinely
+            // has a vineyard — the no-vineyard onboarding always comes first.
+            val hasAccess = if (selected == null) true else resolveVineTrackAccess()
             _ui.update {
                 it.copy(
                     vineyards = vineyards,
@@ -3168,9 +3463,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     // Fresh online list — we're no longer on cached field data.
                     isUsingCachedFieldData = false,
                     cachedFieldDataLastSyncedAt = null,
-                    route = if (selected == null) AppRoute.NoVineyards else AppRoute.Main,
+                    route = when {
+                        selected == null -> AppRoute.NoVineyards
+                        !hasAccess -> AppRoute.Paywall
+                        else -> AppRoute.Main
+                    },
                 )
             }
+            if (!hasAccess) refreshPaywall()
             if (selected != null) loadVineyardData(selected)
             if (selected != null) refreshRegionSettings(selected)
             refreshSelectedVineyardLogo()
@@ -3229,10 +3529,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // catch is only reached after auth succeeded), so falling back to
             // the local read-cache never bypasses authentication.
             if (!hydrateVineyardsFromCache()) {
+                // Offline with in-memory vineyards: honour the local-only access
+                // check (free window / offline grace) so previously valid users
+                // are never locked out by a transient outage.
+                val offlineAccess = hasLocalOfflineAccess()
                 _ui.update {
                     if (it.vineyards.isEmpty()) it.copy(route = AppRoute.VineyardLoadFailed)
-                    else it.copy(route = AppRoute.Main)
+                    else it.copy(route = if (offlineAccess) AppRoute.Main else AppRoute.Paywall)
                 }
+                if (!offlineAccess && _ui.value.route == AppRoute.Paywall) refreshPaywall()
             }
         }
     }
@@ -3259,6 +3564,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             else -> cached.firstOrNull()?.id
         }
         session.selectedVineyardId = selected
+        // Offline launch: evaluate access from local state only (free window /
+        // offline grace snapshot) — no network calls, never locks out a
+        // previously verified subscriber (iOS parity).
+        val offlineAccess = if (selected == null) true else hasLocalOfflineAccess()
         _ui.update {
             it.copy(
                 vineyards = cached,
@@ -3267,9 +3576,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 currentUserId = userId,
                 isUsingCachedFieldData = true,
                 cachedFieldDataLastSyncedAt = domainCache.vineyardsSyncedAt(userId),
-                route = if (selected == null) AppRoute.NoVineyards else AppRoute.Main,
+                route = when {
+                    selected == null -> AppRoute.NoVineyards
+                    !offlineAccess -> AppRoute.Paywall
+                    else -> AppRoute.Main
+                },
             )
         }
+        if (selected != null && !offlineAccess) refreshPaywall()
         if (selected != null) loadVineyardData(selected)
         refreshCacheStatus()
         return true

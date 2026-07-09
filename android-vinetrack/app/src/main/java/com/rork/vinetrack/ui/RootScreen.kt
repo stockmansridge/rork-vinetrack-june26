@@ -38,6 +38,7 @@ import com.rork.vinetrack.ui.auth.OnboardingScreen
 import com.rork.vinetrack.ui.components.LoginVineyardBackground
 import com.rork.vinetrack.ui.main.MainScaffold
 import com.rork.vinetrack.ui.screens.NoVineyardMembershipScreen
+import com.rork.vinetrack.ui.screens.SubscriptionScreen
 import com.rork.vinetrack.ui.theme.VineColors
 
 @Composable
@@ -45,6 +46,7 @@ fun RootScreen() {
     val vm: AppViewModel = viewModel()
     val state by vm.ui.collectAsStateWithLifecycle()
     val authState by vm.authState.collectAsStateWithLifecycle()
+    val subscriptionState by vm.subscription.collectAsStateWithLifecycle()
 
     // Silently revalidate/refresh the Supabase session whenever the app
     // returns to the foreground, so a stale token never bounces the user to
@@ -86,6 +88,13 @@ fun RootScreen() {
             onAcceptInvitation = vm::acceptVineyardInvitation,
             onDeclineInvitation = vm::declineVineyardInvitation,
             onSignOut = vm::signOut,
+        )
+        AppRoute.Paywall -> SubscriptionScreen(
+            state = subscriptionState,
+            onPurchase = vm::purchaseSubscription,
+            onRestore = vm::restoreSubscriptionPurchases,
+            onRecheckAccess = vm::recheckSubscriptionAccess,
+            onSignOut = { vm.signOut() },
         )
         AppRoute.Main ->
             if (!state.onboardingCompleted) OnboardingScreen(onComplete = vm::completeOnboarding)

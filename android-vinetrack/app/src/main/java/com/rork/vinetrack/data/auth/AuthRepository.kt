@@ -75,6 +75,9 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
     val currentEmail: String? get() = session.userEmail
     val currentName: String? get() = session.userName
 
+    /** ISO auth `created_at` for the signed-in user (drives the free-access window). */
+    val currentUserCreatedAt: String? get() = session.userCreatedAt
+
     /**
      * Update the signed-in user's display name in Supabase auth metadata
      * (GoTrue `PUT /auth/v1/user`). Mirrors iOS `updateDisplayName`. Returns the
@@ -326,7 +329,14 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
     private fun persist(token: TokenResponse): AppUser? {
         val access = token.accessToken ?: return null
         val refresh = token.refreshToken ?: return null
-        session.save(access, refresh, token.user?.id, token.user?.email, token.user?.displayName)
+        session.save(
+            access,
+            refresh,
+            token.user?.id,
+            token.user?.email,
+            token.user?.displayName,
+            token.user?.createdAt,
+        )
         return token.user ?: AppUser(id = session.userId ?: "", email = session.userEmail)
     }
 

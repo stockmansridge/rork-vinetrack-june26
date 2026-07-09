@@ -58,6 +58,17 @@ object AppConfig {
         get() = googleWebClientId.isNotBlank()
 
     /**
+     * RevenueCat Android public SDK key (goog_…). A PUBLIC client key, safe to
+     * ship in the APK — mirrors iOS `AppConfig.revenueCatIOSAPIKey`. Empty when
+     * not configured; the subscription service degrades gracefully.
+     */
+    val revenueCatAndroidApiKey: String
+        get() = resolve("REVENUECAT_ANDROID_API_KEY", "EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY") ?: ""
+
+    val isRevenueCatConfigured: Boolean
+        get() = revenueCatAndroidApiKey.isNotBlank()
+
+    /**
      * Emits a safe, one-line diagnostic about the runtime Supabase config.
      * Never prints the key itself — only presence flags, the resolved URL,
      * and the anon key length so we can confirm the build-injected values are
@@ -159,6 +170,7 @@ object AppConfig {
         "SUPABASE_URL", "EXPO_PUBLIC_SUPABASE_URL" -> BuildConfig.SUPABASE_URL
         "SUPABASE_ANON_KEY", "EXPO_PUBLIC_SUPABASE_ANON_KEY" -> BuildConfig.SUPABASE_ANON_KEY
         "GOOGLE_WEB_CLIENT_ID", "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID" -> BuildConfig.GOOGLE_WEB_CLIENT_ID
+        "REVENUECAT_ANDROID_API_KEY", "EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY" -> BuildConfig.REVENUECAT_ANDROID_API_KEY
         else -> null
     }
 }
