@@ -206,6 +206,7 @@ import com.rork.vinetrack.data.model.fillCalculatedPercentOfMix
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.builtInTripFunctions
 import com.rork.vinetrack.data.model.formatTripDuration
+import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import com.rork.vinetrack.data.model.slugifyTripFunction
 import com.rork.vinetrack.data.model.tripFunctionDisplayName
 import com.rork.vinetrack.data.model.VineyardMember
@@ -247,7 +248,6 @@ fun TripsScreen(
     var selectedId by remember { mutableStateOf<String?>(null) }
     var choosing by remember { mutableStateOf(false) }
     var starting by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf<Trip?>(null) }
 
     // When navigated here with a specific trip (e.g. just-started spray job),
     // open that trip's detail once, then clear the external request.
@@ -279,7 +279,6 @@ fun TripsScreen(
                 state = state,
                 tripId = trip.id,
                 onBack = { selectedId = null },
-                onEdit = { editing = it },
             )
         }
     }
@@ -306,15 +305,6 @@ fun TripsScreen(
         )
     }
 
-    editing?.let { trip ->
-        EditTripSheet(
-            vm = vm,
-            state = state,
-            trip = trip,
-            onDismiss = { editing = null },
-            onSaved = { editing = null },
-        )
-    }
 }
 
 private enum class TripSortOption(val label: String, val icon: ImageVector) {
@@ -913,7 +903,6 @@ private fun TripDetailView(
     state: AppUiState,
     tripId: String,
     onBack: () -> Unit,
-    onEdit: (Trip) -> Unit,
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
@@ -921,6 +910,7 @@ private fun TripDetailView(
     var confirmDelete by remember { mutableStateOf(false) }
     var ending by remember { mutableStateOf(false) }
     var editingSeeding by remember { mutableStateOf(false) }
+    var editingCostLinks by remember { mutableStateOf(false) }
     var exportMenuOpen by remember { mutableStateOf(false) }
     // Active trips open in the full-screen in-cab HUD; toggle to the scrollable
     // detail (summary, cost, etc.) and back via the top-bar controls.
@@ -976,7 +966,7 @@ private fun TripDetailView(
                         val blockLabel = tripBlocksLabel(trip, state.paddocks)
                         val operatorName = resolveTripOperatorName(trip, state.members)
                         val linkedSprayForExport = state.sprayRecords.firstOrNull { it.tripId == trip.id }
-                        val pinCount = 0
+                        val pinCount = state.pins.count { it.tripId == trip.id }
                         fun exportPdf() {
                             val ok = TripPdfExporter.exportAndShare(
                                 context = context,
@@ -1031,8 +1021,14 @@ private fun TripDetailView(
                             )
                         }
                     }
-                    IconButton(onClick = { onEdit(trip) }) {
-                        Icon(Icons.Filled.Edit, contentDescription = "Edit trip")
+                    // Delete lives in the top bar like iOS, gated by the same
+                    // roles as iOS `canDeleteOperationalRecords` (owner/manager/
+                    // supervisor). Active trips must be ended first.
+                    val canDeleteTrip = state.currentRole in setOf("owner", "manager", "supervisor")
+                    if (!trip.isActive && canDeleteTrip) {
+                        IconButton(onClick = { confirmDelete = true }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Delete trip", tint = VineColors.Destructive)
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
@@ -1062,39 +1058,38 @@ private fun TripDetailView(
                 )
             }
 
-            // Path map
-            val path = trip.pathPoints?.mapNotNull { it.toLatLng() } ?: emptyList()
-            if (path.size >= 2) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Track", onLight = true)
-                    TripPathMap(path = path, blocks = state.paddocks)
+            // Header — trip name, sync state, start/end (iOS header parity).
+            val pinsForTrip = remember(trip.id, state.pins) { state.pins.filter { it.tripId == trip.id } }
+            VineyardCard {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        trip.displayLabel,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = VineColors.Primary,
+                        maxLines = 2,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TripSyncTick(state.tripSyncState(trip.id))
                 }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeader("Summary", onLight = true)
-                VineyardCard {
-                    DetailRow(Icons.Filled.Schedule, "Duration", formatTripDuration(durationSeconds), VineColors.Indigo)
+                Spacer(Modifier.height(10.dp))
+                DetailRow(Icons.Filled.CalendarToday, "Started", formatTripDateTime(trip.startEpochMs) ?: "—", VineColors.Indigo)
+                val endedAtMs = trip.endEpochMs
+                if (endedAtMs != null) {
                     Divider(vine.cardBorder)
-                    DetailRow(Icons.Filled.Straighten, "Distance", formatDistance(trip.totalDistance) ?: "—", VineColors.Cyan)
+                    DetailRow(Icons.Filled.CalendarToday, "Ended", formatTripDateTime(endedAtMs) ?: "—", VineColors.DarkGreen)
+                } else if (trip.isActive) {
                     Divider(vine.cardBorder)
-                    DetailRow(Icons.Filled.Route, "Rows completed", trip.completedRowCount.toString(), VineColors.LeafGreen)
-                    if ((trip.totalTanks ?: 0) > 0) {
-                        Divider(vine.cardBorder)
-                        DetailRow(Icons.Filled.Grass, "Tanks", trip.totalTanks.toString(), VineColors.Orange)
-                    }
+                    DetailRow(Icons.Filled.PlayArrow, "Status", "Active", VineColors.LeafGreen)
                 }
             }
 
-            if (trip.rowSequence.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Row plan", onLight = true)
-                    TripRowPlanSummaryCard(trip)
-                }
-            }
-
+            // Trip Summary — iOS section order: function, title, duration,
+            // distance, block, operator, work task, then the row-plan stats
+            // (pattern, started, planned/complete/skipped/not-complete) and
+            // the pins-recorded count.
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeader("Details", onLight = true)
+                SectionHeader("Trip Summary", onLight = true)
                 val machineName = resolveTripMachineName(trip, state.machines)
                 val hasMachineLink = trip.machineId != null || trip.tractorId != null
                 val workTask = resolveTripWorkTask(trip, state.workTasks)
@@ -1102,50 +1097,107 @@ private fun TripDetailView(
                 val operatorCategory = resolveTripOperatorCategory(trip, state.operatorCategories)
                 val blockLabel = tripBlocksLabel(trip, state.paddocks)
                 val blockCount = trip.effectivePaddockIds.size
-                VineyardCard {
-                    DetailRow(
-                        Icons.Filled.Grass,
-                        if (blockCount > 1) "Blocks ($blockCount)" else "Block",
-                        blockLabel,
-                        VineColors.LeafGreen,
+                val donePaths = trip.completedPaths.orEmpty().toSet()
+                val skippedPathsSet = trip.skippedPaths.orEmpty().toSet()
+                val summaryRows = buildList {
+                    trip.tripFunction?.takeIf { it.isNotBlank() }?.let { raw ->
+                        add(TripStatRow(tripFunctionIcon(raw), "Function", tripFunctionDisplayName(raw) ?: raw, VineColors.Indigo))
+                    }
+                    trip.tripTitle?.takeIf { it.isNotBlank() }?.let {
+                        add(TripStatRow(Icons.Filled.Notes, "Title", it, VineColors.Indigo))
+                    }
+                    add(TripStatRow(Icons.Filled.Schedule, "Duration", formatTripDuration(durationSeconds), VineColors.Indigo))
+                    add(TripStatRow(Icons.Filled.Straighten, "Distance", formatDistance(trip.totalDistance) ?: "—", VineColors.Cyan))
+                    add(
+                        TripStatRow(
+                            Icons.Filled.Grass,
+                            if (blockCount > 1) "Blocks ($blockCount)" else "Block",
+                            blockLabel,
+                            VineColors.LeafGreen,
+                        ),
                     )
-                    Divider(vine.cardBorder)
-                    DetailRow(
-                        Icons.Filled.Person,
-                        "Operator",
-                        operatorName ?: if (trip.operatorUserId != null) "Linked member unavailable" else "Not recorded",
-                        VineColors.EarthBrown,
+                    add(
+                        TripStatRow(
+                            Icons.Filled.Person,
+                            "Operator",
+                            operatorName ?: if (trip.operatorUserId != null) "Linked member unavailable" else "Not recorded",
+                            VineColors.EarthBrown,
+                        ),
                     )
                     if (trip.operatorCategoryId != null) {
-                        Divider(vine.cardBorder)
-                        DetailRow(
-                            Icons.Filled.Person,
-                            "Operator category",
-                            operatorCategory?.displayName ?: "Linked category unavailable",
-                            VineColors.EarthBrown,
+                        add(
+                            TripStatRow(
+                                Icons.Filled.Person,
+                                "Operator category",
+                                operatorCategory?.displayName ?: "Linked category unavailable",
+                                VineColors.EarthBrown,
+                            ),
                         )
                     }
-                    Divider(vine.cardBorder)
-                    DetailRow(
-                        Icons.Filled.Agriculture,
-                        "Equipment",
-                        machineName ?: if (hasMachineLink) "Linked equipment unavailable" else "No machine linked",
-                        VineColors.Orange,
+                    add(
+                        TripStatRow(
+                            Icons.Filled.Agriculture,
+                            "Equipment",
+                            machineName ?: if (hasMachineLink) "Linked equipment unavailable" else "No machine linked",
+                            VineColors.Orange,
+                        ),
                     )
                     if (trip.workTaskId != null) {
-                        Divider(vine.cardBorder)
-                        DetailRow(
-                            Icons.Filled.Assignment,
-                            "Work task",
-                            workTask?.displayLabel ?: "Linked task unavailable",
-                            VineColors.Indigo,
+                        add(
+                            TripStatRow(
+                                Icons.Filled.Assignment,
+                                "Work task",
+                                workTask?.displayLabel ?: "Linked task unavailable",
+                                VineColors.Indigo,
+                            ),
                         )
                     }
-                    Divider(vine.cardBorder)
-                    DetailRow(Icons.Filled.Schedule, "Started", formatTripDateTime(trip.startEpochMs) ?: "—", VineColors.Indigo)
-                    trip.endEpochMs?.let {
-                        Divider(vine.cardBorder)
-                        DetailRow(Icons.Filled.Schedule, "Finished", formatTripDateTime(it) ?: "—", VineColors.DarkGreen)
+                    if (trip.rowSequence.isNotEmpty()) {
+                        val pattern = TrackingPattern.fromRaw(trip.trackingPattern)
+                        add(TripStatRow(Icons.Filled.Timeline, "Pattern", pattern.title, VineColors.Indigo))
+                        if (pattern == TrackingPattern.EVERY_SECOND_ROW) {
+                            trip.rowSequence.firstOrNull()?.let { startMidrow ->
+                                val lowerRow = kotlin.math.floor(startMidrow).toInt()
+                                val midrowText = if (startMidrow % 1.0 == 0.0) "%.0f".format(startMidrow) else "%.1f".format(startMidrow)
+                                add(
+                                    TripStatRow(
+                                        Icons.Filled.NearMe,
+                                        "Started",
+                                        "Between rows $lowerRow–${lowerRow + 1} — midrow $midrowText",
+                                        VineColors.Indigo,
+                                    ),
+                                )
+                            }
+                        }
+                        add(TripStatRow(Icons.Filled.Route, "Paths planned", trip.rowSequence.size.toString(), VineColors.Cyan))
+                        add(
+                            TripStatRow(
+                                Icons.Filled.CheckCircle,
+                                "Complete",
+                                trip.rowSequence.count { it in donePaths }.toString(),
+                                VineColors.LeafGreen,
+                            ),
+                        )
+                        val skippedCount = trip.rowSequence.count { it in skippedPathsSet && it !in donePaths }
+                        if (skippedCount > 0) {
+                            add(TripStatRow(Icons.Filled.SkipNext, "Skipped", skippedCount.toString(), VineColors.Orange))
+                        }
+                        val notDoneCount = trip.rowSequence.count { it !in donePaths && it !in skippedPathsSet }
+                        if (notDoneCount > 0) {
+                            add(TripStatRow(Icons.Filled.Close, "Not complete", notDoneCount.toString(), VineColors.Destructive))
+                        }
+                    }
+                    if ((trip.totalTanks ?: 0) > 0) {
+                        add(TripStatRow(Icons.Filled.LocalDrink, "Tanks", trip.totalTanks.toString(), VineColors.Cyan))
+                    }
+                    if (pinsForTrip.isNotEmpty()) {
+                        add(TripStatRow(Icons.Filled.Place, "Pins recorded", pinsForTrip.size.toString(), VineColors.Orange))
+                    }
+                }
+                VineyardCard {
+                    summaryRows.forEachIndexed { index, row ->
+                        if (index > 0) Divider(vine.cardBorder)
+                        DetailRow(row.icon, row.label, row.value, row.tint)
                     }
                 }
             }
@@ -1176,136 +1228,105 @@ private fun TripDetailView(
                 state.sprayRecords.firstOrNull { it.tripId == trip.id }
             }
 
-            // Cost breakdown (Stage 3F-3b-i), read-only and owner/manager-only.
-            // Combines labour, fuel and chemical cost into a single total via the
-            // pure TripCostEstimator. Fuel mirrors the iOS TripCostService logic;
-            // labour uses the resolved operator category rate; chemical comes from
-            // the linked spray record. cost/ha and cost/tonne are intentionally
-            // out of scope for this slice.
-            val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
-            if (canViewFinancials) {
-                val cost = remember(trip, linkedSpray, state.operatorCategories, state.machines, state.fuelPurchases, state.paddocks, state.yieldRecords, state.savedInputs) {
-                    TripCostEstimator.estimate(
-                        trip,
-                        linkedSpray,
-                        state.operatorCategories,
-                        state.machines,
-                        state.fuelPurchases,
-                        state.paddocks,
-                        state.yieldRecords,
-                        state.savedInputs,
-                    )
-                }
-                val fuel = cost.fuel
+            // Spray Record — immediately after the summary, matching iOS.
+            if (linkedSpray != null) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Cost breakdown", onLight = true)
+                    SectionHeader("Spray Record", onLight = true)
                     VineyardCard {
                         DetailRow(
-                            Icons.Filled.Person,
-                            "Labour",
-                            if (cost.labour.cost > 0) {
-                                "${formatFuelCurrency(cost.labour.cost)} · ${formatEngineHours(cost.labour.hours)} h"
-                            } else "—",
-                            VineColors.EarthBrown,
+                            Icons.Filled.WaterDrop,
+                            "Reference",
+                            linkedSpray.displayLabel,
+                            VineColors.Cyan,
                         )
-                        Divider(vine.cardBorder)
-                        DetailRow(
-                            Icons.Filled.LocalGasStation,
-                            "Fuel",
-                            fuel.fuelCost?.let { c ->
-                                fuel.litres?.let { l -> "${formatFuelCurrency(c)} · ${formatLitres(l)} L" } ?: formatFuelCurrency(c)
-                            } ?: "—",
-                            VineColors.Orange,
-                        )
-                        cost.chemical?.let { chem ->
-                            Divider(vine.cardBorder)
-                            DetailRow(
-                                Icons.Filled.Science,
-                                "Chemicals",
-                                if (chem.cost > 0) formatFuelCurrency(chem.cost) else "—",
-                                VineColors.LeafGreen,
-                            )
-                        }
-                        cost.seeding?.let { seed ->
+                        val chems = linkedSpray.chemicalNames
+                        if (chems.isNotEmpty()) {
                             Divider(vine.cardBorder)
                             DetailRow(
                                 Icons.Filled.Grass,
-                                "Seed / inputs",
-                                if (seed.cost > 0) formatFuelCurrency(seed.cost) else "—",
+                                "Chemicals",
+                                if (chems.size <= 2) chems.joinToString(", ") else "${chems.take(2).joinToString(", ")} +${chems.size - 2}",
                                 VineColors.LeafGreen,
                             )
                         }
-                        Divider(vine.cardBorder)
-                        DetailRow(
-                            Icons.Filled.Paid,
-                            "Total",
-                            if (cost.totalCost > 0) formatFuelCurrency(cost.totalCost) else "—",
-                            VineColors.DarkGreen,
-                        )
-                        cost.treatedAreaHa?.let { area ->
+                        if (linkedSpray.tankCount > 0) {
                             Divider(vine.cardBorder)
-                            DetailRow(
-                                Icons.Filled.Straighten,
-                                "Treated area",
-                                "${formatLitres(area)} ha",
-                                VineColors.LeafGreen,
-                            )
+                            DetailRow(Icons.Filled.LocalDrink, "Tanks", linkedSpray.tankCount.toString(), VineColors.Indigo)
                         }
-                        cost.costPerHa?.let { perHa ->
-                            Divider(vine.cardBorder)
-                            DetailRow(
-                                Icons.Filled.Paid,
-                                "Cost / ha",
-                                formatFuelCurrency(perHa),
-                                VineColors.DarkGreen,
-                            )
+                    }
+                }
+            }
+
+            // Tank fill-timer sessions (Stage 3F-2a), read-only. Android-only
+            // extra kept right after the spray section it relates to.
+            if (trip.tankSessions.isNotEmpty() || trip.activeTankNumber != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Tank fills", onLight = true)
+                    VineyardCard {
+                        trip.activeTankNumber?.let { active ->
+                            val state = if (trip.isFillingTank) "Filling tank ${trip.fillingTankNumber ?: active}" else "On tank $active"
+                            DetailRow(Icons.Filled.LocalDrink, "Current", state, VineColors.Cyan)
                         }
-                        cost.yieldTonnes?.let { tonnes ->
-                            Divider(vine.cardBorder)
-                            DetailRow(
-                                Icons.Filled.Scale,
-                                "Yield",
-                                "${formatTonnes(tonnes)} t",
-                                VineColors.LeafGreen,
-                            )
+                        trip.tankSessions.forEachIndexed { index, tank ->
+                            if (index > 0 || trip.activeTankNumber != null) Divider(vine.cardBorder)
+                            val parts = buildList {
+                                tank.fillDurationSeconds?.let { add("fill ${formatTripDuration(it)}") }
+                                tank.rowRange.takeIf { it.isNotBlank() }?.let { add(it) }
+                                if (tank.isOpen) add("in progress")
+                            }
+                            val detail = parts.joinToString(" \u00b7 ").ifBlank {
+                                formatTripDateTime(tank.startEpochMs) ?: "\u2014"
+                            }
+                            DetailRow(Icons.Filled.LocalDrink, "Tank ${tank.tankNumber}", detail, VineColors.Indigo)
                         }
-                        cost.costPerTonne?.let { perTonne ->
-                            Divider(vine.cardBorder)
-                            DetailRow(
-                                Icons.Filled.Paid,
-                                "Cost / tonne",
-                                formatFuelCurrency(perTonne),
-                                VineColors.DarkGreen,
-                            )
-                        }
-                        Divider(vine.cardBorder)
-                        DetailRow(
-                            Icons.Filled.Timelapse,
-                            "Fuel basis",
-                            "${fuel.basis.label} · ${formatEngineHours(fuel.fuelHours)} h",
-                            VineColors.Indigo,
-                        )
-                        fuel.costPerLitre?.let { perL ->
-                            Divider(vine.cardBorder)
-                            DetailRow(
-                                Icons.Filled.LocalGasStation,
-                                "Cost / litre",
-                                formatFuelCurrency(perL),
-                                VineColors.Orange,
-                            )
-                        }
-                        val costWarnings = buildList {
-                            addAll(cost.warnings)
-                            cost.areaWarning?.takeIf { cost.totalCost > 0 }?.let { add(it) }
-                            cost.yieldWarning?.takeIf { cost.costPerTonne == null && cost.totalCost > 0 }?.let { add(it) }
-                        }
-                        if (costWarnings.isNotEmpty()) {
-                            Spacer(Modifier.height(8.dp))
-                            costWarnings.forEach { warning ->
-                                Text(warning, fontSize = 12.sp, color = vine.textSecondary)
+                    }
+                }
+            }
+
+            // Row Completion — per-path status list (iOS parity).
+            if (trip.rowSequence.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Row Completion", onLight = true)
+                    val donePathsSet = trip.completedPaths.orEmpty().toSet()
+                    val skippedSetRC = trip.skippedPaths.orEmpty().toSet()
+                    VineyardCard {
+                        trip.rowSequence.forEachIndexed { index, pathNumber ->
+                            if (index > 0) Divider(vine.cardBorder)
+                            val (statusIcon, statusLabel, statusTint) = when {
+                                pathNumber in donePathsSet -> Triple(Icons.Filled.CheckCircle, "Complete", VineColors.LeafGreen)
+                                pathNumber in skippedSetRC -> Triple(Icons.Filled.SkipNext, "Skipped", VineColors.Orange)
+                                else -> Triple(Icons.Filled.RadioButtonUnchecked, "Not complete", VineColors.Destructive)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Icon(statusIcon, contentDescription = null, tint = statusTint, modifier = Modifier.size(20.dp))
+                                Text(
+                                    TripRowSequencePlanner.formatPath(pathNumber),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = vine.textPrimary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(statusLabel, fontSize = 12.sp, color = vine.textSecondary)
                             }
                         }
                     }
+                }
+            }
+
+            // Path map — placed after Row Completion, matching iOS.
+            val path = trip.pathPoints?.mapNotNull { it.toLatLng() } ?: emptyList()
+            if (path.size >= 2) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Path Map", onLight = true)
+                    TripPathMap(path = path, blocks = state.paddocks)
+                }
+            }
+
+            // Path summary — iOS "View Path Summary" equivalent.
+            if (trip.rowSequence.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Path Summary", onLight = true)
+                    TripRowPlanSummaryCard(trip)
                 }
             }
 
@@ -1356,51 +1377,128 @@ private fun TripDetailView(
                 }
             }
 
-            // Tank fill-timer sessions (Stage 3F-2a), read-only. Shown only when
-            // the trip carries recorded sessions or live tank state.
-            if (trip.tankSessions.isNotEmpty() || trip.activeTankNumber != null) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Tank fills", onLight = true)
-                    VineyardCard {
-                        trip.activeTankNumber?.let { active ->
-                            val state = if (trip.isFillingTank) "Filling tank ${trip.fillingTankNumber ?: active}" else "On tank $active"
-                            DetailRow(Icons.Filled.LocalDrink, "Current", state, VineColors.Cyan)
-                        }
-                        trip.tankSessions.forEachIndexed { index, tank ->
-                            if (index > 0 || trip.activeTankNumber != null) Divider(vine.cardBorder)
-                            val parts = buildList {
-                                tank.fillDurationSeconds?.let { add("fill ${formatTripDuration(it)}") }
-                                tank.rowRange.takeIf { it.isNotBlank() }?.let { add(it) }
-                                if (tank.isOpen) add("in progress")
-                            }
-                            val detail = parts.joinToString(" \u00b7 ").ifBlank {
-                                formatTripDateTime(tank.startEpochMs) ?: "\u2014"
-                            }
-                            DetailRow(Icons.Filled.LocalDrink, "Tank ${tank.tankNumber}", detail, VineColors.Indigo)
-                        }
-                    }
+            // Estimated Trip Cost (owners/managers only) — iOS row order:
+            // labour, fuel, chemicals, seed/input, total, treated area,
+            // cost/ha, yield, cost/tonne, then the costing-links editor.
+            val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
+            if (canViewFinancials) {
+                val cost = remember(trip, linkedSpray, state.operatorCategories, state.machines, state.fuelPurchases, state.paddocks, state.yieldRecords, state.savedInputs) {
+                    TripCostEstimator.estimate(
+                        trip,
+                        linkedSpray,
+                        state.operatorCategories,
+                        state.machines,
+                        state.fuelPurchases,
+                        state.paddocks,
+                        state.yieldRecords,
+                        state.savedInputs,
+                    )
                 }
-            }
-
-            if (linkedSpray != null) {
+                val fuel = cost.fuel
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Spray", onLight = true)
+                    SectionHeader("Estimated Trip Cost", onLight = true)
                     VineyardCard {
                         DetailRow(
-                            Icons.Filled.WaterDrop,
-                            "Spray record",
-                            linkedSpray.displayLabel,
-                            VineColors.Cyan,
+                            Icons.Filled.Person,
+                            "Labour",
+                            if (cost.labour.cost > 0) {
+                                "${formatFuelCurrency(cost.labour.cost)} · ${formatEngineHours(cost.labour.hours)} h"
+                            } else "—",
+                            VineColors.EarthBrown,
                         )
-                        val chems = linkedSpray.chemicalNames
-                        if (chems.isNotEmpty()) {
+                        Divider(vine.cardBorder)
+                        DetailRow(
+                            Icons.Filled.LocalGasStation,
+                            "Fuel",
+                            fuel.fuelCost?.let { c ->
+                                fuel.litres?.let { l -> "${formatFuelCurrency(c)} · ${formatLitres(l)} L" } ?: formatFuelCurrency(c)
+                            } ?: "—",
+                            VineColors.Orange,
+                        )
+                        cost.chemical?.let { chem ->
+                            Divider(vine.cardBorder)
+                            DetailRow(
+                                Icons.Filled.Science,
+                                "Chemicals",
+                                if (chem.cost > 0) formatFuelCurrency(chem.cost) else "—",
+                                VineColors.LeafGreen,
+                            )
+                        }
+                        cost.seeding?.let { seed ->
                             Divider(vine.cardBorder)
                             DetailRow(
                                 Icons.Filled.Grass,
-                                "Chemicals",
-                                if (chems.size <= 2) chems.joinToString(", ") else "${chems.take(2).joinToString(", ")} +${chems.size - 2}",
+                                "Seed / inputs",
+                                if (seed.cost > 0) formatFuelCurrency(seed.cost) else "—",
                                 VineColors.LeafGreen,
                             )
+                        }
+                        Divider(vine.cardBorder)
+                        DetailRow(
+                            Icons.Filled.Paid,
+                            "Total estimated",
+                            if (cost.totalCost > 0) formatFuelCurrency(cost.totalCost) else "—",
+                            VineColors.DarkGreen,
+                        )
+                        Divider(vine.cardBorder)
+                        DetailRow(
+                            Icons.Filled.Straighten,
+                            "Treated area",
+                            cost.treatedAreaHa?.let { "${formatLitres(it)} ha" } ?: "—",
+                            VineColors.LeafGreen,
+                        )
+                        Divider(vine.cardBorder)
+                        DetailRow(
+                            Icons.Filled.Paid,
+                            "Cost / ha",
+                            cost.costPerHa?.let { formatFuelCurrency(it) } ?: "—",
+                            VineColors.DarkGreen,
+                        )
+                        Divider(vine.cardBorder)
+                        DetailRow(
+                            Icons.Filled.Scale,
+                            "Yield",
+                            cost.yieldTonnes?.let { "${formatTonnes(it)} t" } ?: "—",
+                            VineColors.LeafGreen,
+                        )
+                        Divider(vine.cardBorder)
+                        DetailRow(
+                            Icons.Filled.Paid,
+                            "Cost / tonne",
+                            cost.costPerTonne?.let { formatFuelCurrency(it) } ?: "—",
+                            VineColors.DarkGreen,
+                        )
+                        Divider(vine.cardBorder)
+                        DetailRow(
+                            Icons.Filled.Timelapse,
+                            "Fuel basis",
+                            "${fuel.basis.label} · ${formatEngineHours(fuel.fuelHours)} h",
+                            VineColors.Indigo,
+                        )
+                        fuel.costPerLitre?.let { perL ->
+                            Divider(vine.cardBorder)
+                            DetailRow(
+                                Icons.Filled.LocalGasStation,
+                                "Cost / litre",
+                                formatFuelCurrency(perL),
+                                VineColors.Orange,
+                            )
+                        }
+                        val costWarnings = buildList {
+                            addAll(cost.warnings)
+                            cost.areaWarning?.takeIf { cost.totalCost > 0 }?.let { add(it) }
+                            cost.yieldWarning?.takeIf { cost.costPerTonne == null && cost.totalCost > 0 }?.let { add(it) }
+                        }
+                        if (costWarnings.isNotEmpty()) {
+                            Spacer(Modifier.height(8.dp))
+                            costWarnings.forEach { warning ->
+                                Text(warning, fontSize = 12.sp, color = vine.textSecondary)
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(onClick = { editingCostLinks = true }) {
+                            Icon(Icons.Filled.Edit, contentDescription = null, tint = VineColors.PrimaryAccent, modifier = Modifier.size(16.dp))
+                            Text("  Edit operator, category & tractor", color = VineColors.PrimaryAccent, fontSize = 13.sp)
                         }
                     }
                 }
@@ -1418,13 +1516,37 @@ private fun TripDetailView(
                 }
             }
 
-            if (!trip.isActive) {
-                TextButton(
-                    onClick = { confirmDelete = true },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive)
-                    Text("  Delete trip", color = VineColors.Destructive)
+            // Pins recorded during this trip (iOS parity).
+            if (pinsForTrip.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Pins (${pinsForTrip.size})", onLight = true)
+                    VineyardCard {
+                        pinsForTrip.forEachIndexed { index, pin ->
+                            if (index > 0) Divider(vine.cardBorder)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Icon(
+                                    if (pin.mode?.lowercase() == "growth") Icons.Filled.Grass else Icons.Filled.Build,
+                                    contentDescription = null,
+                                    tint = if (pin.mode?.lowercase() == "growth") VineColors.LeafGreen else VineColors.Orange,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(pin.displayTitle, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = vine.textPrimary)
+                                    formatTripDateTime(parseIsoToEpochMs(pin.createdAt))?.let {
+                                        Text(it, fontSize = 12.sp, color = vine.textSecondary)
+                                    }
+                                }
+                                if (pin.isCompleted) {
+                                    Icon(
+                                        Icons.Filled.CheckCircle,
+                                        contentDescription = "Completed",
+                                        tint = VineColors.Success,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1442,11 +1564,20 @@ private fun TripDetailView(
         )
     }
 
+    if (editingCostLinks) {
+        TripCostingLinksSheet(
+            vm = vm,
+            state = state,
+            trip = trip,
+            onDismiss = { editingCostLinks = false },
+        )
+    }
+
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete trip?") },
-            text = { Text("This removes the trip for your whole team. This can't be undone here.") },
+            title = { Text("Delete Trip") },
+            text = { Text("Are you sure you want to delete this trip? This action cannot be undone.") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false
@@ -4177,140 +4308,85 @@ private fun EndTripRowReview(
     }
 }
 
+/**
+ * Focused editor for the trip's costing links — operator, operator category
+ * and machine/tractor — mirroring iOS `TripCostingLinksEditSheet`. All other
+ * trip fields are passed through unchanged so nothing else is touched.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EditTripSheet(
+private fun TripCostingLinksSheet(
     vm: AppViewModel,
     state: AppUiState,
     trip: Trip,
     onDismiss: () -> Unit,
-    onSaved: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
-    var paddockIds by remember { mutableStateOf(trip.effectivePaddockIds) }
-    val paddockId: String? = paddockIds.firstOrNull()
-    val selectableFunctions = remember(state.vineyardTripFunctions, trip.tripFunction) {
-        val customActive = state.vineyardTripFunctions
-            .filter { it.isSelectable }
-            .sortedBy { it.label.lowercase() }
-            .map { it.tripFunctionKey to it.label }
-        val base = builtInTripFunctions + customActive
-        // Preserve the trip's current custom function even if it was archived
-        // since the trip was created, so the picker can still display it.
-        val current = trip.tripFunction
-        if (current != null && current.startsWith("custom:") && base.none { it.first == current }) {
-            base + (current to trip.displayLabel)
-        } else {
-            base
-        }
-    }
-    var functionRaw by remember {
-        mutableStateOf(trip.tripFunction?.takeIf { raw -> selectableFunctions.any { it.first == raw } } ?: builtInTripFunctions.first().first)
-    }
-    var operator by remember { mutableStateOf(trip.personName ?: "") }
+    var operatorName by remember { mutableStateOf(trip.personName ?: "") }
     var operatorUserId by remember { mutableStateOf(trip.operatorUserId) }
     var operatorCategoryId by remember { mutableStateOf(trip.operatorCategoryId) }
-    var title by remember { mutableStateOf(trip.tripTitle ?: "") }
     var machineId by remember { mutableStateOf(trip.machineId) }
-    var workTaskId by remember { mutableStateOf(trip.workTaskId) }
     var saving by remember { mutableStateOf(false) }
-    var functionMenu by remember { mutableStateOf(false) }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text("Edit trip", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
-
-            ExposedDropdownMenuBox(expanded = functionMenu, onExpandedChange = { functionMenu = it }) {
-                OutlinedTextField(
-                    value = selectableFunctions.firstOrNull { it.first == functionRaw }?.second ?: "Trip",
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Operation") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = functionMenu) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
-                )
-                ExposedDropdownMenu(expanded = functionMenu, onDismissRequest = { functionMenu = false }) {
-                    selectableFunctions.forEach { (raw, label) ->
-                        DropdownMenuItem(text = { Text(label) }, onClick = { functionRaw = raw; functionMenu = false })
-                    }
-                }
-            }
-
-            MultiBlockPicker(
-                paddocks = state.paddocks,
-                selectedIds = paddockIds,
-                onToggle = { id ->
-                    paddockIds = if (id in paddockIds) paddockIds - id else paddockIds + id
-                },
-                // Offline-resilient fallback: when the block list is unavailable
-                // (e.g. offline restart) show the trip's stored snapshot so a
-                // selected block isn't wrongly implied as cleared.
-                fallbackLabel = trip.paddockName?.takeIf { it.isNotBlank() },
+            Text("Edit operator, category & tractor", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+            Text(
+                "These links drive the trip's labour and fuel cost estimate.",
+                fontSize = 12.sp,
+                color = vine.textSecondary,
             )
 
             OperatorPicker(
                 state = state,
                 operatorUserId = operatorUserId,
-                operatorName = operator,
+                operatorName = operatorName,
                 operatorCategoryId = operatorCategoryId,
                 onSelectMember = { member ->
                     operatorUserId = member?.userId
                     if (member != null) {
-                        operator = member.name
+                        operatorName = member.name
                         if (operatorCategoryId == null) operatorCategoryId = member.operatorCategoryId
                     }
                 },
-                onOperatorNameChange = { operator = it },
+                onOperatorNameChange = { operatorName = it },
                 onSelectCategory = { operatorCategoryId = it },
             )
 
             MachinePicker(state = state, selectedId = machineId, onSelect = { machineId = it })
-            WorkTaskPicker(state = state, selectedId = workTaskId, onSelect = { workTaskId = it })
-
-            OutlinedTextField(
-                value = title,
-                onValueChange = { title = it },
-                label = { Text("Notes / title") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            if (trip.machineId != null && machineId == null || trip.workTaskId != null && workTaskId == null) {
-                Text(
-                    "Clearing an existing equipment or work-task link isn't supported yet — pick a different one to change it.",
-                    fontSize = 12.sp,
-                    color = vine.textSecondary,
-                )
-            }
 
             Button(
                 onClick = {
                     saving = true
-                    val paddock = state.paddocks.firstOrNull { it.id == paddockId }
                     vm.updateTripMetadata(
                         tripId = trip.id,
-                        paddockId = paddockId,
-                        paddockName = paddock?.name,
-                        paddockIds = paddockIds,
-                        personName = operator.trim(),
-                        tripFunction = functionRaw,
-                        tripTitle = title.trim(),
+                        paddockId = trip.paddockId,
+                        paddockName = trip.paddockName,
+                        paddockIds = trip.effectivePaddockIds,
+                        personName = operatorName.trim(),
+                        tripFunction = trip.tripFunction,
+                        tripTitle = trip.tripTitle,
                         machineId = machineId,
-                        workTaskId = workTaskId,
+                        workTaskId = trip.workTaskId,
                         operatorUserId = operatorUserId,
                         operatorCategoryId = operatorCategoryId,
-                    ) { ok -> saving = false; if (ok) onSaved() }
+                    ) { ok -> saving = false; if (ok) onDismiss() }
                 },
                 enabled = !saving,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
             ) {
-                Text("Save changes")
+                if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
+                else Text("Save changes")
             }
         }
     }
@@ -4866,6 +4942,14 @@ private fun OperatorPicker(
         }
     }
 }
+
+/** Icon/label/value/tint tuple backing the merged Trip Summary card rows. */
+private data class TripStatRow(
+    val icon: ImageVector,
+    val label: String,
+    val value: String,
+    val tint: Color,
+)
 
 @Composable
 private fun DetailRow(icon: ImageVector, label: String, value: String, tint: Color) {

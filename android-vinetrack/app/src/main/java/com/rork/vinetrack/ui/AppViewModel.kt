@@ -3784,6 +3784,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val input = PinRepository.PinInput(
             id = UUID.randomUUID().toString(),
             vineyardId = vineyardId,
+            // Link the pin to the in-progress trip (iOS parity) so it shows up
+            // in that trip's detail view and PDF export.
+            tripId = _ui.value.activeTrip?.id,
             paddockId = paddockId,
             title = title.ifBlank { null },
             category = category?.ifBlank { null },
@@ -3869,6 +3872,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val optimistic = Pin(
             id = clientPinId,
             vineyardId = input.vineyardId,
+            tripId = input.tripId,
             paddockId = input.paddockId,
             title = input.title,
             category = input.category,

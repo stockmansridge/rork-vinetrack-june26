@@ -945,6 +945,8 @@ data class Pin(
     val id: String,
     @SerialName("vineyard_id") val vineyardId: String,
     @SerialName("paddock_id") val paddockId: String? = null,
+    /** Trip this pin was dropped during, when recorded mid-trip (iOS parity). */
+    @SerialName("trip_id") val tripId: String? = null,
     val title: String? = null,
     val category: String? = null,
     @SerialName("button_name") val buttonName: String? = null,

@@ -42,6 +42,8 @@ class PinRepository(private val session: SessionStore) {
         val id: String? = null,
         @SerialName("vineyard_id") val vineyardId: String,
         @SerialName("paddock_id") val paddockId: String? = null,
+        /** Active trip at drop time so the pin appears in that trip's detail (iOS parity). */
+        @SerialName("trip_id") val tripId: String? = null,
         val title: String? = null,
         val category: String? = null,
         val mode: String? = null,
