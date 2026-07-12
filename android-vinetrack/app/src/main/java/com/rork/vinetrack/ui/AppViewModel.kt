@@ -7500,7 +7500,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
-                _ui.update { it.copy(sprayError = "Couldn't save the category. Check your connection.") }
+                _ui.update { it.copy(sprayError = "Couldn't save the worker type. Check your connection.") }
                 onResult(false)
             }
         }
@@ -7524,7 +7524,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(operatorCategories = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
-                _ui.update { it.copy(operatorCategories = previous, sprayError = "Couldn't save the category. Check your connection.") }
+                _ui.update { it.copy(operatorCategories = previous, sprayError = "Couldn't save the worker type. Check your connection.") }
                 onResult(false)
             }
         }
@@ -7544,7 +7544,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(operatorCategories = previous, sprayError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
-                _ui.update { it.copy(operatorCategories = previous, sprayError = "Couldn't archive the category. Check your connection.") }
+                _ui.update { it.copy(operatorCategories = previous, sprayError = "Couldn't archive the worker type. Check your connection.") }
                 onResult(false)
             }
         }

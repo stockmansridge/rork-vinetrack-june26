@@ -295,7 +295,7 @@ fun SettingsScreen(
                             Icons.Filled.Group,
                             VineColors.Info,
                             "Team Operations",
-                            "Operator Categories",
+                            "Worker Types",
                             onClick = { onOpenTool(ToolRoute.OperatorCategories) },
                         )
                         RowDivider(vine.cardBorder)

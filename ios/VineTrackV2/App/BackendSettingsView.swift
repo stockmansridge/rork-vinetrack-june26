@@ -217,8 +217,8 @@ struct BackendSettingsView: View {
             ),
             SettingsSearchItem(
                 title: "Team Operations",
-                subtitle: "Operator Categories",
-                keywords: ["operators", "categories", "team", "operations"],
+                subtitle: "Worker Types",
+                keywords: ["operators", "categories", "worker", "types", "team", "operations"],
                 symbol: "person.2.fill",
                 color: .blue,
                 destination: AnyView(TeamOperationsHubView())
@@ -416,9 +416,9 @@ struct BackendSettingsView: View {
             ),
             // Under Team Operations
             SettingsSearchItem(
-                title: "Operator Categories",
-                subtitle: "Operator labour categories",
-                keywords: ["operators", "categories", "labour", "labor", "team"],
+                title: "Worker Types",
+                subtitle: "Worker types with hourly rates",
+                keywords: ["operators", "categories", "worker", "types", "labour", "labor", "team"],
                 symbol: "person.badge.clock.fill",
                 color: .blue,
                 destination: AnyView(OperatorCategoriesView()),
@@ -672,7 +672,7 @@ struct BackendSettingsView: View {
             } label: {
                 SettingsRow(
                     title: "Team Operations",
-                    subtitle: "Operator Categories",
+                    subtitle: "Worker Types",
                     symbol: "person.2.fill",
                     color: .blue
                 )
@@ -1125,10 +1125,10 @@ struct SyncSettingsView: View {
                 Button {
                     Task { await operatorCategorySync.syncForSelectedVineyard() }
                 } label: {
-                    syncButtonLabel(title: "Sync Operator Categories", icon: "person.2.fill", isSyncing: isSyncingMgmt(operatorCategorySync.syncStatus))
+                    syncButtonLabel(title: "Sync Worker Types", icon: "person.2.fill", isSyncing: isSyncingMgmt(operatorCategorySync.syncStatus))
                 }
                 .disabled(isSyncingMgmt(operatorCategorySync.syncStatus))
-                VineyardSyncStatusRow(label: "operator categories", state: mgmtStateFrom(operatorCategorySync.syncStatus, lastSync: operatorCategorySync.lastSyncDate))
+                VineyardSyncStatusRow(label: "worker types", state: mgmtStateFrom(operatorCategorySync.syncStatus, lastSync: operatorCategorySync.lastSyncDate))
 
                 Button {
                     Task { await workTaskTypeSync.syncForSelectedVineyard() }
@@ -1156,7 +1156,7 @@ struct SyncSettingsView: View {
             } header: {
                 Text("Spray Management")
             } footer: {
-                Text("Saved chemicals, presets, equipment, tractors, fuel and operator categories sync across vineyard members.")
+                Text("Saved chemicals, presets, equipment, tractors, fuel and worker types sync across vineyard members.")
             }
 
             Section {

@@ -47,12 +47,12 @@ struct CostingSetupAnalysis {
         let labourComplete = !cats.isEmpty && !catsWithRate.isEmpty
         let labourDetail: String = {
             if cats.isEmpty {
-                return "Assign operator categories and hourly rates in Team & Access."
+                return "Assign worker types and hourly rates in Team & Access."
             }
             if catsWithRate.isEmpty {
-                return "Operator categories have no hourly rate. Open Operator Categories to add one."
+                return "Worker types have no hourly rate. Open Worker Types to add one."
             }
-            return "\(catsWithRate.count) operator categor\(catsWithRate.count == 1 ? "y" : "ies") with hourly rate."
+            return "\(catsWithRate.count) worker type\(catsWithRate.count == 1 ? "" : "s") with hourly rate."
         }()
 
         // Fuel

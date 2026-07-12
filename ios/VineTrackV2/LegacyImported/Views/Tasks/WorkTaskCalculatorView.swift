@@ -56,7 +56,7 @@ struct WorkTaskCalculatorView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("No worker types configured")
                             .font(.subheadline.weight(.semibold))
-                        Text("Add worker types in Settings → Operator Categories to use this calculator.")
+                        Text("Add worker types in Settings → Worker Types to use this calculator.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

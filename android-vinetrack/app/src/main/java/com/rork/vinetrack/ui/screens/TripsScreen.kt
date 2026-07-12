@@ -1128,8 +1128,8 @@ private fun TripDetailView(
                         add(
                             TripStatRow(
                                 Icons.Filled.Person,
-                                "Operator category",
-                                operatorCategory?.displayName ?: "Linked category unavailable",
+                                "Worker type",
+                                operatorCategory?.displayName ?: "Linked worker type unavailable",
                                 VineColors.EarthBrown,
                             ),
                         )
@@ -1498,7 +1498,7 @@ private fun TripDetailView(
                         Spacer(Modifier.height(4.dp))
                         TextButton(onClick = { editingCostLinks = true }) {
                             Icon(Icons.Filled.Edit, contentDescription = null, tint = VineColors.PrimaryAccent, modifier = Modifier.size(16.dp))
-                            Text("  Edit operator, category & tractor", color = VineColors.PrimaryAccent, fontSize = 13.sp)
+                            Text("  Edit operator, worker type & tractor", color = VineColors.PrimaryAccent, fontSize = 13.sp)
                         }
                     }
                 }
@@ -4339,7 +4339,7 @@ private fun TripCostingLinksSheet(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text("Edit operator, category & tractor", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+            Text("Edit operator, worker type & tractor", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
             Text(
                 "These links drive the trip's labour and fuel cost estimate.",
                 fontSize = 12.sp,
@@ -4853,7 +4853,7 @@ private fun WorkTaskPicker(state: AppUiState, selectedId: String?, onSelect: (St
 
 /**
  * Operator picker: link the trip to a real team member (resolved via the
- * `get_vineyard_team_members` RPC) and/or an operator category, while keeping
+ * `get_vineyard_team_members` RPC) and/or a worker type, while keeping
  * free-text entry as a fallback for legacy records and people not on the team.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -4916,25 +4916,25 @@ private fun OperatorPicker(
         )
     }
 
-    // Operator category dropdown (only when the vineyard has categories).
+    // Worker type dropdown (only when the vineyard has worker types).
     if (categories.isNotEmpty()) {
         val selectedCategory = categories.firstOrNull { it.id == operatorCategoryId }
         val categoryValue = when {
             operatorCategoryId != null && selectedCategory != null -> selectedCategory.displayName
-            operatorCategoryId != null -> "Linked category unavailable"
-            else -> "No category"
+            operatorCategoryId != null -> "Linked worker type unavailable"
+            else -> "No worker type"
         }
         ExposedDropdownMenuBox(expanded = categoryMenu, onExpandedChange = { categoryMenu = it }) {
             OutlinedTextField(
                 value = categoryValue,
                 onValueChange = {},
                 readOnly = true,
-                label = { Text("Operator category") },
+                label = { Text("Worker type") },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryMenu) },
                 modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
             )
             ExposedDropdownMenu(expanded = categoryMenu, onDismissRequest = { categoryMenu = false }) {
-                DropdownMenuItem(text = { Text("No category") }, onClick = { onSelectCategory(null); categoryMenu = false })
+                DropdownMenuItem(text = { Text("No worker type") }, onClick = { onSelectCategory(null); categoryMenu = false })
                 categories.forEach { c ->
                     DropdownMenuItem(text = { Text(c.displayName) }, onClick = { onSelectCategory(c.id); categoryMenu = false })
                 }

@@ -448,7 +448,7 @@ struct BackendDiagnosticView: View {
     }
 
     private var operatorCategoryDiagnosticsSection: some View {
-        Section("Operator Categories Diagnostics") {
+        Section("Worker Types Diagnostics") {
             LabeledContent("Selected Vineyard ID", value: migratedStore.selectedVineyardId?.uuidString ?? "none")
             LabeledContent("Local count (this vineyard)", value: "\(localOperatorCategoriesForSelectedVineyard.count)")
             LabeledContent("Local count (all vineyards)", value: "\(migratedStore.operatorCategories.count)")
@@ -477,10 +477,10 @@ struct BackendDiagnosticView: View {
                     }
                 }
             }
-            Button("Sync Operator Categories Now", systemImage: "arrow.triangle.2.circlepath") {
+            Button("Sync Worker Types Now", systemImage: "arrow.triangle.2.circlepath") {
                 Task { await runOperatorCategorySync() }
             }
-            Button("Fetch Remote Operator Categories", systemImage: "icloud.and.arrow.down") {
+            Button("Fetch Remote Worker Types", systemImage: "icloud.and.arrow.down") {
                 Task { await fetchRemoteOperatorCategories() }
             }
             Button("Force Re-push Local → Supabase", systemImage: "icloud.and.arrow.up") {
@@ -505,14 +505,14 @@ struct BackendDiagnosticView: View {
     }
 
     private func runOperatorCategorySync() async {
-        await perform("Sync Operator Categories") {
+        await perform("Sync Worker Types") {
             await operatorCategorySync.syncForSelectedVineyard()
             return "status=\(describe(operatorCategorySync.syncStatus)); last=\(operatorCategorySync.lastSyncDate?.description ?? "nil"); pendingUpserts=\(operatorCategorySync.pendingUpsertCount); pendingDeletes=\(operatorCategorySync.pendingDeleteCount)"
         }
     }
 
     private func fetchRemoteOperatorCategories() async {
-        await perform("Fetch Remote Operator Categories") {
+        await perform("Fetch Remote Worker Types") {
             let remote = try await operatorCategorySync.fetchRemoteForSelectedVineyard()
             let vid = migratedStore.selectedVineyardId?.uuidString ?? "none"
             if remote.isEmpty {
@@ -527,7 +527,7 @@ struct BackendDiagnosticView: View {
     }
 
     private func forceRepushOperatorCategories() async {
-        await perform("Force Re-push Operator Categories") {
+        await perform("Force Re-push Worker Types") {
             let result = await operatorCategorySync.forceRepushLocalForSelectedVineyard()
             return result
         }

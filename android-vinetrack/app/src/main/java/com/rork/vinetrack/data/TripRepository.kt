@@ -59,7 +59,7 @@ class TripRepository(private val session: SessionStore) {
         @SerialName("tractor_id") val tractorId: String? = null,
         @SerialName("work_task_id") val workTaskId: String? = null,
         @SerialName("operator_user_id") val operatorUserId: String? = null,
-        @SerialName("operator_category_id") val operatorCategoryId: String? = null,
+        @SerialName("worker_type_id") val operatorCategoryId: String? = null,
         @SerialName("total_distance") val totalDistance: Double = 0.0,
         @SerialName("path_points") val pathPoints: List<CoordinatePoint> = emptyList(),
         @SerialName("start_engine_hours") val startEngineHours: Double? = null,
@@ -102,7 +102,7 @@ class TripRepository(private val session: SessionStore) {
         @SerialName("machine_id") val machineId: String? = null,
         @SerialName("work_task_id") val workTaskId: String? = null,
         @SerialName("operator_user_id") val operatorUserId: String? = null,
-        @SerialName("operator_category_id") val operatorCategoryId: String? = null,
+        @SerialName("worker_type_id") val operatorCategoryId: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
@@ -587,7 +587,7 @@ class TripRepository(private val session: SessionStore) {
             put("machine_id", machineId?.let { JsonPrimitive(it) } ?: JsonNull)
             put("work_task_id", workTaskId?.let { JsonPrimitive(it) } ?: JsonNull)
             put("operator_user_id", operatorUserId?.let { JsonPrimitive(it) } ?: JsonNull)
-            put("operator_category_id", operatorCategoryId?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("worker_type_id", operatorCategoryId?.let { JsonPrimitive(it) } ?: JsonNull)
             put("is_paused", JsonPrimitive(isPaused))
             // Pause/resume stamps ride along only when the caller tracks them
             // (iOS `Trip.activeDuration` parity) — never cleared by omission.

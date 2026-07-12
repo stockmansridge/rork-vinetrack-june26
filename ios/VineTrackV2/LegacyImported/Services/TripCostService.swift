@@ -148,7 +148,7 @@ nonisolated enum TripCostService {
                 costPerHour: 0,
                 hours: hours,
                 cost: 0,
-                warning: "Operator category has no hourly rate."
+                warning: "Worker type has no hourly rate."
             )
         } else if trip.operatorUserId == nil && trip.operatorCategoryId == nil {
             labour = LabourBreakdown(
@@ -164,7 +164,7 @@ nonisolated enum TripCostService {
                 costPerHour: nil,
                 hours: hours,
                 cost: 0,
-                warning: "Operator has no category assigned. Set one in Team & Access."
+                warning: "Operator has no worker type assigned. Set one in Team & Access."
             )
         }
 

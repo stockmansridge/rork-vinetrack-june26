@@ -1350,8 +1350,8 @@ struct TeamOperationsHubView: View {
                     OperatorCategoriesView()
                 } label: {
                     SettingsRow(
-                        title: "Operator Categories",
-                        subtitle: "\(currentVineyardOperatorCategories) categor\(currentVineyardOperatorCategories == 1 ? "y" : "ies")",
+                        title: "Worker Types",
+                        subtitle: "\(currentVineyardOperatorCategories) worker type\(currentVineyardOperatorCategories == 1 ? "" : "s")",
                         symbol: "person.badge.clock.fill",
                         color: .blue
                     )

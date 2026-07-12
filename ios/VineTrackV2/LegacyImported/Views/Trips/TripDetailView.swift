@@ -243,7 +243,7 @@ struct TripDetailView: View {
                         Button {
                             showEditCostingLinks = true
                         } label: {
-                            Label("Edit operator, category & tractor", systemImage: "pencil")
+                            Label("Edit operator, worker type & tractor", systemImage: "pencil")
                                 .font(.subheadline.weight(.medium))
                         }
                         .padding(.top, 4)

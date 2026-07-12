@@ -423,7 +423,7 @@ private struct EditMemberRoleSheet: View {
 
                 if canAssignOperatorCategory {
                     Section {
-                        Picker("Operator Category", selection: $selectedOperatorCategoryId) {
+                        Picker("Worker Type", selection: $selectedOperatorCategoryId) {
                             Text("None").tag(UUID?.none)
                             ForEach(operatorCategories) { cat in
                                 Text(cat.name).tag(UUID?.some(cat.id))
@@ -431,10 +431,10 @@ private struct EditMemberRoleSheet: View {
                         }
                         .disabled(!canManage)
                     } header: {
-                        Text("Operator Category")
+                        Text("Worker Type")
                     } footer: {
                         if operatorCategories.isEmpty {
-                            Text("Create operator categories in Spray Management → Operator Categories to assign hourly rates for trip cost calculations.")
+                            Text("Create worker types in Spray Management → Worker Types to assign hourly rates for trip cost calculations.")
                         } else {
                             Text("Used as the default for this member's labour cost on trips. Visible to owners and managers only.")
                         }

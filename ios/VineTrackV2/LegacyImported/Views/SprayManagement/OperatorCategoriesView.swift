@@ -47,20 +47,20 @@ struct OperatorCategoriesView: View {
                     Button {
                         showAddSheet = true
                     } label: {
-                        Label("Add Category", systemImage: "plus.circle")
+                        Label("Add Worker Type", systemImage: "plus.circle")
                     }
                 }
             } header: {
-                Text("Categories")
+                Text("Worker Types")
             } footer: {
                 if canManageSetup {
-                    Text("Define operator categories with hourly rates. Assign them to vineyard users to calculate operator costs on trip reports.")
+                    Text("Define worker types with hourly rates. Assign them to vineyard users to calculate labour costs on trips and work tasks.")
                 } else {
                     Text("Setup data is managed by vineyard owners and managers.")
                 }
             }
         }
-        .navigationTitle("Operator Categories")
+        .navigationTitle("Worker Types")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             await operatorCategorySync.syncForSelectedVineyard()
@@ -76,7 +76,7 @@ struct OperatorCategoriesView: View {
         .alert("Duplicates Removed", isPresented: $showDuplicateRemovedAlert) {
             Button("OK", role: .cancel) { }
         } message: {
-            Text("Removed \(removedDuplicateCount) duplicate operator \(removedDuplicateCount == 1 ? "category" : "categories").")
+            Text("Removed \(removedDuplicateCount) duplicate worker \(removedDuplicateCount == 1 ? "type" : "types").")
         }
         .sheet(isPresented: $showAddSheet, onDismiss: {
             Task { await operatorCategorySync.syncForSelectedVineyard() }
@@ -132,7 +132,7 @@ struct OperatorCategoryFormSheet: View {
         NavigationStack {
             Form {
                 Section("Details") {
-                    TextField("Category Name", text: $name)
+                    TextField("Worker Type Name", text: $name)
                     HStack {
                         Text("$")
                             .foregroundStyle(.secondary)
@@ -168,11 +168,11 @@ struct OperatorCategoryFormSheet: View {
                     } header: {
                         Text("Assign Users")
                     } footer: {
-                        Text("Select users to assign to this operator category.")
+                        Text("Select users to assign to this worker type.")
                     }
                 }
             }
-            .navigationTitle(isEditing ? "Edit Category" : "Add Category")
+            .navigationTitle(isEditing ? "Edit Worker Type" : "Add Worker Type")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

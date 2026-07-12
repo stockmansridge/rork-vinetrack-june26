@@ -139,7 +139,7 @@ class VineyardRepository(private val session: SessionStore) {
     }
 
     suspend fun listOperatorCategories(vineyardId: String): List<OperatorCategory> = withContext(Dispatchers.IO) {
-        get("operator_categories?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=name.asc")
+        get("worker_types?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=name.asc")
     }
 
     /**
@@ -158,8 +158,8 @@ class VineyardRepository(private val session: SessionStore) {
     /**
      * Loads the active vineyard's team members via the SECURITY DEFINER
      * `get_vineyard_team_members` RPC, which resolves display names + each
-     * member's default operator category without weakening profiles RLS
-     * (sql/022 + sql/082). Mirrors the iOS `SupabaseTeamRepository.listMembers`.
+     * member's default worker type without weakening profiles RLS
+     * (sql/022 + sql/106). Mirrors the iOS `SupabaseTeamRepository.listMembers`.
      */
     suspend fun listTeamMembers(vineyardId: String): List<VineyardMember> = withContext(Dispatchers.IO) {
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured

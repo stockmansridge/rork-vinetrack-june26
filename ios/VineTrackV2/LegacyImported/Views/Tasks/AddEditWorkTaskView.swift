@@ -346,7 +346,7 @@ struct AddEditWorkTaskView: View {
                     }
                     .disabled(store.operatorCategories.isEmpty)
                     if store.operatorCategories.isEmpty {
-                        Text("Add worker types in Settings → Operator Categories first.")
+                        Text("Add worker types in Settings → Worker Types first.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

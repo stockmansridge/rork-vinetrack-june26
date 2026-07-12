@@ -353,7 +353,7 @@ private fun InviteMemberDialog(
                 RolePicker(selected = role, onSelect = { role = it })
                 Text("Some features and values are hidden based on the assigned role.", fontSize = 11.sp, color = vine.textSecondary)
 
-                Text("Default Operator Category", fontWeight = FontWeight.SemiBold)
+                Text("Default Worker Type", fontWeight = FontWeight.SemiBold)
                 OperatorCategoryPicker(
                     categories = categories,
                     selected = categoryId,
@@ -361,7 +361,7 @@ private fun InviteMemberDialog(
                 )
                 Text(
                     if (categories.isEmpty()) {
-                        "Create operator categories in Spray Management \u2192 Operator Categories to assign a default hourly rate at invite time."
+                        "Create worker types in Spray Management \u2192 Worker Types to assign a default hourly rate at invite time."
                     } else {
                         "Optional. Applied to the new member's profile on accept and used as a fallback for trip cost calculations."
                     },

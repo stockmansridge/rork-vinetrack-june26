@@ -131,7 +131,7 @@ object TripCostEstimator {
                 costPerHour = 0.0,
                 hours = hours,
                 cost = 0.0,
-                warning = "Operator category has no hourly rate.",
+                warning = "Worker type has no hourly rate.",
             )
             trip.operatorUserId == null && trip.operatorCategoryId == null -> LabourBreakdown(
                 categoryName = null,
@@ -145,7 +145,7 @@ object TripCostEstimator {
                 costPerHour = null,
                 hours = hours,
                 cost = 0.0,
-                warning = "Operator has no category assigned. Set one in Team & Access.",
+                warning = "Operator has no worker type assigned. Set one in Team & Access.",
             )
         }
 

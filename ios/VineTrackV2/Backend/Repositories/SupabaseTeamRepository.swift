@@ -34,10 +34,10 @@ final class SupabaseTeamRepository: TeamRepositoryProtocol {
 
     func updateMemberOperatorCategory(vineyardId: UUID, userId: UUID, operatorCategoryId: UUID?) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        // Shared SQL 79 RPC. Owner/manager only; validates the operator
-        // category belongs to the vineyard and is not soft-deleted.
+        // Shared SQL 106 RPC. Owner/manager only; validates the worker type
+        // belongs to the vineyard and is not soft-deleted.
         try await provider.client
-            .rpc("update_member_operator_category", params: UpdateMemberOperatorCategoryRequest(
+            .rpc("update_member_worker_type", params: UpdateMemberOperatorCategoryRequest(
                 vineyardId: vineyardId,
                 userId: userId,
                 operatorCategoryId: operatorCategoryId
@@ -171,10 +171,10 @@ nonisolated private struct UpdateMemberOperatorCategoryRequest: Encodable, Senda
     enum CodingKeys: String, CodingKey {
         case vineyardId = "p_vineyard_id"
         case userId = "p_user_id"
-        case operatorCategoryId = "p_operator_category_id"
+        case operatorCategoryId = "p_worker_type_id"
     }
 
-    // Explicit encode so a nil category is sent as JSON `null` (PostgREST
+    // Explicit encode so a nil worker type is sent as JSON `null` (PostgREST
     // treats it as "argument present, value SQL NULL") and clears the
     // assignment. Mirrors the fix applied to grape-variety / vineyard-
     // location RPCs.

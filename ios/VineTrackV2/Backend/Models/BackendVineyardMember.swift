@@ -7,10 +7,10 @@ nonisolated struct BackendVineyardMember: Identifiable, Codable, Sendable {
     let role: BackendRole
     let displayName: String?
     let joinedAt: Date?
-    /// Default operator category assigned to this member. Used as a fallback
-    /// for trip cost calculations when `trips.operator_category_id` is null.
-    /// Synced as `vineyard_members.operator_category_id` (see
-    /// `sql/057_trips_costing_links.sql`).
+    /// Default worker type assigned to this member. Used as a fallback
+    /// for trip cost calculations when `trips.worker_type_id` is null.
+    /// Synced as `vineyard_members.worker_type_id` (see
+    /// `sql/106_worker_types_rename.sql`).
     let operatorCategoryId: UUID?
 
     // Profile-derived display data populated by the
@@ -19,8 +19,8 @@ nonisolated struct BackendVineyardMember: Identifiable, Codable, Sendable {
     let email: String?
     let fullName: String?
     let avatarUrl: String?
-    /// Resolved operator category name. NULL when no category is assigned or
-    /// the category has been soft-deleted.
+    /// Resolved worker type name. NULL when no worker type is assigned or
+    /// the worker type has been soft-deleted.
     let operatorCategoryName: String?
 
     enum CodingKeys: String, CodingKey {
@@ -31,11 +31,11 @@ nonisolated struct BackendVineyardMember: Identifiable, Codable, Sendable {
         case role
         case displayName = "display_name"
         case joinedAt = "joined_at"
-        case operatorCategoryId = "operator_category_id"
+        case operatorCategoryId = "worker_type_id"
         case email
         case fullName = "full_name"
         case avatarUrl = "avatar_url"
-        case operatorCategoryName = "operator_category_name"
+        case operatorCategoryName = "worker_type_name"
     }
 
     init(from decoder: Decoder) throws {

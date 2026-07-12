@@ -62,7 +62,7 @@ struct TripCostingLinksEditSheet: View {
            let cat = availableCategories.first(where: { $0.id == id }) {
             return cat.name
         }
-        return availableCategories.isEmpty ? "No categories configured" : "Use member default"
+        return availableCategories.isEmpty ? "No worker types configured" : "Use member default"
     }
 
     var body: some View {
@@ -157,14 +157,14 @@ struct TripCostingLinksEditSheet: View {
                         pickerRow(
                             icon: "dollarsign.circle.fill",
                             tint: VineyardTheme.leafGreen,
-                            title: "Operator category",
+                            title: "Worker type",
                             value: selectedCategoryLabel
                         )
                     }
                 } header: {
                     Text("Operator")
                 } footer: {
-                    Text("Picking an operator prefills their default category from team settings. You can override the category for this trip if needed.")
+                    Text("Picking an operator prefills their default worker type from team settings. You can override the worker type for this trip if needed.")
                 }
             }
             .navigationTitle("Edit Costing Links")

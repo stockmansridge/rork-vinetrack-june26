@@ -574,9 +574,9 @@ private fun buildCostingSetup(state: AppUiState): CostingSetup {
     val catsWithRate = cats.filter { (it.costPerHour ?: 0.0) > 0.0 }
     val labourComplete = cats.isNotEmpty() && catsWithRate.isNotEmpty()
     val labourDetail = when {
-        cats.isEmpty() -> "Assign operator categories and hourly rates in Team & Access."
-        catsWithRate.isEmpty() -> "Operator categories have no hourly rate. Open Team & Access to add one."
-        else -> "${catsWithRate.size} operator categor${if (catsWithRate.size == 1) "y" else "ies"} with hourly rate."
+        cats.isEmpty() -> "Assign worker types and hourly rates in Team & Access."
+        catsWithRate.isEmpty() -> "Worker types have no hourly rate. Open Team & Access to add one."
+        else -> "${catsWithRate.size} worker type${if (catsWithRate.size == 1) "" else "s"} with hourly rate."
     }
 
     // Fuel

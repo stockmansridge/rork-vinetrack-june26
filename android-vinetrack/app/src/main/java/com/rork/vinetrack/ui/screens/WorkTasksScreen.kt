@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Notes
@@ -70,6 +71,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -91,6 +93,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.text.KeyboardOptions
 import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
@@ -577,7 +581,7 @@ private fun WorkTaskCalculatorView(state: AppUiState, onBack: () -> Unit) {
                             color = vine.textPrimary,
                         )
                         Text(
-                            "Add worker types in Settings → Operator Categories to use this calculator.",
+                            "Add worker types in Settings → Worker Types to use this calculator.",
                             fontSize = 13.sp,
                             color = vine.textSecondary,
                         )
@@ -672,6 +676,7 @@ private fun WorkTaskDetailView(
     var addingLabour by remember { mutableStateOf(false) }
     var editMachine by remember { mutableStateOf<WorkTaskMachineLine?>(null) }
     var addingMachine by remember { mutableStateOf(false) }
+    var showWorkerTypes by remember { mutableStateOf(false) }
 
     // Load the costing lines for this task whenever it opens.
     LaunchedEffect(taskId) { vm.loadTaskLines(taskId) }
@@ -770,6 +775,10 @@ private fun WorkTaskDetailView(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     SectionHeader("Labour", onLight = true)
                     Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { showWorkerTypes = true }) {
+                        Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp), tint = VineColors.PrimaryAccent)
+                        Text("  Edit", color = VineColors.PrimaryAccent)
+                    }
                     TextButton(onClick = { addingLabour = true }) {
                         Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp), tint = VineColors.PrimaryAccent)
                         Text("  Add", color = VineColors.PrimaryAccent)
@@ -946,6 +955,20 @@ private fun WorkTaskDetailView(
             existing = editMachine,
             onDismiss = { addingMachine = false; editMachine = null },
         )
+    }
+
+    // Full-screen Worker Types listing (iOS parity: the labour section's Edit
+    // button opens the Worker Types manager so a missing type can be added
+    // on the spot).
+    if (showWorkerTypes) {
+        Dialog(
+            onDismissRequest = { showWorkerTypes = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Surface(modifier = Modifier.fillMaxSize(), color = vine.appBackground) {
+                OperatorCategoriesScreen(vm, state, onBack = { showWorkerTypes = false })
+            }
+        }
     }
 
     if (confirmDelete) {
@@ -1320,35 +1343,34 @@ private fun LabourLineSheet(
         ) {
             Text(if (existing == null) "Add labour" else "Edit labour", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
 
-            // Operator category (also seeds the hourly rate).
+            // Worker type (also seeds the hourly rate and the display snapshot).
             ExposedDropdownMenuBox(expanded = categoryMenu, onExpandedChange = { categoryMenu = it }) {
                 OutlinedTextField(
-                    value = state.operatorCategories.firstOrNull { it.id == categoryId }?.displayName ?: "No category",
+                    value = state.operatorCategories.firstOrNull { it.id == categoryId }?.displayName
+                        ?: workerType.takeIf { it.isNotBlank() }
+                        ?: "No worker type",
                     onValueChange = {},
                     readOnly = true,
-                    label = { Text("Worker category") },
+                    label = { Text("Worker type") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryMenu) },
                     modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
                 )
                 ExposedDropdownMenu(expanded = categoryMenu, onDismissRequest = { categoryMenu = false }) {
-                    DropdownMenuItem(text = { Text("No category") }, onClick = { categoryId = null; categoryMenu = false })
+                    DropdownMenuItem(text = { Text("No worker type") }, onClick = {
+                        categoryId = null
+                        workerType = ""
+                        categoryMenu = false
+                    })
                     state.operatorCategories.forEach { c ->
                         DropdownMenuItem(text = { Text(c.displayName) }, onClick = {
                             categoryId = c.id
+                            workerType = c.displayName
                             if (rateText.isBlank()) c.costPerHour?.let { rateText = trimHours(it) }
                             categoryMenu = false
                         })
                     }
                 }
             }
-
-            OutlinedTextField(
-                value = workerType,
-                onValueChange = { workerType = it },
-                label = { Text("Worker type / role (optional)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(

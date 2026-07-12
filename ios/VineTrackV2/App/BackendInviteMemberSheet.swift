@@ -57,17 +57,17 @@ struct BackendInviteMemberSheet: View {
                 }
 
                 Section {
-                    Picker("Operator Category", selection: $operatorCategoryId) {
+                    Picker("Worker Type", selection: $operatorCategoryId) {
                         Text("None").tag(UUID?.none)
                         ForEach(vineyardOperatorCategories) { cat in
                             Text(cat.name).tag(UUID?.some(cat.id))
                         }
                     }
                 } header: {
-                    Text("Default Operator Category")
+                    Text("Default Worker Type")
                 } footer: {
                     if vineyardOperatorCategories.isEmpty {
-                        Text("Create operator categories in Spray Management → Operator Categories to assign a default hourly rate at invite time.")
+                        Text("Create worker types in Spray Management → Worker Types to assign a default hourly rate at invite time.")
                     } else {
                         Text("Optional. Applied to the new member's profile on accept and used as a fallback for trip cost calculations.")
                     }

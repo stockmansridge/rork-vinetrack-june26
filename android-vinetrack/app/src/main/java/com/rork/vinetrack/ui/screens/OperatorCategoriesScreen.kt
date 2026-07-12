@@ -61,11 +61,11 @@ import com.rork.vinetrack.ui.theme.VineColors
 private val OperatorTint: Color = VineColors.Orange
 
 /**
- * Operator/labour cost categories — hourly rates assigned to vineyard users to
- * calculate operator costs on trip reports. Owners/managers can add, edit, and
- * archive categories (the hourly rate is owner/manager-only); other members get
- * a read-only list with rates hidden, matching the iOS `OperatorCategoriesView`
- * financial gating.
+ * Worker Types — role names with hourly rates assigned to vineyard users to
+ * calculate labour costs on trips and work tasks. Owners/managers can add,
+ * edit, and archive worker types (the hourly rate is owner/manager-only);
+ * other members get a read-only list with rates hidden, matching the iOS
+ * `OperatorCategoriesView` financial gating.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,7 +84,7 @@ fun OperatorCategoriesScreen(vm: AppViewModel, state: AppUiState, modifier: Modi
         containerColor = vine.appBackground,
         topBar = {
             TopAppBar(
-                title = { Text("Operator Categories") },
+                title = { Text("Worker Types") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
@@ -95,20 +95,20 @@ fun OperatorCategoriesScreen(vm: AppViewModel, state: AppUiState, modifier: Modi
                     onClick = { creating = true },
                     containerColor = OperatorTint,
                     contentColor = Color.White,
-                ) { Icon(Icons.Filled.Add, contentDescription = "Add category") }
+                ) { Icon(Icons.Filled.Add, contentDescription = "Add worker type") }
             }
         },
     ) { padding ->
         if (state.operatorCategories.isEmpty()) {
             EmptyState(
                 icon = Icons.Filled.Person,
-                title = "No categories yet",
+                title = "No worker types yet",
                 message = if (canManage) {
-                    "Add operator categories with hourly rates to calculate operator costs on trip reports."
+                    "Add worker types with hourly rates to calculate labour costs on trips and work tasks."
                 } else {
-                    "The vineyard owner or manager hasn't added any operator categories yet."
+                    "The vineyard owner or manager hasn't added any worker types yet."
                 },
-                actionLabel = if (canManage) "Add category" else null,
+                actionLabel = if (canManage) "Add worker type" else null,
                 onAction = if (canManage) ({ creating = true }) else null,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
@@ -164,7 +164,7 @@ fun OperatorCategoriesScreen(vm: AppViewModel, state: AppUiState, modifier: Modi
     pendingDelete?.let { category ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("Archive category?") },
+            title = { Text("Archive worker type?") },
             text = { Text("\"${category.displayName}\" will no longer be available for new trips. Existing trips that used it are unaffected.") },
             confirmButton = {
                 TextButton(onClick = {
@@ -202,7 +202,7 @@ private fun OperatorCategoryRow(
             }
             if (canManage) {
                 IconButton(onClick = onDelete) {
-                    Icon(Icons.Filled.Delete, contentDescription = "Archive category", tint = VineColors.Destructive, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Filled.Delete, contentDescription = "Archive worker type", tint = VineColors.Destructive, modifier = Modifier.size(20.dp))
                 }
             }
         }
@@ -245,7 +245,7 @@ private fun OperatorCategoryFormSheet(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(
-                if (isEdit) "Edit Category" else "Add Category",
+                if (isEdit) "Edit Worker Type" else "Add Worker Type",
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = vine.textPrimary,
@@ -253,7 +253,7 @@ private fun OperatorCategoryFormSheet(
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text("Category Name") },
+                label = { Text("Worker Type Name") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -267,7 +267,7 @@ private fun OperatorCategoryFormSheet(
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(
-                "Define operator categories with hourly rates. Assign them to vineyard users to calculate operator costs on trip reports.",
+                "Define worker types with hourly rates. Assign them to vineyard users to calculate labour costs on trips and work tasks.",
                 fontSize = 12.sp,
                 color = vine.textSecondary,
             )
@@ -279,7 +279,7 @@ private fun OperatorCategoryFormSheet(
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
-                else Text(if (isEdit) "Save changes" else "Add Category")
+                else Text(if (isEdit) "Save changes" else "Add Worker Type")
             }
         }
     }

@@ -227,7 +227,7 @@ final class SupabaseOperatorCategorySyncRepository: OperatorCategorySyncReposito
 
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendOperatorCategory] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let q = provider.client.from("operator_categories").select().eq("vineyard_id", value: vineyardId.uuidString)
+        let q = provider.client.from("worker_types").select().eq("vineyard_id", value: vineyardId.uuidString)
         let data: Data
         if let since {
             data = try await q.gte("updated_at", value: iso(since)).order("updated_at", ascending: true).execute().data
@@ -269,12 +269,12 @@ final class SupabaseOperatorCategorySyncRepository: OperatorCategorySyncReposito
     func upsertMany(_ items: [BackendOperatorCategoryUpsert]) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         guard !items.isEmpty else { return }
-        try await provider.client.from("operator_categories").upsert(items, onConflict: "id").execute()
+        try await provider.client.from("worker_types").upsert(items, onConflict: "id").execute()
     }
 
     func softDelete(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        try await provider.client.rpc("soft_delete_operator_category", params: SoftDeleteByIdRequest(id: id)).execute()
+        try await provider.client.rpc("soft_delete_worker_type", params: SoftDeleteByIdRequest(id: id)).execute()
     }
 }
 

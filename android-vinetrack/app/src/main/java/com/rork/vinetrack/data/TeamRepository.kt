@@ -103,7 +103,7 @@ class TeamRepository(private val session: SessionStore) {
         rpc("update_member_role", UpdateRoleArgs(vineyardId, userId, role))
 
     suspend fun updateMemberOperatorCategory(vineyardId: String, userId: String, operatorCategoryId: String?) =
-        rpc("update_member_operator_category", UpdateCategoryArgs(vineyardId, userId, operatorCategoryId))
+        rpc("update_member_worker_type", UpdateCategoryArgs(vineyardId, userId, operatorCategoryId))
 
     suspend fun removeMember(vineyardId: String, userId: String) =
         rpc("remove_member", RemoveMemberArgs(vineyardId, userId))
@@ -178,7 +178,7 @@ class TeamRepository(private val session: SessionStore) {
     private data class UpdateCategoryArgs(
         @SerialName("p_vineyard_id") val vineyardId: String,
         @SerialName("p_user_id") val userId: String,
-        @SerialName("p_operator_category_id") val operatorCategoryId: String?,
+        @SerialName("p_worker_type_id") val operatorCategoryId: String?,
     )
 
     @Serializable

@@ -65,7 +65,7 @@ struct SprayManagementSettingsView: View {
                     OperatorCategoriesView()
                 } label: {
                     HStack {
-                        Label("Operator Categories", systemImage: "person.badge.clock")
+                        Label("Worker Types", systemImage: "person.badge.clock")
                             .foregroundStyle(.primary)
                         Spacer()
                         Text("\(store.operatorCategories.count)")
@@ -74,9 +74,9 @@ struct SprayManagementSettingsView: View {
                     }
                 }
             } header: {
-                Text("Operator Costs")
+                Text("Labour Costs")
             } footer: {
-                Text("Define operator cost categories and assign them to vineyard users for trip cost calculations.")
+                Text("Define worker types with hourly costs and assign them to vineyard users for trip cost calculations.")
             }
 
             Section {

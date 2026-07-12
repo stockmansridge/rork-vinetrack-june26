@@ -249,12 +249,12 @@ private fun SprayManagementHub(
             }
 
             section(
-                header = "Operator Costs",
-                footer = "Define operator cost categories and assign them to vineyard users for trip cost calculations.",
+                header = "Labour Costs",
+                footer = "Define worker types with hourly costs and assign them to vineyard users for trip cost calculations.",
             ) {
                 ManagementRow(
-                    title = "Operator Categories",
-                    subtitle = "Cost categories per user",
+                    title = "Worker Types",
+                    subtitle = "Hourly rates per worker role",
                     icon = Icons.Filled.Person,
                     tint = VineColors.Orange,
                     trailing = state.operatorCategories.size.toString(),

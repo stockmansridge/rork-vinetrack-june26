@@ -350,7 +350,7 @@ data class Trip(
     @SerialName("machine_id") val machineId: String? = null,
     @SerialName("tractor_id") val tractorId: String? = null,
     @SerialName("operator_user_id") val operatorUserId: String? = null,
-    @SerialName("operator_category_id") val operatorCategoryId: String? = null,
+    @SerialName("worker_type_id") val operatorCategoryId: String? = null,
     @SerialName("completed_paths") val completedPaths: List<Double>? = null,
     @SerialName("skipped_paths") val skippedPaths: List<Double>? = null,
     @SerialName("path_points") val pathPoints: List<CoordinatePoint>? = null,
@@ -884,8 +884,8 @@ fun tripBlocksLabel(trip: Trip, paddocks: List<Paddock>): String {
 
 /**
  * A vineyard team member, decoded from the `get_vineyard_team_members` RPC
- * (sql/022 + sql/082). The RPC resolves a display-safe name plus the member's
- * default operator category without weakening profiles RLS. Trips link to a
+ * (sql/022 + sql/106). The RPC resolves a display-safe name plus the member's
+ * default worker type without weakening profiles RLS. Trips link to a
  * member via `trips.operator_user_id` -> `vineyard_members.user_id`.
  */
 @Serializable
@@ -897,8 +897,8 @@ data class VineyardMember(
     @SerialName("display_name") val displayName: String? = null,
     @SerialName("full_name") val fullName: String? = null,
     val email: String? = null,
-    @SerialName("operator_category_id") val operatorCategoryId: String? = null,
-    @SerialName("operator_category_name") val operatorCategoryName: String? = null,
+    @SerialName("worker_type_id") val operatorCategoryId: String? = null,
+    @SerialName("worker_type_name") val operatorCategoryName: String? = null,
 ) {
     /** Best human label, mirroring the RPC's coalesced fallback chain. */
     val name: String
@@ -909,8 +909,8 @@ data class VineyardMember(
 }
 
 /**
- * A vineyard operator/labour cost category — backs `public.operator_categories`
- * (sql/011). Trips optionally link one via `trips.operator_category_id`.
+ * A vineyard worker type (role name + hourly cost) — backs `public.worker_types`
+ * (sql/011 + sql/106). Trips optionally link one via `trips.worker_type_id`.
  */
 @Serializable
 data class OperatorCategory(
@@ -920,7 +920,7 @@ data class OperatorCategory(
     @SerialName("cost_per_hour") val costPerHour: Double? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
-    val displayName: String get() = name.trim().takeIf { it.isNotBlank() } ?: "Operator category"
+    val displayName: String get() = name.trim().takeIf { it.isNotBlank() } ?: "Worker type"
 }
 
 /**
@@ -936,7 +936,7 @@ fun resolveTripOperatorName(trip: Trip, members: List<VineyardMember>): String? 
     return trip.personName?.takeIf { it.isNotBlank() }
 }
 
-/** Resolve a trip's linked operator category, or null when unlinked/unavailable. */
+/** Resolve a trip's linked worker type, or null when unlinked/unavailable. */
 fun resolveTripOperatorCategory(trip: Trip, categories: List<OperatorCategory>): OperatorCategory? =
     trip.operatorCategoryId?.let { id -> categories.firstOrNull { it.id == id } }
 
@@ -1042,7 +1042,7 @@ data class WorkTaskLabourLine(
     @SerialName("work_task_id") val workTaskId: String,
     @SerialName("vineyard_id") val vineyardId: String,
     @SerialName("work_date") val workDate: String? = null,
-    @SerialName("operator_category_id") val operatorCategoryId: String? = null,
+    @SerialName("worker_type_id") val operatorCategoryId: String? = null,
     @SerialName("worker_type") val workerType: String = "",
     @SerialName("worker_count") val workerCount: Int = 1,
     @SerialName("hours_per_worker") val hoursPerWorker: Double = 0.0,
@@ -1076,7 +1076,7 @@ data class WorkTaskMachineLine(
     @SerialName("equipment_ref_id") val equipmentRefId: String? = null,
     @SerialName("equipment_name_snapshot") val equipmentNameSnapshot: String = "",
     @SerialName("operator_user_id") val operatorUserId: String? = null,
-    @SerialName("operator_category_id") val operatorCategoryId: String? = null,
+    @SerialName("worker_type_id") val operatorCategoryId: String? = null,
     @SerialName("duration_hours") val durationHours: Double? = null,
     @SerialName("fuel_litres") val fuelLitres: Double? = null,
     @SerialName("fuel_cost") val fuelCost: Double? = null,

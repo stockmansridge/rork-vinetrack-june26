@@ -92,7 +92,7 @@ enum class ToolRoute(
     OperationPreferences("Operation Preferences", "Season E-L, spray/tank, yield", Icons.Filled.Tune, VineColors.Orange, ToolGroup.Operations),
     AppPreferences("Preferences", "Appearance, tracking, photos & AI", Icons.Filled.Tune, VineColors.Indigo, ToolGroup.Account),
     TripFunctions("Trip Functions", "Custom maintenance operations", Icons.Filled.Agriculture, VineColors.Indigo, ToolGroup.Operations),
-    OperatorCategories("Team Operations", "Operator Categories", Icons.Filled.Group, VineColors.Info, ToolGroup.Operations),
+    OperatorCategories("Team Operations", "Worker Types", Icons.Filled.Group, VineColors.Info, ToolGroup.Operations),
     TripAudit("Trip Audit", "Find & fix trips on the wrong vineyard", Icons.Filled.FactCheck, VineColors.Orange, ToolGroup.Account),
     WeatherData("Weather Data & Forecasting", "Forecast source, station & sensors", Icons.Filled.CloudQueue, VineColors.Info, ToolGroup.Operations),
     VineyardLocation("Location & Calculation", "Coordinates, GDD mode & reset", Icons.Filled.Thermostat, VineColors.Orange, ToolGroup.Vineyard),

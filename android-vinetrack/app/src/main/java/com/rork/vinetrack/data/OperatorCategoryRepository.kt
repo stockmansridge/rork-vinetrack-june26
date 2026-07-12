@@ -21,14 +21,14 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * Write path for vineyard operator/labour cost categories, mirroring the iOS
- * `operator_categories` sync contract (sql/011). RLS scopes selects to vineyard
- * members; inserts/updates require owner/manager; hard deletes are blocked
- * client-side, so deletion goes through the `soft_delete_operator_category` RPC.
+ * Write path for vineyard worker types (role name + hourly cost), mirroring the
+ * iOS `worker_types` sync contract (sql/011 + sql/106). RLS scopes selects to
+ * vineyard members; inserts/updates require owner/manager; hard deletes are
+ * blocked client-side, so deletion goes through the `soft_delete_worker_type` RPC.
  */
 class OperatorCategoryRepository(private val session: SessionStore) {
 
-    /** Editable fields surfaced by the Android operator-category form. */
+    /** Editable fields surfaced by the Android worker-type form. */
     data class CategoryInput(
         val name: String,
         val costPerHour: Double,
@@ -68,7 +68,7 @@ class OperatorCategoryRepository(private val session: SessionStore) {
                 createdBy = session.userId,
                 clientUpdatedAt = nowIso(),
             )
-            val response = SupabaseClient.http.post(SupabaseClient.restUrl("operator_categories")) {
+            val response = SupabaseClient.http.post(SupabaseClient.restUrl("worker_types")) {
                 authHeaders(token)
                 headers { append("Prefer", "return=representation") }
                 contentType(ContentType.Application.Json)
@@ -86,7 +86,7 @@ class OperatorCategoryRepository(private val session: SessionStore) {
                 costPerHour = input.costPerHour,
                 clientUpdatedAt = nowIso(),
             )
-            val response = SupabaseClient.http.patch(SupabaseClient.restUrl("operator_categories?id=eq.$id")) {
+            val response = SupabaseClient.http.patch(SupabaseClient.restUrl("worker_types?id=eq.$id")) {
                 authHeaders(token)
                 headers { append("Prefer", "return=representation") }
                 contentType(ContentType.Application.Json)
@@ -99,7 +99,7 @@ class OperatorCategoryRepository(private val session: SessionStore) {
     suspend fun softDelete(id: String) = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("soft_delete_operator_category")) {
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("soft_delete_worker_type")) {
             authHeaders(token)
             contentType(ContentType.Application.Json)
             setBody(SoftDeleteArgs(id))
