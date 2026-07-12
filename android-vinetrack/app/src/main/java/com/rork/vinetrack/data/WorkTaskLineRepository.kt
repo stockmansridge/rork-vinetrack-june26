@@ -60,6 +60,16 @@ class WorkTaskLineRepository(private val session: SessionStore) {
         get("work_task_labour_lines?select=*&work_task_id=eq.$workTaskId&deleted_at=is.null&order=work_date.asc")
     }
 
+    /**
+     * All active labour lines for a vineyard in one read — backs the Work Tasks
+     * hub season total so it can sum canonical line costs without opening each
+     * task individually.
+     */
+    suspend fun listLabourLinesForVineyard(vineyardId: String): List<WorkTaskLabourLine> = withContext(Dispatchers.IO) {
+        requireConfig()
+        get("work_task_labour_lines?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=work_date.asc")
+    }
+
     /** Stable client-generated id for a new labour line, minted before the network call. */
     fun newLineId(): String = UUID.randomUUID().toString()
 

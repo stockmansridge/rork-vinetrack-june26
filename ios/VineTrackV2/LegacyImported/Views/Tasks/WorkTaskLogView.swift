@@ -99,11 +99,19 @@ struct WorkTaskLogView: View {
             AddEditWorkTaskView(existingTask: task)
         }
         .refreshable {
-            await workTaskSync.syncForSelectedVineyard()
-            await workTaskLabourLineSync.syncForSelectedVineyard()
-            await workTaskMachineLineSync.syncForSelectedVineyard()
-            await workTaskPaddockSync.syncForSelectedVineyard()
+            await syncWorkTaskData()
         }
+        // Auto-sync on open so the log is current without pull-to-refresh.
+        .task {
+            await syncWorkTaskData()
+        }
+    }
+
+    private func syncWorkTaskData() async {
+        await workTaskSync.syncForSelectedVineyard()
+        await workTaskLabourLineSync.syncForSelectedVineyard()
+        await workTaskMachineLineSync.syncForSelectedVineyard()
+        await workTaskPaddockSync.syncForSelectedVineyard()
     }
 
     private var summaryCard: some View {

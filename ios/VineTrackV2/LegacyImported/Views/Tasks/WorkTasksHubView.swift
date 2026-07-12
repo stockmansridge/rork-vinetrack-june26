@@ -73,11 +73,21 @@ struct WorkTasksHubView: View {
             AddEditWorkTaskView()
         }
         .refreshable {
-            await workTaskSync.syncForSelectedVineyard()
-            await workTaskLabourLineSync.syncForSelectedVineyard()
-            await workTaskMachineLineSync.syncForSelectedVineyard()
-            await workTaskPaddockSync.syncForSelectedVineyard()
+            await syncWorkTaskData()
         }
+        // Auto-sync on open so Recent Tasks and the season total are current
+        // without requiring a manual pull-to-refresh. Cached data (if any)
+        // stays visible while the sync runs.
+        .task {
+            await syncWorkTaskData()
+        }
+    }
+
+    private func syncWorkTaskData() async {
+        await workTaskSync.syncForSelectedVineyard()
+        await workTaskLabourLineSync.syncForSelectedVineyard()
+        await workTaskMachineLineSync.syncForSelectedVineyard()
+        await workTaskPaddockSync.syncForSelectedVineyard()
     }
 
     private var summaryCard: some View {

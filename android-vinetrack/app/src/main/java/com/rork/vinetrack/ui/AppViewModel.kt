@@ -408,6 +408,13 @@ data class AppUiState(
      * block snapshot for backwards compatibility.
      */
     val workTaskPaddocks: List<WorkTaskPaddock> = emptyList(),
+    /**
+     * All active labour lines for the selected vineyard, loaded by
+     * [AppViewModel.refreshWorkTasks] when the Work Tasks area opens. Backs the
+     * hub's season labour total. Null until the first successful fetch so the
+     * UI can hide the total rather than show a misleading $0.00.
+     */
+    val vineyardLabourLines: List<WorkTaskLabourLine>? = null,
     /** Labour lines for the work task currently open in detail. */
     val taskLabourLines: List<WorkTaskLabourLine> = emptyList(),
     /** Machine lines for the work task currently open in detail. */
@@ -3609,7 +3616,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         session.selectedVineyardId = id
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), workTaskPaddocks = emptyList(), growthStageImages = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList()) }
         loadedLogoKey = null
         // Apply the cached region settings instantly so units/currency render
         // correctly on first paint, then refresh from the backend below.
@@ -9865,6 +9872,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun friendlyWriteError(code: Int): String = when (code) {
         403 -> "You don't have permission to do that."
         else -> "Something went wrong. Please try again."
+    }
+
+    /**
+     * Targeted refresh of work-task headers, paddock joins and the vineyard's
+     * labour lines, run when the Work Tasks area opens so Recent Tasks and the
+     * season total are current without a manual pull-to-refresh or a full
+     * vineyard reload. Mirrors [loadVineyardData]'s work-task handling: fresh
+     * server reads are written through to the snapshot cache and unresolved
+     * offline writes are overlaid; any failure keeps existing in-memory data.
+     */
+    fun refreshWorkTasks() {
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        val userId = session.userId
+        viewModelScope.launch {
+            val tasks = try {
+                repo.listWorkTasks(vineyardId)
+            } catch (e: Exception) {
+                return@launch
+            }
+            val paddockJoins = try {
+                workTaskPaddockRepo.listForVineyard(vineyardId)
+            } catch (e: Exception) {
+                null
+            }
+            val labourLines = try {
+                workTaskLineRepo.listLabourLinesForVineyard(vineyardId)
+            } catch (e: Exception) {
+                null
+            }
+            if (_ui.value.selectedVineyardId != vineyardId) return@launch
+            runCatching { domainCache.saveWorkTasks(userId, vineyardId, tasks) }
+            val pendingSnapshot = pendingWrites.list()
+            val overlaid = PendingWriteOverlay.overlayWorkTaskHeaders(tasks, pendingSnapshot, vineyardId)
+            _ui.update { st ->
+                st.copy(
+                    workTasks = overlaid,
+                    workTaskPaddocks = paddockJoins?.let {
+                        PendingWriteOverlay.overlayWorkTaskPaddocks(it, pendingSnapshot, vineyardId)
+                    } ?: st.workTaskPaddocks,
+                    vineyardLabourLines = labourLines ?: st.vineyardLabourLines,
+                )
+            }
+        }
     }
 
     private suspend fun loadVineyardData(vineyardId: String) {

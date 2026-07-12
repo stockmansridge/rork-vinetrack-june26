@@ -87,6 +87,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -96,6 +97,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.text.KeyboardOptions
+import com.rork.vinetrack.data.OperationPrefsStore
 import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
@@ -127,6 +129,10 @@ fun WorkTasksScreen(
 
     var nav by remember { mutableStateOf(WTNav.Hub) }
     val selected = state.workTasks.firstOrNull { it.id == selectedId }
+
+    // Auto-sync on open so Recent Tasks and the season total are current
+    // without a manual refresh. Existing data stays visible while it runs.
+    LaunchedEffect(Unit) { vm.refreshWorkTasks() }
 
     AnimatedContent(
         targetState = Triple(selected, nav, Unit),
@@ -200,6 +206,21 @@ private fun WorkTasksHub(
     val tasks = remember(state.workTasks) { state.workTasks.filterNot { it.isArchived } }
     val recent = remember(tasks) { tasks.sortedByDescending { it.startEpochMs ?: 0L }.take(5) }
 
+    // Season-to-date labour total (owner/manager only), summing canonical
+    // labour-line costs for current-season tasks — mirrors the iOS hub card.
+    val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
+    val context = LocalContext.current
+    val opPrefs = remember { OperationPrefsStore(context).load() }
+    val seasonStartMs = remember(opPrefs) { seasonStartDate(opPrefs.seasonStartMonth, opPrefs.seasonStartDay) }
+    val seasonCost = remember(tasks, state.vineyardLabourLines, seasonStartMs) {
+        val lines = state.vineyardLabourLines ?: return@remember null
+        val seasonTaskIds = tasks
+            .filter { (it.startEpochMs ?: 0L) >= seasonStartMs }
+            .map { it.id }
+            .toHashSet()
+        lines.filter { it.workTaskId in seasonTaskIds }.sumOf { it.resolvedCost }
+    }
+
     Scaffold(
         containerColor = vine.appBackground,
         topBar = {
@@ -219,13 +240,31 @@ private fun WorkTasksHub(
         ) {
             // Summary
             VineyardCard {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Work Task Summary", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
-                    Text(
-                        "${tasks.size} task${if (tasks.size == 1) "" else "s"} logged",
-                        fontSize = 14.sp,
-                        color = vine.textSecondary,
-                    )
+                Row(verticalAlignment = Alignment.Top) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Work Task Summary", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                        Text(
+                            "${tasks.size} task${if (tasks.size == 1) "" else "s"} logged",
+                            fontSize = 14.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
+                    if (canViewFinancials && seasonCost != null) {
+                        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("Total · This Season", fontSize = 11.sp, color = vine.textSecondary)
+                            Text(
+                                formatCurrency(seasonCost),
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = VineColors.LeafGreen,
+                            )
+                            Text(
+                                "From " + SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(seasonStartMs)),
+                                fontSize = 10.sp,
+                                color = vine.textSecondary,
+                            )
+                        }
+                    }
                 }
             }
 
