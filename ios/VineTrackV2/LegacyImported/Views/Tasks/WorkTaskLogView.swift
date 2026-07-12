@@ -4,6 +4,7 @@ struct WorkTaskLogView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(WorkTaskSyncService.self) private var workTaskSync
     @Environment(WorkTaskLabourLineSyncService.self) private var workTaskLabourLineSync
+    @Environment(WorkTaskMachineLineSyncService.self) private var workTaskMachineLineSync
     @Environment(WorkTaskPaddockSyncService.self) private var workTaskPaddockSync
     @Environment(\.accessControl) private var accessControl
 
@@ -100,6 +101,7 @@ struct WorkTaskLogView: View {
         .refreshable {
             await workTaskSync.syncForSelectedVineyard()
             await workTaskLabourLineSync.syncForSelectedVineyard()
+            await workTaskMachineLineSync.syncForSelectedVineyard()
             await workTaskPaddockSync.syncForSelectedVineyard()
         }
     }

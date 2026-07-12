@@ -790,7 +790,7 @@ private fun WorkTaskDetailView(
                             CircularProgressIndicator(modifier = Modifier.size(22.dp), color = VineColors.LeafGreen)
                         }
                     } else if (labourLines.isEmpty()) {
-                        Text("No labour recorded yet.", color = vine.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(vertical = 6.dp))
+                        Text("No labour resources added", color = vine.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(vertical = 6.dp))
                     } else {
                         labourLines.forEachIndexed { i, line ->
                             if (i > 0) DividerWT(vine.cardBorder)
@@ -819,7 +819,7 @@ private fun WorkTaskDetailView(
                             CircularProgressIndicator(modifier = Modifier.size(22.dp), color = VineColors.LeafGreen)
                         }
                     } else if (machineLines.isEmpty()) {
-                        Text("No machinery recorded yet.", color = vine.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(vertical = 6.dp))
+                        Text("No machine resources added", color = vine.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(vertical = 6.dp))
                     } else {
                         machineLines.forEachIndexed { i, line ->
                             if (i > 0) DividerWT(vine.cardBorder)
@@ -1248,7 +1248,10 @@ private fun LabourLineRow(line: WorkTaskLabourLine, categoryName: String?, onCli
             }
             Text(sub, color = vine.textSecondary, fontSize = 12.sp, maxLines = 1)
         }
-        Text(formatCurrency(line.resolvedCost), color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        // Never render a stored-nothing as $0.00 — absent rate means the cost
+        // was not specified on the allocation line.
+        val labourCostText = if (line.hourlyRate == null && line.totalCost == null) "Not specified" else formatCurrency(line.resolvedCost)
+        Text(labourCostText, color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -1276,7 +1279,9 @@ private fun MachineLineRow(line: WorkTaskMachineLine, equipmentName: String, onC
                 Text(parts.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp, maxLines = 1)
             }
         }
-        Text(formatCurrency(line.resolvedCost), color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        // Absent rate/total/fuel means cost was never specified — don't imply $0.00.
+        val machineCostText = if (line.totalMachineCost == null && line.hourlyMachineRate == null && line.fuelCost == null) "Not specified" else formatCurrency(line.resolvedCost)
+        Text(machineCostText, color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 

@@ -130,6 +130,27 @@ struct AddEditWorkTaskView: View {
             .sorted { $0.workDate > $1.workDate }
     }
 
+    /// Labour costing lines (work_task_labour_lines) recorded under this task —
+    /// the canonical per-day, per-worker-type entries created by the portal and
+    /// Android. Displayed with the stored rate snapshot; never recalculated
+    /// from a worker type's current rate.
+    private var labourLines: [WorkTaskLabourLine] {
+        guard let id = existingTask?.id else { return [] }
+        return store.workTaskLabourLines
+            .filter { $0.workTaskId == id }
+            .sorted { $0.workDate > $1.workDate }
+    }
+
+    /// Total hours across labour lines (worker count × hours per worker).
+    private var labourLineHours: Double {
+        labourLines.reduce(0.0) { $0 + $1.totalHours }
+    }
+
+    /// Total cost across labour lines using each line's stored rate snapshot.
+    private var labourLineCost: Double {
+        labourLines.reduce(0.0) { $0 + $1.totalCost }
+    }
+
     // MARK: - Operational summary (read-only)
 
     /// Labour hours = the task duration entered on this form.
@@ -172,11 +193,12 @@ struct AddEditWorkTaskView: View {
             .reduce(0.0) { $0 + ($1.totalCost ?? 0) }
     }
 
-    /// Combined total across manual labour, manual machine charge + fuel, and
-    /// linked GPS trip cost. Manual entries and trips are distinct sources, so
-    /// they sum without double-counting.
+    /// Combined total across manual labour, labour costing lines, manual
+    /// machine charge + fuel, and linked GPS trip cost. Manual entries, labour
+    /// lines, and trips are distinct sources, so they sum without
+    /// double-counting.
     private var combinedTotalCost: Double {
-        totalCost + manualMachineCharge + manualMachineFuel + linkedTripCost
+        totalCost + labourLineCost + manualMachineCharge + manualMachineFuel + linkedTripCost
     }
 
     /// Successful GPS trips grouped under this task, newest first. Reads the
@@ -424,6 +446,8 @@ struct AddEditWorkTaskView: View {
 
                 linkedTripsSection
 
+                labourLinesSection
+
                 machineWorkSection
 
                 Section("Notes") {
@@ -528,6 +552,12 @@ struct AddEditWorkTaskView: View {
                 Text(String(format: "%.1fh", labourHours))
                     .foregroundStyle(.secondary)
             }
+            if !labourLines.isEmpty {
+                LabeledContent("Labour Line Hours") {
+                    Text(String(format: "%.1fh", labourLineHours))
+                        .foregroundStyle(.secondary)
+                }
+            }
             LabeledContent("Manual Machine Entries") {
                 Text("\(manualMachineCount)")
                     .foregroundStyle(.secondary)
@@ -545,6 +575,12 @@ struct AddEditWorkTaskView: View {
                 LabeledContent("Manual Labour Cost") {
                     Text(fmt.formatCurrency(totalCost))
                         .foregroundStyle(.secondary)
+                }
+                if !labourLines.isEmpty {
+                    LabeledContent("Labour Line Cost") {
+                        Text(fmt.formatCurrency(labourLineCost))
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 LabeledContent("Manual Machine Charge") {
                     Text(fmt.formatCurrency(manualMachineCharge))
@@ -669,6 +705,70 @@ struct AddEditWorkTaskView: View {
     }
 
     @ViewBuilder
+    private var labourLinesSection: some View {
+        if isEditing {
+            Section {
+                if labourLines.isEmpty {
+                    Text("No labour resources added")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(labourLines) { line in
+                        labourLineRow(line)
+                    }
+                }
+            } header: {
+                Text("Labour Lines")
+            } footer: {
+                Text("Per-day labour entries recorded against this task, including entries added from the portal. Costs use the rate stored on each line.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func labourLineRow(_ line: WorkTaskLabourLine) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(labourLineName(line))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer()
+                Text(fmt.formatDate(line.workDate))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            HStack(spacing: 8) {
+                Label("\(line.workerCount) × \(String(format: "%.1fh", line.hoursPerWorker))", systemImage: "person.2")
+                Text(String(format: "%.1fh total", line.totalHours))
+                if canViewFinancials {
+                    if let rate = line.hourlyRate {
+                        Text("\(fmt.formatCurrency(rate))/hr")
+                        Text(fmt.formatCurrency(line.totalCost))
+                            .fontWeight(.medium)
+                    } else {
+                        Text("Rate: Not specified")
+                    }
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+    }
+
+    /// Display name for a labour line: prefer the linked worker type, then the
+    /// stored free-text snapshot, then a neutral fallback.
+    private func labourLineName(_ line: WorkTaskLabourLine) -> String {
+        if let id = line.operatorCategoryId,
+           let cat = store.operatorCategories.first(where: { $0.id == id }) {
+            return cat.name
+        }
+        let t = line.workerType.trimmingCharacters(in: .whitespaces)
+        return t.isEmpty ? "Labour" : t
+    }
+
+    @ViewBuilder
     private var machineWorkSection: some View {
         Section {
             if !isEditing {
@@ -677,7 +777,7 @@ struct AddEditWorkTaskView: View {
                     .foregroundStyle(.secondary)
             } else {
                 if machineLines.isEmpty {
-                    Text("No machine work recorded.")
+                    Text("No machine resources added")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
