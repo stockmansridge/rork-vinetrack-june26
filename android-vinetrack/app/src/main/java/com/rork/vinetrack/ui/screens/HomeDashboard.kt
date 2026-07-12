@@ -717,10 +717,10 @@ private fun TodaySection(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         SectionHeader("Today")
+        WeatherCard(onClick = onOpenWeather)
         if (alerts.isNotEmpty()) {
             HomeAlertsCard(alerts = alerts, onClick = onOpenAlerts)
         }
-        WeatherCard(onClick = onOpenWeather)
     }
 }
 
