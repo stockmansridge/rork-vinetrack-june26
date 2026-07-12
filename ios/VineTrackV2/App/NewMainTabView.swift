@@ -989,7 +989,7 @@ private struct NewHomeTabView: View {
                 }
                 .buttonStyle(.plain)
                 NavigationLink {
-                    FuelLogView()
+                    FuelLogHubView()
                 } label: {
                     iconTile(title: "Fuel Log", icon: "fuelpump.fill", tint: .red)
                 }
@@ -1047,7 +1047,7 @@ private struct NewHomeTabView: View {
         case "Maintenance Log": return "Repairs & jobs"
         case "Optimal Ripeness": return "GDD & harvest window"
         case "Cost Reports": return "Block & variety costing"
-        case "Fuel Log": return "Record tractor fuel fills"
+        case "Fuel Log": return "Purchases & refuelling"
         case "Growth Stage Records": return "Observations & PDF export"
         case "Yields": return "Forecasting, Sampling & Recording"
         case "Yield Forecasting": return "Potential, samples & reports"

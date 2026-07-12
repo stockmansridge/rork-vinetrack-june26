@@ -10081,6 +10081,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Targeted refresh of the Fuel Log tool's data — fuel purchases and
+     * machine fills — run when the Fuel Log hub opens so the summary cards and
+     * lists are current without a manual pull or a full vineyard reload.
+     * Mirrors [loadVineyardData]'s fuel handling: fresh fills are written
+     * through to the snapshot cache and unresolved offline fill writes are
+     * overlaid; any failure keeps existing in-memory data.
+     */
+    fun refreshFuelData() {
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        val userId = session.userId
+        viewModelScope.launch {
+            val logs = try {
+                repo.listFuelLogs(vineyardId)
+            } catch (e: Exception) {
+                null
+            }
+            val purchases = try {
+                repo.listFuelPurchases(vineyardId)
+            } catch (e: Exception) {
+                null
+            }
+            if (_ui.value.selectedVineyardId != vineyardId) return@launch
+            if (logs != null) runCatching { domainCache.saveFuel(userId, vineyardId, logs) }
+            val pendingSnapshot = pendingWrites.list()
+            _ui.update { st ->
+                st.copy(
+                    fuelLogs = logs?.let {
+                        PendingWriteOverlay.overlayFuel(it, pendingSnapshot, vineyardId)
+                    } ?: st.fuelLogs,
+                    fuelPurchases = purchases ?: st.fuelPurchases,
+                )
+            }
+        }
+    }
+
     private suspend fun loadVineyardData(vineyardId: String) {
         _ui.update { it.copy(isLoadingVineyardData = true) }
         val userId = session.userId

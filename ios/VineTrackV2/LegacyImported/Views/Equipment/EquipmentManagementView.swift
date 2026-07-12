@@ -129,14 +129,14 @@ struct EquipmentManagementView: View {
 
             Section {
                 NavigationLink {
-                    FuelView()
+                    FuelLogHubView()
                 } label: {
-                    navCard(title: "Fuel", subtitle: fuelSubtitle)
+                    navCard(title: "Fuel Log", subtitle: fuelSubtitle)
                 }
             } header: {
                 sectionHeader("Fuel", systemImage: "fuelpump.fill")
             } footer: {
-                Text("Record fuel purchases for weighted cost per litre, and fuel fills to calculate machine usage over time.")
+                Text("Fuel purchases and equipment refuelling now live in the Fuel Log operational tool, also available from the Home screen.")
             }
         }
         .listStyle(.insetGrouped)
@@ -656,12 +656,15 @@ struct TractorFormSheet: View {
 struct FuelPurchaseFormSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var store
+    @Environment(FuelPurchaseSyncService.self) private var fuelPurchaseSync
+    @Environment(\.accessControl) private var accessControl
 
     let purchase: FuelPurchase?
 
     @State private var volumeText: String = ""
     @State private var costText: String = ""
     @State private var date: Date = Date()
+    @State private var confirmDelete: Bool = false
 
     init(purchase: FuelPurchase?) {
         self.purchase = purchase
@@ -692,6 +695,29 @@ struct FuelPurchaseFormSheet: View {
                 Section {
                     DatePicker("Purchase Date", selection: $date, displayedComponents: .date)
                 }
+
+                if let existing = purchase, accessControl?.canManageSetup ?? false {
+                    Section {
+                        Button(role: .destructive) {
+                            confirmDelete = true
+                        } label: {
+                            Label("Delete Purchase", systemImage: "trash")
+                        }
+                        .confirmationDialog(
+                            "Delete this fuel purchase?",
+                            isPresented: $confirmDelete,
+                            titleVisibility: .visible
+                        ) {
+                            Button("Delete", role: .destructive) {
+                                store.deleteFuelPurchase(existing)
+                                Task { await fuelPurchaseSync.syncForSelectedVineyard() }
+                                dismiss()
+                            }
+                        } message: {
+                            Text("This removes the purchase for everyone and updates the average cost per litre.")
+                        }
+                    }
+                }
             }
             .navigationTitle(purchase == nil ? "New Fuel Purchase" : "Edit Fuel Purchase")
             .navigationBarTitleDisplayMode(.inline)
@@ -721,5 +747,7 @@ struct FuelPurchaseFormSheet: View {
         } else {
             store.addFuelPurchase(FuelPurchase(volumeLitres: vol, totalCost: cost, date: date))
         }
+        // Push immediately so other devices and the portal see it promptly.
+        Task { await fuelPurchaseSync.syncForSelectedVineyard() }
     }
 }

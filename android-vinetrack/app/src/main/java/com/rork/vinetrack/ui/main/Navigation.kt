@@ -84,7 +84,7 @@ enum class ToolRoute(
     Yield("Yield", "Forecasts & harvest", Icons.Filled.Scale, VineColors.Orange, ToolGroup.Records),
     CostReports("Cost Reports", "Season, block & variety costs", Icons.Filled.Payments, VineColors.Indigo, ToolGroup.Records),
     Maintenance("Service & Maintenance", "Equipment & repairs", Icons.Filled.Build, VineColors.EarthBrown, ToolGroup.Records),
-    FuelLog("Fuel Log", "Fills & usage rate", Icons.Filled.LocalGasStation, VineColors.Pink, ToolGroup.Records),
+    FuelLog("Fuel Log", "Purchases & refuelling", Icons.Filled.LocalGasStation, VineColors.Pink, ToolGroup.Operations),
     Equipment("Equipment", "Tractors, machines, spray & fuel", Icons.Filled.PrecisionManufacturing, VineColors.EarthBrown, ToolGroup.Records),
     TeamAccess("Team & Access", "Manage members and invitations", Icons.Filled.Group, VineColors.Info, ToolGroup.Account),
     RolesPermissions("Roles & Permissions", "What each role can see and do", Icons.Filled.GppGood, VineColors.Info, ToolGroup.Account),

@@ -74,16 +74,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.AppPreferencesStore
 import com.rork.vinetrack.data.EquipmentItemRepository
-import com.rork.vinetrack.data.FuelPurchaseRepository
 import com.rork.vinetrack.data.TractorFuelLookupService
 import com.rork.vinetrack.data.VineyardMachineRepository
 import com.rork.vinetrack.data.model.EquipmentItem
 import com.rork.vinetrack.data.RegionFormatter
-import com.rork.vinetrack.data.model.FuelPurchase
 import com.rork.vinetrack.data.model.VineyardMachine
 import com.rork.vinetrack.data.model.machineTypeLabel
 import com.rork.vinetrack.data.model.vineyardMachineTypeOptions
-import com.rork.vinetrack.data.model.weightedFuelCostPerLitre
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
@@ -93,9 +90,6 @@ import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
-import java.text.SimpleDateFormat
-import java.time.Instant
-import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.launch
 
@@ -106,7 +100,7 @@ import kotlinx.coroutines.launch
  * (`vineyard_machines`, `spray_equipment`, `equipment_items`, `fuel_purchases`,
  * `tractor_fuel_logs`).
  */
-private enum class EquipmentDestination { HUB, TRACTORS, SPRAY, MACHINES, OTHER, FUEL }
+private enum class EquipmentDestination { HUB, TRACTORS, SPRAY, MACHINES, OTHER }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -130,6 +124,7 @@ fun EquipmentScreen(
                 state = state,
                 onBack = onBack,
                 onOpen = { destination = it },
+                onOpenFuelLog = onOpenFuelLog,
             )
             EquipmentDestination.TRACTORS -> VineyardMachineList(
                 vm = vm, state = state, tractorsOnly = true,
@@ -146,11 +141,6 @@ fun EquipmentScreen(
                 vm = vm, state = state,
                 onBack = { destination = EquipmentDestination.HUB },
             )
-            EquipmentDestination.FUEL -> FuelManagementScreen(
-                vm = vm, state = state,
-                onBack = { destination = EquipmentDestination.HUB },
-                onOpenFuelLog = onOpenFuelLog,
-            )
         }
     }
 }
@@ -161,6 +151,7 @@ private fun EquipmentHub(
     state: AppUiState,
     onBack: (() -> Unit)?,
     onOpen: (EquipmentDestination) -> Unit,
+    onOpenFuelLog: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     val tractorCount = state.machines.count { it.machineType == "tractor" }
@@ -220,11 +211,11 @@ private fun EquipmentHub(
             )
             EquipmentNavCard(
                 icon = Icons.Filled.LocalGasStation, tint = VineColors.Pink,
-                title = "Fuel",
+                title = "Fuel Log",
                 subtitle = if (purchaseCount == 0 && fillCount == 0) "Record purchases and fuel fills"
                 else "$purchaseCount purchase${if (purchaseCount == 1) "" else "s"} · $fillCount fill${if (fillCount == 1) "" else "s"}",
-                footer = "Record fuel purchases for weighted cost per litre, and fuel fills to calculate machine usage over time.",
-                onClick = { onOpen(EquipmentDestination.FUEL) },
+                footer = "Fuel purchases and equipment refuelling now live in the Fuel Log operational tool, also available from Home.",
+                onClick = { onOpenFuelLog() },
             )
         }
     }
@@ -865,234 +856,6 @@ private fun OtherEquipmentFormSheet(
     }
 }
 
-// MARK: - Fuel (purchases + link to Fuel Log)
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun FuelManagementScreen(
-    vm: AppViewModel,
-    state: AppUiState,
-    onBack: () -> Unit,
-    onOpenFuelLog: () -> Unit,
-) {
-    val vine = LocalVineColors.current
-    val fmt = state.regionFormatter
-    val canManage = state.currentRole == "owner" || state.currentRole == "manager"
-    val canViewFinancials = canManage
-    val purchases = remember(state.fuelPurchases) { state.fuelPurchases.sortedByDescending { it.date ?: "" } }
-    var creating by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf<FuelPurchase?>(null) }
-    var pendingDelete by remember { mutableStateOf<FuelPurchase?>(null) }
-
-    val totalVolume = purchases.sumOf { it.volumeLitres }
-    val avgCost = weightedFuelCostPerLitre(purchases)
-
-    Scaffold(
-        containerColor = vine.appBackground,
-        topBar = {
-            TopAppBar(
-                title = { Text("Fuel") },
-                navigationIcon = { BackNavIcon(onBack) },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
-            )
-        },
-        floatingActionButton = {
-            if (canManage) {
-                FloatingActionButton(
-                    onClick = { creating = true },
-                    containerColor = VineColors.Pink,
-                    contentColor = Color.White,
-                ) { Icon(Icons.Filled.Add, contentDescription = "Add fuel purchase") }
-            }
-        },
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            state.equipmentError?.let { item { Text(it, color = VineColors.Destructive, fontSize = 13.sp) } }
-
-            item { SectionHeader("Fuel Purchases", onLight = true) }
-            if (purchases.isEmpty()) {
-                item {
-                    VineyardCard {
-                        Text(
-                            if (canManage) "Record fuel purchases to calculate an average cost per litre."
-                            else "No fuel purchases have been recorded yet.",
-                            color = vine.textSecondary, fontSize = 13.sp,
-                        )
-                    }
-                }
-            } else {
-                items(purchases.size, key = { purchases[it].id }) { idx ->
-                    FuelPurchaseRow(
-                        purchase = purchases[idx],
-                        fmt = fmt,
-                        canViewFinancials = canViewFinancials,
-                        canEdit = canManage,
-                        onClick = { if (canManage) editing = purchases[idx] },
-                    )
-                }
-                item {
-                    VineyardCard {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text("Season Average", color = vine.textSecondary, fontSize = 12.sp)
-                                if (canViewFinancials && avgCost != null) {
-                                    Text(fmt.formatFuelCostPerUnit(avgCost), color = VineColors.LeafGreen, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                                } else {
-                                    Text("—", color = vine.textSecondary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text("Total Purchased", color = vine.textSecondary, fontSize = 12.sp)
-                                Text(fmt.formatFuel(totalVolume, fractionDigits = 0), color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                            }
-                        }
-                    }
-                }
-            }
-
-            item { SectionHeader("Fuel Log", onLight = true) }
-            item {
-                VineyardCard(modifier = Modifier.clickable { onOpenFuelLog() }) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Box(
-                            modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(VineColors.Pink.copy(alpha = 0.15f)),
-                            contentAlignment = Alignment.Center,
-                        ) { Icon(Icons.Filled.LocalGasStation, contentDescription = null, tint = VineColors.Pink, modifier = Modifier.size(22.dp)) }
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text("Open Fuel Log", color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                            Text("${state.fuelLogs.size} fill${if (state.fuelLogs.size == 1) "" else "s"} · litres & engine hours per machine", color = vine.textSecondary, fontSize = 12.sp)
-                        }
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary)
-                    }
-                }
-            }
-        }
-    }
-
-    if (creating) FuelPurchaseFormSheet(vm = vm, existing = null, fmt = fmt, onDismiss = { creating = false })
-    editing?.let { p ->
-        FuelPurchaseFormSheet(vm = vm, existing = p, fmt = fmt, onDismiss = { editing = null }, onDelete = { pendingDelete = p; editing = null })
-    }
-    pendingDelete?.let { p ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("Delete fuel purchase?") },
-            text = { Text("This removes the purchase for everyone and updates the average cost per litre.") },
-            confirmButton = {
-                TextButton(onClick = { vm.deleteFuelPurchase(p.id) {}; pendingDelete = null }) {
-                    Text("Delete", color = VineColors.Destructive)
-                }
-            },
-            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } },
-        )
-    }
-}
-
-@Composable
-private fun FuelPurchaseRow(
-    purchase: FuelPurchase,
-    fmt: RegionFormatter,
-    canViewFinancials: Boolean,
-    canEdit: Boolean,
-    onClick: () -> Unit,
-) {
-    val vine = LocalVineColors.current
-    val costPerLitre = if (purchase.volumeLitres > 0) purchase.totalCost / purchase.volumeLitres else 0.0
-    VineyardCard(modifier = if (canEdit) Modifier.clickable { onClick() } else Modifier) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Box(
-                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(VineColors.Pink.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Filled.LocalGasStation, contentDescription = null, tint = VineColors.Pink, modifier = Modifier.size(22.dp)) }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                if (canViewFinancials) {
-                    Text("${fmt.formatFuel(purchase.volumeLitres)} — ${fmt.formatCurrency(purchase.totalCost)}", color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                } else {
-                    Text(fmt.formatFuel(purchase.volumeLitres), color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(formatPurchaseDate(purchase.date), color = vine.textSecondary, fontSize = 12.sp)
-                    if (canViewFinancials) Text(fmt.formatFuelCostPerUnit(costPerLitre), color = VineColors.LeafGreen, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                }
-            }
-            if (canEdit) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary)
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun FuelPurchaseFormSheet(
-    vm: AppViewModel,
-    existing: FuelPurchase?,
-    fmt: RegionFormatter,
-    onDismiss: () -> Unit,
-    onDelete: (() -> Unit)? = null,
-) {
-    val vine = LocalVineColors.current
-    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
-    var volume by remember { mutableStateOf(existing?.volumeLitres?.takeIf { it > 0 }?.let { trimNum(it) } ?: "") }
-    var cost by remember { mutableStateOf(existing?.totalCost?.takeIf { it > 0 }?.let { trimNum(it) } ?: "") }
-    var saving by remember { mutableStateOf(false) }
-    val vol = volume.replace(',', '.').toDoubleOrNull() ?: 0.0
-    val cst = cost.replace(',', '.').toDoubleOrNull() ?: 0.0
-    val canSave = vol > 0 && cst > 0 && !saving
-
-    fun save() {
-        saving = true
-        val input = FuelPurchaseRepository.PurchaseInput(
-            volumeLitres = vol,
-            totalCost = cst,
-            dateIso = existing?.date ?: Instant.now().toString(),
-        )
-        val cb: (Boolean) -> Unit = { ok -> saving = false; if (ok) onDismiss() }
-        if (existing == null) vm.createFuelPurchase(input, cb) else vm.updateFuelPurchase(existing.id, input, cb)
-    }
-
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = vine.cardBackground) {
-        Column(
-            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp).padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text(
-                if (existing == null) "New Fuel Purchase" else "Edit Fuel Purchase",
-                color = vine.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold,
-            )
-            OutlinedTextField(
-                value = volume, onValueChange = { volume = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                label = { Text("Volume (litres)") }, placeholder = { Text("e.g. 500") },
-                singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = cost, onValueChange = { cost = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                label = { Text("Total cost") }, placeholder = { Text("e.g. 950.00") },
-                singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (vol > 0 && cst > 0) {
-                Text("${fmt.formatFuelCostPerUnit(cst / vol)}", color = vine.textSecondary, fontSize = 13.sp)
-            }
-            Button(
-                onClick = { save() }, enabled = canSave, modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Pink),
-            ) { Text(if (existing == null) "Add" else "Save") }
-            if (existing != null && onDelete != null) {
-                TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.size(6.dp))
-                    Text("Delete purchase", color = VineColors.Destructive)
-                }
-            }
-        }
-    }
-}
-
 @Composable
 private fun ToggleLine(label: String, value: Boolean, onChange: (Boolean) -> Unit) {
     val vine = LocalVineColors.current
@@ -1109,13 +872,3 @@ private fun ToggleLine(label: String, value: Boolean, onChange: (Boolean) -> Uni
 private fun trimNum(v: Double): String =
     if (v == v.toLong().toDouble()) v.toLong().toString()
     else String.format(Locale.US, "%.1f", v).trimEnd('0').trimEnd('.')
-
-private fun formatPurchaseDate(iso: String?): String {
-    if (iso.isNullOrBlank()) return "—"
-    return try {
-        val parsed = Date.from(Instant.parse(iso))
-        SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(parsed)
-    } catch (e: Exception) {
-        iso.take(10)
-    }
-}
