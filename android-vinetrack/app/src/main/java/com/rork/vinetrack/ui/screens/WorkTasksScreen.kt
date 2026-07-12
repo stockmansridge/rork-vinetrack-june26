@@ -326,7 +326,13 @@ private fun WorkTasksHub(
                         }
                     }
                 } else {
-                    recent.forEach { task -> WorkTaskListRow(task = task, onClick = { onSelect(task) }) }
+                    recent.forEach { task ->
+                        WorkTaskListRow(
+                            task = task,
+                            hours = taskDisplayHours(task, state.vineyardLabourLines),
+                            onClick = { onSelect(task) },
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -366,8 +372,19 @@ private fun WTToolCard(
     }
 }
 
+/**
+ * Hours for list display, mirroring iOS `WorkTask.displayHours(in:)`: when the
+ * task has canonical labour lines (portal tasks store planned hours in child
+ * rows, not on the parent), sum their hours; otherwise fall back to the legacy
+ * parent `duration_hours`.
+ */
+private fun taskDisplayHours(task: WorkTask, vineyardLines: List<WorkTaskLabourLine>?): Double {
+    val lines = vineyardLines.orEmpty().filter { it.workTaskId == task.id && it.deletedAt == null }
+    return if (lines.isEmpty()) task.durationHours else lines.sumOf { it.resolvedHours }
+}
+
 @Composable
-private fun WorkTaskListRow(task: WorkTask, onClick: () -> Unit) {
+private fun WorkTaskListRow(task: WorkTask, hours: Double, onClick: () -> Unit) {
     val vine = LocalVineColors.current
     VineyardCard(modifier = Modifier.clickable { onClick() }) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -382,7 +399,7 @@ private fun WorkTaskListRow(task: WorkTask, onClick: () -> Unit) {
                 Text(task.paddockName?.takeIf { it.isNotBlank() } ?: "No block", fontSize = 12.sp, color = vine.textSecondary, maxLines = 1)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Schedule, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(12.dp))
-                    Text(formatHours(task.durationHours), fontSize = 12.sp, color = vine.textSecondary)
+                    Text(formatHours(hours), fontSize = 12.sp, color = vine.textSecondary)
                     if (task.isComplete) {
                         Text("·", color = vine.textSecondary, fontSize = 12.sp)
                         Text("Done", fontSize = 12.sp, color = VineColors.Success, fontWeight = FontWeight.Medium)
@@ -443,7 +460,9 @@ private fun WorkTaskLogView(
             WTSort.Block -> items.sortedBy { (it.paddockName ?: "").lowercase() }
         }
     }
-    val totalHours = remember(filtered) { filtered.sumOf { it.durationHours } }
+    val totalHours = remember(filtered, state.vineyardLabourLines) {
+        filtered.sumOf { taskDisplayHours(it, state.vineyardLabourLines) }
+    }
 
     Scaffold(
         containerColor = vine.appBackground,
@@ -527,7 +546,13 @@ private fun WorkTaskLogView(
                     }
                 }
             } else {
-                items(filtered, key = { it.id }) { task -> WorkTaskListRow(task, onClick = { onSelect(task) }) }
+                items(filtered, key = { it.id }) { task ->
+                    WorkTaskListRow(
+                        task = task,
+                        hours = taskDisplayHours(task, state.vineyardLabourLines),
+                        onClick = { onSelect(task) },
+                    )
+                }
             }
         }
     }

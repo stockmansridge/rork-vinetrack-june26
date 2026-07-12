@@ -220,7 +220,6 @@ private fun DashboardContent(
 
             TodaySection(
                 state,
-                onOpenPins = onOpenPinsList,
                 onOpenWeather = onOpenRain,
                 onOpenAlerts = { onOpenTool(ToolRoute.Alerts) },
             )
@@ -699,12 +698,9 @@ private fun SetupWizardCard(state: AppUiState, onClick: () -> Unit) {
 @Composable
 private fun TodaySection(
     state: AppUiState,
-    onOpenPins: () -> Unit,
     onOpenWeather: () -> Unit,
     onOpenAlerts: () -> Unit,
 ) {
-    val vine = LocalVineColors.current
-    val open = state.openPins
     val context = LocalContext.current
     val alertsRepo = remember { AlertsRepository(SessionStore(context)) }
     var alerts by remember { mutableStateOf<List<AlertWithStatus>>(emptyList()) }
@@ -725,36 +721,6 @@ private fun TodaySection(
             HomeAlertsCard(alerts = alerts, onClick = onOpenAlerts)
         }
         WeatherCard(onClick = onOpenWeather)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 64.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(vine.cardBackground)
-                .clickable { onOpenPins() }
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Box(
-                modifier = Modifier.size(30.dp).clip(RoundedCornerShape(8.dp))
-                    .background(VineColors.Orange.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Filled.LocationOn, contentDescription = null, tint = VineColors.Orange, modifier = Modifier.size(18.dp))
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "$open pin${if (open == 1) "" else "s"} need attention",
-                    fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, maxLines = 1,
-                )
-                Text(
-                    if (open == 0) "All caught up" else "Open Observations to review",
-                    fontSize = 12.sp, color = vine.textSecondary, maxLines = 1,
-                )
-            }
-            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(18.dp))
-        }
     }
 }
 
