@@ -16,7 +16,30 @@ struct WorkTasksHubView: View {
 
     private var visibleTasks: [WorkTask] { store.workTasks.filter { !$0.isArchived } }
     private var totalTasks: Int { visibleTasks.count }
-    private var totalCost: Double { visibleTasks.reduce(0) { $0 + $1.displayLabourCost(in: store) } }
+
+    /// Start of the current season — the most recent occurrence of the
+    /// vineyard's configured season start (default 1 July) on or before today.
+    private var currentSeasonStart: Date {
+        let cal = Calendar.current
+        let now = Date()
+        var comps = cal.dateComponents([.year], from: now)
+        comps.month = store.settings.seasonStartMonth
+        comps.day = store.settings.seasonStartDay
+        guard let thisYear = cal.date(from: comps) else { return cal.startOfDay(for: now) }
+        if thisYear <= now { return cal.startOfDay(for: thisYear) }
+        comps.year = (comps.year ?? 0) - 1
+        return cal.startOfDay(for: cal.date(from: comps) ?? now)
+    }
+
+    /// Non-archived tasks dated within the current season.
+    private var seasonTasks: [WorkTask] {
+        visibleTasks.filter { $0.date >= currentSeasonStart }
+    }
+
+    /// Season-to-date labour cost across current-season tasks.
+    private var seasonCost: Double {
+        seasonTasks.reduce(0) { $0 + $1.displayLabourCost(in: store) }
+    }
 
     var body: some View {
         ScrollView {
@@ -70,12 +93,15 @@ struct WorkTasksHubView: View {
                 Spacer()
                 if accessControl?.canViewFinancials ?? false {
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text("Total")
+                        Text("Total · This Season")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text(fmt.formatCurrency(totalCost))
+                        Text(fmt.formatCurrency(seasonCost))
                             .font(.title2.weight(.bold).monospacedDigit())
                             .foregroundStyle(VineyardTheme.leafGreen)
+                        Text("From \(currentSeasonStart.formatted(.dateTime.day().month(.abbreviated).year()))")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
                 }
             }
