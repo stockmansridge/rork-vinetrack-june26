@@ -103,7 +103,6 @@ fun VarietyGDDDetailScreen(
     val vine = LocalVineColors.current
     val context = LocalContext.current
     val service = remember { DegreeDayService() }
-    val opPrefs = remember { OperationPrefsStore(context).load() }
     val gddSettings = remember { GddSettingsStore(context).load() }
 
     val target = remember(variety) {
@@ -129,8 +128,8 @@ fun VarietyGDDDetailScreen(
         else state.paddocks.firstNotNullOfOrNull { it.centroid }?.let { it.latitude to it.longitude }
     }
 
-    val seasonStartMs = remember(opPrefs) {
-        seasonStartDateMs(opPrefs.seasonStartMonth, opPrefs.seasonStartDay)
+    val seasonStartMs = remember(state.seasonStartMonth, state.seasonStartDay) {
+        seasonStartDateMs(state.seasonStartMonth, state.seasonStartDay)
     }
 
     val resultState = produceState<VarietyGddResult?>(

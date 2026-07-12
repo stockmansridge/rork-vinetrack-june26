@@ -439,6 +439,87 @@ class VineyardRepository(private val session: SessionStore) {
         }
     }
 
+    /**
+     * Reads the shared vineyard season settings (season start month/day on
+     * `public.vineyards`, sql/108) via the member-gated
+     * `get_vineyard_season_settings` RPC. Mirrors the iOS
+     * `SupabaseVineyardRepository.getVineyardSeasonSettings`.
+     */
+    suspend fun getVineyardSeasonSettings(vineyardId: String): VineyardSeasonSettings? =
+        withContext(Dispatchers.IO) {
+            if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("get_vineyard_season_settings")) {
+                headers {
+                    append("apikey", SupabaseClient.anonKey)
+                    append("Authorization", "Bearer $token")
+                }
+                contentType(ContentType.Application.Json)
+                setBody(VineyardIdArg(vineyardId))
+            }
+            when {
+                response.status.isSuccess() -> {
+                    val rows: List<VineyardSeasonSettings> = response.body()
+                    rows.firstOrNull()
+                }
+                response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+                else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            }
+        }
+
+    /**
+     * Writes the shared vineyard season start via the owner/manager-gated
+     * `set_vineyard_season_settings` RPC (sql/108). The server validates real
+     * month/day combinations (Feb ≤ 29; Apr/Jun/Sep/Nov ≤ 30) and role.
+     * Mirrors the iOS `setVineyardSeasonSettings`.
+     */
+    suspend fun setVineyardSeasonSettings(
+        vineyardId: String,
+        seasonStartMonth: Int,
+        seasonStartDay: Int,
+    ): VineyardSeasonSettings = withContext(Dispatchers.IO) {
+        if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("set_vineyard_season_settings")) {
+            headers {
+                append("apikey", SupabaseClient.anonKey)
+                append("Authorization", "Bearer $token")
+            }
+            contentType(ContentType.Application.Json)
+            setBody(
+                SetVineyardSeasonSettingsArg(
+                    vineyardId = vineyardId,
+                    seasonStartMonth = seasonStartMonth,
+                    seasonStartDay = seasonStartDay,
+                )
+            )
+        }
+        when {
+            response.status.isSuccess() -> {
+                val rows: List<VineyardSeasonSettings> = response.body()
+                rows.firstOrNull() ?: throw BackendError.Server(response.status.value, "empty response")
+            }
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
+    /** Shared vineyard season boundary row returned by the sql/108 RPCs. */
+    @Serializable
+    data class VineyardSeasonSettings(
+        @SerialName("vineyard_id") val vineyardId: String? = null,
+        @SerialName("season_start_month") val seasonStartMonth: Int = 7,
+        @SerialName("season_start_day") val seasonStartDay: Int = 1,
+        @SerialName("updated_at") val updatedAt: String? = null,
+    )
+
+    @Serializable
+    private data class SetVineyardSeasonSettingsArg(
+        @SerialName("p_vineyard_id") val vineyardId: String,
+        @SerialName("p_season_start_month") val seasonStartMonth: Int,
+        @SerialName("p_season_start_day") val seasonStartDay: Int,
+    )
+
     @Serializable
     data class BackendVineyardLocation(
         @SerialName("vineyard_id") val vineyardId: String? = null,

@@ -44,6 +44,8 @@ struct NewMainTabView: View {
     @State private var selectedTab: Int = 0
     @State private var isSweeping: Bool = false
     @State private var portalPromptTrigger: PortalPromptTrigger?
+    @State private var seasonMigrationPrompt: SeasonMigrationPrompt?
+    @State private var seasonMigrationError: String?
 
     /// Used by the full sweep to pull vineyard-scoped organisation region
     /// settings (country/units/date format/terminology) from Supabase.
@@ -181,6 +183,38 @@ struct NewMainTabView: View {
         .sheet(item: $portalPromptTrigger) { trigger in
             VineTrackPortalPromptSheet(trigger: trigger, role: accessControl.currentRole)
         }
+        // One-time reconciliation between this device's legacy local season
+        // start and the shared vineyard value (owners/managers only).
+        .alert(
+            "Shared Season Settings",
+            isPresented: Binding(
+                get: { seasonMigrationPrompt != nil },
+                set: { if !$0 { seasonMigrationPrompt = nil } }
+            ),
+            presenting: seasonMigrationPrompt
+        ) { prompt in
+            Button("Keep shared value (\(prompt.sharedLabel))") {
+                store.applyRemoteVineyardSeasonSettings(
+                    month: prompt.sharedMonth,
+                    day: prompt.sharedDay,
+                    vineyardId: prompt.vineyardId
+                )
+                SeasonSettingsMigrationTracker.markDecided(prompt.vineyardId)
+            }
+            Button("Use this device's value (\(prompt.localLabel))") {
+                Task { await pushDeviceSeasonValue(prompt) }
+            }
+        } message: { prompt in
+            Text("This vineyard's shared season start is \(prompt.sharedLabel), but this device was using \(prompt.localLabel). The season start is now shared with everyone in the vineyard and affects how records are grouped into vintages and \u{201C}This Season\u{201D} reports.")
+        }
+        .alert("Season Settings", isPresented: Binding(
+            get: { seasonMigrationError != nil },
+            set: { if !$0 { seasonMigrationError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(seasonMigrationError ?? "")
+        }
         .onReceive(NotificationCenter.default.publisher(for: .vineTrackPortalPromptRequest)) { note in
             guard
                 let raw = note.userInfo?["trigger"] as? String,
@@ -258,6 +292,9 @@ struct NewMainTabView: View {
         // selection — pulling it here too means a manual/forced "Sync now"
         // picks up changes saved from the Lovable portal or another device.
         await syncVineyardRegionSettings()
+        // Shared vineyard season settings (season start month/day, sql/108) —
+        // one value per vineyard for every member. Server is authoritative.
+        await syncVineyardSeasonSettings()
         switch alertRefresh {
         case .generate: await alertService.generateAndRefresh()
         case .refresh:  await alertService.refresh()
@@ -336,6 +373,77 @@ struct NewMainTabView: View {
             #if DEBUG
             print("[RegionSync] fetch failed for vineyard=\(vineyardId): \(error.localizedDescription)")
             #endif
+        }
+    }
+
+    // MARK: - Vineyard season settings
+
+    /// Pull the shared vineyard season start (month/day) from Supabase.
+    /// The shared value is authoritative for every member. The only exception
+    /// is a one-time reconciliation on devices that carry a diverging legacy
+    /// local value AND belong to a user who may edit vineyard settings — they
+    /// get a prompt to either adopt the shared value or push their local one
+    /// up. Read-only members always adopt the shared value.
+    private func syncVineyardSeasonSettings() async {
+        guard let vineyardId = store.selectedVineyardId else { return }
+        do {
+            guard let remote = try await vineyardRegionRepository.getVineyardSeasonSettings(vineyardId: vineyardId) else { return }
+            let localMonth = store.settings.seasonStartMonth
+            let localDay = store.settings.seasonStartDay
+
+            if localMonth == remote.seasonStartMonth && localDay == remote.seasonStartDay {
+                SeasonSettingsMigrationTracker.markDecided(vineyardId)
+                return
+            }
+
+            let decided = SeasonSettingsMigrationTracker.hasDecided(vineyardId)
+            if decided || !accessControl.canChangeSettings {
+                store.applyRemoteVineyardSeasonSettings(
+                    month: remote.seasonStartMonth,
+                    day: remote.seasonStartDay,
+                    vineyardId: vineyardId
+                )
+                if !accessControl.canChangeSettings {
+                    SeasonSettingsMigrationTracker.markDecided(vineyardId)
+                }
+                return
+            }
+
+            // Undecided divergence on an editing user's device — one-time prompt.
+            guard seasonMigrationPrompt == nil else { return }
+            seasonMigrationPrompt = SeasonMigrationPrompt(
+                vineyardId: vineyardId,
+                localMonth: localMonth,
+                localDay: localDay,
+                sharedMonth: remote.seasonStartMonth,
+                sharedDay: remote.seasonStartDay
+            )
+        } catch {
+            // Offline / RPC missing — keep the cached local value.
+            #if DEBUG
+            print("[SeasonSync] fetch failed for vineyard=\(vineyardId): \(error.localizedDescription)")
+            #endif
+        }
+    }
+
+    /// Migration choice: push this device's legacy local season value up to
+    /// the shared vineyard setting. Only records the decision after the
+    /// server confirms the write.
+    private func pushDeviceSeasonValue(_ prompt: SeasonMigrationPrompt) async {
+        do {
+            let saved = try await vineyardRegionRepository.setVineyardSeasonSettings(
+                vineyardId: prompt.vineyardId,
+                seasonStartMonth: prompt.localMonth,
+                seasonStartDay: prompt.localDay
+            )
+            store.applyRemoteVineyardSeasonSettings(
+                month: saved.seasonStartMonth,
+                day: saved.seasonStartDay,
+                vineyardId: prompt.vineyardId
+            )
+            SeasonSettingsMigrationTracker.markDecided(prompt.vineyardId)
+        } catch {
+            seasonMigrationError = "Could not apply this device's season start to the vineyard. The shared value stays in effect — you can change it later in Operation Preferences."
         }
     }
 

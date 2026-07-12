@@ -42,6 +42,38 @@ protocol VineyardRepositoryProtocol: Sendable {
     func setVineyardRegionSettings(
         _ settings: BackendVineyardRegionSettings
     ) async throws -> BackendVineyardRegionSettings
+
+    /// Fetch the shared vineyard season settings (season start month/day) from
+    /// `public.vineyards` via `get_vineyard_season_settings` (sql/108). Any
+    /// vineyard member may read; returns nil when the vineyard has no row.
+    func getVineyardSeasonSettings(vineyardId: UUID) async throws -> BackendVineyardSeasonSettings?
+
+    /// Owner/manager only. Writes the shared season start month + day
+    /// atomically via `set_vineyard_season_settings` (sql/108). The server
+    /// validates real month/day combinations and role; throws on rejection.
+    @discardableResult
+    func setVineyardSeasonSettings(
+        vineyardId: UUID,
+        seasonStartMonth: Int,
+        seasonStartDay: Int
+    ) async throws -> BackendVineyardSeasonSettings
+}
+
+/// Shared vineyard-level season boundary from `public.vineyards`
+/// (`season_start_month` / `season_start_day`, sql/108). One value per
+/// vineyard for every member — not a per-device or per-user setting.
+nonisolated struct BackendVineyardSeasonSettings: Decodable, Sendable {
+    let vineyardId: UUID
+    let seasonStartMonth: Int
+    let seasonStartDay: Int
+    let updatedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "vineyard_id"
+        case seasonStartMonth = "season_start_month"
+        case seasonStartDay = "season_start_day"
+        case updatedAt = "updated_at"
+    }
 }
 
 nonisolated struct BackendVineyardLocation: Decodable, Sendable {

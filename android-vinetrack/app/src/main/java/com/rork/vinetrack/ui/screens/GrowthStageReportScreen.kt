@@ -78,9 +78,8 @@ fun GrowthStageReportScreen(
     val vine = LocalVineColors.current
     val context = LocalContext.current
     val fmt = state.regionFormatter
-    val ops = remember { OperationPrefsStore(context).load() }
-    val seasonMonth = ops.seasonStartMonth
-    val seasonDay = ops.seasonStartDay
+    val seasonMonth = state.seasonStartMonth
+    val seasonDay = state.seasonStartDay
     val dateFormat = remember(state.regionSettings) { RegionDateFormat.from(state.regionSettings.dateFormat) }
 
     var selectedPaddockId by remember { mutableStateOf<String?>(null) }

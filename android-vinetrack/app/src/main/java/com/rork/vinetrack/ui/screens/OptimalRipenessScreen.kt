@@ -156,7 +156,6 @@ fun OptimalRipenessScreen(
     val vine = LocalVineColors.current
     val context = LocalContext.current
     val service = remember { DegreeDayService() }
-    val opPrefs = remember { OperationPrefsStore(context).load() }
     val gddSettings = remember { GddSettingsStore(context).load() }
 
     // Resolve GDD source coordinates: vineyard coords, else first mapped block centroid.
@@ -171,8 +170,8 @@ fun OptimalRipenessScreen(
         }
     }
 
-    val seasonStartMs = remember(opPrefs) {
-        seasonStartDate(opPrefs.seasonStartMonth, opPrefs.seasonStartDay)
+    val seasonStartMs = remember(state.seasonStartMonth, state.seasonStartDay) {
+        seasonStartDate(state.seasonStartMonth, state.seasonStartDay)
     }
 
     // Fetch + compute. Recomputes when the inputs change.
@@ -252,8 +251,8 @@ fun OptimalRipenessScreen(
                         item {
                             SetupChecklistCard(
                                 state = state,
-                                seasonStartMonth = opPrefs.seasonStartMonth,
-                                seasonStartDay = opPrefs.seasonStartDay,
+                                seasonStartMonth = state.seasonStartMonth,
+                                seasonStartDay = state.seasonStartDay,
                                 onOpenTool = onOpenTool,
                                 onOpenBudburst = { showBudburstSheet = true },
                                 onOpenFixVarieties = { showFixVarietiesSheet = true },

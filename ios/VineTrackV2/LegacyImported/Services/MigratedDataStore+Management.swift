@@ -887,6 +887,20 @@ extension MigratedDataStore {
         )
     }
 
+    /// Apply the shared vineyard season settings (season start month/day from
+    /// `public.vineyards`, sql/108) to the local per-vineyard `AppSettings`
+    /// cache. The server value is authoritative; the local JSON copy is only
+    /// the offline cache of the last successful fetch.
+    func applyRemoteVineyardSeasonSettings(month: Int, day: Int, vineyardId: UUID) {
+        guard selectedVineyardId == vineyardId else { return }
+        var s = settings
+        s.vineyardId = vineyardId
+        guard s.seasonStartMonth != month || s.seasonStartDay != day else { return }
+        s.seasonStartMonth = month
+        s.seasonStartDay = day
+        saveSettings(s)
+    }
+
     // MARK: - Button Templates
 
     private func saveButtonTemplatesToDisk() {

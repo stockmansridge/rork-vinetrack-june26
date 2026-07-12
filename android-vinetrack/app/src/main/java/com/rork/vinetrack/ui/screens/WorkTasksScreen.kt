@@ -87,7 +87,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -97,7 +96,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.text.KeyboardOptions
-import com.rork.vinetrack.data.OperationPrefsStore
 import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
@@ -209,9 +207,9 @@ private fun WorkTasksHub(
     // Season-to-date labour total (owner/manager only), summing canonical
     // labour-line costs for current-season tasks — mirrors the iOS hub card.
     val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
-    val context = LocalContext.current
-    val opPrefs = remember { OperationPrefsStore(context).load() }
-    val seasonStartMs = remember(opPrefs) { seasonStartDate(opPrefs.seasonStartMonth, opPrefs.seasonStartDay) }
+    val seasonStartMs = remember(state.seasonStartMonth, state.seasonStartDay) {
+        seasonStartDate(state.seasonStartMonth, state.seasonStartDay)
+    }
     val seasonCost = remember(tasks, state.vineyardLabourLines, seasonStartMs) {
         val lines = state.vineyardLabourLines ?: return@remember null
         val seasonTaskIds = tasks

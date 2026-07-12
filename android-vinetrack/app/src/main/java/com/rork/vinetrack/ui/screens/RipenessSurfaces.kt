@@ -140,12 +140,13 @@ fun RipenessWatchTile(state: AppUiState, onClick: () -> Unit, modifier: Modifier
     val vine = LocalVineColors.current
     val context = LocalContext.current
     val service = remember { DegreeDayService() }
-    val opPrefs = remember { OperationPrefsStore(context).load() }
     val gddSettings = remember { GddSettingsStore(context).load() }
     val coords = remember(state.selectedVineyardId, state.vineyards, state.paddocks) {
         resolveRipenessCoords(state)
     }
-    val seasonStartMs = remember(opPrefs) { seasonStartDate(opPrefs.seasonStartMonth, opPrefs.seasonStartDay) }
+    val seasonStartMs = remember(state.seasonStartMonth, state.seasonStartDay) {
+        seasonStartDate(state.seasonStartMonth, state.seasonStartDay)
+    }
 
     val resultState = produceState<RipenessTileResult?>(
         initialValue = null,
@@ -301,12 +302,13 @@ fun BlockRipenessChip(state: AppUiState, block: Paddock, modifier: Modifier = Mo
     val vine = LocalVineColors.current
     val context = LocalContext.current
     val service = remember { DegreeDayService() }
-    val opPrefs = remember { OperationPrefsStore(context).load() }
     val gddSettings = remember { GddSettingsStore(context).load() }
     val coords = remember(state.selectedVineyardId, state.vineyards, state.paddocks) {
         resolveRipenessCoords(state)
     }
-    val seasonStartMs = remember(opPrefs) { seasonStartDate(opPrefs.seasonStartMonth, opPrefs.seasonStartDay) }
+    val seasonStartMs = remember(state.seasonStartMonth, state.seasonStartDay) {
+        seasonStartDate(state.seasonStartMonth, state.seasonStartDay)
+    }
 
     val primary = remember(block.varietyAllocations) {
         block.varietyAllocations.orEmpty().maxByOrNull { it.displayPercent ?: 0.0 }

@@ -103,6 +103,35 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
     // the Home wizard card). Mirrors the iOS SetupWizardView sheet.
     var showSetupWizard by rememberSaveable { mutableStateOf(false) }
 
+    // One-time reconciliation between this device's legacy local season start
+    // and the shared vineyard value (owners/managers only — sql/108).
+    state.seasonMigrationPrompt?.let { prompt ->
+        val monthNames = remember { java.text.DateFormatSymbols(java.util.Locale.US).months }
+        fun label(month: Int, day: Int) = "$day ${monthNames.getOrElse(month - 1) { "" }}"
+        AlertDialog(
+            onDismissRequest = { /* require an explicit choice */ },
+            title = { Text("Shared Season Settings") },
+            text = {
+                Text(
+                    "This vineyard's shared season start is ${label(prompt.sharedMonth, prompt.sharedDay)}, " +
+                        "but this device was using ${label(prompt.localMonth, prompt.localDay)}. " +
+                        "The season start is now shared with everyone in the vineyard and affects how " +
+                        "records are grouped into vintages and \u201CThis Season\u201D reports."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { vm.resolveSeasonMigration(useDeviceValue = false) }) {
+                    Text("Keep shared (${label(prompt.sharedMonth, prompt.sharedDay)})")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.resolveSeasonMigration(useDeviceValue = true) }) {
+                    Text("Use this device's (${label(prompt.localMonth, prompt.localDay)})")
+                }
+            },
+        )
+    }
+
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -377,7 +406,7 @@ private fun ToolHost(
                 )
             }
         }
-        ToolRoute.OperationPreferences -> OperationPreferencesScreen(modifier, onBack = onBack)
+        ToolRoute.OperationPreferences -> OperationPreferencesScreen(vm, state, modifier, onBack = onBack)
         ToolRoute.AppPreferences -> AppPreferencesScreen(modifier, onBack = onBack)
         ToolRoute.TripFunctions -> TripFunctionsSettingsScreen(vm, state, modifier, onBack = onBack)
         ToolRoute.TripAudit -> TripAuditScreen(vm, modifier, onBack = onBack)

@@ -174,6 +174,55 @@ final class SupabaseVineyardRepository: VineyardRepositoryProtocol {
         guard let row = rows.first else { throw BackendRepositoryError.emptyResponse }
         return row
     }
+
+    func getVineyardSeasonSettings(vineyardId: UUID) async throws -> BackendVineyardSeasonSettings? {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let rows: [BackendVineyardSeasonSettings] = try await provider.client
+            .rpc("get_vineyard_season_settings", params: GetVineyardSeasonSettingsRequest(vineyardId: vineyardId))
+            .execute()
+            .value
+        return rows.first
+    }
+
+    @discardableResult
+    func setVineyardSeasonSettings(
+        vineyardId: UUID,
+        seasonStartMonth: Int,
+        seasonStartDay: Int
+    ) async throws -> BackendVineyardSeasonSettings {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let params = SetVineyardSeasonSettingsRequest(
+            vineyardId: vineyardId,
+            seasonStartMonth: seasonStartMonth,
+            seasonStartDay: seasonStartDay
+        )
+        let rows: [BackendVineyardSeasonSettings] = try await provider.client
+            .rpc("set_vineyard_season_settings", params: params)
+            .execute()
+            .value
+        guard let row = rows.first else { throw BackendRepositoryError.emptyResponse }
+        return row
+    }
+}
+
+nonisolated private struct GetVineyardSeasonSettingsRequest: Encodable, Sendable {
+    let vineyardId: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "p_vineyard_id"
+    }
+}
+
+nonisolated private struct SetVineyardSeasonSettingsRequest: Encodable, Sendable {
+    let vineyardId: UUID
+    let seasonStartMonth: Int
+    let seasonStartDay: Int
+
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "p_vineyard_id"
+        case seasonStartMonth = "p_season_start_month"
+        case seasonStartDay = "p_season_start_day"
+    }
 }
 
 nonisolated private struct GetVineyardLocationRequest: Encodable, Sendable {

@@ -60,6 +60,7 @@ import com.rork.vinetrack.data.AlertPreferencesRepository
 import com.rork.vinetrack.data.BillingGrantsRepository
 import com.rork.vinetrack.data.HomePrefsStore
 import com.rork.vinetrack.data.OnboardingStore
+import com.rork.vinetrack.data.OperationPrefsStore
 import com.rork.vinetrack.data.PinCompletionSync
 import com.rork.vinetrack.data.PinCreateSync
 import com.rork.vinetrack.data.PinDeleteSync
@@ -292,6 +293,18 @@ data class AuthFormState(
     val error: String? = null,
 )
 
+/**
+ * Payload for the one-time local-vs-shared season settings reconciliation
+ * prompt (owners/managers whose device has a diverging legacy value).
+ */
+data class SeasonMigrationPrompt(
+    val vineyardId: String,
+    val localMonth: Int,
+    val localDay: Int,
+    val sharedMonth: Int,
+    val sharedDay: Int,
+)
+
 data class AppUiState(
     val route: AppRoute = AppRoute.Restoring,
     /**
@@ -317,6 +330,20 @@ data class AppUiState(
      * unchanged. Consume via [regionFormatter].
      */
     val regionSettings: RegionSettings = RegionSettings.defaults,
+    /**
+     * Shared vineyard season start (public.vineyards.season_start_month/day,
+     * sql/108) — one value per vineyard for every member. Seeded from the
+     * vineyard-scoped offline cache, then refreshed from the backend. Every
+     * season/vintage calculation must use these, never a device-local copy.
+     */
+    val seasonStartMonth: Int = 7,
+    val seasonStartDay: Int = 1,
+    /**
+     * One-time reconciliation prompt shown when this device carries a legacy
+     * local season value that differs from the shared vineyard value and the
+     * user may edit vineyard settings. Null when nothing to reconcile.
+     */
+    val seasonMigrationPrompt: SeasonMigrationPrompt? = null,
     val paddocks: List<Paddock> = emptyList(),
     val pins: List<Pin> = emptyList(),
     val trips: List<Trip> = emptyList(),
@@ -662,6 +689,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val accountDeletionRepo = AccountDeletionRepository(session)
     private val regionSettingsStore = RegionSettingsStore(app)
     private val regionSettingsRepo = RegionSettingsRepository(session)
+    private val operationPrefsStore = OperationPrefsStore(app)
 
     // --- Subscription / access gate (parity with iOS SubscriptionService +
     // VineTrackAccessResolver). RevenueCat sells only the Google Play Solo
@@ -3480,6 +3508,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (!hasAccess) refreshPaywall()
             if (selected != null) loadVineyardData(selected)
             if (selected != null) refreshRegionSettings(selected)
+            if (selected != null) refreshSeasonSettings(selected)
             refreshSelectedVineyardLogo()
             refreshGrowthStageImages()
             refreshCacheStatus()
@@ -3591,7 +3620,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         if (selected != null && !offlineAccess) refreshPaywall()
-        if (selected != null) loadVineyardData(selected)
+        if (selected != null) {
+            loadVineyardData(selected)
+            applyCachedSeasonSettings(selected)
+        }
         refreshCacheStatus()
         return true
     }
@@ -3624,6 +3656,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         refreshSelectedVineyardLogo()
         refreshGrowthStageImages()
         refreshRegionSettings(id)
+        refreshSeasonSettings(id)
         viewModelScope.launch { loadVineyardData(id) }
     }
 
@@ -3646,7 +3679,138 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val id = _ui.value.selectedVineyardId ?: return
         refreshSelectedVineyardLogo()
         refreshGrowthStageImages()
+        refreshSeasonSettings(id)
         viewModelScope.launch { loadVineyardData(id) }
+    }
+
+    // MARK: - Shared season settings (sql/108)
+
+    /** Seed state from the vineyard-scoped offline cache (1 July fallback). */
+    private fun applyCachedSeasonSettings(vineyardId: String) {
+        val cached = operationPrefsStore.loadSeason(vineyardId)
+        _ui.update {
+            it.copy(
+                seasonStartMonth = cached?.first ?: 7,
+                seasonStartDay = cached?.second ?: 1,
+                seasonMigrationPrompt = null,
+            )
+        }
+    }
+
+    /**
+     * Apply the cached shared season start instantly, then refresh the
+     * authoritative value from Supabase. The shared value always wins; the
+     * only exception is a one-time prompt on devices whose legacy global
+     * value diverges AND whose user may edit vineyard settings — they choose
+     * whether to adopt the shared value or push their device value up.
+     * Read-only members always adopt the shared value.
+     */
+    private fun refreshSeasonSettings(vineyardId: String) {
+        applyCachedSeasonSettings(vineyardId)
+        viewModelScope.launch {
+            val fetched = runCatching { repo.getVineyardSeasonSettings(vineyardId) }.getOrNull() ?: return@launch
+            if (_ui.value.selectedVineyardId != vineyardId) return@launch
+            val decided = operationPrefsStore.isSeasonMigrationDecided(vineyardId)
+            val legacy = operationPrefsStore.legacySeason()
+            val role = _ui.value.currentRole
+            val canEdit = role == "owner" || role == "manager"
+            val legacyDiverges = legacy != null &&
+                (legacy.first != fetched.seasonStartMonth || legacy.second != fetched.seasonStartDay)
+
+            // Shared value drives display + cache in every branch — the legacy
+            // local value is never silently pushed to the vineyard.
+            operationPrefsStore.saveSeason(vineyardId, fetched.seasonStartMonth, fetched.seasonStartDay)
+            _ui.update {
+                it.copy(
+                    seasonStartMonth = fetched.seasonStartMonth,
+                    seasonStartDay = fetched.seasonStartDay,
+                )
+            }
+
+            when {
+                decided -> Unit
+                !legacyDiverges -> operationPrefsStore.setSeasonMigrationDecided(vineyardId)
+                canEdit -> _ui.update {
+                    it.copy(
+                        seasonMigrationPrompt = SeasonMigrationPrompt(
+                            vineyardId = vineyardId,
+                            localMonth = legacy!!.first,
+                            localDay = legacy.second,
+                            sharedMonth = fetched.seasonStartMonth,
+                            sharedDay = fetched.seasonStartDay,
+                        )
+                    )
+                }
+                role != null -> operationPrefsStore.setSeasonMigrationDecided(vineyardId)
+                // Role unknown yet (members still loading) — leave undecided so
+                // a later refresh can still offer the prompt to an editor.
+                else -> Unit
+            }
+        }
+    }
+
+    /**
+     * Resolve the one-time season reconciliation prompt. `useDeviceValue`
+     * pushes this device's legacy value to the shared vineyard setting
+     * (recorded only after the server confirms); otherwise the shared value
+     * is kept.
+     */
+    fun resolveSeasonMigration(useDeviceValue: Boolean) {
+        val prompt = _ui.value.seasonMigrationPrompt ?: return
+        _ui.update { it.copy(seasonMigrationPrompt = null) }
+        if (!useDeviceValue) {
+            operationPrefsStore.saveSeason(prompt.vineyardId, prompt.sharedMonth, prompt.sharedDay)
+            operationPrefsStore.setSeasonMigrationDecided(prompt.vineyardId)
+            if (_ui.value.selectedVineyardId == prompt.vineyardId) {
+                _ui.update { it.copy(seasonStartMonth = prompt.sharedMonth, seasonStartDay = prompt.sharedDay) }
+            }
+            return
+        }
+        viewModelScope.launch {
+            val saved = runCatching {
+                repo.setVineyardSeasonSettings(prompt.vineyardId, prompt.localMonth, prompt.localDay)
+            }.getOrNull() ?: return@launch // failed — stays undecided; shared value remains in effect
+            operationPrefsStore.saveSeason(prompt.vineyardId, saved.seasonStartMonth, saved.seasonStartDay)
+            operationPrefsStore.setSeasonMigrationDecided(prompt.vineyardId)
+            if (_ui.value.selectedVineyardId == prompt.vineyardId) {
+                _ui.update { it.copy(seasonStartMonth = saved.seasonStartMonth, seasonStartDay = saved.seasonStartDay) }
+            }
+        }
+    }
+
+    /**
+     * Owner/manager write of the shared season start. Validates real
+     * month/day combinations locally, then persists via the shared RPC.
+     * State + the vineyard-scoped cache update only after the server
+     * confirms. [onResult] receives null on success or an error message.
+     */
+    fun setSeasonSettings(month: Int, day: Int, onResult: (String?) -> Unit) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run {
+            onResult("No vineyard selected.")
+            return
+        }
+        val maxDay = when (month) {
+            2 -> 29
+            4, 6, 9, 11 -> 30
+            else -> 31
+        }
+        if (month !in 1..12 || day !in 1..maxDay) {
+            onResult("That day is not valid for the selected month.")
+            return
+        }
+        viewModelScope.launch {
+            val saved = runCatching { repo.setVineyardSeasonSettings(vineyardId, month, day) }.getOrNull()
+            if (saved == null) {
+                onResult("Could not save the shared season settings. Check your connection and try again.")
+                return@launch
+            }
+            operationPrefsStore.saveSeason(vineyardId, saved.seasonStartMonth, saved.seasonStartDay)
+            operationPrefsStore.setSeasonMigrationDecided(vineyardId)
+            if (_ui.value.selectedVineyardId == vineyardId) {
+                _ui.update { it.copy(seasonStartMonth = saved.seasonStartMonth, seasonStartDay = saved.seasonStartDay) }
+            }
+            onResult(null)
+        }
     }
 
     /**
