@@ -16,7 +16,7 @@ struct WorkTasksHubView: View {
 
     private var visibleTasks: [WorkTask] { store.workTasks.filter { !$0.isArchived } }
     private var totalTasks: Int { visibleTasks.count }
-    private var totalCost: Double { visibleTasks.reduce(0) { $0 + $1.totalCost } }
+    private var totalCost: Double { visibleTasks.reduce(0) { $0 + $1.displayLabourCost(in: store) } }
 
     var body: some View {
         ScrollView {
@@ -237,20 +237,20 @@ struct WorkTaskRow: View {
                         .lineLimit(1)
 
                     HStack(spacing: 8) {
-                        Label(String(format: "%.1fh", task.durationHours), systemImage: "clock")
+                        Label(String(format: "%.1fh", task.displayHours(in: store)), systemImage: "clock")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         Text("•")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
-                        Label("\(task.totalPeople)", systemImage: "person.fill")
+                        Label("\(task.displayPeople(in: store))", systemImage: "person.fill")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        if task.totalCost > 0 && (accessControl?.canViewFinancials ?? false) {
+                        if task.displayLabourCost(in: store) > 0 && (accessControl?.canViewFinancials ?? false) {
                             Text("•")
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
-                            Text(fmt.formatCurrency(task.totalCost))
+                            Text(fmt.formatCurrency(task.displayLabourCost(in: store)))
                                 .font(.caption2.weight(.medium))
                                 .foregroundStyle(VineyardTheme.leafGreen)
                         }

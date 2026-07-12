@@ -89,14 +89,14 @@ struct AddEditWorkTaskView: View {
         return selectedBlocksOrdered.map { p in
             let area = areaFor(p)
             let share = (total > 0 && area != nil) ? (area! / total) : 0
-            let cost = totalCost * share
+            let cost = displayLabourCost * share
             let cph: Double? = (area ?? 0) > 0 ? cost / area! : nil
             return BlockAllocation(
                 id: p.id,
                 name: p.name,
                 areaHa: area,
                 pctOfTotal: share,
-                allocatedHours: durationHours * share,
+                allocatedHours: labourHours * share,
                 allocatedCost: cost,
                 costPerHa: cph
             )
@@ -151,10 +151,33 @@ struct AddEditWorkTaskView: View {
         labourLines.reduce(0.0) { $0 + $1.totalCost }
     }
 
+    /// Total workers across canonical labour lines.
+    private var labourLinePeople: Int {
+        labourLines.reduce(0) { $0 + $1.workerCount }
+    }
+
+    /// People shown in the summary: legacy quick-entry resources plus
+    /// canonical labour lines (portal/Android entries).
+    private var displayTotalPeople: Int { totalPeople + labourLinePeople }
+
+    /// Labour cost shown in the summary: legacy resource costing plus
+    /// canonical labour-line costs (stored rate snapshots — never
+    /// recalculated from a worker type's current rate).
+    private var displayLabourCost: Double { totalCost + labourLineCost }
+
+    private var displayCostPerPerson: Double {
+        guard displayTotalPeople > 0 else { return 0 }
+        return displayLabourCost / Double(displayTotalPeople)
+    }
+
     // MARK: - Operational summary (read-only)
 
-    /// Labour hours = the task duration entered on this form.
-    private var labourHours: Double { durationHours }
+    /// Labour hours: canonical labour lines are the source of truth when they
+    /// exist (portal/Android tasks store planned hours in child lines, not on
+    /// the parent row); otherwise the task duration entered on this form.
+    private var labourHours: Double {
+        labourLines.isEmpty ? durationHours : labourLineHours
+    }
 
     /// Manual machine entries recorded under this task (non-deleted lines are
     /// already the only ones kept in the store).
@@ -349,10 +372,20 @@ struct AddEditWorkTaskView: View {
                 }
 
                 Section {
+                    // Canonical labour lines (work_task_labour_lines) — the
+                    // portal/Android entries — are the primary labour source and
+                    // are shown here with their stored rate snapshots.
+                    if !labourLines.isEmpty {
+                        ForEach(labourLines) { line in
+                            labourLineRow(line)
+                        }
+                    }
                     if resources.isEmpty {
-                        Text("No workers added")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        if labourLines.isEmpty {
+                            Text("No workers added")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     } else {
                         ForEach($resources) { $res in
                             resourceRow($res)
@@ -387,24 +420,26 @@ struct AddEditWorkTaskView: View {
                         .buttonStyle(.borderless)
                     }
                 } footer: {
-                    Text("Set the number of workers of each type used on this task.")
+                    Text(labourLines.isEmpty
+                         ? "Set the number of workers of each type used on this task."
+                         : "Includes labour recorded against this task from the portal or other devices. Costs use the rate stored on each entry.")
                 }
 
                 if accessControl?.canViewFinancials ?? false {
                     Section("Estimated Cost") {
                         LabeledContent("Total People") {
-                            Text("\(totalPeople)")
+                            Text("\(displayTotalPeople)")
                                 .foregroundStyle(.secondary)
                         }
                         LabeledContent("Cost / Person") {
-                            Text(fmt.formatCurrency(costPerPerson))
+                            Text(fmt.formatCurrency(displayCostPerPerson))
                                 .foregroundStyle(.secondary)
                         }
                         HStack {
                             Text("\(fmt.blockTermCapitalised) Total")
                                 .font(.headline)
                             Spacer()
-                            Text(fmt.formatCurrency(totalCost))
+                            Text(fmt.formatCurrency(displayLabourCost))
                                 .font(.title3.weight(.bold))
                                 .foregroundStyle(VineyardTheme.leafGreen)
                         }
@@ -413,7 +448,7 @@ struct AddEditWorkTaskView: View {
                 } else {
                     Section("Task Summary") {
                         LabeledContent("Total People") {
-                            Text("\(totalPeople)")
+                            Text("\(displayTotalPeople)")
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -435,7 +470,7 @@ struct AddEditWorkTaskView: View {
                         }
                         if (accessControl?.canViewFinancials ?? false) && totalSelectedArea > 0 {
                             LabeledContent("Cost / \(fmt.areaUnitAbbreviation)") {
-                                Text("\(fmt.formatCurrency((totalCost / totalSelectedArea) / fmt.areaValue(hectares: 1)))/\(fmt.areaUnitAbbreviation)")
+                                Text("\(fmt.formatCurrency((displayLabourCost / totalSelectedArea) / fmt.areaValue(hectares: 1)))/\(fmt.areaUnitAbbreviation)")
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -445,8 +480,6 @@ struct AddEditWorkTaskView: View {
                 operationalSummarySection
 
                 linkedTripsSection
-
-                labourLinesSection
 
                 machineWorkSection
 
@@ -551,12 +584,6 @@ struct AddEditWorkTaskView: View {
             LabeledContent("Labour Hours") {
                 Text(String(format: "%.1fh", labourHours))
                     .foregroundStyle(.secondary)
-            }
-            if !labourLines.isEmpty {
-                LabeledContent("Labour Line Hours") {
-                    Text(String(format: "%.1fh", labourLineHours))
-                        .foregroundStyle(.secondary)
-                }
             }
             LabeledContent("Manual Machine Entries") {
                 Text("\(manualMachineCount)")
@@ -702,27 +729,6 @@ struct AddEditWorkTaskView: View {
 
     private func unlink(_ trip: Trip) {
         Task { await tripSync.setWorkTaskLink(tripId: trip.id, workTaskId: nil) }
-    }
-
-    @ViewBuilder
-    private var labourLinesSection: some View {
-        if isEditing {
-            Section {
-                if labourLines.isEmpty {
-                    Text("No labour resources added")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(labourLines) { line in
-                        labourLineRow(line)
-                    }
-                }
-            } header: {
-                Text("Labour Lines")
-            } footer: {
-                Text("Per-day labour entries recorded against this task, including entries added from the portal. Costs use the rate stored on each line.")
-            }
-        }
     }
 
     @ViewBuilder
@@ -957,6 +963,18 @@ struct AddEditWorkTaskView: View {
     private func loadIfEditing() {
         logBlockPickerDiagnosticsIfEmpty()
         if let t = existingTask {
+            #if DEBUG
+            // Labour-line trace: which task is selected, how many labour rows
+            // the store holds, and how many match this task id.
+            let allLines = store.workTaskLabourLines
+            let matched = allLines.filter { $0.workTaskId == t.id }
+            print("""
+            [WorkTask] edit open taskId=\(t.id.uuidString) \
+            storeLabourLines=\(allLines.count) matchedForTask=\(matched.count) \
+            matchedHours=\(matched.reduce(0.0) { $0 + $1.totalHours }) \
+            matchedCost=\(matched.reduce(0.0) { $0 + $1.totalCost })
+            """)
+            #endif
             date = t.date
             taskType = t.taskType
             if !mergedTaskTypeNames.contains(t.taskType) && !t.taskType.isEmpty {

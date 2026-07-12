@@ -433,7 +433,20 @@ final class WorkTaskLabourLineSyncService {
     private func pull(vineyardId: UUID) async throws {
         guard let store else { return }
         let lastSync = metadata.lastSync(for: vineyardId)
-        let remote = try await repository.fetch(vineyardId: vineyardId, since: lastSync)
+        // Always pull the FULL vineyard slice. An incremental cursor of
+        // `updated_at >= lastSync` compares the server's updated_at against the
+        // device clock captured at the end of the previous sync — if the device
+        // clock runs ahead of the server (or a portal row commits while a pull
+        // is in flight), the row falls permanently behind the cursor and is
+        // never fetched again. Labour lines are the canonical costing rows
+        // created by the portal, per-vineyard volume is small, and upserts are
+        // idempotent, so a full fetch is safe and self-healing.
+        let remote = try await repository.fetch(vineyardId: vineyardId, since: nil)
+        #if DEBUG
+        let remoteTaskIds = Set(remote.map { $0.workTaskId })
+        let hours = remote.filter { $0.deletedAt == nil }.reduce(0.0) { $0 + (($1.totalHours) ?? 0) }
+        print("[WorkTaskLabourLineSync] pull: \(remote.count) row(s) across \(remoteTaskIds.count) task(s), activeTotalHours=\(hours) vineyard=\(vineyardId.uuidString)")
+        #endif
         if lastSync == nil {
             let remoteIds = Set(remote.map { $0.id })
             let local = store.workTaskLabourLines.filter { $0.vineyardId == vineyardId }
@@ -586,7 +599,9 @@ final class WorkTaskMachineLineSyncService {
     private func pull(vineyardId: UUID) async throws {
         guard let store else { return }
         let lastSync = metadata.lastSync(for: vineyardId)
-        let remote = try await repository.fetch(vineyardId: vineyardId, since: lastSync)
+        // Full pull every time — same clock-skew rationale as labour lines:
+        // a device-clock cursor can permanently skip portal-created rows.
+        let remote = try await repository.fetch(vineyardId: vineyardId, since: nil)
         if lastSync == nil {
             let remoteIds = Set(remote.map { $0.id })
             let local = store.workTaskMachineLines.filter { $0.vineyardId == vineyardId }

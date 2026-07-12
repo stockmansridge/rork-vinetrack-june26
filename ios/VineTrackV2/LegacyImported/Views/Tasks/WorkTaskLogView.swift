@@ -60,14 +60,14 @@ struct WorkTaskLogView: View {
         case .block:
             items.sort { $0.paddockName.localizedStandardCompare($1.paddockName) == .orderedAscending }
         case .costDesc:
-            items.sort { $0.totalCost > $1.totalCost }
+            items.sort { $0.displayLabourCost(in: store) > $1.displayLabourCost(in: store) }
         }
         return items
     }
 
-    private var totalCost: Double { filtered.reduce(0) { $0 + $1.totalCost } }
-    private var totalHours: Double { filtered.reduce(0) { $0 + $1.durationHours } }
-    private var totalPeople: Int { filtered.reduce(0) { $0 + $1.totalPeople } }
+    private var totalCost: Double { filtered.reduce(0) { $0 + $1.displayLabourCost(in: store) } }
+    private var totalHours: Double { filtered.reduce(0) { $0 + $1.displayHours(in: store) } }
+    private var totalPeople: Int { filtered.reduce(0) { $0 + $1.displayPeople(in: store) } }
 
     var body: some View {
         ScrollView {
@@ -262,6 +262,33 @@ struct WorkTaskLogView: View {
 }
 
 extension WorkTask {
+    /// Canonical labour lines (work_task_labour_lines) recorded against this
+    /// task — the portal/Android entries with stored rate snapshots.
+    func labourLines(in store: MigratedDataStore) -> [WorkTaskLabourLine] {
+        store.workTaskLabourLines.filter { $0.workTaskId == id }
+    }
+
+    /// Hours for display: canonical labour-line hours when lines exist
+    /// (portal tasks store planned hours in child lines, not on the parent
+    /// row), otherwise the legacy task duration.
+    func displayHours(in store: MigratedDataStore) -> Double {
+        let lines = labourLines(in: store)
+        return lines.isEmpty ? durationHours : lines.reduce(0.0) { $0 + $1.totalHours }
+    }
+
+    /// People for display: legacy quick-entry resources plus canonical
+    /// labour-line worker counts.
+    func displayPeople(in store: MigratedDataStore) -> Int {
+        totalPeople + labourLines(in: store).reduce(0) { $0 + $1.workerCount }
+    }
+
+    /// Labour cost for display: legacy resource costing plus canonical
+    /// labour-line costs (stored rate snapshots — never recalculated from a
+    /// worker type's current rate).
+    func displayLabourCost(in store: MigratedDataStore) -> Double {
+        totalCost + labourLines(in: store).reduce(0.0) { $0 + $1.totalCost }
+    }
+
     /// List-friendly block label: “No block”, the single block name, or
     /// “N blocks”. Prefers work_task_paddocks join rows; falls back to the
     /// legacy single paddock_id/name when no join rows exist.
@@ -293,6 +320,12 @@ private struct WorkTaskLogRow: View {
 
     private var blockDisplay: String { task.blockDisplay(in: store) }
 
+    private var displayCostPerPerson: Double {
+        let people = task.displayPeople(in: store)
+        guard people > 0 else { return 0 }
+        return task.displayLabourCost(in: store) / Double(people)
+    }
+
     var body: some View {
         HStack(spacing: 14) {
             VStack {
@@ -315,20 +348,20 @@ private struct WorkTaskLogRow: View {
                     .lineLimit(1)
 
                 HStack(spacing: 8) {
-                    Label(String(format: "%.1fh", task.durationHours), systemImage: "clock")
+                    Label(String(format: "%.1fh", task.displayHours(in: store)), systemImage: "clock")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     Text("•")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
-                    Label("\(task.totalPeople)", systemImage: "person.fill")
+                    Label("\(task.displayPeople(in: store))", systemImage: "person.fill")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    if task.costPerPerson > 0 && (accessControl?.canViewFinancials ?? false) {
+                    if displayCostPerPerson > 0 && (accessControl?.canViewFinancials ?? false) {
                         Text("•")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
-                        Text("\(fmt.formatCurrency(task.costPerPerson))/pp")
+                        Text("\(fmt.formatCurrency(displayCostPerPerson))/pp")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -339,7 +372,7 @@ private struct WorkTaskLogRow: View {
 
             VStack(alignment: .trailing, spacing: 4) {
                 if accessControl?.canViewFinancials ?? false {
-                    Text(fmt.formatCurrency(task.totalCost))
+                    Text(fmt.formatCurrency(task.displayLabourCost(in: store)))
                         .font(.subheadline.weight(.bold).monospacedDigit())
                         .foregroundStyle(VineyardTheme.leafGreen)
                 }
