@@ -309,19 +309,20 @@ private fun YieldHubView(
             }
 
             YieldHubOptionRow(
-                icon = Icons.Filled.EditNote,
-                gradient = listOf(VineColors.LeafGreen, VineColors.DarkGreen),
-                title = "Record Actual Yield",
-                subtitle = "Add harvested tonnes by block & season",
-                onClick = onRecordActual,
-            )
-            YieldHubOptionRow(
                 icon = Icons.Filled.Calculate,
                 gradient = listOf(VineColors.Purple, VineColors.Pink),
                 title = "Pruning Yield Calculator",
                 subtitle = "Pruning bud-load potential",
                 detail = latestDetermination?.let { "Latest: ${state.regionFormatter.formatYieldPerArea(it)}" },
                 onClick = onDetermination,
+            )
+            YieldHubOptionRow(
+                icon = Icons.Filled.Warning,
+                gradient = listOf(VineColors.Destructive, VineColors.Orange),
+                title = "Record Damage",
+                subtitle = "Adjust yield estimates for seasonal damage.",
+                detail = state.damageRecords.size.takeIf { it > 0 }?.let { "$it damage record${if (it == 1) "" else "s"}" },
+                onClick = onDamage,
             )
             YieldHubOptionRow(
                 icon = Icons.Filled.Agriculture,
@@ -332,20 +333,19 @@ private fun YieldHubView(
                 onClick = onEstimate,
             )
             YieldHubOptionRow(
+                icon = Icons.Filled.EditNote,
+                gradient = listOf(VineColors.LeafGreen, VineColors.DarkGreen),
+                title = "Record Actual Yield",
+                subtitle = "Add harvested tonnes by block & season",
+                onClick = onRecordActual,
+            )
+            YieldHubOptionRow(
                 icon = Icons.Filled.Assessment,
                 gradient = listOf(VineColors.Indigo, VineColors.Info),
                 title = "Yield Reports",
                 subtitle = "Compare estimates and harvest results",
                 detail = records.size.takeIf { it > 0 }?.let { "$it record${if (it == 1) "" else "s"}" },
                 onClick = onReports,
-            )
-            YieldHubOptionRow(
-                icon = Icons.Filled.Warning,
-                gradient = listOf(VineColors.Destructive, VineColors.Orange),
-                title = "Record Damage",
-                subtitle = "Adjust yield estimates for seasonal damage.",
-                detail = state.damageRecords.size.takeIf { it > 0 }?.let { "$it damage record${if (it == 1) "" else "s"}" },
-                onClick = onDamage,
             )
             YieldHubOptionRow(
                 icon = Icons.Filled.Scale,

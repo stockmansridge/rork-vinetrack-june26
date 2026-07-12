@@ -15,19 +15,6 @@ struct YieldHubView: View {
                 headerCard
 
                 VStack(spacing: 12) {
-                    Button {
-                        showRecordActualSheet = true
-                    } label: {
-                        hubOption(
-                            icon: "square.and.pencil",
-                            iconGradient: [.green, VineyardTheme.leafGreen],
-                            title: "Record Actual Yield",
-                            subtitle: "Add harvested tonnes by block & season",
-                            detail: nil
-                        )
-                    }
-                    .buttonStyle(.plain)
-
                     NavigationLink {
                         YieldDeterminationCalculatorView()
                     } label: {
@@ -37,6 +24,19 @@ struct YieldHubView: View {
                             title: "Pruning Yield Calculator",
                             subtitle: "Pruning bud-load potential",
                             detail: determinationDetail
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    NavigationLink {
+                        DamageRecordsListView()
+                    } label: {
+                        hubOption(
+                            icon: "exclamationmark.triangle.fill",
+                            iconGradient: [.red, .orange],
+                            title: "Record Damage",
+                            subtitle: "Adjust yield estimates for seasonal damage.",
+                            detail: damageDetail
                         )
                     }
                     .buttonStyle(.plain)
@@ -54,6 +54,19 @@ struct YieldHubView: View {
                     }
                     .buttonStyle(.plain)
 
+                    Button {
+                        showRecordActualSheet = true
+                    } label: {
+                        hubOption(
+                            icon: "square.and.pencil",
+                            iconGradient: [.green, VineyardTheme.leafGreen],
+                            title: "Record Actual Yield",
+                            subtitle: "Add harvested tonnes by block & season",
+                            detail: nil
+                        )
+                    }
+                    .buttonStyle(.plain)
+
                     NavigationLink {
                         YieldReportsListView()
                     } label: {
@@ -63,19 +76,6 @@ struct YieldHubView: View {
                             title: "Yield Reports",
                             subtitle: "Compare estimates and harvest results",
                             detail: yieldReportsDetail
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    NavigationLink {
-                        DamageRecordsListView()
-                    } label: {
-                        hubOption(
-                            icon: "exclamationmark.triangle.fill",
-                            iconGradient: [.red, .orange],
-                            title: "Record Damage",
-                            subtitle: "Adjust yield estimates for seasonal damage.",
-                            detail: damageDetail
                         )
                     }
                     .buttonStyle(.plain)
