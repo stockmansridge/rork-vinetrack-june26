@@ -1,11 +1,13 @@
 -- =====================================================================
 -- Work Task data-flow inspection (read-only, safe to run in SQL editor)
 -- =====================================================================
--- HOW TO USE:
---   1. Replace :task_id below with the id of the portal-created task
---      (find it in step 0 if you don't know it).
---   2. Run each numbered block and compare against the expectations
---      in the comments.
+-- HOW TO USE (Supabase SQL editor friendly — no psql variables):
+--   * Each numbered block is self-contained. Run blocks ONE AT A TIME
+--     (select the block text, then Run) so you see every result.
+--   * By default every block targets the MOST RECENTLY CREATED task.
+--   * To inspect a specific task instead, replace PASTE_TASK_ID_HERE
+--     with the task's uuid (keep the quotes) in the block you run.
+--     Leaving it as-is is fine — it falls back to the newest task.
 --
 -- Tables involved (canonical schema, post sql/106 rename):
 --   work_tasks                 parent row (header only — no cost columns)
@@ -21,22 +23,29 @@
 --   worker_types               rate catalog (name, cost_per_hour)
 -- =====================================================================
 
--- 0. Most recent tasks — find the affected one.
+-- 0. Most recent tasks — find the affected one (copy its id if you want
+--    to target it explicitly in the blocks below).
 select id, vineyard_id, task_type, date, duration_hours, status,
        start_date, end_date, resources, created_by, created_at
 from public.work_tasks
 order by created_at desc
 limit 10;
 
--- 1. Parent row for the affected task.
+-- 1. Parent row for the target task.
 --    EXPECT: header fields set. NOTE: work_tasks has NO planned-cost or
 --    planned-hours-total column — totals only come from the line tables.
 --    `resources` is a legacy iOS-only JSONB (camelCase keys:
 --    id/operatorCategoryId/workerTypeName/hourlyRate/count). The portal
 --    should normally leave it NULL.
-select *
-from public.work_tasks
-where id = ':task_id';
+with target as (
+  select coalesce(
+    nullif('PASTE_TASK_ID_HERE', 'PASTE_TASK_ID_HERE')::uuid,
+    (select id from public.work_tasks order by created_at desc limit 1)
+  ) as id
+)
+select t.*
+from public.work_tasks t
+join target on t.id = target.id;
 
 -- 2. Labour allocations for the task (INCLUDING soft-deleted).
 --    EXPECT: one row per planned labour resource with worker_type_id set,
@@ -44,34 +53,59 @@ where id = ':task_id';
 --    DB-generated total_hours / total_cost.
 --    If ZERO rows: the portal never persisted the labour allocations —
 --    the data is missing FROM THE DATABASE, not from the apps.
-select id, work_task_id, vineyard_id, work_date,
-       worker_type_id, worker_type, worker_count, hours_per_worker,
-       hourly_rate, total_hours, total_cost, notes,
-       created_by, created_at, deleted_at
-from public.work_task_labour_lines
-where work_task_id = ':task_id';
+with target as (
+  select coalesce(
+    nullif('PASTE_TASK_ID_HERE', 'PASTE_TASK_ID_HERE')::uuid,
+    (select id from public.work_tasks order by created_at desc limit 1)
+  ) as id
+)
+select l.id, l.work_task_id, l.vineyard_id, l.work_date,
+       l.worker_type_id, l.worker_type, l.worker_count, l.hours_per_worker,
+       l.hourly_rate, l.total_hours, l.total_cost, l.notes,
+       l.created_by, l.created_at, l.deleted_at
+from public.work_task_labour_lines l
+join target on l.work_task_id = target.id;
 
 -- 3. Equipment allocations for the task (INCLUDING soft-deleted).
-select id, work_task_id, vineyard_id, work_date,
-       equipment_source, equipment_ref_id, equipment_name_snapshot,
-       operator_user_id, worker_type_id, duration_hours,
-       hourly_machine_rate, fuel_litres, fuel_cost, total_machine_cost,
-       entry_source, created_by, created_at, deleted_at
-from public.work_task_machine_lines
-where work_task_id = ':task_id';
+with target as (
+  select coalesce(
+    nullif('PASTE_TASK_ID_HERE', 'PASTE_TASK_ID_HERE')::uuid,
+    (select id from public.work_tasks order by created_at desc limit 1)
+  ) as id
+)
+select m.id, m.work_task_id, m.vineyard_id, m.work_date,
+       m.equipment_source, m.equipment_ref_id, m.equipment_name_snapshot,
+       m.operator_user_id, m.worker_type_id, m.duration_hours,
+       m.hourly_machine_rate, m.fuel_litres, m.fuel_cost, m.total_machine_cost,
+       m.entry_source, m.created_by, m.created_at, m.deleted_at
+from public.work_task_machine_lines m
+join target on m.work_task_id = target.id;
 
 -- 4. Block joins for the task.
-select * from public.work_task_paddocks
-where work_task_id = ':task_id';
+with target as (
+  select coalesce(
+    nullif('PASTE_TASK_ID_HERE', 'PASTE_TASK_ID_HERE')::uuid,
+    (select id from public.work_tasks order by created_at desc limit 1)
+  ) as id
+)
+select p.*
+from public.work_task_paddocks p
+join target on p.work_task_id = target.id;
 
 -- 5. FK validity: do the labour lines' worker_type_id values resolve?
+with target as (
+  select coalesce(
+    nullif('PASTE_TASK_ID_HERE', 'PASTE_TASK_ID_HERE')::uuid,
+    (select id from public.work_tasks order by created_at desc limit 1)
+  ) as id
+)
 select l.id as labour_line_id, l.worker_type_id,
        wt.id is not null as worker_type_exists,
        wt.name as worker_type_name, wt.cost_per_hour as current_rate,
        l.hourly_rate as snapshot_rate_on_line
 from public.work_task_labour_lines l
-left join public.worker_types wt on wt.id = l.worker_type_id
-where l.work_task_id = ':task_id';
+join target on l.work_task_id = target.id
+left join public.worker_types wt on wt.id = l.worker_type_id;
 
 -- 6. CRITICAL: does the portal write to tables the apps don't read?
 --    Lists EVERY column in the database named like a work-task FK.
@@ -89,9 +123,18 @@ order by table_name;
 -- 7. Vineyard ownership + membership sanity for the task's vineyard.
 --    EXPECT: the mobile user appears with a role in
 --    ('owner','manager','supervisor','operator','viewer').
+with target as (
+  select coalesce(
+    nullif('PASTE_TASK_ID_HERE', 'PASTE_TASK_ID_HERE')::uuid,
+    (select id from public.work_tasks order by created_at desc limit 1)
+  ) as id
+)
 select vm.user_id, vm.role, vm.worker_type_id
 from public.vineyard_members vm
-where vm.vineyard_id = (select vineyard_id from public.work_tasks where id = ':task_id');
+where vm.vineyard_id = (
+  select w.vineyard_id from public.work_tasks w
+  join target on w.id = target.id
+);
 
 -- 8. RLS policies actually active on the involved tables.
 --    EXPECT SELECT policies USING is_vineyard_member(vineyard_id) on all
