@@ -474,21 +474,65 @@ private fun FuelPurchaseFormSheet(
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     var volume by remember { mutableStateOf(existing?.volumeLitres?.takeIf { it > 0 }?.let { trimNum(it) } ?: "") }
-    var cost by remember { mutableStateOf(existing?.totalCost?.takeIf { it > 0 }?.let { trimNum(it) } ?: "") }
+    var cost by remember {
+        mutableStateOf(existing?.totalCost?.takeIf { it > 0 }?.let { String.format(Locale.US, "%.2f", it) } ?: "")
+    }
+    var pricePerLitre by remember {
+        mutableStateOf(
+            existing?.takeIf { it.volumeLitres > 0 && it.totalCost > 0 }
+                ?.let { formatFuelUnitPrice(it.totalCost / it.volumeLitres) } ?: ""
+        )
+    }
+    // Which cost field the user last edited manually; volume changes recalc
+    // the other field from this one. Existing records start from the stored total.
+    var lastEditedCostField by remember {
+        mutableStateOf(if (existing != null) FuelCostField.TOTAL else FuelCostField.NONE)
+    }
     var dateMs by remember { mutableStateOf(purchaseEpochMs(existing?.date) ?: System.currentTimeMillis()) }
     var showDatePicker by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
-    val vol = volume.replace(',', '.').toDoubleOrNull() ?: 0.0
-    val cst = cost.replace(',', '.').toDoubleOrNull() ?: 0.0
-    val canSave = vol > 0 && cst > 0 && !saving
+
+    val vol = parseFuelDecimal(volume) ?: 0.0
+    val enteredTotal = parseFuelDecimal(cost)?.takeIf { it >= 0 }
+    val enteredPrice = parseFuelDecimal(pricePerLitre)?.takeIf { it >= 0 }
+    // Full purchase amount to save: entered total, or litres × unit price.
+    val resolvedTotal: Double? = when {
+        enteredTotal != null -> enteredTotal
+        enteredPrice != null && vol > 0 -> Math.round(enteredPrice * vol * 100) / 100.0
+        else -> null
+    }
+    val canSave = vol > 0 && resolvedTotal != null && !saving
+
+    // Rewrites only the field opposite to the source, never the one being typed in.
+    fun recalcDependent(source: FuelCostField) {
+        val v = parseFuelDecimal(volume)?.takeIf { it > 0 } ?: return
+        when (source) {
+            FuelCostField.PRICE -> parseFuelDecimal(pricePerLitre)?.takeIf { it >= 0 }?.let {
+                cost = String.format(Locale.US, "%.2f", (v * it).coerceAtLeast(0.0))
+            }
+            FuelCostField.TOTAL -> parseFuelDecimal(cost)?.takeIf { it >= 0 }?.let {
+                pricePerLitre = formatFuelUnitPrice(it / v)
+            }
+            FuelCostField.NONE -> Unit
+        }
+    }
+
+    // Visible, non-destructive hint for records that look like the unit price
+    // was saved into the total field. Never rewrites the stored value.
+    val suspiciousNote: String? = existing
+        ?.takeIf { it.volumeLitres >= 20 && it.totalCost > 0 && it.totalCost <= 10 }
+        ?.let {
+            "The saved total (${fmt.formatCurrency(it.totalCost)}) looks unusually low for ${fmt.formatFuel(it.volumeLitres)} — it may have been entered as a price per litre. Nothing was changed automatically; correct the Total Purchase Cost and save if needed."
+        }
 
     fun save() {
+        val total = resolvedTotal ?: return
         saving = true
         saveError = null
         val input = FuelPurchaseRepository.PurchaseInput(
             volumeLitres = vol,
-            totalCost = cst,
+            totalCost = Math.round(total * 100) / 100.0,
             dateIso = Instant.ofEpochMilli(dateMs).toString(),
         )
         val cb: (Boolean) -> Unit = { ok ->
@@ -509,24 +553,50 @@ private fun FuelPurchaseFormSheet(
                 color = vine.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.Bold,
             )
             OutlinedTextField(
-                value = volume, onValueChange = { volume = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                label = { Text("Volume (litres)") }, placeholder = { Text("e.g. 500") },
+                value = volume,
+                onValueChange = {
+                    volume = it.filter { c -> c.isDigit() || c == '.' || c == ',' }
+                    recalcDependent(lastEditedCostField)
+                },
+                label = { Text("Volume (L)") }, placeholder = { Text("e.g. 154") },
                 singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(
-                value = cost, onValueChange = { cost = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                label = { Text("Total cost") }, placeholder = { Text("e.g. 950.00") },
+                value = pricePerLitre,
+                onValueChange = {
+                    pricePerLitre = it.filter { c -> c.isDigit() || c == '.' || c == ',' }
+                    lastEditedCostField = FuelCostField.PRICE
+                    recalcDependent(FuelCostField.PRICE)
+                },
+                label = { Text("Price per Litre (\$/L)") }, placeholder = { Text("e.g. 1.89") },
                 singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                supportingText = { Text("Enter either the price per litre or the total purchase cost — the other is calculated from the volume.") },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = cost,
+                onValueChange = {
+                    cost = it.filter { c -> c.isDigit() || c == '.' || c == ',' }
+                    lastEditedCostField = FuelCostField.TOTAL
+                    recalcDependent(FuelCostField.TOTAL)
+                },
+                label = { Text("Total Purchase Cost (\$)") }, placeholder = { Text("e.g. 291.06") },
+                singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                supportingText = { Text("The full invoice amount, not the price of one litre.") },
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.CalendarMonth, contentDescription = null, modifier = Modifier.size(18.dp))
                 Text("  " + formatPurchaseDate(Instant.ofEpochMilli(dateMs).toString()))
             }
-            if (vol > 0 && cst > 0) {
-                Text(fmt.formatFuelCostPerUnit(cst / vol), color = vine.textSecondary, fontSize = 13.sp)
+            if (vol > 0 && resolvedTotal != null && resolvedTotal > 0) {
+                Text(
+                    "${fmt.formatFuel(vol)} × ${fmt.formatFuelCostPerUnit(resolvedTotal / vol)} = ${fmt.formatCurrency(resolvedTotal)}",
+                    color = vine.textSecondary, fontSize = 13.sp,
+                )
             }
+            suspiciousNote?.let { Text(it, color = VineColors.Warning, fontSize = 12.sp) }
             saveError?.let { Text(it, color = VineColors.Destructive, fontSize = 12.sp) }
             Button(
                 onClick = { save() }, enabled = canSave, modifier = Modifier.fillMaxWidth(),
@@ -558,6 +628,19 @@ private fun FuelPurchaseFormSheet(
             dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } },
         ) { DatePicker(state = dpState) }
     }
+}
+
+/** Which cost field the user last edited manually in the purchase form. */
+private enum class FuelCostField { NONE, PRICE, TOTAL }
+
+/** Accepts "1.89" and "1,89"; returns null for blank or non-finite input. */
+private fun parseFuelDecimal(text: String): Double? =
+    text.replace(',', '.').trim().toDoubleOrNull()?.takeIf { it.isFinite() }
+
+/** Unit price formatted to at most 4 decimal places, trailing zeros trimmed. */
+private fun formatFuelUnitPrice(value: Double): String {
+    val s = String.format(Locale.US, "%.4f", value)
+    return s.trimEnd('0').trimEnd('.')
 }
 
 /** Epoch millis for an ISO purchase date, tolerating date-only values. */

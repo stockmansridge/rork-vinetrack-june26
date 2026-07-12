@@ -661,35 +661,121 @@ struct FuelPurchaseFormSheet: View {
 
     let purchase: FuelPurchase?
 
+    /// Which cost field the user last edited manually. Volume changes
+    /// recalculate the *other* field from this one, never both at once.
+    private enum CostField {
+        case pricePerLitre
+        case totalCost
+    }
+
     @State private var volumeText: String = ""
+    @State private var pricePerLitreText: String = ""
     @State private var costText: String = ""
     @State private var date: Date = Date()
     @State private var confirmDelete: Bool = false
+    @State private var lastEditedCostField: CostField = .totalCost
+    /// Sentinels for values this form wrote programmatically, so their
+    /// `onChange` does not reclaim "last edited" status or reformat the
+    /// field the user is actively typing in.
+    @State private var lastProgrammaticPrice: String?
+    @State private var lastProgrammaticCost: String?
 
     init(purchase: FuelPurchase?) {
         self.purchase = purchase
         if let p = purchase {
-            _volumeText = State(initialValue: String(format: "%.0f", p.volumeLitres))
+            _volumeText = State(initialValue: Self.trimmedNumber(p.volumeLitres, maxDecimals: 2))
             _costText = State(initialValue: String(format: "%.2f", p.totalCost))
+            if p.volumeLitres > 0, p.totalCost > 0 {
+                _pricePerLitreText = State(initialValue: Self.trimmedNumber(p.totalCost / p.volumeLitres, maxDecimals: 4))
+            }
             _date = State(initialValue: p.date)
         }
     }
 
+    /// Accepts "1.89" and "1,89"; rejects blanks, negatives handled by callers.
+    private static func parseDecimal(_ text: String) -> Double? {
+        let normalized = text.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespaces)
+        guard !normalized.isEmpty, let value = Double(normalized), value.isFinite else { return nil }
+        return value
+    }
+
+    /// Formats to at most `maxDecimals` places, trimming trailing zeros.
+    private static func trimmedNumber(_ value: Double, maxDecimals: Int) -> String {
+        var text = String(format: "%.\(maxDecimals)f", value)
+        guard text.contains(".") else { return text }
+        while text.hasSuffix("0") { text.removeLast() }
+        if text.hasSuffix(".") { text.removeLast() }
+        return text
+    }
+
+    private var litres: Double? { Self.parseDecimal(volumeText) }
+
+    /// Full purchase amount that would be saved: the entered total, or
+    /// litres × price per litre when only the unit price was entered.
+    private var resolvedTotal: Double? {
+        if let total = Self.parseDecimal(costText) {
+            return total >= 0 ? total : nil
+        }
+        if let ppl = Self.parseDecimal(pricePerLitreText), ppl >= 0,
+           let vol = litres, vol > 0 {
+            return (ppl * vol * 100).rounded() / 100
+        }
+        return nil
+    }
+
     private var isValid: Bool {
-        (Double(volumeText) ?? 0) > 0 && (Double(costText) ?? 0) > 0
+        guard let vol = litres, vol > 0 else { return false }
+        guard let total = resolvedTotal, total >= 0 else { return false }
+        return true
+    }
+
+    /// Visible, non-destructive hint for records that look like the unit
+    /// price was saved into the total field. Never rewrites the stored value.
+    private var suspiciousHistoricalNote: String? {
+        guard let p = purchase, p.volumeLitres >= 20, p.totalCost > 0, p.totalCost <= 10 else { return nil }
+        return "The saved total ($\(String(format: "%.2f", p.totalCost))) looks unusually low for \(Self.trimmedNumber(p.volumeLitres, maxDecimals: 2)) L — it may have been entered as a price per litre. Nothing has been changed automatically; correct the Total Purchase Cost and save if needed."
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Volume (Litres)") {
-                    TextField("e.g. 500", text: $volumeText)
-                        .keyboardType(.decimalPad)
+                Section {
+                    HStack {
+                        TextField("e.g. 154", text: $volumeText)
+                            .keyboardType(.decimalPad)
+                        Text("L").foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Volume (L)")
                 }
 
-                Section("Total Cost ($)") {
-                    TextField("e.g. 950.00", text: $costText)
-                        .keyboardType(.decimalPad)
+                Section {
+                    HStack {
+                        Text("$").foregroundStyle(.secondary)
+                        TextField("e.g. 1.89", text: $pricePerLitreText)
+                            .keyboardType(.decimalPad)
+                        Text("/L").foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Price per Litre ($/L)")
+                } footer: {
+                    Text("Enter either the price per litre or the total purchase cost — the other is calculated automatically from the volume.")
+                }
+
+                Section {
+                    HStack {
+                        Text("$").foregroundStyle(.secondary)
+                        TextField("e.g. 291.06", text: $costText)
+                            .keyboardType(.decimalPad)
+                    }
+                } header: {
+                    Text("Total Purchase Cost ($)")
+                } footer: {
+                    if let note = suspiciousHistoricalNote {
+                        Text(note).foregroundStyle(.orange)
+                    } else {
+                        Text("The total purchase cost is the full invoice amount, not the price of one litre.")
+                    }
                 }
 
                 Section {
@@ -721,6 +807,19 @@ struct FuelPurchaseFormSheet: View {
             }
             .navigationTitle(purchase == nil ? "New Fuel Purchase" : "Edit Fuel Purchase")
             .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: volumeText) { _, _ in
+                recalculateDependentField(from: lastEditedCostField)
+            }
+            .onChange(of: pricePerLitreText) { _, newValue in
+                guard newValue != lastProgrammaticPrice else { return }
+                lastEditedCostField = .pricePerLitre
+                recalculateDependentField(from: .pricePerLitre)
+            }
+            .onChange(of: costText) { _, newValue in
+                guard newValue != lastProgrammaticCost else { return }
+                lastEditedCostField = .totalCost
+                recalculateDependentField(from: .totalCost)
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -736,9 +835,31 @@ struct FuelPurchaseFormSheet: View {
         }
     }
 
+    /// Rewrites only the field opposite to `sourceField`, and only when the
+    /// volume and the source value are both valid — so the field being typed
+    /// in is never reformatted mid-entry and no recalculation loop can form.
+    private func recalculateDependentField(from sourceField: CostField) {
+        guard let vol = litres, vol > 0 else { return }
+        switch sourceField {
+        case .pricePerLitre:
+            guard let ppl = Self.parseDecimal(pricePerLitreText), ppl >= 0 else { return }
+            let text = String(format: "%.2f", max(0, ppl * vol))
+            guard text != costText else { return }
+            lastProgrammaticCost = text
+            costText = text
+        case .totalCost:
+            guard let total = Self.parseDecimal(costText), total >= 0 else { return }
+            let text = Self.trimmedNumber(total / vol, maxDecimals: 4)
+            guard text != pricePerLitreText else { return }
+            lastProgrammaticPrice = text
+            pricePerLitreText = text
+        }
+    }
+
     private func save() {
-        let vol = Double(volumeText) ?? 0
-        let cost = Double(costText) ?? 0
+        guard let vol = litres, vol > 0, let rawTotal = resolvedTotal else { return }
+        // Persist the full purchase amount rounded to cents.
+        let cost = (rawTotal * 100).rounded() / 100
         if var existing = purchase {
             existing.volumeLitres = vol
             existing.totalCost = cost
