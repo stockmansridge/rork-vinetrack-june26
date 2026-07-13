@@ -64,7 +64,10 @@ fun MoreScreen(
                     tool.group == group &&
                         tool != ToolRoute.RolesPermissions &&
                         tool != ToolRoute.SprayManagement &&
-                        (tool != ToolRoute.CostReports || canViewCosting)
+                        (tool != ToolRoute.CostReports || canViewCosting) &&
+                        // In-development tools — System Admins only for now.
+                        (tool != ToolRoute.PruningTracker || state.isSystemAdmin) &&
+                        (tool != ToolRoute.FertiliserCalculator || state.isSystemAdmin)
                 }
                 if (tools.isNotEmpty()) {
                     item(key = "header-${group.name}") {

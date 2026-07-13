@@ -565,6 +565,7 @@ private struct NewHomeTabView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(TripTrackingService.self) private var tripTracking
+    @Environment(SystemAdminService.self) private var systemAdmin
 
     @State private var showQuickPin: Bool = false
     @State private var showTripChoice: Bool = false
@@ -1032,6 +1033,20 @@ private struct NewHomeTabView: View {
                     }
                     .buttonStyle(.plain)
                 }
+                if systemAdmin.isSystemAdmin {
+                    NavigationLink {
+                        FertiliserCalculatorView()
+                    } label: {
+                        iconTile(title: "Fertiliser Calculator", icon: "circle.hexagongrid.fill", tint: .mint)
+                    }
+                    .buttonStyle(.plain)
+                    NavigationLink {
+                        PruningTrackerView()
+                    } label: {
+                        iconTile(title: "Pruning Tracker", icon: "scissors", tint: .teal)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .padding(.horizontal)
         }
@@ -1055,6 +1070,8 @@ private struct NewHomeTabView: View {
         case "Irrigation Advisor": return "Water planning"
         case "Disease Risk": return "Downy/Powdery/Botrytis"
         case "Yield Determination": return "Pruning bud-load"
+        case "Pruning Tracker": return "Row progress & crew rates"
+        case "Fertiliser Calculator": return "Rates, packs & costs"
         case "Manage Users": return "Team & roles"
         case "Vineyard Setup": return "Blocks & rows"
         default: return ""

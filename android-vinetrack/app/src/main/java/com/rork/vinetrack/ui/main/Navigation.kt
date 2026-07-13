@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CloudQueue
+import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Coronavirus
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.DirectionsCar
@@ -12,6 +13,7 @@ import androidx.compose.material.icons.filled.FactCheck
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.GppGood
+import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Group
@@ -85,6 +87,8 @@ enum class ToolRoute(
     CostReports("Cost Reports", "Season, block & variety costs", Icons.Filled.Payments, VineColors.Indigo, ToolGroup.Records),
     Maintenance("Service & Maintenance", "Equipment & repairs", Icons.Filled.Build, VineColors.EarthBrown, ToolGroup.Records),
     FuelLog("Fuel Log", "Purchases & refuelling", Icons.Filled.LocalGasStation, VineColors.Pink, ToolGroup.Operations),
+    FertiliserCalculator("Fertiliser Calculator", "Rates, packs & costs", Icons.Filled.Grain, VineColors.LeafGreen, ToolGroup.Operations),
+    PruningTracker("Pruning Tracker", "Row progress & crew rates", Icons.Filled.ContentCut, VineColors.Cyan, ToolGroup.Operations),
     Equipment("Equipment", "Tractors, machines, spray & fuel", Icons.Filled.PrecisionManufacturing, VineColors.EarthBrown, ToolGroup.Records),
     TeamAccess("Team & Access", "Manage members and invitations", Icons.Filled.Group, VineColors.Info, ToolGroup.Account),
     RolesPermissions("Roles & Permissions", "What each role can see and do", Icons.Filled.GppGood, VineColors.Info, ToolGroup.Account),

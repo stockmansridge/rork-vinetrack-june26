@@ -41,9 +41,11 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Coronavirus
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Grass
+import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.LocationOn
@@ -233,7 +235,7 @@ private fun DashboardContent(
 
             OverviewSection(state, onOpenMap)
 
-            OperationalToolsSection(onOpenTab = onOpenTab, onOpenTool = onOpenTool)
+            OperationalToolsSection(onOpenTab = onOpenTab, onOpenTool = onOpenTool, isSystemAdmin = state.isSystemAdmin)
 
             if (canChangeSettings) {
                 ManagementSection(onOpenTool = onOpenTool)
@@ -937,7 +939,11 @@ private data class ToolItem(
 )
 
 @Composable
-private fun OperationalToolsSection(onOpenTab: (MainTab) -> Unit, onOpenTool: (ToolRoute) -> Unit) {
+private fun OperationalToolsSection(
+    onOpenTab: (MainTab) -> Unit,
+    onOpenTool: (ToolRoute) -> Unit,
+    isSystemAdmin: Boolean = false,
+) {
     val tools = listOf(
         ToolItem("Work Tasks", "Log & calculate", Icons.Filled.Group, VineColors.Indigo) { onOpenTool(ToolRoute.WorkTasks) },
         ToolItem("Maintenance Log", "Repairs & jobs", Icons.Filled.Build, VineColors.EarthBrown) { onOpenTool(ToolRoute.Maintenance) },
@@ -948,7 +954,14 @@ private fun OperationalToolsSection(onOpenTab: (MainTab) -> Unit, onOpenTool: (T
         ToolItem("Growth Stage Records", "Phenology records", Icons.Filled.Spa, VineColors.LeafGreen) { onOpenTool(ToolRoute.Growth) },
         ToolItem("Optimal Ripeness", "GDD & harvest window", Icons.Filled.Thermostat, VineColors.Orange) { onOpenTool(ToolRoute.OptimalRipeness) },
         ToolItem("Cost Reports", "Season, block & variety", Icons.Filled.Payments, VineColors.Indigo) { onOpenTool(ToolRoute.CostReports) },
-    )
+    ) + if (isSystemAdmin) {
+        listOf(
+            ToolItem("Fertiliser Calculator", "Rates, packs & costs", Icons.Filled.Grain, VineColors.LeafGreen) { onOpenTool(ToolRoute.FertiliserCalculator) },
+            ToolItem("Pruning Tracker", "Row progress & crew rates", Icons.Filled.ContentCut, VineColors.Cyan) { onOpenTool(ToolRoute.PruningTracker) },
+        )
+    } else {
+        emptyList()
+    }
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
