@@ -44,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
@@ -507,9 +508,12 @@ private fun BlockLabelMarker(block: Paddock, position: LatLng) {
 
 /**
  * A vineyard pin rendered in its actual configured colour as a circular marker
- * (iOS `PinsMapView` parity): a coloured disc with a white ring, a tick when the
- * pin is completed, otherwise a small inner dot. Stacked above block labels and
- * boundaries via zIndex so pins always read in the foreground.
+ * (iOS `PinsMapView` parity): a coloured disc with a tick when the pin is
+ * completed, otherwise a small inner dot. Rendered fully opaque and stacked
+ * above block labels, row lines and boundaries via zIndex so pins always sit
+ * in front of every other map layer; pending-sync pins use a lighter solid
+ * tint instead of transparency (translucent markers let row lines and
+ * boundary shading show through, reading as if they were drawn on top).
  */
 @OptIn(MapsComposeExperimentalApi::class)
 @Composable
@@ -522,14 +526,14 @@ private fun PinMapMarker(
     onPinClick: ((Pin) -> Unit)?,
 ) {
     val markerState = remember(position) { MarkerState(position = position) }
+    val baseColor = if (faded) lerp(color, Color.White, 0.28f) else color
     MarkerComposable(
         keys = arrayOf(pin.id, pin.isCompleted.toString(), color.value.toString(), faded.toString()),
         state = markerState,
         title = pin.displayTitle,
         snippet = snippet,
         anchor = Offset(0.5f, 0.5f),
-        alpha = if (faded) 0.8f else 1f,
-        zIndex = 2f,
+        zIndex = 3f,
         onClick = {
             val cb = onPinClick
             if (cb != null) {
@@ -542,13 +546,15 @@ private fun PinMapMarker(
     ) {
         // Solid colour disc with a subtle vertical gradient, matching the iOS
         // `Circle().fill(color.gradient)` pin marker (no heavy outer ring).
+        // Fully opaque: the gradient darkens toward the bottom instead of
+        // becoming transparent, so map layers never bleed through the pin.
         Box(
             modifier = Modifier
                 .size(30.dp)
                 .clip(CircleShape)
                 .background(
                     Brush.verticalGradient(
-                        listOf(color, color.copy(alpha = 0.82f)),
+                        listOf(baseColor, lerp(baseColor, Color.Black, 0.16f)),
                     ),
                 ),
             contentAlignment = Alignment.Center,
