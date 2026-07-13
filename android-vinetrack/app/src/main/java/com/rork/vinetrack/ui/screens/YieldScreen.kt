@@ -694,7 +694,7 @@ private fun YieldListView(
             Box {
                 FloatingActionButton(
                     onClick = { createMenu = true },
-                    containerColor = VineColors.PrimaryAccent,
+                    containerColor = VineColors.Primary,
                     contentColor = Color.White,
                 ) {
                     Icon(Icons.Filled.Add, contentDescription = "Add yield record")

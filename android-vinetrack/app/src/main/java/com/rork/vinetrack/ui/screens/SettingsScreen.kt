@@ -722,7 +722,7 @@ private fun MapDefaultsEditor(
                         ) {
                             Text(option.label, color = vine.textPrimary, modifier = Modifier.weight(1f))
                             if (style == option) {
-                                Icon(Icons.Filled.Check, contentDescription = null, tint = VineColors.Success)
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = VineColors.Primary)
                             }
                         }
                     }
@@ -1059,7 +1059,7 @@ private fun VineyardDetailSheet(
                             )
                         }
                         if (state.vineyardLogoBusy) {
-                            CircularProgressIndicator(color = VineColors.PrimaryAccent, modifier = Modifier.size(20.dp))
+                            CircularProgressIndicator(color = VineColors.Primary, modifier = Modifier.size(20.dp))
                         }
                     }
                     if (canEdit) {
@@ -1142,7 +1142,7 @@ private fun VineyardDetailSheet(
                 Button(
                     onClick = { renameText = live.name; showRename = true },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                     enabled = !working,
                 ) {
                     Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))

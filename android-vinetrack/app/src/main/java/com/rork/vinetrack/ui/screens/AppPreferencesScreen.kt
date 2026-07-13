@@ -291,6 +291,7 @@ private fun TimezonePickerDialog(selected: String, onSelect: (String) -> Unit, o
                 onValueChange = { query = it },
                 singleLine = true,
                 placeholder = { Text("Search timezones") },
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth(),
             )
             LazyColumn(

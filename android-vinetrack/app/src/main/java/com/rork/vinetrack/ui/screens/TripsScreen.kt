@@ -508,7 +508,7 @@ private fun TripListView(state: AppUiState, onSelect: (Trip) -> Unit, onStart: (
         when {
             state.isLoadingVineyardData && state.trips.isEmpty() -> {
                 Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = VineColors.LeafGreen)
+                    CircularProgressIndicator(color = VineColors.Primary)
                 }
             }
 
@@ -4383,7 +4383,7 @@ private fun TripCostingLinksSheet(
                 },
                 enabled = !saving,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text("Save changes")
@@ -4572,7 +4572,7 @@ private fun SeedingDetailsSheet(
                 },
                 enabled = !saving,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text("Save seeding details")

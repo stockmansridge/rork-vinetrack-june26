@@ -465,7 +465,7 @@ fun EditBlockScreen(
 
     if (saving) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = VineColors.LeafGreen)
+            CircularProgressIndicator(color = VineColors.Primary)
         }
     }
 }

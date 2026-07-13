@@ -226,7 +226,7 @@ fun OptimalRipenessScreen(
             result == null -> {
                 Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        CircularProgressIndicator(color = VineColors.LeafGreen)
+                        CircularProgressIndicator(color = VineColors.Primary)
                         Text("Fetching season weather…", color = vine.textSecondary, fontSize = 13.sp)
                     }
                 }

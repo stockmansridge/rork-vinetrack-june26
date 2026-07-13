@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Opacity
 import androidx.compose.material.icons.filled.Paid
@@ -52,7 +53,6 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.TableChart
@@ -372,7 +372,7 @@ private fun SprayListView(
                     }
                     Box {
                         IconButton(onClick = { sortMenu = true }) {
-                            Icon(Icons.Filled.Sort, contentDescription = "Sort")
+                            Icon(Icons.Filled.FilterList, contentDescription = "Sort", tint = vine.textSecondary)
                         }
                         androidx.compose.material3.DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
                             SpraySort.entries.forEach { option ->
@@ -385,7 +385,7 @@ private fun SprayListView(
                                         )
                                     },
                                     trailingIcon = {
-                                        if (option == sort) Icon(Icons.Filled.Check, contentDescription = null, tint = VineColors.PrimaryAccent)
+                                        if (option == sort) Icon(Icons.Filled.Check, contentDescription = null, tint = VineColors.Primary)
                                     },
                                     onClick = { sort = option; sortMenu = false },
                                 )
@@ -478,6 +478,7 @@ private fun SprayListView(
                     }
                 },
                 singleLine = true,
+                shape = RoundedCornerShape(12.dp),
             )
 
             // Status filter chips
@@ -494,7 +495,7 @@ private fun SprayListView(
                         color = if (active) Color.White else vine.textSecondary,
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
-                            .background(if (active) VineColors.PrimaryAccent else vine.cardBackground)
+                            .background(if (active) VineColors.Primary else vine.cardBackground)
                             .clickable { filter = f }
                             .padding(horizontal = 14.dp, vertical = 7.dp),
                     )
@@ -504,7 +505,7 @@ private fun SprayListView(
             when {
                 state.isLoadingVineyardData && all.isEmpty() -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = VineColors.LeafGreen)
+                        CircularProgressIndicator(color = VineColors.Primary)
                     }
                 }
 
@@ -721,7 +722,7 @@ private fun SprayImportPreviewSheet(
                     onClick = onConfirm,
                     enabled = !importing && rows.isNotEmpty(),
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                 ) {
                     if (importing) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                     else Text("Import ${rows.size}")
@@ -748,7 +749,7 @@ private fun SprayRow(record: SprayRecord, machines: List<VineyardMachine>, trips
     val vine = LocalVineColors.current
     val status = if (record.isTemplate) null else sprayRecordStatus(record, trips)
     val (icon, iconTint) = when {
-        record.isTemplate -> Icons.Filled.ContentCopy to VineColors.Indigo
+        record.isTemplate -> Icons.Filled.ContentCopy to VineColors.Purple
         status == SprayStatus.IN_PROGRESS -> Icons.Filled.FiberManualRecord to VineColors.Destructive
         status == SprayStatus.NOT_STARTED -> Icons.Filled.Schedule to VineColors.Orange
         status == SprayStatus.COMPLETED -> Icons.Filled.CheckCircle to VineColors.LeafGreen
@@ -855,9 +856,9 @@ private fun SprayDetailView(
                 VineyardCard {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Box(
-                            modifier = Modifier.size(36.dp).clip(CircleShape).background(VineColors.Indigo.copy(alpha = 0.15f)),
+                            modifier = Modifier.size(36.dp).clip(CircleShape).background(VineColors.Purple.copy(alpha = 0.15f)),
                             contentAlignment = Alignment.Center,
-                        ) { Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = VineColors.Indigo, modifier = Modifier.size(20.dp)) }
+                        ) { Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = VineColors.Purple, modifier = Modifier.size(20.dp)) }
                         Column(Modifier.weight(1f)) {
                             Text("Reusable template", fontWeight = FontWeight.SemiBold, color = vine.textPrimary, fontSize = 15.sp)
                             Text("Start a new spray record from this template.", fontSize = 12.sp, color = vine.textSecondary)
@@ -867,7 +868,7 @@ private fun SprayDetailView(
                     Button(
                         onClick = { onUseTemplate(record) },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                     ) {
                         Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         Text("  Use template for new record")
@@ -1151,7 +1152,7 @@ private fun SprayDetailView(
                             },
                             enabled = !starting && !hasActiveTrip,
                             modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                            colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                         ) {
                             Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                             Text(if (starting) "  Starting…" else "  Start job now")
@@ -1589,7 +1590,7 @@ private fun SpraySheet(
                 onClick = { save() },
                 enabled = !saving,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text(if (isEdit) "Save changes" else if (isTemplate) "Save template" else "Save spray record")

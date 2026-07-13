@@ -775,7 +775,7 @@ fun SprayCalculatorScreen(
                 Button(
                     onClick = { runCalculation() },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                 ) {
                     Icon(Icons.Filled.Calculate, contentDescription = null, modifier = Modifier.size(18.dp))
                     Text("  Calculate mix")
@@ -793,7 +793,7 @@ fun SprayCalculatorScreen(
                         onClick = { startJobNow() },
                         enabled = !saving && !hasActiveTrip,
                         modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                     ) {
                         if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                         else {

@@ -265,7 +265,7 @@ private fun LoadingCard() {
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.padding(vertical = 24.dp),
     ) {
-        CircularProgressIndicator(color = VineColors.LeafGreen)
+        CircularProgressIndicator(color = VineColors.Primary)
         Text(
             "Loading subscription options…",
             fontSize = 14.sp,

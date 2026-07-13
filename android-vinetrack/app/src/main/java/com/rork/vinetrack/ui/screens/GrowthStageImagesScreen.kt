@@ -194,14 +194,14 @@ private fun StageRow(
             // Custom upload wins; otherwise fall back to the app-bundled photo.
             val model: Any? = url ?: bundledRes
             when {
-                busy -> CircularProgressIndicator(color = VineColors.LeafGreen, modifier = Modifier.size(18.dp))
+                busy -> CircularProgressIndicator(color = VineColors.Primary, modifier = Modifier.size(18.dp))
                 model != null -> AsyncImage(
                     model = model,
                     contentDescription = "${stage.code} reference image",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-                image != null -> CircularProgressIndicator(color = VineColors.LeafGreen, modifier = Modifier.size(18.dp))
+                image != null -> CircularProgressIndicator(color = VineColors.Primary, modifier = Modifier.size(18.dp))
                 else -> Icon(
                     Icons.Filled.AddPhotoAlternate,
                     contentDescription = null,
@@ -270,7 +270,7 @@ private fun StageImageDetailSheet(
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxSize(),
                     )
-                    image != null -> CircularProgressIndicator(color = VineColors.LeafGreen)
+                    image != null -> CircularProgressIndicator(color = VineColors.Primary)
                     else -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Filled.PhotoCamera, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(36.dp))
                         Text("No image available", color = vine.textSecondary, fontSize = 13.sp)

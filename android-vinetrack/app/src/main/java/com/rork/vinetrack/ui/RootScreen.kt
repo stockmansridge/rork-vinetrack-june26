@@ -136,7 +136,7 @@ private fun LoadingScreen(message: String) {
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            CircularProgressIndicator(color = VineColors.LeafGreen)
+            CircularProgressIndicator(color = VineColors.Primary)
             Text(message, color = VineColors.TextSecondaryLight)
         }
     }

@@ -217,7 +217,7 @@ private fun MaintenanceListView(
     ) { padding ->
         if (state.isLoadingVineyardData && state.maintenanceLogs.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = VineColors.LeafGreen)
+                CircularProgressIndicator(color = VineColors.Primary)
             }
             return@Scaffold
         }
@@ -278,6 +278,7 @@ private fun MaintenanceListView(
                     placeholder = { Text("Search logs…") },
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -828,7 +829,7 @@ private fun MaintenanceSheet(
                 onClick = { save() },
                 enabled = canSave,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text(if (existing == null) "Save log" else "Save changes")
@@ -928,7 +929,7 @@ private fun MaintenanceInvoiceCard(vm: AppViewModel, photoPath: String?) {
                 Icon(Icons.Filled.ReceiptLong, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(18.dp))
                 Text("Invoice unavailable offline", fontSize = 13.sp, color = vine.textSecondary)
             }
-            else -> CircularProgressIndicator(color = VineColors.PrimaryAccent)
+            else -> CircularProgressIndicator(color = VineColors.Primary)
         }
     }
 
@@ -1007,7 +1008,7 @@ private fun MaintenancePhotoSection(
                 } else if (photoUnavailable) {
                     Text("Photo unavailable offline", fontSize = 13.sp, color = vine.textSecondary)
                 } else {
-                    CircularProgressIndicator(color = VineColors.PrimaryAccent)
+                    CircularProgressIndicator(color = VineColors.Primary)
                 }
                 if (busy) {
                     Box(
@@ -1030,7 +1031,7 @@ private fun MaintenancePhotoSection(
         } else {
             OutlinedButton(onClick = onPick, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                 if (busy) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = VineColors.PrimaryAccent)
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = VineColors.Primary)
                 } else {
                     Icon(Icons.Filled.AddAPhoto, contentDescription = null, modifier = Modifier.size(18.dp))
                     Text("  Add invoice photo")

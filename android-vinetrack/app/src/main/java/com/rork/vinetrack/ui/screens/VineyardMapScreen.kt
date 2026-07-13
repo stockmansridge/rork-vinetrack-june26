@@ -179,9 +179,10 @@ fun VineyardMapContent(
     // Resolve each pin's configured colour (iOS nameColorMap parity).
     val colorMap = remember(state.repairButtons, state.growthButtons) { pinColorMap(state) }
 
-    // Block geometry frames the map first (iOS parity): boundary polygons,
-    // then mapped row lines when no boundaries exist. Pins and the vineyard's
-    // saved location are only fallbacks when no block geometry is available.
+    // Block geometry contributes boundary polygons, then mapped row lines when
+    // no boundaries exist. The initial camera fit combines this geometry with
+    // the pin locations so pins are always in view (iOS parity); the vineyard's
+    // saved location is only a fallback when neither exists.
     val blockFramePoints = remember(state.paddocks) {
         val boundaries = state.paddocks.flatMap { block ->
             (block.polygonPoints ?: emptyList())
@@ -198,9 +199,9 @@ fun VineyardMapContent(
         }
     }
     val framePoints = remember(blockFramePoints, locatedPins, state.selectedVineyard) {
-        if (blockFramePoints.isNotEmpty()) return@remember blockFramePoints
         val pinPoints = locatedPins.mapNotNull { it.latLng() }
-        if (pinPoints.isNotEmpty()) return@remember pinPoints
+        val combined = blockFramePoints + pinPoints
+        if (combined.isNotEmpty()) return@remember combined
         val v = state.selectedVineyard
         if (isValidMapCoordinate(v?.latitude, v?.longitude)) {
             listOf(LatLng(v?.latitude ?: 0.0, v?.longitude ?: 0.0))
@@ -215,8 +216,10 @@ fun VineyardMapContent(
     var hasFramed by remember { mutableStateOf(false) }
     // Block geometry that produced the last auto-fit. After the initial fit,
     // only a change in the block layout itself (vineyard switch, blocks
-    // loading after the map) re-frames — never pin refreshes or user pans.
+    // loading after the map) or pins first becoming available re-frames —
+    // never routine pin refreshes or user pans.
     var framedBlockGeometry by remember { mutableStateOf<List<LatLng>?>(null) }
+    var framedHadPins by remember { mutableStateOf(false) }
     // Measured map size, used to keep a tapped pin visible above the detail sheet.
     var mapSizePx by remember { mutableStateOf(IntSize.Zero) }
 
@@ -231,7 +234,10 @@ fun VineyardMapContent(
     // refreshes/filter changes and user pans never move it.
     LaunchedEffect(mapLoaded, framePoints) {
         if (!mapLoaded || framePoints.isEmpty()) return@LaunchedEffect
-        if (hasFramed && blockFramePoints == framedBlockGeometry) return@LaunchedEffect
+        val hasPins = locatedPins.any { it.latLng() != null }
+        if (hasFramed && blockFramePoints == framedBlockGeometry && (framedHadPins || !hasPins)) {
+            return@LaunchedEffect
+        }
         cameraPositionState.fitToContent(
             points = framePoints,
             paddingPx = 120,
@@ -240,6 +246,7 @@ fun VineyardMapContent(
         )
         hasFramed = true
         framedBlockGeometry = blockFramePoints
+        framedHadPins = hasPins
     }
 
     // Re-apply tilt whenever the mode changes, preserving centre and zoom.

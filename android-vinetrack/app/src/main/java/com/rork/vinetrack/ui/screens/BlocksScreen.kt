@@ -242,7 +242,7 @@ private fun VineyardSetupHub(
         when {
             state.isLoadingVineyardData && paddocks.isEmpty() -> {
                 Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = VineColors.LeafGreen)
+                    CircularProgressIndicator(color = VineColors.Primary)
                 }
             }
 

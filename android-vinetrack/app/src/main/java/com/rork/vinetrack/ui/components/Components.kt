@@ -184,7 +184,7 @@ fun EmptyState(
             Button(
                 onClick = onAction,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = com.rork.vinetrack.ui.theme.VineColors.PrimaryAccent,
+                    containerColor = com.rork.vinetrack.ui.theme.VineColors.Primary,
                 ),
             ) {
                 Icon(actionIcon, contentDescription = null, modifier = Modifier.size(18.dp))

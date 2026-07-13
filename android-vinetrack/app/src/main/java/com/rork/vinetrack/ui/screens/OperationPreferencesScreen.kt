@@ -268,7 +268,7 @@ private fun MonthRow(label: String, month: Int, enabled: Boolean = true, onSelec
             (1..12).forEach { m ->
                 DropdownMenuItem(
                     text = { Text(monthName(m)) },
-                    trailingIcon = { if (m == month) Icon(Icons.Filled.Check, contentDescription = null, tint = VineColors.Success) },
+                    trailingIcon = { if (m == month) Icon(Icons.Filled.Check, contentDescription = null, tint = VineColors.Primary) },
                     onClick = { onSelect(m); expanded = false },
                 )
             }

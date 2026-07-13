@@ -167,7 +167,7 @@ fun VineyardLocationScreen(
                         onClick = { saveLocation() },
                         enabled = !isSaving,
                         modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                     ) {
                         if (isSaving) {
                             CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = androidx.compose.ui.graphics.Color.White)

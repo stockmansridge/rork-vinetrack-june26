@@ -339,7 +339,7 @@ private fun TripFunctionFormSheet(
                 onClick = { save() },
                 enabled = canSave,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text(if (isEdit) "Save changes" else "Add Function")

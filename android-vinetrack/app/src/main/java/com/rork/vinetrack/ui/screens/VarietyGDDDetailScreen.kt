@@ -193,7 +193,7 @@ fun VarietyGDDDetailScreen(
                 result == null -> {
                     Box(modifier = Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            CircularProgressIndicator(color = VineColors.LeafGreen)
+                            CircularProgressIndicator(color = VineColors.Primary)
                             Text("Fetching season weather…", color = vine.textSecondary, fontSize = 13.sp)
                         }
                     }

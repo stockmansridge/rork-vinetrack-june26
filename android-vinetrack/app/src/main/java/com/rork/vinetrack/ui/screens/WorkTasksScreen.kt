@@ -309,7 +309,7 @@ private fun WorkTasksHub(
                 SectionHeader("Recent Tasks", onLight = true)
                 if (state.isLoadingVineyardData && tasks.isEmpty()) {
                     Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = VineColors.LeafGreen)
+                        CircularProgressIndicator(color = VineColors.Primary)
                     }
                 } else if (recent.isEmpty()) {
                     VineyardCard {
@@ -485,6 +485,7 @@ private fun WorkTaskLogView(
                     placeholder = { Text("Search tasks…") },
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -1207,7 +1208,7 @@ private fun WorkTaskSheet(
                 onClick = { save() },
                 enabled = !saving && taskType.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
             ) {
                 if (saving) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
@@ -1478,7 +1479,7 @@ private fun LabourLineSheet(
                 onClick = { save() },
                 enabled = !saving,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text(if (existing == null) "Add labour" else "Save changes")
@@ -1648,7 +1649,7 @@ private fun MachineLineSheet(
                 onClick = { save() },
                 enabled = !saving && canSave,
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text(if (existing == null) "Add machinery" else "Save changes")

@@ -463,13 +463,13 @@ private fun PinsFilterBar(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PinModeFilterChip("All", modeFilter == null, vine.textSecondary) { onModeFilter(null) }
-        PinModeFilterChip("Repairs", modeFilter == "Repairs", RepairColor) { onModeFilter("Repairs") }
-        PinModeFilterChip("Growth", modeFilter == "Growth", GrowthColor) { onModeFilter("Growth") }
+        PinModeFilterChip("All", modeFilter == null) { onModeFilter(null) }
+        PinModeFilterChip("Repairs", modeFilter == "Repairs") { onModeFilter("Repairs") }
+        PinModeFilterChip("Growth", modeFilter == "Growth") { onModeFilter("Growth") }
         Box(Modifier.size(width = 1.dp, height = 22.dp).background(vine.textSecondary.copy(alpha = 0.3f)))
-        PinModeFilterChip("Both", statusFilter == null, vine.textSecondary) { onStatusFilter(null) }
-        PinModeFilterChip("Not Done", statusFilter == false, VineColors.Warning) { onStatusFilter(false) }
-        PinModeFilterChip("Done", statusFilter == true, VineColors.Success) { onStatusFilter(true) }
+        PinModeFilterChip("Both", statusFilter == null) { onStatusFilter(null) }
+        PinModeFilterChip("Not Done", statusFilter == false) { onStatusFilter(false) }
+        PinModeFilterChip("Done", statusFilter == true) { onStatusFilter(true) }
     }
 }
 
@@ -2197,14 +2197,16 @@ private fun PinModeEntryCard(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PinModeFilterChip(label: String, selected: Boolean, accent: Color, onClick: () -> Unit) {
+private fun PinModeFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    // Selected chips use the shared blue action colour (iOS chip parity);
+    // category dots and status colours inside rows keep their own accents.
     FilterChip(
         selected = selected,
         onClick = onClick,
         label = { Text(label) },
         colors = FilterChipDefaults.filterChipColors(
-            selectedContainerColor = accent.copy(alpha = 0.18f),
-            selectedLabelColor = accent,
+            selectedContainerColor = VineColors.Primary.copy(alpha = 0.18f),
+            selectedLabelColor = VineColors.Primary,
         ),
     )
 }
@@ -2499,7 +2501,7 @@ private fun PinEditSheet(
                 },
                 enabled = !saving && title.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
             ) {
                 Text(if (existing == null) "Add pin" else "Save changes")
             }
@@ -2600,7 +2602,7 @@ private fun PinPhotoSection(
                         color = vine.textSecondary,
                     )
                 } else {
-                    CircularProgressIndicator(color = VineColors.PrimaryAccent)
+                    CircularProgressIndicator(color = VineColors.Primary)
                 }
                 if (busy) {
                     Box(
@@ -2629,7 +2631,7 @@ private fun PinPhotoSection(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 if (busy) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = VineColors.PrimaryAccent)
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = VineColors.Primary)
                 } else {
                     Icon(Icons.Outlined.AddAPhoto, contentDescription = null)
                     Text("  Add photo")

@@ -255,7 +255,7 @@ private fun GrowthListView(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = onCreate,
-                containerColor = VineColors.PrimaryAccent,
+                containerColor = VineColors.Primary,
                 contentColor = Color.White,
             ) {
                 Icon(Icons.Filled.Add, contentDescription = "Add observation")
@@ -561,7 +561,7 @@ private fun EditGrapeVarietySheet(
                     }
                 },
                 enabled = name.trim().isNotEmpty() && !saving,
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.PrimaryAccent),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 if (saving) {
@@ -1208,7 +1208,7 @@ private fun GrowthPhotoSection(
                             modifier = Modifier.fillMaxWidth().height(220.dp),
                         )
                     } else {
-                        CircularProgressIndicator(color = VineColors.LeafGreen)
+                        CircularProgressIndicator(color = VineColors.Primary)
                     }
                     if (busy) {
                         Box(
@@ -1755,7 +1755,7 @@ private fun GrowthStageConfirm(
                     modifier = Modifier.fillMaxSize(),
                 )
                 // A custom image is expected but its signed URL is still loading.
-                image != null -> CircularProgressIndicator(color = VineColors.LeafGreen, modifier = Modifier.size(28.dp))
+                image != null -> CircularProgressIndicator(color = VineColors.Primary, modifier = Modifier.size(28.dp))
                 else -> Icon(Icons.Filled.PhotoCamera, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(36.dp))
             }
         }
