@@ -54,8 +54,12 @@ android {
         applicationId = "com.rork.vinetrack"
         minSdk = 24
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.0.6"
+        // Play Console already has a bundle with versionCode 1783302184 (an
+        // earlier timestamp-based export). Google Play refuses any bundle with
+        // a lower code, so the code must stay above that value forever.
+        // Increment by 1 for each new release.
+        versionCode = 1783302185
+        versionName = "0.0.7"
 
         val supabaseUrl = resolveBuildConfigValue(
             "SUPABASE_URL",
