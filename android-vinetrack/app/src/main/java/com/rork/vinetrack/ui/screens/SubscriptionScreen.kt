@@ -3,6 +3,7 @@ package com.rork.vinetrack.ui.screens
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -36,12 +37,17 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.R
 import com.rork.vinetrack.data.subscription.SubscriptionUiState
 import com.rork.vinetrack.ui.theme.VineColors
 
@@ -126,12 +132,15 @@ private fun Header() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Box(
+        Image(
+            painter = painterResource(R.drawable.vinetrack_logo),
+            contentDescription = "VineTrack",
+            contentScale = ContentScale.Fit,
             modifier = Modifier
+                .shadow(10.dp, RoundedCornerShape(20.dp), clip = false)
                 .size(86.dp)
-                .background(VineColors.DarkGreen, RoundedCornerShape(20.dp)),
-            contentAlignment = Alignment.Center,
-        ) { Text("\uD83C\uDF47", fontSize = 44.sp) }
+                .clip(RoundedCornerShape(20.dp)),
+        )
 
         Text(
             "Start with 3 months free",

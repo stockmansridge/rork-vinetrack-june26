@@ -1,6 +1,8 @@
 package com.rork.vinetrack.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,8 +23,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -32,6 +37,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.rork.vinetrack.R
 import com.rork.vinetrack.ui.auth.BiometricLockScreen
 import com.rork.vinetrack.ui.auth.LoginScreen
 import com.rork.vinetrack.ui.auth.OnboardingScreen
@@ -107,10 +113,16 @@ private fun SplashScreen() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         LoginVineyardBackground()
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            Box(
-                modifier = Modifier.size(96.dp).background(Color.White.copy(alpha = 0.14f), RoundedCornerShape(24.dp)),
-                contentAlignment = Alignment.Center,
-            ) { Text("\uD83C\uDF47", fontSize = 48.sp) }
+            Image(
+                painter = painterResource(R.drawable.vinetrack_logo),
+                contentDescription = "VineTrack",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .shadow(14.dp, RoundedCornerShape(24.dp), clip = false)
+                    .size(96.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .border(1.2.dp, Color.White.copy(alpha = 0.24f), RoundedCornerShape(24.dp)),
+            )
             Text("VineTrack", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold)
             CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp)
         }

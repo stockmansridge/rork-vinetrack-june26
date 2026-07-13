@@ -77,6 +77,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -87,6 +88,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
+import com.rork.vinetrack.R
 import com.rork.vinetrack.data.AlertsRepository
 import com.rork.vinetrack.data.HomePrefsStore
 import com.rork.vinetrack.data.MapPrefsStore
@@ -271,15 +273,12 @@ private fun HeaderRow(
                 modifier = Modifier.size(40.dp).clip(CircleShape),
             )
         } else {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(Brush.linearGradient(listOf(VineColors.LeafGreen, VineColors.DarkGreen))),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("\uD83C\uDF47", fontSize = 20.sp)
-            }
+            Image(
+                painter = painterResource(R.drawable.vinetrack_logo),
+                contentDescription = "VineTrack logo",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(40.dp).clip(CircleShape),
+            )
         }
         if (canSwitch) {
             Box(modifier = Modifier.weight(1f)) {
