@@ -1,35 +1,54 @@
 import Foundation
 import Observation
 
-/// Local-first store for the Pruning Tracker (in development — System Admin only).
-/// Persists to UserDefaults as JSON; the model shapes mirror the planned
-/// `pruning_block_setups` / `pruning_entries` sync tables so cloud sync can be
-/// added later without a data migration.
+/// Offline-first store for the Pruning Tracker (System Admin only while in
+/// development). Acts as the local cache for the shared `pruning_seasons` /
+/// `pruning_entries` / `pruning_row_segments` Supabase tables:
+///
+/// * every write lands here first (instant UI, works offline) and fires a
+///   change hook that `PruningSyncService` uses to queue the push,
+/// * remote state is applied through the `applyRemote*` methods, which never
+///   re-fire the hooks.
+///
+/// Storage note: v1 development data lived in UserDefaults and was device-only
+/// test data — it is intentionally discarded by the move to the shared
+/// `PersistenceStore` under new v2 keys.
 @Observable
 final class PruningStore {
+    static let shared = PruningStore()
+
     private(set) var setups: [PruningBlockSetup] = []
     private(set) var entries: [PruningEntry] = []
 
-    private static let setupsKey = "vinetrack_pruning_setups"
-    private static let entriesKey = "vinetrack_pruning_entries"
+    /// Sync hooks — fired for local user edits only, never for remote applies.
+    var onSeasonChanged: ((UUID) -> Void)?
+    var onSeasonDeleted: ((UUID) -> Void)?
+    var onEntryRecorded: ((UUID) -> Void)?
+    var onEntryDeleted: ((UUID) -> Void)?
 
-    init() {
-        load()
+    private static let setupsKey = "vinetrack_pruning_seasons_v2"
+    private static let entriesKey = "vinetrack_pruning_entries_v2"
+
+    private let persistence: PersistenceStore
+
+    init(persistence: PersistenceStore = .shared) {
+        self.persistence = persistence
+        setups = persistence.load(key: Self.setupsKey) ?? []
+        entries = persistence.load(key: Self.entriesKey) ?? []
     }
 
-    // MARK: Setups
+    // MARK: Seasons (block setups)
 
     func setup(for paddockId: UUID) -> PruningBlockSetup? {
-        setups.first { $0.paddockId == paddockId }
+        setups
+            .filter { $0.paddockId == paddockId }
+            .max { $0.seasonYear < $1.seasonYear }
     }
 
     func upsertSetup(_ setup: PruningBlockSetup) {
-        if let index = setups.firstIndex(where: { $0.paddockId == setup.paddockId }) {
-            setups[index] = setup
-        } else {
-            setups.append(setup)
-        }
+        applySeasonUpsert(setup)
         persistSetups()
+        onSeasonChanged?(setup.id)
     }
 
     // MARK: Entries
@@ -47,36 +66,92 @@ final class PruningStore {
     func addEntry(_ entry: PruningEntry) {
         entries.append(entry)
         persistEntries()
+        onEntryRecorded?(entry.id)
     }
 
     func deleteEntry(id: UUID) {
         entries.removeAll { $0.id == id }
         persistEntries()
+        onEntryDeleted?(id)
+    }
+
+    // MARK: Remote applies (no hooks)
+
+    func applyRemoteSeasonUpsert(_ setup: PruningBlockSetup) {
+        applySeasonUpsert(setup)
+        persistSetups()
+    }
+
+    func applyRemoteSeasonDelete(_ id: UUID) {
+        let before = setups.count
+        setups.removeAll { $0.id == id }
+        if setups.count != before { persistSetups() }
+    }
+
+    func applyRemoteEntryUpsert(_ entry: PruningEntry) {
+        if let index = entries.firstIndex(where: { $0.id == entry.id }) {
+            // Preserve the local segment list until the attribution pass runs.
+            var merged = entry
+            merged.segments = entries[index].segments
+            entries[index] = merged
+        } else {
+            entries.append(entry)
+        }
+        persistEntries()
+    }
+
+    func applyRemoteEntryDelete(_ id: UUID) {
+        let before = entries.count
+        entries.removeAll { $0.id == id }
+        if entries.count != before { persistEntries() }
+    }
+
+    /// Applies the server's segment attribution (the `pruning_row_segments`
+    /// table is the single source of truth for completed quarters). Entries in
+    /// `protectedIds` are still queued locally and keep their optimistic
+    /// segment list until their push lands.
+    func applyRemoteSegmentAttribution(
+        vineyardId: UUID,
+        segmentsByEntry: [UUID: [PruningSegment]],
+        protectedIds: Set<UUID>
+    ) {
+        var changed = false
+        for index in entries.indices where entries[index].vineyardId == vineyardId {
+            let id = entries[index].id
+            guard !protectedIds.contains(id) else { continue }
+            let remote = (segmentsByEntry[id] ?? []).sorted {
+                ($0.row, $0.quarter) < ($1.row, $1.quarter)
+            }
+            let local = entries[index].segments.sorted {
+                ($0.row, $0.quarter) < ($1.row, $1.quarter)
+            }
+            if local != remote {
+                entries[index].segments = remote
+                changed = true
+            }
+        }
+        if changed { persistEntries() }
     }
 
     // MARK: Persistence
 
-    private func load() {
-        let defaults = UserDefaults.standard
-        if let data = defaults.data(forKey: Self.setupsKey),
-           let decoded = try? JSONDecoder().decode([PruningBlockSetup].self, from: data) {
-            setups = decoded
-        }
-        if let data = defaults.data(forKey: Self.entriesKey),
-           let decoded = try? JSONDecoder().decode([PruningEntry].self, from: data) {
-            entries = decoded
+    private func applySeasonUpsert(_ setup: PruningBlockSetup) {
+        if let index = setups.firstIndex(where: { $0.id == setup.id }) {
+            setups[index] = setup
+        } else if let index = setups.firstIndex(where: {
+            $0.vineyardId == setup.vineyardId && $0.paddockId == setup.paddockId && $0.seasonYear == setup.seasonYear
+        }) {
+            setups[index] = setup
+        } else {
+            setups.append(setup)
         }
     }
 
     private func persistSetups() {
-        if let data = try? JSONEncoder().encode(setups) {
-            UserDefaults.standard.set(data, forKey: Self.setupsKey)
-        }
+        persistence.save(setups, key: Self.setupsKey)
     }
 
     private func persistEntries() {
-        if let data = try? JSONEncoder().encode(entries) {
-            UserDefaults.standard.set(data, forKey: Self.entriesKey)
-        }
+        persistence.save(entries, key: Self.entriesKey)
     }
 }

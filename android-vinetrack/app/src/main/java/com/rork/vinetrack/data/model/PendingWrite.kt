@@ -259,6 +259,35 @@ object PendingEntityType {
      * session write and a session replay never touches another entity.
      */
     const val YIELD_SESSION = "yield_session"
+    /**
+     * A pruning-season (block setup) upsert queued offline. Backs
+     * `pruning_seasons` — UPDATE (merge-duplicates upsert keyed by the
+     * deterministic season id) and DELETE (soft-delete RPC). Coalesced
+     * one-per season ([PendingWrite.clientId] = seasonId) so the latest
+     * setup wins.
+     */
+    const val PRUNING_SEASON = "pruning_season"
+    /**
+     * A pruning "Complete Today" entry queued offline. Backs the idempotent
+     * `record_pruning_entry` RPC (CREATE, keyed by the client entry id) and
+     * the `delete_pruning_entry` RPC (DELETE). Replaying a CREATE can never
+     * double-count a quarter — the server attributes each quarter to the
+     * first entry that completed it.
+     */
+    const val PRUNING_ENTRY = "pruning_entry"
+    /**
+     * A fertiliser product-library upsert queued offline. Backs
+     * `fertiliser_products` — UPDATE (merge-duplicates upsert keyed by the
+     * product id, coalesced one-per product) and DELETE (soft-delete RPC).
+     */
+    const val FERTILISER_PRODUCT = "fertiliser_product"
+    /**
+     * A fertiliser calculation/application record upsert queued offline.
+     * Backs `fertiliser_records` + `fertiliser_record_allocations` — UPDATE
+     * (record upsert followed by its per-block allocation upserts, coalesced
+     * one-per record) and DELETE (soft-delete RPC).
+     */
+    const val FERTILISER_RECORD = "fertiliser_record"
 }
 
 /** The kind of write a pending row represents. */

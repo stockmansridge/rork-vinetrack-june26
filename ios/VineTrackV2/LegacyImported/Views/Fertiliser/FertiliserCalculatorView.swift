@@ -5,7 +5,8 @@ import SwiftUI
 /// application records. In development: System Admin only.
 struct FertiliserCalculatorView: View {
     @Environment(MigratedDataStore.self) private var store
-    @State private var fertStore = FertiliserStore()
+    @Environment(FertiliserSyncService.self) private var fertiliserSync
+    private var fertStore: FertiliserStore { .shared }
 
     @State private var mode: FertiliserCalcMode = .perHectare
     @State private var selectedPaddockIds: Set<UUID> = []
@@ -75,6 +76,12 @@ struct FertiliserCalculatorView: View {
         }
         .onChange(of: selectedPaddockIds) { _, _ in
             syncAreaAndVines()
+        }
+        .refreshable {
+            await fertiliserSync.syncForSelectedVineyard()
+        }
+        .task {
+            await fertiliserSync.syncForSelectedVineyard()
         }
     }
 
@@ -508,7 +515,8 @@ struct FertiliserCalculatorView: View {
             packSize: result.packSize,
             productCost: result.productCost,
             labourMachineryCost: result.labourCost,
-            notes: notes
+            notes: notes,
+            allocations: blockAllocations(for: selected, result: result)
         )
         fertStore.addRecord(record)
         savedBanner = status == .planned ? "Saved as planned task" : "Recorded"
@@ -519,6 +527,28 @@ struct FertiliserCalculatorView: View {
     }
 
     // MARK: Helpers
+
+    /// Per-block share of a multi-block calculation, weighted by area
+    /// (per-hectare mode) or vine count (per-vine mode) so block-level
+    /// costing stays accurate.
+    private func blockAllocations(for selected: [Paddock], result: CalcResult) -> [FertiliserAllocation] {
+        guard !selected.isEmpty else { return [] }
+        let weights: [Double] = selected.map { paddock in
+            mode == .perVine ? Double(paddock.effectiveVineCount) : paddock.areaHectares
+        }
+        let totalWeight = weights.reduce(0, +)
+        return selected.enumerated().map { index, paddock in
+            let share = totalWeight > 0 ? weights[index] / totalWeight : 1.0 / Double(selected.count)
+            return FertiliserAllocation(
+                paddockId: paddock.id,
+                areaHectares: paddock.areaHectares,
+                vineCount: paddock.effectiveVineCount,
+                rate: result.rate,
+                productRequired: result.total * share,
+                allocatedCost: result.productCost.map { $0 * share }
+            )
+        }
+    }
 
     private func currency(_ value: Double) -> String {
         "$\(value.formatted(.number.precision(.fractionLength(2))))"

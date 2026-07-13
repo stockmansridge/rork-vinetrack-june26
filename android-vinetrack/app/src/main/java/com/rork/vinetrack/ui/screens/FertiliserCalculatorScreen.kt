@@ -43,6 +43,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +60,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.FertiliserStore
+import com.rork.vinetrack.data.model.FertiliserAllocation
 import com.rork.vinetrack.data.model.FertiliserCalc
 import com.rork.vinetrack.data.model.FertiliserCategories
 import com.rork.vinetrack.data.model.FertiliserProduct
@@ -90,15 +92,22 @@ fun FertiliserCalculatorScreen(
     onBack: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val context = LocalContext.current
-    val store = remember { FertiliserStore(context) }
     val vineyardId = state.selectedVineyardId
 
     var products by remember(vineyardId) {
-        mutableStateOf(vineyardId?.let { store.loadProducts(it) } ?: emptyList())
+        mutableStateOf(vineyardId?.let { vm.fertiliserProducts(it) } ?: emptyList())
     }
     var records by remember(vineyardId) {
-        mutableStateOf(vineyardId?.let { store.loadRecords(it) } ?: emptyList())
+        mutableStateOf(vineyardId?.let { vm.fertiliserRecords(it) } ?: emptyList())
+    }
+
+    // Initial fetch + reconcile when the screen opens or the vineyard changes;
+    // shows the local cache instantly and merges the server state on top.
+    LaunchedEffect(vineyardId, state.isOnline) {
+        val id = vineyardId ?: return@LaunchedEffect
+        val (mergedProducts, mergedRecords) = vm.refreshFertiliser(id)
+        products = mergedProducts
+        records = mergedRecords
     }
     var tab by rememberSaveable { mutableStateOf(0) }
     var editingProduct by remember { mutableStateOf<FertiliserProduct?>(null) }
@@ -132,7 +141,7 @@ fun FertiliserCalculatorScreen(
                     products = products,
                     vineyardId = vineyardId,
                     onSaveRecord = { record ->
-                        vineyardId?.let { records = store.addRecord(it, record) }
+                        vineyardId?.let { records = vm.addFertiliserRecord(it, record) }
                     },
                 )
                 1 -> FertProductsTab(
@@ -143,10 +152,10 @@ fun FertiliserCalculatorScreen(
                 else -> FertRecordsTab(
                     records = records,
                     onMarkCompleted = { id ->
-                        vineyardId?.let { records = store.markCompleted(it, id, LocalDate.now().toString()) }
+                        vineyardId?.let { records = vm.completeFertiliserRecord(it, id, LocalDate.now().toString()) }
                     },
                     onDelete = { id ->
-                        vineyardId?.let { records = store.deleteRecord(it, id) }
+                        vineyardId?.let { records = vm.deleteFertiliserRecord(it, id) }
                     },
                 )
             }
@@ -162,12 +171,12 @@ fun FertiliserCalculatorScreen(
                 editingProduct = null
             },
             onSave = { product ->
-                vineyardId?.let { products = store.upsertProduct(it, product) }
+                vineyardId?.let { products = vm.upsertFertiliserProduct(it, product) }
                 showAddProduct = false
                 editingProduct = null
             },
             onDelete = { productId ->
-                vineyardId?.let { products = store.deleteProduct(it, productId) }
+                vineyardId?.let { products = vm.deleteFertiliserProduct(it, productId) }
                 showAddProduct = false
                 editingProduct = null
             },
@@ -513,6 +522,22 @@ private fun FertCalculatorTab(
                 fun buildRecord(status: String): FertiliserRecord? {
                     val vid = vineyardId ?: return null
                     val selected = paddocks.filter { selectedPaddockIds.contains(it.id) }
+                    // Per-block allocations: weighted by vine count (per-vine
+                    // mode) or area so block-level costing stays accurate.
+                    val weights = selected.map { if (mode == "perVine") it.effectiveVineCount.toDouble() else it.areaHectares }
+                    val totalWeight = weights.sum()
+                    val allocations = selected.mapIndexed { index, paddock ->
+                        val share = if (totalWeight > 0) weights[index] / totalWeight else 1.0 / selected.size
+                        FertiliserAllocation(
+                            id = UUID.randomUUID().toString(),
+                            paddockId = paddock.id,
+                            areaHectares = paddock.areaHectares,
+                            vineCount = paddock.effectiveVineCount,
+                            rate = rate,
+                            productRequired = total * share,
+                            allocatedCost = cost?.let { it * share },
+                        )
+                    }
                     return FertiliserRecord(
                         id = UUID.randomUUID().toString(),
                         vineyardId = vid,
@@ -531,6 +556,7 @@ private fun FertCalculatorTab(
                         packSize = packSize,
                         productCost = cost,
                         labourMachineryCost = labour,
+                        allocations = allocations,
                         createdAtMs = System.currentTimeMillis(),
                     )
                 }

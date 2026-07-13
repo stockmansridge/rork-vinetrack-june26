@@ -3,10 +3,27 @@ package com.rork.vinetrack.data.model
 import kotlinx.serialization.Serializable
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
+import java.util.UUID
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+
+/**
+ * Deterministic pruning-season ids shared with iOS: both platforms derive the
+ * SAME `pruning_seasons` row id from (vineyard, paddock, season year), so two
+ * devices that configure a block independently converge instead of colliding
+ * on the unique season index. Uses `UUID.nameUUIDFromBytes` (MD5 v3), which
+ * the iOS `PruningSeasonId.make` replicates byte-for-byte.
+ */
+object PruningSeasonIds {
+    fun make(vineyardId: String, paddockId: String, seasonYear: Int): String {
+        val name = "vinetrack-pruning-season|${vineyardId.lowercase()}|${paddockId.lowercase()}|$seasonYear"
+        return UUID.nameUUIDFromBytes(name.toByteArray(Charsets.UTF_8)).toString()
+    }
+
+    fun currentSeasonYear(): Int = LocalDate.now().year
+}
 
 /**
  * A fixed quarter of a vineyard row (quarter 1 = 0–25% … 4 = 75–100%).
@@ -16,12 +33,14 @@ import kotlin.math.roundToInt
 @Serializable
 data class PruningSegment(val row: Int, val quarter: Int)
 
-/** Per-block pruning configuration. Local-only for now; shaped for future sync. */
+/** Per-block pruning configuration — one row per block + season year (`pruning_seasons`). */
 @Serializable
 data class PruningBlockSetup(
     val id: String,
     val vineyardId: String,
     val paddockId: String,
+    /** Pruning season (calendar year); part of the deterministic season id. */
+    val seasonYear: Int = PruningSeasonIds.currentSeasonYear(),
     /** ISO dates, yyyy-MM-dd. */
     val startDate: String? = null,
     val dueDate: String? = null,
@@ -35,12 +54,14 @@ data class PruningBlockSetup(
     val notes: String = "",
 )
 
-/** One day's recorded pruning work on a block. */
+/** One day's recorded pruning work on a block (one press of Complete Today). */
 @Serializable
 data class PruningEntry(
     val id: String,
     val vineyardId: String,
     val paddockId: String,
+    /** The `pruning_seasons` row this entry belongs to. */
+    val seasonId: String = "",
     /** ISO date, yyyy-MM-dd. */
     val date: String,
     val segments: List<PruningSegment> = emptyList(),
@@ -51,6 +72,8 @@ data class PruningEntry(
     val finishTime: String? = null,
     val method: String = "spur",
     val notes: String = "",
+    /** Client estimate at save time; the server re-attributes on sync. */
+    val estimatedVines: Int = 0,
     val createdAtMs: Long = 0L,
 ) {
     /** A full row = 1.0; each quarter = 0.25. */

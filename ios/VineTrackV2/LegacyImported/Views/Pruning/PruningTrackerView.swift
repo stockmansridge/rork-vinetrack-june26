@@ -4,7 +4,8 @@ import SwiftUI
 /// In development: reachable only by System Admins from Operational Tools.
 struct PruningTrackerView: View {
     @Environment(MigratedDataStore.self) private var store
-    @State private var pruningStore = PruningStore()
+    @Environment(PruningSyncService.self) private var pruningSync
+    private var pruningStore: PruningStore { .shared }
 
     private var paddocks: [Paddock] {
         let all = store.paddocks
@@ -35,6 +36,12 @@ struct PruningTrackerView: View {
         .background(VineyardTheme.appBackground)
         .navigationTitle("Pruning Tracker")
         .navigationBarTitleDisplayMode(.inline)
+        .refreshable {
+            await pruningSync.syncForSelectedVineyard()
+        }
+        .task {
+            await pruningSync.syncForSelectedVineyard()
+        }
     }
 
     private var devBadge: some View {

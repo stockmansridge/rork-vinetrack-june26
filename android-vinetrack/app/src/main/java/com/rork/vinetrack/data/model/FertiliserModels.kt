@@ -73,6 +73,21 @@ data class FertiliserProduct(
  * fertiliser application record ("completed"). Mode is "perHectare" or
  * "perVine". Mirrors the iOS `FertiliserRecord`.
  */
+/**
+ * Per-block share of a multi-block calculation (`fertiliser_record_allocations`),
+ * so block-level costing and reporting stay accurate.
+ */
+@Serializable
+data class FertiliserAllocation(
+    val id: String,
+    val paddockId: String,
+    val areaHectares: Double = 0.0,
+    val vineCount: Int = 0,
+    val rate: Double = 0.0,
+    val productRequired: Double = 0.0,
+    val allocatedCost: Double? = null,
+)
+
 @Serializable
 data class FertiliserRecord(
     val id: String,
@@ -96,6 +111,8 @@ data class FertiliserRecord(
     val productCost: Double? = null,
     val labourMachineryCost: Double? = null,
     val notes: String = "",
+    /** Per-block breakdown for multi-block calculations. */
+    val allocations: List<FertiliserAllocation> = emptyList(),
     val createdAtMs: Long = 0L,
 ) {
     val isLiquid: Boolean get() = form == "liquid"

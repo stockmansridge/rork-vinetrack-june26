@@ -7,12 +7,15 @@ import com.rork.vinetrack.data.model.PruningEntry
 import kotlinx.serialization.json.Json
 
 /**
- * Local-first store for the Pruning Tracker (in development — System Admin
- * only). Backs setups and entries with per-vineyard JSON blobs in
- * SharedPreferences, following the same lightweight pattern as
- * [YieldDeterminationPrefsStore]. Model shapes mirror the planned
- * `pruning_block_setups` / `pruning_entries` sync tables so cloud sync can be
- * added later without a data migration.
+ * Offline-first local cache for the Pruning Tracker (in development — System
+ * Admin only). Backs seasons (block setups) and entries with per-vineyard
+ * JSON blobs in SharedPreferences. This is the CACHE layer for the shared
+ * `pruning_seasons` / `pruning_entries` / `pruning_row_segments` Supabase
+ * tables — [PruningSyncCoordinator] writes through it and reconciles it with
+ * the server.
+ *
+ * Key note: the v1 keys held device-only development test data and are
+ * intentionally abandoned by the move to synced v2 keys.
  */
 class PruningStore(context: Context) {
 
@@ -22,12 +25,12 @@ class PruningStore(context: Context) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     fun loadSetups(vineyardId: String): List<PruningBlockSetup> {
-        val raw = prefs.getString("setups_$vineyardId", null) ?: return emptyList()
+        val raw = prefs.getString("setups_v2_$vineyardId", null) ?: return emptyList()
         return runCatching { json.decodeFromString<List<PruningBlockSetup>>(raw) }.getOrDefault(emptyList())
     }
 
     fun saveSetups(vineyardId: String, setups: List<PruningBlockSetup>) {
-        prefs.edit { putString("setups_$vineyardId", json.encodeToString(setups)) }
+        prefs.edit { putString("setups_v2_$vineyardId", json.encodeToString(setups)) }
     }
 
     fun upsertSetup(vineyardId: String, setup: PruningBlockSetup): List<PruningBlockSetup> {
@@ -42,12 +45,12 @@ class PruningStore(context: Context) {
     }
 
     fun loadEntries(vineyardId: String): List<PruningEntry> {
-        val raw = prefs.getString("entries_$vineyardId", null) ?: return emptyList()
+        val raw = prefs.getString("entries_v2_$vineyardId", null) ?: return emptyList()
         return runCatching { json.decodeFromString<List<PruningEntry>>(raw) }.getOrDefault(emptyList())
     }
 
     fun saveEntries(vineyardId: String, entries: List<PruningEntry>) {
-        prefs.edit { putString("entries_$vineyardId", json.encodeToString(entries)) }
+        prefs.edit { putString("entries_v2_$vineyardId", json.encodeToString(entries)) }
     }
 
     fun addEntry(vineyardId: String, entry: PruningEntry): List<PruningEntry> {

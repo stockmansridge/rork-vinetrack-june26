@@ -601,9 +601,19 @@ private struct PruningEntrySheet: View {
     }
 
     private func save() {
+        // Make sure the season row exists before the entry references it —
+        // recording work on an unconfigured block auto-creates the season.
+        let season: PruningBlockSetup
+        if let existing = pruningStore.setup(for: paddock.id) {
+            season = existing
+        } else {
+            season = PruningBlockSetup(vineyardId: vineyardId, paddockId: paddock.id)
+            pruningStore.upsertSetup(season)
+        }
         let entry = PruningEntry(
             vineyardId: vineyardId,
             paddockId: paddock.id,
+            seasonId: season.id,
             date: date,
             segments: segments,
             worker: worker.trimmingCharacters(in: .whitespaces),
@@ -611,7 +621,8 @@ private struct PruningEntrySheet: View {
             startTime: includeTimes ? startTime : nil,
             finishTime: includeTimes ? finishTime : nil,
             method: method,
-            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines)
+            notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
+            estimatedVines: PruningCalculator.vines(forSegmentCount: segments.count, vinesPerRow: vinesPerRow)
         )
         pruningStore.addEntry(entry)
         onSaved()
@@ -747,9 +758,10 @@ private struct PruningBlockSetupSheet: View {
     private func save() {
         let existing = pruningStore.setup(for: paddock.id)
         let setup = PruningBlockSetup(
-            id: existing?.id ?? UUID(),
+            id: existing?.id,
             vineyardId: vineyardId,
             paddockId: paddock.id,
+            seasonYear: existing?.seasonYear ?? PruningSeasonId.currentSeasonYear,
             startDate: hasStartDate ? startDate : nil,
             dueDate: hasDueDate ? dueDate : nil,
             method: method,

@@ -141,10 +141,49 @@ nonisolated enum FertiliserCalcMode: String, Codable, CaseIterable, Identifiable
 }
 
 nonisolated enum FertiliserRecordStatus: String, Codable, Sendable {
+    case draft
     case planned
     case completed
+    case cancelled
 
-    var label: String { self == .planned ? "Planned" : "Completed" }
+    var label: String {
+        switch self {
+        case .draft: return "Draft"
+        case .planned: return "Planned"
+        case .completed: return "Completed"
+        case .cancelled: return "Cancelled"
+        }
+    }
+}
+
+/// Per-block share of a multi-block calculation, so block-level costing and
+/// reporting stay accurate (mirrors `fertiliser_record_allocations`).
+nonisolated struct FertiliserAllocation: Codable, Identifiable, Sendable, Hashable {
+    let id: UUID
+    var paddockId: UUID
+    var areaHectares: Double
+    var vineCount: Int
+    var rate: Double
+    var productRequired: Double
+    var allocatedCost: Double?
+
+    init(
+        id: UUID = UUID(),
+        paddockId: UUID,
+        areaHectares: Double,
+        vineCount: Int,
+        rate: Double,
+        productRequired: Double,
+        allocatedCost: Double? = nil
+    ) {
+        self.id = id
+        self.paddockId = paddockId
+        self.areaHectares = areaHectares
+        self.vineCount = vineCount
+        self.rate = rate
+        self.productRequired = productRequired
+        self.allocatedCost = allocatedCost
+    }
 }
 
 /// A saved calculation — either a planned work task or a completed
@@ -170,6 +209,8 @@ nonisolated struct FertiliserRecord: Codable, Identifiable, Sendable, Hashable {
     var productCost: Double?
     var labourMachineryCost: Double?
     var notes: String
+    /// Per-block breakdown for multi-block calculations.
+    var allocations: [FertiliserAllocation]
     var createdAt: Date
 
     init(
@@ -191,6 +232,7 @@ nonisolated struct FertiliserRecord: Codable, Identifiable, Sendable, Hashable {
         productCost: Double? = nil,
         labourMachineryCost: Double? = nil,
         notes: String = "",
+        allocations: [FertiliserAllocation] = [],
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -211,6 +253,7 @@ nonisolated struct FertiliserRecord: Codable, Identifiable, Sendable, Hashable {
         self.productCost = productCost
         self.labourMachineryCost = labourMachineryCost
         self.notes = notes
+        self.allocations = allocations
         self.createdAt = createdAt
     }
 

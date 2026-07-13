@@ -36,6 +36,8 @@ struct NewMainTabView: View {
     @Environment(YieldEstimationSessionSyncService.self) private var yieldSessionSync
     @Environment(DamageRecordSyncService.self) private var damageRecordSync
     @Environment(HistoricalYieldRecordSyncService.self) private var historicalYieldSync
+    @Environment(PruningSyncService.self) private var pruningSync
+    @Environment(FertiliserSyncService.self) private var fertiliserSync
     @Environment(AlertService.self) private var alertService
     @Environment(AppNoticeService.self) private var appNoticeService
     @Environment(SyncStatusCenter.self) private var syncStatusCenter
@@ -125,6 +127,8 @@ struct NewMainTabView: View {
             yieldSessionSync.configure(store: store, auth: auth)
             damageRecordSync.configure(store: store, auth: auth)
             historicalYieldSync.configure(store: store, auth: auth)
+            pruningSync.configure(store: store, auth: auth)
+            fertiliserSync.configure(store: store, auth: auth)
             alertService.configure(store: store, auth: auth, accessControl: accessControl)
             appNoticeService.configure(auth: auth)
             Task { await appNoticeService.refresh() }
@@ -287,6 +291,8 @@ struct NewMainTabView: View {
         await yieldSessionSync.syncForSelectedVineyard()
         await damageRecordSync.syncForSelectedVineyard()
         await historicalYieldSync.syncForSelectedVineyard()
+        await pruningSync.syncForSelectedVineyard()
+        await fertiliserSync.syncForSelectedVineyard()
         // Vineyard-scoped organisation region/unit settings (country, currency,
         // units, date format, terminology). Previously only pulled on vineyard
         // selection — pulling it here too means a manual/forced "Sync now"
@@ -476,6 +482,8 @@ struct NewMainTabView: View {
             + yieldSessionSync.pendingUpsertCount
             + damageRecordSync.pendingUpsertCount
             + historicalYieldSync.pendingUpsertCount
+            + pruningSync.pendingUpsertCount
+            + fertiliserSync.pendingUpsertCount
     }
 
     /// Total queued deletes across every field-data sync service.
@@ -505,6 +513,8 @@ struct NewMainTabView: View {
             + yieldSessionSync.pendingDeleteCount
             + damageRecordSync.pendingDeleteCount
             + historicalYieldSync.pendingDeleteCount
+            + pruningSync.pendingDeleteCount
+            + fertiliserSync.pendingDeleteCount
     }
 
     /// Total individual records whose last upload failed, across every

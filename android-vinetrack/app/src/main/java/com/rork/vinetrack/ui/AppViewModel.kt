@@ -53,8 +53,18 @@ import com.rork.vinetrack.data.calculateRowLines
 import com.rork.vinetrack.data.DomainCacheRepository
 import com.rork.vinetrack.data.PendingPhotoRepository
 import com.rork.vinetrack.data.ActiveTripStore
+import com.rork.vinetrack.data.FertiliserStore
+import com.rork.vinetrack.data.FertiliserSyncCoordinator
+import com.rork.vinetrack.data.FertiliserSyncRepository
 import com.rork.vinetrack.data.PendingWriteOverlay
 import com.rork.vinetrack.data.PendingWriteRepository
+import com.rork.vinetrack.data.PruningStore
+import com.rork.vinetrack.data.PruningSyncCoordinator
+import com.rork.vinetrack.data.PruningSyncRepository
+import com.rork.vinetrack.data.model.FertiliserProduct
+import com.rork.vinetrack.data.model.FertiliserRecord
+import com.rork.vinetrack.data.model.PruningBlockSetup
+import com.rork.vinetrack.data.model.PruningEntry
 import com.rork.vinetrack.data.AdminRepository
 import com.rork.vinetrack.data.AlertPreferencesRepository
 import com.rork.vinetrack.data.BillingGrantsRepository
@@ -753,6 +763,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * online-only. Replayed on reconnect and after a successful vineyard load.
      */
     private val pinCreateSync = PinCreateSync(pinRepo, pendingWrites)
+
+    /**
+     * Offline-first sync for the System Admin Pruning Tracker + Fertiliser
+     * Calculator (Phase 2). Local-first writes with queued replay through the
+     * shared pending-write outbox; pulls reconcile on screen open, reconnect
+     * and pull-to-refresh. Mirrors the iOS PruningSyncService /
+     * FertiliserSyncService contracts.
+     */
+    private val pruningStore = PruningStore(app)
+    private val fertiliserStore = FertiliserStore(app)
+    private val pruningSyncCoordinator = PruningSyncCoordinator(
+        store = pruningStore,
+        repo = PruningSyncRepository(session),
+        pending = pendingWrites,
+        scope = viewModelScope,
+        canSync = { session.accessToken != null && _ui.value.isOnline },
+    )
+    private val fertiliserSyncCoordinator = FertiliserSyncCoordinator(
+        store = fertiliserStore,
+        repo = FertiliserSyncRepository(session),
+        pending = pendingWrites,
+        scope = viewModelScope,
+        canSync = { session.accessToken != null && _ui.value.isOnline },
+    )
 
     /**
      * Replay coordinator for fuel-log CREATE only (Tier-A Stage H-1). Replays an
@@ -3065,8 +3099,66 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingDamageDeletes()
         replayPendingButtonConfig()
         replayPendingYieldSessions()
+        replayPendingPruningWrites()
+        replayPendingFertiliserWrites()
         replayPendingPinPhotos()
     }
+
+    private fun replayPendingPruningWrites() {
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        viewModelScope.launch { pruningSyncCoordinator.replayAll() }
+    }
+
+    private fun replayPendingFertiliserWrites() {
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        viewModelScope.launch { fertiliserSyncCoordinator.replayAll() }
+    }
+
+    // MARK: - Pruning Tracker (System Admin, offline-first)
+
+    fun pruningSetups(vineyardId: String): List<PruningBlockSetup> =
+        pruningSyncCoordinator.setups(vineyardId)
+
+    fun pruningEntries(vineyardId: String): List<PruningEntry> =
+        pruningSyncCoordinator.entries(vineyardId)
+
+    fun upsertPruningSetup(vineyardId: String, setup: PruningBlockSetup): List<PruningBlockSetup> =
+        pruningSyncCoordinator.upsertSetup(vineyardId, setup)
+
+    fun recordPruningEntry(vineyardId: String, entry: PruningEntry): List<PruningEntry> =
+        pruningSyncCoordinator.recordEntry(vineyardId, entry)
+
+    fun deletePruningEntry(vineyardId: String, entryId: String): List<PruningEntry> =
+        pruningSyncCoordinator.deleteEntry(vineyardId, entryId)
+
+    suspend fun refreshPruning(vineyardId: String): Pair<List<PruningBlockSetup>, List<PruningEntry>> =
+        pruningSyncCoordinator.refresh(vineyardId)
+
+    // MARK: - Fertiliser Calculator (System Admin, offline-first)
+
+    fun fertiliserProducts(vineyardId: String): List<FertiliserProduct> =
+        fertiliserSyncCoordinator.products(vineyardId)
+
+    fun fertiliserRecords(vineyardId: String): List<FertiliserRecord> =
+        fertiliserSyncCoordinator.records(vineyardId)
+
+    fun upsertFertiliserProduct(vineyardId: String, product: FertiliserProduct): List<FertiliserProduct> =
+        fertiliserSyncCoordinator.upsertProduct(vineyardId, product)
+
+    fun deleteFertiliserProduct(vineyardId: String, productId: String): List<FertiliserProduct> =
+        fertiliserSyncCoordinator.deleteProduct(vineyardId, productId)
+
+    fun addFertiliserRecord(vineyardId: String, record: FertiliserRecord): List<FertiliserRecord> =
+        fertiliserSyncCoordinator.addRecord(vineyardId, record)
+
+    fun completeFertiliserRecord(vineyardId: String, recordId: String, date: String): List<FertiliserRecord> =
+        fertiliserSyncCoordinator.markCompleted(vineyardId, recordId, date)
+
+    fun deleteFertiliserRecord(vineyardId: String, recordId: String): List<FertiliserRecord> =
+        fertiliserSyncCoordinator.deleteRecord(vineyardId, recordId)
+
+    suspend fun refreshFertiliser(vineyardId: String): Pair<List<FertiliserProduct>, List<FertiliserRecord>> =
+        fertiliserSyncCoordinator.refresh(vineyardId)
 
     fun retryVineyardLoad() {
         viewModelScope.launch {

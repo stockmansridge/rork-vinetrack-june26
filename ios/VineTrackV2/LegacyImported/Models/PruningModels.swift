@@ -1,4 +1,30 @@
+import CryptoKit
 import Foundation
+
+/// Deterministic ids + season helpers shared with the Android app so two
+/// devices that configure the same block independently converge on the SAME
+/// `pruning_seasons` row instead of colliding on the unique
+/// (vineyard, paddock, season_year) index.
+nonisolated enum PruningSeasonId {
+    /// Matches Java's `UUID.nameUUIDFromBytes` (MD5, version 3) so Kotlin and
+    /// Swift generate identical ids from the same name string.
+    static func make(vineyardId: UUID, paddockId: UUID, seasonYear: Int) -> UUID {
+        let name = "vinetrack-pruning-season|\(vineyardId.uuidString.lowercased())|\(paddockId.uuidString.lowercased())|\(seasonYear)"
+        var bytes = Array(Insecure.MD5.hash(data: Data(name.utf8)))
+        bytes[6] = (bytes[6] & 0x0F) | 0x30
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
+    }
+
+    static var currentSeasonYear: Int {
+        Calendar.current.component(.year, from: Date())
+    }
+}
 
 /// How a block is being pruned. Stored on the block setup and on each daily entry.
 nonisolated enum PruningMethod: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -38,6 +64,8 @@ nonisolated struct PruningBlockSetup: Codable, Identifiable, Sendable, Hashable 
     let id: UUID
     var vineyardId: UUID
     var paddockId: UUID
+    /// Pruning season (calendar year). Part of the deterministic season id.
+    var seasonYear: Int
     var startDate: Date?
     var dueDate: Date?
     var method: PruningMethod
@@ -50,9 +78,10 @@ nonisolated struct PruningBlockSetup: Codable, Identifiable, Sendable, Hashable 
     var notes: String
 
     init(
-        id: UUID = UUID(),
+        id: UUID? = nil,
         vineyardId: UUID,
         paddockId: UUID,
+        seasonYear: Int = PruningSeasonId.currentSeasonYear,
         startDate: Date? = nil,
         dueDate: Date? = nil,
         method: PruningMethod = .spur,
@@ -62,7 +91,8 @@ nonisolated struct PruningBlockSetup: Codable, Identifiable, Sendable, Hashable 
         estimatedLabourHours: Double? = nil,
         notes: String = ""
     ) {
-        self.id = id
+        self.id = id ?? PruningSeasonId.make(vineyardId: vineyardId, paddockId: paddockId, seasonYear: seasonYear)
+        self.seasonYear = seasonYear
         self.vineyardId = vineyardId
         self.paddockId = paddockId
         self.startDate = startDate
@@ -81,6 +111,9 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
     var vineyardId: UUID
     var paddockId: UUID
+    /// The `pruning_seasons` row this entry belongs to (deterministic per
+    /// vineyard + paddock + season year).
+    var seasonId: UUID
     var date: Date
     var segments: [PruningSegment]
     var worker: String
@@ -89,12 +122,15 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
     var finishTime: Date?
     var method: PruningMethod
     var notes: String
+    /// Client estimate at save time; the server re-attributes on sync.
+    var estimatedVines: Int
     var createdAt: Date
 
     init(
         id: UUID = UUID(),
         vineyardId: UUID,
         paddockId: UUID,
+        seasonId: UUID? = nil,
         date: Date = Date(),
         segments: [PruningSegment] = [],
         worker: String = "",
@@ -103,11 +139,14 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
         finishTime: Date? = nil,
         method: PruningMethod = .spur,
         notes: String = "",
+        estimatedVines: Int = 0,
         createdAt: Date = Date()
     ) {
         self.id = id
         self.vineyardId = vineyardId
         self.paddockId = paddockId
+        self.seasonId = seasonId ?? PruningSeasonId.make(vineyardId: vineyardId, paddockId: paddockId, seasonYear: PruningSeasonId.currentSeasonYear)
+        self.estimatedVines = estimatedVines
         self.date = date
         self.segments = segments
         self.worker = worker

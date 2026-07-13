@@ -52,6 +52,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,6 +76,7 @@ import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningCalculator
 import com.rork.vinetrack.data.model.PruningEntry
 import com.rork.vinetrack.data.model.PruningMethods
+import com.rork.vinetrack.data.model.PruningSeasonIds
 import com.rork.vinetrack.data.model.PruningSegment
 import com.rork.vinetrack.data.model.PruningStatus
 import com.rork.vinetrack.ui.AppUiState
@@ -102,17 +104,24 @@ fun PruningTrackerScreen(
     onBack: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val context = LocalContext.current
-    val store = remember { PruningStore(context) }
     val vineyardId = state.selectedVineyardId
 
     var setups by remember(vineyardId) {
-        mutableStateOf(vineyardId?.let { store.loadSetups(it) } ?: emptyList())
+        mutableStateOf(vineyardId?.let { vm.pruningSetups(it) } ?: emptyList())
     }
     var entries by remember(vineyardId) {
-        mutableStateOf(vineyardId?.let { store.loadEntries(it) } ?: emptyList())
+        mutableStateOf(vineyardId?.let { vm.pruningEntries(it) } ?: emptyList())
     }
     var selectedPaddockId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // Initial fetch + reconcile when the screen opens or the vineyard changes;
+    // shows the local cache instantly and merges the server state on top.
+    LaunchedEffect(vineyardId, state.isOnline) {
+        val id = vineyardId ?: return@LaunchedEffect
+        val (mergedSetups, mergedEntries) = vm.refreshPruning(id)
+        setups = mergedSetups
+        entries = mergedEntries
+    }
 
     val paddocks = remember(state.paddocks) { state.paddocks.sortedBy { it.name.lowercase() } }
     val selectedPaddock = paddocks.firstOrNull { it.id == selectedPaddockId }
@@ -125,9 +134,33 @@ fun PruningTrackerScreen(
             setup = setups.firstOrNull { it.paddockId == selectedPaddock.id },
             blockEntries = entries.filter { it.paddockId == selectedPaddock.id }.sortedByDescending { it.date },
             onBack = { selectedPaddockId = null },
-            onUpsertSetup = { setups = store.upsertSetup(vineyardId, it) },
-            onAddEntry = { entries = store.addEntry(vineyardId, it) },
-            onDeleteEntry = { entries = store.deleteEntry(vineyardId, it) },
+            onUpsertSetup = { setups = vm.upsertPruningSetup(vineyardId, it) },
+            onAddEntry = { entry ->
+                // Ensure the season row exists before the entry references it —
+                // recording work on an unconfigured block auto-creates the season.
+                var setup = setups.firstOrNull { it.paddockId == entry.paddockId }
+                if (setup == null) {
+                    setup = PruningBlockSetup(
+                        id = PruningSeasonIds.make(vineyardId, entry.paddockId, PruningSeasonIds.currentSeasonYear()),
+                        vineyardId = vineyardId,
+                        paddockId = entry.paddockId,
+                    )
+                    setups = vm.upsertPruningSetup(vineyardId, setup)
+                }
+                val metrics = PruningCalculator.metrics(
+                    paddock = selectedPaddock,
+                    setup = setup,
+                    entries = entries.filter { it.paddockId == entry.paddockId },
+                )
+                entries = vm.recordPruningEntry(
+                    vineyardId,
+                    entry.copy(
+                        seasonId = setup.id,
+                        estimatedVines = PruningCalculator.vines(entry.segments.size, metrics.vinesPerRow),
+                    ),
+                )
+            },
+            onDeleteEntry = { entries = vm.deletePruningEntry(vineyardId, it) },
             modifier = modifier,
         )
         return
@@ -1215,9 +1248,10 @@ private fun PruningSetupSheet(
                 onClick = {
                     onSave(
                         PruningBlockSetup(
-                            id = existing?.id ?: UUID.randomUUID().toString(),
+                            id = existing?.id ?: PruningSeasonIds.make(vineyardId, paddock.id, PruningSeasonIds.currentSeasonYear()),
                             vineyardId = vineyardId,
                             paddockId = paddock.id,
+                            seasonYear = existing?.seasonYear ?: PruningSeasonIds.currentSeasonYear(),
                             startDate = startDate?.toString(),
                             dueDate = dueDate?.toString(),
                             method = method,
