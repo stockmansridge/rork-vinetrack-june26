@@ -1509,6 +1509,7 @@ data class MaintenanceLog(
     @SerialName("is_archived") val isArchived: Boolean = false,
     @SerialName("is_finalized") val isFinalized: Boolean = false,
     @SerialName("photo_path") val photoPath: String? = null,
+    @SerialName("created_by") val createdBy: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     val totalCost: Double get() = partsCost + labourCost
@@ -1555,6 +1556,7 @@ fun resolveMaintenanceEquipmentName(
     log: MaintenanceLog,
     machines: List<VineyardMachine>,
     sprayEquipment: List<SprayEquipment>,
+    equipmentItems: List<EquipmentItem> = emptyList(),
 ): String {
     val snapshot = log.itemName.trim().takeIf { it.isNotBlank() }
     val refId = log.equipmentRefId
@@ -1566,6 +1568,9 @@ fun resolveMaintenanceEquipmentName(
             }
             "spray_equipment" -> {
                 sprayEquipment.firstOrNull { it.id == refId }?.let { return it.displayName }
+            }
+            "equipment_item" -> {
+                equipmentItems.firstOrNull { it.id == refId }?.let { return it.displayName }
             }
         }
         // Link present but asset not loaded/available: fall back to snapshot.

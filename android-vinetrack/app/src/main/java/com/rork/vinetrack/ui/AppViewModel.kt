@@ -8477,6 +8477,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             date = input.date,
             isArchived = input.isArchived,
             isFinalized = input.isFinalized,
+            createdBy = session.userId,
         )
         // Optimistic insert at the top — the operator sees the log straight away.
         _ui.update { it.copy(maintenanceLogs = listOf(optimistic) + it.maintenanceLogs, maintenanceError = null) }
@@ -10114,6 +10115,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     fuelPurchases = purchases ?: st.fuelPurchases,
                 )
             }
+        }
+    }
+
+    /**
+     * Targeted refresh of maintenance logs, run when the Maintenance Log screen
+     * opens (and on pull-to-refresh) so records are current without a full
+     * vineyard reload — iOS parity. Mirrors [loadVineyardData]'s maintenance
+     * handling: fresh server reads are written through to the snapshot cache and
+     * unresolved offline writes are overlaid; any failure keeps existing
+     * in-memory data.
+     */
+    fun refreshMaintenanceLogs(onComplete: () -> Unit = {}) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onComplete(); return }
+        val userId = session.userId
+        viewModelScope.launch {
+            val logs = try {
+                repo.listMaintenanceLogs(vineyardId)
+            } catch (e: Exception) {
+                onComplete()
+                return@launch
+            }
+            if (_ui.value.selectedVineyardId != vineyardId) {
+                onComplete()
+                return@launch
+            }
+            runCatching { domainCache.saveMaintenance(userId, vineyardId, logs) }
+            val pendingSnapshot = pendingWrites.list()
+            _ui.update { st ->
+                st.copy(maintenanceLogs = PendingWriteOverlay.overlayMaintenance(logs, pendingSnapshot, vineyardId))
+            }
+            onComplete()
         }
     }
 

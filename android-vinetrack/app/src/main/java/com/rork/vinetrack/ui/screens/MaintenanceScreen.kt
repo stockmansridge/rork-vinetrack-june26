@@ -38,10 +38,14 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Agriculture
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.Notes
+import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Schedule
@@ -72,6 +76,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberDatePickerState
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
@@ -93,10 +98,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.rork.vinetrack.data.MaintenanceLogRepository
 import com.rork.vinetrack.data.model.MaintenanceLog
 import com.rork.vinetrack.data.model.SprayEquipment
 import com.rork.vinetrack.data.model.VineyardMachine
+import com.rork.vinetrack.data.model.VineyardMember
 import com.rork.vinetrack.data.model.machineTypeLabel
 import com.rork.vinetrack.data.model.resolveMaintenanceEquipmentName
 import com.rork.vinetrack.ui.AppUiState
@@ -129,6 +137,9 @@ fun MaintenanceScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = 
 
     val selectedLog = state.maintenanceLogs.firstOrNull { it.id == selectedLogId }
 
+    // iOS/Work Tasks parity: refresh records automatically when the tool opens.
+    LaunchedEffect(Unit) { vm.refreshMaintenanceLogs() }
+
     AnimatedContent(
         targetState = selectedLog,
         transitionSpec = { fadeIn() togetherWith fadeOut() },
@@ -145,6 +156,7 @@ fun MaintenanceScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = 
             )
         } else {
             MaintenanceListView(
+                vm = vm,
                 state = state,
                 onBack = onBack,
                 onSelect = { selectedLogId = it.id },
@@ -164,6 +176,7 @@ fun MaintenanceScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MaintenanceListView(
+    vm: AppViewModel,
     state: AppUiState,
     onBack: (() -> Unit)?,
     onSelect: (MaintenanceLog) -> Unit,
@@ -172,13 +185,14 @@ private fun MaintenanceListView(
     val vine = LocalVineColors.current
     val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
     var search by remember { mutableStateOf("") }
+    var refreshing by remember { mutableStateOf(false) }
 
     val sorted = remember(state.maintenanceLogs) { state.maintenanceLogs.sortedByDescending { it.startEpochMs ?: 0L } }
-    val filtered = remember(sorted, search, state.machines, state.sprayEquipment) {
+    val filtered = remember(sorted, search, state.machines, state.sprayEquipment, state.equipmentItems) {
         if (search.isBlank()) sorted else {
             val q = search.trim()
             sorted.filter {
-                resolveMaintenanceEquipmentName(it, state.machines, state.sprayEquipment).contains(q, true) ||
+                resolveMaintenanceEquipmentName(it, state.machines, state.sprayEquipment, state.equipmentItems).contains(q, true) ||
                     it.itemName.contains(q, true) ||
                     it.workCompleted.contains(q, true) ||
                     it.partsUsed.contains(q, true)
@@ -207,8 +221,16 @@ private fun MaintenanceListView(
             }
             return@Scaffold
         }
-        LazyColumn(
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = {
+                refreshing = true
+                vm.refreshMaintenanceLogs { refreshing = false }
+            },
             modifier = Modifier.fillMaxSize().padding(padding),
+        ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -229,7 +251,7 @@ private fun MaintenanceListView(
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                             MaintMetric(Modifier.weight(1f), Icons.Filled.Build, formatMoney(totalParts), "Parts", VineColors.Orange)
                             MaintMetric(Modifier.weight(1f), Icons.Filled.Payments, formatMoney(totalLabour), "Labour", VineColors.Primary)
-                            MaintMetric(Modifier.weight(1f), Icons.Filled.Schedule, trimNum(totalHours), "Hours", VineColors.Olive)
+                            MaintMetric(Modifier.weight(1f), Icons.Filled.Schedule, "%.1f".format(totalHours), "Labour Hours", VineColors.Olive)
                         }
                     }
                 } else {
@@ -243,7 +265,7 @@ private fun MaintenanceListView(
                             }
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text("$recordCount record${if (recordCount == 1) "" else "s"}", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                                Text("${trimNum(totalHours)} total hours logged", fontSize = 12.sp, color = vine.textSecondary)
+                                Text("%.1f total labour hours logged".format(totalHours), fontSize = 12.sp, color = vine.textSecondary)
                             }
                         }
                     }
@@ -277,12 +299,13 @@ private fun MaintenanceListView(
                 items(filtered, key = { it.id }) { log ->
                     MaintenanceRow(
                         log = log,
-                        equipmentName = resolveMaintenanceEquipmentName(log, state.machines, state.sprayEquipment),
+                        equipmentName = resolveMaintenanceEquipmentName(log, state.machines, state.sprayEquipment, state.equipmentItems),
                         canViewFinancials = canViewFinancials,
                         onClick = { onSelect(log) },
                     )
                 }
             }
+        }
         }
     }
 }
@@ -297,38 +320,76 @@ private fun MaintMetric(modifier: Modifier, icon: ImageVector, value: String, la
     }
 }
 
+/** Compact label + value pair shown in the log row metric grid (iOS parity). */
+private data class RowMetric(val label: String, val value: String, val emphasised: Boolean = false)
+
 @Composable
 private fun MaintenanceRow(log: MaintenanceLog, equipmentName: String, canViewFinancials: Boolean, onClick: () -> Unit) {
     val vine = LocalVineColors.current
+    // Mirrors the iOS row grid: Labour Hours, Machine hours, then financials
+    // (Parts / Labour / emphasised Total) for owners and managers only.
+    val metrics = remember(log, canViewFinancials) {
+        buildList {
+            add(RowMetric("Labour Hours", "%.1f h".format(log.hours)))
+            log.machineHours?.takeIf { it > 0 }?.let { add(RowMetric("Machine", "%.0f mh".format(it))) }
+            if (canViewFinancials) {
+                add(RowMetric("Parts", formatMoney(log.partsCost)))
+                add(RowMetric("Labour", formatMoney(log.labourCost)))
+                add(RowMetric("Total", formatMoney(log.totalCost), emphasised = true))
+            }
+        }
+    }
     VineyardCard(modifier = Modifier.clickable { onClick() }) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(
                 modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(VineColors.EarthBrown),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(Icons.Filled.Build, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(equipmentName, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, maxLines = 1)
-                log.workCompleted.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 12.sp, color = vine.textSecondary, maxLines = 1) }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Schedule, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(12.dp))
-                    Text("${trimNum(log.hours)}h", fontSize = 12.sp, color = vine.textSecondary)
-                    log.machineHours?.takeIf { it > 0 }?.let {
-                        Text("·", color = vine.textSecondary, fontSize = 12.sp)
-                        Text("${trimNum(it)} mh", fontSize = 12.sp, color = vine.textSecondary)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        equipmentName,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (log.hasInvoicePhoto) {
+                        Icon(Icons.Filled.Description, contentDescription = "Invoice attached", tint = vine.textSecondary, modifier = Modifier.size(14.dp))
                     }
-                    if (log.totalCost > 0 && canViewFinancials) {
-                        Text("·", color = vine.textSecondary, fontSize = 12.sp)
-                        Text(formatMoney(log.totalCost), fontSize = 12.sp, color = VineColors.EarthBrown, fontWeight = FontWeight.Medium)
+                    Text(formatMaintDate(log.startEpochMs) ?: "—", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary, maxLines = 1)
+                }
+                log.workCompleted.takeIf { it.isNotBlank() }?.let {
+                    Text(it, fontSize = 12.sp, color = vine.textSecondary, maxLines = 2)
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    metrics.chunked(2).forEach { pair ->
+                        Row(Modifier.fillMaxWidth()) {
+                            pair.forEach { m -> RowMetricCell(m, Modifier.weight(1f)) }
+                            if (pair.size == 1) Spacer(Modifier.weight(1f))
+                        }
                     }
                 }
             }
-            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(formatMaintDayMonth(log.startEpochMs), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
-                formatMaintYear(log.startEpochMs)?.let { Text(it, fontSize = 11.sp, color = vine.textSecondary) }
-            }
         }
+    }
+}
+
+@Composable
+private fun RowMetricCell(metric: RowMetric, modifier: Modifier = Modifier) {
+    val vine = LocalVineColors.current
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(metric.label, fontSize = 12.sp, color = vine.textSecondary, maxLines = 1)
+        Text(
+            metric.value,
+            fontSize = 12.sp,
+            fontWeight = if (metric.emphasised) FontWeight.Bold else FontWeight.SemiBold,
+            color = if (metric.emphasised) VineColors.EarthBrown else vine.textPrimary,
+            maxLines = 1,
+        )
     }
 }
 
@@ -343,12 +404,14 @@ private fun MaintenanceDetailView(
 ) {
     val vine = LocalVineColors.current
     val log = state.maintenanceLogs.firstOrNull { it.id == logId }
-    var confirmDelete by remember { mutableStateOf(false) }
 
     LaunchedEffect(log == null) { if (log == null) onBack() }
     if (log == null) return
 
-    val equipmentName = resolveMaintenanceEquipmentName(log, state.machines, state.sprayEquipment)
+    val equipmentName = resolveMaintenanceEquipmentName(log, state.machines, state.sprayEquipment, state.equipmentItems)
+    // Financials are visible to owners/managers only, matching iOS.
+    val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
+    val creatorName = resolveCreatorName(log.createdBy, state.members)
 
     Scaffold(
         containerColor = vine.appBackground,
@@ -375,6 +438,10 @@ private fun MaintenanceDetailView(
                     DetailRowM(Icons.Filled.Agriculture, "Equipment", equipmentName, VineColors.Orange)
                     DividerM(vine.cardBorder)
                     DetailRowM(Icons.Filled.Schedule, "Date", formatMaintDate(log.startEpochMs) ?: "—", VineColors.Cyan)
+                    creatorName?.let {
+                        DividerM(vine.cardBorder)
+                        DetailRowM(Icons.Filled.Person, "Logged by", it, VineColors.Primary)
+                    }
                     log.machineHours?.takeIf { it > 0 }?.let {
                         DividerM(vine.cardBorder)
                         DetailRowM(Icons.Filled.Speed, "Machine hours", "${trimNum(it)} h", VineColors.Indigo)
@@ -403,7 +470,7 @@ private fun MaintenanceDetailView(
                 }
             }
 
-            if (log.totalCost > 0) {
+            if (log.totalCost > 0 && canViewFinancials) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     SectionHeader("Cost", onLight = true)
                     VineyardCard {
@@ -412,6 +479,21 @@ private fun MaintenanceDetailView(
                         CostRowM("Labour", formatMoney(log.labourCost), vine.textSecondary, vine.textPrimary)
                         DividerM(vine.cardBorder)
                         CostRowM("Total", formatMoney(log.totalCost), vine.textPrimary, VineColors.PrimaryAccent, emphasise = true)
+                        if (log.hours > 0) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("Cost per Hour", fontSize = 12.sp, color = vine.textSecondary)
+                                Spacer(Modifier.weight(1f))
+                                Text(
+                                    "${formatMoney(log.totalCost / log.hours)}/hr",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = vine.textSecondary,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -423,27 +505,8 @@ private fun MaintenanceDetailView(
                 }
             }
 
-            TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive)
-                Text("  Delete log", color = VineColors.Destructive)
-            }
             Spacer(Modifier.height(8.dp))
         }
-    }
-
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete maintenance log?") },
-            text = { Text("This removes the log for your whole team. This can't be undone here.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    vm.deleteMaintenanceLog(log.id) {}
-                }) { Text("Delete", color = VineColors.Destructive) }
-            },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
-        )
     }
 }
 
@@ -535,14 +598,30 @@ private fun MaintenanceSheet(
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
-    // Equipment options: machines + spray equipment, with a "None" choice.
-    val options = remember(state.machines, state.sprayEquipment) {
-        state.machines.map { EquipmentRef("vineyard_machine", it.id, it.displayName) } +
-            state.sprayEquipment.map { EquipmentRef("spray_equipment", it.id, it.displayName) }
+    // Equipment options grouped like the iOS picker: machines/tractors, spray
+    // equipment, and Other Equipment & Assets, with a "None" choice.
+    val machineOptions = remember(state.machines) {
+        state.machines.map { EquipmentRef("vineyard_machine", it.id, it.displayName) }
+    }
+    val sprayOptions = remember(state.sprayEquipment) {
+        state.sprayEquipment.map { EquipmentRef("spray_equipment", it.id, it.displayName) }
+    }
+    val otherOptions = remember(state.equipmentItems) {
+        state.equipmentItems.map { EquipmentRef("equipment_item", it.id, it.displayName) }
     }
     var equipment by remember {
         mutableStateOf(
-            existing?.equipmentRefId?.let { ref -> options.firstOrNull { it.refId == ref && it.source == existing.equipmentSource } },
+            existing?.equipmentRefId?.let { ref ->
+                when (existing.equipmentSource) {
+                    // Legacy "tractor" links resolve to the machine mirroring that tractor.
+                    "vineyard_machine", "tractor" -> state.machines
+                        .firstOrNull { it.id == ref || it.legacyTractorId == ref }
+                        ?.let { EquipmentRef("vineyard_machine", it.id, it.displayName) }
+                    "spray_equipment" -> sprayOptions.firstOrNull { it.refId == ref }
+                    "equipment_item" -> otherOptions.firstOrNull { it.refId == ref }
+                    else -> null
+                }
+            },
         )
     }
     var itemName by remember { mutableStateOf(existing?.itemName ?: "") }
@@ -573,6 +652,10 @@ private fun MaintenanceSheet(
 
     // Financial fields are gated by role, matching iOS (owner/manager only).
     val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
+    // Deleting lives in the edit sheet and matches the iOS role rules
+    // (owner/manager/supervisor — iOS Role.canDelete).
+    val canDelete = state.currentRole == "owner" || state.currentRole == "manager" || state.currentRole == "supervisor"
+    var confirmDelete by remember { mutableStateOf(false) }
     val costTotal = (partsCostText.replace(',', '.').toDoubleOrNull() ?: 0.0) +
         (labourCostText.replace(',', '.').toDoubleOrNull() ?: 0.0)
 
@@ -616,15 +699,28 @@ private fun MaintenanceSheet(
                 )
                 ExposedDropdownMenu(expanded = equipMenu, onDismissRequest = { equipMenu = false }) {
                     DropdownMenuItem(text = { Text("No linked equipment") }, onClick = { equipment = null; equipMenu = false })
-                    options.forEach { opt ->
-                        DropdownMenuItem(
-                            text = { Text(opt.name) },
-                            onClick = {
-                                equipment = opt
-                                if (itemName.isBlank()) itemName = opt.name
-                                equipMenu = false
-                            },
-                        )
+                    val pick: (EquipmentRef) -> Unit = { opt ->
+                        equipment = opt
+                        if (itemName.isBlank()) itemName = opt.name
+                        equipMenu = false
+                    }
+                    if (machineOptions.isNotEmpty()) {
+                        EquipmentGroupLabel("Machines & Tractors")
+                        machineOptions.forEach { opt ->
+                            DropdownMenuItem(text = { Text(opt.name) }, onClick = { pick(opt) })
+                        }
+                    }
+                    if (sprayOptions.isNotEmpty()) {
+                        EquipmentGroupLabel("Spray Equipment")
+                        sprayOptions.forEach { opt ->
+                            DropdownMenuItem(text = { Text(opt.name) }, onClick = { pick(opt) })
+                        }
+                    }
+                    if (otherOptions.isNotEmpty()) {
+                        EquipmentGroupLabel("Other Equipment & Assets")
+                        otherOptions.forEach { opt ->
+                            DropdownMenuItem(text = { Text(opt.name) }, onClick = { pick(opt) })
+                        }
                     }
                 }
             }
@@ -737,7 +833,30 @@ private fun MaintenanceSheet(
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text(if (existing == null) "Save log" else "Save changes")
             }
+
+            if (existing != null && canDelete) {
+                TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive, modifier = Modifier.size(18.dp))
+                    Text("  Delete Record", color = VineColors.Destructive)
+                }
+            }
         }
+    }
+
+    if (confirmDelete && existing != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete Record") },
+            text = { Text("Are you sure you want to delete this maintenance record?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    vm.deleteMaintenanceLog(existing.id) {}
+                    onSaved()
+                }) { Text("Delete", color = VineColors.Destructive) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
     }
 
     if (showDatePicker) {
@@ -773,27 +892,61 @@ private fun MaintenanceInvoiceCard(vm: AppViewModel, photoPath: String?) {
         }
     }
 
+    var showFull by remember(photoPath) { mutableStateOf(false) }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(4f / 3f)
             .clip(RoundedCornerShape(12.dp))
-            .background(vine.textSecondary.copy(alpha = 0.1f)),
+            .background(vine.textSecondary.copy(alpha = 0.1f))
+            .clickable(enabled = signedUrl != null) { showFull = true },
         contentAlignment = Alignment.Center,
     ) {
         val url = signedUrl
         when {
-            url != null -> AsyncImage(
-                model = url,
-                contentDescription = "Invoice photo",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f),
-            )
+            url != null -> {
+                AsyncImage(
+                    model = url,
+                    contentDescription = "Invoice photo",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f),
+                )
+                // iOS-parity expand affordance — tap opens the invoice full screen.
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .padding(6.dp),
+                ) {
+                    Icon(Icons.Filled.OpenInFull, contentDescription = "View full screen", tint = Color.White, modifier = Modifier.size(14.dp))
+                }
+            }
             unavailable -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Icons.Filled.ReceiptLong, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(18.dp))
                 Text("Invoice unavailable offline", fontSize = 13.sp, color = vine.textSecondary)
             }
             else -> CircularProgressIndicator(color = VineColors.PrimaryAccent)
+        }
+    }
+
+    val fullUrl = signedUrl
+    if (showFull && fullUrl != null) {
+        Dialog(onDismissRequest = { showFull = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                AsyncImage(
+                    model = fullUrl,
+                    contentDescription = "Invoice photo",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                IconButton(
+                    onClick = { showFull = false },
+                    modifier = Modifier.align(Alignment.TopStart).padding(top = 32.dp, start = 8.dp),
+                ) { Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color.White) }
+            }
         }
     }
 }
@@ -929,14 +1082,30 @@ private fun formatMaintDate(epochMs: Long?): String? {
     return SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(epochMs))
 }
 
-private fun formatMaintDayMonth(epochMs: Long?): String {
-    epochMs ?: return "—"
-    return SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(epochMs))
+/**
+ * Resolve the "Logged by" display name for a maintenance record. `created_by`
+ * stores the creator's user id, so it is resolved against the vineyard member
+ * list; legacy iOS rows that carry a plain name are shown as-is, and
+ * unresolvable ids are hidden rather than surfaced as raw UUIDs.
+ */
+private fun resolveCreatorName(createdBy: String?, members: List<VineyardMember>): String? {
+    val raw = createdBy?.trim()?.takeIf { it.isNotBlank() } ?: return null
+    members.firstOrNull { it.userId == raw }?.let { return it.name }
+    val isUuid = runCatching { java.util.UUID.fromString(raw) }.isSuccess
+    return if (isUuid) null else raw
 }
 
-private fun formatMaintYear(epochMs: Long?): String? {
-    epochMs ?: return null
-    return SimpleDateFormat("yyyy", Locale.getDefault()).format(Date(epochMs))
+/** Non-tappable group header inside the equipment dropdown, mirroring iOS picker sections. */
+@Composable
+private fun EquipmentGroupLabel(title: String) {
+    val vine = LocalVineColors.current
+    Text(
+        title,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = vine.textSecondary,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+    )
 }
 
 private fun trimNum(value: Double): String =
