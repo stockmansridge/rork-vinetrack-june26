@@ -106,6 +106,7 @@ class PruningSyncRepository(private val session: SessionStore) {
         val notes: String? = null,
         @SerialName("row_equivalents_completed") val rowEquivalentsCompleted: Double? = null,
         @SerialName("estimated_vines_completed") val estimatedVinesCompleted: Int? = null,
+        @SerialName("work_task_id") val workTaskId: String? = null,
         @SerialName("created_at") val createdAt: String? = null,
         @SerialName("deleted_at") val deletedAt: String? = null,
     ) {
@@ -124,6 +125,7 @@ class PruningSyncRepository(private val session: SessionStore) {
             method = pruningMethod ?: "spur",
             notes = notes.orEmpty(),
             estimatedVines = estimatedVinesCompleted ?: 0,
+            workTaskId = workTaskId,
             createdAtMs = parseInstantMs(createdAt),
         )
     }
@@ -168,6 +170,8 @@ class PruningSyncRepository(private val session: SessionStore) {
         @SerialName("p_estimated_vines") val estimatedVines: Int,
         @SerialName("p_client_updated_at") val clientUpdatedAt: String,
         @SerialName("p_segments") val segments: List<SegmentArg>,
+        /** Optional Work Task link (sql/113); omitted when null so the RPC stays compatible pre-migration. */
+        @SerialName("p_work_task_id") val workTaskId: String? = null,
     )
 
     @Serializable
@@ -238,6 +242,7 @@ class PruningSyncRepository(private val session: SessionStore) {
             segments = entry.segments.map {
                 SegmentArg(row = it.row, segment = it.quarter, rowId = it.rowId, label = it.row.toString())
             },
+            workTaskId = entry.workTaskId,
         )
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("record_pruning_entry")) {
             authHeaders(token)

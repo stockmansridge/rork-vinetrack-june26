@@ -28,8 +28,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DatePicker
@@ -81,6 +83,7 @@ import com.rork.vinetrack.data.model.PruningRowRef
 import com.rork.vinetrack.data.model.PruningSeasonIds
 import com.rork.vinetrack.data.model.PruningSegment
 import com.rork.vinetrack.data.model.PruningStatus
+import com.rork.vinetrack.data.model.builtInWorkTaskTypes
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
@@ -95,7 +98,8 @@ import java.util.UUID
 /**
  * Pruning Tracker (in development — System Admin only). Mirrors the iOS
  * `PruningTrackerView`: vineyard dashboard, per-block row-quarter progress,
- * rapid Complete Today entry, rolling rates and projected completion.
+ * rapid Record Pruning entry (with an optional linked, completed Work Task
+ * created in the same flow), rolling rates and projected completion.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -155,7 +159,7 @@ fun PruningTrackerScreen(
             blockEntries = entries.filter { it.paddockId == selectedPaddock.id }.sortedByDescending { it.date },
             onBack = { selectedPaddockId = null },
             onUpsertSetup = { setups = vm.upsertPruningSetup(vineyardId, it) },
-            onAddEntry = { entry ->
+            onAddEntry = { entry, taskDraft ->
                 // Ensure the season row exists before the entry references it —
                 // recording work on an unconfigured block auto-creates the season.
                 var setup = setups.firstOrNull { it.paddockId == entry.paddockId }
@@ -172,15 +176,29 @@ fun PruningTrackerScreen(
                     setup = setup,
                     entries = entries.filter { it.paddockId == entry.paddockId },
                 )
-                entries = vm.recordPruningEntry(
-                    vineyardId,
-                    entry.copy(
-                        seasonId = setup.id,
-                        estimatedVines = PruningCalculator.vines(entry.segments, metrics.rows),
-                    ),
+                var linked = entry.copy(
+                    seasonId = setup.id,
+                    estimatedVines = PruningCalculator.vines(entry.segments, metrics.rows),
                 )
+                // Optionally turn the same submission into ONE completed Work
+                // Task through the existing shared work-task flow. The id is
+                // client-generated, so offline replay and retries can never
+                // create a duplicate task for this entry.
+                if (taskDraft != null) {
+                    val taskId = vm.createWorkTask(
+                        taskType = taskDraft.taskType,
+                        paddockIds = listOf(entry.paddockId),
+                        date = entry.date,
+                        durationHours = entry.labourHours ?: 0.0,
+                        notes = taskDraft.notes,
+                        markCompleted = true,
+                    ) { }
+                    if (taskId != null) linked = linked.copy(workTaskId = taskId)
+                }
+                entries = vm.recordPruningEntry(vineyardId, linked)
             },
             onDeleteEntry = { entries = vm.deletePruningEntry(vineyardId, it) },
+            onDeleteWorkTask = { vm.deleteWorkTask(it) { } },
             modifier = modifier,
         )
         return
@@ -577,8 +595,9 @@ private fun PruningBlockDetail(
     blockEntries: List<PruningEntry>,
     onBack: () -> Unit,
     onUpsertSetup: (PruningBlockSetup) -> Unit,
-    onAddEntry: (PruningEntry) -> Unit,
+    onAddEntry: (PruningEntry, PruningWorkTaskDraft?) -> Unit,
     onDeleteEntry: (String) -> Unit,
+    onDeleteWorkTask: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val vine = LocalVineColors.current
@@ -592,6 +611,7 @@ private fun PruningBlockDetail(
     var showSetupSheet by remember { mutableStateOf(false) }
     var rangeFromIndex by remember(paddock.id) { mutableStateOf(0) }
     var rangeToIndex by remember(paddock.id) { mutableStateOf(0) }
+    var entryPendingReversal by remember { mutableStateOf<PruningEntry?>(null) }
 
     Scaffold(
         modifier = modifier,
@@ -635,7 +655,7 @@ private fun PruningBlockDetail(
                             onClick = { showEntrySheet = true },
                             colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                         ) {
-                            Text("Complete Today", fontWeight = FontWeight.SemiBold)
+                            Text("Record Pruning", fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -715,7 +735,15 @@ private fun PruningBlockDetail(
                         },
                     )
                 }
-                item(key = "history") { DetailHistoryCard(blockEntries, onDeleteEntry) }
+                item(key = "history") {
+                    DetailHistoryCard(blockEntries) { entry ->
+                        if (entry.workTaskId != null) {
+                            entryPendingReversal = entry
+                        } else {
+                            onDeleteEntry(entry.id)
+                        }
+                    }
+                }
                 item(key = "bottom-space") { Spacer(Modifier.height(24.dp)) }
             }
         }
@@ -730,10 +758,38 @@ private fun PruningBlockDetail(
             defaultMethod = setup?.method ?: "spur",
             defaultWorker = setup?.crew ?: "",
             onDismiss = { showEntrySheet = false },
-            onSave = { entry ->
-                onAddEntry(entry)
+            onSave = { entry, taskDraft ->
+                onAddEntry(entry, taskDraft)
                 selected = emptySet()
                 showEntrySheet = false
+            },
+        )
+    }
+
+    // Reversal prompt for entries with a linked Work Task — the pruning entry
+    // is always reversed; the user explicitly decides what happens to the task.
+    entryPendingReversal?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { entryPendingReversal = null },
+            title = { Text("Linked Work Task") },
+            text = {
+                Text("This pruning entry has a linked Work Task. What should happen to the task? Reversing the entry always reopens its row quarters.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pending.workTaskId?.let(onDeleteWorkTask)
+                    onDeleteEntry(pending.id)
+                    entryPendingReversal = null
+                }) { Text("Delete Work Task", color = VineColors.Destructive) }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { entryPendingReversal = null }) { Text("Cancel") }
+                    TextButton(onClick = {
+                        onDeleteEntry(pending.id)
+                        entryPendingReversal = null
+                    }) { Text("Keep Work Task") }
+                }
             },
         )
     }
@@ -1027,7 +1083,7 @@ private fun PruningRowLine(
 // MARK: - History
 
 @Composable
-private fun DetailHistoryCard(entries: List<PruningEntry>, onDelete: (String) -> Unit) {
+private fun DetailHistoryCard(entries: List<PruningEntry>, onDelete: (PruningEntry) -> Unit) {
     val vine = LocalVineColors.current
     PruningCard {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1052,6 +1108,17 @@ private fun DetailHistoryCard(entries: List<PruningEntry>, onDelete: (String) ->
                             if (entry.notes.isNotBlank()) {
                                 Text(entry.notes, fontSize = 12.sp, color = vine.textSecondary, fontStyle = FontStyle.Italic)
                             }
+                            if (entry.workTaskId != null) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Icon(
+                                        Icons.Filled.Link,
+                                        contentDescription = "Linked Work Task",
+                                        tint = VineColors.Primary,
+                                        modifier = Modifier.size(12.dp),
+                                    )
+                                    Text("Work Task", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
+                                }
+                            }
                         }
                         Text(
                             "${fmt(entry.rowEquivalents)} rows",
@@ -1059,8 +1126,8 @@ private fun DetailHistoryCard(entries: List<PruningEntry>, onDelete: (String) ->
                             fontWeight = FontWeight.Bold,
                             color = vine.textPrimary,
                         )
-                        IconButton(onClick = { onDelete(entry.id) }, modifier = Modifier.size(28.dp)) {
-                            Icon(Icons.Filled.Delete, contentDescription = "Delete entry", tint = VineColors.Destructive, modifier = Modifier.size(16.dp))
+                        IconButton(onClick = { onDelete(entry) }, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Reverse this pruning entry", tint = VineColors.Destructive, modifier = Modifier.size(16.dp))
                         }
                     }
                     if (index < entries.lastIndex) HorizontalDivider(color = vine.cardBorder)
@@ -1072,6 +1139,45 @@ private fun DetailHistoryCard(entries: List<PruningEntry>, onDelete: (String) ->
 
 // MARK: - Entry sheet
 
+/** Work Task creation request captured in the Record Pruning sheet — every
+ * other task value (date, block, crew, hours, times) is reused from the
+ * pruning entry itself so nothing is entered twice. */
+private data class PruningWorkTaskDraft(val taskType: String, val notes: String)
+
+/** Distinct selected row numbers grouped into compact ranges, e.g. "44–46, 50". */
+private fun rowRangeSummary(segments: List<PruningSegment>): String {
+    val numbers = segments.map { it.row }.distinct().sorted()
+    if (numbers.isEmpty()) return "—"
+    val parts = mutableListOf<String>()
+    var start = numbers.first()
+    var previous = start
+    for (number in numbers.drop(1)) {
+        if (number == previous + 1) {
+            previous = number
+            continue
+        }
+        parts.add(if (start == previous) "$start" else "$start–$previous")
+        start = number
+        previous = number
+    }
+    parts.add(if (start == previous) "$start" else "$start–$previous")
+    return parts.joinToString(", ")
+}
+
+/** Work Task notes composed from the pruning record (matches the iOS format). */
+private fun composePruningTaskNotes(
+    segments: List<PruningSegment>,
+    rows: List<PruningRowRef>,
+    method: String,
+    userNotes: String,
+): String {
+    val rowEq = fmt(segments.size / 4.0)
+    val vines = PruningCalculator.vines(segments, rows)
+    var summary = "Source: Pruning Tracker — Rows ${rowRangeSummary(segments)} · ${segments.size} quarters · $rowEq row equivalents · ~$vines vines · ${PruningMethods.label(method)}"
+    if (userNotes.isNotBlank()) summary += "\n$userNotes"
+    return summary
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PruningEntrySheet(
@@ -1082,7 +1188,7 @@ private fun PruningEntrySheet(
     defaultMethod: String,
     defaultWorker: String,
     onDismiss: () -> Unit,
-    onSave: (PruningEntry) -> Unit,
+    onSave: (PruningEntry, PruningWorkTaskDraft?) -> Unit,
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1096,6 +1202,8 @@ private fun PruningEntrySheet(
     var finishTime by remember { mutableStateOf("") }
     var method by remember { mutableStateOf(defaultMethod) }
     var notes by remember { mutableStateOf("") }
+    var createTask by remember { mutableStateOf(false) }
+    var taskType by remember { mutableStateOf("Pruning") }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = vine.appBackground) {
         Column(
@@ -1106,9 +1214,9 @@ private fun PruningEntrySheet(
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Complete Today", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+            Text("Record Pruning — ${paddock.name}", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
             Text(
-                "${paddock.name} · ${fmt(segments.size / 4.0)} row equivalents · ~${PruningCalculator.vines(segments, rows)} vines",
+                "${segments.size} quarters · ${fmt(segments.size / 4.0)} row equivalents · ~${PruningCalculator.vines(segments, rows)} vines",
                 fontSize = 13.sp,
                 color = vine.textSecondary,
             )
@@ -1175,30 +1283,64 @@ private fun PruningEntrySheet(
                 modifier = Modifier.fillMaxWidth(),
             )
 
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Create a Work Task for this pruning work",
+                    fontSize = 14.sp,
+                    color = vine.textPrimary,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(checked = createTask, onCheckedChange = { createTask = it })
+            }
+            if (createTask) {
+                WorkTaskTypePicker(builtInWorkTaskTypes, taskType) { taskType = it }
+                Text(
+                    "Title: Pruning — ${paddock.name} · Status: Completed",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = vine.textSecondary,
+                )
+                Text(
+                    "The Work Task reuses this record's date, block, crew, labour hours, times and notes — nothing is entered twice. It is created as completed and appears in the Work Tasks tool.",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
+            }
+
             Button(
                 onClick = {
-                    onSave(
-                        PruningEntry(
-                            id = UUID.randomUUID().toString(),
-                            vineyardId = vineyardId,
-                            paddockId = paddock.id,
-                            date = date.toString(),
-                            segments = segments,
-                            worker = worker.trim(),
-                            labourHours = hoursText.replace(',', '.').toDoubleOrNull(),
-                            startTime = if (includeTimes) startTime.trim().ifBlank { null } else null,
-                            finishTime = if (includeTimes) finishTime.trim().ifBlank { null } else null,
-                            method = method,
-                            notes = notes.trim(),
-                            createdAtMs = System.currentTimeMillis(),
-                        )
+                    val entry = PruningEntry(
+                        id = UUID.randomUUID().toString(),
+                        vineyardId = vineyardId,
+                        paddockId = paddock.id,
+                        date = date.toString(),
+                        segments = segments,
+                        worker = worker.trim(),
+                        labourHours = hoursText.replace(',', '.').toDoubleOrNull(),
+                        startTime = if (includeTimes) startTime.trim().ifBlank { null } else null,
+                        finishTime = if (includeTimes) finishTime.trim().ifBlank { null } else null,
+                        method = method,
+                        notes = notes.trim(),
+                        createdAtMs = System.currentTimeMillis(),
                     )
+                    val draft = if (createTask) {
+                        PruningWorkTaskDraft(
+                            taskType = taskType,
+                            notes = composePruningTaskNotes(segments, rows, method, notes.trim()),
+                        )
+                    } else {
+                        null
+                    }
+                    onSave(entry, draft)
                 },
                 enabled = segments.isNotEmpty(),
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Save", fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (segments.size == 1) "Record 1 quarter" else "Record ${segments.size} quarters",
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
     }
@@ -1220,6 +1362,38 @@ private fun PruningEntrySheet(
             dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } },
         ) {
             DatePicker(state = pickerState)
+        }
+    }
+}
+
+@Composable
+private fun WorkTaskTypePicker(options: List<String>, value: String, onChange: (String) -> Unit) {
+    val vine = LocalVineColors.current
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(vine.cardBackground)
+                .clickable { expanded = true }
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Work type", fontSize = 14.sp, color = vine.textPrimary)
+            Spacer(Modifier.weight(1f))
+            Text(value, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    onClick = {
+                        onChange(option)
+                        expanded = false
+                    },
+                )
+            }
         }
     }
 }

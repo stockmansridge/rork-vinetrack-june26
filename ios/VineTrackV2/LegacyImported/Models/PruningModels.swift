@@ -169,6 +169,8 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
     var notes: String
     /// Client estimate at save time; the server re-attributes on sync.
     var estimatedVines: Int
+    /// The Work Task created from this recording (at most one per entry).
+    var workTaskId: UUID?
     var createdAt: Date
 
     init(
@@ -185,6 +187,7 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
         method: PruningMethod = .spur,
         notes: String = "",
         estimatedVines: Int = 0,
+        workTaskId: UUID? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -200,6 +203,7 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
         self.finishTime = finishTime
         self.method = method
         self.notes = notes
+        self.workTaskId = workTaskId
         self.createdAt = createdAt
     }
 

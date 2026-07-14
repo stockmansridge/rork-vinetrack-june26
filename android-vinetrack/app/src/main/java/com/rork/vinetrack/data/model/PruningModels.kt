@@ -116,6 +116,8 @@ data class PruningEntry(
     val notes: String = "",
     /** Client estimate at save time; the server re-attributes on sync. */
     val estimatedVines: Int = 0,
+    /** The Work Task created from this recording (at most one per entry). */
+    val workTaskId: String? = null,
     val createdAtMs: Long = 0L,
 ) {
     /** A full row = 1.0; each quarter = 0.25. */

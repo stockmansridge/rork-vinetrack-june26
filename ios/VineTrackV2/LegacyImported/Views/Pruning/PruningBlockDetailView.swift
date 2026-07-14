@@ -1,9 +1,11 @@
 import SwiftUI
 
 /// Row-quarter progress screen for one block: tap quarters (or select a row
-/// range), then "Complete Today" records a daily entry with crew and hours.
+/// range), then "Record Pruning" records an entry with crew and hours — and
+/// can optionally create one linked, completed Work Task in the same flow.
 struct PruningBlockDetailView: View {
     @Environment(MigratedDataStore.self) private var store
+    @Environment(\.accessControl) private var accessControl
     let paddock: Paddock
     let pruningStore: PruningStore
 
@@ -12,6 +14,8 @@ struct PruningBlockDetailView: View {
     @State private var showSetupSheet: Bool = false
     @State private var rangeFromIndex: Int = 0
     @State private var rangeToIndex: Int = 0
+    @State private var entryPendingReversal: PruningEntry?
+    @State private var linkedTask: WorkTask?
 
     private var setup: PruningBlockSetup? { pruningStore.setup(for: paddock.id) }
     private var entries: [PruningEntry] { pruningStore.entries(for: paddock.id) }
@@ -77,6 +81,43 @@ struct PruningBlockDetailView: View {
                 needsRowCount: paddock.rows.isEmpty
             )
         }
+        .sheet(item: $linkedTask) { task in
+            AddEditWorkTaskView(existingTask: task)
+        }
+        .confirmationDialog(
+            "This pruning entry has a linked Work Task. What should happen to the task?",
+            isPresented: Binding(
+                get: { entryPendingReversal != nil },
+                set: { if !$0 { entryPendingReversal = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Keep Work Task") {
+                if let entry = entryPendingReversal { pruningStore.deleteEntry(id: entry.id) }
+                entryPendingReversal = nil
+            }
+            if canDeleteLinkedTask {
+                Button("Delete Work Task", role: .destructive) {
+                    if let entry = entryPendingReversal {
+                        if let taskId = entry.workTaskId {
+                            store.deleteWorkTask(taskId)
+                        }
+                        pruningStore.deleteEntry(id: entry.id)
+                    }
+                    entryPendingReversal = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { entryPendingReversal = nil }
+        } message: {
+            Text("Reversing the entry always reopens its row quarters. The linked Work Task can be kept for your labour records or deleted with it.")
+        }
+    }
+
+    /// Deleting the linked task follows the normal Work Task permission rules.
+    private var canDeleteLinkedTask: Bool {
+        guard let entry = entryPendingReversal, let taskId = entry.workTaskId else { return false }
+        guard store.workTasks.contains(where: { $0.id == taskId }) else { return false }
+        return accessControl?.canDelete ?? false
     }
 
     // MARK: Setup prompt
@@ -472,11 +513,12 @@ struct PruningBlockDetailView: View {
             Button {
                 showEntrySheet = true
             } label: {
-                Text("Complete Today")
+                Text("Record Pruning")
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 4)
             }
             .buttonStyle(.borderedProminent)
+            .accessibilityLabel("Record pruning for the selected quarters")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -509,17 +551,39 @@ struct PruningBlockDetailView: View {
                                     .foregroundStyle(.secondary)
                                     .italic()
                             }
+                            if let taskId = entry.workTaskId {
+                                Button {
+                                    if let task = store.workTasks.first(where: { $0.id == taskId }) {
+                                        linkedTask = task
+                                    }
+                                } label: {
+                                    Label(
+                                        store.workTasks.contains(where: { $0.id == taskId }) ? "Work Task" : "Work Task (removed)",
+                                        systemImage: "link"
+                                    )
+                                    .font(.caption2.weight(.semibold))
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.mini)
+                                .disabled(!store.workTasks.contains(where: { $0.id == taskId }))
+                                .accessibilityLabel("Open the linked Work Task")
+                            }
                         }
                         Spacer()
                         Text("\(entry.rowEquivalents.formatted(.number.precision(.fractionLength(0...2)))) rows")
                             .font(.caption.weight(.bold))
                             .monospacedDigit()
                         Button(role: .destructive) {
-                            pruningStore.deleteEntry(id: entry.id)
+                            if entry.workTaskId != nil {
+                                entryPendingReversal = entry
+                            } else {
+                                pruningStore.deleteEntry(id: entry.id)
+                            }
                         } label: {
                             Image(systemName: "trash")
                                 .font(.caption)
                         }
+                        .accessibilityLabel("Reverse this pruning entry")
                     }
                     .padding(.vertical, 4)
                     if entry.id != entries.last?.id {
@@ -550,6 +614,8 @@ struct PruningBlockDetailView: View {
 
 private struct PruningEntrySheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(MigratedDataStore.self) private var dataStore
+    @Environment(NewBackendAuthService.self) private var auth
     let paddock: Paddock
     let pruningStore: PruningStore
     let vineyardId: UUID
@@ -567,6 +633,16 @@ private struct PruningEntrySheet: View {
     @State private var finishTime: Date = Date()
     @State private var method: PruningMethod = .spur
     @State private var notes: String = ""
+    @State private var createWorkTask: Bool = false
+    @State private var workTaskType: String = "Pruning"
+
+    private var taskTypeOptions: [String] {
+        WorkTaskTypeCatalog.merged(with: dataStore.workTaskTypes)
+    }
+
+    private var recordButtonTitle: String {
+        segments.count == 1 ? "Record 1 quarter" : "Record \(segments.count) quarters"
+    }
 
     var body: some View {
         NavigationStack {
@@ -601,17 +677,37 @@ private struct PruningEntrySheet: View {
                     TextField("Optional notes", text: $notes, axis: .vertical)
                         .lineLimit(2...4)
                 }
+
+                Section {
+                    Toggle("Create a Work Task for this pruning work", isOn: $createWorkTask)
+                    if createWorkTask {
+                        Picker("Work type", selection: $workTaskType) {
+                            ForEach(taskTypeOptions, id: \.self) { option in
+                                Text(option).tag(option)
+                            }
+                        }
+                        LabeledContent("Title", value: "Pruning \u{2014} \(paddock.name)")
+                        LabeledContent("Status", value: "Completed")
+                    }
+                } header: {
+                    Text("Work Task")
+                } footer: {
+                    if createWorkTask {
+                        Text("The Work Task reuses this record's date, block, crew, labour hours, times and notes \u{2014} nothing is entered twice. It is created as completed and appears in the Work Tasks tool.")
+                    }
+                }
             }
-            .navigationTitle("Complete Today")
+            .navigationTitle("Record Pruning \u{2014} \(paddock.name)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }
+                    Button(recordButtonTitle) { save() }
                         .fontWeight(.semibold)
                         .disabled(segments.isEmpty)
+                        .accessibilityLabel("Record pruning")
                 }
             }
             .onAppear {
@@ -619,6 +715,72 @@ private struct PruningEntrySheet: View {
                 worker = defaultWorker
             }
         }
+    }
+
+    /// Distinct selected row numbers grouped into compact ranges, e.g. "44\u{2013}46, 50".
+    private var rowRangeSummary: String {
+        let numbers = Set(segments.map(\.row)).sorted()
+        guard let first = numbers.first else { return "\u{2014}" }
+        var parts: [String] = []
+        var start = first
+        var previous = first
+        for number in numbers.dropFirst() {
+            if number == previous + 1 {
+                previous = number
+                continue
+            }
+            parts.append(start == previous ? "\(start)" : "\(start)\u{2013}\(previous)")
+            start = number
+            previous = number
+        }
+        parts.append(start == previous ? "\(start)" : "\(start)\u{2013}\(previous)")
+        return parts.joined(separator: ", ")
+    }
+
+    /// Work Task notes composed from the pruning record so nothing is entered twice.
+    private var composedTaskNotes: String {
+        let rowEq = (Double(segments.count) / 4.0).formatted(.number.precision(.fractionLength(0...2)))
+        let vines = PruningCalculator.vines(for: segments, rows: rows)
+        var summary = "Source: Pruning Tracker \u{2014} Rows \(rowRangeSummary) \u{00B7} \(segments.count) quarters \u{00B7} \(rowEq) row equivalents \u{00B7} ~\(vines.formatted()) vines \u{00B7} \(method.label)"
+        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            summary += "\n" + trimmed
+        }
+        return summary
+    }
+
+    /// Creates the linked, completed Work Task through the existing shared
+    /// work-task store + sync (client-generated id \u{2014} the pruning entry keeps
+    /// this id, so retries and offline replays can never create a duplicate).
+    private func createLinkedWorkTask() -> UUID {
+        let hours = Double(labourHoursText.replacingOccurrences(of: ",", with: ".")) ?? 0
+        let userName = auth.userName ?? ""
+        var task = WorkTask(
+            vineyardId: vineyardId,
+            date: date,
+            taskType: workTaskType,
+            paddockId: paddock.id,
+            paddockName: paddock.name,
+            durationHours: hours,
+            notes: composedTaskNotes,
+            createdBy: userName.isEmpty ? nil : userName,
+            isFinalized: true,
+            finalizedAt: Date(),
+            finalizedBy: userName.isEmpty ? nil : userName,
+            taskDescription: "Pruning \u{2014} \(paddock.name)",
+            status: "Completed"
+        )
+        if paddock.areaHectares > 0 {
+            task.areaHa = paddock.areaHectares
+        }
+        dataStore.addWorkTask(task)
+        dataStore.addWorkTaskPaddock(WorkTaskPaddock(
+            workTaskId: task.id,
+            vineyardId: vineyardId,
+            paddockId: paddock.id,
+            areaHa: paddock.areaHectares > 0 ? paddock.areaHectares : nil
+        ))
+        return task.id
     }
 
     private func save() {
@@ -631,6 +793,10 @@ private struct PruningEntrySheet: View {
             season = PruningBlockSetup(vineyardId: vineyardId, paddockId: paddock.id)
             pruningStore.upsertSetup(season)
         }
+        // The Work Task is created first with a client-generated id; the entry
+        // stores that id, so both records stay linked through offline replay
+        // and a retry can never create a second task for the same entry.
+        let linkedTaskId: UUID? = createWorkTask ? createLinkedWorkTask() : nil
         let entry = PruningEntry(
             vineyardId: vineyardId,
             paddockId: paddock.id,
@@ -643,7 +809,8 @@ private struct PruningEntrySheet: View {
             finishTime: includeTimes ? finishTime : nil,
             method: method,
             notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
-            estimatedVines: PruningCalculator.vines(for: segments, rows: rows)
+            estimatedVines: PruningCalculator.vines(for: segments, rows: rows),
+            workTaskId: linkedTaskId
         )
         pruningStore.addEntry(entry)
         onSaved()

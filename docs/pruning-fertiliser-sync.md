@@ -8,7 +8,7 @@ contract below; the Lovable portal can consume the same tables later.
 | Table | Writes | Notes |
 | --- | --- | --- |
 | `pruning_seasons` | client upsert on `id` + `soft_delete_pruning_season` RPC | One row per vineyard + paddock + season year (unique partial index on live rows). Season ids are **deterministic**: `UUIDv3(md5, "vinetrack-pruning-season|<vineyardId>|<paddockId>|<year>")` — Kotlin `UUID.nameUUIDFromBytes`, replicated byte-for-byte on iOS (`PruningSeasonId.make`). Two devices configuring the same block converge on the same row. |
-| `pruning_entries` | `record_pruning_entry` / `delete_pruning_entry` RPCs only (no direct client writes) | One row per "Complete Today". Carries crew, labour hours, times, method, notes and the server-attributed `row_equivalents_completed` / `estimated_vines_completed`. |
+| `pruning_entries` | `record_pruning_entry` / `delete_pruning_entry` RPCs only (no direct client writes) | One row per "Record Pruning" submission. Carries crew, labour hours, times, method, notes, the server-attributed `row_equivalents_completed` / `estimated_vines_completed`, and the optional `work_task_id` link (sql/113). |
 | `pruning_row_segments` | RPCs only | Four fixed quarters per row; `UNIQUE(pruning_season_id, row_number, segment_number)`. **Single source of truth for completed work.** |
 | `fertiliser_products` | client upsert on `id` + `soft_delete_fertiliser_product` RPC | `analysis_basis` = `elemental` \| `oxide` stored explicitly. |
 | `fertiliser_records` | client upsert on `id` + `soft_delete_fertiliser_record` RPC | `record_status` = draft / planned / completed / cancelled; `calculation_mode` = perHectare / perVine / nutrientTarget / fertigation. |
@@ -68,6 +68,58 @@ labour/machinery. Multi-block allocations are weighted by area (per-hectare) or 
   vineyard change; pending rows count toward `AppUiState.pendingSyncCount`.
 - Both: client-generated UUIDs; local caches survive offline restarts; server state survives logout /
   reinstall / device changes.
+
+## Record Pruning + Work Task link (sql/113)
+
+Wording contract (all platforms): the action is **"Record Pruning"** — never "Complete Today" —
+because the date field determines when the work occurred. Dialog title: `Record Pruning — <Block>`.
+Submit button: `Record N quarters` (disabled when nothing is selected).
+
+- `pruning_entries.work_task_id` — nullable uuid, **one Work Task per entry at most**. Logical
+  reference (no FK), matching the pruning tables' `paddock_id` convention: the task is created
+  client-side with a client-generated UUID and pushed through the existing work-task queue, so the
+  pruning RPC may replay before the `work_tasks` row exists remotely. Stable ids keep the link
+  consistent regardless of replay order.
+- `record_pruning_entry` gained `p_work_task_id uuid default null` (old 15-arg signature dropped —
+  PostgREST ambiguity). On replay the link only back-fills an EMPTY `work_task_id`; it can never
+  overwrite an existing different link, so retries create at most one linked task.
+- `set_pruning_entry_work_task(p_entry_id, p_work_task_id)` — the explicit link / unlink / replace
+  action (clients cannot write `pruning_entries` directly). Validates the task belongs to the same
+  vineyard.
+- **Create Work Task flow (mobile, mirrored on both platforms):** "Create a Work Task for this
+  pruning work" toggle, default OFF. When ON, only the work type is asked (default `Pruning`,
+  existing task-type catalog); everything else is reused from the pruning form — date, block,
+  crew, labour hours, times, notes. Task is created as **Completed** (`isFinalized`,
+  `status = "Completed"`), with notes
+  `Source: Pruning Tracker — Rows 44–46 · 6 quarters · 1.5 row equivalents · ~375 vines · <method>`
+  plus the user's notes, a `work_task_paddocks` join row, and `area_ha` from the block (iOS).
+  One task per submission — never per row or per quarter.
+- **Atomicity:** both records are local-first writes; each syncs through its own idempotent queue
+  with the SAME client ids, so offline replay preserves the relationship and can never duplicate.
+- **Reversal:** deleting an entry with a linked task prompts — Keep Work Task / Delete Work Task
+  (existing work-task delete permissions) / Cancel. `delete_pruning_entry` itself never touches the
+  task. Editing a Work Task never rewrites the pruning entry — the pruning record stays the source
+  of truth for row completion.
+
+### Portal parity spec (implement in Lovable)
+
+- Same wording contract as above; the recording dialog must contain exactly: Date, Worker or crew,
+  Labour hours, optional Start/Finish time, Pruning method, Notes, selected rows + quarters,
+  Create Work Task toggle (default off, conditional fields only).
+- Quarter tiles ≥ 44×44 px, full cell width, whole tile clickable, states: grey = remaining,
+  blue = selected, green = completed (locked); keep Q1–Q4 headings; hover/focus/keyboard states.
+- Work Task creation must call the existing work-task insert with a client-generated UUID and pass
+  it as `p_work_task_id` to `record_pruning_entry` (or use `set_pruning_entry_work_task` on retry).
+  If the task insert fails after pruning succeeded: keep the pruning record, show
+  "Pruning was recorded, but the Work Task could not be created", and retry with the SAME task id.
+- **Range parser (reference behaviour, must match the pickers on mobile):** input like
+  `1-10, 15, 20-22` selects every ACTUAL configured row whose row number falls inclusively in a
+  range — never synthesised rows. Trim whitespace; accept descending input (`46-44` ≡ `44-46`);
+  de-duplicate; ignore numbers not present in the configured rows; malformed tokens produce a
+  validation message, never a silent single-row selection; apply to incomplete quarters only.
+  Test cases: single row `44` → {44}; `44-46` over rows 42–46 → {44,45,46}; `46-44` → same;
+  `2-5` over rows 1,2,3,5,6 → {2,3,5} (no invented 4); `1-10, 15, 20-22` multi-token;
+  duplicates `44,44-45` → {44,45}; `44-abc` → validation error; `999` (absent) → empty + notice.
 
 ## Phase 2 remainder (deliberately sequenced after sync is verified)
 

@@ -149,6 +149,7 @@ nonisolated struct BackendPruningEntry: Codable, Sendable, Identifiable {
     let notes: String?
     let rowEquivalentsCompleted: Double?
     let estimatedVinesCompleted: Int?
+    let workTaskId: UUID?
     let createdAt: Date?
     let updatedAt: Date?
     let deletedAt: Date?
@@ -168,6 +169,7 @@ nonisolated struct BackendPruningEntry: Codable, Sendable, Identifiable {
         case notes
         case rowEquivalentsCompleted = "row_equivalents_completed"
         case estimatedVinesCompleted = "estimated_vines_completed"
+        case workTaskId = "work_task_id"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
@@ -190,6 +192,7 @@ nonisolated struct BackendPruningEntry: Codable, Sendable, Identifiable {
             method: PruningMethod(rawValue: pruningMethod ?? "") ?? .spur,
             notes: notes ?? "",
             estimatedVines: estimatedVinesCompleted ?? 0,
+            workTaskId: workTaskId,
             createdAt: createdAt ?? Date()
         )
     }
@@ -228,6 +231,9 @@ nonisolated struct RecordPruningEntryParams: Encodable, Sendable {
     let estimatedVines: Int
     let clientUpdatedAt: Date
     let segments: [Segment]
+    /// Optional Work Task link (sql/113). Encoded only when set, so the RPC
+    /// stays compatible with servers that pre-date the migration.
+    let workTaskId: UUID?
 
     enum CodingKeys: String, CodingKey {
         case id = "p_id"
@@ -245,6 +251,7 @@ nonisolated struct RecordPruningEntryParams: Encodable, Sendable {
         case estimatedVines = "p_estimated_vines"
         case clientUpdatedAt = "p_client_updated_at"
         case segments = "p_segments"
+        case workTaskId = "p_work_task_id"
     }
 
     init(from entry: PruningEntry, clientUpdatedAt: Date) {
@@ -262,6 +269,7 @@ nonisolated struct RecordPruningEntryParams: Encodable, Sendable {
         self.notes = entry.notes
         self.estimatedVines = entry.estimatedVines
         self.clientUpdatedAt = clientUpdatedAt
+        self.workTaskId = entry.workTaskId
         self.segments = entry.segments.map {
             Segment(row: $0.row, segment: $0.quarter, rowId: $0.rowId, label: "\($0.row)")
         }

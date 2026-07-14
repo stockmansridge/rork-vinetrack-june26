@@ -5614,6 +5614,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *
      * Work-task update / finalize / delete remain online-only in J-1, and the
      * labour/machine line writes are parked for J-4/J-5.
+     *
+     * Returns the minted task id so callers (e.g. the Pruning Tracker) can link
+     * other records to it with the same client-generated id — retries and
+     * offline replays then can never create a duplicate. [markCompleted]
+     * creates the task already finalized (work that has already occurred, such
+     * as a recorded pruning day).
      */
     fun createWorkTask(
         taskType: String,
@@ -5621,9 +5627,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         date: String,
         durationHours: Double,
         notes: String?,
+        markCompleted: Boolean = false,
         onResult: (Boolean) -> Unit,
-    ) {
-        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+    ): String? {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return null }
         val id = workTaskRepo.newId()
         val clientUpdatedAt = Instant.now().toString()
         val blocks = selectedBlocks(paddockIds)
@@ -5640,19 +5647,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             taskType = trimmedType,
             durationHours = durationHours,
             notes = trimmedNotes,
-            isFinalized = false,
+            isFinalized = markCompleted,
+            finalizedAt = if (markCompleted) clientUpdatedAt else null,
+            finalizedBy = if (markCompleted) session.userId else null,
         )
         // Optimistic insert at the top — the operator sees the task straight away.
         _ui.update { it.copy(workTasks = listOf(optimistic) + it.workTasks, workTaskError = null) }
 
         // Known-offline: queue the create marker without touching the network.
         if (!_ui.value.isOnline) {
-            workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt)
+            workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt, isFinalized = markCompleted)
             // Join rows queue too — gated behind the header create until it syncs.
             reconcileWorkTaskPaddocks(id, vineyardId, paddockIds)
             _ui.update { it.copy(workTaskError = "Work task saved offline — will sync when connection is available.") }
             onResult(true)
-            return
+            return id
         }
 
         viewModelScope.launch {
@@ -5669,9 +5678,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     id = id,
                     clientUpdatedAt = clientUpdatedAt,
                 )
-                _ui.update { st -> st.copy(workTasks = st.workTasks.map { if (it.id == id) created else it }, workTaskBusy = false) }
+                // Preserve the completed flag on the reconciled row (the create
+                // endpoint inserts un-finalized; the finalize lands right after).
+                _ui.update { st ->
+                    st.copy(
+                        workTasks = st.workTasks.map {
+                            if (it.id == id) {
+                                if (markCompleted) created.copy(isFinalized = true, finalizedAt = clientUpdatedAt, finalizedBy = session.userId) else created
+                            } else {
+                                it
+                            }
+                        },
+                        workTaskBusy = false,
+                    )
+                }
                 // Header now exists server-side — write the join rows online.
                 reconcileWorkTaskPaddocks(id, vineyardId, paddockIds)
+                // Work created from the Pruning Tracker has already occurred —
+                // finalize it now that the header exists server-side.
+                if (markCompleted) {
+                    setWorkTaskComplete(id, true)
+                }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 _ui.update { it.copy(workTaskBusy = false) }
@@ -5684,13 +5711,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 // Transient network failure — keep the optimistic row and queue a
                 // create marker for automatic replay rather than rolling back.
-                workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt)
+                workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt, isFinalized = markCompleted)
                 // Join rows queue behind the now-pending header create.
                 reconcileWorkTaskPaddocks(id, vineyardId, paddockIds)
                 _ui.update { it.copy(workTaskBusy = false, workTaskError = "Work task saved offline — will sync when connection is available.") }
                 onResult(true)
             }
         }
+        return id
     }
 
     /** Resolve a selection of paddock ids to their loaded [Paddock]s, order preserved. */
