@@ -1,6 +1,5 @@
 package com.rork.vinetrack.data
 
-import com.rork.vinetrack.data.model.FertiliserProduct
 import com.rork.vinetrack.data.model.FertiliserRecord
 import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
@@ -16,9 +15,12 @@ import java.time.LocalDate
  * Offline-first coordinator for the Fertiliser Calculator (System Admin only
  * while in development). Mirrors iOS `FertiliserSyncService`: local-first
  * writes into [FertiliserStore] plus queued replays into the shared
- * `fertiliser_products` / `fertiliser_records` / `fertiliser_record_allocations`
- * tables; [refresh] pulls and reconciles, keeping records with unresolved
- * queued writes untouched until their push lands.
+ * `fertiliser_records` / `fertiliser_record_allocations` tables; [refresh]
+ * pulls and reconciles, keeping records with unresolved queued writes
+ * untouched until their push lands.
+ *
+ * The product library is the shared saved chemical database (`saved_chemicals`,
+ * sql/111) — products sync through [SavedChemicalRepository], never here.
  */
 class FertiliserSyncCoordinator(
     private val store: FertiliserStore,
@@ -32,36 +34,9 @@ class FertiliserSyncCoordinator(
 
     // MARK: Cached reads
 
-    fun products(vineyardId: String): List<FertiliserProduct> = store.loadProducts(vineyardId)
-
     fun records(vineyardId: String): List<FertiliserRecord> = store.loadRecords(vineyardId)
 
     // MARK: Local-first writes
-
-    fun upsertProduct(vineyardId: String, product: FertiliserProduct): List<FertiliserProduct> {
-        val updated = store.upsertProduct(vineyardId, product)
-        enqueueCoalesced(
-            entityType = PendingEntityType.FERTILISER_PRODUCT,
-            opType = PendingOpType.UPDATE,
-            payloadJson = json.encodeToString(FertiliserProduct.serializer(), product),
-            clientId = product.id,
-        )
-        scope.launch { replayAll() }
-        return updated
-    }
-
-    fun deleteProduct(vineyardId: String, productId: String): List<FertiliserProduct> {
-        val updated = store.deleteProduct(vineyardId, productId)
-        removeUnresolved(PendingEntityType.FERTILISER_PRODUCT, PendingOpType.UPDATE, productId)
-        enqueueCoalesced(
-            entityType = PendingEntityType.FERTILISER_PRODUCT,
-            opType = PendingOpType.DELETE,
-            payloadJson = productId,
-            clientId = productId,
-        )
-        scope.launch { replayAll() }
-        return updated
-    }
 
     fun addRecord(vineyardId: String, record: FertiliserRecord): List<FertiliserRecord> {
         val updated = store.addRecord(vineyardId, record)
@@ -92,21 +67,13 @@ class FertiliserSyncCoordinator(
 
     // MARK: Replay
 
-    /** Products push before records so product foreign keys always resolve. */
     suspend fun replayAll() {
         if (!canSync()) return
         if (!replayLock.tryLock()) return
         try {
-            replayPass(PendingEntityType.FERTILISER_PRODUCT, PendingOpType.UPDATE) { write ->
-                val product = json.decodeFromString(FertiliserProduct.serializer(), write.payloadJson)
-                repo.upsertProduct(product)
-            }
             replayPass(PendingEntityType.FERTILISER_RECORD, PendingOpType.UPDATE) { write ->
                 val record = json.decodeFromString(FertiliserRecord.serializer(), write.payloadJson)
                 repo.upsertRecord(record)
-            }
-            replayPass(PendingEntityType.FERTILISER_PRODUCT, PendingOpType.DELETE) { write ->
-                repo.softDeleteProduct(write.clientId)
             }
             replayPass(PendingEntityType.FERTILISER_RECORD, PendingOpType.DELETE) { write ->
                 repo.softDeleteRecord(write.clientId)
@@ -118,40 +85,18 @@ class FertiliserSyncCoordinator(
 
     // MARK: Refresh (pull + reconcile)
 
-    suspend fun refresh(vineyardId: String): Pair<List<FertiliserProduct>, List<FertiliserRecord>> {
-        if (!canSync()) return store.loadProducts(vineyardId) to store.loadRecords(vineyardId)
+    suspend fun refresh(vineyardId: String): List<FertiliserRecord> {
+        if (!canSync()) return store.loadRecords(vineyardId)
         replayAll()
         return try {
             val unresolved = pending.list().filter { it.status in PendingWriteStatus.unresolved }
-            val pendingProductIds = unresolved
-                .filter { it.entityType == PendingEntityType.FERTILISER_PRODUCT }
-                .map { it.clientId }.toSet()
             val pendingRecordIds = unresolved
                 .filter { it.entityType == PendingEntityType.FERTILISER_RECORD }
                 .map { it.clientId }.toSet()
 
-            val remoteProducts = repo.fetchProducts(vineyardId)
             val remoteRecords = repo.fetchRecords(vineyardId)
             val remoteAllocations = repo.fetchAllocations(vineyardId)
             val allocationsByRecord = remoteAllocations.groupBy { it.fertiliserRecordId }
-
-            val localProducts = store.loadProducts(vineyardId)
-            val remoteProductIds = remoteProducts.map { it.id }.toSet()
-            val mergedProducts = remoteProducts
-                .filter { it.deletedAt == null && it.id !in pendingProductIds }
-                .map { it.toModel() } +
-                localProducts.filter { it.id in pendingProductIds }
-            localProducts
-                .filter { it.id !in remoteProductIds && it.id !in pendingProductIds }
-                .forEach { product ->
-                    enqueueCoalesced(
-                        entityType = PendingEntityType.FERTILISER_PRODUCT,
-                        opType = PendingOpType.UPDATE,
-                        payloadJson = json.encodeToString(FertiliserProduct.serializer(), product),
-                        clientId = product.id,
-                    )
-                }
-            store.saveProducts(vineyardId, mergedProducts)
 
             val localRecords = store.loadRecords(vineyardId)
             val remoteRecordIds = remoteRecords.map { it.id }.toSet()
@@ -164,9 +109,9 @@ class FertiliserSyncCoordinator(
                 .forEach { enqueueRecordUpsert(it) }
             store.saveRecords(vineyardId, mergedRecords)
 
-            mergedProducts to mergedRecords
+            mergedRecords
         } catch (_: Exception) {
-            store.loadProducts(vineyardId) to store.loadRecords(vineyardId)
+            store.loadRecords(vineyardId)
         }
     }
 

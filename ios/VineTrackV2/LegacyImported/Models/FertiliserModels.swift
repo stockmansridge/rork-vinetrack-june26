@@ -13,37 +13,65 @@ nonisolated enum FertiliserForm: String, Codable, CaseIterable, Identifiable, Se
     var perVineUnit: String { self == .solid ? "g" : "mL" }
 }
 
-/// Product category — the library is not just synthetic granular fertilisers.
-nonisolated enum FertiliserCategory: String, Codable, CaseIterable, Identifiable, Sendable {
+/// Unified saved-product category (`saved_chemicals.product_category`, sql/111).
+/// The shared library covers spray chemicals AND fertiliser/nutrient products.
+/// Raw keys are stable and shared across iOS, Android and the portal.
+/// "" (no case) = uncategorised — every legacy spray chemical.
+nonisolated enum ProductCategory: String, Codable, CaseIterable, Identifiable, Sendable {
+    case fungicide
+    case insecticide
+    case herbicide
+    case adjuvant
+    case growthRegulator
+    case foliarNutrient
+    case granularFertiliser
+    case liquidFertiliser
+    case fertigation
     case compost
     case manure
     case biofertiliser
     case compostTea
     case seaweed
     case fishHydrolysate
-    case humic
-    case pelletised
-    case foliar
-    case conventional
+    case humicFulvic
+    case soilAmendment
     case other
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
+        case .fungicide: return "Fungicide"
+        case .insecticide: return "Insecticide"
+        case .herbicide: return "Herbicide"
+        case .adjuvant: return "Adjuvant"
+        case .growthRegulator: return "Growth regulator"
+        case .foliarNutrient: return "Foliar nutrient"
+        case .granularFertiliser: return "Granular fertiliser"
+        case .liquidFertiliser: return "Liquid fertiliser"
+        case .fertigation: return "Fertigation product"
         case .compost: return "Compost"
         case .manure: return "Manure"
         case .biofertiliser: return "Biofertiliser"
         case .compostTea: return "Compost tea"
         case .seaweed: return "Seaweed"
         case .fishHydrolysate: return "Fish hydrolysate"
-        case .humic: return "Humic products"
-        case .pelletised: return "Pelletised fertiliser"
-        case .foliar: return "Foliar nutrition"
-        case .conventional: return "Conventional fertiliser"
-        case .other: return "Other amendments"
+        case .humicFulvic: return "Humic / fulvic product"
+        case .soilAmendment: return "Soil amendment"
+        case .other: return "Other"
         }
     }
+
+    /// Categories the Fertiliser Calculator shows by default.
+    static let fertiliserCategories: [ProductCategory] = [
+        .foliarNutrient, .granularFertiliser, .liquidFertiliser, .fertigation,
+        .compost, .manure, .biofertiliser, .compostTea, .seaweed,
+        .fishHydrolysate, .humicFulvic, .soilAmendment,
+    ]
+
+    /// True when this category is fertiliser / nutrient related, which makes
+    /// the pack, N-P-K and inventory fields relevant in the product editor.
+    var isFertiliser: Bool { Self.fertiliserCategories.contains(self) }
 }
 
 /// Whether the stored P/K analysis uses elemental values or oxide (P₂O₅ / K₂O)
@@ -57,67 +85,33 @@ nonisolated enum FertiliserAnalysisBasis: String, Codable, CaseIterable, Identif
     var label: String { self == .elemental ? "Elemental (P, K)" : "Oxide (P₂O₅, K₂O)" }
 }
 
-/// A saved fertiliser product, mirroring the chemical library pattern.
-nonisolated struct FertiliserProduct: Codable, Identifiable, Sendable, Hashable {
-    let id: UUID
-    var vineyardId: UUID
-    var name: String
-    var manufacturer: String
-    var form: FertiliserForm
-    var category: FertiliserCategory
-    /// Pack size in kg (solid) or L (liquid).
-    var packSize: Double
-    var pricePerPack: Double?
-    /// kg per litre, for liquid products where relevant.
-    var density: Double?
-    var nitrogenPercent: Double?
-    var phosphorusPercent: Double?
-    var potassiumPercent: Double?
-    var analysisBasis: FertiliserAnalysisBasis
-    var organicCertified: Bool
-    var applicationNotes: String
-    /// Stock on hand, in packs.
-    var inventoryPacks: Double?
+// MARK: - SavedChemical fertiliser helpers
 
-    init(
-        id: UUID = UUID(),
-        vineyardId: UUID,
-        name: String = "",
-        manufacturer: String = "",
-        form: FertiliserForm = .solid,
-        category: FertiliserCategory = .conventional,
-        packSize: Double = 25,
-        pricePerPack: Double? = nil,
-        density: Double? = nil,
-        nitrogenPercent: Double? = nil,
-        phosphorusPercent: Double? = nil,
-        potassiumPercent: Double? = nil,
-        analysisBasis: FertiliserAnalysisBasis = .elemental,
-        organicCertified: Bool = false,
-        applicationNotes: String = "",
-        inventoryPacks: Double? = nil
-    ) {
-        self.id = id
-        self.vineyardId = vineyardId
-        self.name = name
-        self.manufacturer = manufacturer
-        self.form = form
-        self.category = category
-        self.packSize = packSize
-        self.pricePerPack = pricePerPack
-        self.density = density
-        self.nitrogenPercent = nitrogenPercent
-        self.phosphorusPercent = phosphorusPercent
-        self.potassiumPercent = potassiumPercent
-        self.analysisBasis = analysisBasis
-        self.organicCertified = organicCertified
-        self.applicationNotes = applicationNotes
-        self.inventoryPacks = inventoryPacks
+/// The Fertiliser Calculator reads products from the shared saved chemical
+/// library (`saved_chemicals`, sql/111) — these helpers derive the
+/// fertiliser-specific view of a saved product.
+extension SavedChemical {
+    /// Parsed unified category; nil when uncategorised.
+    var category: ProductCategory? {
+        productCategory.isEmpty ? nil : ProductCategory(rawValue: productCategory)
+    }
+
+    /// True when the product belongs to a fertiliser/nutrient category.
+    var isFertiliserProduct: Bool { category?.isFertiliser ?? false }
+
+    /// Solid/liquid form for fertiliser maths — explicit `productForm` first,
+    /// falling back to the spray unit (Litres/mL = liquid).
+    var fertiliserForm: FertiliserForm {
+        switch productForm {
+        case "liquid": return .liquid
+        case "solid": return .solid
+        default: return (unit == .litres || unit == .millilitres) ? .liquid : .solid
+        }
     }
 
     /// Cost per base unit (kg or L), derived from the pack price.
-    var costPerUnit: Double? {
-        guard let pricePerPack, packSize > 0 else { return nil }
+    var costPerPackUnit: Double? {
+        guard let pricePerPack, let packSize, packSize > 0 else { return nil }
         return pricePerPack / packSize
     }
 
@@ -187,7 +181,9 @@ nonisolated struct FertiliserAllocation: Codable, Identifiable, Sendable, Hashab
 }
 
 /// A saved calculation — either a planned work task or a completed
-/// fertiliser application record.
+/// fertiliser application record. `productId` references the shared saved
+/// chemical/product library (`saved_chemicals.id`); `productName`, `form` and
+/// `packSize` are historical snapshots taken at calculation time.
 nonisolated struct FertiliserRecord: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
     var vineyardId: UUID

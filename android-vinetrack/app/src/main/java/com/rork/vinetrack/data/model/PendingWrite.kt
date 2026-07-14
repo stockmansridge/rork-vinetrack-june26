@@ -276,16 +276,12 @@ object PendingEntityType {
      */
     const val PRUNING_ENTRY = "pruning_entry"
     /**
-     * A fertiliser product-library upsert queued offline. Backs
-     * `fertiliser_products` — UPDATE (merge-duplicates upsert keyed by the
-     * product id, coalesced one-per product) and DELETE (soft-delete RPC).
-     */
-    const val FERTILISER_PRODUCT = "fertiliser_product"
-    /**
      * A fertiliser calculation/application record upsert queued offline.
      * Backs `fertiliser_records` + `fertiliser_record_allocations` — UPDATE
      * (record upsert followed by its per-block allocation upserts, coalesced
-     * one-per record) and DELETE (soft-delete RPC).
+     * one-per record) and DELETE (soft-delete RPC). The product library is
+     * the shared `saved_chemicals` table (sql/111) and is never queued here —
+     * the former "fertiliser_product" discriminator is retired.
      */
     const val FERTILISER_RECORD = "fertiliser_record"
 }

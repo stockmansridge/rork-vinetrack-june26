@@ -105,8 +105,19 @@ struct ChemicalDetailRow: View {
                     .font(.body.weight(.medium))
                     .foregroundStyle(.primary)
 
-                if !chemical.chemicalGroup.isEmpty || !chemical.problem.isEmpty {
+                if chemical.category != nil || !chemical.chemicalGroup.isEmpty || !chemical.problem.isEmpty {
                     HStack(spacing: 6) {
+                        if let category = chemical.category {
+                            Text(category.label)
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(
+                                    (category.isFertiliser ? VineyardTheme.leafGreen : VineyardTheme.info).opacity(0.12)
+                                )
+                                .foregroundStyle(category.isFertiliser ? VineyardTheme.leafGreen : VineyardTheme.info)
+                                .clipShape(Capsule())
+                        }
                         if !chemical.chemicalGroup.isEmpty {
                             Text(chemical.chemicalGroup)
                                 .font(.caption2.weight(.semibold))

@@ -1392,6 +1392,29 @@ data class SavedChemical(
     @SerialName("mode_of_action") val modeOfAction: String = "",
     val rates: List<ChemicalRate> = emptyList(),
     val purchase: ChemicalPurchase? = null,
+    // Unified product-library fields (sql/111). Fertilisers and nutrient
+    // products are saved products in the same library; these stay null/blank
+    // for ordinary spray chemicals.
+    @SerialName("product_category") val productCategory: String = "",
+    /** "solid" | "liquid" | "" (unspecified — derived from [unit] when empty). */
+    @SerialName("product_form") val productForm: String = "",
+    /** Pack size in kg (solid) or L (liquid). */
+    @SerialName("pack_size") val packSize: Double? = null,
+    @SerialName("pack_unit") val packUnit: String = "",
+    @SerialName("price_per_pack") val pricePerPack: Double? = null,
+    /** kg per litre, for liquid products where relevant. */
+    val density: Double? = null,
+    @SerialName("nitrogen_percent") val nitrogenPercent: Double? = null,
+    @SerialName("phosphorus_percent") val phosphorusPercent: Double? = null,
+    @SerialName("potassium_percent") val potassiumPercent: Double? = null,
+    /** "elemental" or "oxide" (P₂O₅ / K₂O label values). */
+    @SerialName("analysis_basis") val analysisBasis: String = "elemental",
+    @SerialName("organic_certified") val organicCertified: Boolean = false,
+    /** Stock on hand (in [inventoryUnit], typically packs). */
+    @SerialName("inventory_quantity") val inventoryQuantity: Double? = null,
+    @SerialName("inventory_unit") val inventoryUnit: String = "",
+    @SerialName("application_notes") val applicationNotes: String = "",
+    @SerialName("is_active") val isActive: Boolean = true,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     val displayName: String get() = name.trim().takeIf { it.isNotBlank() } ?: "Chemical"

@@ -387,7 +387,7 @@ private fun ToolHost(
         ToolRoute.CostReports -> CostReportsScreen(vm, state, modifier, onBack, onOpenTool = onOpenTool)
         ToolRoute.Maintenance -> MaintenanceScreen(vm, state, modifier, onBack)
         ToolRoute.FuelLog -> FuelLogScreen(vm, state, modifier, onBack)
-        ToolRoute.FertiliserCalculator -> FertiliserCalculatorScreen(vm, state, modifier, onBack)
+        ToolRoute.FertiliserCalculator -> FertiliserCalculatorScreen(vm, state, modifier, onBack, onOpenProducts = { onOpenTool(ToolRoute.SprayManagement) })
         ToolRoute.PruningTracker -> PruningTrackerScreen(vm, state, modifier, onBack)
         ToolRoute.Equipment -> EquipmentScreen(vm, state, modifier, onBack, onOpenFuelLog = { onOpenTool(ToolRoute.FuelLog) })
         ToolRoute.TeamAccess -> TeamAccessScreen(vm, state, modifier, onBack = onBack, onOpenTool = onOpenTool)

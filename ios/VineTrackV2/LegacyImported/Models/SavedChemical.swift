@@ -108,6 +108,33 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
     var productURL: String
     var modeOfAction: String
 
+    // MARK: Unified product library fields (sql/111)
+    // Fertilisers and nutrient products are saved products in the same
+    // library. These fields are optional/defaulted so ordinary spray
+    // chemicals never need them.
+
+    /// `ProductCategory` raw key; "" = uncategorised (legacy spray chemical).
+    var productCategory: String
+    /// "solid" | "liquid" | "" (unspecified — derived from `unit` when empty).
+    var productForm: String
+    /// Pack size in kg (solid) or L (liquid).
+    var packSize: Double?
+    var packUnit: String
+    var pricePerPack: Double?
+    /// kg per litre, for liquid products where relevant.
+    var density: Double?
+    var nitrogenPercent: Double?
+    var phosphorusPercent: Double?
+    var potassiumPercent: Double?
+    /// "elemental" or "oxide" (P₂O₅ / K₂O label values).
+    var analysisBasis: String
+    var organicCertified: Bool
+    /// Stock on hand (in `inventoryUnit`, typically packs).
+    var inventoryQuantity: Double?
+    var inventoryUnit: String
+    var applicationNotes: String
+    var isActive: Bool
+
     init(
         id: UUID = UUID(),
         vineyardId: UUID = UUID(),
@@ -126,7 +153,22 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         purchase: ChemicalPurchase? = nil,
         labelURL: String = "",
         productURL: String = "",
-        modeOfAction: String = ""
+        modeOfAction: String = "",
+        productCategory: String = "",
+        productForm: String = "",
+        packSize: Double? = nil,
+        packUnit: String = "",
+        pricePerPack: Double? = nil,
+        density: Double? = nil,
+        nitrogenPercent: Double? = nil,
+        phosphorusPercent: Double? = nil,
+        potassiumPercent: Double? = nil,
+        analysisBasis: String = "elemental",
+        organicCertified: Bool = false,
+        inventoryQuantity: Double? = nil,
+        inventoryUnit: String = "",
+        applicationNotes: String = "",
+        isActive: Bool = true
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -146,12 +188,31 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         self.labelURL = labelURL
         self.productURL = productURL
         self.modeOfAction = modeOfAction
+        self.productCategory = productCategory
+        self.productForm = productForm
+        self.packSize = packSize
+        self.packUnit = packUnit
+        self.pricePerPack = pricePerPack
+        self.density = density
+        self.nitrogenPercent = nitrogenPercent
+        self.phosphorusPercent = phosphorusPercent
+        self.potassiumPercent = potassiumPercent
+        self.analysisBasis = analysisBasis
+        self.organicCertified = organicCertified
+        self.inventoryQuantity = inventoryQuantity
+        self.inventoryUnit = inventoryUnit
+        self.applicationNotes = applicationNotes
+        self.isActive = isActive
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
         case id, vineyardId, name, ratePerHa, unit, chemicalGroup, use, manufacturer
         case restrictions, notes, crop, problem, activeIngredient, rates, purchase
         case labelURL, productURL, modeOfAction
+        case productCategory, productForm, packSize, packUnit, pricePerPack
+        case density, nitrogenPercent, phosphorusPercent, potassiumPercent
+        case analysisBasis, organicCertified, inventoryQuantity, inventoryUnit
+        case applicationNotes, isActive
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -176,6 +237,21 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         // placeholder hosts but do not require a document path.
         productURL = LabelURLValidator.sanitize(try container.decodeIfPresent(String.self, forKey: .productURL) ?? "")
         modeOfAction = try container.decodeIfPresent(String.self, forKey: .modeOfAction) ?? ""
+        productCategory = try container.decodeIfPresent(String.self, forKey: .productCategory) ?? ""
+        productForm = try container.decodeIfPresent(String.self, forKey: .productForm) ?? ""
+        packSize = try container.decodeIfPresent(Double.self, forKey: .packSize)
+        packUnit = try container.decodeIfPresent(String.self, forKey: .packUnit) ?? ""
+        pricePerPack = try container.decodeIfPresent(Double.self, forKey: .pricePerPack)
+        density = try container.decodeIfPresent(Double.self, forKey: .density)
+        nitrogenPercent = try container.decodeIfPresent(Double.self, forKey: .nitrogenPercent)
+        phosphorusPercent = try container.decodeIfPresent(Double.self, forKey: .phosphorusPercent)
+        potassiumPercent = try container.decodeIfPresent(Double.self, forKey: .potassiumPercent)
+        analysisBasis = try container.decodeIfPresent(String.self, forKey: .analysisBasis) ?? "elemental"
+        organicCertified = try container.decodeIfPresent(Bool.self, forKey: .organicCertified) ?? false
+        inventoryQuantity = try container.decodeIfPresent(Double.self, forKey: .inventoryQuantity)
+        inventoryUnit = try container.decodeIfPresent(String.self, forKey: .inventoryUnit) ?? ""
+        applicationNotes = try container.decodeIfPresent(String.self, forKey: .applicationNotes) ?? ""
+        isActive = try container.decodeIfPresent(Bool.self, forKey: .isActive) ?? true
     }
 }
 

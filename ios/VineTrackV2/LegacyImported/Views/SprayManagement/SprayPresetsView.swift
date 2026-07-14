@@ -222,6 +222,19 @@ struct EditSavedChemicalSheet: View {
     @State private var containerSizeText: String = ""
     @State private var containerUnit: ChemicalUnit = .litres
     @State private var costText: String = ""
+    // Unified product library fields (sql/111). Fertiliser-specific inputs
+    // only appear when a fertiliser/nutrient category is selected.
+    @State private var productCategory: ProductCategory?
+    @State private var packSizeText: String = ""
+    @State private var packPriceText: String = ""
+    @State private var densityText: String = ""
+    @State private var nitrogenText: String = ""
+    @State private var phosphorusText: String = ""
+    @State private var potassiumText: String = ""
+    @State private var analysisBasis: FertiliserAnalysisBasis = .elemental
+    @State private var organicCertified: Bool = false
+    @State private var inventoryText: String = ""
+    @State private var applicationNotes: String = ""
     @State private var showAILookup: Bool = false
     @State private var aiLoading: Bool = false
     @State private var aiError: String?
@@ -270,6 +283,18 @@ struct EditSavedChemicalSheet: View {
             } else {
                 _containerUnit = State(initialValue: c.unit)
             }
+
+            _productCategory = State(initialValue: c.category)
+            _packSizeText = State(initialValue: c.packSize.map { Self.formatRate($0) } ?? "")
+            _packPriceText = State(initialValue: c.pricePerPack.map { Self.formatRate($0) } ?? "")
+            _densityText = State(initialValue: c.density.map { Self.formatRate($0) } ?? "")
+            _nitrogenText = State(initialValue: c.nitrogenPercent.map { Self.formatRate($0) } ?? "")
+            _phosphorusText = State(initialValue: c.phosphorusPercent.map { Self.formatRate($0) } ?? "")
+            _potassiumText = State(initialValue: c.potassiumPercent.map { Self.formatRate($0) } ?? "")
+            _analysisBasis = State(initialValue: FertiliserAnalysisBasis(rawValue: c.analysisBasis) ?? .elemental)
+            _organicCertified = State(initialValue: c.organicCertified)
+            _inventoryText = State(initialValue: c.inventoryQuantity.map { Self.formatRate($0) } ?? "")
+            _applicationNotes = State(initialValue: c.applicationNotes)
         } else {
             self.existingPerHaRateId = nil
             self.existingPer100LRateId = nil
@@ -297,6 +322,9 @@ struct EditSavedChemicalSheet: View {
                 productSection
                 detailsSection
                 ratesSection
+                if productCategory?.isFertiliser == true {
+                    fertiliserSection
+                }
                 if canViewFinancials {
                     purchaseSection
                 }
@@ -364,9 +392,15 @@ struct EditSavedChemicalSheet: View {
     }
 
     private var productSection: some View {
-        Section("Product") {
+        Section {
             LabeledField(label: "Chemical / Product Name") {
                 TextField("e.g. Synertrol Horti Oil", text: $name)
+            }
+            Picker("Category", selection: $productCategory) {
+                Text("Uncategorised").tag(ProductCategory?.none)
+                ForEach(ProductCategory.allCases) { option in
+                    Text(option.label).tag(ProductCategory?.some(option))
+                }
             }
             Picker("Form", selection: $formType) {
                 ForEach(ChemicalFormType.allCases) { f in
@@ -378,6 +412,76 @@ struct EditSavedChemicalSheet: View {
                 ForEach(formType.units, id: \.self) { u in
                     Text(u.rawValue).tag(u)
                 }
+            }
+        } header: {
+            Text("Product")
+        } footer: {
+            Text("Fertiliser and nutrient categories unlock pack, N-P-K and inventory fields used by the Fertiliser Calculator.")
+        }
+    }
+
+    /// Pack, nutrient analysis and inventory inputs — shown only for
+    /// fertiliser/nutrient categories so ordinary spray chemicals stay clean.
+    private var fertiliserSection: some View {
+        Group {
+            Section("Pack & Inventory") {
+                Toggle("Organic certified", isOn: $organicCertified)
+                LabeledContent("Pack size (\(formType == .liquid ? "L" : "kg"))") {
+                    TextField("25", text: $packSizeText)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                }
+                if canViewFinancials {
+                    LabeledContent("Price per pack ($)") {
+                        TextField("Optional", text: $packPriceText)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+                if formType == .liquid {
+                    LabeledContent("Density (kg/L)") {
+                        TextField("Optional", text: $densityText)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+                LabeledContent("Stock on hand (packs)") {
+                    TextField("Optional", text: $inventoryText)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                }
+            }
+
+            Section {
+                LabeledContent("Nitrogen (N) %") {
+                    TextField("0", text: $nitrogenText)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                }
+                LabeledContent("Phosphorus %") {
+                    TextField("0", text: $phosphorusText)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                }
+                LabeledContent("Potassium %") {
+                    TextField("0", text: $potassiumText)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                }
+                Picker("P & K basis", selection: $analysisBasis) {
+                    ForEach(FertiliserAnalysisBasis.allCases) { option in
+                        Text(option.label).tag(option)
+                    }
+                }
+            } header: {
+                Text("Nutrient Analysis")
+            } footer: {
+                Text("Record whether the label lists elemental P/K or oxide (P\u{2082}O\u{2085}/K\u{2082}O) values — mixing them up causes major rate errors.")
+            }
+
+            Section("Application Notes") {
+                TextField("Optional notes", text: $applicationNotes, axis: .vertical)
+                    .lineLimit(2...4)
             }
         }
     }
@@ -643,6 +747,10 @@ struct EditSavedChemicalSheet: View {
             }
         }
 
+        let parseOptional: (String) -> Double? = { Double($0.replacingOccurrences(of: ",", with: ".")) }
+        let productForm = formType == .liquid ? "liquid" : "solid"
+        let packUnit = formType == .liquid ? "L" : "kg"
+
         if var existing = chemical {
             existing.name = name
             existing.unit = unit
@@ -658,6 +766,22 @@ struct EditSavedChemicalSheet: View {
             existing.productURL = productURL
             existing.rates = rates
             existing.purchase = purchase
+            existing.productCategory = productCategory?.rawValue ?? ""
+            existing.productForm = productForm
+            existing.packSize = parseOptional(packSizeText)
+            existing.packUnit = packUnit
+            // Preserve pricing authored by owners/managers when the current
+            // editor cannot see financials.
+            existing.pricePerPack = canViewFinancials ? parseOptional(packPriceText) : chemical?.pricePerPack
+            existing.density = parseOptional(densityText)
+            existing.nitrogenPercent = parseOptional(nitrogenText)
+            existing.phosphorusPercent = parseOptional(phosphorusText)
+            existing.potassiumPercent = parseOptional(potassiumText)
+            existing.analysisBasis = analysisBasis.rawValue
+            existing.organicCertified = organicCertified
+            existing.inventoryQuantity = parseOptional(inventoryText)
+            existing.inventoryUnit = parseOptional(inventoryText) != nil ? "packs" : existing.inventoryUnit
+            existing.applicationNotes = applicationNotes.trimmingCharacters(in: .whitespacesAndNewlines)
             store.updateSavedChemical(existing)
         } else {
             let new = SavedChemical(
@@ -674,7 +798,21 @@ struct EditSavedChemicalSheet: View {
                 purchase: purchase,
                 labelURL: labelURL,
                 productURL: productURL,
-                modeOfAction: modeOfAction
+                modeOfAction: modeOfAction,
+                productCategory: productCategory?.rawValue ?? "",
+                productForm: productForm,
+                packSize: parseOptional(packSizeText),
+                packUnit: packUnit,
+                pricePerPack: canViewFinancials ? parseOptional(packPriceText) : nil,
+                density: parseOptional(densityText),
+                nitrogenPercent: parseOptional(nitrogenText),
+                phosphorusPercent: parseOptional(phosphorusText),
+                potassiumPercent: parseOptional(potassiumText),
+                analysisBasis: analysisBasis.rawValue,
+                organicCertified: organicCertified,
+                inventoryQuantity: parseOptional(inventoryText),
+                inventoryUnit: parseOptional(inventoryText) != nil ? "packs" : "",
+                applicationNotes: applicationNotes.trimmingCharacters(in: .whitespacesAndNewlines)
             )
             store.addSavedChemical(new)
         }

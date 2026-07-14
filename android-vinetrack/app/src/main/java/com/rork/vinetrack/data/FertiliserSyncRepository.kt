@@ -2,7 +2,6 @@ package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.FertiliserAllocation
-import com.rork.vinetrack.data.model.FertiliserProduct
 import com.rork.vinetrack.data.model.FertiliserRecord
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
@@ -25,76 +24,13 @@ import java.time.OffsetDateTime
 
 /**
  * Supabase data layer for the Fertiliser Calculator, mirroring the iOS
- * `SupabaseFertiliserSyncRepository` contract (sql/110): merge-duplicates
- * upserts keyed by the client-generated id for `fertiliser_products`,
+ * `SupabaseFertiliserSyncRepository` contract (sql/110 + sql/111):
+ * merge-duplicates upserts keyed by the client-generated id for
  * `fertiliser_records` and the per-block `fertiliser_record_allocations`
- * child rows; soft deletes via security-definer RPCs.
+ * child rows; soft deletes via security-definer RPCs. The product library is
+ * the shared `saved_chemicals` table, handled by [SavedChemicalRepository].
  */
 class FertiliserSyncRepository(private val session: SessionStore) {
-
-    @Serializable
-    data class ProductRow(
-        val id: String,
-        @SerialName("vineyard_id") val vineyardId: String,
-        val name: String? = null,
-        val manufacturer: String? = null,
-        val category: String? = null,
-        val form: String? = null,
-        @SerialName("pack_size") val packSize: Double? = null,
-        @SerialName("price_per_pack") val pricePerPack: Double? = null,
-        val density: Double? = null,
-        @SerialName("nitrogen_percent") val nitrogenPercent: Double? = null,
-        @SerialName("phosphorus_percent") val phosphorusPercent: Double? = null,
-        @SerialName("potassium_percent") val potassiumPercent: Double? = null,
-        @SerialName("analysis_basis") val analysisBasis: String? = null,
-        @SerialName("organic_certified") val organicCertified: Boolean = false,
-        @SerialName("inventory_quantity") val inventoryQuantity: Double? = null,
-        @SerialName("application_notes") val applicationNotes: String? = null,
-        @SerialName("deleted_at") val deletedAt: String? = null,
-    ) {
-        fun toModel(): FertiliserProduct = FertiliserProduct(
-            id = id,
-            vineyardId = vineyardId,
-            name = name.orEmpty(),
-            manufacturer = manufacturer.orEmpty(),
-            form = form ?: "solid",
-            category = category ?: "conventional",
-            packSize = packSize ?: 25.0,
-            pricePerPack = pricePerPack,
-            density = density,
-            nitrogenPercent = nitrogenPercent,
-            phosphorusPercent = phosphorusPercent,
-            potassiumPercent = potassiumPercent,
-            analysisBasis = analysisBasis ?: "elemental",
-            organicCertified = organicCertified,
-            applicationNotes = applicationNotes.orEmpty(),
-            inventoryPacks = inventoryQuantity,
-        )
-    }
-
-    @Serializable
-    private data class ProductUpsert(
-        val id: String,
-        @SerialName("vineyard_id") val vineyardId: String,
-        val name: String,
-        val manufacturer: String,
-        val category: String,
-        val form: String,
-        @SerialName("pack_size") val packSize: Double,
-        @SerialName("pack_unit") val packUnit: String,
-        @SerialName("price_per_pack") val pricePerPack: Double? = null,
-        val density: Double? = null,
-        @SerialName("nitrogen_percent") val nitrogenPercent: Double? = null,
-        @SerialName("phosphorus_percent") val phosphorusPercent: Double? = null,
-        @SerialName("potassium_percent") val potassiumPercent: Double? = null,
-        @SerialName("analysis_basis") val analysisBasis: String,
-        @SerialName("organic_certified") val organicCertified: Boolean,
-        @SerialName("inventory_quantity") val inventoryQuantity: Double? = null,
-        @SerialName("inventory_unit") val inventoryUnit: String,
-        @SerialName("application_notes") val applicationNotes: String,
-        @SerialName("created_by") val createdBy: String? = null,
-        @SerialName("client_updated_at") val clientUpdatedAt: String,
-    )
 
     @Serializable
     data class RecordRow(
@@ -199,9 +135,6 @@ class FertiliserSyncRepository(private val session: SessionStore) {
 
     // MARK: Reads
 
-    suspend fun fetchProducts(vineyardId: String): List<ProductRow> =
-        getList("fertiliser_products?vineyard_id=eq.$vineyardId&order=updated_at.asc")
-
     suspend fun fetchRecords(vineyardId: String): List<RecordRow> =
         getList("fertiliser_records?vineyard_id=eq.$vineyardId&order=updated_at.asc")
 
@@ -209,40 +142,6 @@ class FertiliserSyncRepository(private val session: SessionStore) {
         getList("fertiliser_record_allocations?vineyard_id=eq.$vineyardId")
 
     // MARK: Writes
-
-    suspend fun upsertProduct(product: FertiliserProduct) = withContext(Dispatchers.IO) {
-        requireConfig()
-        val token = session.accessToken ?: throw BackendError.Unauthorized
-        val body = ProductUpsert(
-            id = product.id,
-            vineyardId = product.vineyardId,
-            name = product.name,
-            manufacturer = product.manufacturer,
-            category = product.category,
-            form = product.form,
-            packSize = product.packSize,
-            packUnit = product.unit,
-            pricePerPack = product.pricePerPack,
-            density = product.density,
-            nitrogenPercent = product.nitrogenPercent,
-            phosphorusPercent = product.phosphorusPercent,
-            potassiumPercent = product.potassiumPercent,
-            analysisBasis = product.analysisBasis,
-            organicCertified = product.organicCertified,
-            inventoryQuantity = product.inventoryPacks,
-            inventoryUnit = "packs",
-            applicationNotes = product.applicationNotes,
-            createdBy = session.userId,
-            clientUpdatedAt = Instant.now().toString(),
-        )
-        val response = SupabaseClient.http.post(SupabaseClient.restUrl("fertiliser_products?on_conflict=id")) {
-            authHeaders(token)
-            headers { append("Prefer", "resolution=merge-duplicates") }
-            contentType(ContentType.Application.Json)
-            setBody(listOf(body))
-        }
-        requireSuccess(response)
-    }
 
     /** Upserts the record, then its per-block allocation rows. */
     suspend fun upsertRecord(record: FertiliserRecord) = withContext(Dispatchers.IO) {
@@ -307,8 +206,6 @@ class FertiliserSyncRepository(private val session: SessionStore) {
             requireSuccess(allocationResponse)
         }
     }
-
-    suspend fun softDeleteProduct(productId: String) = softDelete("soft_delete_fertiliser_product", productId)
 
     suspend fun softDeleteRecord(recordId: String) = softDelete("soft_delete_fertiliser_record", recordId)
 

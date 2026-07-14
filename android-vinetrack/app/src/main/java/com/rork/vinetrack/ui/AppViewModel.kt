@@ -61,7 +61,6 @@ import com.rork.vinetrack.data.PendingWriteRepository
 import com.rork.vinetrack.data.PruningStore
 import com.rork.vinetrack.data.PruningSyncCoordinator
 import com.rork.vinetrack.data.PruningSyncRepository
-import com.rork.vinetrack.data.model.FertiliserProduct
 import com.rork.vinetrack.data.model.FertiliserRecord
 import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningEntry
@@ -3135,18 +3134,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         pruningSyncCoordinator.refresh(vineyardId)
 
     // MARK: - Fertiliser Calculator (System Admin, offline-first)
-
-    fun fertiliserProducts(vineyardId: String): List<FertiliserProduct> =
-        fertiliserSyncCoordinator.products(vineyardId)
+    // The product library is the shared saved chemical database
+    // (`state.savedChemicals`, sql/111) — only calculation records live here.
 
     fun fertiliserRecords(vineyardId: String): List<FertiliserRecord> =
         fertiliserSyncCoordinator.records(vineyardId)
-
-    fun upsertFertiliserProduct(vineyardId: String, product: FertiliserProduct): List<FertiliserProduct> =
-        fertiliserSyncCoordinator.upsertProduct(vineyardId, product)
-
-    fun deleteFertiliserProduct(vineyardId: String, productId: String): List<FertiliserProduct> =
-        fertiliserSyncCoordinator.deleteProduct(vineyardId, productId)
 
     fun addFertiliserRecord(vineyardId: String, record: FertiliserRecord): List<FertiliserRecord> =
         fertiliserSyncCoordinator.addRecord(vineyardId, record)
@@ -3157,7 +3149,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteFertiliserRecord(vineyardId: String, recordId: String): List<FertiliserRecord> =
         fertiliserSyncCoordinator.deleteRecord(vineyardId, recordId)
 
-    suspend fun refreshFertiliser(vineyardId: String): Pair<List<FertiliserProduct>, List<FertiliserRecord>> =
+    suspend fun refreshFertiliser(vineyardId: String): List<FertiliserRecord> =
         fertiliserSyncCoordinator.refresh(vineyardId)
 
     fun retryVineyardLoad() {

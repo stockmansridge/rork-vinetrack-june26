@@ -75,6 +75,7 @@ import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_100L
 import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_HECTARE
 import com.rork.vinetrack.data.model.ChemicalPurchase
 import com.rork.vinetrack.data.model.ChemicalRate
+import com.rork.vinetrack.data.model.ProductCategories
 import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.data.model.chemicalUnitToBase
 import java.util.UUID
@@ -315,8 +316,9 @@ private fun ChemicalRow(
                 if (subtitle.isNotEmpty()) {
                     Text(subtitle, fontSize = 13.sp, color = vine.textSecondary)
                 }
-                // Group / target-problem chips.
+                // Category / group / target-problem chips.
                 val chips = buildList {
+                    chemical.productCategory.takeIf { it.isNotBlank() }?.let { add(ProductCategories.label(it)) }
                     chemical.chemicalGroup.takeIf { it.isNotBlank() }?.let { add(it) }
                     chemical.problem.takeIf { it.isNotBlank() }?.let { add(it) }
                     chemical.modeOfAction.takeIf { it.isNotBlank() }?.let { add("MOA $it") }
@@ -416,6 +418,20 @@ private fun ChemicalFormSheet(
     var containerSize by remember { mutableStateOf(existing?.purchase?.containerSizeML?.takeIf { it > 0 }?.let { formatRate(it) } ?: "") }
     var containerUnit by remember { mutableStateOf(existing?.purchase?.containerUnit?.takeIf { it in chemicalUnits } ?: (existing?.unit ?: "Litres")) }
     var cost by remember { mutableStateOf(existing?.purchase?.costDollars?.takeIf { it > 0 }?.let { formatRate(it) } ?: "") }
+    // Unified product-library fields (sql/111). Fertiliser inputs only appear
+    // when a fertiliser/nutrient category is selected.
+    var category by remember { mutableStateOf(existing?.productCategory ?: "") }
+    var packSizeText by remember { mutableStateOf(existing?.packSize?.let { formatRate(it) } ?: "") }
+    var packPriceText by remember { mutableStateOf(existing?.pricePerPack?.let { formatRate(it) } ?: "") }
+    var densityText by remember { mutableStateOf(existing?.density?.let { formatRate(it) } ?: "") }
+    var nText by remember { mutableStateOf(existing?.nitrogenPercent?.let { formatRate(it) } ?: "") }
+    var pText by remember { mutableStateOf(existing?.phosphorusPercent?.let { formatRate(it) } ?: "") }
+    var kText by remember { mutableStateOf(existing?.potassiumPercent?.let { formatRate(it) } ?: "") }
+    var oxideBasis by remember { mutableStateOf(existing?.analysisBasis == "oxide") }
+    var organicCertified by remember { mutableStateOf(existing?.organicCertified ?: false) }
+    var inventoryText by remember { mutableStateOf(existing?.inventoryQuantity?.let { formatRate(it) } ?: "") }
+    var applicationNotes by remember { mutableStateOf(existing?.applicationNotes ?: "") }
+    var categoryMenu by remember { mutableStateOf(false) }
     var unitMenu by remember { mutableStateOf(false) }
     var containerUnitMenu by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
@@ -520,6 +536,21 @@ private fun ChemicalFormSheet(
             labelUrl = labelUrl.trim().ifBlank { null },
             productUrl = productUrl.trim().ifBlank { null },
             purchase = purchase,
+            productCategory = category,
+            productForm = if (formType == "Solid") "solid" else "liquid",
+            packSize = packSizeText.toDoubleSafe(),
+            packUnit = if (formType == "Solid") "kg" else "L",
+            // Owners/managers author pack pricing; others keep the existing value.
+            pricePerPack = if (canViewFinancials) packPriceText.toDoubleSafe() else existing?.pricePerPack,
+            density = densityText.toDoubleSafe(),
+            nitrogenPercent = nText.toDoubleSafe(),
+            phosphorusPercent = pText.toDoubleSafe(),
+            potassiumPercent = kText.toDoubleSafe(),
+            analysisBasis = if (oxideBasis) "oxide" else "elemental",
+            organicCertified = organicCertified,
+            inventoryQuantity = inventoryText.toDoubleSafe(),
+            inventoryUnit = if (inventoryText.toDoubleSafe() != null) "packs" else (existing?.inventoryUnit ?: ""),
+            applicationNotes = applicationNotes.trim(),
         )
         val cb: (Boolean) -> Unit = { ok -> saving = false; if (ok) onDismiss() }
         if (isEdit) vm.updateSavedChemical(existing!!.id, input, cb) else vm.createSavedChemical(input, cb)
@@ -590,6 +621,111 @@ private fun ChemicalFormSheet(
                 onSelect = { unit = it; unitMenu = false },
                 modifier = Modifier.fillMaxWidth(),
             )
+            CategoryDropdown(
+                value = category,
+                expanded = categoryMenu,
+                onExpandedChange = { categoryMenu = it },
+                onSelect = { category = it; categoryMenu = false },
+            )
+            Text(
+                "Fertiliser and nutrient categories unlock pack, N-P-K and inventory fields used by the Fertiliser Calculator.",
+                fontSize = 11.sp,
+                color = vine.textSecondary,
+            )
+
+            if (ProductCategories.isFertiliser(category)) {
+                SectionLabel("Pack & inventory")
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text("Organic certified", fontSize = 15.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
+                    Switch(checked = organicCertified, onCheckedChange = { organicCertified = it })
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = packSizeText,
+                        onValueChange = { packSizeText = it.numericFilter() },
+                        label = { Text(if (formType == "Solid") "Pack size (kg)" else "Pack size (L)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (canViewFinancials) {
+                        OutlinedTextField(
+                            value = packPriceText,
+                            onValueChange = { packPriceText = it.numericFilter() },
+                            label = { Text("Price per pack ($)") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (formType != "Solid") {
+                        OutlinedTextField(
+                            value = densityText,
+                            onValueChange = { densityText = it.numericFilter() },
+                            label = { Text("Density (kg/L)") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    OutlinedTextField(
+                        value = inventoryText,
+                        onValueChange = { inventoryText = it.numericFilter() },
+                        label = { Text("Stock on hand (packs)") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                SectionLabel("Nutrient analysis (%)")
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = nText,
+                        onValueChange = { nText = it.numericFilter() },
+                        label = { Text("N") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = pText,
+                        onValueChange = { pText = it.numericFilter() },
+                        label = { Text("P") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = kText,
+                        onValueChange = { kText = it.numericFilter() },
+                        label = { Text("K") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Oxide label values (P\u2082O\u2085 / K\u2082O)", fontSize = 14.sp, color = vine.textPrimary)
+                        Text(
+                            "Record which basis the label uses \u2014 mixing them up causes major rate errors.",
+                            fontSize = 11.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
+                    Switch(checked = oxideBasis, onCheckedChange = { oxideBasis = it })
+                }
+
+                OutlinedTextField(
+                    value = applicationNotes,
+                    onValueChange = { applicationNotes = it },
+                    label = { Text("Application notes (optional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
 
             SectionLabel("Details")
             OutlinedTextField(
@@ -766,6 +902,33 @@ private fun ChemicalFormSheet(
 private fun SectionLabel(text: String) {
     val vine = LocalVineColors.current
     Text(text.uppercase(), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+}
+
+/** Unified product-category dropdown (keys from [ProductCategories], sql/111). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CategoryDropdown(
+    value: String,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onSelect: (String) -> Unit,
+) {
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = onExpandedChange, modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = if (value.isBlank()) "Uncategorised" else ProductCategories.label(value),
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Category") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { onExpandedChange(false) }) {
+            DropdownMenuItem(text = { Text("Uncategorised") }, onClick = { onSelect("") })
+            ProductCategories.all.forEach { (key, label) ->
+                DropdownMenuItem(text = { Text(label) }, onClick = { onSelect(key) })
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

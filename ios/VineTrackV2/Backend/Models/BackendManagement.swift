@@ -21,6 +21,21 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
     let labelUrl: String?
     let productUrl: String?
     let modeOfAction: String?
+    let productCategory: String?
+    let productForm: String?
+    let packSize: Double?
+    let packUnit: String?
+    let pricePerPack: Double?
+    let density: Double?
+    let nitrogenPercent: Double?
+    let phosphorusPercent: Double?
+    let potassiumPercent: Double?
+    let analysisBasis: String?
+    let organicCertified: Bool?
+    let inventoryQuantity: Double?
+    let inventoryUnit: String?
+    let applicationNotes: String?
+    let isActive: Bool?
     let createdAt: Date?
     let updatedAt: Date?
     let deletedAt: Date?
@@ -45,6 +60,21 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         case labelUrl = "label_url"
         case productUrl = "product_url"
         case modeOfAction = "mode_of_action"
+        case productCategory = "product_category"
+        case productForm = "product_form"
+        case packSize = "pack_size"
+        case packUnit = "pack_unit"
+        case pricePerPack = "price_per_pack"
+        case density
+        case nitrogenPercent = "nitrogen_percent"
+        case phosphorusPercent = "phosphorus_percent"
+        case potassiumPercent = "potassium_percent"
+        case analysisBasis = "analysis_basis"
+        case organicCertified = "organic_certified"
+        case inventoryQuantity = "inventory_quantity"
+        case inventoryUnit = "inventory_unit"
+        case applicationNotes = "application_notes"
+        case isActive = "is_active"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
@@ -73,6 +103,23 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         // column is absent so decoding doesn't fail for legacy backends.
         self.productUrl = try c.decodeIfPresent(String.self, forKey: .productUrl)
         self.modeOfAction = try c.decodeIfPresent(String.self, forKey: .modeOfAction)
+        // Unified product-library columns were added in sql/111; tolerate
+        // older backends where they are absent.
+        self.productCategory = try c.decodeIfPresent(String.self, forKey: .productCategory)
+        self.productForm = try c.decodeIfPresent(String.self, forKey: .productForm)
+        self.packSize = try c.decodeIfPresent(Double.self, forKey: .packSize)
+        self.packUnit = try c.decodeIfPresent(String.self, forKey: .packUnit)
+        self.pricePerPack = try c.decodeIfPresent(Double.self, forKey: .pricePerPack)
+        self.density = try c.decodeIfPresent(Double.self, forKey: .density)
+        self.nitrogenPercent = try c.decodeIfPresent(Double.self, forKey: .nitrogenPercent)
+        self.phosphorusPercent = try c.decodeIfPresent(Double.self, forKey: .phosphorusPercent)
+        self.potassiumPercent = try c.decodeIfPresent(Double.self, forKey: .potassiumPercent)
+        self.analysisBasis = try c.decodeIfPresent(String.self, forKey: .analysisBasis)
+        self.organicCertified = try c.decodeIfPresent(Bool.self, forKey: .organicCertified)
+        self.inventoryQuantity = try c.decodeIfPresent(Double.self, forKey: .inventoryQuantity)
+        self.inventoryUnit = try c.decodeIfPresent(String.self, forKey: .inventoryUnit)
+        self.applicationNotes = try c.decodeIfPresent(String.self, forKey: .applicationNotes)
+        self.isActive = try c.decodeIfPresent(Bool.self, forKey: .isActive)
         self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
         self.updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
         self.deletedAt = try c.decodeIfPresent(Date.self, forKey: .deletedAt)
@@ -99,6 +146,21 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
     let labelUrl: String
     let productUrl: String
     let modeOfAction: String
+    let productCategory: String
+    let productForm: String
+    let packSize: Double?
+    let packUnit: String
+    let pricePerPack: Double?
+    let density: Double?
+    let nitrogenPercent: Double?
+    let phosphorusPercent: Double?
+    let potassiumPercent: Double?
+    let analysisBasis: String
+    let organicCertified: Bool
+    let inventoryQuantity: Double?
+    let inventoryUnit: String
+    let applicationNotes: String
+    let isActive: Bool
     let createdBy: UUID?
     let clientUpdatedAt: Date
 
@@ -121,6 +183,21 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
         case labelUrl = "label_url"
         case productUrl = "product_url"
         case modeOfAction = "mode_of_action"
+        case productCategory = "product_category"
+        case productForm = "product_form"
+        case packSize = "pack_size"
+        case packUnit = "pack_unit"
+        case pricePerPack = "price_per_pack"
+        case density
+        case nitrogenPercent = "nitrogen_percent"
+        case phosphorusPercent = "phosphorus_percent"
+        case potassiumPercent = "potassium_percent"
+        case analysisBasis = "analysis_basis"
+        case organicCertified = "organic_certified"
+        case inventoryQuantity = "inventory_quantity"
+        case inventoryUnit = "inventory_unit"
+        case applicationNotes = "application_notes"
+        case isActive = "is_active"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
     }
@@ -147,6 +224,21 @@ extension BackendSavedChemical {
             labelUrl: c.labelURL,
             productUrl: c.productURL,
             modeOfAction: c.modeOfAction,
+            productCategory: c.productCategory,
+            productForm: c.productForm,
+            packSize: c.packSize,
+            packUnit: c.packUnit,
+            pricePerPack: c.pricePerPack,
+            density: c.density,
+            nitrogenPercent: c.nitrogenPercent,
+            phosphorusPercent: c.phosphorusPercent,
+            potassiumPercent: c.potassiumPercent,
+            analysisBasis: c.analysisBasis,
+            organicCertified: c.organicCertified,
+            inventoryQuantity: c.inventoryQuantity,
+            inventoryUnit: c.inventoryUnit,
+            applicationNotes: c.applicationNotes,
+            isActive: c.isActive,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
         )
@@ -171,7 +263,22 @@ extension BackendSavedChemical {
             purchase: purchase,
             labelURL: LabelURLValidator.sanitize(labelUrl ?? ""),
             productURL: LabelURLValidator.sanitize(productUrl ?? ""),
-            modeOfAction: modeOfAction ?? ""
+            modeOfAction: modeOfAction ?? "",
+            productCategory: productCategory ?? "",
+            productForm: productForm ?? "",
+            packSize: packSize,
+            packUnit: packUnit ?? "",
+            pricePerPack: pricePerPack,
+            density: density,
+            nitrogenPercent: nitrogenPercent,
+            phosphorusPercent: phosphorusPercent,
+            potassiumPercent: potassiumPercent,
+            analysisBasis: analysisBasis ?? "elemental",
+            organicCertified: organicCertified ?? false,
+            inventoryQuantity: inventoryQuantity,
+            inventoryUnit: inventoryUnit ?? "",
+            applicationNotes: applicationNotes ?? "",
+            isActive: isActive ?? true
         )
     }
 }

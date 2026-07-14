@@ -3,79 +3,83 @@ package com.rork.vinetrack.data.model
 import kotlinx.serialization.Serializable
 
 /**
- * Fertiliser product categories — the library is not just synthetic granular
- * fertilisers. Keys match the iOS `FertiliserCategory` cases.
+ * Unified saved-product categories (`saved_chemicals.product_category`,
+ * sql/111). The shared library covers spray chemicals AND fertiliser/nutrient
+ * products. Keys match the iOS `ProductCategory` cases and are shared with the
+ * portal. "" = uncategorised — every legacy spray chemical.
  */
-object FertiliserCategories {
+object ProductCategories {
     val all: List<Pair<String, String>> = listOf(
+        "fungicide" to "Fungicide",
+        "insecticide" to "Insecticide",
+        "herbicide" to "Herbicide",
+        "adjuvant" to "Adjuvant",
+        "growthRegulator" to "Growth regulator",
+        "foliarNutrient" to "Foliar nutrient",
+        "granularFertiliser" to "Granular fertiliser",
+        "liquidFertiliser" to "Liquid fertiliser",
+        "fertigation" to "Fertigation product",
         "compost" to "Compost",
         "manure" to "Manure",
         "biofertiliser" to "Biofertiliser",
         "compostTea" to "Compost tea",
         "seaweed" to "Seaweed",
         "fishHydrolysate" to "Fish hydrolysate",
-        "humic" to "Humic products",
-        "pelletised" to "Pelletised fertiliser",
-        "foliar" to "Foliar nutrition",
-        "conventional" to "Conventional fertiliser",
-        "other" to "Other amendments",
+        "humicFulvic" to "Humic / fulvic product",
+        "soilAmendment" to "Soil amendment",
+        "other" to "Other",
     )
 
-    fun label(key: String): String = all.firstOrNull { it.first == key }?.second ?: "Other"
+    /** Categories the Fertiliser Calculator shows by default. */
+    val fertiliserKeys: Set<String> = setOf(
+        "foliarNutrient", "granularFertiliser", "liquidFertiliser", "fertigation",
+        "compost", "manure", "biofertiliser", "compostTea", "seaweed",
+        "fishHydrolysate", "humicFulvic", "soilAmendment",
+    )
+
+    fun label(key: String): String =
+        all.firstOrNull { it.first == key }?.second ?: (key.takeIf { it.isNotBlank() } ?: "Uncategorised")
+
+    fun isFertiliser(key: String): Boolean = key in fertiliserKeys
 }
 
 /**
- * A saved fertiliser product, mirroring the chemical library pattern and the
- * iOS `FertiliserProduct` model. `form` is "solid" or "liquid";
- * `analysisBasis` is "elemental" or "oxide" (P₂O₅/K₂O label values).
+ * Fertiliser view of a shared saved product ([SavedChemical], sql/111). The
+ * Fertiliser Calculator reads its product library from the saved chemical
+ * database — these helpers derive the fertiliser-specific values.
  */
-@Serializable
-data class FertiliserProduct(
-    val id: String,
-    val vineyardId: String,
-    val name: String = "",
-    val manufacturer: String = "",
-    val form: String = "solid",
-    val category: String = "conventional",
-    /** Pack size in kg (solid) or L (liquid). */
-    val packSize: Double = 25.0,
-    val pricePerPack: Double? = null,
-    /** kg per litre, for liquid products where relevant. */
-    val density: Double? = null,
-    val nitrogenPercent: Double? = null,
-    val phosphorusPercent: Double? = null,
-    val potassiumPercent: Double? = null,
-    val analysisBasis: String = "elemental",
-    val organicCertified: Boolean = false,
-    val applicationNotes: String = "",
-    /** Stock on hand, in packs. */
-    val inventoryPacks: Double? = null,
-) {
-    val isLiquid: Boolean get() = form == "liquid"
-    val unit: String get() = if (isLiquid) "L" else "kg"
-    val perVineUnit: String get() = if (isLiquid) "mL" else "g"
+val SavedChemical.isFertiliserProduct: Boolean
+    get() = ProductCategories.isFertiliser(productCategory)
 
-    val analysisSummary: String?
-        get() {
-            val parts = mutableListOf<String>()
-            nitrogenPercent?.takeIf { it > 0 }?.let { parts.add("N ${trim(it)}") }
-            phosphorusPercent?.takeIf { it > 0 }?.let { parts.add("P ${trim(it)}") }
-            potassiumPercent?.takeIf { it > 0 }?.let { parts.add("K ${trim(it)}") }
-            return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
-        }
+/** Solid/liquid for fertiliser maths — explicit form first, unit fallback. */
+val SavedChemical.isFertiliserLiquid: Boolean
+    get() = when (productForm) {
+        "liquid" -> true
+        "solid" -> false
+        else -> unit == "Litres" || unit == "mL"
+    }
 
-    private fun trim(value: Double): String =
-        if (value % 1.0 == 0.0) value.toInt().toString() else "%.1f".format(value)
-}
+val SavedChemical.fertiliserUnit: String get() = if (isFertiliserLiquid) "L" else "kg"
+val SavedChemical.fertiliserPerVineUnit: String get() = if (isFertiliserLiquid) "mL" else "g"
+
+/** Short N-P-K summary, e.g. "N 20 · P 5 · K 10"; null when no analysis stored. */
+val SavedChemical.analysisSummary: String?
+    get() {
+        fun trim(value: Double): String =
+            if (value % 1.0 == 0.0) value.toInt().toString() else "%.1f".format(value)
+        val parts = mutableListOf<String>()
+        nitrogenPercent?.takeIf { it > 0 }?.let { parts.add("N ${trim(it)}") }
+        phosphorusPercent?.takeIf { it > 0 }?.let { parts.add("P ${trim(it)}") }
+        potassiumPercent?.takeIf { it > 0 }?.let { parts.add("K ${trim(it)}") }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+    }
 
 /**
  * A saved calculation — either a planned work task ("planned") or a completed
  * fertiliser application record ("completed"). Mode is "perHectare" or
- * "perVine". Mirrors the iOS `FertiliserRecord`.
- */
-/**
- * Per-block share of a multi-block calculation (`fertiliser_record_allocations`),
- * so block-level costing and reporting stay accurate.
+ * "perVine". `productId` references the shared saved chemical/product library
+ * (`saved_chemicals.id`); `productName`, `form` and `packSize` are historical
+ * snapshots taken at calculation time. Mirrors the iOS `FertiliserRecord`.
  */
 @Serializable
 data class FertiliserAllocation(

@@ -17,6 +17,7 @@ struct FertiliserCalculatorView: View {
     @State private var notes: String = ""
 
     @State private var selectedProductId: UUID?
+    @State private var showAllProducts: Bool = false
     @State private var manualName: String = ""
     @State private var manualForm: FertiliserForm = .solid
     @State private var manualPackSizeText: String = "25"
@@ -32,12 +33,22 @@ struct FertiliserCalculatorView: View {
         return all.filter { $0.vineyardId == vineyardId }
     }
 
-    private var products: [FertiliserProduct] {
-        fertStore.products(forVineyard: vineyardId)
+    /// The product library IS the shared saved chemical database (sql/111).
+    /// Defaults to fertiliser/nutrient categories; "Show all" surfaces
+    /// products that have not been categorised yet.
+    private var products: [SavedChemical] {
+        let all = store.savedChemicals
+            .filter { $0.isActive }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        guard !showAllProducts else { return all }
+        let fertiliser = all.filter { $0.isFertiliserProduct }
+        // Fall back to the full library while nothing is categorised yet so
+        // the picker is never inexplicably empty.
+        return fertiliser.isEmpty ? all : fertiliser
     }
 
-    private var selectedProduct: FertiliserProduct? {
-        selectedProductId.flatMap { id in products.first { $0.id == id } }
+    private var selectedProduct: SavedChemical? {
+        selectedProductId.flatMap { id in store.savedChemicals.first { $0.id == id } }
     }
 
     private var records: [FertiliserRecord] {
@@ -67,11 +78,11 @@ struct FertiliserCalculatorView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink {
-                    FertiliserProductLibraryView(fertStore: fertStore)
+                    ChemicalsManagementView()
                 } label: {
                     Image(systemName: "books.vertical")
                 }
-                .accessibilityLabel("Product library")
+                .accessibilityLabel("Saved products")
             }
         }
         .onChange(of: selectedPaddockIds) { _, _ in
@@ -151,9 +162,9 @@ struct FertiliserCalculatorView: View {
                     .font(.headline)
                 Spacer()
                 NavigationLink {
-                    FertiliserProductLibraryView(fertStore: fertStore)
+                    ChemicalsManagementView()
                 } label: {
-                    Text(products.isEmpty ? "Add products" : "Library")
+                    Text(products.isEmpty ? "Add products" : "Manage")
                         .font(.caption.weight(.semibold))
                 }
             }
@@ -166,10 +177,18 @@ struct FertiliserCalculatorView: View {
             }
             .pickerStyle(.menu)
 
+            Toggle(isOn: $showAllProducts) {
+                Text("Show all saved products")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+
             if let product = selectedProduct {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
-                        Text(product.category.label)
+                        Text(product.category?.label ?? "Uncategorised")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if product.organicCertified {
@@ -182,7 +201,11 @@ struct FertiliserCalculatorView: View {
                         }
                     }
                     HStack(spacing: 12) {
-                        Text("Pack: \(product.packSize.formatted()) \(product.form.unit)")
+                        if let packSize = product.packSize, packSize > 0 {
+                            Text("Pack: \(packSize.formatted()) \(product.fertiliserForm.unit)")
+                        } else {
+                            Text("No pack size saved")
+                        }
                         if let price = product.pricePerPack {
                             Text("$\(price.formatted(.number.precision(.fractionLength(2))))/pack")
                         }
@@ -218,7 +241,7 @@ struct FertiliserCalculatorView: View {
     // MARK: Rate
 
     private var activeForm: FertiliserForm {
-        selectedProduct?.form ?? manualForm
+        selectedProduct?.fertiliserForm ?? manualForm
     }
 
     private var rateCard: some View {
@@ -280,8 +303,8 @@ struct FertiliserCalculatorView: View {
         if let product = selectedProduct {
             packSize = product.packSize
             price = product.pricePerPack
-            if let inventory = product.inventoryPacks {
-                remaining = inventory * product.packSize - total
+            if let inventory = product.inventoryQuantity, let size = product.packSize, size > 0 {
+                remaining = inventory * size - total
             }
         } else {
             packSize = Double(manualPackSizeText.replacingOccurrences(of: ",", with: "."))

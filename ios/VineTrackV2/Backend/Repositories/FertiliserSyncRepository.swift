@@ -1,15 +1,15 @@
 import Foundation
 import Supabase
 
+/// Repository for `fertiliser_records` + `fertiliser_record_allocations`.
+/// The product library is the shared `saved_chemicals` table (sql/111),
+/// handled by `SavedChemicalSyncRepositoryProtocol`.
 protocol FertiliserSyncRepositoryProtocol: Sendable {
-    func fetchProducts(vineyardId: UUID, since: Date?) async throws -> [BackendFertiliserProduct]
     func fetchRecords(vineyardId: UUID, since: Date?) async throws -> [BackendFertiliserRecord]
     /// Allocations are small child rows — always fetched in full per vineyard.
     func fetchAllocations(vineyardId: UUID) async throws -> [BackendFertiliserAllocation]
-    func upsertProducts(_ items: [BackendFertiliserProductUpsert]) async throws
     func upsertRecords(_ items: [BackendFertiliserRecordUpsert]) async throws
     func upsertAllocations(_ items: [BackendFertiliserAllocation]) async throws
-    func softDeleteProduct(id: UUID) async throws
     func softDeleteRecord(id: UUID) async throws
 }
 
@@ -27,15 +27,6 @@ private func isoTimestamp(_ date: Date) -> String {
 final class SupabaseFertiliserSyncRepository: FertiliserSyncRepositoryProtocol {
     private let provider: SupabaseClientProvider
     init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
-
-    func fetchProducts(vineyardId: UUID, since: Date?) async throws -> [BackendFertiliserProduct] {
-        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let q = provider.client.from("fertiliser_products").select().eq("vineyard_id", value: vineyardId.uuidString)
-        if let since {
-            return try await q.gte("updated_at", value: isoTimestamp(since)).order("updated_at", ascending: true).execute().value
-        }
-        return try await q.order("updated_at", ascending: true).execute().value
-    }
 
     func fetchRecords(vineyardId: UUID, since: Date?) async throws -> [BackendFertiliserRecord] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
@@ -56,12 +47,6 @@ final class SupabaseFertiliserSyncRepository: FertiliserSyncRepositoryProtocol {
             .value
     }
 
-    func upsertProducts(_ items: [BackendFertiliserProductUpsert]) async throws {
-        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        guard !items.isEmpty else { return }
-        try await provider.client.from("fertiliser_products").upsert(items, onConflict: "id").execute()
-    }
-
     func upsertRecords(_ items: [BackendFertiliserRecordUpsert]) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         guard !items.isEmpty else { return }
@@ -72,11 +57,6 @@ final class SupabaseFertiliserSyncRepository: FertiliserSyncRepositoryProtocol {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         guard !items.isEmpty else { return }
         try await provider.client.from("fertiliser_record_allocations").upsert(items, onConflict: "id").execute()
-    }
-
-    func softDeleteProduct(id: UUID) async throws {
-        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        try await provider.client.rpc("soft_delete_fertiliser_product", params: FertiliserIdRequest(id: id)).execute()
     }
 
     func softDeleteRecord(id: UUID) async throws {

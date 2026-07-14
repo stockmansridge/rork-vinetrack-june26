@@ -2,10 +2,13 @@ import Foundation
 import Observation
 
 /// Sync service for the Fertiliser Calculator (System Admin only while in
-/// development). Standard management-sync template over three tables:
-/// `fertiliser_products`, `fertiliser_records` and the per-block
-/// `fertiliser_record_allocations` child rows (pushed with their record,
-/// pulled and re-attached by record id).
+/// development). Standard management-sync template over `fertiliser_records`
+/// and the per-block `fertiliser_record_allocations` child rows (pushed with
+/// their record, pulled and re-attached by record id).
+///
+/// Products are NOT synced here — the product library is the shared saved
+/// chemical database (`saved_chemicals`, sql/111) synced by
+/// `SavedChemicalSyncService`.
 @Observable
 @MainActor
 final class FertiliserSyncService {
@@ -15,18 +18,13 @@ final class FertiliserSyncService {
     var lastSyncDate: Date?
     var errorMessage: String?
 
-    var pendingUpsertCount: Int {
-        productMetadata.pendingUpserts.count + recordMetadata.pendingUpserts.count
-    }
-    var pendingDeleteCount: Int {
-        productMetadata.pendingDeletes.count + recordMetadata.pendingDeletes.count
-    }
+    var pendingUpsertCount: Int { recordMetadata.pendingUpserts.count }
+    var pendingDeleteCount: Int { recordMetadata.pendingDeletes.count }
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
     private let fertStore: FertiliserStore
     private let repository: any FertiliserSyncRepositoryProtocol
-    private let productMetadata: ManagementSyncMetadata
     private let recordMetadata: ManagementSyncMetadata
     private var isConfigured: Bool = false
     private var eagerPushTask: Task<Void, Never>?
@@ -34,7 +32,6 @@ final class FertiliserSyncService {
     init(repository: (any FertiliserSyncRepositoryProtocol)? = nil, fertStore: FertiliserStore? = nil) {
         self.repository = repository ?? SupabaseFertiliserSyncRepository()
         self.fertStore = fertStore ?? .shared
-        self.productMetadata = ManagementSyncMetadata(key: "vinetrack_fertiliser_product_sync_metadata")
         self.recordMetadata = ManagementSyncMetadata(key: "vinetrack_fertiliser_record_sync_metadata")
     }
 
@@ -43,14 +40,6 @@ final class FertiliserSyncService {
         self.auth = auth
         guard !isConfigured else { return }
         isConfigured = true
-        fertStore.onProductChanged = { [weak self] id in
-            self?.productMetadata.markDirty(id, at: Date())
-            self?.scheduleEagerPush()
-        }
-        fertStore.onProductDeleted = { [weak self] id in
-            self?.productMetadata.markDeleted(id, at: Date())
-            self?.scheduleEagerPush()
-        }
         fertStore.onRecordChanged = { [weak self] id in
             self?.recordMetadata.markDirty(id, at: Date())
             self?.scheduleEagerPush()
@@ -85,11 +74,8 @@ final class FertiliserSyncService {
         syncStatus = .syncing
         errorMessage = nil
         do {
-            try await pushProducts(vineyardId: vineyardId)
             try await pushRecords(vineyardId: vineyardId)
-            try await pullProducts(vineyardId: vineyardId)
             try await pullRecords(vineyardId: vineyardId)
-            productMetadata.setLastSync(Date(), for: vineyardId)
             recordMetadata.setLastSync(Date(), for: vineyardId)
             lastSyncDate = Date()
             syncStatus = .success
@@ -100,33 +86,6 @@ final class FertiliserSyncService {
     }
 
     // MARK: Push
-
-    private func pushProducts(vineyardId: UUID) async throws {
-        let createdBy = auth?.userId
-        let dirty = productMetadata.pendingUpserts
-        if !dirty.isEmpty {
-            let byId = Dictionary(fertStore.products.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-            var payloads: [BackendFertiliserProductUpsert] = []
-            var pushed: [UUID] = []
-            for (id, ts) in dirty {
-                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
-                payloads.append(BackendFertiliserProduct.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
-                pushed.append(id)
-            }
-            if !payloads.isEmpty {
-                try await repository.upsertProducts(payloads)
-                productMetadata.clearDirty(pushed)
-            }
-        }
-        for (id, _) in productMetadata.pendingDeletes {
-            do {
-                try await repository.softDeleteProduct(id: id)
-                productMetadata.clearDeleted([id])
-            } catch {
-                if isFertiliserMissingRowError(error) { productMetadata.clearDeleted([id]) }
-            }
-        }
-    }
 
     private func pushRecords(vineyardId: UUID) async throws {
         let createdBy = auth?.userId
@@ -161,37 +120,6 @@ final class FertiliserSyncService {
     }
 
     // MARK: Pull
-
-    private func pullProducts(vineyardId: UUID) async throws {
-        let lastSync = productMetadata.lastSync(for: vineyardId)
-        let remote = try await repository.fetchProducts(vineyardId: vineyardId, since: lastSync)
-        if lastSync == nil {
-            let remoteIds = Set(remote.map { $0.id })
-            let local = fertStore.products.filter { $0.vineyardId == vineyardId }
-            let missing = local.filter { !remoteIds.contains($0.id) }
-            if !missing.isEmpty {
-                let now = Date()
-                let createdBy = auth?.userId
-                let payloads = missing.map { BackendFertiliserProduct.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now) }
-                try? await repository.upsertProducts(payloads)
-            }
-            if remote.isEmpty { return }
-        }
-        for item in remote {
-            if item.deletedAt != nil {
-                fertStore.applyRemoteProductDelete(item.id)
-                productMetadata.clearDirty([item.id])
-                productMetadata.clearDeleted([item.id])
-                continue
-            }
-            if let pendingAt = productMetadata.pendingUpserts[item.id] {
-                let remoteAt = item.clientUpdatedAt ?? item.updatedAt ?? .distantPast
-                if pendingAt > remoteAt { continue }
-            }
-            fertStore.applyRemoteProductUpsert(item.toFertiliserProduct())
-            productMetadata.clearDirty([item.id])
-        }
-    }
 
     private func pullRecords(vineyardId: UUID) async throws {
         let lastSync = recordMetadata.lastSync(for: vineyardId)
