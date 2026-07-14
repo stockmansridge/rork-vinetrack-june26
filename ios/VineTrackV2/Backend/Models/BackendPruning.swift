@@ -200,6 +200,17 @@ nonisolated struct RecordPruningEntryParams: Encodable, Sendable {
     nonisolated struct Segment: Encodable, Sendable {
         let row: Int
         let segment: Int
+        /// Stable paddock row id — the real identity for configured rows.
+        let rowId: UUID?
+        /// Display label snapshot for history/reporting.
+        let label: String
+
+        enum CodingKeys: String, CodingKey {
+            case row
+            case segment
+            case rowId = "row_id"
+            case label
+        }
     }
 
     let id: UUID
@@ -251,7 +262,9 @@ nonisolated struct RecordPruningEntryParams: Encodable, Sendable {
         self.notes = entry.notes
         self.estimatedVines = entry.estimatedVines
         self.clientUpdatedAt = clientUpdatedAt
-        self.segments = entry.segments.map { Segment(row: $0.row, segment: $0.quarter) }
+        self.segments = entry.segments.map {
+            Segment(row: $0.row, segment: $0.quarter, rowId: $0.rowId, label: "\($0.row)")
+        }
     }
 }
 
@@ -262,7 +275,10 @@ nonisolated struct BackendPruningSegment: Codable, Sendable, Identifiable {
     let vineyardId: UUID
     let pruningSeasonId: UUID
     let paddockId: UUID
+    /// Stable paddock row id (sql/112); nil for manual-fallback rows.
+    let paddockRowId: UUID?
     let rowNumber: Int
+    let rowLabel: String?
     let segmentNumber: Int
     let completed: Bool?
     let completedAt: Date?
@@ -274,7 +290,9 @@ nonisolated struct BackendPruningSegment: Codable, Sendable, Identifiable {
         case vineyardId = "vineyard_id"
         case pruningSeasonId = "pruning_season_id"
         case paddockId = "paddock_id"
+        case paddockRowId = "paddock_row_id"
         case rowNumber = "row_number"
+        case rowLabel = "row_label"
         case segmentNumber = "segment_number"
         case completed
         case completedAt = "completed_at"

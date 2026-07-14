@@ -237,6 +237,10 @@ class PaddockRepository(private val session: SessionStore) {
     private fun rowArray(rows: List<PaddockRow>?): JsonArray = buildJsonArray {
         rows.orEmpty().forEach { row ->
             add(buildJsonObject {
+                // Preserve the stable row id — pruning progress is keyed on it.
+                // Legacy rows without one get the deterministic fallback id
+                // (identical on iOS), so the identity persists from now on.
+                put("id", JsonPrimitive(row.stableId))
                 put("number", JsonPrimitive(row.number))
                 put("startPoint", coordinateObject(row.startPoint))
                 put("endPoint", coordinateObject(row.endPoint))

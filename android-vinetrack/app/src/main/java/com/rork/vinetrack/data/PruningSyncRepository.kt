@@ -132,14 +132,24 @@ class PruningSyncRepository(private val session: SessionStore) {
     data class SegmentRow(
         val id: String,
         @SerialName("pruning_season_id") val pruningSeasonId: String,
+        /** Stable paddock row id (sql/112); null for manual-fallback rows. */
+        @SerialName("paddock_row_id") val paddockRowId: String? = null,
         @SerialName("row_number") val rowNumber: Int = 0,
+        @SerialName("row_label") val rowLabel: String? = null,
         @SerialName("segment_number") val segmentNumber: Int = 0,
         val completed: Boolean = false,
         @SerialName("pruning_entry_id") val pruningEntryId: String? = null,
     )
 
     @Serializable
-    private data class SegmentArg(val row: Int, val segment: Int)
+    private data class SegmentArg(
+        val row: Int,
+        val segment: Int,
+        /** Stable paddock row id — the real identity for configured rows. */
+        @SerialName("row_id") val rowId: String? = null,
+        /** Display label snapshot for history/reporting. */
+        val label: String? = null,
+    )
 
     @Serializable
     private data class RecordEntryArgs(
@@ -225,7 +235,9 @@ class PruningSyncRepository(private val session: SessionStore) {
             notes = entry.notes,
             estimatedVines = entry.estimatedVines,
             clientUpdatedAt = Instant.now().toString(),
-            segments = entry.segments.map { SegmentArg(row = it.row, segment = it.quarter) },
+            segments = entry.segments.map {
+                SegmentArg(row = it.row, segment = it.quarter, rowId = it.rowId, label = it.row.toString())
+            },
         )
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("record_pruning_entry")) {
             authHeaders(token)

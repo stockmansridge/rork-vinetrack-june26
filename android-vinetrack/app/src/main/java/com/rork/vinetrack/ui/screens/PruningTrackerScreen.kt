@@ -76,6 +76,7 @@ import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningCalculator
 import com.rork.vinetrack.data.model.PruningEntry
 import com.rork.vinetrack.data.model.PruningMethods
+import com.rork.vinetrack.data.model.PruningRowRef
 import com.rork.vinetrack.data.model.PruningSeasonIds
 import com.rork.vinetrack.data.model.PruningSegment
 import com.rork.vinetrack.data.model.PruningStatus
@@ -156,7 +157,7 @@ fun PruningTrackerScreen(
                     vineyardId,
                     entry.copy(
                         seasonId = setup.id,
-                        estimatedVines = PruningCalculator.vines(entry.segments.size, metrics.vinesPerRow),
+                        estimatedVines = PruningCalculator.vines(entry.segments, metrics.rows),
                     ),
                 )
             },
@@ -346,7 +347,7 @@ private fun PruningDashboardCard(
             projected = projected?.let { if (finish.isAfter(it)) finish else it } ?: finish
         }
         for (entry in blockEntries) {
-            val vines = PruningCalculator.vines(entry.segments.size, metrics.vinesPerRow).toDouble()
+            val vines = PruningCalculator.vines(entry.segments, metrics.rows).toDouble()
             vinesByDay[entry.date] = (vinesByDay[entry.date] ?: 0.0) + vines
             val entryHours = entry.labourHours
             if (entryHours != null && entryHours > 0) {
@@ -480,12 +481,15 @@ private fun PruningBlockDetail(
 ) {
     val vine = LocalVineColors.current
     val metrics = PruningCalculator.metrics(paddock, setup, blockEntries)
+    // The block's ACTUAL rows (configured paddock rows in stored order, or
+    // clearly-labelled fallback rows generated from the manual row count).
+    val rows = metrics.rows
 
     var selected by remember(paddock.id) { mutableStateOf(setOf<PruningSegment>()) }
     var showEntrySheet by remember { mutableStateOf(false) }
     var showSetupSheet by remember { mutableStateOf(false) }
-    var rangeFrom by remember(paddock.id) { mutableStateOf(1) }
-    var rangeTo by remember(paddock.id) { mutableStateOf(1) }
+    var rangeFromIndex by remember(paddock.id) { mutableStateOf(0) }
+    var rangeToIndex by remember(paddock.id) { mutableStateOf(0) }
 
     Scaffold(
         modifier = modifier,
@@ -520,7 +524,7 @@ private fun PruningBlockDetail(
                                 color = vine.textPrimary,
                             )
                             Text(
-                                "${selected.size} quarters · ~${PruningCalculator.vines(selected.size, metrics.vinesPerRow)} vines",
+                                "${selected.size} quarters · ~${PruningCalculator.vines(selected, rows)} vines",
                                 fontSize = 12.sp,
                                 color = vine.textSecondary,
                             )
@@ -565,29 +569,31 @@ private fun PruningBlockDetail(
                 item(key = "rates") { DetailRatesCard(metrics, blockEntries) }
                 item(key = "grid-header") {
                     RowGridHeader(
-                        metrics = metrics,
+                        rows = rows,
                         selectedCount = selected.size,
-                        rangeFrom = rangeFrom,
-                        rangeTo = rangeTo,
-                        onRangeFrom = { rangeFrom = it },
-                        onRangeTo = { rangeTo = it },
+                        rangeFromIndex = rangeFromIndex,
+                        rangeToIndex = rangeToIndex,
+                        onRangeFrom = { rangeFromIndex = it },
+                        onRangeTo = { rangeToIndex = it },
                         onSelectRange = {
-                            val low = minOf(rangeFrom, rangeTo)
-                            val high = maxOf(rangeFrom, rangeTo)
-                            val additions = mutableSetOf<PruningSegment>()
-                            for (row in low..high) {
-                                for (quarter in 1..4) {
-                                    val segment = PruningSegment(row, quarter)
-                                    if (!metrics.completed.contains(segment)) additions.add(segment)
+                            if (rows.isNotEmpty()) {
+                                val low = minOf(rangeFromIndex, rangeToIndex).coerceIn(0, rows.lastIndex)
+                                val high = maxOf(rangeFromIndex, rangeToIndex).coerceIn(0, rows.lastIndex)
+                                val additions = mutableSetOf<PruningSegment>()
+                                for (index in low..high) {
+                                    for (quarter in 1..4) {
+                                        val segment = rows[index].segment(quarter)
+                                        if (!metrics.completed.contains(segment)) additions.add(segment)
+                                    }
                                 }
+                                selected = selected + additions
                             }
-                            selected = selected + additions
                         },
                         onClear = { selected = emptySet() },
                     )
                 }
-                items(metrics.rowCount, key = { "row-${it + 1}" }) { index ->
-                    val row = index + 1
+                items(rows.size, key = { "row-${rows[it].key}" }) { index ->
+                    val row = rows[index]
                     PruningRowLine(
                         row = row,
                         completed = metrics.completed,
@@ -597,7 +603,7 @@ private fun PruningBlockDetail(
                         },
                         onToggleRow = {
                             val remaining = (1..4)
-                                .map { PruningSegment(row, it) }
+                                .map { row.segment(it) }
                                 .filter { !metrics.completed.contains(it) }
                             selected = if (remaining.all { selected.contains(it) }) {
                                 selected - remaining.toSet()
@@ -618,7 +624,7 @@ private fun PruningBlockDetail(
             paddock = paddock,
             vineyardId = vineyardId,
             segments = selected.sortedWith(compareBy({ it.row }, { it.quarter })),
-            vinesPerRow = metrics.vinesPerRow,
+            rows = rows,
             defaultMethod = setup?.method ?: "spur",
             defaultWorker = setup?.crew ?: "",
             onDismiss = { showEntrySheet = false },
@@ -713,7 +719,7 @@ private fun DetailRatesCard(metrics: PruningBlockMetrics, entries: List<PruningE
     for (entry in entries) {
         val entryHours = entry.labourHours
         if (entryHours != null && entryHours > 0) {
-            vinesForHours += PruningCalculator.vines(entry.segments.size, metrics.vinesPerRow).toDouble()
+            vinesForHours += PruningCalculator.vines(entry.segments, metrics.rows).toDouble()
             hours += entryHours
         }
     }
@@ -764,10 +770,10 @@ private fun RateStat(value: Double?, label: String, modifier: Modifier = Modifie
 
 @Composable
 private fun RowGridHeader(
-    metrics: PruningBlockMetrics,
+    rows: List<PruningRowRef>,
     selectedCount: Int,
-    rangeFrom: Int,
-    rangeTo: Int,
+    rangeFromIndex: Int,
+    rangeToIndex: Int,
     onRangeFrom: (Int) -> Unit,
     onRangeTo: (Int) -> Unit,
     onSelectRange: () -> Unit,
@@ -785,11 +791,18 @@ private fun RowGridHeader(
                     }
                 }
             }
+            if (rows.firstOrNull()?.isFallback == true) {
+                Text(
+                    "Using manually entered row count — this block has no configured rows. Map its rows in Vineyard Setup to track real row numbers.",
+                    fontSize = 11.sp,
+                    color = VineColors.Warning,
+                )
+            }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Rows", fontSize = 12.sp, color = vine.textSecondary)
-                RowNumberPicker(rangeFrom, metrics.rowCount, onRangeFrom)
+                RowLabelPicker(rangeFromIndex, rows, onRangeFrom)
                 Text("to", fontSize = 12.sp, color = vine.textSecondary)
-                RowNumberPicker(rangeTo, metrics.rowCount, onRangeTo)
+                RowLabelPicker(rangeToIndex, rows, onRangeTo)
                 Spacer(Modifier.weight(1f))
                 OutlinedButton(onClick = onSelectRange) {
                     Text("Select range", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
@@ -805,12 +818,12 @@ private fun RowGridHeader(
 }
 
 @Composable
-private fun RowNumberPicker(value: Int, maxValue: Int, onChange: (Int) -> Unit) {
+private fun RowLabelPicker(valueIndex: Int, rows: List<PruningRowRef>, onChange: (Int) -> Unit) {
     val vine = LocalVineColors.current
     var expanded by remember { mutableStateOf(false) }
     Box {
         Text(
-            "$value",
+            rows.getOrNull(valueIndex)?.label ?: "—",
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             color = VineColors.Primary,
@@ -821,11 +834,11 @@ private fun RowNumberPicker(value: Int, maxValue: Int, onChange: (Int) -> Unit) 
                 .padding(horizontal = 12.dp, vertical = 6.dp),
         )
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            (1..maxValue).forEach { number ->
+            rows.forEachIndexed { index, row ->
                 DropdownMenuItem(
-                    text = { Text("$number") },
+                    text = { Text(row.label) },
                     onClick = {
-                        onChange(number)
+                        onChange(index)
                         expanded = false
                     },
                 )
@@ -845,14 +858,14 @@ private fun GridLegend(color: Color, label: String) {
 
 @Composable
 private fun PruningRowLine(
-    row: Int,
+    row: PruningRowRef,
     completed: Set<PruningSegment>,
     selected: Set<PruningSegment>,
     onToggle: (PruningSegment) -> Unit,
     onToggleRow: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val rowDone = (1..4).all { completed.contains(PruningSegment(row, it)) || selected.contains(PruningSegment(row, it)) }
+    val rowDone = (1..4).all { completed.contains(row.segment(it)) || selected.contains(row.segment(it)) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -863,16 +876,16 @@ private fun PruningRowLine(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            "$row",
+            row.label,
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             color = vine.textSecondary,
-            modifier = Modifier.width(26.dp),
+            modifier = Modifier.width(30.dp),
             textAlign = TextAlign.End,
         )
         Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
             (1..4).forEach { quarter ->
-                val segment = PruningSegment(row, quarter)
+                val segment = row.segment(quarter)
                 val isDone = completed.contains(segment)
                 val isSelected = selected.contains(segment)
                 Box(
@@ -901,7 +914,7 @@ private fun PruningRowLine(
         IconButton(onClick = onToggleRow, modifier = Modifier.size(28.dp)) {
             Icon(
                 Icons.Filled.CheckCircle,
-                contentDescription = "Select all of row $row",
+                contentDescription = "Select all of row ${row.label}",
                 tint = if (rowDone) VineColors.LeafGreen else vine.textSecondary.copy(alpha = 0.5f),
                 modifier = Modifier.size(18.dp),
             )
@@ -963,7 +976,7 @@ private fun PruningEntrySheet(
     paddock: Paddock,
     vineyardId: String,
     segments: List<PruningSegment>,
-    vinesPerRow: Double,
+    rows: List<PruningRowRef>,
     defaultMethod: String,
     defaultWorker: String,
     onDismiss: () -> Unit,
@@ -993,7 +1006,7 @@ private fun PruningEntrySheet(
         ) {
             Text("Complete Today", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
             Text(
-                "${paddock.name} · ${fmt(segments.size / 4.0)} row equivalents · ~${PruningCalculator.vines(segments.size, vinesPerRow)} vines",
+                "${paddock.name} · ${fmt(segments.size / 4.0)} row equivalents · ~${PruningCalculator.vines(segments, rows)} vines",
                 fontSize = 13.sp,
                 color = vine.textSecondary,
             )

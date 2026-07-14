@@ -161,7 +161,7 @@ class PruningSyncCoordinator(
                 val entryId = segment.pruningEntryId ?: continue
                 if (!segment.completed) continue
                 segmentsByEntry.getOrPut(entryId) { mutableListOf() }
-                    .add(PruningSegment(row = segment.rowNumber, quarter = segment.segmentNumber))
+                    .add(PruningSegment(row = segment.rowNumber, quarter = segment.segmentNumber, rowId = segment.paddockRowId))
             }
 
             val localEntries = store.loadEntries(vineyardId)

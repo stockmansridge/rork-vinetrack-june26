@@ -49,13 +49,58 @@ nonisolated enum PruningMethod: String, Codable, CaseIterable, Identifiable, Sen
 
 /// A fixed quarter of a vineyard row. Quarters are segments (1 = 0–25% … 4 = 75–100%)
 /// so the same portion can never be recorded twice and the crew's stopping point is visible.
+///
+/// Identity is the ACTUAL paddock row record (`rowId`) when the block has
+/// configured rows — renaming or reordering rows never detaches progress.
+/// `row` is the display-number snapshot (the real stored number, e.g. 101,
+/// never a 1…N index). `rowId` is nil only for manual fallback rows.
 nonisolated struct PruningSegment: Codable, Hashable, Sendable {
+    var rowId: UUID?
     var row: Int
     var quarter: Int
 
-    init(row: Int, quarter: Int) {
+    init(rowId: UUID? = nil, row: Int, quarter: Int) {
+        self.rowId = rowId
         self.row = row
         self.quarter = min(max(quarter, 1), 4)
+    }
+
+    /// Canonical row identity: the stable row id when present, else the number.
+    var rowKey: String { rowId?.uuidString.lowercased() ?? "n\(row)" }
+
+    static func == (lhs: PruningSegment, rhs: PruningSegment) -> Bool {
+        lhs.rowKey == rhs.rowKey && lhs.quarter == rhs.quarter
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(rowKey)
+        hasher.combine(quarter)
+    }
+}
+
+/// One selectable row on the progress screen — the ACTUAL configured paddock
+/// row when the block has row records, or a numbered fallback row generated
+/// from the manual row count otherwise. Precedence:
+///   1. configured paddock rows (stored order, real numbers, per-row length),
+///   2. sequential fallback rows from `manual_row_count`.
+nonisolated struct PruningRowRef: Identifiable, Sendable, Hashable {
+    /// Stable paddock row id (nil for manual fallback rows).
+    let rowId: UUID?
+    /// Real stored row number (or 1…N only for fallback rows).
+    let number: Int
+    /// Display label — the stored row identifier.
+    let label: String
+    /// This row's length in metres when geometry exists.
+    let lengthMetres: Double?
+    /// Estimated vines in THIS row (rows can have different lengths).
+    let vines: Double
+    /// True when generated from the manual row count.
+    let isFallback: Bool
+
+    var id: String { rowId?.uuidString.lowercased() ?? "n\(number)" }
+
+    func segment(quarter: Int) -> PruningSegment {
+        PruningSegment(rowId: rowId, row: number, quarter: quarter)
     }
 }
 
@@ -185,6 +230,9 @@ nonisolated enum PruningStatus: String, Sendable {
 
 /// Aggregated progress + rate metrics for one block.
 nonisolated struct PruningBlockMetrics: Sendable {
+    /// The actual rows the tracker operates on (configured rows first,
+    /// manual fallback rows only when none are configured).
+    var rows: [PruningRowRef]
     var rowCount: Int
     var completed: Set<PruningSegment>
     var completedRowEquivalents: Double
@@ -209,12 +257,88 @@ nonisolated enum PruningCalculator {
         return ((weekday + 5) % 7) + 1
     }
 
-    /// Union of completed segments across entries, clipped to the block's row count.
-    static func completedSegments(entries: [PruningEntry], rowCount: Int) -> Set<PruningSegment> {
+    /// Length of one mapped row in metres (equirectangular, matches
+    /// `Paddock.totalRowLengthMetres`).
+    static func rowLength(_ row: PaddockRow, paddock: Paddock) -> Double {
+        let points = paddock.polygonPoints
+        let centroidLat = points.isEmpty
+            ? row.startPoint.latitude
+            : points.map(\.latitude).reduce(0, +) / Double(points.count)
+        let mPerDegLat = 111_320.0
+        let mPerDegLon = 111_320.0 * cos(centroidLat * .pi / 180.0)
+        let dLat = (row.endPoint.latitude - row.startPoint.latitude) * mPerDegLat
+        let dLon = (row.endPoint.longitude - row.startPoint.longitude) * mPerDegLon
+        return (dLat * dLat + dLon * dLon).squareRoot()
+    }
+
+    /// The rows the tracker operates on. Uses the ACTUAL configured paddock
+    /// rows (stored order, real numbers — non-sequential and >1 starts are
+    /// preserved); falls back to sequential rows from the manual row count
+    /// only when the block has no configured row records.
+    ///
+    /// Vine distribution: each row is weighted by its own length (rows
+    /// without geometry get the average mapped length, or an equal share
+    /// when nothing is mapped), and the block's effective vine count is
+    /// split across those weights — so a quarter contributes 25% of THAT
+    /// row's vines and totals always reconcile with the block vine count.
+    static func rowRefs(paddock: Paddock, setup: PruningBlockSetup?) -> [PruningRowRef] {
+        let totalVines = Double(paddock.effectiveVineCount)
+        let configured = paddock.rows
+        if !configured.isEmpty {
+            let lengths = configured.map { rowLength($0, paddock: paddock) }
+            let positive = lengths.filter { $0 > 0 }
+            let averageLength = positive.isEmpty ? 0 : positive.reduce(0, +) / Double(positive.count)
+            let weights = lengths.map { $0 > 0 ? $0 : (averageLength > 0 ? averageLength : 1) }
+            let totalWeight = weights.reduce(0, +)
+            return configured.enumerated().map { index, row in
+                PruningRowRef(
+                    rowId: row.id,
+                    number: row.number,
+                    label: "\(row.number)",
+                    lengthMetres: lengths[index] > 0 ? lengths[index] : nil,
+                    vines: totalWeight > 0 ? totalVines * weights[index] / totalWeight : 0,
+                    isFallback: false
+                )
+            }
+        }
+        let count = setup?.rowCountOverride ?? 0
+        guard count > 0 else { return [] }
+        return (1...count).map { number in
+            PruningRowRef(
+                rowId: nil,
+                number: number,
+                label: "\(number)",
+                lengthMetres: nil,
+                vines: totalVines / Double(count),
+                isFallback: true
+            )
+        }
+    }
+
+    /// Union of completed segments across entries, canonicalised onto the
+    /// block's actual rows. Segments carrying a row id only match that exact
+    /// row (a renamed row keeps its progress; a deleted row's quarters are
+    /// excluded rather than silently attached to a different row). Legacy
+    /// segments without a row id are matched by their stored number.
+    static func completedSegments(entries: [PruningEntry], rows: [PruningRowRef]) -> Set<PruningSegment> {
+        var byId: [String: PruningRowRef] = [:]
+        var byNumber: [Int: PruningRowRef] = [:]
+        for ref in rows {
+            if let rowId = ref.rowId { byId[rowId.uuidString.lowercased()] = ref }
+            if byNumber[ref.number] == nil { byNumber[ref.number] = ref }
+        }
         var set = Set<PruningSegment>()
         for entry in entries {
-            for segment in entry.segments where segment.row >= 1 && segment.row <= rowCount {
-                set.insert(segment)
+            for segment in entry.segments {
+                let ref: PruningRowRef?
+                if let rowId = segment.rowId {
+                    ref = byId[rowId.uuidString.lowercased()]
+                } else {
+                    ref = byNumber[segment.row]
+                }
+                if let ref {
+                    set.insert(ref.segment(quarter: segment.quarter))
+                }
             }
         }
         return set
@@ -295,16 +419,16 @@ nonisolated enum PruningCalculator {
         entries: [PruningEntry],
         calendar: Calendar = .current
     ) -> PruningBlockMetrics {
-        let mappedRows = paddock.rows.count
-        let rowCount = mappedRows > 0 ? mappedRows : (setup?.rowCountOverride ?? 0)
-        let completed = completedSegments(entries: entries, rowCount: max(rowCount, 1))
+        let rows = rowRefs(paddock: paddock, setup: setup)
+        let rowCount = rows.count
+        let completed = completedSegments(entries: entries, rows: rows)
         let completedRowEq = Double(completed.count) / 4.0
         let totalRowEq = Double(rowCount)
         let fraction = totalRowEq > 0 ? min(completedRowEq / totalRowEq, 1.0) : 0
 
         let totalVines = paddock.effectiveVineCount
         let vinesPerRow = rowCount > 0 ? Double(totalVines) / Double(rowCount) : 0
-        let vinesPruned = Int((Double(completed.count) * vinesPerRow / 4.0).rounded())
+        let vinesPruned = vines(for: completed, rows: rows)
         let averageRowLength = rowCount > 0 ? paddock.effectiveTotalRowLength / Double(rowCount) : 0
 
         let rate = preferredRate(entries: entries, calendar: calendar)
@@ -341,6 +465,7 @@ nonisolated enum PruningCalculator {
         }
 
         return PruningBlockMetrics(
+            rows: rows,
             rowCount: rowCount,
             completed: completed,
             completedRowEquivalents: completedRowEq,
@@ -357,8 +482,18 @@ nonisolated enum PruningCalculator {
         )
     }
 
-    /// Vines represented by a set of segments for a block.
+    /// Vines represented by a set of segments for a block (average-row basis;
+    /// used for rate stats).
     static func vines(forSegmentCount count: Int, vinesPerRow: Double) -> Int {
         Int((Double(count) * vinesPerRow / 4.0).rounded())
+    }
+
+    /// Vines represented by a set of segments using each ACTUAL row's vine
+    /// estimate — a quarter contributes 25% of that specific row's vines.
+    static func vines(for segments: some Collection<PruningSegment>, rows: [PruningRowRef]) -> Int {
+        var byKey: [String: Double] = [:]
+        for ref in rows { byKey[ref.id] = ref.vines }
+        let total = segments.reduce(0.0) { $0 + (byKey[$1.rowKey] ?? 0) / 4.0 }
+        return Int(total.rounded())
     }
 }

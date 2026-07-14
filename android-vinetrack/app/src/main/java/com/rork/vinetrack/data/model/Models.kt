@@ -82,10 +82,30 @@ data class LauncherButton(
 
 @Serializable
 data class PaddockRow(
+    /** Stable row id written by iOS/portal; may be absent on legacy rows. */
+    val id: String? = null,
     val number: Int = 0,
     val startPoint: CoordinatePoint? = null,
     val endPoint: CoordinatePoint? = null,
-)
+) {
+    /**
+     * Stable row identity: the stored id when present, else a DETERMINISTIC
+     * fallback derived from the row content. Matches the iOS
+     * `PaddockRowIdentity.derive` (MD5 v3, `UUID.nameUUIDFromBytes`) so every
+     * device converges on the identical id for legacy rows saved without one.
+     */
+    val stableId: String
+        get() = id ?: deriveId(number, startPoint, endPoint)
+
+    companion object {
+        fun deriveId(number: Int, start: CoordinatePoint?, end: CoordinatePoint?): String {
+            fun fmt(value: Double?): String =
+                value?.let { String.format(java.util.Locale.US, "%.6f", it) } ?: ""
+            val name = "vinetrack-paddock-row|$number|${fmt(start?.latitude)}|${fmt(start?.longitude)}|${fmt(end?.latitude)}|${fmt(end?.longitude)}"
+            return java.util.UUID.nameUUIDFromBytes(name.toByteArray(Charsets.UTF_8)).toString()
+        }
+    }
+}
 
 /**
  * A single variety allocation on a block. Tolerant of the various key names

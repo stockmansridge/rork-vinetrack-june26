@@ -10,14 +10,18 @@ struct PruningBlockDetailView: View {
     @State private var selectedSegments: Set<PruningSegment> = []
     @State private var showEntrySheet: Bool = false
     @State private var showSetupSheet: Bool = false
-    @State private var rangeFrom: Int = 1
-    @State private var rangeTo: Int = 1
+    @State private var rangeFromIndex: Int = 0
+    @State private var rangeToIndex: Int = 0
 
     private var setup: PruningBlockSetup? { pruningStore.setup(for: paddock.id) }
     private var entries: [PruningEntry] { pruningStore.entries(for: paddock.id) }
     private var metrics: PruningBlockMetrics {
         PruningCalculator.metrics(paddock: paddock, setup: setup, entries: entries)
     }
+
+    /// The block's ACTUAL rows (configured paddock rows in stored order, or
+    /// clearly-labelled fallback rows generated from the manual row count).
+    private var rows: [PruningRowRef] { metrics.rows }
 
     var body: some View {
         ScrollView {
@@ -58,7 +62,7 @@ struct PruningBlockDetailView: View {
                 pruningStore: pruningStore,
                 vineyardId: store.selectedVineyardId ?? paddock.vineyardId,
                 segments: Array(selectedSegments).sorted { ($0.row, $0.quarter) < ($1.row, $1.quarter) },
-                vinesPerRow: metrics.vinesPerRow,
+                rows: rows,
                 defaultMethod: setup?.method ?? .spur,
                 defaultWorker: setup?.crew ?? ""
             ) {
@@ -194,7 +198,7 @@ struct PruningBlockDetailView: View {
         var hours = 0.0
         for entry in entries {
             if let entryHours = entry.labourHours, entryHours > 0 {
-                vinesForHours += Double(PruningCalculator.vines(forSegmentCount: entry.segments.count, vinesPerRow: metrics.vinesPerRow))
+                vinesForHours += Double(PruningCalculator.vines(for: entry.segments, rows: rows))
                 hours += entryHours
             }
         }
@@ -293,9 +297,20 @@ struct PruningBlockDetailView: View {
                 gridLegend(color: Color(.systemGray5), text: "Remaining")
             }
 
+            if rows.first?.isFallback == true {
+                Label {
+                    Text("Using manually entered row count — this block has no configured rows. Map its rows in Vineyard Setup to track real row numbers.")
+                        .font(.caption2)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.caption2)
+                }
+                .foregroundStyle(.orange)
+            }
+
             VStack(spacing: 6) {
-                ForEach(1...metrics.rowCount, id: \.self) { row in
-                    rowLine(row: row)
+                ForEach(rows) { row in
+                    rowLine(row)
                 }
             }
         }
@@ -311,15 +326,19 @@ struct PruningBlockDetailView: View {
             Text("Rows")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Picker("From", selection: $rangeFrom) {
-                ForEach(1...metrics.rowCount, id: \.self) { Text("\($0)").tag($0) }
+            Picker("From", selection: $rangeFromIndex) {
+                ForEach(rows.indices, id: \.self) { index in
+                    Text(rows[index].label).tag(index)
+                }
             }
             .pickerStyle(.menu)
             Text("to")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Picker("To", selection: $rangeTo) {
-                ForEach(1...metrics.rowCount, id: \.self) { Text("\($0)").tag($0) }
+            Picker("To", selection: $rangeToIndex) {
+                ForEach(rows.indices, id: \.self) { index in
+                    Text(rows[index].label).tag(index)
+                }
             }
             .pickerStyle(.menu)
             Spacer()
@@ -344,17 +363,17 @@ struct PruningBlockDetailView: View {
         }
     }
 
-    private func rowLine(row: Int) -> some View {
+    private func rowLine(_ row: PruningRowRef) -> some View {
         HStack(spacing: 8) {
-            Text("\(row)")
+            Text(row.label)
                 .font(.caption.weight(.semibold))
                 .monospacedDigit()
-                .frame(width: 30, alignment: .trailing)
+                .frame(width: 34, alignment: .trailing)
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 3) {
                 ForEach(1...4, id: \.self) { quarter in
-                    quarterCell(segment: PruningSegment(row: row, quarter: quarter))
+                    quarterCell(segment: row.segment(quarter: quarter))
                 }
             }
 
@@ -366,7 +385,7 @@ struct PruningBlockDetailView: View {
                     .foregroundStyle(rowFullySelectedOrDone(row) ? VineyardTheme.leafGreen : Color.secondary)
             }
             .frame(width: 30)
-            .accessibilityLabel("Select all of row \(row)")
+            .accessibilityLabel("Select all of row \(row.label)")
         }
         .frame(minHeight: 34)
     }
@@ -403,16 +422,16 @@ struct PruningBlockDetailView: View {
         .accessibilityLabel("Row \(segment.row), quarter \(segment.quarter)\(isDone ? ", complete" : isSelected ? ", selected" : "")")
     }
 
-    private func rowFullySelectedOrDone(_ row: Int) -> Bool {
+    private func rowFullySelectedOrDone(_ row: PruningRowRef) -> Bool {
         (1...4).allSatisfy { quarter in
-            let segment = PruningSegment(row: row, quarter: quarter)
+            let segment = row.segment(quarter: quarter)
             return metrics.completed.contains(segment) || selectedSegments.contains(segment)
         }
     }
 
-    private func toggleWholeRow(_ row: Int) {
+    private func toggleWholeRow(_ row: PruningRowRef) {
         let remaining = (1...4)
-            .map { PruningSegment(row: row, quarter: $0) }
+            .map { row.segment(quarter: $0) }
             .filter { !metrics.completed.contains($0) }
         if remaining.allSatisfy({ selectedSegments.contains($0) }) {
             for segment in remaining { selectedSegments.remove(segment) }
@@ -422,11 +441,13 @@ struct PruningBlockDetailView: View {
     }
 
     private func selectRange() {
-        let low = min(rangeFrom, rangeTo)
-        let high = max(rangeFrom, rangeTo)
-        for row in low...high {
+        guard !rows.isEmpty else { return }
+        let low = min(rangeFromIndex, rangeToIndex)
+        let high = max(rangeFromIndex, rangeToIndex)
+        guard low >= 0, high < rows.count else { return }
+        for row in rows[low...high] {
             for quarter in 1...4 {
-                let segment = PruningSegment(row: row, quarter: quarter)
+                let segment = row.segment(quarter: quarter)
                 if !metrics.completed.contains(segment) {
                     selectedSegments.insert(segment)
                 }
@@ -438,7 +459,7 @@ struct PruningBlockDetailView: View {
 
     private var selectionBar: some View {
         let rowEq = Double(selectedSegments.count) / 4.0
-        let vines = PruningCalculator.vines(forSegmentCount: selectedSegments.count, vinesPerRow: metrics.vinesPerRow)
+        let vines = PruningCalculator.vines(for: selectedSegments, rows: rows)
         return HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
                 Text("\(rowEq.formatted(.number.precision(.fractionLength(0...2)))) row equivalents")
@@ -533,7 +554,7 @@ private struct PruningEntrySheet: View {
     let pruningStore: PruningStore
     let vineyardId: UUID
     let segments: [PruningSegment]
-    let vinesPerRow: Double
+    let rows: [PruningRowRef]
     let defaultMethod: PruningMethod
     let defaultWorker: String
     let onSaved: () -> Void
@@ -553,7 +574,7 @@ private struct PruningEntrySheet: View {
                 Section("Work Completed") {
                     LabeledContent("Block", value: paddock.name)
                     LabeledContent("Row equivalents", value: (Double(segments.count) / 4.0).formatted(.number.precision(.fractionLength(0...2))))
-                    LabeledContent("Vines (approx.)", value: "\(PruningCalculator.vines(forSegmentCount: segments.count, vinesPerRow: vinesPerRow).formatted())")
+                    LabeledContent("Vines (approx.)", value: "\(PruningCalculator.vines(for: segments, rows: rows).formatted())")
                     DatePicker("Date", selection: $date, displayedComponents: .date)
                 }
 
@@ -622,7 +643,7 @@ private struct PruningEntrySheet: View {
             finishTime: includeTimes ? finishTime : nil,
             method: method,
             notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
-            estimatedVines: PruningCalculator.vines(forSegmentCount: segments.count, vinesPerRow: vinesPerRow)
+            estimatedVines: PruningCalculator.vines(for: segments, rows: rows)
         )
         pruningStore.addEntry(entry)
         onSaved()

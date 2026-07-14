@@ -5,9 +5,11 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 import kotlin.math.ceil
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /**
  * Deterministic pruning-season ids shared with iOS: both platforms derive the
@@ -29,9 +31,49 @@ object PruningSeasonIds {
  * A fixed quarter of a vineyard row (quarter 1 = 0–25% … 4 = 75–100%).
  * Segments are absolute so the same portion can never be recorded twice and
  * the crew's stopping point stays visible. Mirrors the iOS `PruningSegment`.
+ *
+ * Identity is the ACTUAL paddock row record ([rowId]) when the block has
+ * configured rows — renaming or reordering rows never detaches progress.
+ * [row] is the display-number snapshot (the real stored number, e.g. 101,
+ * never a 1…N index). [rowId] is null only for manual fallback rows.
  */
 @Serializable
-data class PruningSegment(val row: Int, val quarter: Int)
+data class PruningSegment(val row: Int, val quarter: Int, val rowId: String? = null) {
+    /** Canonical row identity: the stable row id when present, else the number. */
+    val rowKey: String get() = rowId?.lowercase() ?: "n$row"
+
+    override fun equals(other: Any?): Boolean =
+        other is PruningSegment && other.rowKey == rowKey && other.quarter == quarter
+
+    override fun hashCode(): Int = rowKey.hashCode() * 31 + quarter
+}
+
+/**
+ * One selectable row on the progress screen — the ACTUAL configured paddock
+ * row when the block has row records, or a numbered fallback row generated
+ * from the manual row count otherwise. Mirrors the iOS `PruningRowRef`.
+ * Precedence:
+ *   1. configured paddock rows (stored order, real numbers, per-row length),
+ *   2. sequential fallback rows from `manual_row_count`.
+ */
+data class PruningRowRef(
+    /** Stable paddock row id (null for manual fallback rows). */
+    val rowId: String?,
+    /** Real stored row number (or 1…N only for fallback rows). */
+    val number: Int,
+    /** Display label — the stored row identifier. */
+    val label: String,
+    /** This row's length in metres when geometry exists. */
+    val lengthMetres: Double?,
+    /** Estimated vines in THIS row (rows can have different lengths). */
+    val vines: Double,
+    /** True when generated from the manual row count. */
+    val isFallback: Boolean,
+) {
+    val key: String get() = rowId?.lowercase() ?: "n$number"
+
+    fun segment(quarter: Int): PruningSegment = PruningSegment(row = number, quarter = quarter, rowId = rowId)
+}
 
 /** Per-block pruning configuration — one row per block + season year (`pruning_seasons`). */
 @Serializable
@@ -104,6 +146,11 @@ enum class PruningStatus(val label: String) {
 
 /** Aggregated progress + rate metrics for one block. */
 data class PruningBlockMetrics(
+    /**
+     * The actual rows the tracker operates on (configured rows first,
+     * manual fallback rows only when none are configured).
+     */
+    val rows: List<PruningRowRef>,
     val rowCount: Int,
     val completed: Set<PruningSegment>,
     val completedRowEquivalents: Double,
@@ -125,11 +172,84 @@ object PruningCalculator {
     fun parseDate(value: String?): LocalDate? =
         value?.takeIf { it.isNotBlank() }?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
 
-    fun completedSegments(entries: List<PruningEntry>, rowCount: Int): Set<PruningSegment> {
+    /** Length of one mapped row in metres (matches iOS `PruningCalculator.rowLength`). */
+    fun rowLength(row: PaddockRow, paddock: Paddock): Double {
+        val start = row.startPoint ?: return 0.0
+        val end = row.endPoint ?: return 0.0
+        val points = paddock.polygonPoints.orEmpty()
+        val centroidLat = if (points.isEmpty()) start.latitude else points.sumOf { it.latitude } / points.size
+        val mPerDegLat = 111_320.0
+        val mPerDegLon = 111_320.0 * cos(centroidLat * Math.PI / 180.0)
+        val dLat = (end.latitude - start.latitude) * mPerDegLat
+        val dLon = (end.longitude - start.longitude) * mPerDegLon
+        return sqrt(dLat * dLat + dLon * dLon)
+    }
+
+    /**
+     * The rows the tracker operates on. Uses the ACTUAL configured paddock
+     * rows (stored order, real numbers — non-sequential and >1 starts are
+     * preserved); falls back to sequential rows from the manual row count
+     * only when the block has no configured row records.
+     *
+     * Vine distribution mirrors iOS: each row is weighted by its own length
+     * (rows without geometry get the average mapped length, or an equal share
+     * when nothing is mapped), and the block's effective vine count is split
+     * across those weights — so a quarter contributes 25% of THAT row's vines
+     * and totals always reconcile with the block vine count.
+     */
+    fun rowRefs(paddock: Paddock, setup: PruningBlockSetup?): List<PruningRowRef> {
+        val totalVines = paddock.effectiveVineCount.toDouble()
+        val configured = paddock.rows.orEmpty()
+        if (configured.isNotEmpty()) {
+            val lengths = configured.map { rowLength(it, paddock) }
+            val positive = lengths.filter { it > 0 }
+            val averageLength = if (positive.isEmpty()) 0.0 else positive.sum() / positive.size
+            val weights = lengths.map { if (it > 0) it else (if (averageLength > 0) averageLength else 1.0) }
+            val totalWeight = weights.sum()
+            return configured.mapIndexed { index, row ->
+                PruningRowRef(
+                    rowId = row.stableId,
+                    number = row.number,
+                    label = row.number.toString(),
+                    lengthMetres = lengths[index].takeIf { it > 0 },
+                    vines = if (totalWeight > 0) totalVines * weights[index] / totalWeight else 0.0,
+                    isFallback = false,
+                )
+            }
+        }
+        val count = setup?.rowCountOverride ?: 0
+        if (count <= 0) return emptyList()
+        return (1..count).map { number ->
+            PruningRowRef(
+                rowId = null,
+                number = number,
+                label = number.toString(),
+                lengthMetres = null,
+                vines = totalVines / count,
+                isFallback = true,
+            )
+        }
+    }
+
+    /**
+     * Union of completed segments across entries, canonicalised onto the
+     * block's actual rows. Segments carrying a row id only match that exact
+     * row (a renamed row keeps its progress; a deleted row's quarters are
+     * excluded rather than silently attached to a different row). Legacy
+     * segments without a row id are matched by their stored number.
+     */
+    fun completedSegments(entries: List<PruningEntry>, rows: List<PruningRowRef>): Set<PruningSegment> {
+        val byId = HashMap<String, PruningRowRef>()
+        val byNumber = HashMap<Int, PruningRowRef>()
+        for (ref in rows) {
+            ref.rowId?.let { byId[it.lowercase()] = ref }
+            byNumber.putIfAbsent(ref.number, ref)
+        }
         val set = mutableSetOf<PruningSegment>()
         for (entry in entries) {
             for (segment in entry.segments) {
-                if (segment.row in 1..rowCount) set.add(segment)
+                val ref = if (segment.rowId != null) byId[segment.rowId.lowercase()] else byNumber[segment.row]
+                if (ref != null) set.add(ref.segment(segment.quarter))
             }
         }
         return set
@@ -202,22 +322,31 @@ object PruningCalculator {
     fun vines(segmentCount: Int, vinesPerRow: Double): Int =
         (segmentCount * vinesPerRow / 4.0).roundToInt()
 
+    /**
+     * Vines represented by a set of segments using each ACTUAL row's vine
+     * estimate — a quarter contributes 25% of that specific row's vines.
+     */
+    fun vines(segments: Collection<PruningSegment>, rows: List<PruningRowRef>): Int {
+        val byKey = rows.associateBy({ it.key }, { it.vines })
+        return segments.sumOf { (byKey[it.rowKey] ?: 0.0) / 4.0 }.roundToInt()
+    }
+
     /** Full metric bundle for one block. */
     fun metrics(
         paddock: Paddock,
         setup: PruningBlockSetup?,
         entries: List<PruningEntry>,
     ): PruningBlockMetrics {
-        val mappedRows = paddock.rowCount
-        val rowCount = if (mappedRows > 0) mappedRows else (setup?.rowCountOverride ?: 0)
-        val completed = completedSegments(entries, max(rowCount, 1))
+        val rows = rowRefs(paddock, setup)
+        val rowCount = rows.size
+        val completed = completedSegments(entries, rows)
         val completedRowEq = completed.size / 4.0
         val totalRowEq = rowCount.toDouble()
         val fraction = if (totalRowEq > 0) min(completedRowEq / totalRowEq, 1.0) else 0.0
 
         val totalVines = paddock.effectiveVineCount
         val vinesPerRow = if (rowCount > 0) totalVines.toDouble() / rowCount else 0.0
-        val vinesPruned = vines(completed.size, vinesPerRow)
+        val vinesPruned = vines(completed, rows)
         val averageRowLength = if (rowCount > 0) paddock.effectiveTotalRowLength / rowCount else 0.0
 
         val rate = preferredRate(entries)
@@ -243,6 +372,7 @@ object PruningCalculator {
         }
 
         return PruningBlockMetrics(
+            rows = rows,
             rowCount = rowCount,
             completed = completed,
             completedRowEquivalents = completedRowEq,

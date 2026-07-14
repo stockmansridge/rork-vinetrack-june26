@@ -1,5 +1,6 @@
-import Foundation
 import CoreLocation
+import CryptoKit
+import Foundation
 
 nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
@@ -265,5 +266,42 @@ nonisolated struct PaddockRow: Codable, Identifiable, Sendable, Hashable {
         self.number = number
         self.startPoint = startPoint
         self.endPoint = endPoint
+    }
+
+    enum CodingKeys: String, CodingKey { case id, number, startPoint, endPoint }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        number = try c.decode(Int.self, forKey: .number)
+        startPoint = try c.decode(CoordinatePoint.self, forKey: .startPoint)
+        endPoint = try c.decode(CoordinatePoint.self, forKey: .endPoint)
+        // Tolerate rows written without an `id` (older Android builds and
+        // external systems stripped it). The fallback is DETERMINISTIC from
+        // the row's content, so every device derives the identical id and
+        // pruning progress keyed on it stays consistent across platforms.
+        id = (try? c.decodeIfPresent(UUID.self, forKey: .id))
+            ?? PaddockRowIdentity.derive(number: number, startPoint: startPoint, endPoint: endPoint)
+    }
+}
+
+/// Deterministic fallback identity for paddock rows stored without an `id`.
+/// Matches Java's `UUID.nameUUIDFromBytes` (MD5, version 3) so the Kotlin app
+/// derives byte-identical ids from the same row content.
+nonisolated enum PaddockRowIdentity {
+    static func derive(number: Int, startPoint: CoordinatePoint?, endPoint: CoordinatePoint?) -> UUID {
+        func fmt(_ value: Double?) -> String {
+            guard let value else { return "" }
+            return String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), value)
+        }
+        let name = "vinetrack-paddock-row|\(number)|\(fmt(startPoint?.latitude))|\(fmt(startPoint?.longitude))|\(fmt(endPoint?.latitude))|\(fmt(endPoint?.longitude))"
+        var bytes = Array(Insecure.MD5.hash(data: Data(name.utf8)))
+        bytes[6] = (bytes[6] & 0x0F) | 0x30
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
     }
 }

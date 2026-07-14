@@ -232,7 +232,9 @@ final class PruningSyncService {
         var byEntry: [UUID: [PruningSegment]] = [:]
         for segment in segments where (segment.completed ?? false) {
             guard let entryId = segment.pruningEntryId else { continue }
-            byEntry[entryId, default: []].append(PruningSegment(row: segment.rowNumber, quarter: segment.segmentNumber))
+            byEntry[entryId, default: []].append(
+                PruningSegment(rowId: segment.paddockRowId, row: segment.rowNumber, quarter: segment.segmentNumber)
+            )
         }
         pruningStore.applyRemoteSegmentAttribution(
             vineyardId: vineyardId,

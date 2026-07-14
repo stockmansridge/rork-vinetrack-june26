@@ -89,7 +89,7 @@ struct PruningTrackerView: View {
                 projected = max(projected ?? finish, finish)
             }
             for entry in pruningStore.entries(for: paddock.id) {
-                let vines = Double(PruningCalculator.vines(forSegmentCount: entry.segments.count, vinesPerRow: metrics.vinesPerRow))
+                let vines = Double(PruningCalculator.vines(for: entry.segments, rows: metrics.rows))
                 vinesByDay[calendar.startOfDay(for: entry.date), default: 0] += vines
                 if let entryHours = entry.labourHours, entryHours > 0 {
                     vinesForHours += vines
