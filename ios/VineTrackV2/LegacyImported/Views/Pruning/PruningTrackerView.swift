@@ -106,7 +106,9 @@ struct PruningTrackerView: View {
     ) {
         var completedEq = 0.0
         var totalEq = 0.0
-        var vinesPruned = 0
+        // CONTRACT: sum EXACT vines across blocks and round ONCE at the end —
+        // summing per-block rounded values drifts against Android/portal.
+        var vinesPrunedExact = 0.0
         var vinesTotal = 0
         var blocksComplete = 0
         var blocksBehind = 0
@@ -120,7 +122,7 @@ struct PruningTrackerView: View {
         for (paddock, metrics) in blockMetrics {
             completedEq += metrics.completedRowEquivalents
             totalEq += metrics.totalRowEquivalents
-            vinesPruned += metrics.vinesPruned
+            vinesPrunedExact += metrics.vinesPrunedExact
             vinesTotal += metrics.vinesTotal
             if metrics.status == .complete { blocksComplete += 1 }
             if metrics.status == .behind || metrics.status == .atRisk { blocksBehind += 1 }
@@ -128,7 +130,7 @@ struct PruningTrackerView: View {
                 projected = max(projected ?? finish, finish)
             }
             for entry in pruningStore.entries(for: paddock.id) {
-                let vines = Double(PruningCalculator.vines(for: entry.segments, rows: metrics.rows))
+                let vines = PruningCalculator.exactVines(for: entry.segments, rows: metrics.rows)
                 vinesByDay[calendar.startOfDay(for: entry.date), default: 0] += vines
                 if let entryHours = entry.labourHours, entryHours > 0 {
                     vinesForHours += vines
@@ -139,7 +141,7 @@ struct PruningTrackerView: View {
 
         let vinesPerDay = vinesByDay.isEmpty ? nil : vinesByDay.values.reduce(0, +) / Double(vinesByDay.count)
         let vinesPerHour = hours > 0 ? vinesForHours / hours : nil
-        return (completedEq, totalEq, vinesPruned, vinesTotal, blocksComplete, blocksBehind, vinesPerDay, vinesPerHour, projected)
+        return (completedEq, totalEq, Int(vinesPrunedExact.rounded()), vinesTotal, blocksComplete, blocksBehind, vinesPerDay, vinesPerHour, projected)
     }
 
     private var dashboardCard: some View {
@@ -151,7 +153,7 @@ struct PruningTrackerView: View {
                 Text("Vineyard Progress")
                     .font(.headline)
                 Spacer()
-                Text(fraction.formatted(.percent.precision(.fractionLength(0))))
+                Text("\(PruningCalculator.displayPercent(fraction))%")
                     .font(.title3.weight(.bold))
                     .foregroundStyle(VineyardTheme.leafGreen)
                     .monospacedDigit()
@@ -317,7 +319,7 @@ struct PruningBlockCard: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(metrics.fractionComplete.formatted(.percent.precision(.fractionLength(0))))
+                    Text("\(PruningCalculator.displayPercent(metrics.fractionComplete))%")
                         .font(.caption.weight(.semibold))
                         .monospacedDigit()
                 }

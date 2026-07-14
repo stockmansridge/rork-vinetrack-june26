@@ -159,6 +159,13 @@ data class PruningBlockMetrics(
     val totalRowEquivalents: Double,
     val fractionComplete: Double,
     val vinesPerRow: Double,
+    /**
+     * EXACT (unrounded) vines pruned — sum of each completed quarter's exact
+     * vines. Vineyard totals MUST sum this and round once at display
+     * (rounding per block first drifts against iOS/portal).
+     */
+    val vinesPrunedExact: Double,
+    /** Display value for this block: round(vinesPrunedExact). */
     val vinesPruned: Int,
     val vinesTotal: Int,
     val averageRowLength: Double,
@@ -168,8 +175,23 @@ data class PruningBlockMetrics(
     val timeElapsedFraction: Double?,
 )
 
-/** Pure calculation helpers — mirrors the iOS `PruningCalculator`. */
+/**
+ * Pure calculation helpers — mirrors the iOS `PruningCalculator`.
+ *
+ * CALCULATION CONTRACT (shared with iOS + the portal RPC
+ * `get_pruning_vineyard_summary`): all intermediate row/quarter vine values
+ * stay full-precision doubles; rounding happens ONCE at display via
+ * [displayPercent] / `round(exact)`. Overall progress is row-equivalent
+ * based (completed ÷ total row equivalents), never vine-weighted.
+ */
 object PruningCalculator {
+
+    /**
+     * The ONE display rounding rule for percentages on every platform:
+     * round(fraction × 100) half up — never truncate. Matches the iOS
+     * `PruningCalculator.displayPercent` and the SQL RPC.
+     */
+    fun displayPercent(fraction: Double): Int = (fraction * 100).roundToInt()
 
     fun parseDate(value: String?): LocalDate? =
         value?.takeIf { it.isNotBlank() }?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
@@ -325,13 +347,21 @@ object PruningCalculator {
         (segmentCount * vinesPerRow / 4.0).roundToInt()
 
     /**
-     * Vines represented by a set of segments using each ACTUAL row's vine
-     * estimate — a quarter contributes 25% of that specific row's vines.
+     * EXACT vines represented by a set of segments using each ACTUAL row's
+     * vine estimate — a quarter contributes 25% of that specific row's vines.
+     * Full precision: aggregate these and round ONCE at display.
      */
-    fun vines(segments: Collection<PruningSegment>, rows: List<PruningRowRef>): Int {
+    fun exactVines(segments: Collection<PruningSegment>, rows: List<PruningRowRef>): Double {
         val byKey = rows.associateBy({ it.key }, { it.vines })
-        return segments.sumOf { (byKey[it.rowKey] ?: 0.0) / 4.0 }.roundToInt()
+        return segments.sumOf { (byKey[it.rowKey] ?: 0.0) / 4.0 }
     }
+
+    /**
+     * Display-rounded variant of [exactVines]. Never sum these — sum the
+     * exact values and round the total instead.
+     */
+    fun vines(segments: Collection<PruningSegment>, rows: List<PruningRowRef>): Int =
+        exactVines(segments, rows).roundToInt()
 
     /** Full metric bundle for one block. */
     fun metrics(
@@ -348,7 +378,7 @@ object PruningCalculator {
 
         val totalVines = paddock.effectiveVineCount
         val vinesPerRow = if (rowCount > 0) totalVines.toDouble() / rowCount else 0.0
-        val vinesPruned = vines(completed, rows)
+        val vinesPrunedExact = exactVines(completed, rows)
         val averageRowLength = if (rowCount > 0) paddock.effectiveTotalRowLength / rowCount else 0.0
 
         val rate = preferredRate(entries)
@@ -381,7 +411,8 @@ object PruningCalculator {
             totalRowEquivalents = totalRowEq,
             fractionComplete = fraction,
             vinesPerRow = vinesPerRow,
-            vinesPruned = vinesPruned,
+            vinesPrunedExact = vinesPrunedExact,
+            vinesPruned = vinesPrunedExact.roundToInt(),
             vinesTotal = totalVines,
             averageRowLength = averageRowLength,
             ratePerWorkday = rate,

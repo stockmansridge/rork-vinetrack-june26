@@ -243,6 +243,11 @@ nonisolated struct PruningBlockMetrics: Sendable {
     var totalRowEquivalents: Double
     var fractionComplete: Double
     var vinesPerRow: Double
+    /// EXACT (unrounded) vines pruned — sum of each completed quarter's exact
+    /// vines. Vineyard totals MUST sum this and round once at display
+    /// (rounding per block first drifts against Android/portal).
+    var vinesPrunedExact: Double
+    /// Display value for this block: round(vinesPrunedExact).
     var vinesPruned: Int
     var vinesTotal: Int
     var averageRowLength: Double
@@ -253,7 +258,20 @@ nonisolated struct PruningBlockMetrics: Sendable {
 }
 
 /// Pure calculation helpers for the Pruning Tracker.
+///
+/// CALCULATION CONTRACT (shared with Android + the portal RPC
+/// `get_pruning_vineyard_summary`): all intermediate row/quarter vine values
+/// stay full-precision doubles; rounding happens ONCE at display via
+/// `displayPercent` / `round(exact)`. Overall progress is row-equivalent
+/// based (completed ÷ total row equivalents), never vine-weighted.
 nonisolated enum PruningCalculator {
+
+    /// The ONE display rounding rule for percentages on every platform:
+    /// round(fraction × 100) half away from zero. (Kotlin `roundToInt` and
+    /// the SQL RPC use the same rule — never truncate, never banker's-round.)
+    static func displayPercent(_ fraction: Double) -> Int {
+        Int((fraction * 100).rounded())
+    }
 
     /// ISO weekday (1 = Monday … 7 = Sunday) for a date.
     static func isoWeekday(of date: Date, calendar: Calendar = .current) -> Int {
@@ -432,7 +450,7 @@ nonisolated enum PruningCalculator {
 
         let totalVines = paddock.effectiveVineCount
         let vinesPerRow = rowCount > 0 ? Double(totalVines) / Double(rowCount) : 0
-        let vinesPruned = vines(for: completed, rows: rows)
+        let vinesPrunedExact = exactVines(for: completed, rows: rows)
         let averageRowLength = rowCount > 0 ? paddock.effectiveTotalRowLength / Double(rowCount) : 0
 
         let rate = preferredRate(entries: entries, calendar: calendar)
@@ -476,7 +494,8 @@ nonisolated enum PruningCalculator {
             totalRowEquivalents: totalRowEq,
             fractionComplete: fraction,
             vinesPerRow: vinesPerRow,
-            vinesPruned: vinesPruned,
+            vinesPrunedExact: vinesPrunedExact,
+            vinesPruned: Int(vinesPrunedExact.rounded()),
             vinesTotal: totalVines,
             averageRowLength: averageRowLength,
             ratePerWorkday: rate,
@@ -492,12 +511,18 @@ nonisolated enum PruningCalculator {
         Int((Double(count) * vinesPerRow / 4.0).rounded())
     }
 
-    /// Vines represented by a set of segments using each ACTUAL row's vine
-    /// estimate — a quarter contributes 25% of that specific row's vines.
-    static func vines(for segments: some Collection<PruningSegment>, rows: [PruningRowRef]) -> Int {
+    /// EXACT vines represented by a set of segments using each ACTUAL row's
+    /// vine estimate — a quarter contributes 25% of that specific row's vines.
+    /// Full precision: aggregate these and round ONCE at display.
+    static func exactVines(for segments: some Collection<PruningSegment>, rows: [PruningRowRef]) -> Double {
         var byKey: [String: Double] = [:]
         for ref in rows { byKey[ref.id] = ref.vines }
-        let total = segments.reduce(0.0) { $0 + (byKey[$1.rowKey] ?? 0) / 4.0 }
-        return Int(total.rounded())
+        return segments.reduce(0.0) { $0 + (byKey[$1.rowKey] ?? 0) / 4.0 }
+    }
+
+    /// Display-rounded variant of `exactVines`. Never sum these — sum the
+    /// exact values and round the total instead.
+    static func vines(for segments: some Collection<PruningSegment>, rows: [PruningRowRef]) -> Int {
+        Int(exactVines(for: segments, rows: rows).rounded())
     }
 }

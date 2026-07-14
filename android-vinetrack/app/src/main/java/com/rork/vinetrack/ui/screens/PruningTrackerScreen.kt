@@ -97,6 +97,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+import kotlin.math.roundToInt
 
 /**
  * Pruning Tracker (in development — System Admin only). Mirrors the iOS
@@ -371,7 +372,11 @@ private fun fmt(value: Double, decimals: Int = 2): String {
     return "%.${decimals}f".format(value).trimEnd('0').trimEnd('.')
 }
 
-private fun fmtPercent(fraction: Double): String = "${(fraction * 100).toInt()}%"
+/**
+ * Shared display rule (matches iOS + portal RPC): round(fraction × 100),
+ * never truncate — truncation made Android show 3% where iOS showed 4%.
+ */
+private fun fmtPercent(fraction: Double): String = "${PruningCalculator.displayPercent(fraction)}%"
 
 private val displayDate: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM")
 
@@ -389,7 +394,9 @@ private fun PruningDashboardCard(
 
     var completedEq = 0.0
     var totalEq = 0.0
-    var vinesPruned = 0
+    // CONTRACT: sum EXACT vines across blocks and round ONCE at the end —
+    // summing per-block rounded values drifts against iOS/portal.
+    var vinesPrunedExact = 0.0
     var vinesTotal = 0
     var blocksComplete = 0
     var blocksAtRisk = 0
@@ -404,7 +411,7 @@ private fun PruningDashboardCard(
         val metrics = PruningCalculator.metrics(paddock, setup, blockEntries)
         completedEq += metrics.completedRowEquivalents
         totalEq += metrics.totalRowEquivalents
-        vinesPruned += metrics.vinesPruned
+        vinesPrunedExact += metrics.vinesPrunedExact
         vinesTotal += metrics.vinesTotal
         if (metrics.status == PruningStatus.Complete) blocksComplete += 1
         if (metrics.status == PruningStatus.Behind || metrics.status == PruningStatus.AtRisk) blocksAtRisk += 1
@@ -412,7 +419,7 @@ private fun PruningDashboardCard(
             projected = projected?.let { if (finish.isAfter(it)) finish else it } ?: finish
         }
         for (entry in blockEntries) {
-            val vines = PruningCalculator.vines(entry.segments, metrics.rows).toDouble()
+            val vines = PruningCalculator.exactVines(entry.segments, metrics.rows)
             vinesByDay[entry.date] = (vinesByDay[entry.date] ?: 0.0) + vines
             val entryHours = entry.labourHours
             if (entryHours != null && entryHours > 0) {
@@ -422,6 +429,7 @@ private fun PruningDashboardCard(
         }
     }
 
+    val vinesPruned = vinesPrunedExact.roundToInt()
     val fraction = if (totalEq > 0) (completedEq / totalEq).coerceAtMost(1.0) else 0.0
     val vinesPerDay = if (vinesByDay.isNotEmpty()) vinesByDay.values.sum() / vinesByDay.size else null
     val vinesPerHour = if (hours > 0) vinesForHours / hours else null

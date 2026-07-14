@@ -29,28 +29,62 @@ All tables: RLS via `is_vineyard_member` (select) and `has_vineyard_role(owner/m
 - Clients re-apply the server's segment attribution after every pull; entries still queued locally keep
   their optimistic quarters until their push lands.
 
-## Calculation contract (identical on both platforms)
+## Calculation contract (identical on ALL platforms — iOS, Android, portal)
 
 Source of truth = stored entries/segments; dashboards derive deterministically.
+`get_pruning_vineyard_summary` (sql/115) is the **authoritative reference implementation** — the
+portal must call it (or replicate it exactly); the mobile calculators mirror it for offline use.
+
+**Blocks included:** ALL non-deleted paddocks of the selected vineyard — including blocks named
+"Test", blocks with no season row, and blocks with zero vines. No platform may include a block the
+others exclude.
+
+**Season selection:** `season_year` = requested year, else the year of the as-of date in the
+vineyard's IANA timezone (`vineyards.timezone`, UTC fallback) — never the device calendar year
+independently. Entry grouping uses the stored `entry_date` (date-only, no UTC conversion).
 
 - Row equivalents: full row = 1.0; quarter = 0.25. Completed = union of completed quarters (set
-  semantics — duplicates impossible by construction).
-- Vines in row = row length ÷ vine spacing; stored vine counts win when present
-  (`paddock.effectiveVineCount`). Vines for N quarters = N × vinesPerRow ÷ 4, rounded.
-- Daily rate = total row equivalents on days WITH entries ÷ number of days with entries, over the last
-  3 working days, last 7, or the whole period. **Days without entries (rain days) never reduce the
-  rate.** Preferred rate = 3-day rolling average, falling back to whole-period.
-- Remaining working days = ceil(remaining row equivalents ÷ preferred rate); projected finish walks
-  forward through the season's configured working days (ISO weekdays, default Mon–Fri).
+  semantics — duplicates impossible by construction). Segments carrying a `paddock_row_id` match
+  only that row; segments without one match the FIRST configured row (stored order) with that
+  number; unmatched quarters are excluded — never re-attached to a different row.
+- **Block vine total (single precedence, all platforms):** `vine_count_override`, else
+  `trunc((row_length_override ?? Σ row lengths) ÷ vine_spacing)` (spacing default 1.0; 0 vines when
+  spacing ≤ 0). Row lengths use equirectangular distance with the polygon-centroid latitude (row
+  start latitude when no polygon). No platform may use `paddock vines ÷ row count` while another
+  uses `length ÷ spacing`.
+- **Row vines:** block vines distributed by row-length weights — a row without geometry gets the
+  average mapped length (or an equal share when nothing is mapped) — so per-row vines always
+  reconcile with the block total and rows may have different lengths.
+- **Rounding point (critical):** a quarter contributes `exactRowVines ÷ 4` at FULL precision.
+  Vines pruned = `round(Σ exact quarter vines)` — rounded ONCE at the level being displayed
+  (block card: block sum; vineyard dashboard: vineyard sum). NEVER `Σ round(…)` per quarter, per
+  entry, or per block. (This was the 1,124 vs 1,126 drift.)
+- **Overall completion % (the ONE formula):** `completed row equivalents ÷ total row equivalents`
+  — row-equivalent based, NOT vine-weighted, NOT blocks-complete based. Display
+  `round(fraction × 100)` half-up — never truncate. (Android truncation caused 3% vs iOS 4%;
+  the portal's vine-weighted formula caused 5%.)
+- **Vines/day (label: whole period):** group entries by `entry_date`, sum EXACT vines per day,
+  divide by the number of days-with-entries over the whole period; round only for display.
+- **Vines/labour hour:** `Σ exact vines of entries with labour_hours > 0 ÷ Σ labour hours`
+  (person-hours, after Work Task labour-line totals are applied). Deleted entries and zero-hour
+  entries are excluded from the denominator; their vines are excluded from the numerator.
+- Daily rate (projection input) = mean row equivalents per day-with-entries over the 3 most recent
+  days-with-entries, whole period when fewer. **Days without entries (rain days) never reduce the
+  rate.**
+- **Projection:** remaining working days = ceil(remaining row equivalents ÷ rate); walk calendar
+  days starting AT the as-of date (today counts when it is a working day — the portal starting
+  tomorrow caused 15 vs 14 July). Date-only arithmetic in the vineyard timezone — no UTC shifts.
+  Vineyard projected completion = the LATEST block projection.
 - Status thresholds: Ahead > 3 days early · On track ≤ 3 days late/early · At risk 1–3 days late ·
-  Behind > 3 days late · Complete at 100% · Not started at 0%.
+  Behind > 3 days late · Complete at 100% · Not started at 0%. "Blocks at risk" counts At risk +
+  Behind.
 - Time-elapsed marker = (today − start) ÷ (due − start), clamped 0–1; start falls back to the first
   entry date.
 - Edge cases: no work recorded → Not started, no projection; one day recorded → that day is the
   average; zero labour hours → per-hour rates omitted (no divide-by-zero); due date passed with work
-  remaining → Behind; zero completion rate → no projected finish; differing row lengths → vinesPerRow
-  uses the block average (total length ÷ rows); missing geometry → `manual_row_count` from season
-  setup; missing spacing and vine count → vine metrics show 0 while row-equivalent progress still works.
+  remaining → Behind; zero completion rate → no projected finish; missing geometry →
+  `manual_row_count` fallback rows (equal vine share, number identity); missing spacing and vine
+  count → vine metrics show 0 while row-equivalent progress still works.
 
 Fertiliser: per-hectare total = ha × rate; per-vine total = vines × g(mL)/vine ÷ 1000; packs =
 total ÷ pack size; product cost = total ÷ pack size × price per pack; total job cost = product +
@@ -131,7 +165,28 @@ Submit button: `Record N quarters` (disabled when nothing is selected).
   task. Editing a Work Task never rewrites the pruning entry — the pruning record stays the source
   of truth for row completion.
 
-### Portal parity spec (implement in Lovable)
+### Portal summary parity spec (implement in Lovable — sql/115)
+
+The portal's pruning dashboard MUST NOT keep its own aggregation. Replace it with:
+
+```ts
+const { data } = await supabase.rpc("get_pruning_vineyard_summary", {
+  p_vineyard_id: vineyardId,
+  // optional: p_season_year, p_today (defaults: vineyard-timezone today)
+});
+```
+
+Returned fields: `completion_fraction` + `display_percent` (row-equivalent based),
+`total_vines`, `vines_pruned` (+ `_exact`), `vines_remaining`, `vines_per_day` (+ `_exact`),
+`vines_per_labour_hour` (+ `_exact`), `labour_hours`, `projected_completion_date`,
+`blocks_complete`, `blocks_at_risk`, and a per-block `blocks` array (name, row count, row
+equivalents, vines, rate, projection, status) — use the `blocks` array for the block cards so the
+same numbers drive both levels. Display the pre-rounded fields as-is; never re-derive progress
+from vines or re-round the exact values differently. The three portal-side root causes to remove:
+vine-weighted overall %, its own vine denominator (22,704 vs the contract's 22,598), and a
+projection that skips the current day.
+
+### Portal recording spec (implement in Lovable)
 
 - Same wording contract as above; the recording dialog must contain exactly: Date, Worker or crew,
   Labour hours (read-only Σ person-hours while the task toggle is on), optional Start/Finish time,

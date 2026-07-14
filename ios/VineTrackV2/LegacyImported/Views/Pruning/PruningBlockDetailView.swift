@@ -164,7 +164,7 @@ struct PruningBlockDetailView: View {
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(metrics.fractionComplete.formatted(.percent.precision(.fractionLength(0))))
+                Text("\(PruningCalculator.displayPercent(metrics.fractionComplete))%")
                     .font(.system(size: 34, weight: .bold, design: .rounded))
                     .monospacedDigit()
                 Text("\(metrics.completedRowEquivalents.formatted(.number.precision(.fractionLength(0...2)))) of \(metrics.rowCount) row equivalents")
@@ -180,8 +180,8 @@ struct PruningBlockDetailView: View {
 
             if let elapsed = metrics.timeElapsedFraction {
                 HStack(spacing: 12) {
-                    legendDot(color: metrics.status.tint, text: "Work \(metrics.fractionComplete.formatted(.percent.precision(.fractionLength(0))))")
-                    legendDot(color: .primary.opacity(0.55), text: "Time \(elapsed.formatted(.percent.precision(.fractionLength(0))))")
+                    legendDot(color: metrics.status.tint, text: "Work \(PruningCalculator.displayPercent(metrics.fractionComplete))%")
+                    legendDot(color: .primary.opacity(0.55), text: "Time \(PruningCalculator.displayPercent(elapsed))%")
                 }
             }
 
