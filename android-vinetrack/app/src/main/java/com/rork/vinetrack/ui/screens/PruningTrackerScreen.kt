@@ -24,6 +24,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCut
@@ -73,6 +75,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.PruningStore
+import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PruningBlockMetrics
 import com.rork.vinetrack.data.model.PruningBlockSetup
@@ -185,20 +188,42 @@ fun PruningTrackerScreen(
                 // client-generated, so offline replay and retries can never
                 // create a duplicate task for this entry.
                 if (taskDraft != null) {
+                    val personHours = taskDraft.labour.sumOf { it.totalHours }
                     val taskId = vm.createWorkTask(
                         taskType = taskDraft.taskType,
                         paddockIds = listOf(entry.paddockId),
                         date = entry.date,
-                        durationHours = entry.labourHours ?: 0.0,
+                        durationHours = if (personHours > 0) personHours else entry.labourHours ?: 0.0,
                         notes = taskDraft.notes,
                         markCompleted = true,
                     ) { }
-                    if (taskId != null) linked = linked.copy(workTaskId = taskId)
+                    if (taskId != null) {
+                        linked = linked.copy(workTaskId = taskId)
+                        // One canonical work_task_labour_lines row per worker/crew
+                        // — through the existing shared labour path (optimistic +
+                        // offline queue with a stable client id and a parent-create
+                        // gate), so retries and offline replays can never duplicate
+                        // the task or its lines.
+                        taskDraft.labour.forEach { line ->
+                            vm.saveLabourLine(
+                                lineId = null,
+                                taskId = taskId,
+                                workDate = entry.date,
+                                operatorCategoryId = line.operatorCategoryId,
+                                workerType = line.workerType,
+                                workerCount = line.workerCount,
+                                hoursPerWorker = line.hoursPerWorker,
+                                hourlyRate = line.hourlyRate,
+                                notes = null,
+                            ) { }
+                        }
+                    }
                 }
                 entries = vm.recordPruningEntry(vineyardId, linked)
             },
             onDeleteEntry = { entries = vm.deletePruningEntry(vineyardId, it) },
             onDeleteWorkTask = { vm.deleteWorkTask(it) { } },
+            operatorCategories = state.operatorCategories,
             modifier = modifier,
         )
         return
@@ -598,6 +623,7 @@ private fun PruningBlockDetail(
     onAddEntry: (PruningEntry, PruningWorkTaskDraft?) -> Unit,
     onDeleteEntry: (String) -> Unit,
     onDeleteWorkTask: (String) -> Unit,
+    operatorCategories: List<OperatorCategory>,
     modifier: Modifier = Modifier,
 ) {
     val vine = LocalVineColors.current
@@ -757,6 +783,7 @@ private fun PruningBlockDetail(
             rows = rows,
             defaultMethod = setup?.method ?: "spur",
             defaultWorker = setup?.crew ?: "",
+            operatorCategories = operatorCategories,
             onDismiss = { showEntrySheet = false },
             onSave = { entry, taskDraft ->
                 onAddEntry(entry, taskDraft)
@@ -1140,9 +1167,49 @@ private fun DetailHistoryCard(entries: List<PruningEntry>, onDelete: (PruningEnt
 // MARK: - Entry sheet
 
 /** Work Task creation request captured in the Record Pruning sheet — every
- * other task value (date, block, crew, hours, times) is reused from the
- * pruning entry itself so nothing is entered twice. */
-private data class PruningWorkTaskDraft(val taskType: String, val notes: String)
+ * other task value (date, block, crew, times) is reused from the pruning
+ * entry itself so nothing is entered twice. [labour] carries one costing line
+ * per worker/crew row (`work_task_labour_lines`). */
+private data class PruningWorkTaskDraft(
+    val taskType: String,
+    val notes: String,
+    val labour: List<PruningLabourDraft>,
+)
+
+/** One validated Work Task labour line captured in the Record Pruning sheet. */
+private data class PruningLabourDraft(
+    val operatorCategoryId: String?,
+    val workerType: String,
+    val workerCount: Int,
+    val hoursPerWorker: Double,
+    val hourlyRate: Double?,
+) {
+    /** Person-hours: worker count × hours per worker (DB `total_hours`). */
+    val totalHours: Double get() = workerCount * hoursPerWorker
+}
+
+/** Editable labour-line row state inside the Record Pruning sheet. */
+private data class PruningLabourRow(
+    val key: Int,
+    val categoryId: String? = null,
+    val workerType: String = "",
+    val countText: String = "1",
+    val hoursText: String = "",
+    val rateText: String = "",
+) {
+    val workerCount: Int get() = (countText.toIntOrNull() ?: 1).coerceAtLeast(1)
+    val hoursPerWorker: Double get() = hoursText.replace(',', '.').toDoubleOrNull() ?: 0.0
+    val hourlyRate: Double? get() = rateText.replace(',', '.').toDoubleOrNull()
+    /** Person-hours: worker count × hours per worker. */
+    val totalHours: Double get() = workerCount * hoursPerWorker
+    /** Line cost, or null when no rate was specified (shown as "Not specified"). */
+    val totalCost: Double? get() = hourlyRate?.let { totalHours * it }
+    val isValid: Boolean get() = hoursPerWorker > 0.0
+}
+
+/** Compact currency label (e.g. "$42.50") matching the Work Tasks screen. */
+private fun fmtCurrency(value: Double): String =
+    if (value % 1.0 == 0.0) "$%,d".format(value.toLong()) else "$%,.2f".format(value)
 
 /** Distinct selected row numbers grouped into compact ranges, e.g. "44–46, 50". */
 private fun rowRangeSummary(segments: List<PruningSegment>): String {
@@ -1187,6 +1254,7 @@ private fun PruningEntrySheet(
     rows: List<PruningRowRef>,
     defaultMethod: String,
     defaultWorker: String,
+    operatorCategories: List<OperatorCategory>,
     onDismiss: () -> Unit,
     onSave: (PruningEntry, PruningWorkTaskDraft?) -> Unit,
 ) {
@@ -1204,6 +1272,18 @@ private fun PruningEntrySheet(
     var notes by remember { mutableStateOf("") }
     var createTask by remember { mutableStateOf(false) }
     var taskType by remember { mutableStateOf("Pruning") }
+    // Labour costing lines for the linked Work Task. The first row is seeded
+    // from the pruning form's Worker/Crew + Labour hours when the toggle turns
+    // on, so nothing is entered twice.
+    var labourRows by remember { mutableStateOf(listOf<PruningLabourRow>()) }
+    var nextLabourKey by remember { mutableStateOf(1) }
+
+    // Person-hours convention: with labour lines, the pruning entry's labour
+    // hours = sum of all line person-hours (2 workers × 8 h = 16 h).
+    val labourPersonHours = labourRows.sumOf { it.totalHours }
+    val labourTotalCost = labourRows.sumOf { it.totalCost ?: 0.0 }
+    val hasRatedLine = labourRows.any { it.hourlyRate != null }
+    val labourValid = labourRows.isNotEmpty() && labourRows.all { it.isValid }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = vine.appBackground) {
         Column(
@@ -1242,14 +1322,30 @@ private fun PruningEntrySheet(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
-            OutlinedTextField(
-                value = hoursText,
-                onValueChange = { hoursText = it },
-                label = { Text("Labour hours") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
+            if (createTask) {
+                // Labour hours are derived from the Work Task labour lines below.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(vine.cardBackground)
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Labour hours", fontSize = 14.sp, color = vine.textPrimary)
+                    Spacer(Modifier.weight(1f))
+                    Text("${fmt(labourPersonHours)} h", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
+                }
+            } else {
+                OutlinedTextField(
+                    value = hoursText,
+                    onValueChange = { hoursText = it },
+                    label = { Text("Labour hours") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+            }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Record start & finish time", fontSize = 14.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
@@ -1290,7 +1386,16 @@ private fun PruningEntrySheet(
                     color = vine.textPrimary,
                     modifier = Modifier.weight(1f),
                 )
-                Switch(checked = createTask, onCheckedChange = { createTask = it })
+                Switch(checked = createTask, onCheckedChange = { on ->
+                    createTask = on
+                    if (on && labourRows.isEmpty()) {
+                        // Seed the first labour line from the pruning form's
+                        // Worker/Crew + Labour hours — nothing is re-entered.
+                        labourRows = listOf(
+                            PruningLabourRow(key = 0, workerType = worker.trim(), hoursText = hoursText.trim())
+                        )
+                    }
+                })
             }
             if (createTask) {
                 WorkTaskTypePicker(builtInWorkTaskTypes, taskType) { taskType = it }
@@ -1300,8 +1405,45 @@ private fun PruningEntrySheet(
                     fontWeight = FontWeight.SemiBold,
                     color = vine.textSecondary,
                 )
+
+                Text("Labour lines", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                labourRows.forEachIndexed { index, row ->
+                    PruningLabourRowEditor(
+                        row = row,
+                        categories = operatorCategories,
+                        canRemove = labourRows.size > 1,
+                        onChange = { updated ->
+                            labourRows = labourRows.toMutableList().also { it[index] = updated }
+                        },
+                        onRemove = {
+                            labourRows = labourRows.filterNot { it.key == row.key }
+                        },
+                    )
+                }
+                TextButton(onClick = {
+                    labourRows = labourRows + PruningLabourRow(key = nextLabourKey)
+                    nextLabourKey += 1
+                }) {
+                    Icon(Icons.Filled.Add, contentDescription = null, tint = VineColors.Primary)
+                    Text("  Add worker", color = VineColors.Primary, fontWeight = FontWeight.SemiBold)
+                }
+                if (labourValid) {
+                    Text(
+                        "Total: ${fmt(labourPersonHours)} h person-hours" +
+                            if (hasRatedLine) " · ${fmtCurrency(labourTotalCost)} labour cost" else "",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textSecondary,
+                    )
+                } else {
+                    Text(
+                        "Each labour line needs hours greater than zero.",
+                        fontSize = 12.sp,
+                        color = VineColors.Destructive,
+                    )
+                }
                 Text(
-                    "The Work Task reuses this record's date, block, crew, labour hours, times and notes — nothing is entered twice. It is created as completed and appears in the Work Tasks tool.",
+                    "The Work Task reuses this record's date, block, crew, times and notes — nothing is entered twice. It is created as completed with these labour lines and appears in the Work Tasks tool. Rates left blank show as “Not specified”.",
                     fontSize = 12.sp,
                     color = vine.textSecondary,
                 )
@@ -1316,7 +1458,14 @@ private fun PruningEntrySheet(
                         date = date.toString(),
                         segments = segments,
                         worker = worker.trim(),
-                        labourHours = hoursText.replace(',', '.').toDoubleOrNull(),
+                        // Person-hours convention: with labour lines, the entry's
+                        // labour hours = sum of line person-hours; otherwise the
+                        // manually entered value applies as before.
+                        labourHours = if (createTask) {
+                            labourPersonHours.takeIf { it > 0 }
+                        } else {
+                            hoursText.replace(',', '.').toDoubleOrNull()
+                        },
                         startTime = if (includeTimes) startTime.trim().ifBlank { null } else null,
                         finishTime = if (includeTimes) finishTime.trim().ifBlank { null } else null,
                         method = method,
@@ -1327,13 +1476,22 @@ private fun PruningEntrySheet(
                         PruningWorkTaskDraft(
                             taskType = taskType,
                             notes = composePruningTaskNotes(segments, rows, method, notes.trim()),
+                            labour = labourRows.filter { it.isValid }.map { row ->
+                                PruningLabourDraft(
+                                    operatorCategoryId = row.categoryId,
+                                    workerType = row.workerType.trim(),
+                                    workerCount = row.workerCount,
+                                    hoursPerWorker = row.hoursPerWorker,
+                                    hourlyRate = row.hourlyRate,
+                                )
+                            },
                         )
                     } else {
                         null
                     }
                     onSave(entry, draft)
                 },
-                enabled = segments.isNotEmpty(),
+                enabled = segments.isNotEmpty() && (!createTask || labourValid),
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                 modifier = Modifier.fillMaxWidth(),
             ) {
@@ -1363,6 +1521,106 @@ private fun PruningEntrySheet(
         ) {
             DatePicker(state = pickerState)
         }
+    }
+}
+
+/**
+ * One editable Work Task labour line: worker/crew name (with an optional
+ * worker-type picker that seeds the hourly rate, mirroring the Work Tasks
+ * labour sheet), worker count, hours per worker and optional hourly rate.
+ */
+@Composable
+private fun PruningLabourRowEditor(
+    row: PruningLabourRow,
+    categories: List<OperatorCategory>,
+    canRemove: Boolean,
+    onChange: (PruningLabourRow) -> Unit,
+    onRemove: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    var categoryMenu by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(vine.cardBackground)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            OutlinedTextField(
+                value = row.workerType,
+                onValueChange = { onChange(row.copy(workerType = it)) },
+                label = { Text("Worker or crew member") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+            )
+            if (categories.isNotEmpty()) {
+                Box {
+                    IconButton(onClick = { categoryMenu = true }) {
+                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "Choose worker type", tint = VineColors.Primary)
+                    }
+                    DropdownMenu(expanded = categoryMenu, onDismissRequest = { categoryMenu = false }) {
+                        categories.forEach { category ->
+                            DropdownMenuItem(
+                                text = {
+                                    val rate = category.costPerHour
+                                    Text(if (rate != null && rate > 0) "${category.displayName} · ${fmtCurrency(rate)}/h" else category.displayName)
+                                },
+                                onClick = {
+                                    // Worker-type default rate seeds an empty rate
+                                    // field — same behaviour as the Work Task sheet.
+                                    val seededRate = if (row.rateText.isBlank()) {
+                                        category.costPerHour?.takeIf { it > 0 }?.let { fmt(it) } ?: row.rateText
+                                    } else {
+                                        row.rateText
+                                    }
+                                    onChange(row.copy(categoryId = category.id, workerType = category.displayName, rateText = seededRate))
+                                    categoryMenu = false
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+            if (canRemove) {
+                IconButton(onClick = onRemove) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Remove labour line", tint = VineColors.Destructive)
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = row.countText,
+                onValueChange = { text -> onChange(row.copy(countText = text.filter { it.isDigit() })) },
+                label = { Text("Workers") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = row.hoursText,
+                onValueChange = { text -> onChange(row.copy(hoursText = text.filter { it.isDigit() || it == '.' || it == ',' })) },
+                label = { Text("Hrs / worker") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = row.rateText,
+                onValueChange = { text -> onChange(row.copy(rateText = text.filter { it.isDigit() || it == '.' || it == ',' })) },
+                label = { Text("Rate $/h") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+            )
+        }
+        Text(
+            "${fmt(row.totalHours)} h · " + (row.totalCost?.let { fmtCurrency(it) } ?: "Cost not specified"),
+            fontSize = 12.sp,
+            color = vine.textSecondary,
+        )
     }
 }
 

@@ -6339,6 +6339,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     clientUpdatedAt = clientUpdatedAt,
                 )
                 _ui.update { st ->
+                    // Only reconcile into the visible list while the SAME task's
+                    // lines are open — background callers (e.g. the Pruning
+                    // Tracker's linked-task labour lines) must not leak rows
+                    // into another task's open line list.
+                    if (st.taskLinesTaskId != taskId) return@update st.copy(taskLineBusy = false)
                     val others = st.taskLabourLines.filterNot { it.id == saved.id }
                     st.copy(taskLabourLines = others + saved, taskLineBusy = false)
                 }

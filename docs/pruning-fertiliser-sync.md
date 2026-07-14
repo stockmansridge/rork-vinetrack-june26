@@ -69,7 +69,7 @@ labour/machinery. Multi-block allocations are weighted by area (per-hectare) or 
 - Both: client-generated UUIDs; local caches survive offline restarts; server state survives logout /
   reinstall / device changes.
 
-## Record Pruning + Work Task link (sql/113)
+## Record Pruning + Work Task link (sql/113, corrected by sql/114)
 
 Wording contract (all platforms): the action is **"Record Pruning"** — never "Complete Today" —
 because the date field determines when the work occurred. Dialog title: `Record Pruning — <Block>`.
@@ -80,6 +80,16 @@ Submit button: `Record N quarters` (disabled when nothing is selected).
   client-side with a client-generated UUID and pushed through the existing work-task queue, so the
   pruning RPC may replay before the `work_tasks` row exists remotely. Stable ids keep the link
   consistent regardless of replay order.
+- **sql/114 (corrective, 113 untouched):** partial unique index
+  `pruning_entries_work_task_unique` on `(work_task_id) where work_task_id is not null and
+  deleted_at is null` — one task may be linked to at most ONE live pruning entry (existing
+  duplicates resolved earliest-entry-wins before the index is created). `record_pruning_entry`
+  now DROPS the link (entry still records) when another live entry already owns the task id, so
+  replay can never fail or steal a link; `set_pruning_entry_work_task` RAISES on the same
+  condition because it's an explicit user action. Both functions deliberately accept a
+  `work_task_id` with no `work_tasks` row yet — required because the pruning queue may replay
+  before the work-task queue; vineyard isolation still rejects an existing task from another
+  vineyard. This allowance is documented on both functions.
 - `record_pruning_entry` gained `p_work_task_id uuid default null` (old 15-arg signature dropped —
   PostgREST ambiguity). On replay the link only back-fills an EMPTY `work_task_id`; it can never
   overwrite an existing different link, so retries create at most one linked task.
@@ -87,15 +97,35 @@ Submit button: `Record N quarters` (disabled when nothing is selected).
   action (clients cannot write `pruning_entries` directly). Validates the task belongs to the same
   vineyard.
 - **Create Work Task flow (mobile, mirrored on both platforms):** "Create a Work Task for this
-  pruning work" toggle, default OFF. When ON, only the work type is asked (default `Pruning`,
-  existing task-type catalog); everything else is reused from the pruning form — date, block,
-  crew, labour hours, times, notes. Task is created as **Completed** (`isFinalized`,
+  pruning work" toggle, default OFF. When ON, the work type is asked (default `Pruning`, existing
+  task-type catalog) plus a **Labour lines** section; everything else is reused from the pruning
+  form — date, block, crew, times, notes. Task is created as **Completed** (`isFinalized`,
   `status = "Completed"`), with notes
   `Source: Pruning Tracker — Rows 44–46 · 6 quarters · 1.5 row equivalents · ~375 vines · <method>`
   plus the user's notes, a `work_task_paddocks` join row, and `area_ha` from the block (iOS).
   One task per submission — never per row or per quarter.
-- **Atomicity:** both records are local-first writes; each syncs through its own idempotent queue
-  with the SAME client ids, so offline replay preserves the relationship and can never duplicate.
+- **Labour lines (canonical Work Task costing rows):** the flow creates real
+  `work_task_labour_lines` rows (sql/050) — NOT a pruning-specific model — through each platform's
+  existing labour path (iOS `MigratedDataStore.addWorkTaskLabourLine` →
+  `WorkTaskLabourLineSyncService`; Android `AppViewModel.saveLabourLine` → `WorkTaskLabourSync`
+  outbox with its parent-create gate). The first line is seeded from the pruning form's
+  Worker/Crew + Labour hours; more workers can be added, each with its own worker type
+  (`worker_type_id` link + `worker_type` snapshot, default rate seeded from the worker type),
+  worker count, hours per worker and optional hourly rate. Line totals use the DB convention:
+  `total_hours = worker_count × hours_per_worker`, `total_cost = total_hours × hourly_rate`;
+  a blank rate displays as "Not specified", never $0.
+- **Person-hours convention:** VineTrack Work Tasks treat labour-line hours as PERSON-hours and
+  the canonical labour source when lines exist (see `AddEditWorkTaskView` /
+  `WorkTaskLogView.effectiveHours`). Therefore when the toggle is ON,
+  `pruning_entries.labour_hours = Σ line person-hours` (Worker A 8 h + Worker B 8 h → 16 h) so
+  vines-per-labour-hour stays accurate; the task header's `durationHours` carries the same total
+  as a fallback. With the toggle OFF, the manually entered labour hours apply unchanged.
+- **Atomicity:** all three records (pruning entry, task header + join row, labour lines) are
+  local-first writes; each syncs through its own idempotent queue with the SAME client-generated
+  ids (labour ids minted when the row is added in the sheet), and Android's labour queue defers
+  behind the task header's pending create, so offline replay preserves relationships and can
+  never duplicate the task or a line. A failed step retries from its own queue without
+  re-recording pruning.
 - **Reversal:** deleting an entry with a linked task prompts — Keep Work Task / Delete Work Task
   (existing work-task delete permissions) / Cancel. `delete_pruning_entry` itself never touches the
   task. Editing a Work Task never rewrites the pruning entry — the pruning record stays the source
@@ -104,8 +134,11 @@ Submit button: `Record N quarters` (disabled when nothing is selected).
 ### Portal parity spec (implement in Lovable)
 
 - Same wording contract as above; the recording dialog must contain exactly: Date, Worker or crew,
-  Labour hours, optional Start/Finish time, Pruning method, Notes, selected rows + quarters,
-  Create Work Task toggle (default off, conditional fields only).
+  Labour hours (read-only Σ person-hours while the task toggle is on), optional Start/Finish time,
+  Pruning method, Notes, selected rows + quarters, Create Work Task toggle (default off,
+  conditional fields only) with the same Labour lines section (seed first line from Worker/Crew +
+  Labour hours; add/remove workers; worker type picker seeds the rate; per-line totals; blank
+  rate = "Not specified").
 - Quarter tiles ≥ 44×44 px, full cell width, whole tile clickable, states: grey = remaining,
   blue = selected, green = completed (locked); keep Q1–Q4 headings; hover/focus/keyboard states.
 - Work Task creation must call the existing work-task insert with a client-generated UUID and pass

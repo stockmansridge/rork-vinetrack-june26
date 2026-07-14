@@ -612,6 +612,29 @@ struct PruningBlockDetailView: View {
 
 // MARK: - Entry sheet
 
+/// Editable labour-line draft for the Record Pruning sheet. The id is minted
+/// once when the row is added and becomes the `work_task_labour_lines` row id,
+/// so offline replay and retries can never create a duplicate line.
+private struct PruningLabourLineDraft: Identifiable {
+    let id: UUID = UUID()
+    var operatorCategoryId: UUID? = nil
+    var workerType: String = ""
+    var countText: String = "1"
+    var hoursText: String = ""
+    var rateText: String = ""
+
+    var workerCount: Int { max(Int(countText) ?? 1, 1) }
+    var hoursPerWorker: Double { Double(hoursText.replacingOccurrences(of: ",", with: ".")) ?? 0 }
+    var hourlyRate: Double? { Double(rateText.replacingOccurrences(of: ",", with: ".")) }
+    /// Person-hours: worker count × hours per worker (matches the DB-generated
+    /// `total_hours` column).
+    var totalHours: Double { Double(workerCount) * hoursPerWorker }
+    /// Line cost: person-hours × hourly rate; nil when no rate was specified
+    /// (mirrors the existing Work Task "Not specified" convention — never $0).
+    var totalCost: Double? { hourlyRate.map { totalHours * $0 } }
+    var isValid: Bool { hoursPerWorker > 0 }
+}
+
 private struct PruningEntrySheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var dataStore
@@ -635,9 +658,43 @@ private struct PruningEntrySheet: View {
     @State private var notes: String = ""
     @State private var createWorkTask: Bool = false
     @State private var workTaskType: String = "Pruning"
+    @State private var labourLines: [PruningLabourLineDraft] = []
 
     private var taskTypeOptions: [String] {
         WorkTaskTypeCatalog.merged(with: dataStore.workTaskTypes)
+    }
+
+    private var workerCategories: [OperatorCategory] {
+        dataStore.operatorCategories.filter { $0.vineyardId == vineyardId }
+    }
+
+    /// Total person-hours across labour lines (worker count × hours per worker,
+    /// summed) — the existing VineTrack Work Task convention, and the value
+    /// stored on `pruning_entries.labour_hours` when a task is created.
+    private var labourPersonHours: Double {
+        labourLines.reduce(0) { $0 + $1.totalHours }
+    }
+
+    /// Total labour cost across lines that have a rate.
+    private var labourTotalCost: Double {
+        labourLines.reduce(0) { $0 + ($1.totalCost ?? 0) }
+    }
+
+    private var hasRatedLine: Bool {
+        labourLines.contains { $0.hourlyRate != nil }
+    }
+
+    /// Every labour line needs hours > 0 before the task can be created.
+    private var labourLinesValid: Bool {
+        !labourLines.isEmpty && labourLines.allSatisfy { $0.isValid }
+    }
+
+    private func hoursLabel(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...1))) + " h"
+    }
+
+    private func currencyLabel(_ value: Double) -> String {
+        "$" + value.formatted(.number.precision(.fractionLength(2)))
     }
 
     private var recordButtonTitle: String {
@@ -656,8 +713,14 @@ private struct PruningEntrySheet: View {
 
                 Section("Crew") {
                     TextField("Worker or crew", text: $worker)
-                    TextField("Labour hours", text: $labourHoursText)
-                        .keyboardType(.decimalPad)
+                    if createWorkTask {
+                        // Person-hours convention: with labour lines, the pruning
+                        // record's labour hours = sum of all line person-hours.
+                        LabeledContent("Labour hours", value: hoursLabel(labourPersonHours))
+                    } else {
+                        TextField("Labour hours", text: $labourHoursText)
+                            .keyboardType(.decimalPad)
+                    }
                     Toggle("Record start & finish time", isOn: $includeTimes)
                     if includeTimes {
                         DatePicker("Start", selection: $startTime, displayedComponents: .hourAndMinute)
@@ -680,6 +743,15 @@ private struct PruningEntrySheet: View {
 
                 Section {
                     Toggle("Create a Work Task for this pruning work", isOn: $createWorkTask)
+                        .onChange(of: createWorkTask) { _, isOn in
+                            guard isOn, labourLines.isEmpty else { return }
+                            // Seed the first labour line from the pruning form's
+                            // Worker/Crew and Labour Hours so nothing is re-entered.
+                            var first = PruningLabourLineDraft()
+                            first.workerType = worker.trimmingCharacters(in: .whitespaces)
+                            first.hoursText = labourHoursText
+                            labourLines = [first]
+                        }
                     if createWorkTask {
                         Picker("Work type", selection: $workTaskType) {
                             ForEach(taskTypeOptions, id: \.self) { option in
@@ -693,7 +765,33 @@ private struct PruningEntrySheet: View {
                     Text("Work Task")
                 } footer: {
                     if createWorkTask {
-                        Text("The Work Task reuses this record's date, block, crew, labour hours, times and notes \u{2014} nothing is entered twice. It is created as completed and appears in the Work Tasks tool.")
+                        Text("The Work Task reuses this record's date, block, crew, times and notes \u{2014} nothing is entered twice. It is created as completed with the labour lines below and appears in the Work Tasks tool.")
+                    }
+                }
+
+                if createWorkTask {
+                    Section {
+                        ForEach($labourLines) { $line in
+                            labourLineEditor($line)
+                        }
+                        Button {
+                            labourLines.append(PruningLabourLineDraft())
+                        } label: {
+                            Label("Add worker", systemImage: "plus.circle.fill")
+                        }
+                        .buttonStyle(.borderless)
+                    } header: {
+                        Text("Labour Lines")
+                    } footer: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            if labourLinesValid {
+                                Text("Total: \(hoursLabel(labourPersonHours)) person-hours" + (hasRatedLine ? " \u{00B7} \(currencyLabel(labourTotalCost)) labour cost" : ""))
+                            } else {
+                                Text("Each labour line needs hours greater than zero.")
+                                    .foregroundStyle(.red)
+                            }
+                            Text("One costing line per worker or crew \u{2014} different hours and rates per worker are supported. Rates left blank show as \u{201C}Not specified\u{201D} in the Work Task.")
+                        }
                     }
                 }
             }
@@ -706,7 +804,7 @@ private struct PruningEntrySheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(recordButtonTitle) { save() }
                         .fontWeight(.semibold)
-                        .disabled(segments.isEmpty)
+                        .disabled(segments.isEmpty || (createWorkTask && !labourLinesValid))
                         .accessibilityLabel("Record pruning")
                 }
             }
@@ -749,11 +847,79 @@ private struct PruningEntrySheet: View {
         return summary
     }
 
-    /// Creates the linked, completed Work Task through the existing shared
-    /// work-task store + sync (client-generated id \u{2014} the pruning entry keeps
-    /// this id, so retries and offline replays can never create a duplicate).
+    @ViewBuilder
+    private func labourLineEditor(_ line: Binding<PruningLabourLineDraft>) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                TextField("Worker or crew member", text: line.workerType)
+                if !workerCategories.isEmpty {
+                    Menu {
+                        ForEach(workerCategories) { category in
+                            Button {
+                                line.wrappedValue.operatorCategoryId = category.id
+                                line.wrappedValue.workerType = category.name
+                                // Worker-type default rate seeds an empty rate
+                                // field \u{2014} same behaviour as the existing Work
+                                // Task labour sheet.
+                                if line.wrappedValue.rateText.isEmpty, category.costPerHour > 0 {
+                                    line.wrappedValue.rateText = category.costPerHour.formatted(.number.precision(.fractionLength(0...2)))
+                                }
+                            } label: {
+                                if category.costPerHour > 0 {
+                                    Text("\(category.name) \u{00B7} \(currencyLabel(category.costPerHour))/h")
+                                } else {
+                                    Text(category.name)
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "person.crop.circle.badge.checkmark")
+                            .foregroundStyle(.blue)
+                    }
+                    .accessibilityLabel("Choose worker type")
+                }
+                if labourLines.count > 1 {
+                    Button {
+                        labourLines.removeAll { $0.id == line.wrappedValue.id }
+                    } label: {
+                        Image(systemName: "minus.circle.fill")
+                            .foregroundStyle(.red)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Remove labour line")
+                }
+            }
+            HStack(spacing: 12) {
+                TextField("Workers", text: line.countText)
+                    .keyboardType(.numberPad)
+                TextField("Hrs / worker", text: line.hoursText)
+                    .keyboardType(.decimalPad)
+                TextField("Rate $/h", text: line.rateText)
+                    .keyboardType(.decimalPad)
+            }
+            .font(.subheadline)
+            HStack {
+                Text(hoursLabel(line.wrappedValue.totalHours))
+                Text("\u{00B7}")
+                if let cost = line.wrappedValue.totalCost {
+                    Text(currencyLabel(cost))
+                } else {
+                    Text("Cost not specified")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+    }
+
+    /// Creates the linked, completed Work Task AND its labour costing lines
+    /// through the existing shared work-task store + sync. Every id (task and
+    /// each `work_task_labour_lines` row) is client-generated and stable, so
+    /// retries and offline replays can never create a duplicate task or line.
+    /// Sequence: task header \u{2192} block join row \u{2192} labour lines; the labour
+    /// sync queues independently and the server upsert is idempotent by id.
     private func createLinkedWorkTask() -> UUID {
-        let hours = Double(labourHoursText.replacingOccurrences(of: ",", with: ".")) ?? 0
         let userName = auth.userName ?? ""
         var task = WorkTask(
             vineyardId: vineyardId,
@@ -761,7 +927,7 @@ private struct PruningEntrySheet: View {
             taskType: workTaskType,
             paddockId: paddock.id,
             paddockName: paddock.name,
-            durationHours: hours,
+            durationHours: labourPersonHours,
             notes: composedTaskNotes,
             createdBy: userName.isEmpty ? nil : userName,
             isFinalized: true,
@@ -780,6 +946,24 @@ private struct PruningEntrySheet: View {
             paddockId: paddock.id,
             areaHa: paddock.areaHectares > 0 ? paddock.areaHectares : nil
         ))
+        // One canonical labour line per worker/crew row \u{2014} the same
+        // work_task_labour_lines records the Work Task editor and portal use.
+        // Draft ids were minted when the rows were added, so a re-run of the
+        // offline queue upserts by id instead of duplicating.
+        for draft in labourLines where draft.isValid {
+            dataStore.addWorkTaskLabourLine(WorkTaskLabourLine(
+                id: draft.id,
+                workTaskId: task.id,
+                vineyardId: vineyardId,
+                workDate: date,
+                operatorCategoryId: draft.operatorCategoryId,
+                workerType: draft.workerType.trimmingCharacters(in: .whitespaces),
+                workerCount: draft.workerCount,
+                hoursPerWorker: draft.hoursPerWorker,
+                hourlyRate: draft.hourlyRate,
+                notes: ""
+            ))
+        }
         return task.id
     }
 
@@ -797,6 +981,13 @@ private struct PruningEntrySheet: View {
         // stores that id, so both records stay linked through offline replay
         // and a retry can never create a second task for the same entry.
         let linkedTaskId: UUID? = createWorkTask ? createLinkedWorkTask() : nil
+        // Person-hours convention: with labour lines, the pruning entry's labour
+        // hours = sum of all line person-hours (e.g. 2 workers \u{00D7} 8 h = 16 h) so
+        // vines-per-labour-hour stays accurate. Without a task, the manually
+        // entered value applies as before.
+        let entryHours: Double? = createWorkTask
+            ? (labourPersonHours > 0 ? labourPersonHours : nil)
+            : Double(labourHoursText.replacingOccurrences(of: ",", with: "."))
         let entry = PruningEntry(
             vineyardId: vineyardId,
             paddockId: paddock.id,
@@ -804,7 +995,7 @@ private struct PruningEntrySheet: View {
             date: date,
             segments: segments,
             worker: worker.trimmingCharacters(in: .whitespaces),
-            labourHours: Double(labourHoursText.replacingOccurrences(of: ",", with: ".")),
+            labourHours: entryHours,
             startTime: includeTimes ? startTime : nil,
             finishTime: includeTimes ? finishTime : nil,
             method: method,
