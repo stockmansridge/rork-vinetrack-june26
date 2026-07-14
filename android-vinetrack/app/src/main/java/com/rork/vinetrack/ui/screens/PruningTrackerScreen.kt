@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DatePicker
@@ -114,6 +115,7 @@ fun PruningTrackerScreen(
         mutableStateOf(vineyardId?.let { vm.pruningEntries(it) } ?: emptyList())
     }
     var selectedPaddockId by rememberSaveable { mutableStateOf<String?>(null) }
+    var blockSort by rememberSaveable { mutableStateOf("alphabetical") }
 
     // Initial fetch + reconcile when the screen opens or the vineyard changes;
     // shows the local cache instantly and merges the server state on top.
@@ -125,6 +127,23 @@ fun PruningTrackerScreen(
     }
 
     val paddocks = remember(state.paddocks) { state.paddocks.sortedBy { it.name.lowercase() } }
+    // Block list order — by first actual row number (blocks without rows sink
+    // to the bottom, ties fall back to the name) or alphabetical.
+    val sortedPaddocks = remember(paddocks, setups, blockSort) {
+        if (blockSort == "rowNumber") {
+            paddocks.sortedWith(
+                compareBy(
+                    { paddock ->
+                        val setup = setups.firstOrNull { it.paddockId == paddock.id }
+                        PruningCalculator.rowRefs(paddock, setup).minOfOrNull { it.number } ?: Int.MAX_VALUE
+                    },
+                    { it.name.lowercase() },
+                )
+            )
+        } else {
+            paddocks
+        }
+    }
     val selectedPaddock = paddocks.firstOrNull { it.id == selectedPaddockId }
 
     if (selectedPaddock != null && vineyardId != null) {
@@ -199,8 +218,11 @@ fun PruningTrackerScreen(
                     }
                 }
             } else {
-                items(paddocks.size, key = { paddocks[it].id }) { index ->
-                    val paddock = paddocks[index]
+                item(key = "block-sort") {
+                    BlockSortHeader(sort = blockSort, onSortChange = { blockSort = it })
+                }
+                items(sortedPaddocks.size, key = { sortedPaddocks[it].id }) { index ->
+                    val paddock = sortedPaddocks[index]
                     val setup = setups.firstOrNull { it.paddockId == paddock.id }
                     val blockEntries = entries.filter { it.paddockId == paddock.id }
                     val metrics = PruningCalculator.metrics(paddock, setup, blockEntries)
@@ -404,7 +426,76 @@ private fun DashStat(value: String, label: String, modifier: Modifier = Modifier
     }
 }
 
+// MARK: - Block list header
+
+private val blockSortOptions: List<Pair<String, String>> = listOf(
+    "rowNumber" to "Row number",
+    "alphabetical" to "Block name",
+)
+
+@Composable
+private fun BlockSortHeader(sort: String, onSortChange: (String) -> Unit) {
+    val vine = LocalVineColors.current
+    var expanded by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Blocks", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+        Spacer(Modifier.weight(1f))
+        Box {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { expanded = true }
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+            ) {
+                Icon(
+                    Icons.Filled.SwapVert,
+                    contentDescription = "Sort blocks",
+                    tint = VineColors.Primary,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    blockSortOptions.firstOrNull { it.first == sort }?.second ?: "Block name",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = VineColors.Primary,
+                )
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                blockSortOptions.forEach { (key, label) ->
+                    DropdownMenuItem(
+                        text = { Text(label) },
+                        trailingIcon = {
+                            if (key == sort) {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = null,
+                                    tint = VineColors.Primary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        },
+                        onClick = {
+                            onSortChange(key)
+                            expanded = false
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Block card
+
+/** "Rows 5–28" from the block's ACTUAL row numbers (or the fallback range). */
+private fun rowRangeLabel(metrics: PruningBlockMetrics): String? {
+    val numbers = metrics.rows.map { it.number }
+    val low = numbers.minOrNull() ?: return null
+    val high = numbers.maxOrNull() ?: return null
+    return if (low == high) "Row $low" else "Rows $low–$high"
+}
 
 @Composable
 private fun PruningBlockCardItem(
@@ -425,7 +516,18 @@ private fun PruningBlockCardItem(
     ) {
         Row(verticalAlignment = Alignment.Top) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(paddock.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        paddock.name,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary,
+                        maxLines = 1,
+                    )
+                    rowRangeLabel(metrics)?.let {
+                        Text(it, fontSize = 12.sp, color = vine.textSecondary, maxLines = 1)
+                    }
+                }
                 paddock.primaryVarietyName?.let {
                     Text(it, fontSize = 12.sp, color = vine.textSecondary)
                 }

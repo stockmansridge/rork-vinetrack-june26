@@ -1,11 +1,31 @@
 import SwiftUI
 
+/// Ordering options for the Pruning Tracker block list.
+enum PruningBlockSort: String, CaseIterable, Identifiable {
+    case rowNumber
+    case alphabetical
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .rowNumber: return "Row number"
+        case .alphabetical: return "Block name"
+        }
+    }
+}
+
 /// Pruning Tracker hub — vineyard dashboard plus a visual block list.
 /// In development: reachable only by System Admins from Operational Tools.
 struct PruningTrackerView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(PruningSyncService.self) private var pruningSync
+    @AppStorage("pruningBlockSort") private var blockSortRaw: String = PruningBlockSort.alphabetical.rawValue
     private var pruningStore: PruningStore { .shared }
+
+    private var blockSort: PruningBlockSort {
+        PruningBlockSort(rawValue: blockSortRaw) ?? .alphabetical
+    }
 
     private var paddocks: [Paddock] {
         let all = store.paddocks
@@ -14,13 +34,32 @@ struct PruningTrackerView: View {
     }
 
     private var blockMetrics: [(paddock: Paddock, metrics: PruningBlockMetrics)] {
-        paddocks
-            .map { paddock in
-                let setup = pruningStore.setup(for: paddock.id)
-                let entries = pruningStore.entries(for: paddock.id)
-                return (paddock, PruningCalculator.metrics(paddock: paddock, setup: setup, entries: entries))
+        let items: [(paddock: Paddock, metrics: PruningBlockMetrics)] = paddocks.map { paddock in
+            let setup = pruningStore.setup(for: paddock.id)
+            let entries = pruningStore.entries(for: paddock.id)
+            return (paddock, PruningCalculator.metrics(paddock: paddock, setup: setup, entries: entries))
+        }
+        switch blockSort {
+        case .alphabetical:
+            return items.sorted { $0.paddock.name.localizedStandardCompare($1.paddock.name) == .orderedAscending }
+        case .rowNumber:
+            // Blocks ordered by their FIRST actual row number; blocks without
+            // rows sink to the bottom, ties fall back to the block name.
+            return items.sorted { lhs, rhs in
+                let left = lhs.metrics.rows.map(\.number).min()
+                let right = rhs.metrics.rows.map(\.number).min()
+                switch (left, right) {
+                case let (l?, r?) where l != r:
+                    return l < r
+                case (.some, .none):
+                    return true
+                case (.none, .some):
+                    return false
+                default:
+                    return lhs.paddock.name.localizedStandardCompare(rhs.paddock.name) == .orderedAscending
+                }
             }
-            .sorted { $0.paddock.name.localizedStandardCompare($1.paddock.name) == .orderedAscending }
+        }
     }
 
     var body: some View {
@@ -182,6 +221,7 @@ struct PruningTrackerView: View {
             .padding(.horizontal)
         } else {
             VStack(spacing: 12) {
+                blockListHeader
                 ForEach(blockMetrics, id: \.paddock.id) { item in
                     NavigationLink {
                         PruningBlockDetailView(paddock: item.paddock, pruningStore: pruningStore)
@@ -192,6 +232,29 @@ struct PruningTrackerView: View {
                 }
             }
             .padding(.horizontal)
+        }
+    }
+
+    /// Compact "Blocks" header with the sort menu — small, no extra chrome.
+    private var blockListHeader: some View {
+        HStack {
+            Text("Blocks")
+                .font(.headline)
+            Spacer()
+            Menu {
+                Picker("Sort blocks", selection: $blockSortRaw) {
+                    ForEach(PruningBlockSort.allCases) { option in
+                        Text(option.label).tag(option.rawValue)
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.caption2)
+                    Text(blockSort.label)
+                        .font(.caption.weight(.semibold))
+                }
+            }
         }
     }
 }
@@ -209,13 +272,29 @@ struct PruningBlockCard: View {
             .name
     }
 
+    /// "Rows 5–28" from the block's ACTUAL row numbers (or the fallback range).
+    private var rowRange: String? {
+        let numbers = metrics.rows.map(\.number)
+        guard let lowest = numbers.min(), let highest = numbers.max() else { return nil }
+        return lowest == highest ? "Row \(lowest)" : "Rows \(lowest)–\(highest)"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(paddock.name)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(paddock.name)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        if let rowRange {
+                            Text(rowRange)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
                     if let varietyName, !varietyName.isEmpty {
                         Text(varietyName)
                             .font(.caption)
