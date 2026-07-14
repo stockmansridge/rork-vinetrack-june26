@@ -97,56 +97,18 @@ struct PruningTrackerView: View {
 
     // MARK: Dashboard
 
-    private var totals: (
-        completedEq: Double, totalEq: Double,
-        vinesPruned: Int, vinesTotal: Int,
-        blocksComplete: Int, blocksBehind: Int,
-        vinesPerDay: Double?, vinesPerHour: Double?,
-        projectedFinish: Date?
-    ) {
-        var completedEq = 0.0
-        var totalEq = 0.0
-        // CONTRACT: sum EXACT vines across blocks and round ONCE at the end —
-        // summing per-block rounded values drifts against Android/portal.
-        var vinesPrunedExact = 0.0
-        var vinesTotal = 0
-        var blocksComplete = 0
-        var blocksBehind = 0
-        var projected: Date?
-
-        var vinesByDay: [Date: Double] = [:]
-        var vinesForHours = 0.0
-        var hours = 0.0
-        let calendar = Calendar.current
-
-        for (paddock, metrics) in blockMetrics {
-            completedEq += metrics.completedRowEquivalents
-            totalEq += metrics.totalRowEquivalents
-            vinesPrunedExact += metrics.vinesPrunedExact
-            vinesTotal += metrics.vinesTotal
-            if metrics.status == .complete { blocksComplete += 1 }
-            if metrics.status == .behind || metrics.status == .atRisk { blocksBehind += 1 }
-            if let finish = metrics.projectedFinish {
-                projected = max(projected ?? finish, finish)
-            }
-            for entry in pruningStore.entries(for: paddock.id) {
-                let vines = PruningCalculator.exactVines(for: entry.segments, rows: metrics.rows)
-                vinesByDay[calendar.startOfDay(for: entry.date), default: 0] += vines
-                if let entryHours = entry.labourHours, entryHours > 0 {
-                    vinesForHours += vines
-                    hours += entryHours
-                }
-            }
-        }
-
-        let vinesPerDay = vinesByDay.isEmpty ? nil : vinesByDay.values.reduce(0, +) / Double(vinesByDay.count)
-        let vinesPerHour = hours > 0 ? vinesForHours / hours : nil
-        return (completedEq, totalEq, Int(vinesPrunedExact.rounded()), vinesTotal, blocksComplete, blocksBehind, vinesPerDay, vinesPerHour, projected)
+    /// SHARED CONTRACT: the dashboard is `PruningCalculator.vineyardSummary`
+    /// — the exact aggregation the SQL 115 RPC implements and the fixture
+    /// tests verify. Never aggregate here in the view.
+    private var totals: PruningVineyardSummary {
+        PruningCalculator.vineyardSummary(
+            blocks: blockMetrics.map { (metrics: $0.metrics, entries: pruningStore.entries(for: $0.paddock.id)) }
+        )
     }
 
     private var dashboardCard: some View {
         let summary = totals
-        let fraction = summary.totalEq > 0 ? min(summary.completedEq / summary.totalEq, 1) : 0
+        let fraction = summary.fraction
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -163,11 +125,11 @@ struct PruningTrackerView: View {
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 dashStat(value: "\(summary.vinesPruned.formatted())", label: "Vines pruned")
-                dashStat(value: "\(max(summary.vinesTotal - summary.vinesPruned, 0).formatted())", label: "Vines remaining")
+                dashStat(value: "\(summary.vinesRemaining.formatted())", label: "Vines remaining")
                 dashStat(value: summary.vinesPerDay.map { $0.formatted(.number.precision(.fractionLength(0))) } ?? "—", label: "Vines / day")
-                dashStat(value: summary.vinesPerHour.map { $0.formatted(.number.precision(.fractionLength(0))) } ?? "—", label: "Vines / labour hr")
+                dashStat(value: summary.vinesPerLabourHour.map { $0.formatted(.number.precision(.fractionLength(0))) } ?? "—", label: "Vines / labour hr")
                 dashStat(value: "\(summary.blocksComplete)", label: "Blocks complete")
-                dashStat(value: "\(summary.blocksBehind)", label: "Blocks at risk")
+                dashStat(value: "\(summary.blocksAtRisk)", label: "Blocks at risk")
             }
 
             if let projected = summary.projectedFinish {

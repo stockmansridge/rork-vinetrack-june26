@@ -392,47 +392,17 @@ private fun PruningDashboardCard(
 ) {
     val vine = LocalVineColors.current
 
-    var completedEq = 0.0
-    var totalEq = 0.0
-    // CONTRACT: sum EXACT vines across blocks and round ONCE at the end —
-    // summing per-block rounded values drifts against iOS/portal.
-    var vinesPrunedExact = 0.0
-    var vinesTotal = 0
-    var blocksComplete = 0
-    var blocksAtRisk = 0
-    var projected: LocalDate? = null
-    val vinesByDay = mutableMapOf<String, Double>()
-    var vinesForHours = 0.0
-    var hours = 0.0
-
-    for (paddock in paddocks) {
-        val setup = setups.firstOrNull { it.paddockId == paddock.id }
-        val blockEntries = entries.filter { it.paddockId == paddock.id }
-        val metrics = PruningCalculator.metrics(paddock, setup, blockEntries)
-        completedEq += metrics.completedRowEquivalents
-        totalEq += metrics.totalRowEquivalents
-        vinesPrunedExact += metrics.vinesPrunedExact
-        vinesTotal += metrics.vinesTotal
-        if (metrics.status == PruningStatus.Complete) blocksComplete += 1
-        if (metrics.status == PruningStatus.Behind || metrics.status == PruningStatus.AtRisk) blocksAtRisk += 1
-        metrics.projectedFinish?.let { finish ->
-            projected = projected?.let { if (finish.isAfter(it)) finish else it } ?: finish
-        }
-        for (entry in blockEntries) {
-            val vines = PruningCalculator.exactVines(entry.segments, metrics.rows)
-            vinesByDay[entry.date] = (vinesByDay[entry.date] ?: 0.0) + vines
-            val entryHours = entry.labourHours
-            if (entryHours != null && entryHours > 0) {
-                vinesForHours += vines
-                hours += entryHours
-            }
-        }
-    }
-
-    val vinesPruned = vinesPrunedExact.roundToInt()
-    val fraction = if (totalEq > 0) (completedEq / totalEq).coerceAtMost(1.0) else 0.0
-    val vinesPerDay = if (vinesByDay.isNotEmpty()) vinesByDay.values.sum() / vinesByDay.size else null
-    val vinesPerHour = if (hours > 0) vinesForHours / hours else null
+    // SHARED CONTRACT: the dashboard is `PruningCalculator.vineyardSummary`
+    // — the exact aggregation the SQL 115 RPC implements and the fixture
+    // tests verify. Never aggregate here in the view.
+    val summary = PruningCalculator.vineyardSummary(paddocks, setups, entries)
+    val vinesPruned = summary.vinesPruned
+    val fraction = summary.fraction
+    val vinesPerDay = summary.vinesPerDay
+    val vinesPerHour = summary.vinesPerLabourHour
+    val blocksComplete = summary.blocksComplete
+    val blocksAtRisk = summary.blocksAtRisk
+    val projected = summary.projectedFinish
 
     PruningCard {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -449,7 +419,7 @@ private fun PruningDashboardCard(
             PruningProgressBarView(fraction, null, VineColors.LeafGreen)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 DashStat("${vinesPruned}", "Vines pruned", Modifier.weight(1f))
-                DashStat("${maxOf(vinesTotal - vinesPruned, 0)}", "Vines remaining", Modifier.weight(1f))
+                DashStat("${summary.vinesRemaining}", "Vines remaining", Modifier.weight(1f))
                 DashStat(vinesPerDay?.let { fmt(it, 0) } ?: "—", "Vines / day", Modifier.weight(1f))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -907,16 +877,11 @@ private fun DetailRatesCard(metrics: PruningBlockMetrics, entries: List<PruningE
     val period = PruningCalculator.rowEquivalentsPerDay(entries, null)
     val rate = metrics.ratePerWorkday
 
-    var vinesForHours = 0.0
-    var hours = 0.0
-    for (entry in entries) {
-        val entryHours = entry.labourHours
-        if (entryHours != null && entryHours > 0) {
-            vinesForHours += PruningCalculator.vines(entry.segments, metrics.rows).toDouble()
-            hours += entryHours
-        }
-    }
-    val vinesPerHour = if (hours > 0) vinesForHours / hours else null
+    // SHARED CONTRACT (SQL 115): exact per-day vine totals and person-hour
+    // rates — full precision throughout, rounded once at display. Never sum
+    // per-entry rounded values or approximate via vines-per-row.
+    val vinesPerDay = PruningCalculator.exactVinesPerDay(entries, metrics.rows)
+    val vinesPerHour = PruningCalculator.vinesPerLabourHour(entries, metrics.rows)
 
     PruningCard {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -941,7 +906,7 @@ private fun DetailRatesCard(metrics: PruningBlockMetrics, entries: List<PruningE
                 )
                 HorizontalDivider(color = vine.cardBorder)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DashStat(rate?.let { fmt(it * metrics.vinesPerRow, 0) } ?: "—", "Vines / day", Modifier.weight(1f))
+                    DashStat(vinesPerDay?.let { fmt(it, 0) } ?: "—", "Vines / day", Modifier.weight(1f))
                     DashStat(vinesPerHour?.let { fmt(it, 0) } ?: "—", "Vines / labour hr", Modifier.weight(1f))
                     DashStat(rate?.let { "${fmt(it * metrics.averageRowLength, 0)} m" } ?: "—", "Row metres / day", Modifier.weight(1f))
                 }

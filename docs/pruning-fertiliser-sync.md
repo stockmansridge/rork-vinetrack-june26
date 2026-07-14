@@ -90,6 +90,56 @@ Fertiliser: per-hectare total = ha × rate; per-vine total = vines × g(mL)/vine
 total ÷ pack size; product cost = total ÷ pack size × price per pack; total job cost = product +
 labour/machinery. Multi-block allocations are weighted by area (per-hectare) or vine count (per-vine).
 
+### One aggregation function per platform
+
+The vineyard dashboard is a single shared function on each platform — views NEVER aggregate inline:
+
+- iOS: `PruningCalculator.vineyardSummary(…)` → `PruningVineyardSummary`
+  (`LegacyImported/Models/PruningModels.swift`), used by `PruningTrackerView` and the parity check.
+- Android: `PruningCalculator.vineyardSummary(…)` → `PruningVineyardSummary`
+  (`data/model/PruningModels.kt`), used by `PruningTrackerScreen` and the parity check.
+- Portal / server: the `get_pruning_vineyard_summary` RPC (sql/115) — the authoritative reference.
+
+Block detail screens use the same primitives (`exactVinesPerDay`, `vinesPerLabourHour`,
+`exactVines`) — no per-entry rounding, no `rate × vinesPerRow` approximations.
+
+### Online SQL 115 reconciliation (offline-first preserved)
+
+Mobile keeps the full local calculation path — a server-only dashboard would break field use.
+When online, after every successful pruning sync/refresh each app calls
+`get_pruning_vineyard_summary` and compares the server's rounded values (progress %, vines
+pruned/total/remaining, vines/day, vines/labour-hour, blocks complete/at risk, projected date)
+against the local `vineyardSummary`:
+
+- iOS: `PruningSyncService.verifyServerParity` → `lastParityReport` + `[PruningParity]` log line.
+- Android: `AppViewModel.verifyPruningServerParity` → `PruningParity` logcat tag
+  (`Log.w` on mismatch, `Log.d` on match).
+
+The check NEVER blocks or alters the workflow: RPC unavailable (offline, older schema) ⇒ silent
+skip. Note the check compares the server's season (as-of year in the vineyard timezone) against
+the device's newest local season per block — identical except across a New-Year boundary.
+
+### Shared fixture tests
+
+The same deterministic fixture runs in both native test suites and encodes the SQL 115 contract:
+
+- iOS: `ios/VineTrackV2Tests/PruningCalculatorFixtureTests.swift` (swift-testing).
+- Android: `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/PruningCalculatorFixtureTest.kt` (JUnit).
+
+Fixture: block "Cab Franc" with 7 REAL non-sequential rows (42–47 + 50, six 200 m + one 100 m,
+vine override 1300) with rows 42–45 full + row 46 Q1/Q2 completed over two entries
+(13 Jul: 8 quarters/4 h; 14 Jul: 10 quarters/8 h), plus a manual-fallback block (4 rows,
+400 vines), as of 2026-07-14. Expected identical on every platform:
+
+- Block: 4.5 / 7 row eq · 64 % · 900 / 1300 vines · rate 2.25 · projected 2026-07-15 · Ahead.
+- Vineyard: 4.5 / 11 row eq · 41 % · 900 / 1700 vines · 800 remaining · 450 vines/day ·
+  75 vines/labour-hour · projected 2026-07-15 · 0 complete · 0 at risk.
+- Plus: duplicate quarters never double-count, legacy number-matched segments, reversal reopens
+  quarters, gap days never reduce rates, zero-hour entries excluded from both rate sides.
+
+Run Android: `./gradlew testReleaseUnitTest --tests '*PruningCalculatorFixtureTest'`.
+Run iOS: the `VineTrackV2Tests` target in Xcode (⌘U).
+
 ## Offline behaviour
 
 - iOS: `PruningSyncService` / `FertiliserSyncService` (management-sync template) — dirty-id metadata

@@ -177,6 +177,33 @@ class PruningSyncRepository(private val session: SessionStore) {
     @Serializable
     private data class IdArgs(@SerialName("p_id") val id: String)
 
+    @Serializable
+    private data class SummaryArgs(@SerialName("p_vineyard_id") val vineyardId: String)
+
+    /**
+     * Decoded response of the authoritative `get_pruning_vineyard_summary`
+     * RPC (sql/115). Fetched online purely to verify that the local offline
+     * calculation matches the server contract; unavailability never blocks
+     * the field workflow.
+     */
+    @Serializable
+    data class ServerSummary(
+        @SerialName("season_year") val seasonYear: Int? = null,
+        @SerialName("display_percent") val displayPercent: Int? = null,
+        @SerialName("total_vines") val totalVines: Long? = null,
+        @SerialName("vines_pruned") val vinesPruned: Long? = null,
+        @SerialName("vines_remaining") val vinesRemaining: Long? = null,
+        @SerialName("vines_per_day_exact") val vinesPerDayExact: Double? = null,
+        @SerialName("vines_per_labour_hour_exact") val vinesPerLabourHourExact: Double? = null,
+        @SerialName("labour_hours") val labourHours: Double? = null,
+        /** yyyy-MM-dd in the vineyard's timezone. */
+        @SerialName("projected_completion_date") val projectedCompletionDate: String? = null,
+        @SerialName("blocks_complete") val blocksComplete: Int? = null,
+        @SerialName("blocks_at_risk") val blocksAtRisk: Int? = null,
+        @SerialName("completed_row_equivalents") val completedRowEquivalents: Double? = null,
+        @SerialName("total_row_equivalents") val totalRowEquivalents: Double? = null,
+    )
+
     // MARK: Reads
 
     suspend fun fetchSeasons(vineyardId: String): List<SeasonRow> =
@@ -187,6 +214,22 @@ class PruningSyncRepository(private val session: SessionStore) {
 
     suspend fun fetchSegments(vineyardId: String): List<SegmentRow> =
         getList("pruning_row_segments?vineyard_id=eq.$vineyardId&completed=eq.true")
+
+    /** Fetches the authoritative SQL 115 summary for the online parity check. */
+    suspend fun fetchVineyardSummary(vineyardId: String): ServerSummary = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("get_pruning_vineyard_summary")) {
+            authHeaders(token)
+            contentType(ContentType.Application.Json)
+            setBody(SummaryArgs(vineyardId))
+        }
+        when {
+            response.status.isSuccess() -> response.body<ServerSummary>()
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
 
     // MARK: Writes
 

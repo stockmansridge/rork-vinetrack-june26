@@ -189,6 +189,16 @@ class PruningSyncCoordinator(
         }
     }
 
+    // MARK: SQL 115 parity probe
+
+    /**
+     * Fetches the authoritative `get_pruning_vineyard_summary` (sql/115)
+     * for the online parity check. Never throws — offline or an older
+     * schema simply returns null and the local offline math stands alone.
+     */
+    suspend fun fetchServerSummary(vineyardId: String): PruningSyncRepository.ServerSummary? =
+        if (!canSync()) null else runCatching { repo.fetchVineyardSummary(vineyardId) }.getOrNull()
+
     // MARK: Outbox plumbing
 
     private fun enqueueCoalesced(entityType: String, opType: String, payloadJson: String, clientId: String) {

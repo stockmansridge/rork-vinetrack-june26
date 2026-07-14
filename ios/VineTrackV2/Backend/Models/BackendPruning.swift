@@ -308,3 +308,53 @@ nonisolated struct BackendPruningSegment: Codable, Sendable, Identifiable {
         case pruningEntryId = "pruning_entry_id"
     }
 }
+
+// MARK: - get_pruning_vineyard_summary (SQL 115)
+
+/// Parameters for the authoritative summary RPC. `p_season_year` / `p_today`
+/// are omitted so the server resolves them in the vineyard's timezone — the
+/// same defaults the portal uses.
+nonisolated struct PruningSummaryRequest: Encodable, Sendable {
+    let vineyardId: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "p_vineyard_id"
+    }
+}
+
+/// Decoded response of `get_pruning_vineyard_summary` — the authoritative
+/// cross-platform vineyard summary. Fetched online purely to verify that the
+/// local offline calculation matches the server contract; the RPC being
+/// unavailable never blocks the field workflow.
+nonisolated struct BackendPruningVineyardSummary: Decodable, Sendable {
+    let seasonYear: Int?
+    let displayPercent: Int?
+    let totalVines: Int?
+    let vinesPruned: Int?
+    let vinesRemaining: Int?
+    let vinesPerDay: Double?
+    let vinesPerLabourHour: Double?
+    let labourHours: Double?
+    /// yyyy-MM-dd in the vineyard's timezone.
+    let projectedCompletionDate: String?
+    let blocksComplete: Int?
+    let blocksAtRisk: Int?
+    let completedRowEquivalents: Double?
+    let totalRowEquivalents: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case seasonYear = "season_year"
+        case displayPercent = "display_percent"
+        case totalVines = "total_vines"
+        case vinesPruned = "vines_pruned"
+        case vinesRemaining = "vines_remaining"
+        case vinesPerDay = "vines_per_day_exact"
+        case vinesPerLabourHour = "vines_per_labour_hour_exact"
+        case labourHours = "labour_hours"
+        case projectedCompletionDate = "projected_completion_date"
+        case blocksComplete = "blocks_complete"
+        case blocksAtRisk = "blocks_at_risk"
+        case completedRowEquivalents = "completed_row_equivalents"
+        case totalRowEquivalents = "total_row_equivalents"
+    }
+}

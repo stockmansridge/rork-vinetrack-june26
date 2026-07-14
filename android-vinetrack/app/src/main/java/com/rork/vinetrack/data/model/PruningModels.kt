@@ -176,6 +176,32 @@ data class PruningBlockMetrics(
 )
 
 /**
+ * Vineyard-wide dashboard summary — the aggregation contract shared with iOS
+ * and the SQL 115 RPC `get_pruning_vineyard_summary`. All values are exact;
+ * round only at display.
+ */
+data class PruningVineyardSummary(
+    val blockCount: Int,
+    val completedRowEquivalents: Double,
+    val totalRowEquivalents: Double,
+    /** Exact completion fraction (row-equivalent based, capped at 1). */
+    val fraction: Double,
+    val vinesPrunedExact: Double,
+    /** round(vinesPrunedExact) — the ONE rounding point for vine totals. */
+    val vinesPruned: Int,
+    val vinesTotal: Int,
+    val vinesPerDay: Double?,
+    val vinesPerLabourHour: Double?,
+    val labourHours: Double,
+    val blocksComplete: Int,
+    val blocksAtRisk: Int,
+    val projectedFinish: LocalDate?,
+) {
+    val vinesRemaining: Int get() = maxOf(vinesTotal - vinesPruned, 0)
+    val displayPercent: Int get() = PruningCalculator.displayPercent(fraction)
+}
+
+/**
  * Pure calculation helpers — mirrors the iOS `PruningCalculator`.
  *
  * CALCULATION CONTRACT (shared with iOS + the portal RPC
@@ -363,11 +389,129 @@ object PruningCalculator {
     fun vines(segments: Collection<PruningSegment>, rows: List<PruningRowRef>): Int =
         exactVines(segments, rows).roundToInt()
 
-    /** Full metric bundle for one block. */
+    /**
+     * Mean EXACT vines per day-with-entries (whole period) — the same
+     * vines/day contract the vineyard dashboard and the SQL 115 RPC use,
+     * applied to one block. Days without entries never count against the rate.
+     */
+    fun exactVinesPerDay(entries: List<PruningEntry>, rows: List<PruningRowRef>): Double? {
+        val byDay = HashMap<String, Double>()
+        for (entry in entries) {
+            byDay[entry.date] = (byDay[entry.date] ?: 0.0) + exactVines(entry.segments, rows)
+        }
+        if (byDay.isEmpty()) return null
+        return byDay.values.sum() / byDay.size
+    }
+
+    /**
+     * Vines per person-hour: Σ EXACT vines of entries with labour hours > 0
+     * ÷ Σ labour hours. Entries without hours are excluded from BOTH sides
+     * (SQL 115 contract). Round only for display.
+     */
+    fun vinesPerLabourHour(entries: List<PruningEntry>, rows: List<PruningRowRef>): Double? {
+        var vines = 0.0
+        var hours = 0.0
+        for (entry in entries) {
+            val entryHours = entry.labourHours
+            if (entryHours != null && entryHours > 0) {
+                vines += exactVines(entry.segments, rows)
+                hours += entryHours
+            }
+        }
+        return if (hours > 0) vines / hours else null
+    }
+
+    /**
+     * THE vineyard dashboard aggregation — mirrors the authoritative SQL 115
+     * RPC `get_pruning_vineyard_summary` exactly:
+     * * Σ EXACT per-quarter vines across blocks, rounded ONCE at the end,
+     * * overall % = completed ÷ total row equivalents (row-equivalent based),
+     * * vines/day = mean of per-day exact totals over days-with-entries,
+     * * vines/labour hr = exact vines of hour-carrying entries ÷ person-hours,
+     * * vineyard projection = the LATEST block projection.
+     */
+    fun vineyardSummary(blocks: List<Pair<PruningBlockMetrics, List<PruningEntry>>>): PruningVineyardSummary {
+        var completedEq = 0.0
+        var totalEq = 0.0
+        var vinesPrunedExact = 0.0
+        var vinesTotal = 0
+        var blocksComplete = 0
+        var blocksAtRisk = 0
+        var projected: LocalDate? = null
+        val vinesByDay = HashMap<String, Double>()
+        var vinesForHours = 0.0
+        var hours = 0.0
+
+        for ((metrics, blockEntries) in blocks) {
+            completedEq += metrics.completedRowEquivalents
+            totalEq += metrics.totalRowEquivalents
+            vinesPrunedExact += metrics.vinesPrunedExact
+            vinesTotal += metrics.vinesTotal
+            if (metrics.status == PruningStatus.Complete) blocksComplete += 1
+            if (metrics.status == PruningStatus.Behind || metrics.status == PruningStatus.AtRisk) blocksAtRisk += 1
+            metrics.projectedFinish?.let { finish ->
+                projected = projected?.let { if (finish.isAfter(it)) finish else it } ?: finish
+            }
+            for (entry in blockEntries) {
+                val vines = exactVines(entry.segments, metrics.rows)
+                vinesByDay[entry.date] = (vinesByDay[entry.date] ?: 0.0) + vines
+                val entryHours = entry.labourHours
+                if (entryHours != null && entryHours > 0) {
+                    vinesForHours += vines
+                    hours += entryHours
+                }
+            }
+        }
+
+        val fraction = if (totalEq > 0) min(completedEq / totalEq, 1.0) else 0.0
+        return PruningVineyardSummary(
+            blockCount = blocks.size,
+            completedRowEquivalents = completedEq,
+            totalRowEquivalents = totalEq,
+            fraction = fraction,
+            vinesPrunedExact = vinesPrunedExact,
+            vinesPruned = vinesPrunedExact.roundToInt(),
+            vinesTotal = vinesTotal,
+            vinesPerDay = if (vinesByDay.isNotEmpty()) vinesByDay.values.sum() / vinesByDay.size else null,
+            vinesPerLabourHour = if (hours > 0) vinesForHours / hours else null,
+            labourHours = hours,
+            blocksComplete = blocksComplete,
+            blocksAtRisk = blocksAtRisk,
+            projectedFinish = projected,
+        )
+    }
+
+    /**
+     * Convenience overload building block metrics from raw store data — used
+     * by the online SQL 115 parity check and the shared fixture tests.
+     * Includes EVERY non-deleted paddock of the vineyard (blocks without a
+     * season row or without entries still count), matching the RPC.
+     */
+    fun vineyardSummary(
+        paddocks: List<Paddock>,
+        setups: List<PruningBlockSetup>,
+        entries: List<PruningEntry>,
+        asOf: LocalDate = LocalDate.now(),
+    ): PruningVineyardSummary {
+        val blocks = paddocks.map { paddock ->
+            val setup = setups
+                .filter { it.paddockId == paddock.id }
+                .maxByOrNull { it.seasonYear }
+            val blockEntries = entries.filter { it.paddockId == paddock.id }
+            metrics(paddock, setup, blockEntries, asOf) to blockEntries
+        }
+        return vineyardSummary(blocks)
+    }
+
+    /**
+     * Full metric bundle for one block. [asOf] is the projection start date
+     * (defaults to today; fixture tests pass a fixed date for determinism).
+     */
     fun metrics(
         paddock: Paddock,
         setup: PruningBlockSetup?,
         entries: List<PruningEntry>,
+        asOf: LocalDate = LocalDate.now(),
     ): PruningBlockMetrics {
         val rows = rowRefs(paddock, setup)
         val rowCount = rows.size
@@ -384,7 +528,7 @@ object PruningCalculator {
         val rate = preferredRate(entries)
         val remaining = max(totalRowEq - completedRowEq, 0.0)
         val projected = if (rate != null && rate > 0 && remaining > 0) {
-            projectedFinish(remaining, rate, setup?.workingDays ?: listOf(1, 2, 3, 4, 5))
+            projectedFinish(remaining, rate, setup?.workingDays ?: listOf(1, 2, 3, 4, 5), from = asOf)
         } else {
             null
         }
@@ -398,7 +542,7 @@ object PruningCalculator {
                 ?: entries.mapNotNull { parseDate(it.date) }.minOrNull()
             if (start != null && due.isAfter(start)) {
                 val total = ChronoUnit.DAYS.between(start, due).toDouble()
-                val gone = ChronoUnit.DAYS.between(start, LocalDate.now()).toDouble()
+                val gone = ChronoUnit.DAYS.between(start, asOf).toDouble()
                 if (total > 0) elapsed = min(max(gone / total, 0.0), 1.0)
             }
         }

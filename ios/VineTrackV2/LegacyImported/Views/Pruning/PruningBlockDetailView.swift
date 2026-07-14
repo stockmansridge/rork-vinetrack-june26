@@ -235,15 +235,11 @@ struct PruningBlockDetailView: View {
         let period = PruningCalculator.rowEquivalentsPerDay(entries: entries, lastDays: nil)
         let rate = metrics.ratePerWorkday
 
-        var vinesForHours = 0.0
-        var hours = 0.0
-        for entry in entries {
-            if let entryHours = entry.labourHours, entryHours > 0 {
-                vinesForHours += Double(PruningCalculator.vines(for: entry.segments, rows: rows))
-                hours += entryHours
-            }
-        }
-        let vinesPerHour: Double? = hours > 0 ? vinesForHours / hours : nil
+        // SHARED CONTRACT (SQL 115): exact per-day vine totals and person-hour
+        // rates — full precision throughout, rounded once at display. Never
+        // sum per-entry rounded values or approximate via vines-per-row.
+        let vinesPerDay = PruningCalculator.exactVinesPerDay(entries: entries, rows: rows)
+        let vinesPerHour = PruningCalculator.vinesPerLabourHour(entries: entries, rows: rows)
 
         return VStack(alignment: .leading, spacing: 10) {
             Text("Daily Rate")
@@ -268,7 +264,7 @@ struct PruningBlockDetailView: View {
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     smallStat(
-                        value: rate.map { ($0 * metrics.vinesPerRow).formatted(.number.precision(.fractionLength(0))) } ?? "—",
+                        value: vinesPerDay.map { $0.formatted(.number.precision(.fractionLength(0))) } ?? "—",
                         label: "Vines / day"
                     )
                     smallStat(

@@ -19,6 +19,10 @@ final class PruningSyncService {
     var syncStatus: Status = .idle
     var lastSyncDate: Date?
     var errorMessage: String?
+    /// Result of the last online SQL 115 parity check ("match" or a diff
+    /// description). Nil while offline / unavailable — the check never blocks
+    /// the field workflow.
+    private(set) var lastParityReport: String?
 
     var pendingUpsertCount: Int {
         seasonMetadata.pendingUpserts.count + entryMetadata.pendingUpserts.count
@@ -98,9 +102,68 @@ final class PruningSyncService {
             entryMetadata.setLastSync(Date(), for: vineyardId)
             lastSyncDate = Date()
             syncStatus = .success
+            await verifyServerParity(vineyardId: vineyardId)
         } catch {
             errorMessage = error.localizedDescription
             syncStatus = .failure(error.localizedDescription)
+        }
+    }
+
+    // MARK: SQL 115 parity check
+
+    /// Online reconciliation against the authoritative
+    /// `get_pruning_vineyard_summary` RPC (SQL 115). The local offline
+    /// calculation must produce the identical rounded values; a mismatch is
+    /// logged for diagnosis. RPC unavailability (offline, older schema) is
+    /// silent — the mobile calculation path stays fully offline-capable.
+    private func verifyServerParity(vineyardId: UUID) async {
+        guard let store else { return }
+        do {
+            let server = try await repository.fetchVineyardSummary(vineyardId: vineyardId)
+            let paddocks = store.paddocks.filter { $0.vineyardId == vineyardId }
+            let local = PruningCalculator.vineyardSummary(
+                paddocks: paddocks,
+                setups: pruningStore.setups.filter { $0.vineyardId == vineyardId },
+                entries: pruningStore.entries(forVineyard: vineyardId)
+            )
+
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy-MM-dd"
+            let localProjected = local.projectedFinish.map { formatter.string(from: $0) }
+
+            var diffs: [String] = []
+            func check(_ label: String, _ localValue: String, _ serverValue: String) {
+                if localValue != serverValue { diffs.append("\(label) local \(localValue) vs server \(serverValue)") }
+            }
+            check("progress%", "\(local.displayPercent)", "\(server.displayPercent ?? -1)")
+            check("vinesPruned", "\(local.vinesPruned)", "\(server.vinesPruned ?? -1)")
+            check("totalVines", "\(local.vinesTotal)", "\(server.totalVines ?? -1)")
+            check("vinesRemaining", "\(local.vinesRemaining)", "\(server.vinesRemaining ?? -1)")
+            check(
+                "vinesPerDay",
+                local.vinesPerDay.map { "\(Int($0.rounded()))" } ?? "—",
+                server.vinesPerDay.map { "\(Int($0.rounded()))" } ?? "—"
+            )
+            check(
+                "vinesPerLabourHour",
+                local.vinesPerLabourHour.map { "\(Int($0.rounded()))" } ?? "—",
+                server.vinesPerLabourHour.map { "\(Int($0.rounded()))" } ?? "—"
+            )
+            check("blocksComplete", "\(local.blocksComplete)", "\(server.blocksComplete ?? -1)")
+            check("blocksAtRisk", "\(local.blocksAtRisk)", "\(server.blocksAtRisk ?? -1)")
+            check("projected", localProjected ?? "—", server.projectedCompletionDate ?? "—")
+
+            if diffs.isEmpty {
+                lastParityReport = "match"
+                print("[PruningParity] LOCAL == SQL115 — \(local.displayPercent)% · \(local.vinesPruned)/\(local.vinesTotal) vines · projected \(localProjected ?? "—")")
+            } else {
+                lastParityReport = diffs.joined(separator: "; ")
+                print("[PruningParity] MISMATCH — \(diffs.joined(separator: "; "))")
+            }
+        } catch {
+            // Offline or RPC not installed — keep the local offline-first path.
+            lastParityReport = nil
         }
     }
 

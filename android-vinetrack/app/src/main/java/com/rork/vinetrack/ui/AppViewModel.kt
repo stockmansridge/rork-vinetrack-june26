@@ -2,6 +2,7 @@ package com.rork.vinetrack.ui
 
 import android.app.Activity
 import android.app.Application
+import android.util.Log
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -63,6 +64,7 @@ import com.rork.vinetrack.data.PruningSyncCoordinator
 import com.rork.vinetrack.data.PruningSyncRepository
 import com.rork.vinetrack.data.model.FertiliserRecord
 import com.rork.vinetrack.data.model.PruningBlockSetup
+import com.rork.vinetrack.data.model.PruningCalculator
 import com.rork.vinetrack.data.model.PruningEntry
 import com.rork.vinetrack.data.AdminRepository
 import com.rork.vinetrack.data.AlertPreferencesRepository
@@ -3130,8 +3132,56 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun deletePruningEntry(vineyardId: String, entryId: String): List<PruningEntry> =
         pruningSyncCoordinator.deleteEntry(vineyardId, entryId)
 
-    suspend fun refreshPruning(vineyardId: String): Pair<List<PruningBlockSetup>, List<PruningEntry>> =
-        pruningSyncCoordinator.refresh(vineyardId)
+    suspend fun refreshPruning(vineyardId: String): Pair<List<PruningBlockSetup>, List<PruningEntry>> {
+        val result = pruningSyncCoordinator.refresh(vineyardId)
+        verifyPruningServerParity(vineyardId, result.first, result.second)
+        return result
+    }
+
+    /**
+     * Online reconciliation against the authoritative SQL 115 RPC. The local
+     * offline calculation must produce the identical rounded values; a
+     * mismatch is logged for diagnosis and never blocks the field workflow.
+     */
+    private fun verifyPruningServerParity(
+        vineyardId: String,
+        setups: List<PruningBlockSetup>,
+        entries: List<PruningEntry>,
+    ) {
+        val paddocks = _ui.value.paddocks.takeIf { _ui.value.selectedVineyardId == vineyardId } ?: return
+        viewModelScope.launch {
+            val server = pruningSyncCoordinator.fetchServerSummary(vineyardId) ?: return@launch
+            val local = PruningCalculator.vineyardSummary(paddocks, setups, entries)
+            val localProjected = local.projectedFinish?.toString()
+            val diffs = buildList {
+                fun check(label: String, localValue: String, serverValue: String) {
+                    if (localValue != serverValue) add("$label local $localValue vs server $serverValue")
+                }
+                check("progress%", "${local.displayPercent}", "${server.displayPercent ?: -1}")
+                check("vinesPruned", "${local.vinesPruned}", "${server.vinesPruned ?: -1}")
+                check("totalVines", "${local.vinesTotal}", "${server.totalVines ?: -1}")
+                check("vinesRemaining", "${local.vinesRemaining}", "${server.vinesRemaining ?: -1}")
+                check(
+                    "vinesPerDay",
+                    local.vinesPerDay?.let { "${Math.round(it)}" } ?: "—",
+                    server.vinesPerDayExact?.let { "${Math.round(it)}" } ?: "—",
+                )
+                check(
+                    "vinesPerLabourHour",
+                    local.vinesPerLabourHour?.let { "${Math.round(it)}" } ?: "—",
+                    server.vinesPerLabourHourExact?.let { "${Math.round(it)}" } ?: "—",
+                )
+                check("blocksComplete", "${local.blocksComplete}", "${server.blocksComplete ?: -1}")
+                check("blocksAtRisk", "${local.blocksAtRisk}", "${server.blocksAtRisk ?: -1}")
+                check("projected", localProjected ?: "—", server.projectedCompletionDate ?: "—")
+            }
+            if (diffs.isEmpty()) {
+                Log.d("PruningParity", "LOCAL == SQL115 — ${local.displayPercent}% · ${local.vinesPruned}/${local.vinesTotal} vines · projected ${localProjected ?: "—"}")
+            } else {
+                Log.w("PruningParity", "MISMATCH — ${diffs.joinToString("; ")}")
+            }
+        }
+    }
 
     // MARK: - Fertiliser Calculator (System Admin, offline-first)
     // The product library is the shared saved chemical database

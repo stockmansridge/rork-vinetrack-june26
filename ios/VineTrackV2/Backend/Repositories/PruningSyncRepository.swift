@@ -11,6 +11,9 @@ protocol PruningSyncRepositoryProtocol: Sendable {
     func recordEntry(_ params: RecordPruningEntryParams) async throws
     func deleteEntry(id: UUID) async throws
     func softDeleteSeason(id: UUID) async throws
+    /// Fetches the authoritative SQL 115 vineyard summary for the online
+    /// parity check. Offline callers must treat failures as "no check".
+    func fetchVineyardSummary(vineyardId: UUID) async throws -> BackendPruningVineyardSummary
 }
 
 private nonisolated struct PruningIdRequest: Encodable, Sendable {
@@ -76,5 +79,13 @@ final class SupabasePruningSyncRepository: PruningSyncRepositoryProtocol {
     func softDeleteSeason(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         try await provider.client.rpc("soft_delete_pruning_season", params: PruningIdRequest(id: id)).execute()
+    }
+
+    func fetchVineyardSummary(vineyardId: UUID) async throws -> BackendPruningVineyardSummary {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        return try await provider.client
+            .rpc("get_pruning_vineyard_summary", params: PruningSummaryRequest(vineyardId: vineyardId))
+            .execute()
+            .value
     }
 }
