@@ -358,7 +358,24 @@ struct PruningBlockDetailView: View {
         .padding(.horizontal)
     }
 
+    /// The pickers are `.fixedSize()` so the menu labels can never be
+    /// compressed into wrapped digits on narrow screens; when one line is
+    /// too tight, the whole control wraps to two lines instead.
     private var rangeSelector: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                rangePickers
+                Spacer(minLength: 8)
+                selectRangeButton
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                rangePickers
+                selectRangeButton
+            }
+        }
+    }
+
+    private var rangePickers: some View {
         HStack(spacing: 8) {
             Text("Rows")
                 .font(.caption)
@@ -369,6 +386,7 @@ struct PruningBlockDetailView: View {
                 }
             }
             .pickerStyle(.menu)
+            .fixedSize()
             Text("to")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -378,15 +396,20 @@ struct PruningBlockDetailView: View {
                 }
             }
             .pickerStyle(.menu)
-            Spacer()
-            Button {
-                selectRange()
-            } label: {
-                Text("Select range")
-                    .font(.caption.weight(.semibold))
-            }
-            .buttonStyle(.bordered)
+            .fixedSize()
         }
+    }
+
+    private var selectRangeButton: some View {
+        Button {
+            selectRange()
+        } label: {
+            Text("Select range")
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .buttonStyle(.bordered)
     }
 
     private func gridLegend(color: Color, text: String) -> some View {

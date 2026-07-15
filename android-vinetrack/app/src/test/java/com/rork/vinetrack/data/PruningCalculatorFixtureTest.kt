@@ -61,10 +61,11 @@ class PruningCalculatorFixtureTest {
         name = "Cab Franc",
         vineSpacing = 1.0,
         vineCountOverride = 1300,
+        // Stored intentionally out of order — rowRefs must sort ascending by number.
         rows = listOf(
-            row(42, 200.0), row(43, 200.0), row(44, 200.0),
-            row(45, 200.0), row(46, 200.0), row(47, 200.0),
-            row(50, 100.0),
+            row(50, 100.0), row(47, 200.0), row(42, 200.0),
+            row(45, 200.0), row(43, 200.0), row(46, 200.0),
+            row(44, 200.0),
         ),
     )
 
@@ -125,8 +126,9 @@ class PruningCalculatorFixtureTest {
     // MARK: Row identity
 
     @Test
-    fun rowRefs_preserveActualNonSequentialNumbersAndOrder() {
+    fun rowRefs_sortAscendingAndPreserveActualNonSequentialNumbers() {
         val rows = PruningCalculator.rowRefs(blockA, setupA)
+        // Input is stored out of order; refs must come back lowest → highest.
         assertEquals(listOf(42, 43, 44, 45, 46, 47, 50), rows.map { it.number })
         assertTrue(rows.none { it.isFallback })
         // Row 48/49 must NOT be invented; row vines follow each row's length.

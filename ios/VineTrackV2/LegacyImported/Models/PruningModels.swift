@@ -294,8 +294,8 @@ nonisolated enum PruningCalculator {
     }
 
     /// The rows the tracker operates on. Uses the ACTUAL configured paddock
-    /// rows (stored order, real numbers — non-sequential and >1 starts are
-    /// preserved); falls back to sequential rows from the manual row count
+    /// rows (ascending row-number order, real numbers — non-sequential and
+    /// >1 starts are preserved); falls back to sequential rows from the manual row count
     /// only when the block has no configured row records.
     ///
     /// Vine distribution: each row is weighted by its own length (rows
@@ -305,7 +305,7 @@ nonisolated enum PruningCalculator {
     /// row's vines and totals always reconcile with the block vine count.
     static func rowRefs(paddock: Paddock, setup: PruningBlockSetup?) -> [PruningRowRef] {
         let totalVines = Double(paddock.effectiveVineCount)
-        let configured = paddock.rows
+        let configured = paddock.rows.sorted { $0.number < $1.number }
         if !configured.isEmpty {
             let lengths = configured.map { rowLength($0, paddock: paddock) }
             let positive = lengths.filter { $0 > 0 }

@@ -963,7 +963,14 @@ private fun RowGridHeader(
                 RowLabelPicker(rangeToIndex, rows, onRangeTo)
                 Spacer(Modifier.weight(1f))
                 OutlinedButton(onClick = onSelectRange) {
-                    Text("Select range", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
+                    Text(
+                        "Select range",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = VineColors.Primary,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -985,6 +992,8 @@ private fun RowLabelPicker(valueIndex: Int, rows: List<PruningRowRef>, onChange:
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             color = VineColors.Primary,
+            maxLines = 1,
+            softWrap = false,
             modifier = Modifier
                 .clip(RoundedCornerShape(8.dp))
                 .background(vine.cardBorder.copy(alpha = 0.5f))

@@ -249,7 +249,7 @@ object PruningCalculator {
      */
     fun rowRefs(paddock: Paddock, setup: PruningBlockSetup?): List<PruningRowRef> {
         val totalVines = paddock.effectiveVineCount.toDouble()
-        val configured = paddock.rows.orEmpty()
+        val configured = paddock.rows.orEmpty().sortedBy { it.number }
         if (configured.isNotEmpty()) {
             val lengths = configured.map { rowLength(it, paddock) }
             val positive = lengths.filter { it > 0 }

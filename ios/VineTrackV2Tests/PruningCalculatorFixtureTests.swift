@@ -61,10 +61,11 @@ struct PruningCalculatorFixtureTests {
         id: blockAId,
         vineyardId: vineyardId,
         name: "Cab Franc",
+        // Stored intentionally out of order — rowRefs must sort ascending by number.
         rows: [
-            row(42, lengthMetres: 200), row(43, lengthMetres: 200), row(44, lengthMetres: 200),
-            row(45, lengthMetres: 200), row(46, lengthMetres: 200), row(47, lengthMetres: 200),
-            row(50, lengthMetres: 100)
+            row(50, lengthMetres: 100), row(47, lengthMetres: 200), row(42, lengthMetres: 200),
+            row(45, lengthMetres: 200), row(43, lengthMetres: 200), row(46, lengthMetres: 200),
+            row(44, lengthMetres: 200)
         ],
         vineSpacing: 1.0,
         vineCountOverride: 1300
@@ -123,8 +124,9 @@ struct PruningCalculatorFixtureTests {
 
     // MARK: Row identity
 
-    @Test func rowRefs_preserveActualNonSequentialNumbersAndOrder() {
+    @Test func rowRefs_sortAscendingAndPreserveActualNonSequentialNumbers() {
         let rows = PruningCalculator.rowRefs(paddock: Self.blockA, setup: Self.setupA)
+        // Input is stored out of order; refs must come back lowest → highest.
         #expect(rows.map(\.number) == [42, 43, 44, 45, 46, 47, 50])
         #expect(rows.allSatisfy { !$0.isFallback })
         // Row 48/49 must NOT be invented; row vines follow each row's length.
