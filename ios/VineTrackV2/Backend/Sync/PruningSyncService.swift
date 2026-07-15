@@ -85,6 +85,13 @@ final class PruningSyncService {
         await sync(vineyardId: vineyardId)
     }
 
+    /// Sync order matters: seasons are pushed and PULLED before entries are
+    /// pushed, and a push failure never blocks the pulls. Previously a single
+    /// failing push aborted the whole sync (including pulls), so one wedged
+    /// entry silently stopped ALL pruning sync in both directions with no
+    /// diagnostics. Queued entries are also re-pointed at the canonical
+    /// season row after the season pull so they can never collide with the
+    /// server's active-season unique index.
     func sync(vineyardId: UUID) async {
         guard SupabaseClientProvider.shared.isConfigured else {
             errorMessage = "Supabase not configured"
@@ -93,19 +100,60 @@ final class PruningSyncService {
         }
         syncStatus = .syncing
         errorMessage = nil
+        var pushError: Error?
+
         do {
             try await pushSeasons(vineyardId: vineyardId)
-            try await pushEntries(vineyardId: vineyardId)
-            try await pullSeasons(vineyardId: vineyardId)
-            try await pullEntriesAndSegments(vineyardId: vineyardId)
-            seasonMetadata.setLastSync(Date(), for: vineyardId)
-            entryMetadata.setLastSync(Date(), for: vineyardId)
-            lastSyncDate = Date()
-            syncStatus = .success
-            await verifyServerParity(vineyardId: vineyardId)
         } catch {
+            pushError = error
+            print("[PruningSync] season push failed: \(error)")
+        }
+
+        do {
+            try await pullSeasons(vineyardId: vineyardId)
+            seasonMetadata.setLastSync(Date(), for: vineyardId)
+        } catch {
+            print("[PruningSync] season pull failed: \(error)")
             errorMessage = error.localizedDescription
             syncStatus = .failure(error.localizedDescription)
+            return
+        }
+
+        // The season pull may have replaced a locally created season row with
+        // the server's canonical row for the same block + year (different id).
+        // Re-point queued entries so their push lands on the surviving row.
+        let remapped = pruningStore.remapPendingEntrySeasons(
+            vineyardId: vineyardId,
+            pendingIds: Set(entryMetadata.pendingUpserts.keys)
+        )
+        if !remapped.isEmpty {
+            print("[PruningSync] remapped \(remapped.count) queued entry(ies) to the canonical season row")
+        }
+
+        do {
+            try await pushEntries(vineyardId: vineyardId)
+        } catch {
+            if pushError == nil { pushError = error }
+            print("[PruningSync] entry push failed: \(error)")
+        }
+
+        do {
+            try await pullEntriesAndSegments(vineyardId: vineyardId)
+            entryMetadata.setLastSync(Date(), for: vineyardId)
+        } catch {
+            print("[PruningSync] entry pull failed: \(error)")
+            errorMessage = error.localizedDescription
+            syncStatus = .failure(error.localizedDescription)
+            return
+        }
+
+        lastSyncDate = Date()
+        if let pushError {
+            errorMessage = pushError.localizedDescription
+            syncStatus = .failure(pushError.localizedDescription)
+        } else {
+            syncStatus = .success
+            await verifyServerParity(vineyardId: vineyardId)
         }
     }
 
@@ -182,8 +230,23 @@ final class PruningSyncService {
                 pushed.append(id)
             }
             if !payloads.isEmpty {
-                try await repository.upsertSeasons(payloads)
-                seasonMetadata.clearDirty(pushed)
+                do {
+                    try await repository.upsertSeasons(payloads)
+                    seasonMetadata.clearDirty(pushed)
+                } catch {
+                    let message = String(describing: error).lowercased()
+                    if message.contains("pruning_seasons_active_unique") || message.contains("duplicate key") || message.contains("23505") {
+                        // A different-id ACTIVE season already exists on the
+                        // server for the same vineyard + block + year (e.g.
+                        // created from the portal). Keeping these dirty would
+                        // wedge the queue forever — drop the local copy and
+                        // let the pull adopt the server's canonical row.
+                        seasonMetadata.clearDirty(pushed)
+                        print("[PruningSync] season push hit the active-season unique index — adopting the server row instead")
+                    } else {
+                        throw error
+                    }
+                }
             }
         }
         for (id, _) in seasonMetadata.pendingDeletes {
@@ -211,6 +274,7 @@ final class PruningSyncService {
                     try await repository.recordEntry(RecordPruningEntryParams(from: entry, clientUpdatedAt: ts))
                     entryMetadata.clearDirty([id])
                 } catch {
+                    print("[PruningSync] record_pruning_entry failed for entry \(id): \(error)")
                     if firstError == nil { firstError = error }
                 }
             }

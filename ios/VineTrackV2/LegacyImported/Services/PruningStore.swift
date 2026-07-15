@@ -106,6 +106,34 @@ final class PruningStore {
         if entries.count != before { persistEntries() }
     }
 
+    /// Re-points queued entries at the canonical season row for their block.
+    ///
+    /// After a season pull, `applyRemoteSeasonUpsert` may have replaced a
+    /// locally created season (deterministic id) with the server's row for
+    /// the same vineyard + paddock + year under a DIFFERENT id (e.g. a row
+    /// created from the portal). Entries still queued against the stale id
+    /// would collide with the server's active-season unique index on every
+    /// replay, wedging the outbox forever — remapping them to the surviving
+    /// setup row lets the push land. Only entries in `pendingIds` (still
+    /// queued) are touched. Returns the remapped entry ids.
+    func remapPendingEntrySeasons(vineyardId: UUID, pendingIds: Set<UUID>) -> [UUID] {
+        guard !pendingIds.isEmpty else { return [] }
+        let knownSetupIds = Set(setups.map { $0.id })
+        var remapped: [UUID] = []
+        for index in entries.indices {
+            let entry = entries[index]
+            guard entry.vineyardId == vineyardId,
+                  pendingIds.contains(entry.id),
+                  !knownSetupIds.contains(entry.seasonId),
+                  let canonical = setup(for: entry.paddockId),
+                  canonical.id != entry.seasonId else { continue }
+            entries[index].seasonId = canonical.id
+            remapped.append(entry.id)
+        }
+        if !remapped.isEmpty { persistEntries() }
+        return remapped
+    }
+
     /// Applies the server's segment attribution (the `pruning_row_segments`
     /// table is the single source of truth for completed quarters). Entries in
     /// `protectedIds` are still queued locally and keep their optimistic
