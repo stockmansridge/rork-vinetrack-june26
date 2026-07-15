@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -39,6 +40,22 @@ import java.time.format.DateTimeFormatter
  *   that device's entry) or the explicit `delete_pruning_entry` RPC.
  */
 class PruningSyncRepository(private val session: SessionStore) {
+
+    /**
+     * PostgREST resolves RPC functions by the EXACT set of provided argument
+     * names — a missing key only resolves when the SQL parameter has a
+     * default. The shared [SupabaseClient.json] uses `explicitNulls = false`,
+     * which silently DROPPED `p_labour_hours` / `p_start_time` /
+     * `p_finish_time` for entries recorded without hours or times, producing
+     * a 12-argument call the server could not match (PGRST202 "Could not
+     * find the function") that wedged the entry in the offline queue
+     * forever. RPC bodies are therefore encoded with explicit nulls so the
+     * call shape never varies with which optional fields are filled in.
+     */
+    private val rpcJson = Json {
+        encodeDefaults = true
+        explicitNulls = true
+    }
 
     @Serializable
     data class SeasonRow(
@@ -170,7 +187,7 @@ class PruningSyncRepository(private val session: SessionStore) {
         @SerialName("p_estimated_vines") val estimatedVines: Int,
         @SerialName("p_client_updated_at") val clientUpdatedAt: String,
         @SerialName("p_segments") val segments: List<SegmentArg>,
-        /** Optional Work Task link (sql/113); omitted when null so the RPC stays compatible pre-migration. */
+        /** Optional Work Task link (sql/113). */
         @SerialName("p_work_task_id") val workTaskId: String? = null,
     )
 
@@ -290,7 +307,8 @@ class PruningSyncRepository(private val session: SessionStore) {
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("record_pruning_entry")) {
             authHeaders(token)
             contentType(ContentType.Application.Json)
-            setBody(args)
+            // Raw pre-encoded body: all 16 keys always present, nulls explicit.
+            setBody(rpcJson.encodeToString(RecordEntryArgs.serializer(), args))
         }
         requireSuccess(response)
     }

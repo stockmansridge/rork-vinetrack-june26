@@ -231,8 +231,7 @@ nonisolated struct RecordPruningEntryParams: Encodable, Sendable {
     let estimatedVines: Int
     let clientUpdatedAt: Date
     let segments: [Segment]
-    /// Optional Work Task link (sql/113). Encoded only when set, so the RPC
-    /// stays compatible with servers that pre-date the migration.
+    /// Optional Work Task link (sql/113).
     let workTaskId: UUID?
 
     enum CodingKeys: String, CodingKey {
@@ -252,6 +251,49 @@ nonisolated struct RecordPruningEntryParams: Encodable, Sendable {
         case clientUpdatedAt = "p_client_updated_at"
         case segments = "p_segments"
         case workTaskId = "p_work_task_id"
+    }
+
+    /// PostgREST resolves RPC functions by the EXACT set of provided argument
+    /// names — a missing key only resolves if the SQL parameter has a default.
+    /// The synthesized Encodable drops nil keys (encodeIfPresent), which made
+    /// entries without labour hours / start / finish times send a 12-argument
+    /// call the server could not match (PGRST202 "Could not find the
+    /// function"), wedging them in the offline queue forever. Encode every
+    /// key explicitly — nils as JSON null — so the call shape never varies.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(vineyardId, forKey: .vineyardId)
+        try container.encode(seasonId, forKey: .seasonId)
+        try container.encode(paddockId, forKey: .paddockId)
+        try container.encode(seasonYear, forKey: .seasonYear)
+        try container.encode(entryDate, forKey: .entryDate)
+        try container.encode(worker, forKey: .worker)
+        if let labourHours {
+            try container.encode(labourHours, forKey: .labourHours)
+        } else {
+            try container.encodeNil(forKey: .labourHours)
+        }
+        if let startTime {
+            try container.encode(startTime, forKey: .startTime)
+        } else {
+            try container.encodeNil(forKey: .startTime)
+        }
+        if let finishTime {
+            try container.encode(finishTime, forKey: .finishTime)
+        } else {
+            try container.encodeNil(forKey: .finishTime)
+        }
+        try container.encode(method, forKey: .method)
+        try container.encode(notes, forKey: .notes)
+        try container.encode(estimatedVines, forKey: .estimatedVines)
+        try container.encode(clientUpdatedAt, forKey: .clientUpdatedAt)
+        try container.encode(segments, forKey: .segments)
+        if let workTaskId {
+            try container.encode(workTaskId, forKey: .workTaskId)
+        } else {
+            try container.encodeNil(forKey: .workTaskId)
+        }
     }
 
     init(from entry: PruningEntry, clientUpdatedAt: Date) {
