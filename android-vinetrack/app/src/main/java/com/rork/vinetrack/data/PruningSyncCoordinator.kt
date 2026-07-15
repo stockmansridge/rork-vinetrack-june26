@@ -13,8 +13,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.json.Json
 
 /**
- * Offline-first coordinator for the Pruning Tracker (System Admin only while
- * in development). Local-first semantics mirroring iOS `PruningSyncService`:
+ * Offline-first coordinator for the Pruning Tracker. Local-first semantics
+ * mirroring iOS `PruningSyncService`:
  *
  * * every write lands in [PruningStore] first (instant UI, works offline) and
  *   is queued in the shared pending-write outbox,
@@ -95,7 +95,12 @@ class PruningSyncCoordinator(
                 val setup = json.decodeFromString(PruningBlockSetup.serializer(), write.payloadJson)
                 repo.upsertSeason(setup)
             }
-            replayPass(PendingEntityType.PRUNING_ENTRY, PendingOpType.CREATE) { write ->
+            // conflictIsSuccess = false: `record_pruning_entry` guards every
+            // insert with ON CONFLICT, so a 409 here is a REAL failure (e.g.
+            // the pre-SQL-116 season-id collision) — dropping the write on 409
+            // silently lost the entry. Retry instead; SQL 116 resolves the
+            // canonical season server-side so the replay now lands.
+            replayPass(PendingEntityType.PRUNING_ENTRY, PendingOpType.CREATE, conflictIsSuccess = false) { write ->
                 val entry = json.decodeFromString(PruningEntry.serializer(), write.payloadJson)
                 repo.recordEntry(entry)
             }
@@ -119,6 +124,11 @@ class PruningSyncCoordinator(
      */
     suspend fun refresh(vineyardId: String): Pair<List<PruningBlockSetup>, List<PruningEntry>> {
         if (!canSync()) return store.loadSetups(vineyardId) to store.loadEntries(vineyardId)
+        // Un-wedge: writes that exhausted their retries BEFORE the SQL 116
+        // server fix landed sit at BLOCKED forever (replay only picks up
+        // PENDING/FAILED). An explicit refresh grants them a new retry cycle
+        // against the fixed RPC. Bounded — one demotion per refresh.
+        retryBlockedPruningWrites()
         replayAll()
         return try {
             val unresolved = pending.list().filter { it.status in PendingWriteStatus.unresolved }
@@ -138,21 +148,25 @@ class PruningSyncCoordinator(
 
             val localSetups = store.loadSetups(vineyardId)
             val remoteSeasonIds = remoteSeasons.map { it.id }.toSet()
+            // Seed: local seasons the server has never seen and that aren't
+            // queued — re-queue them AND keep them in the merged cache. They
+            // previously fell out of the merged list (queued but dropped from
+            // the UI until the push landed).
+            val seededSetups = localSetups
+                .filter { it.id !in remoteSeasonIds && it.id !in pendingSeasonIds }
+            seededSetups.forEach { setup ->
+                enqueueCoalesced(
+                    entityType = PendingEntityType.PRUNING_SEASON,
+                    opType = PendingOpType.UPDATE,
+                    payloadJson = json.encodeToString(PruningBlockSetup.serializer(), setup),
+                    clientId = setup.id,
+                )
+            }
             val mergedSetups = remoteSeasons
                 .filter { it.deletedAt == null && it.id !in pendingSeasonIds }
                 .map { it.toModel() } +
-                localSetups.filter { it.id in pendingSeasonIds }
-            // Seed: local seasons the server has never seen and that aren't queued.
-            localSetups
-                .filter { it.id !in remoteSeasonIds && it.id !in pendingSeasonIds }
-                .forEach { setup ->
-                    enqueueCoalesced(
-                        entityType = PendingEntityType.PRUNING_SEASON,
-                        opType = PendingOpType.UPDATE,
-                        payloadJson = json.encodeToString(PruningBlockSetup.serializer(), setup),
-                        clientId = setup.id,
-                    )
-                }
+                localSetups.filter { it.id in pendingSeasonIds } +
+                seededSetups
             store.saveSetups(vineyardId, mergedSetups)
 
             // Server attribution: quarters grouped by the entry that completed them.
@@ -166,21 +180,26 @@ class PruningSyncCoordinator(
 
             val localEntries = store.loadEntries(vineyardId)
             val remoteEntryIds = remoteEntries.map { it.id }.toSet()
+            // Seed: local entries the server has never seen and that aren't
+            // queued — re-queue them AND keep them in the merged cache. They
+            // previously fell out of the merged list, so an entry whose queued
+            // create was wrongly dropped (pre-fix 409 handling) vanished from
+            // the device while still unsynced.
+            val seededEntries = localEntries
+                .filter { it.id !in remoteEntryIds && it.id !in pendingEntryCreateIds && it.id !in pendingEntryDeleteIds }
+            seededEntries.forEach { entry ->
+                enqueueCoalesced(
+                    entityType = PendingEntityType.PRUNING_ENTRY,
+                    opType = PendingOpType.CREATE,
+                    payloadJson = json.encodeToString(PruningEntry.serializer(), entry),
+                    clientId = entry.id,
+                )
+            }
             val mergedEntries = remoteEntries
                 .filter { it.deletedAt == null && it.id !in pendingEntryDeleteIds && it.id !in pendingEntryCreateIds }
                 .map { it.toModel(segmentsByEntry[it.id].orEmpty()) } +
-                localEntries.filter { it.id in pendingEntryCreateIds }
-            // Seed: local entries the server has never seen and that aren't queued.
-            localEntries
-                .filter { it.id !in remoteEntryIds && it.id !in pendingEntryCreateIds && it.id !in pendingEntryDeleteIds }
-                .forEach { entry ->
-                    enqueueCoalesced(
-                        entityType = PendingEntityType.PRUNING_ENTRY,
-                        opType = PendingOpType.CREATE,
-                        payloadJson = json.encodeToString(PruningEntry.serializer(), entry),
-                        clientId = entry.id,
-                    )
-                }
+                localEntries.filter { it.id in pendingEntryCreateIds } +
+                seededEntries
             store.saveEntries(vineyardId, mergedEntries)
 
             mergedSetups to mergedEntries
@@ -220,7 +239,19 @@ class PruningSyncCoordinator(
             .forEach { pending.remove(it.id) }
     }
 
-    private suspend fun replayPass(entityType: String, opType: String, action: suspend (PendingWrite) -> Unit) {
+    /**
+     * @param conflictIsSuccess whether an HTTP 409 means "row already exists —
+     * idempotent success" (true for the merge-duplicates season upsert) or a
+     * genuine failure that must be retried (false for the guarded
+     * `record_pruning_entry` RPC, where every insert is ON CONFLICT-protected
+     * and a 409 signals a real collision such as the pre-SQL-116 season wedge).
+     */
+    private suspend fun replayPass(
+        entityType: String,
+        opType: String,
+        conflictIsSuccess: Boolean = true,
+        action: suspend (PendingWrite) -> Unit,
+    ) {
         val candidates = pending.list().filter {
             it.entityType == entityType && it.opType == opType &&
                 (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
@@ -234,8 +265,8 @@ class PruningSyncCoordinator(
                 retryOrBlock(write, "Sign-in needed to sync pruning work.")
             } catch (e: BackendError.Server) {
                 when {
-                    // Duplicate key — the row already exists (idempotent success).
-                    e.code == 409 -> pending.remove(write.id)
+                    e.code == 409 && conflictIsSuccess -> pending.remove(write.id)
+                    e.code == 409 -> retryOrBlock(write, "Conflict (409) — will retry.")
                     e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
                     else -> pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Rejected (${e.code}).")
                 }
@@ -243,6 +274,16 @@ class PruningSyncCoordinator(
                 retryOrBlock(write, e.message ?: "No connection.")
             }
         }
+    }
+
+    /** Demotes BLOCKED pruning writes back to FAILED so an explicit refresh retries them. */
+    private fun retryBlockedPruningWrites() {
+        pending.list()
+            .filter {
+                it.status == PendingWriteStatus.BLOCKED &&
+                    (it.entityType == PendingEntityType.PRUNING_SEASON || it.entityType == PendingEntityType.PRUNING_ENTRY)
+            }
+            .forEach { pending.updateStatus(it.id, PendingWriteStatus.FAILED, it.lastError) }
     }
 
     private fun retryOrBlock(write: PendingWrite, error: String) {
