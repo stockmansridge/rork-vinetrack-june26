@@ -235,7 +235,7 @@ private fun DashboardContent(
 
             OverviewSection(state, onOpenMap)
 
-            OperationalToolsSection(onOpenTab = onOpenTab, onOpenTool = onOpenTool, isSystemAdmin = state.isSystemAdmin)
+            OperationalToolsSection(onOpenTab = onOpenTab, onOpenTool = onOpenTool)
 
             if (canChangeSettings) {
                 ManagementSection(onOpenTool = onOpenTool)
@@ -942,7 +942,6 @@ private data class ToolItem(
 private fun OperationalToolsSection(
     onOpenTab: (MainTab) -> Unit,
     onOpenTool: (ToolRoute) -> Unit,
-    isSystemAdmin: Boolean = false,
 ) {
     val tools = listOf(
         ToolItem("Work Tasks", "Log & calculate", Icons.Filled.Group, VineColors.Indigo) { onOpenTool(ToolRoute.WorkTasks) },
@@ -954,14 +953,9 @@ private fun OperationalToolsSection(
         ToolItem("Growth Stage Records", "Phenology records", Icons.Filled.Spa, VineColors.LeafGreen) { onOpenTool(ToolRoute.Growth) },
         ToolItem("Optimal Ripeness", "GDD & harvest window", Icons.Filled.Thermostat, VineColors.Orange) { onOpenTool(ToolRoute.OptimalRipeness) },
         ToolItem("Cost Reports", "Season, block & variety", Icons.Filled.Payments, VineColors.Indigo) { onOpenTool(ToolRoute.CostReports) },
-    ) + if (isSystemAdmin) {
-        listOf(
-            ToolItem("Fertiliser Calculator", "Rates, packs & costs", Icons.Filled.Grain, VineColors.LeafGreen) { onOpenTool(ToolRoute.FertiliserCalculator) },
-            ToolItem("Pruning Tracker", "Row progress & crew rates", Icons.Filled.ContentCut, VineColors.Cyan) { onOpenTool(ToolRoute.PruningTracker) },
-        )
-    } else {
-        emptyList()
-    }
+        ToolItem("Fertiliser Calculator", "Rates, packs & costs", Icons.Filled.Grain, VineColors.LeafGreen) { onOpenTool(ToolRoute.FertiliserCalculator) },
+        ToolItem("Pruning Tracker", "Row progress & crew rates", Icons.Filled.ContentCut, VineColors.Cyan) { onOpenTool(ToolRoute.PruningTracker) },
+    )
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),

@@ -1043,20 +1043,18 @@ private struct NewHomeTabView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                if systemAdmin.isSystemAdmin {
-                    NavigationLink {
-                        FertiliserCalculatorView()
-                    } label: {
-                        iconTile(title: "Fertiliser Calculator", icon: "circle.hexagongrid.fill", tint: .mint)
-                    }
-                    .buttonStyle(.plain)
-                    NavigationLink {
-                        PruningTrackerView()
-                    } label: {
-                        iconTile(title: "Pruning Tracker", icon: "scissors", tint: .teal)
-                    }
-                    .buttonStyle(.plain)
+                NavigationLink {
+                    FertiliserCalculatorView()
+                } label: {
+                    iconTile(title: "Fertiliser Calculator", icon: "circle.hexagongrid.fill", tint: .mint)
                 }
+                .buttonStyle(.plain)
+                NavigationLink {
+                    PruningTrackerView()
+                } label: {
+                    iconTile(title: "Pruning Tracker", icon: "scissors", tint: .teal)
+                }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal)
         }
