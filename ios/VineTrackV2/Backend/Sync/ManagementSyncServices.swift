@@ -66,6 +66,24 @@ final class ManagementSyncMetadata {
     private func save() { persistence.save(state, key: key) }
 }
 
+/// Matches the Postgres 23505 unique-violation raised by
+/// `uniq_worker_types_active_name_cost` (sql/106) when two clients create the
+/// same worker type (name + cost) under different ids.
+private func isDuplicateWorkerTypeError(_ error: Error) -> Bool {
+    let message = String(describing: error).lowercased()
+    return message.contains("uniq_worker_types_active_name_cost")
+        || message.contains("duplicate key")
+        || message.contains("23505")
+}
+
+/// Byte-for-byte the same normalisation as `worker_type_normalised_name`
+/// in sql/106: trim, collapse internal whitespace, lowercase.
+private func normalisedWorkerTypeName(_ name: String) -> String {
+    name.trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        .lowercased()
+}
+
 private func isMissingRowError(_ error: Error) -> Bool {
     let message = String(describing: error).lowercased()
     if message.contains("not found") { return true }
@@ -1164,24 +1182,11 @@ final class OperatorCategorySyncService {
     private func push(vineyardId: UUID) async throws {
         guard let store else { return }
         let createdBy = auth?.userId
-        let dirty = metadata.pendingUpserts
-        if !dirty.isEmpty {
-            let byId = Dictionary(store.operatorCategories.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-            var payloads: [BackendOperatorCategoryUpsert] = []
-            var pushed: [UUID] = []
-            for (id, ts) in dirty {
-                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
-                payloads.append(BackendOperatorCategory.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
-                pushed.append(id)
-            }
-            if !payloads.isEmpty {
-                #if DEBUG
-                print("[OperatorCategorySync] push: upserting \(payloads.count) row(s) for vineyard \(vineyardId.uuidString)")
-                #endif
-                try await repository.upsertMany(payloads)
-                metadata.clearDirty(pushed)
-            }
-        }
+
+        // Deletes run FIRST: a queued soft-delete can be holding the same
+        // (name, cost) slot on the server's `uniq_worker_types_active_name_cost`
+        // index. Freeing it before the upserts prevents a permanent
+        // duplicate-key wedge when the local de-dupe kept a different id.
         let pendingDeletes = metadata.pendingDeletes
         if !pendingDeletes.isEmpty {
             #if DEBUG
@@ -1210,7 +1215,74 @@ final class OperatorCategorySyncService {
                 }
             }
         }
+
+        let dirty = metadata.pendingUpserts
+        if !dirty.isEmpty {
+            let byId = Dictionary(store.operatorCategories.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            var payloads: [BackendOperatorCategoryUpsert] = []
+            var pushed: [UUID] = []
+            for (id, ts) in dirty {
+                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
+                payloads.append(BackendOperatorCategory.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
+                pushed.append(id)
+            }
+            if !payloads.isEmpty {
+                #if DEBUG
+                print("[OperatorCategorySync] push: upserting \(payloads.count) row(s) for vineyard \(vineyardId.uuidString)")
+                #endif
+                do {
+                    try await repository.upsertMany(payloads)
+                    metadata.clearDirty(pushed)
+                } catch where isDuplicateWorkerTypeError(error) {
+                    try await resolveDuplicateWorkerTypes(payloads: payloads, vineyardId: vineyardId)
+                }
+            }
+        }
         if let firstDeleteError { throw firstDeleteError }
+    }
+
+    /// A push collided with the server's `uniq_worker_types_active_name_cost`
+    /// unique index: another client (portal / Android) already created a LIVE
+    /// worker type with the same name + cost under a DIFFERENT id. Keeping the
+    /// local copy queued would wedge the sync forever — retry item-by-item and
+    /// adopt the server's canonical row for each conflicting one.
+    private func resolveDuplicateWorkerTypes(payloads: [BackendOperatorCategoryUpsert], vineyardId: UUID) async throws {
+        guard let store else { return }
+        var remoteRows: [BackendOperatorCategory]?
+        for payload in payloads {
+            do {
+                try await repository.upsertMany([payload])
+                metadata.clearDirty([payload.id])
+            } catch where isDuplicateWorkerTypeError(error) {
+                if remoteRows == nil {
+                    remoteRows = try await repository.fetch(vineyardId: vineyardId, since: nil)
+                }
+                let wanted = normalisedWorkerTypeName(payload.name)
+                let match = (remoteRows ?? []).first {
+                    $0.deletedAt == nil
+                        && $0.id != payload.id
+                        && normalisedWorkerTypeName($0.name ?? "") == wanted
+                        && abs(($0.costPerHour ?? 0) - payload.costPerHour) < 0.00005
+                }
+                if let match {
+                    store.adoptRemoteOperatorCategory(localId: payload.id, remote: match.toOperatorCategory())
+                    metadata.clearDirty([payload.id])
+                    // Never soft-delete the canonical row we just adopted.
+                    metadata.clearDeleted([match.id])
+                    #if DEBUG
+                    print("[OperatorCategorySync] adopted server worker type \(match.id) for local duplicate \(payload.id)")
+                    #endif
+                } else {
+                    // Conflict against a row we cannot see — drop the queued
+                    // copy instead of wedging every future sync; the pull
+                    // restores the server's truth.
+                    metadata.clearDirty([payload.id])
+                    #if DEBUG
+                    print("[OperatorCategorySync] duplicate conflict for \(payload.id) with no visible server match — dropping queued copy")
+                    #endif
+                }
+            }
+        }
     }
 
     private func pull(vineyardId: UUID) async throws {

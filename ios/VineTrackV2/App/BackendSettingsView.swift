@@ -1016,6 +1016,8 @@ struct SyncSettingsView: View {
     @Environment(YieldEstimationSessionSyncService.self) private var yieldSessionSync
     @Environment(DamageRecordSyncService.self) private var damageRecordSync
     @Environment(HistoricalYieldRecordSyncService.self) private var historicalYieldSync
+    @Environment(PruningSyncService.self) private var pruningSync
+    @Environment(FertiliserSyncService.self) private var fertiliserSync
 
     var body: some View {
         Form {
@@ -1223,6 +1225,30 @@ struct SyncSettingsView: View {
 
             Section {
                 Button {
+                    Task { await pruningSync.syncForSelectedVineyard() }
+                } label: {
+                    syncButtonLabel(title: "Sync Pruning Tracker", icon: "scissors", isSyncing: isSyncingMgmt(pruningSync.syncStatus))
+                }
+                .disabled(isSyncingMgmt(pruningSync.syncStatus))
+                VineyardSyncStatusRow(label: "pruning tracker", state: mgmtStateFrom(pruningSync.syncStatus, lastSync: pruningSync.lastSyncDate))
+                pendingQueueRow(label: "Pruning items waiting", count: pruningSync.pendingUpsertCount + pruningSync.pendingDeleteCount)
+
+                Button {
+                    Task { await fertiliserSync.syncForSelectedVineyard() }
+                } label: {
+                    syncButtonLabel(title: "Sync Fertiliser Records", icon: "leaf.arrow.triangle.circlepath", isSyncing: isSyncingMgmt(fertiliserSync.syncStatus))
+                }
+                .disabled(isSyncingMgmt(fertiliserSync.syncStatus))
+                VineyardSyncStatusRow(label: "fertiliser records", state: mgmtStateFrom(fertiliserSync.syncStatus, lastSync: fertiliserSync.lastSyncDate))
+                pendingQueueRow(label: "Fertiliser records waiting", count: fertiliserSync.pendingUpsertCount + fertiliserSync.pendingDeleteCount)
+            } header: {
+                Text("Operational Tools")
+            } footer: {
+                Text("Pruning tracker seasons and entries plus fertiliser records sync across vineyard members.")
+            }
+
+            Section {
+                Button {
                     Task { await growthStageImageSync.syncForSelectedVineyard() }
                 } label: {
                     syncButtonLabel(title: "Sync Growth Stage Images", icon: "photo.on.rectangle", isSyncing: isSyncingMgmt(growthStageImageSync.syncStatus))
@@ -1407,6 +1433,24 @@ struct SyncSettingsView: View {
         case .syncing: return .syncing
         case .success: return .success(lastSync)
         case .failure(let m): return .failure(m)
+        }
+    }
+
+    /// Compact queue-depth row shown under a sync button when records are
+    /// still waiting to upload — makes a wedged outbox visible at a glance.
+    @ViewBuilder
+    private func pendingQueueRow(label: String, count: Int) -> some View {
+        if count > 0 {
+            HStack {
+                Text(label)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(count)")
+                    .font(.footnote.monospacedDigit())
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 

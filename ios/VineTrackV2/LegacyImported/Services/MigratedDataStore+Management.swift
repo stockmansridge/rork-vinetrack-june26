@@ -409,6 +409,42 @@ extension MigratedDataStore {
         persistenceStore.save(all, key: MgmtKeys.operatorCategories)
     }
 
+    /// Replace a locally created operator category with the server's canonical
+    /// row for the same (name, cost). Used when a push collides with the
+    /// server's `uniq_worker_types_active_name_cost` unique index because
+    /// another client created the same worker type under a different id.
+    /// Member references are remapped from the local id to the server id.
+    /// Deliberately does NOT fire `onOperatorCategoryChanged` — the adopted
+    /// row is already the server's truth and must not re-enter the push queue.
+    func adoptRemoteOperatorCategory(localId: UUID, remote: OperatorCategory) {
+        operatorCategories.removeAll { $0.id == localId }
+        if let idx = operatorCategories.firstIndex(where: { $0.id == remote.id }) {
+            operatorCategories[idx] = remote
+        } else {
+            operatorCategories.append(remote)
+        }
+        var all: [OperatorCategory] = persistenceStore.load(key: MgmtKeys.operatorCategories) ?? []
+        all.removeAll { $0.id == localId }
+        if let idx = all.firstIndex(where: { $0.id == remote.id }) {
+            all[idx] = remote
+        } else {
+            all.append(remote)
+        }
+        persistenceStore.save(all, key: MgmtKeys.operatorCategories)
+
+        if let vineyardIndex = vineyards.firstIndex(where: { $0.id == remote.vineyardId }) {
+            var updated = vineyards[vineyardIndex]
+            var changed = false
+            for i in updated.users.indices where updated.users[i].operatorCategoryId == localId {
+                updated.users[i].operatorCategoryId = remote.id
+                changed = true
+            }
+            if changed {
+                updateVineyard(updated)
+            }
+        }
+    }
+
     // MARK: - Work Task Types
 
     func addWorkTaskType(_ type: WorkTaskType) {
