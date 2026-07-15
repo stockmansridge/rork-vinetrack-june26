@@ -20,6 +20,8 @@ struct SyncDiagnosticsView: View {
     @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
     @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(PaddockSyncService.self) private var paddockSync
+    @Environment(PruningSyncService.self) private var pruningSync
+    @Environment(FertiliserSyncService.self) private var fertiliserSync
 
     @State private var copyConfirmation: String?
     @State private var isSyncingAll: Bool = false
@@ -988,6 +990,28 @@ struct SyncDiagnosticsView: View {
                 lastSync: tripCostAllocationSync.lastSyncDate,
                 status: statusMgmt(tripCostAllocationSync.syncStatus),
                 errorMessage: tripCostAllocationSync.errorMessage
+            ),
+            DiagnosticRow(
+                id: "pruning",
+                title: "Pruning Tracker",
+                icon: "scissors",
+                localCount: filteredCount(PruningStore.shared.entries, vineyardId: vineyardId) { $0.vineyardId },
+                pendingUpserts: pruningSync.pendingUpsertCount,
+                pendingDeletes: pruningSync.pendingDeleteCount,
+                lastSync: pruningSync.lastSyncDate,
+                status: statusMgmt(pruningSync.syncStatus),
+                errorMessage: pruningSync.errorMessage
+            ),
+            DiagnosticRow(
+                id: "fertiliser",
+                title: "Fertiliser Records",
+                icon: "leaf.circle.fill",
+                localCount: filteredCount(FertiliserStore.shared.records, vineyardId: vineyardId) { $0.vineyardId },
+                pendingUpserts: fertiliserSync.pendingUpsertCount,
+                pendingDeletes: fertiliserSync.pendingDeleteCount,
+                lastSync: fertiliserSync.lastSyncDate,
+                status: statusMgmt(fertiliserSync.syncStatus),
+                errorMessage: fertiliserSync.errorMessage
             )
         ]
     }
@@ -1032,6 +1056,8 @@ struct SyncDiagnosticsView: View {
         await workTaskLabourLineSync.syncForSelectedVineyard()
         await workTaskPaddockSync.syncForSelectedVineyard()
         await growthStageRecordSync.syncForSelectedVineyard()
+        await pruningSync.syncForSelectedVineyard()
+        await fertiliserSync.syncForSelectedVineyard()
     }
 
     private func copyDiagnostics() {
