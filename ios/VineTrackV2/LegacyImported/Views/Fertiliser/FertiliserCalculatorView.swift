@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Fertiliser Calculator — per-hectare and per-vine planning with pack, cost
 /// and inventory maths. Saved calculations become planned tasks or completed
-/// application records. In development: System Admin only.
+/// application records.
 struct FertiliserCalculatorView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(FertiliserSyncService.self) private var fertiliserSync
@@ -58,7 +58,7 @@ struct FertiliserCalculatorView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                devBadge
+                savedBannerRow
                 modePicker
                 blockCard
                 productCard
@@ -96,21 +96,15 @@ struct FertiliserCalculatorView: View {
         }
     }
 
-    private var devBadge: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "hammer.fill")
-                .font(.caption2)
-            Text("In development — visible to System Admins only")
-                .font(.caption)
-            Spacer()
-            if let savedBanner {
-                Text(savedBanner)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(VineyardTheme.leafGreen)
-            }
+    @ViewBuilder
+    private var savedBannerRow: some View {
+        if let savedBanner {
+            Text(savedBanner)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(VineyardTheme.leafGreen)
+                .padding(.horizontal)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .foregroundStyle(.secondary)
-        .padding(.horizontal)
     }
 
     private var modePicker: some View {

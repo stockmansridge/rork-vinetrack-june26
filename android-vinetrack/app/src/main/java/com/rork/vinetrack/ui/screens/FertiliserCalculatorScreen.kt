@@ -21,7 +21,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -157,15 +156,6 @@ private fun money(value: Double): String = "$%.2f".format(value)
 private val fertDisplayDate: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM")
 
 @Composable
-private fun FertDevBanner() {
-    val vine = LocalVineColors.current
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Icon(Icons.Filled.Grain, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(13.dp))
-        Text("In development — visible to System Admins only", fontSize = 12.sp, color = vine.textSecondary)
-    }
-}
-
-@Composable
 private fun FertCard(content: @Composable ColumnScope.() -> Unit) {
     val vine = LocalVineColors.current
     Column(
@@ -283,8 +273,6 @@ private fun FertCalculatorTab(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item(key = "dev") { FertDevBanner() }
-
         item(key = "mode") {
             Row(
                 modifier = Modifier
@@ -685,7 +673,6 @@ private fun FertRecordsTab(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        item(key = "dev") { FertDevBanner() }
         if (records.isEmpty()) {
             item(key = "empty") {
                 FertCard {

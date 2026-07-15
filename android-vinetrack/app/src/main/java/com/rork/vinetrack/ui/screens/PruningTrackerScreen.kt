@@ -246,7 +246,6 @@ fun PruningTrackerScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item(key = "dev") { PruningDevBanner() }
             item(key = "dashboard") {
                 PruningDashboardCard(paddocks = paddocks, setups = setups, entries = entries)
             }
@@ -284,19 +283,6 @@ fun PruningTrackerScreen(
 }
 
 // MARK: - Shared pieces
-
-@Composable
-private fun PruningDevBanner() {
-    val vine = LocalVineColors.current
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Icon(Icons.Filled.ContentCut, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(13.dp))
-        Text(
-            "In development — visible to System Admins only",
-            fontSize = 12.sp,
-            color = vine.textSecondary,
-        )
-    }
-}
 
 @Composable
 private fun PruningCard(content: @Composable ColumnScope.() -> Unit) {

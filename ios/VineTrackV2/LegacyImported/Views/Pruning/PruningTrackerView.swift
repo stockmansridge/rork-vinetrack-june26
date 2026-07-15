@@ -16,7 +16,7 @@ enum PruningBlockSort: String, CaseIterable, Identifiable {
 }
 
 /// Pruning Tracker hub — vineyard dashboard plus a visual block list.
-/// In development: reachable only by System Admins from Operational Tools.
+/// Reachable from Operational Tools.
 struct PruningTrackerView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(PruningSyncService.self) private var pruningSync
@@ -65,7 +65,6 @@ struct PruningTrackerView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                devBadge
                 dashboardCard
                 blockList
                 Spacer(minLength: 24)
@@ -81,18 +80,6 @@ struct PruningTrackerView: View {
         .task {
             await pruningSync.syncForSelectedVineyard()
         }
-    }
-
-    private var devBadge: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "hammer.fill")
-                .font(.caption2)
-            Text("In development — visible to System Admins only")
-                .font(.caption)
-        }
-        .foregroundStyle(.secondary)
-        .padding(.horizontal)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: Dashboard
