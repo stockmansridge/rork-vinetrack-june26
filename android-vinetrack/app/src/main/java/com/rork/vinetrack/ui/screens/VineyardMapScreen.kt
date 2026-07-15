@@ -60,6 +60,7 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.EmptyState
+import com.rork.vinetrack.ui.components.estimatedCameraPosition
 import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.components.isValidMapCoordinate
 import com.rork.vinetrack.ui.theme.LocalVineColors
@@ -211,7 +212,12 @@ fun VineyardMapContent(
         }
     }
 
-    val cameraPositionState = rememberCameraPositionState()
+    // Seed the camera on the blocks+pins midpoint immediately (iOS parity) so
+    // the map never opens at the world-default (0,0) position over Africa
+    // while tiles load and the precise bounds fit below is still pending.
+    val cameraPositionState = rememberCameraPositionState {
+        estimatedCameraPosition(framePoints)?.let { position = it }
+    }
     var mode by remember { mutableStateOf(if (defaults.overview3D) MapMode.Overview else MapMode.TopDown) }
     var mapLoaded by remember { mutableStateOf(false) }
     var hasFramed by remember { mutableStateOf(false) }
@@ -229,6 +235,14 @@ fun VineyardMapContent(
     var showPins by remember(defaults.showPins) { mutableStateOf(defaults.showPins) }
     var showRowLines by remember(defaults.showRowLines) { mutableStateOf(defaults.showRowLines) }
     var showBlockLabels by remember(defaults.showBlockLabels) { mutableStateOf(defaults.showBlockLabels) }
+
+    // If the content arrived after first composition (cold start while data is
+    // still loading), snap the camera onto the midpoint straight away — without
+    // waiting for onMapLoaded — so the interim frame is the vineyard, not (0,0).
+    LaunchedEffect(framePoints) {
+        if (hasFramed || framePoints.isEmpty()) return@LaunchedEffect
+        estimatedCameraPosition(framePoints)?.let { cameraPositionState.position = it }
+    }
 
     // Frame the vineyard blocks once the map is laid out. After the initial
     // fit, the camera only re-frames when block geometry itself changes; pin
