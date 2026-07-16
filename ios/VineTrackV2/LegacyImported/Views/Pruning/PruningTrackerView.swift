@@ -65,6 +65,9 @@ struct PruningTrackerView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                if pendingPruningChanges > 0 || pruningSync.errorMessage != nil {
+                    pendingSyncBanner
+                }
                 dashboardCard
                 blockList
                 Spacer(minLength: 24)
@@ -80,6 +83,50 @@ struct PruningTrackerView: View {
         .task {
             await pruningSync.syncForSelectedVineyard()
         }
+    }
+
+    // MARK: Pending-sync warning
+
+    private var pendingPruningChanges: Int {
+        pruningSync.pendingUpsertCount + pruningSync.pendingDeleteCount
+    }
+
+    /// Progress below may include work that has NOT reached the server yet.
+    /// Never hide unsynced pruning writes behind a synced-looking dashboard.
+    private var pendingSyncBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                    .foregroundStyle(.orange)
+                Text(pendingPruningChanges > 0 ? "Pruning changes pending sync" : "Pruning sync problem")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+            }
+            if pendingPruningChanges > 0 {
+                Text("\(pendingPruningChanges) recorded change\(pendingPruningChanges == 1 ? " hasn't" : "s haven't") reached the server yet. The progress below includes this device's unsynced work.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let error = pruningSync.errorMessage, !error.isEmpty {
+                Text("Last error: \(error)")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(4)
+            }
+            Button {
+                Task { await pruningSync.syncForSelectedVineyard() }
+            } label: {
+                Label("Retry sync", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .tint(.orange)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.12), in: .rect(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.orange.opacity(0.35), lineWidth: 0.5))
+        .padding(.horizontal)
     }
 
     // MARK: Dashboard

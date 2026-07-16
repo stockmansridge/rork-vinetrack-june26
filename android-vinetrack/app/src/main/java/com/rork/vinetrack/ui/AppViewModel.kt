@@ -14,6 +14,7 @@ import android.net.Uri
 import com.revenuecat.purchases.Package as RcPackage
 import com.revenuecat.purchases.PackageType
 import com.rork.vinetrack.data.auth.GoogleSignInHelper
+import com.rork.vinetrack.data.AppConfig
 import com.rork.vinetrack.data.BackendError
 import com.rork.vinetrack.data.VineTrackAccessRepository
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
@@ -64,6 +65,7 @@ import com.rork.vinetrack.data.PruningSyncCoordinator
 import com.rork.vinetrack.data.PruningSyncRepository
 import com.rork.vinetrack.data.model.FertiliserRecord
 import com.rork.vinetrack.data.model.PruningBlockSetup
+import com.rork.vinetrack.data.model.PruningSeasonIds
 import com.rork.vinetrack.data.model.PruningCalculator
 import com.rork.vinetrack.data.model.PruningEntry
 import com.rork.vinetrack.data.AdminRepository
@@ -3133,9 +3135,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         pruningSyncCoordinator.deleteEntry(vineyardId, entryId)
 
     suspend fun refreshPruning(vineyardId: String): Pair<List<PruningBlockSetup>, List<PruningEntry>> {
+        logPruningEnvironment(vineyardId)
         val result = pruningSyncCoordinator.refresh(vineyardId)
         verifyPruningServerParity(vineyardId, result.first, result.second)
         return result
+    }
+
+    /**
+     * Diagnostic: the exact runtime pruning environment (no secrets). Proves
+     * which Supabase project, vineyard UUID and season year this device is
+     * actually reading/writing — for cross-checking against the portal.
+     */
+    private fun logPruningEnvironment(vineyardId: String) {
+        val setups = pruningSyncCoordinator.setups(vineyardId)
+        val pruningPending = _ui.value.pendingSyncItems.filter {
+            it.entityType == PendingEntityType.PRUNING_SEASON || it.entityType == PendingEntityType.PRUNING_ENTRY
+        }
+        Log.i(
+            "PruningEnv",
+            "url=${AppConfig.supabaseUrl} " +
+                "user=${_ui.value.currentUserId ?: "-"} " +
+                "vineyard=$vineyardId " +
+                "resolvedSeasonYear=${PruningSeasonIds.currentSeasonYear()} " +
+                "seasonRows=[${setups.sortedBy { it.id }.joinToString(" ") { "${it.seasonYear}:${it.id}" }}] " +
+                "pendingOutbox=${pruningPending.size} " +
+                "failed=${pruningPending.count { it.status == PendingWriteStatus.FAILED || it.status == PendingWriteStatus.BLOCKED }}",
+        )
     }
 
     /**

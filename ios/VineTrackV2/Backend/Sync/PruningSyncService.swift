@@ -100,6 +100,7 @@ final class PruningSyncService {
         }
         syncStatus = .syncing
         errorMessage = nil
+        logEnvironment(vineyardId: vineyardId)
         var pushError: Error?
 
         do {
@@ -155,6 +156,25 @@ final class PruningSyncService {
             syncStatus = .success
             await verifyServerParity(vineyardId: vineyardId)
         }
+    }
+
+    /// Diagnostic: the exact runtime pruning environment (no secrets). Proves
+    /// which Supabase project, vineyard UUID and season year this device is
+    /// actually reading/writing — for cross-checking against the portal.
+    private func logEnvironment(vineyardId: UUID) {
+        let seasonRows = pruningStore.setups
+            .filter { $0.vineyardId == vineyardId }
+            .map { "\($0.seasonYear):\($0.id.uuidString.lowercased())" }
+            .sorted()
+        print("""
+        [PruningEnv] url=\(AppConfig.supabaseURL.absoluteString) \
+        user=\(auth?.userId?.uuidString.lowercased() ?? "-") \
+        vineyard=\(vineyardId.uuidString.lowercased()) \
+        resolvedSeasonYear=\(PruningSeasonId.currentSeasonYear) \
+        seasonRows=[\(seasonRows.joined(separator: " "))] \
+        pendingUpserts=\(pendingUpsertCount) pendingDeletes=\(pendingDeleteCount) \
+        lastSync=\(lastSyncDate.map { ISO8601DateFormatter().string(from: $0) } ?? "never")
+        """)
     }
 
     // MARK: SQL 115 parity check

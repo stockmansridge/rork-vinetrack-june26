@@ -54,6 +54,7 @@ struct SyncDiagnosticsView: View {
         Form {
             contextSection
             entitiesSection
+            pruningEnvironmentSection
             actionsSection
             paddockForceRefreshSection
             grapeVarietyCatalogSection
@@ -96,6 +97,57 @@ struct SyncDiagnosticsView: View {
             Text("Entities")
         } footer: {
             Text("Local = rows currently loaded for the selected vineyard. Pending = local changes not yet pushed.")
+        }
+    }
+
+    /// One block's pruning season row — the deterministic id the portal must
+    /// find under the SAME (vineyard, block, season year) triple.
+    private struct PruningSeasonRow: Identifiable {
+        let id: UUID
+        let blockName: String
+        let seasonYear: Int
+    }
+
+    private var pruningSeasonRows: [PruningSeasonRow] {
+        guard let vineyardId = store.selectedVineyardId else { return [] }
+        let names = Dictionary(store.paddocks.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+        return PruningStore.shared.setups
+            .filter { $0.vineyardId == vineyardId }
+            .map { PruningSeasonRow(id: $0.id, blockName: names[$0.paddockId] ?? $0.paddockId.uuidString.lowercased(), seasonYear: $0.seasonYear) }
+            .sorted { $0.blockName.localizedStandardCompare($1.blockName) == .orderedAscending }
+    }
+
+    /// Runtime pruning environment — answers "which Supabase project, which
+    /// vineyard UUID and which season year is THIS device using" without
+    /// Xcode. Compare directly against the portal's diagnostic output.
+    private var pruningEnvironmentSection: some View {
+        Section {
+            LabeledContent("Supabase URL", value: AppConfig.supabaseURL.absoluteString)
+                .font(.footnote.monospaced())
+            LabeledContent("Resolved season year", value: String(PruningSeasonId.currentSeasonYear))
+            LabeledContent("Pending changes", value: "\(pruningSync.pendingUpsertCount + pruningSync.pendingDeleteCount)")
+            LabeledContent("Last sync", value: pruningSync.lastSyncDate.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "never")
+            if let error = pruningSync.errorMessage, !error.isEmpty {
+                LabeledContent("Last error", value: error)
+                    .font(.footnote)
+            }
+            if let parity = pruningSync.lastParityReport {
+                LabeledContent("SQL 115 parity", value: parity)
+                    .font(.footnote)
+            }
+            ForEach(pruningSeasonRows) { row in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(row.blockName) — season \(String(row.seasonYear))")
+                        .font(.footnote)
+                    Text(row.id.uuidString.lowercased())
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("Pruning Environment")
+        } footer: {
+            Text("The portal must query this exact vineyard ID and season year. Season IDs are derived from (vineyard, block, season year) — a different year produces different IDs and finds no data.")
         }
     }
 
@@ -1096,6 +1148,22 @@ struct SyncDiagnosticsView: View {
             if let err = r.errorMessage, !err.isEmpty {
                 lines.append("  last_error: \(err)")
             }
+        }
+        lines.append("")
+        lines.append("Pruning Environment")
+        lines.append("  supabase_url: \(AppConfig.supabaseURL.absoluteString)")
+        lines.append("  resolved_season_year: \(PruningSeasonId.currentSeasonYear)")
+        lines.append("  pending_upserts: \(pruningSync.pendingUpsertCount)")
+        lines.append("  pending_deletes: \(pruningSync.pendingDeleteCount)")
+        lines.append("  last_sync: \(pruningSync.lastSyncDate.map { df.string(from: $0) } ?? "never")")
+        if let err = pruningSync.errorMessage, !err.isEmpty {
+            lines.append("  last_error: \(err)")
+        }
+        if let parity = pruningSync.lastParityReport {
+            lines.append("  sql115_parity: \(parity)")
+        }
+        for row in pruningSeasonRows {
+            lines.append("  - \(row.blockName): season_year=\(row.seasonYear) season_id=\(row.id.uuidString.lowercased())")
         }
         lines.append("")
         lines.append("Sync running: \(isSyncingAll ? "yes" : "no")")

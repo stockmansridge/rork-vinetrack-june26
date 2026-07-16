@@ -31,8 +31,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.SyncProblem
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -61,6 +63,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -89,10 +92,12 @@ import com.rork.vinetrack.data.model.PruningStatus
 import com.rork.vinetrack.data.model.builtInWorkTaskTypes
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.PendingSyncItem
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.time.Instant
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -115,6 +120,13 @@ fun PruningTrackerScreen(
 ) {
     val vine = LocalVineColors.current
     val vineyardId = state.selectedVineyardId
+    val scope = rememberCoroutineScope()
+
+    // Sync-integrity contract: pruning writes still sitting in the outbox.
+    // Progress must never look fully synced while these exist.
+    val pruningPendingItems = remember(state.pendingSyncItems) {
+        state.pendingSyncItems.filter { it.entityType == "pruning_season" || it.entityType == "pruning_entry" }
+    }
 
     var setups by remember(vineyardId) {
         mutableStateOf(vineyardId?.let { vm.pruningSetups(it) } ?: emptyList())
@@ -246,6 +258,24 @@ fun PruningTrackerScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (pruningPendingItems.isNotEmpty()) {
+                item(key = "pending-sync-warning") {
+                    PruningPendingSyncCard(
+                        items = pruningPendingItems,
+                        canRetry = state.isOnline,
+                        isRetrying = state.isRetryingSync,
+                        onRetry = {
+                            if (state.canRetrySync) vm.retryPendingSync()
+                            val id = vineyardId ?: return@PruningPendingSyncCard
+                            scope.launch {
+                                val (mergedSetups, mergedEntries) = vm.refreshPruning(id)
+                                setups = mergedSetups
+                                entries = mergedEntries
+                            }
+                        },
+                    )
+                }
+            }
             item(key = "dashboard") {
                 PruningDashboardCard(paddocks = paddocks, setups = setups, entries = entries)
             }
@@ -283,6 +313,87 @@ fun PruningTrackerScreen(
 }
 
 // MARK: - Shared pieces
+
+/**
+ * Visible warning while pruning writes remain in the outbox — pending count,
+ * needs-attention count, the last error, and a retry that routes through the
+ * ordered replay pipeline plus a pruning refresh. Never hides failed pruning
+ * writes behind a synced-looking dashboard.
+ */
+@Composable
+private fun PruningPendingSyncCard(
+    items: List<PendingSyncItem>,
+    canRetry: Boolean,
+    isRetrying: Boolean,
+    onRetry: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val attention = items.count { it.status == "blocked" || it.status == "failed" }
+    val lastError = items.firstOrNull { !it.rawDetail.isNullOrBlank() }?.rawDetail
+        ?: items.firstOrNull { !it.friendlyDetail.isNullOrBlank() }?.friendlyDetail
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(VineColors.Warning.copy(alpha = 0.12f))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                Icons.Filled.SyncProblem,
+                contentDescription = null,
+                tint = VineColors.Warning,
+                modifier = Modifier.size(20.dp),
+            )
+            Text(
+                "Pruning changes pending sync",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.sp,
+                color = vine.textPrimary,
+            )
+        }
+        Text(
+            (if (items.size == 1) "1 recorded change hasn't" else "${items.size} recorded changes haven't") +
+                " reached the server yet. The progress below includes this device's unsynced work.",
+            fontSize = 12.sp,
+            color = vine.textSecondary,
+        )
+        if (attention > 0) {
+            Text(
+                if (attention == 1) "1 item needs attention" else "$attention items need attention",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = VineColors.Destructive,
+            )
+        }
+        if (lastError != null) {
+            Text("Last error: $lastError", fontSize = 11.sp, color = VineColors.Destructive)
+        }
+        if (canRetry) {
+            Button(
+                onClick = onRetry,
+                enabled = !isRetrying,
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Warning),
+            ) {
+                Icon(
+                    Icons.Filled.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    if (isRetrying) "Retrying…" else "Retry sync",
+                    modifier = Modifier.padding(start = 6.dp),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun PruningCard(content: @Composable ColumnScope.() -> Unit) {
