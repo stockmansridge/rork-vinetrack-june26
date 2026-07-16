@@ -21,6 +21,8 @@ nonisolated enum TripCostAllocationCalculator {
         paddocks: [Paddock],
         varieties: [GrapeVariety],
         historicalYieldRecords: [HistoricalYieldRecord],
+        seasonStartMonth: Int = 7,
+        seasonStartDay: Int = 1,
         sourceTripUpdatedAt: Date? = nil,
         now: Date = Date()
     ) -> [TripCostAllocation] {
@@ -38,7 +40,14 @@ nonisolated enum TripCostAllocationCalculator {
 
         let totalArea = linkedPaddocks.reduce(0.0) { $0 + max($1.areaHectares, 0) }
 
-        let seasonYear = Calendar.current.component(.year, from: trip.startTime)
+        // Costing groups by production VINTAGE (sql/119) — resolved from the
+        // trip date + the vineyard's shared season-start setting, NOT the
+        // calendar year. July 2026 work under a 1 July start → Vintage 2027.
+        let seasonYear = VintageResolver.vintageYear(
+            for: trip.startTime,
+            seasonStartMonth: seasonStartMonth,
+            seasonStartDay: seasonStartDay
+        )
 
         let totalCost = result.totalCost
         let labourCost = result.labour.cost

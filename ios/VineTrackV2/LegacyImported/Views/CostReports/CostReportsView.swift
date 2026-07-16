@@ -106,10 +106,10 @@ struct CostReportsView: View {
     @ViewBuilder
     private var filtersSection: some View {
         Section("Filters") {
-            Picker("Season", selection: $selectedSeason) {
-                Text("All seasons").tag(Int?.none)
+            Picker("Vintage", selection: $selectedSeason) {
+                Text("All vintages").tag(Int?.none)
                 ForEach(seasons, id: \.self) { y in
-                    Text(String(y)).tag(Int?.some(y))
+                    Text("Vintage \(String(y))").tag(Int?.some(y))
                 }
             }
             Picker(fmt.blockTermCapitalised, selection: $selectedPaddockId) {
@@ -170,7 +170,7 @@ struct CostReportsView: View {
                     .foregroundStyle(.secondary)
             }
         } header: {
-            Text("Season summary")
+            Text("Vintage summary")
         } footer: {
             Text("Treated area is the accumulated mapped block area from the jobs/trips included in this report. If the same block is treated multiple times, its area contributes once per job.")
         }
@@ -218,7 +218,7 @@ struct CostReportsView: View {
             }
         } header: {
             HStack(spacing: 6) {
-                Text("Season × \(fmt.blockTermCapitalised) × Variety")
+                Text("Vintage × \(fmt.blockTermCapitalised) × Variety")
                 if groups.contains(where: { $0.0.variety == "Unassigned variety" }) {
                     Button {
                         showUnassignedInfo = true
@@ -230,7 +230,7 @@ struct CostReportsView: View {
                 }
             }
         } footer: {
-            Text("Rows are grouped by season, block and variety. Tap a row to see the contributing trips.")
+            Text("Rows are grouped by vintage, block and variety. Costs are assigned to the production vintage resolved from the work date and your season start setting. Tap a row to see the contributing trips.")
         }
     }
 
@@ -281,7 +281,7 @@ struct CostReportsView: View {
     private func breakdownRow(key: BlockVarietyKey, agg: BlockVarietyAggregate, tripCount: Int) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("\(String(key.seasonYear)) · \(key.paddockName)")
+                Text("Vintage \(String(key.seasonYear)) · \(key.paddockName)")
                     .font(.headline)
                 Spacer()
                 Text(fmt.formatCurrency(agg.total))
@@ -399,7 +399,7 @@ struct CostReportsView: View {
         } header: {
             Text("Actions")
         } footer: {
-            Text("Recalculate rebuilds cost allocation rows for every trip in the selected season from current trip costing. Owners and managers only.")
+            Text("Recalculate rebuilds cost allocation rows for every trip in the selected vintage from current trip costing. Owners and managers only.")
         }
     }
 
@@ -496,14 +496,21 @@ struct TripCostAllocationRecalculator {
     let store: MigratedDataStore
     let allocationSync: TripCostAllocationSyncService
 
-    /// Rebuild allocation rows for every trip in `season` (nil = all seasons).
-    /// Returns the number of trips that produced allocation rows.
+    /// Rebuild allocation rows for every trip in `season` (a production
+    /// VINTAGE year; nil = all vintages). Vintage resolution mirrors the
+    /// authoritative database resolver (sql/119).
     func recalculateSeason(_ season: Int?) async -> Int {
         guard let vineyardId = store.selectedVineyardId else { return 0 }
+        let startMonth = store.settings.seasonStartMonth
+        let startDay = store.settings.seasonStartDay
         let trips = store.trips.filter { trip in
             guard trip.vineyardId == vineyardId else { return false }
             guard let season else { return true }
-            return Calendar.current.component(.year, from: trip.startTime) == season
+            return VintageResolver.vintageYear(
+                for: trip.startTime,
+                seasonStartMonth: startMonth,
+                seasonStartDay: startDay
+            ) == season
         }
         var processed = 0
         for trip in trips {
@@ -573,6 +580,8 @@ struct TripCostAllocationRecalculator {
             paddocks: store.paddocks,
             varieties: store.grapeVarieties,
             historicalYieldRecords: store.historicalYieldRecords,
+            seasonStartMonth: store.settings.seasonStartMonth,
+            seasonStartDay: store.settings.seasonStartDay,
             sourceTripUpdatedAt: trip.endTime ?? trip.startTime
         )
 

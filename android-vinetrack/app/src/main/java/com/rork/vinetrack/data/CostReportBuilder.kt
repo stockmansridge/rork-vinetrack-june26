@@ -7,8 +7,6 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.VineyardMachine
-import java.util.Calendar
-import java.util.TimeZone
 
 /**
  * Pure, read-only Cost Reports aggregator mirroring the iOS `CostReportsView`
@@ -60,9 +58,10 @@ object CostReportBuilder {
         machines: List<VineyardMachine>,
         fuelPurchases: List<FuelPurchase>,
         paddocks: List<Paddock>,
+        seasonStartMonth: Int = 7,
+        seasonStartDay: Int = 1,
     ): List<CostAllocationRow> {
         val rows = mutableListOf<CostAllocationRow>()
-        val cal = Calendar.getInstance(TimeZone.getDefault())
 
         for (trip in trips) {
             if (trip.deletedAt != null) continue
@@ -71,8 +70,10 @@ object CostReportBuilder {
             // A trip counts toward costs once it has finished.
             if (trip.endEpochMs == null) continue
 
-            cal.timeInMillis = start
-            val season = cal.get(Calendar.YEAR)
+            // Costing groups by production VINTAGE (sql/119) — resolved from
+            // the trip date + the vineyard's shared season-start setting, NOT
+            // the calendar year. July 2026 work under a 1 July start → Vintage 2027.
+            val season = VintageResolver.vintageYearForEpochMs(start, seasonStartMonth, seasonStartDay)
 
             val sprayRecord = sprayRecords.firstOrNull { it.tripId == trip.id && it.deletedAt == null }
             val est = TripCostEstimator.estimate(

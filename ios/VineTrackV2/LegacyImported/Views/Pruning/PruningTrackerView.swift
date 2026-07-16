@@ -140,14 +140,32 @@ struct PruningTrackerView: View {
         )
     }
 
+    /// Technical pruning season (calendar-year grouping used by sync) and the
+    /// production/costing vintage — both shown so "Season 2026" is never
+    /// mistaken for the costing vintage. Mirrors the sql/119 resolver.
+    private var seasonVintageLabel: String {
+        let seasonYear = PruningSeasonId.currentSeasonYear
+        let vintage = VintageResolver.vintageYear(
+            for: Date(),
+            seasonStartMonth: store.settings.seasonStartMonth,
+            seasonStartDay: store.settings.seasonStartDay
+        )
+        return "\(String(seasonYear)) Winter Pruning · Vintage \(String(vintage))"
+    }
+
     private var dashboardCard: some View {
         let summary = totals
         let fraction = summary.fraction
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Vineyard Progress")
-                    .font(.headline)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Vineyard Progress")
+                        .font(.headline)
+                    Text(seasonVintageLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 Text("\(PruningCalculator.displayPercent(fraction))%")
                     .font(.title3.weight(.bold))

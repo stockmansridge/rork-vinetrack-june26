@@ -86,6 +86,7 @@ import com.rork.vinetrack.data.model.PruningCalculator
 import com.rork.vinetrack.data.model.PruningEntry
 import com.rork.vinetrack.data.model.PruningMethods
 import com.rork.vinetrack.data.model.PruningRowRef
+import com.rork.vinetrack.data.VintageResolver
 import com.rork.vinetrack.data.model.PruningSeasonIds
 import com.rork.vinetrack.data.model.PruningSegment
 import com.rork.vinetrack.data.model.PruningStatus
@@ -277,7 +278,13 @@ fun PruningTrackerScreen(
                 }
             }
             item(key = "dashboard") {
-                PruningDashboardCard(paddocks = paddocks, setups = setups, entries = entries)
+                PruningDashboardCard(
+                    paddocks = paddocks,
+                    setups = setups,
+                    entries = entries,
+                    seasonStartMonth = state.seasonStartMonth,
+                    seasonStartDay = state.seasonStartDay,
+                )
             }
             if (paddocks.isEmpty()) {
                 item(key = "empty") {
@@ -486,8 +493,19 @@ private fun PruningDashboardCard(
     paddocks: List<Paddock>,
     setups: List<PruningBlockSetup>,
     entries: List<PruningEntry>,
+    seasonStartMonth: Int = 7,
+    seasonStartDay: Int = 1,
 ) {
     val vine = LocalVineColors.current
+
+    // Technical pruning season (calendar-year grouping used by sync) AND the
+    // production/costing vintage — both shown so "Season 2026" is never read
+    // as the costing vintage. Mirrors the sql/119 resolver (matches iOS).
+    val seasonVintageLabel = remember(seasonStartMonth, seasonStartDay) {
+        val seasonYear = PruningSeasonIds.currentSeasonYear()
+        val vintage = VintageResolver.vintageYear(LocalDate.now(), seasonStartMonth, seasonStartDay)
+        "$seasonYear Winter Pruning · Vintage $vintage"
+    }
 
     // SHARED CONTRACT: the dashboard is `PruningCalculator.vineyardSummary`
     // — the exact aggregation the SQL 115 RPC implements and the fixture
@@ -504,8 +522,10 @@ private fun PruningDashboardCard(
     PruningCard {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Vineyard Progress", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                Spacer(Modifier.weight(1f))
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
+                    Text("Vineyard Progress", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Text(seasonVintageLabel, fontSize = 12.sp, color = vine.textSecondary)
+                }
                 Text(
                     fmtPercent(fraction),
                     fontSize = 20.sp,

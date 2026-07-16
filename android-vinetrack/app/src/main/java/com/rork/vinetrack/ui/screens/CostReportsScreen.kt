@@ -113,7 +113,7 @@ fun CostReportsScreen(
         if (!canViewCosting) null else buildCostingSetup(state)
     }
 
-    val allRows = remember(state.trips, state.sprayRecords, state.operatorCategories, state.machines, state.fuelPurchases, state.paddocks) {
+    val allRows = remember(state.trips, state.sprayRecords, state.operatorCategories, state.machines, state.fuelPurchases, state.paddocks, state.seasonStartMonth, state.seasonStartDay) {
         if (!canViewCosting) emptyList()
         else CostReportBuilder.build(
             trips = state.trips,
@@ -122,6 +122,8 @@ fun CostReportsScreen(
             machines = state.machines,
             fuelPurchases = state.fuelPurchases,
             paddocks = state.paddocks,
+            seasonStartMonth = state.seasonStartMonth,
+            seasonStartDay = state.seasonStartDay,
         )
     }
 
@@ -226,10 +228,10 @@ fun CostReportsScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             SectionHeader("Filters", onLight = true)
                             FilterPicker(
-                                label = "Season",
-                                value = selectedSeason?.toString(),
-                                allLabel = "All seasons",
-                                options = seasons.map { it.toString() to it.toString() },
+                                label = "Vintage",
+                                value = selectedSeason?.let { "Vintage $it" },
+                                allLabel = "All vintages",
+                                options = seasons.map { it.toString() to "Vintage $it" },
                                 onSelect = { selectedSeason = it?.toIntOrNull() },
                             )
                             FilterPicker(
@@ -256,10 +258,10 @@ fun CostReportsScreen(
                         }
                     }
 
-                    // Season summary
+                    // Vintage summary
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            SectionHeader("Season Summary", onLight = true)
+                            SectionHeader("Vintage Summary", onLight = true)
                             VineyardCard {
                                 SummaryRow("Total estimated cost", fmt.formatCurrency(totalCost), emphasise = true)
                                 DividerC(vine.cardBorder)
@@ -289,7 +291,7 @@ fun CostReportsScreen(
                     // Breakdown
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            SectionHeader("Season × Block × Variety", onLight = true)
+                            SectionHeader("Vintage × Block × Variety", onLight = true)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -384,7 +386,7 @@ private fun BreakdownCard(group: CostGroup, fmt: RegionFormatter, yieldTonnes: D
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    "${group.seasonYear} · ${group.paddockName}",
+                    "Vintage ${group.seasonYear} · ${group.paddockName}",
                     color = vine.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
