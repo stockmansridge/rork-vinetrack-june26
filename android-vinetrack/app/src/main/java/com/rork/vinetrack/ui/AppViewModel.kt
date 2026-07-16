@@ -3817,6 +3817,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { loadVineyardData(id) }
     }
 
+    /**
+     * Last successful server-read timestamps per data area for the selected
+     * vineyard (epoch millis), read from the local domain cache. Powers the
+     * per-function breakdown on the Sync Status screen (iOS Settings → Sync
+     * parity). Read-only — building this map never touches the network or
+     * mutates any cache; a null value means that area has no recorded
+     * successful read yet on this device.
+     */
+    fun domainSyncTimes(): Map<String, Long?> {
+        val vineyardId = _ui.value.selectedVineyardId ?: return emptyMap()
+        val userId = session.userId
+        return mapOf(
+            "pins" to domainCache.pinsSyncedAt(userId, vineyardId),
+            "paddocks" to domainCache.paddocksSyncedAt(userId, vineyardId),
+            "trips" to domainCache.tripsSyncedAt(userId, vineyardId),
+            "spray" to domainCache.spraySyncedAt(userId, vineyardId),
+            "workTasks" to domainCache.workTasksSyncedAt(userId, vineyardId),
+            "maintenance" to domainCache.maintenanceSyncedAt(userId, vineyardId),
+            "fuel" to domainCache.fuelSyncedAt(userId, vineyardId),
+            "yield" to domainCache.yieldSessionsSyncedAt(userId, vineyardId),
+            "damage" to domainCache.damageSyncedAt(userId, vineyardId),
+            "growth" to domainCache.growthSyncedAt(userId, vineyardId),
+        )
+    }
+
     // MARK: - Shared season settings (sql/108)
 
     /** Seed state from the vineyard-scoped offline cache (1 July fallback). */

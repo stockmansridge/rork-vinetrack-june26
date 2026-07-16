@@ -418,13 +418,7 @@ private fun ToolHost(
         ToolRoute.VineyardLocation -> VineyardLocationScreen(vm, state, modifier, onBack = onBack)
         ToolRoute.Settings -> SettingsScreen(vm, state, modifier, onBack, onOpenTool = onOpenTool)
         ToolRoute.RegionUnits -> RegionUnitsSettingsScreen(state, modifier, onBack = onBack)
-        ToolRoute.SyncStatus -> SyncStatusScreen(
-            state,
-            modifier,
-            onBack,
-            onRetryAll = vm::retryPendingSync,
-            onRetryItem = vm::retryPendingSyncItem,
-        )
+        ToolRoute.SyncStatus -> SyncStatusScreen(vm, state, modifier, onBack)
         ToolRoute.OfflineReadiness -> OfflineReadinessScreen(
             state,
             userEmail = vm.userEmail,
