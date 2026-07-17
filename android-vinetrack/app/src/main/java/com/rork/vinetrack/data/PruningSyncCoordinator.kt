@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.json.Json
+import java.time.Instant
 
 /**
  * Offline-first coordinator for the Pruning Tracker. Local-first semantics
@@ -69,11 +70,42 @@ class PruningSyncCoordinator(
         return updated
     }
 
+    /**
+     * Local-first edit of an existing entry (sql/120). The full desired state
+     * lands in the cache immediately; the push routes by dependency:
+     *
+     *  * an unresolved queued CREATE for the same entry means the create hasn't
+     *    landed — the edit is FOLDED into the create payload (the
+     *    `record_pruning_entry` replay carries the full new state and nothing
+     *    was ever claimed server-side to release), never queued separately;
+     *  * otherwise ONE coalesced UPDATE write is queued and replays through the
+     *    idempotent `update_pruning_entry` RPC — LWW on the edit's own
+     *    timestamp, so a delayed retry can never resurrect older values or
+     *    restore quarters removed by a newer edit on another device.
+     */
+    fun editEntry(vineyardId: String, entry: PruningEntry): List<PruningEntry> {
+        val updated = store.updateEntry(vineyardId, entry)
+        val hasQueuedCreate = pending.list().any {
+            it.entityType == PendingEntityType.PRUNING_ENTRY && it.opType == PendingOpType.CREATE &&
+                it.clientId == entry.id && it.status in PendingWriteStatus.unresolved
+        }
+        enqueueCoalesced(
+            entityType = PendingEntityType.PRUNING_ENTRY,
+            opType = if (hasQueuedCreate) PendingOpType.CREATE else PendingOpType.UPDATE,
+            payloadJson = json.encodeToString(PruningEntry.serializer(), entry),
+            clientId = entry.id,
+        )
+        scope.launch { replayAll() }
+        return updated
+    }
+
     fun deleteEntry(vineyardId: String, entryId: String): List<PruningEntry> {
         val updated = store.deleteEntry(vineyardId, entryId)
-        // Drop any unsent create for the same entry, then queue the delete —
-        // the delete RPC is a no-op server-side if the entry never landed.
+        // Drop any unsent create or edit for the same entry, then queue the
+        // delete — the delete RPC is a no-op server-side if the entry never
+        // landed, and a queued edit of a reversed entry is obsolete.
         removeUnresolved(PendingEntityType.PRUNING_ENTRY, PendingOpType.CREATE, entryId)
+        removeUnresolved(PendingEntityType.PRUNING_ENTRY, PendingOpType.UPDATE, entryId)
         enqueueCoalesced(
             entityType = PendingEntityType.PRUNING_ENTRY,
             opType = PendingOpType.DELETE,
@@ -104,6 +136,9 @@ class PruningSyncCoordinator(
                 val entry = json.decodeFromString(PruningEntry.serializer(), write.payloadJson)
                 repo.recordEntry(entry)
             }
+            // Edits replay AFTER creates — an edit of an entry whose create
+            // hasn't landed yet returns entry_not_found and stays queued.
+            replayEditPass()
             replayPass(PendingEntityType.PRUNING_ENTRY, PendingOpType.DELETE) { write ->
                 repo.deleteEntry(write.clientId)
             }
@@ -112,6 +147,54 @@ class PruningSyncCoordinator(
             }
         } finally {
             replayLock.unlock()
+        }
+    }
+
+    /**
+     * Replays queued `update_pruning_entry` pushes. The RPC is idempotent
+     * (full desired state, LWW on client_updated_at), so a retry can never
+     * duplicate quarters or restore quarters removed by a newer edit. The
+     * structured JSON response is inspected — the RPC reports entry-level
+     * failures in the body, never as an HTTP error:
+     *
+     *  * `entry_not_found` — ordered dependency: the create hasn't landed;
+     *    keep the edit queued and retry next pass;
+     *  * `entry_reversed` — the entry was reversed elsewhere; the edit is
+     *    obsolete and dropped;
+     *  * `stale: true` — a newer edit from another device already applied;
+     *    dropped (LWW);
+     *  * `conflicts` — quarters owned by another entry were refused (never
+     *    stolen); the edit itself applied, so the write completes and the
+     *    next refresh reconciles the grid to the server attribution.
+     */
+    private suspend fun replayEditPass() {
+        val candidates = pending.list().filter {
+            it.entityType == PendingEntityType.PRUNING_ENTRY && it.opType == PendingOpType.UPDATE &&
+                (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
+        }
+        for (write in candidates) {
+            pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            try {
+                val entry = json.decodeFromString(PruningEntry.serializer(), write.payloadJson)
+                // LWW timestamp = when the edit was (re-)queued, NOT the replay
+                // time — a delayed retry must never beat a newer edit.
+                val result = repo.updateEntry(entry, Instant.ofEpochMilli(write.createdAt).toString())
+                when {
+                    result.error == "entry_not_found" ->
+                        retryOrBlock(write, "Waiting for the pruning entry to reach the server — will retry.")
+                    result.error == "entry_reversed" -> pending.remove(write.id)
+                    else -> pending.remove(write.id)
+                }
+            } catch (_: BackendError.Unauthorized) {
+                retryOrBlock(write, "Sign-in needed to sync pruning work.")
+            } catch (e: BackendError.Server) {
+                when {
+                    e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
+                    else -> pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Rejected (${e.code}).")
+                }
+            } catch (e: Exception) {
+                retryOrBlock(write, e.message ?: "No connection.")
+            }
         }
     }
 
@@ -137,6 +220,12 @@ class PruningSyncCoordinator(
                 .map { it.clientId }.toSet()
             val pendingEntryCreateIds = unresolved
                 .filter { it.entityType == PendingEntityType.PRUNING_ENTRY && it.opType == PendingOpType.CREATE }
+                .map { it.clientId }.toSet()
+            // Entries with a queued edit keep their optimistic local state until
+            // the `update_pruning_entry` push lands — a pull must not overwrite
+            // the pending edit with the server's pre-edit row.
+            val pendingEntryEditIds = unresolved
+                .filter { it.entityType == PendingEntityType.PRUNING_ENTRY && it.opType == PendingOpType.UPDATE }
                 .map { it.clientId }.toSet()
             val pendingEntryDeleteIds = unresolved
                 .filter { it.entityType == PendingEntityType.PRUNING_ENTRY && it.opType == PendingOpType.DELETE }
@@ -186,7 +275,10 @@ class PruningSyncCoordinator(
             // create was wrongly dropped (pre-fix 409 handling) vanished from
             // the device while still unsynced.
             val seededEntries = localEntries
-                .filter { it.id !in remoteEntryIds && it.id !in pendingEntryCreateIds && it.id !in pendingEntryDeleteIds }
+                .filter {
+                    it.id !in remoteEntryIds && it.id !in pendingEntryCreateIds &&
+                        it.id !in pendingEntryEditIds && it.id !in pendingEntryDeleteIds
+                }
             seededEntries.forEach { entry ->
                 enqueueCoalesced(
                     entityType = PendingEntityType.PRUNING_ENTRY,
@@ -196,9 +288,12 @@ class PruningSyncCoordinator(
                 )
             }
             val mergedEntries = remoteEntries
-                .filter { it.deletedAt == null && it.id !in pendingEntryDeleteIds && it.id !in pendingEntryCreateIds }
+                .filter {
+                    it.deletedAt == null && it.id !in pendingEntryDeleteIds &&
+                        it.id !in pendingEntryCreateIds && it.id !in pendingEntryEditIds
+                }
                 .map { it.toModel(segmentsByEntry[it.id].orEmpty()) } +
-                localEntries.filter { it.id in pendingEntryCreateIds } +
+                localEntries.filter { it.id in pendingEntryCreateIds || it.id in pendingEntryEditIds } +
                 seededEntries
             store.saveEntries(vineyardId, mergedEntries)
 

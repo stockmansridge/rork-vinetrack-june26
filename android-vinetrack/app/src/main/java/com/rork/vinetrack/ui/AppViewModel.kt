@@ -3134,6 +3134,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun deletePruningEntry(vineyardId: String, entryId: String): List<PruningEntry> =
         pruningSyncCoordinator.deleteEntry(vineyardId, entryId)
 
+    /**
+     * Local-first edit of an existing pruning entry (sql/120) — replays
+     * through the idempotent `update_pruning_entry` RPC. The linked Work
+     * Task's own header/labour-line changes flow through the EXISTING
+     * work-task paths ([updateWorkTask] / [saveLabourLine] /
+     * [deleteLabourLine]) with stable ids, so retries never duplicate.
+     */
+    fun editPruningEntry(vineyardId: String, entry: PruningEntry): List<PruningEntry> =
+        pruningSyncCoordinator.editEntry(vineyardId, entry)
+
     suspend fun refreshPruning(vineyardId: String): Pair<List<PruningBlockSetup>, List<PruningEntry>> {
         logPruningEnvironment(vineyardId)
         val result = pruningSyncCoordinator.refresh(vineyardId)

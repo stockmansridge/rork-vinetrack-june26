@@ -364,8 +364,15 @@ class PruningSyncRepository(private val session: SessionStore) {
      * ONLY way an existing entry, its quarters and totals change. Sends the
      * FULL desired state (idempotent, LWW on client_updated_at); all 13 keys
      * always present with explicit nulls so the call shape never varies.
+     *
+     * [clientUpdatedAt] must be the timestamp of the EDIT itself (queued
+     * offline or performed now) — never the replay time — so a delayed retry
+     * can never overwrite a newer edit made on another device.
      */
-    suspend fun updateEntry(entry: PruningEntry): UpdateEntryResult = withContext(Dispatchers.IO) {
+    suspend fun updateEntry(
+        entry: PruningEntry,
+        clientUpdatedAt: String = Instant.now().toString(),
+    ): UpdateEntryResult = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val args = UpdateEntryArgs(
@@ -385,7 +392,7 @@ class PruningSyncRepository(private val session: SessionStore) {
             // A nil link on an edit means the link was removed (clearing an
             // already-null link server-side is a harmless no-op).
             clearWorkTask = entry.workTaskId == null,
-            clientUpdatedAt = Instant.now().toString(),
+            clientUpdatedAt = clientUpdatedAt,
         )
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("update_pruning_entry")) {
             authHeaders(token)

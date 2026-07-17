@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -90,6 +91,8 @@ import com.rork.vinetrack.data.VintageResolver
 import com.rork.vinetrack.data.model.PruningSeasonIds
 import com.rork.vinetrack.data.model.PruningSegment
 import com.rork.vinetrack.data.model.PruningStatus
+import com.rork.vinetrack.data.model.WorkTask
+import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.builtInWorkTaskTypes
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -235,9 +238,92 @@ fun PruningTrackerScreen(
                 }
                 entries = vm.recordPruningEntry(vineyardId, linked)
             },
+            onEditEntry = { entry, action ->
+                var updated = entry
+                when (action) {
+                    is PruningEditTaskAction.UpdateLinked -> {
+                        val taskId = entry.workTaskId
+                        if (taskId != null) {
+                            // Person-hours convention: the entry's labour hours =
+                            // sum of live labour-line person-hours — entry and
+                            // task never disagree.
+                            val personHours = action.lines.sumOf { it.workerCount * it.hoursPerWorker }
+                            vm.updateWorkTask(
+                                taskId = taskId,
+                                taskType = action.taskType,
+                                paddockIds = listOf(entry.paddockId),
+                                date = entry.date,
+                                durationHours = personHours,
+                                notes = action.notes,
+                            ) { }
+                            // Labour-line diff: stable ids update the canonical
+                            // rows, new lines get repo-minted ids, removed lines
+                            // soft-delete — retries can never duplicate.
+                            action.lines.forEach { line ->
+                                vm.saveLabourLine(
+                                    lineId = line.lineId,
+                                    taskId = taskId,
+                                    workDate = entry.date,
+                                    operatorCategoryId = line.operatorCategoryId,
+                                    workerType = line.workerType,
+                                    workerCount = line.workerCount,
+                                    hoursPerWorker = line.hoursPerWorker,
+                                    hourlyRate = line.hourlyRate,
+                                    notes = null,
+                                ) { }
+                            }
+                            action.removedLineIds.forEach { vm.deleteLabourLine(it) { } }
+                            updated = updated.copy(labourHours = personHours.takeIf { it > 0 })
+                        }
+                    }
+                    is PruningEditTaskAction.CreateNew -> {
+                        val personHours = action.draft.labour.sumOf { it.totalHours }
+                        val taskId = vm.createWorkTask(
+                            taskType = action.draft.taskType,
+                            paddockIds = listOf(entry.paddockId),
+                            date = entry.date,
+                            durationHours = if (personHours > 0) personHours else entry.labourHours ?: 0.0,
+                            notes = action.draft.notes,
+                            markCompleted = true,
+                        ) { }
+                        if (taskId != null) {
+                            updated = updated.copy(
+                                workTaskId = taskId,
+                                labourHours = personHours.takeIf { it > 0 } ?: entry.labourHours,
+                            )
+                            action.draft.labour.forEach { line ->
+                                vm.saveLabourLine(
+                                    lineId = null,
+                                    taskId = taskId,
+                                    workDate = entry.date,
+                                    operatorCategoryId = line.operatorCategoryId,
+                                    workerType = line.workerType,
+                                    workerCount = line.workerCount,
+                                    hoursPerWorker = line.hoursPerWorker,
+                                    hourlyRate = line.hourlyRate,
+                                    notes = null,
+                                ) { }
+                            }
+                        }
+                    }
+                    is PruningEditTaskAction.Unlink -> {
+                        // Explicit user choice from the unlink dialog — never silent.
+                        if (action.deleteTask) entry.workTaskId?.let { id -> vm.deleteWorkTask(id) { } }
+                        updated = updated.copy(workTaskId = null)
+                    }
+                    PruningEditTaskAction.None -> Unit
+                }
+                entries = vm.editPruningEntry(vineyardId, updated)
+            },
             onDeleteEntry = { entries = vm.deletePruningEntry(vineyardId, it) },
             onDeleteWorkTask = { vm.deleteWorkTask(it) { } },
             operatorCategories = state.operatorCategories,
+            workTasks = state.workTasks,
+            taskLabourLines = state.taskLabourLines,
+            taskLinesTaskId = state.taskLinesTaskId,
+            onLoadTaskLines = { vm.loadTaskLines(it) },
+            seasonStartMonth = state.seasonStartMonth,
+            seasonStartDay = state.seasonStartDay,
             modifier = modifier,
         )
         return
@@ -716,9 +802,16 @@ private fun PruningBlockDetail(
     onBack: () -> Unit,
     onUpsertSetup: (PruningBlockSetup) -> Unit,
     onAddEntry: (PruningEntry, PruningWorkTaskDraft?) -> Unit,
+    onEditEntry: (PruningEntry, PruningEditTaskAction) -> Unit,
     onDeleteEntry: (String) -> Unit,
     onDeleteWorkTask: (String) -> Unit,
     operatorCategories: List<OperatorCategory>,
+    workTasks: List<WorkTask>,
+    taskLabourLines: List<WorkTaskLabourLine>,
+    taskLinesTaskId: String?,
+    onLoadTaskLines: (String) -> Unit,
+    seasonStartMonth: Int,
+    seasonStartDay: Int,
     modifier: Modifier = Modifier,
 ) {
     val vine = LocalVineColors.current
@@ -733,6 +826,28 @@ private fun PruningBlockDetail(
     var rangeFromIndex by remember(paddock.id) { mutableStateOf(0) }
     var rangeToIndex by remember(paddock.id) { mutableStateOf(0) }
     var entryPendingReversal by remember { mutableStateOf<PruningEntry?>(null) }
+    /** Entry being edited — its own quarters unlock in the grid so the user
+     * can add/remove/replace them before saving through the edit form. */
+    var editingEntry by remember(paddock.id) { mutableStateOf<PruningEntry?>(null) }
+
+    // Quarters locked in the grid. While editing, the entry's own quarters
+    // become toggleable; quarters completed by OTHER entries stay locked —
+    // the server refuses to steal them anyway (sql/120).
+    val lockedSegments = editingEntry.let { editing ->
+        if (editing == null) metrics.completed
+        else metrics.completed - PruningCalculator.completedSegments(listOf(editing), rows)
+    }
+
+    fun beginEdit(entry: PruningEntry) {
+        editingEntry = entry
+        selected = PruningCalculator.completedSegments(listOf(entry), rows)
+        entry.workTaskId?.let(onLoadTaskLines)
+    }
+
+    fun cancelEdit() {
+        editingEntry = null
+        selected = emptySet()
+    }
 
     Scaffold(
         modifier = modifier,
@@ -750,7 +865,7 @@ private fun PruningBlockDetail(
             )
         },
         bottomBar = {
-            if (selected.isNotEmpty()) {
+            if (selected.isNotEmpty() || editingEntry != null) {
                 Surface(color = vine.cardBackground, shadowElevation = 8.dp) {
                     Row(
                         modifier = Modifier
@@ -776,7 +891,10 @@ private fun PruningBlockDetail(
                             onClick = { showEntrySheet = true },
                             colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                         ) {
-                            Text("Record Pruning", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                if (editingEntry == null) "Record Pruning" else "Save Changes",
+                                fontWeight = FontWeight.SemiBold,
+                            )
                         }
                     }
                 }
@@ -808,6 +926,11 @@ private fun PruningBlockDetail(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                editingEntry?.let { editing ->
+                    item(key = "edit-banner") {
+                        PruningEditBanner(entry = editing, onCancel = { cancelEdit() })
+                    }
+                }
                 item(key = "progress") { DetailProgressCard(metrics, setup) }
                 item(key = "rates") { DetailRatesCard(metrics, blockEntries) }
                 item(key = "grid-header") {
@@ -826,7 +949,7 @@ private fun PruningBlockDetail(
                                 for (index in low..high) {
                                     for (quarter in 1..4) {
                                         val segment = rows[index].segment(quarter)
-                                        if (!metrics.completed.contains(segment)) additions.add(segment)
+                                        if (!lockedSegments.contains(segment)) additions.add(segment)
                                     }
                                 }
                                 selected = selected + additions
@@ -839,7 +962,7 @@ private fun PruningBlockDetail(
                     val row = rows[index]
                     PruningRowLine(
                         row = row,
-                        completed = metrics.completed,
+                        completed = lockedSegments,
                         selected = selected,
                         onToggle = { segment ->
                             selected = if (selected.contains(segment)) selected - segment else selected + segment
@@ -847,7 +970,7 @@ private fun PruningBlockDetail(
                         onToggleRow = {
                             val remaining = (1..4)
                                 .map { row.segment(it) }
-                                .filter { !metrics.completed.contains(it) }
+                                .filter { !lockedSegments.contains(it) }
                             selected = if (remaining.all { selected.contains(it) }) {
                                 selected - remaining.toSet()
                             } else {
@@ -857,7 +980,10 @@ private fun PruningBlockDetail(
                     )
                 }
                 item(key = "history") {
-                    DetailHistoryCard(blockEntries) { entry ->
+                    DetailHistoryCard(
+                        entries = blockEntries,
+                        onEdit = { beginEdit(it) },
+                    ) { entry ->
                         if (entry.workTaskId != null) {
                             entryPendingReversal = entry
                         } else {
@@ -871,6 +997,7 @@ private fun PruningBlockDetail(
     }
 
     if (showEntrySheet) {
+        val editing = editingEntry
         PruningEntrySheet(
             paddock = paddock,
             vineyardId = vineyardId,
@@ -879,10 +1006,25 @@ private fun PruningBlockDetail(
             defaultMethod = setup?.method ?: "spur",
             defaultWorker = setup?.crew ?: "",
             operatorCategories = operatorCategories,
+            existingEntry = editing,
+            linkedTask = editing?.workTaskId?.let { id -> workTasks.firstOrNull { it.id == id } },
+            linkedTaskLines = if (editing?.workTaskId != null && taskLinesTaskId == editing.workTaskId) {
+                taskLabourLines.filter { it.workTaskId == editing.workTaskId }
+            } else {
+                emptyList()
+            },
+            seasonStartMonth = seasonStartMonth,
+            seasonStartDay = seasonStartDay,
             onDismiss = { showEntrySheet = false },
             onSave = { entry, taskDraft ->
                 onAddEntry(entry, taskDraft)
                 selected = emptySet()
+                showEntrySheet = false
+            },
+            onSaveEdit = { entry, action ->
+                onEditEntry(entry, action)
+                selected = emptySet()
+                editingEntry = null
                 showEntrySheet = false
             },
         )
@@ -1209,7 +1351,11 @@ private fun PruningRowLine(
 // MARK: - History
 
 @Composable
-private fun DetailHistoryCard(entries: List<PruningEntry>, onDelete: (PruningEntry) -> Unit) {
+private fun DetailHistoryCard(
+    entries: List<PruningEntry>,
+    onEdit: (PruningEntry) -> Unit,
+    onDelete: (PruningEntry) -> Unit,
+) {
     val vine = LocalVineColors.current
     PruningCard {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1252,6 +1398,9 @@ private fun DetailHistoryCard(entries: List<PruningEntry>, onDelete: (PruningEnt
                             fontWeight = FontWeight.Bold,
                             color = vine.textPrimary,
                         )
+                        IconButton(onClick = { onEdit(entry) }, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Filled.Edit, contentDescription = "Edit this pruning entry", tint = VineColors.Primary, modifier = Modifier.size(16.dp))
+                        }
                         IconButton(onClick = { onDelete(entry) }, modifier = Modifier.size(28.dp)) {
                             Icon(Icons.Filled.Delete, contentDescription = "Reverse this pruning entry", tint = VineColors.Destructive, modifier = Modifier.size(16.dp))
                         }
@@ -1263,20 +1412,95 @@ private fun DetailHistoryCard(entries: List<PruningEntry>, onDelete: (PruningEnt
     }
 }
 
+// MARK: - Edit banner
+
+/** Blue in-context banner while a pruning entry is being edited — the grid
+ * unlocks the entry's own quarters underneath it. */
+@Composable
+private fun PruningEditBanner(entry: PruningEntry, onCancel: () -> Unit) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(VineColors.Primary.copy(alpha = 0.10f))
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            Icons.Filled.Edit,
+            contentDescription = null,
+            tint = VineColors.Primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                "Editing ${fmtDate(PruningCalculator.parseDate(entry.date))} entry",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textPrimary,
+            )
+            Text(
+                "Tap quarters to adjust the selection, then Save Changes.",
+                fontSize = 11.sp,
+                color = vine.textSecondary,
+            )
+        }
+        TextButton(onClick = onCancel) {
+            Text("Cancel", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
+        }
+    }
+}
+
 // MARK: - Entry sheet
+
+/** What happens to the linked Work Task when a pruning entry edit saves. */
+sealed interface PruningEditTaskAction {
+    /** No Work Task involvement — the entry edit stands alone. */
+    data object None : PruningEditTaskAction
+
+    /** Synchronise the existing linked task's header and labour lines.
+     * [lines] carry stable ids for existing rows (update the canonical
+     * `work_task_labour_lines` row) and null ids for new rows;
+     * [removedLineIds] soft-delete through the normal labour workflow. */
+    data class UpdateLinked(
+        val taskType: String,
+        val notes: String,
+        val lines: List<PruningEditLabourLine>,
+        val removedLineIds: Set<String>,
+    ) : PruningEditTaskAction
+
+    /** Create ONE Work Task for an entry that never had one. */
+    data class CreateNew(val draft: PruningWorkTaskDraft) : PruningEditTaskAction
+
+    /** Explicit user choice from the unlink dialog — never silent. */
+    data class Unlink(val deleteTask: Boolean) : PruningEditTaskAction
+}
+
+/** One labour line in a pruning edit — stable [lineId] for existing rows so
+ * the update lands on the canonical row instead of duplicating it. */
+data class PruningEditLabourLine(
+    val lineId: String?,
+    val operatorCategoryId: String?,
+    val workerType: String,
+    val workerCount: Int,
+    val hoursPerWorker: Double,
+    val hourlyRate: Double?,
+)
 
 /** Work Task creation request captured in the Record Pruning sheet — every
  * other task value (date, block, crew, times) is reused from the pruning
  * entry itself so nothing is entered twice. [labour] carries one costing line
  * per worker/crew row (`work_task_labour_lines`). */
-private data class PruningWorkTaskDraft(
+data class PruningWorkTaskDraft(
     val taskType: String,
     val notes: String,
     val labour: List<PruningLabourDraft>,
 )
 
 /** One validated Work Task labour line captured in the Record Pruning sheet. */
-private data class PruningLabourDraft(
+data class PruningLabourDraft(
     val operatorCategoryId: String?,
     val workerType: String,
     val workerCount: Int,
@@ -1287,9 +1511,13 @@ private data class PruningLabourDraft(
     val totalHours: Double get() = workerCount * hoursPerWorker
 }
 
-/** Editable labour-line row state inside the Record Pruning sheet. */
+/** Editable labour-line row state inside the Record Pruning sheet. For lines
+ * loaded from an existing linked Work Task, [lineId] is the REAL
+ * `work_task_labour_lines` row id, so edits update the canonical row instead
+ * of duplicating it. */
 private data class PruningLabourRow(
     val key: Int,
+    val lineId: String? = null,
     val categoryId: String? = null,
     val workerType: String = "",
     val countText: String = "1",
@@ -1356,26 +1584,96 @@ private fun PruningEntrySheet(
     operatorCategories: List<OperatorCategory>,
     onDismiss: () -> Unit,
     onSave: (PruningEntry, PruningWorkTaskDraft?) -> Unit,
+    /** Non-null puts the SAME form into edit mode: fields preload from this
+     * entry, [segments] carries the edited quarter set, and saving routes
+     * through the offline edit queue + `update_pruning_entry` RPC (sql/120). */
+    existingEntry: PruningEntry? = null,
+    /** The linked Work Task when it exists in the local store. */
+    linkedTask: WorkTask? = null,
+    /** The linked task's live labour lines (stable ids preserved for the diff). */
+    linkedTaskLines: List<WorkTaskLabourLine> = emptyList(),
+    seasonStartMonth: Int = 7,
+    seasonStartDay: Int = 1,
+    onSaveEdit: (PruningEntry, PruningEditTaskAction) -> Unit = { _, _ -> },
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    var date by remember { mutableStateOf(LocalDate.now()) }
+    val isEditing = existingEntry != null
+    val hasLinkedTask = existingEntry?.workTaskId != null
+
+    var date by remember { mutableStateOf(PruningCalculator.parseDate(existingEntry?.date) ?: LocalDate.now()) }
     var showDatePicker by remember { mutableStateOf(false) }
-    var worker by remember { mutableStateOf(defaultWorker) }
-    var hoursText by remember { mutableStateOf("") }
-    var includeTimes by remember { mutableStateOf(false) }
-    var startTime by remember { mutableStateOf("") }
-    var finishTime by remember { mutableStateOf("") }
-    var method by remember { mutableStateOf(defaultMethod) }
-    var notes by remember { mutableStateOf("") }
+    var worker by remember { mutableStateOf(existingEntry?.worker ?: defaultWorker) }
+    var hoursText by remember { mutableStateOf(existingEntry?.labourHours?.let { fmt(it, 1) } ?: "") }
+    var includeTimes by remember { mutableStateOf(existingEntry?.startTime != null || existingEntry?.finishTime != null) }
+    var startTime by remember { mutableStateOf(existingEntry?.startTime ?: "") }
+    var finishTime by remember { mutableStateOf(existingEntry?.finishTime ?: "") }
+    var method by remember { mutableStateOf(existingEntry?.method ?: defaultMethod) }
+    var notes by remember { mutableStateOf(existingEntry?.notes ?: "") }
     var createTask by remember { mutableStateOf(false) }
-    var taskType by remember { mutableStateOf("Pruning") }
+    var taskType by remember { mutableStateOf(linkedTask?.taskType?.takeIf { it.isNotBlank() } ?: "Pruning") }
+    // Edit-mode Work Task state: default ON so the linked task's date, work
+    // type, notes and labour lines follow the edit unless the user opts out.
+    var updateLinkedTask by remember { mutableStateOf(true) }
+    var showUnlinkDialog by remember { mutableStateOf(false) }
+    var unlinkKeepTask by remember { mutableStateOf(false) }
+    var unlinkDeleteTask by remember { mutableStateOf(false) }
+    /** Stable ids of the linked task's live lines when the editor opened —
+     * lines missing from the saved set soft-delete through the normal flow. */
+    var originalLineIds by remember { mutableStateOf(setOf<String>()) }
     // Labour costing lines for the linked Work Task. The first row is seeded
     // from the pruning form's Worker/Crew + Labour hours when the toggle turns
-    // on, so nothing is entered twice.
-    var labourRows by remember { mutableStateOf(listOf<PruningLabourRow>()) }
+    // on (or from the entry while the linked task's real lines load), so
+    // nothing is entered twice.
+    var labourRows by remember {
+        mutableStateOf(
+            if (existingEntry?.workTaskId != null) {
+                listOf(
+                    PruningLabourRow(
+                        key = 0,
+                        workerType = existingEntry.worker,
+                        hoursText = existingEntry.labourHours?.let { fmt(it, 1) } ?: "",
+                    )
+                )
+            } else {
+                emptyList()
+            }
+        )
+    }
     var nextLabourKey by remember { mutableStateOf(1) }
+    var labourSeeded by remember { mutableStateOf(false) }
+
+    // The linked task's REAL labour lines replace the fallback seed exactly
+    // once when they arrive (they may load async) — stable line ids preserved
+    // so the edit updates canonical rows instead of duplicating them.
+    LaunchedEffect(linkedTaskLines) {
+        if (hasLinkedTask && !labourSeeded && linkedTaskLines.isNotEmpty()) {
+            labourRows = linkedTaskLines.mapIndexed { index, line ->
+                PruningLabourRow(
+                    key = 100 + index,
+                    lineId = line.id,
+                    categoryId = line.operatorCategoryId,
+                    workerType = line.workerType,
+                    countText = "${line.workerCount}",
+                    hoursText = fmt(line.hoursPerWorker),
+                    rateText = line.hourlyRate?.let { fmt(it) } ?: "",
+                )
+            }
+            originalLineIds = linkedTaskLines.map { it.id }.toSet()
+            nextLabourKey = 100 + linkedTaskLines.size
+            labourSeeded = true
+        }
+    }
+
+    val willUnlink = unlinkKeepTask || unlinkDeleteTask
+    /** Whether the Work Task costing fields (work type + labour lines) are
+     * active: creating a new task, or updating an existing linked one. */
+    val showsTaskFields = if (isEditing && hasLinkedTask) {
+        updateLinkedTask && !willUnlink && linkedTask != null
+    } else {
+        createTask
+    }
 
     // Person-hours convention: with labour lines, the pruning entry's labour
     // hours = sum of all line person-hours (2 workers × 8 h = 16 h).
@@ -1393,7 +1691,12 @@ private fun PruningEntrySheet(
                 .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Record Pruning — ${paddock.name}", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+            Text(
+                if (isEditing) "Edit Pruning Record — ${paddock.name}" else "Record Pruning — ${paddock.name}",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = vine.textPrimary,
+            )
             Text(
                 "${segments.size} quarters · ${fmt(segments.size / 4.0)} row equivalents · ~${PruningCalculator.vines(segments, rows)} vines",
                 fontSize = 13.sp,
@@ -1421,7 +1724,7 @@ private fun PruningEntrySheet(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
-            if (createTask) {
+            if (showsTaskFields) {
                 // Labour hours are derived from the Work Task labour lines below.
                 Row(
                     modifier = Modifier
@@ -1478,33 +1781,86 @@ private fun PruningEntrySheet(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "Create a Work Task for this pruning work",
-                    fontSize = 14.sp,
-                    color = vine.textPrimary,
-                    modifier = Modifier.weight(1f),
-                )
-                Switch(checked = createTask, onCheckedChange = { on ->
-                    createTask = on
-                    if (on && labourRows.isEmpty()) {
-                        // Seed the first labour line from the pruning form's
-                        // Worker/Crew + Labour hours — nothing is re-entered.
-                        labourRows = listOf(
-                            PruningLabourRow(key = 0, workerType = worker.trim(), hoursText = hoursText.trim())
+            if (isEditing && hasLinkedTask) {
+                if (willUnlink) {
+                    Text(
+                        if (unlinkDeleteTask) {
+                            "The Work Task will be deleted and unlinked when you save."
+                        } else {
+                            "The Work Task will be kept but unlinked when you save."
+                        },
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = VineColors.Warning,
+                    )
+                    TextButton(onClick = {
+                        unlinkKeepTask = false
+                        unlinkDeleteTask = false
+                    }) {
+                        Text("Keep Work Task linked", color = VineColors.Primary, fontWeight = FontWeight.SemiBold)
+                    }
+                } else if (linkedTask != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Update linked Work Task",
+                            fontSize = 14.sp,
+                            color = vine.textPrimary,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(checked = updateLinkedTask, onCheckedChange = { updateLinkedTask = it })
+                    }
+                    if (updateLinkedTask) {
+                        WorkTaskTypePicker(builtInWorkTaskTypes, taskType) { taskType = it }
+                        Text(
+                            "Title: Pruning — ${paddock.name} · Status: ${if (linkedTask.isFinalized) "Completed" else linkedTask.status ?: "Open"}",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = vine.textSecondary,
                         )
                     }
-                })
+                    TextButton(onClick = { showUnlinkDialog = true }) {
+                        Text("Unlink Work Task…", color = VineColors.Destructive, fontWeight = FontWeight.SemiBold)
+                    }
+                } else {
+                    Text(
+                        "The linked Work Task isn't on this device yet — its costing fields can't be edited here.",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                    )
+                    TextButton(onClick = { showUnlinkDialog = true }) {
+                        Text("Unlink Work Task…", color = VineColors.Destructive, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (isEditing) "Create a Work Task for this pruning record" else "Create a Work Task for this pruning work",
+                        fontSize = 14.sp,
+                        color = vine.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(checked = createTask, onCheckedChange = { on ->
+                        createTask = on
+                        if (on && labourRows.isEmpty()) {
+                            // Seed the first labour line from the pruning form's
+                            // Worker/Crew + Labour hours — nothing is re-entered.
+                            labourRows = listOf(
+                                PruningLabourRow(key = 0, workerType = worker.trim(), hoursText = hoursText.trim())
+                            )
+                        }
+                    })
+                }
+                if (createTask) {
+                    WorkTaskTypePicker(builtInWorkTaskTypes, taskType) { taskType = it }
+                    Text(
+                        "Title: Pruning — ${paddock.name} · Status: Completed",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textSecondary,
+                    )
+                }
             }
-            if (createTask) {
-                WorkTaskTypePicker(builtInWorkTaskTypes, taskType) { taskType = it }
-                Text(
-                    "Title: Pruning — ${paddock.name} · Status: Completed",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = vine.textSecondary,
-                )
-
+            if (showsTaskFields) {
                 Text("Labour lines", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
                 labourRows.forEachIndexed { index, row ->
                     PruningLabourRowEditor(
@@ -1542,60 +1898,144 @@ private fun PruningEntrySheet(
                     )
                 }
                 Text(
-                    "The Work Task reuses this record's date, block, crew, times and notes — nothing is entered twice. It is created as completed with these labour lines and appears in the Work Tasks tool. Rates left blank show as “Not specified”.",
+                    if (isEditing && hasLinkedTask) {
+                        "Saving synchronises the task's date, work type, notes and the labour lines above — stable ids, so retries never duplicate the task or its lines. The pruning record stays the source of truth for row completion."
+                    } else {
+                        "The Work Task reuses this record's date, block, crew, times and notes — nothing is entered twice. It is created as completed with these labour lines and appears in the Work Tasks tool. Rates left blank show as “Not specified”."
+                    },
                     fontSize = 12.sp,
                     color = vine.textSecondary,
                 )
             }
 
+            if (existingEntry != null) {
+                PruningEditSummaryCard(
+                    original = existingEntry,
+                    newQuarters = segments.size,
+                    newHours = if (showsTaskFields) {
+                        labourPersonHours.takeIf { it > 0 }
+                    } else {
+                        hoursText.replace(',', '.').toDoubleOrNull()
+                    },
+                    labourCost = if (showsTaskFields && hasRatedLine) labourTotalCost else null,
+                    vintage = VintageResolver.vintageYear(date, seasonStartMonth, seasonStartDay),
+                )
+            }
+
             Button(
                 onClick = {
-                    val entry = PruningEntry(
-                        id = UUID.randomUUID().toString(),
-                        vineyardId = vineyardId,
-                        paddockId = paddock.id,
-                        date = date.toString(),
-                        segments = segments,
-                        worker = worker.trim(),
-                        // Person-hours convention: with labour lines, the entry's
-                        // labour hours = sum of line person-hours; otherwise the
-                        // manually entered value applies as before.
-                        labourHours = if (createTask) {
+                    if (existingEntry != null) {
+                        // Person-hours convention: with a live task, the entry's
+                        // labour hours = sum of the labour-line person-hours.
+                        val entryHours = if (showsTaskFields) {
                             labourPersonHours.takeIf { it > 0 }
                         } else {
                             hoursText.replace(',', '.').toDoubleOrNull()
-                        },
-                        startTime = if (includeTimes) startTime.trim().ifBlank { null } else null,
-                        finishTime = if (includeTimes) finishTime.trim().ifBlank { null } else null,
-                        method = method,
-                        notes = notes.trim(),
-                        createdAtMs = System.currentTimeMillis(),
-                    )
-                    val draft = if (createTask) {
-                        PruningWorkTaskDraft(
-                            taskType = taskType,
-                            notes = composePruningTaskNotes(segments, rows, method, notes.trim()),
-                            labour = labourRows.filter { it.isValid }.map { row ->
-                                PruningLabourDraft(
-                                    operatorCategoryId = row.categoryId,
-                                    workerType = row.workerType.trim(),
-                                    workerCount = row.workerCount,
-                                    hoursPerWorker = row.hoursPerWorker,
-                                    hourlyRate = row.hourlyRate,
-                                )
-                            },
+                        }
+                        val updated = existingEntry.copy(
+                            date = date.toString(),
+                            segments = segments,
+                            worker = worker.trim(),
+                            labourHours = entryHours,
+                            startTime = if (includeTimes) startTime.trim().ifBlank { null } else null,
+                            finishTime = if (includeTimes) finishTime.trim().ifBlank { null } else null,
+                            method = method,
+                            notes = notes.trim(),
+                            estimatedVines = PruningCalculator.vines(segments, rows),
                         )
+                        val keptLineIds = labourRows.filter { it.isValid }.mapNotNull { it.lineId }.toSet()
+                        val action: PruningEditTaskAction = when {
+                            willUnlink && hasLinkedTask ->
+                                PruningEditTaskAction.Unlink(deleteTask = unlinkDeleteTask)
+                            hasLinkedTask && showsTaskFields -> PruningEditTaskAction.UpdateLinked(
+                                taskType = taskType,
+                                notes = composePruningTaskNotes(segments, rows, method, notes.trim()),
+                                lines = labourRows.filter { it.isValid }.map { row ->
+                                    PruningEditLabourLine(
+                                        lineId = row.lineId,
+                                        operatorCategoryId = row.categoryId,
+                                        workerType = row.workerType.trim(),
+                                        workerCount = row.workerCount,
+                                        hoursPerWorker = row.hoursPerWorker,
+                                        hourlyRate = row.hourlyRate,
+                                    )
+                                },
+                                removedLineIds = originalLineIds - keptLineIds,
+                            )
+                            !hasLinkedTask && createTask -> PruningEditTaskAction.CreateNew(
+                                PruningWorkTaskDraft(
+                                    taskType = taskType,
+                                    notes = composePruningTaskNotes(segments, rows, method, notes.trim()),
+                                    labour = labourRows.filter { it.isValid }.map { row ->
+                                        PruningLabourDraft(
+                                            operatorCategoryId = row.categoryId,
+                                            workerType = row.workerType.trim(),
+                                            workerCount = row.workerCount,
+                                            hoursPerWorker = row.hoursPerWorker,
+                                            hourlyRate = row.hourlyRate,
+                                        )
+                                    },
+                                )
+                            )
+                            else -> PruningEditTaskAction.None
+                        }
+                        onSaveEdit(updated, action)
                     } else {
-                        null
+                        val entry = PruningEntry(
+                            id = UUID.randomUUID().toString(),
+                            vineyardId = vineyardId,
+                            paddockId = paddock.id,
+                            date = date.toString(),
+                            segments = segments,
+                            worker = worker.trim(),
+                            // Person-hours convention: with labour lines, the entry's
+                            // labour hours = sum of line person-hours; otherwise the
+                            // manually entered value applies as before.
+                            labourHours = if (createTask) {
+                                labourPersonHours.takeIf { it > 0 }
+                            } else {
+                                hoursText.replace(',', '.').toDoubleOrNull()
+                            },
+                            startTime = if (includeTimes) startTime.trim().ifBlank { null } else null,
+                            finishTime = if (includeTimes) finishTime.trim().ifBlank { null } else null,
+                            method = method,
+                            notes = notes.trim(),
+                            createdAtMs = System.currentTimeMillis(),
+                        )
+                        val draft = if (createTask) {
+                            PruningWorkTaskDraft(
+                                taskType = taskType,
+                                notes = composePruningTaskNotes(segments, rows, method, notes.trim()),
+                                labour = labourRows.filter { it.isValid }.map { row ->
+                                    PruningLabourDraft(
+                                        operatorCategoryId = row.categoryId,
+                                        workerType = row.workerType.trim(),
+                                        workerCount = row.workerCount,
+                                        hoursPerWorker = row.hoursPerWorker,
+                                        hourlyRate = row.hourlyRate,
+                                    )
+                                },
+                            )
+                        } else {
+                            null
+                        }
+                        onSave(entry, draft)
                     }
-                    onSave(entry, draft)
                 },
-                enabled = segments.isNotEmpty() && (!createTask || labourValid),
+                enabled = if (isEditing) {
+                    !showsTaskFields || labourValid
+                } else {
+                    segments.isNotEmpty() && (!createTask || labourValid)
+                },
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    if (segments.size == 1) "Record 1 quarter" else "Record ${segments.size} quarters",
+                    when {
+                        isEditing -> "Save Changes"
+                        segments.size == 1 -> "Record 1 quarter"
+                        else -> "Record ${segments.size} quarters"
+                    },
                     fontWeight = FontWeight.SemiBold,
                 )
             }
@@ -1620,6 +2060,81 @@ private fun PruningEntrySheet(
         ) {
             DatePicker(state = pickerState)
         }
+    }
+
+    // Never a silent unlink — the user explicitly chooses what happens to the
+    // linked Work Task (mirrors the iOS confirmation dialog).
+    if (showUnlinkDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnlinkDialog = false },
+            title = { Text("Remove the Work Task link from this pruning record?") },
+            text = {
+                Text("The pruning record keeps its quarters either way — unlinking only affects Work Task reporting.")
+            },
+            confirmButton = {
+                Column(horizontalAlignment = Alignment.End) {
+                    TextButton(onClick = {
+                        unlinkKeepTask = true
+                        unlinkDeleteTask = false
+                        showUnlinkDialog = false
+                    }) { Text("Keep Work Task but unlink") }
+                    TextButton(onClick = {
+                        unlinkDeleteTask = true
+                        unlinkKeepTask = false
+                        showUnlinkDialog = false
+                    }) { Text("Delete Work Task and unlink", color = VineColors.Destructive) }
+                    TextButton(onClick = { showUnlinkDialog = false }) { Text("Cancel") }
+                }
+            },
+        )
+    }
+}
+
+/** Before-save summary so the user sees exactly what the edit changes. */
+@Composable
+private fun PruningEditSummaryCard(
+    original: PruningEntry,
+    newQuarters: Int,
+    newHours: Double?,
+    labourCost: Double?,
+    vintage: Int,
+) {
+    val vine = LocalVineColors.current
+    val oldQuarters = original.segments.size
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(vine.cardBackground)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("Edit Summary", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+        EditSummaryRow("Quarters", "$oldQuarters → $newQuarters")
+        EditSummaryRow("Row equivalents", "${fmt(oldQuarters / 4.0)} → ${fmt(newQuarters / 4.0)}")
+        EditSummaryRow(
+            "Person-hours",
+            "${original.labourHours?.let { "${fmt(it, 1)} h" } ?: "—"} → ${newHours?.let { "${fmt(it, 1)} h" } ?: "—"}",
+        )
+        if (labourCost != null) {
+            EditSummaryRow("Labour cost", fmtCurrency(labourCost))
+        }
+        EditSummaryRow("Vintage", "$vintage")
+        Text(
+            "Quarters completed by other entries are never taken over — any conflict is reported after sync.",
+            fontSize = 11.sp,
+            color = vine.textSecondary,
+        )
+    }
+}
+
+@Composable
+private fun EditSummaryRow(label: String, value: String) {
+    val vine = LocalVineColors.current
+    Row {
+        Text(label, fontSize = 13.sp, color = vine.textSecondary)
+        Spacer(Modifier.weight(1f))
+        Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
     }
 }
 
