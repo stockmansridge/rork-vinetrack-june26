@@ -9,6 +9,9 @@ protocol PruningSyncRepositoryProtocol: Sendable {
     func fetchSegments(vineyardId: UUID) async throws -> [BackendPruningSegment]
     func upsertSeasons(_ items: [BackendPruningSeasonUpsert]) async throws
     func recordEntry(_ params: RecordPruningEntryParams) async throws
+    /// Transaction-safe edit through `update_pruning_entry` (sql/120) — the
+    /// ONLY way an existing entry, its quarters and totals change.
+    func updateEntry(_ params: UpdatePruningEntryParams) async throws -> UpdatePruningEntryResult
     func deleteEntry(id: UUID) async throws
     func softDeleteSeason(id: UUID) async throws
     /// Fetches the authoritative SQL 115 vineyard summary for the online
@@ -69,6 +72,14 @@ final class SupabasePruningSyncRepository: PruningSyncRepositoryProtocol {
     func recordEntry(_ params: RecordPruningEntryParams) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         try await provider.client.rpc("record_pruning_entry", params: params).execute()
+    }
+
+    func updateEntry(_ params: UpdatePruningEntryParams) async throws -> UpdatePruningEntryResult {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        return try await provider.client
+            .rpc("update_pruning_entry", params: params)
+            .execute()
+            .value
     }
 
     func deleteEntry(id: UUID) async throws {

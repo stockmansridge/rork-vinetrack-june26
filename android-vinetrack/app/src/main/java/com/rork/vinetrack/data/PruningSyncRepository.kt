@@ -57,6 +57,9 @@ class PruningSyncRepository(private val session: SessionStore) {
         explicitNulls = true
     }
 
+    /** Lenient decoder for RPC JSON responses. */
+    private val resultJson = Json { ignoreUnknownKeys = true }
+
     @Serializable
     data class SeasonRow(
         val id: String,
@@ -192,6 +195,49 @@ class PruningSyncRepository(private val session: SessionStore) {
     )
 
     @Serializable
+    private data class UpdateEntryArgs(
+        @SerialName("p_entry_id") val entryId: String,
+        @SerialName("p_entry_date") val entryDate: String,
+        @SerialName("p_worker") val worker: String,
+        @SerialName("p_labour_hours") val labourHours: Double? = null,
+        @SerialName("p_start_time") val startTime: String? = null,
+        @SerialName("p_finish_time") val finishTime: String? = null,
+        @SerialName("p_method") val method: String,
+        @SerialName("p_notes") val notes: String,
+        @SerialName("p_estimated_vines") val estimatedVines: Int,
+        @SerialName("p_segments") val segments: List<SegmentArg>,
+        @SerialName("p_work_task_id") val workTaskId: String? = null,
+        @SerialName("p_clear_work_task") val clearWorkTask: Boolean = false,
+        @SerialName("p_client_updated_at") val clientUpdatedAt: String,
+    )
+
+    /** One quarter the edit could not attribute (owned by another entry). */
+    @Serializable
+    data class UpdateEntryConflict(
+        val row: Int? = null,
+        val segment: Int? = null,
+        val reason: String? = null,
+    )
+
+    /** Structured response of `update_pruning_entry` (sql/120). */
+    @Serializable
+    data class UpdateEntryResult(
+        @SerialName("entry_id") val entryId: String? = null,
+        @SerialName("season_id") val seasonId: String? = null,
+        @SerialName("vintage_year") val vintageYear: Int? = null,
+        val requested: Int? = null,
+        val attributed: Int? = null,
+        val removed: Int? = null,
+        val added: Int? = null,
+        val conflicts: List<UpdateEntryConflict> = emptyList(),
+        @SerialName("work_task_conflict") val workTaskConflict: Boolean? = null,
+        /** "entry_not_found" (create hasn't landed — retry) or "entry_reversed". */
+        val error: String? = null,
+        /** True when a newer edit already applied — this edit is obsolete. */
+        val stale: Boolean? = null,
+    )
+
+    @Serializable
     private data class IdArgs(@SerialName("p_id") val id: String)
 
     @Serializable
@@ -311,6 +357,46 @@ class PruningSyncRepository(private val session: SessionStore) {
             setBody(rpcJson.encodeToString(RecordEntryArgs.serializer(), args))
         }
         requireSuccess(response)
+    }
+
+    /**
+     * Transaction-safe edit through `update_pruning_entry` (sql/120) — the
+     * ONLY way an existing entry, its quarters and totals change. Sends the
+     * FULL desired state (idempotent, LWW on client_updated_at); all 13 keys
+     * always present with explicit nulls so the call shape never varies.
+     */
+    suspend fun updateEntry(entry: PruningEntry): UpdateEntryResult = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val args = UpdateEntryArgs(
+            entryId = entry.id,
+            entryDate = entry.date,
+            worker = entry.worker,
+            labourHours = entry.labourHours,
+            startTime = toInstantString(entry.date, entry.startTime),
+            finishTime = toInstantString(entry.date, entry.finishTime),
+            method = entry.method,
+            notes = entry.notes,
+            estimatedVines = entry.estimatedVines,
+            segments = entry.segments.map {
+                SegmentArg(row = it.row, segment = it.quarter, rowId = it.rowId, label = it.row.toString())
+            },
+            workTaskId = entry.workTaskId,
+            // A nil link on an edit means the link was removed (clearing an
+            // already-null link server-side is a harmless no-op).
+            clearWorkTask = entry.workTaskId == null,
+            clientUpdatedAt = Instant.now().toString(),
+        )
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("update_pruning_entry")) {
+            authHeaders(token)
+            contentType(ContentType.Application.Json)
+            setBody(rpcJson.encodeToString(UpdateEntryArgs.serializer(), args))
+        }
+        when {
+            response.status.isSuccess() -> resultJson.decodeFromString(UpdateEntryResult.serializer(), response.bodyAsText())
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
     }
 
     /** The ONLY way completed quarters revert (explicit authorised action). */

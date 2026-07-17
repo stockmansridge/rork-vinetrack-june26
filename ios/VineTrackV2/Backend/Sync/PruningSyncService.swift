@@ -25,7 +25,7 @@ final class PruningSyncService {
     private(set) var lastParityReport: String?
 
     var pendingUpsertCount: Int {
-        seasonMetadata.pendingUpserts.count + entryMetadata.pendingUpserts.count
+        seasonMetadata.pendingUpserts.count + entryMetadata.pendingUpserts.count + editMetadata.pendingUpserts.count
     }
     var pendingDeleteCount: Int {
         seasonMetadata.pendingDeletes.count + entryMetadata.pendingDeletes.count
@@ -37,6 +37,10 @@ final class PruningSyncService {
     private let repository: any PruningSyncRepositoryProtocol
     private let seasonMetadata: ManagementSyncMetadata
     private let entryMetadata: ManagementSyncMetadata
+    /// Queued `update_pruning_entry` pushes — separate from the create queue
+    /// so an edit of an already-synced entry replays through the edit RPC
+    /// (which can RELEASE removed quarters; the record RPC never can).
+    private let editMetadata: ManagementSyncMetadata
     private var isConfigured: Bool = false
     private var eagerPushTask: Task<Void, Never>?
 
@@ -45,6 +49,7 @@ final class PruningSyncService {
         self.pruningStore = pruningStore ?? .shared
         self.seasonMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_season_sync_metadata")
         self.entryMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_entry_sync_metadata")
+        self.editMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_edit_sync_metadata")
     }
 
     func configure(store: MigratedDataStore, auth: NewBackendAuthService) {
@@ -64,8 +69,21 @@ final class PruningSyncService {
             self?.entryMetadata.markDirty(id, at: Date())
             self?.scheduleEagerPush()
         }
+        pruningStore.onEntryEdited = { [weak self] id in
+            guard let self else { return }
+            if self.entryMetadata.pendingUpserts[id] != nil {
+                // The create hasn't landed yet — fold the edit into the queued
+                // record push (record_pruning_entry replays the full new state
+                // and nothing was ever claimed server-side to release).
+                self.entryMetadata.markDirty(id, at: Date())
+            } else {
+                self.editMetadata.markDirty(id, at: Date())
+            }
+            self.scheduleEagerPush()
+        }
         pruningStore.onEntryDeleted = { [weak self] id in
             self?.entryMetadata.markDeleted(id, at: Date())
+            self?.editMetadata.clearDirty([id])
             self?.scheduleEagerPush()
         }
     }
@@ -136,6 +154,15 @@ final class PruningSyncService {
         } catch {
             if pushError == nil { pushError = error }
             print("[PruningSync] entry push failed: \(error)")
+        }
+
+        // Edits replay AFTER creates — an edit of an entry whose create hasn't
+        // landed yet returns entry_not_found and stays queued for next pass.
+        do {
+            try await pushEdits(vineyardId: vineyardId)
+        } catch {
+            if pushError == nil { pushError = error }
+            print("[PruningSync] entry edit push failed: \(error)")
         }
 
         do {
@@ -314,6 +341,58 @@ final class PruningSyncService {
         if let firstError { throw firstError }
     }
 
+    /// Replays queued `update_pruning_entry` pushes. The RPC is idempotent
+    /// (full desired state, LWW on client_updated_at), so a retry can never
+    /// duplicate quarters or restore quarters removed by a newer edit.
+    private func pushEdits(vineyardId: UUID) async throws {
+        let dirty = editMetadata.pendingUpserts
+        guard !dirty.isEmpty else { return }
+        var firstError: Error?
+        let byId = Dictionary(pruningStore.entries.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+        for (id, ts) in dirty {
+            guard let entry = byId[id] else {
+                editMetadata.clearDirty([id])
+                continue
+            }
+            guard entry.vineyardId == vineyardId else { continue }
+            do {
+                let result = try await repository.updateEntry(UpdatePruningEntryParams(from: entry, clientUpdatedAt: ts))
+                if result.error == "entry_not_found" {
+                    // Ordered dependency: the entry create hasn't landed on the
+                    // server yet — keep the edit queued and retry next sync.
+                    print("[PruningSync] edit \(id) waiting for the entry create to land — kept queued")
+                    if firstError == nil {
+                        firstError = NSError(
+                            domain: "PruningSync",
+                            code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: "Pruning edit is waiting for the entry to reach the server — it will retry automatically."]
+                        )
+                    }
+                    continue
+                }
+                if result.error == "entry_reversed" {
+                    // The entry was reversed elsewhere — the edit is obsolete.
+                    editMetadata.clearDirty([id])
+                    continue
+                }
+                if result.stale == true {
+                    print("[PruningSync] edit \(id) superseded by a newer edit on another device — dropped")
+                }
+                if let conflicts = result.conflicts, !conflicts.isEmpty {
+                    let detail = conflicts
+                        .map { "row \($0.row.map(String.init) ?? "?") q\($0.segment.map(String.init) ?? "?")" }
+                        .joined(separator: ", ")
+                    print("[PruningSync] edit \(id): \(conflicts.count) quarter(s) already completed by another entry — \(detail)")
+                }
+                editMetadata.clearDirty([id])
+            } catch {
+                print("[PruningSync] update_pruning_entry failed for \(id): \(error)")
+                if firstError == nil { firstError = error }
+            }
+        }
+        if let firstError { throw firstError }
+    }
+
     // MARK: Pull
 
     private func pullSeasons(vineyardId: UUID) async throws {
@@ -363,14 +442,20 @@ final class PruningSyncService {
             }
         }
 
+        // Entries with a queued create OR a queued edit keep their optimistic
+        // local state until the push lands.
+        let protected = Set(entryMetadata.pendingUpserts.keys)
+            .union(editMetadata.pendingUpserts.keys)
+
         for item in remote {
             if item.deletedAt != nil {
                 pruningStore.applyRemoteEntryDelete(item.id)
                 entryMetadata.clearDirty([item.id])
                 entryMetadata.clearDeleted([item.id])
+                editMetadata.clearDirty([item.id])
                 continue
             }
-            if entryMetadata.pendingUpserts[item.id] != nil { continue }
+            if protected.contains(item.id) { continue }
             pruningStore.applyRemoteEntryUpsert(item.toPruningEntry())
         }
 
@@ -386,7 +471,7 @@ final class PruningSyncService {
         pruningStore.applyRemoteSegmentAttribution(
             vineyardId: vineyardId,
             segmentsByEntry: byEntry,
-            protectedIds: Set(entryMetadata.pendingUpserts.keys)
+            protectedIds: protected
         )
     }
 }

@@ -24,6 +24,7 @@ final class PruningStore {
     var onSeasonChanged: ((UUID) -> Void)?
     var onSeasonDeleted: ((UUID) -> Void)?
     var onEntryRecorded: ((UUID) -> Void)?
+    var onEntryEdited: ((UUID) -> Void)?
     var onEntryDeleted: ((UUID) -> Void)?
 
     private static let setupsKey = "vinetrack_pruning_seasons_v2"
@@ -67,6 +68,16 @@ final class PruningStore {
         entries.append(entry)
         persistEntries()
         onEntryRecorded?(entry.id)
+    }
+
+    /// Local-first edit of an existing entry — fires the edit hook so the
+    /// sync layer queues an `update_pruning_entry` push (or folds the change
+    /// into a still-pending create).
+    func updateEntry(_ entry: PruningEntry) {
+        guard let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
+        entries[index] = entry
+        persistEntries()
+        onEntryEdited?(entry.id)
     }
 
     func deleteEntry(id: UUID) {

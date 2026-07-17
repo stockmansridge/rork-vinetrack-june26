@@ -16,6 +16,9 @@ struct PruningBlockDetailView: View {
     @State private var rangeToIndex: Int = 0
     @State private var entryPendingReversal: PruningEntry?
     @State private var linkedTask: WorkTask?
+    /// Entry being edited — its own quarters unlock in the grid so the user
+    /// can add/remove/replace them before saving through the edit form.
+    @State private var editingEntry: PruningEntry?
 
     private var setup: PruningBlockSetup? { pruningStore.setup(for: paddock.id) }
     private var entries: [PruningEntry] { pruningStore.entries(for: paddock.id) }
@@ -27,12 +30,38 @@ struct PruningBlockDetailView: View {
     /// clearly-labelled fallback rows generated from the manual row count).
     private var rows: [PruningRowRef] { metrics.rows }
 
+    /// The editing entry's quarters canonicalised onto the block's rows.
+    private var editingSegments: Set<PruningSegment> {
+        guard let editingEntry else { return [] }
+        return PruningCalculator.completedSegments(entries: [editingEntry], rows: rows)
+    }
+
+    /// Quarters locked in the grid. While editing, the entry's own quarters
+    /// become toggleable; quarters completed by OTHER entries stay locked —
+    /// the server refuses to steal them anyway.
+    private var lockedSegments: Set<PruningSegment> {
+        editingEntry == nil ? metrics.completed : metrics.completed.subtracting(editingSegments)
+    }
+
+    private func beginEdit(_ entry: PruningEntry) {
+        editingEntry = entry
+        selectedSegments = PruningCalculator.completedSegments(entries: [entry], rows: rows)
+    }
+
+    private func cancelEdit() {
+        editingEntry = nil
+        selectedSegments.removeAll()
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 if metrics.rowCount == 0 {
                     setupPromptCard
                 } else {
+                    if editingEntry != nil {
+                        editBanner
+                    }
                     progressCard
                     ratesCard
                     rowGridCard
@@ -56,7 +85,7 @@ struct PruningBlockDetailView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            if !selectedSegments.isEmpty {
+            if !selectedSegments.isEmpty || editingEntry != nil {
                 selectionBar
             }
         }
@@ -68,9 +97,11 @@ struct PruningBlockDetailView: View {
                 segments: Array(selectedSegments).sorted { ($0.row, $0.quarter) < ($1.row, $1.quarter) },
                 rows: rows,
                 defaultMethod: setup?.method ?? .spur,
-                defaultWorker: setup?.crew ?? ""
+                defaultWorker: setup?.crew ?? "",
+                existingEntry: editingEntry
             ) {
                 selectedSegments.removeAll()
+                editingEntry = nil
             }
         }
         .sheet(isPresented: $showSetupSheet) {
@@ -149,6 +180,32 @@ struct PruningBlockDetailView: View {
         .frame(maxWidth: .infinity)
         .background(VineyardTheme.cardBackground, in: .rect(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(VineyardTheme.cardBorder, lineWidth: 0.5))
+        .padding(.horizontal)
+    }
+
+    // MARK: Edit banner
+
+    private var editBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "pencil.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.blue)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Editing \(editingEntry?.date.formatted(date: .abbreviated, time: .omitted) ?? "") entry")
+                    .font(.footnote.weight(.semibold))
+                Text("Tap quarters to adjust the selection, then Save Changes.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Cancel") {
+                cancelEdit()
+            }
+            .font(.caption.weight(.semibold))
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.blue.opacity(0.1), in: .rect(cornerRadius: 14))
         .padding(.horizontal)
     }
 
@@ -451,7 +508,7 @@ struct PruningBlockDetailView: View {
     }
 
     private func quarterCell(segment: PruningSegment) -> some View {
-        let isDone = metrics.completed.contains(segment)
+        let isDone = lockedSegments.contains(segment)
         let isSelected = selectedSegments.contains(segment)
         return Button {
             guard !isDone else { return }
@@ -485,14 +542,14 @@ struct PruningBlockDetailView: View {
     private func rowFullySelectedOrDone(_ row: PruningRowRef) -> Bool {
         (1...4).allSatisfy { quarter in
             let segment = row.segment(quarter: quarter)
-            return metrics.completed.contains(segment) || selectedSegments.contains(segment)
+            return lockedSegments.contains(segment) || selectedSegments.contains(segment)
         }
     }
 
     private func toggleWholeRow(_ row: PruningRowRef) {
         let remaining = (1...4)
             .map { row.segment(quarter: $0) }
-            .filter { !metrics.completed.contains($0) }
+            .filter { !lockedSegments.contains($0) }
         if remaining.allSatisfy({ selectedSegments.contains($0) }) {
             for segment in remaining { selectedSegments.remove(segment) }
         } else {
@@ -508,7 +565,7 @@ struct PruningBlockDetailView: View {
         for row in rows[low...high] {
             for quarter in 1...4 {
                 let segment = row.segment(quarter: quarter)
-                if !metrics.completed.contains(segment) {
+                if !lockedSegments.contains(segment) {
                     selectedSegments.insert(segment)
                 }
             }
@@ -532,12 +589,12 @@ struct PruningBlockDetailView: View {
             Button {
                 showEntrySheet = true
             } label: {
-                Text("Record Pruning")
+                Text(editingEntry == nil ? "Record Pruning" : "Save Changes")
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 4)
             }
             .buttonStyle(.borderedProminent)
-            .accessibilityLabel("Record pruning for the selected quarters")
+            .accessibilityLabel(editingEntry == nil ? "Record pruning for the selected quarters" : "Review and save the edited pruning entry")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -592,6 +649,13 @@ struct PruningBlockDetailView: View {
                         Text("\(entry.rowEquivalents.formatted(.number.precision(.fractionLength(0...2)))) rows")
                             .font(.caption.weight(.bold))
                             .monospacedDigit()
+                        Button {
+                            beginEdit(entry)
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.caption)
+                        }
+                        .accessibilityLabel("Edit this pruning entry")
                         Button(role: .destructive) {
                             if entry.workTaskId != nil {
                                 entryPendingReversal = entry
@@ -635,7 +699,10 @@ struct PruningBlockDetailView: View {
 /// once when the row is added and becomes the `work_task_labour_lines` row id,
 /// so offline replay and retries can never create a duplicate line.
 private struct PruningLabourLineDraft: Identifiable {
-    let id: UUID = UUID()
+    /// Stable line id — for lines loaded from an existing linked Work Task
+    /// this is the REAL `work_task_labour_lines` row id, so edits update the
+    /// canonical row instead of duplicating it.
+    var id: UUID = UUID()
     var operatorCategoryId: UUID? = nil
     var workerType: String = ""
     var countText: String = "1"
@@ -658,6 +725,7 @@ private struct PruningEntrySheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var dataStore
     @Environment(NewBackendAuthService.self) private var auth
+    @Environment(\.accessControl) private var accessControl
     let paddock: Paddock
     let pruningStore: PruningStore
     let vineyardId: UUID
@@ -665,6 +733,10 @@ private struct PruningEntrySheet: View {
     let rows: [PruningRowRef]
     let defaultMethod: PruningMethod
     let defaultWorker: String
+    /// Non-nil puts the SAME form into edit mode: fields preload from this
+    /// entry, `segments` carries the edited quarter set, and saving routes
+    /// through the offline edit queue + `update_pruning_entry` RPC.
+    let existingEntry: PruningEntry?
     let onSaved: () -> Void
 
     @State private var date: Date = Date()
@@ -678,6 +750,11 @@ private struct PruningEntrySheet: View {
     @State private var createWorkTask: Bool = false
     @State private var workTaskType: String = "Pruning"
     @State private var labourLines: [PruningLabourLineDraft] = []
+    @State private var updateLinkedTask: Bool = true
+    @State private var originalLineIds: Set<UUID> = []
+    @State private var showUnlinkDialog: Bool = false
+    @State private var unlinkKeepTask: Bool = false
+    @State private var unlinkDeleteTask: Bool = false
 
     private var taskTypeOptions: [String] {
         WorkTaskTypeCatalog.merged(with: dataStore.workTaskTypes)
@@ -720,6 +797,34 @@ private struct PruningEntrySheet: View {
         segments.count == 1 ? "Record 1 quarter" : "Record \(segments.count) quarters"
     }
 
+    private var isEditing: Bool { existingEntry != nil }
+
+    private var hasLinkedTask: Bool { existingEntry?.workTaskId != nil }
+
+    /// The linked Work Task when it exists in the local store.
+    private var linkedTask: WorkTask? {
+        guard let id = existingEntry?.workTaskId else { return nil }
+        return dataStore.workTasks.first { $0.id == id }
+    }
+
+    private var willUnlink: Bool { unlinkKeepTask || unlinkDeleteTask }
+
+    /// Whether the Work Task costing fields (work type + labour lines) are
+    /// active: creating a new task, or updating an existing linked one.
+    private var showsTaskFields: Bool {
+        if isEditing, hasLinkedTask {
+            return updateLinkedTask && !willUnlink && linkedTask != nil
+        }
+        return createWorkTask
+    }
+
+    /// Plain-text number for prefilling editable fields (locale-safe parse).
+    private func numText(_ value: Double?) -> String {
+        guard let value else { return "" }
+        if value == value.rounded() { return String(Int(value)) }
+        return String(value)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -732,7 +837,7 @@ private struct PruningEntrySheet: View {
 
                 Section("Crew") {
                     TextField("Worker or crew", text: $worker)
-                    if createWorkTask {
+                    if showsTaskFields {
                         // Person-hours convention: with labour lines, the pruning
                         // record's labour hours = sum of all line person-hours.
                         LabeledContent("Labour hours", value: hoursLabel(labourPersonHours))
@@ -761,34 +866,74 @@ private struct PruningEntrySheet: View {
                 }
 
                 Section {
-                    Toggle("Create a Work Task for this pruning work", isOn: $createWorkTask)
-                        .onChange(of: createWorkTask) { _, isOn in
-                            guard isOn, labourLines.isEmpty else { return }
-                            // Seed the first labour line from the pruning form's
-                            // Worker/Crew and Labour Hours so nothing is re-entered.
-                            var first = PruningLabourLineDraft()
-                            first.workerType = worker.trimmingCharacters(in: .whitespaces)
-                            first.hoursText = labourHoursText
-                            labourLines = [first]
-                        }
-                    if createWorkTask {
-                        Picker("Work type", selection: $workTaskType) {
-                            ForEach(taskTypeOptions, id: \.self) { option in
-                                Text(option).tag(option)
+                    if isEditing, hasLinkedTask {
+                        if willUnlink {
+                            Label(
+                                unlinkDeleteTask
+                                    ? "The Work Task will be deleted and unlinked when you save."
+                                    : "The Work Task will be kept but unlinked when you save.",
+                                systemImage: "link.badge.plus"
+                            )
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                            Button("Keep Work Task linked") {
+                                unlinkKeepTask = false
+                                unlinkDeleteTask = false
+                            }
+                        } else if linkedTask != nil {
+                            Toggle("Update linked Work Task", isOn: $updateLinkedTask)
+                            if updateLinkedTask {
+                                Picker("Work type", selection: $workTaskType) {
+                                    ForEach(taskTypeOptions, id: \.self) { option in
+                                        Text(option).tag(option)
+                                    }
+                                }
+                                LabeledContent("Title", value: "Pruning \u{2014} \(paddock.name)")
+                                LabeledContent("Status", value: linkedTask?.status ?? "Completed")
+                            }
+                            Button("Unlink Work Task\u{2026}", role: .destructive) {
+                                showUnlinkDialog = true
+                            }
+                        } else {
+                            Text("The linked Work Task isn't on this device yet \u{2014} its costing fields can't be edited here.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Button("Unlink Work Task\u{2026}", role: .destructive) {
+                                showUnlinkDialog = true
                             }
                         }
-                        LabeledContent("Title", value: "Pruning \u{2014} \(paddock.name)")
-                        LabeledContent("Status", value: "Completed")
+                    } else {
+                        Toggle(isEditing ? "Create a Work Task for this pruning record" : "Create a Work Task for this pruning work", isOn: $createWorkTask)
+                            .onChange(of: createWorkTask) { _, isOn in
+                                guard isOn, labourLines.isEmpty else { return }
+                                // Seed the first labour line from the pruning form's
+                                // Worker/Crew and Labour Hours so nothing is re-entered.
+                                var first = PruningLabourLineDraft()
+                                first.workerType = worker.trimmingCharacters(in: .whitespaces)
+                                first.hoursText = labourHoursText
+                                labourLines = [first]
+                            }
+                        if createWorkTask {
+                            Picker("Work type", selection: $workTaskType) {
+                                ForEach(taskTypeOptions, id: \.self) { option in
+                                    Text(option).tag(option)
+                                }
+                            }
+                            LabeledContent("Title", value: "Pruning \u{2014} \(paddock.name)")
+                            LabeledContent("Status", value: "Completed")
+                        }
                     }
                 } header: {
                     Text("Work Task")
                 } footer: {
-                    if createWorkTask {
+                    if isEditing, hasLinkedTask, showsTaskFields {
+                        Text("Saving synchronises the task's date, work type, notes and the labour lines below \u{2014} stable ids, so retries never duplicate the task or its lines. The pruning record stays the source of truth for row completion.")
+                    } else if createWorkTask {
                         Text("The Work Task reuses this record's date, block, crew, times and notes \u{2014} nothing is entered twice. It is created as completed with the labour lines below and appears in the Work Tasks tool.")
                     }
                 }
 
-                if createWorkTask {
+                if showsTaskFields {
                     Section {
                         ForEach($labourLines) { $line in
                             labourLineEditor($line)
@@ -813,24 +958,118 @@ private struct PruningEntrySheet: View {
                         }
                     }
                 }
+                if let original = existingEntry {
+                    editSummarySection(original)
+                }
             }
-            .navigationTitle("Record Pruning \u{2014} \(paddock.name)")
+            .navigationTitle(isEditing ? "Edit Pruning Record \u{2014} \(paddock.name)" : "Record Pruning \u{2014} \(paddock.name)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(recordButtonTitle) { save() }
+                    Button(isEditing ? "Save Changes" : recordButtonTitle) { save() }
                         .fontWeight(.semibold)
-                        .disabled(segments.isEmpty || (createWorkTask && !labourLinesValid))
-                        .accessibilityLabel("Record pruning")
+                        .disabled((!isEditing && segments.isEmpty) || (showsTaskFields && !labourLinesValid))
+                        .accessibilityLabel(isEditing ? "Save pruning changes" : "Record pruning")
                 }
             }
             .onAppear {
-                method = defaultMethod
-                worker = defaultWorker
+                if let entry = existingEntry {
+                    preload(from: entry)
+                } else {
+                    method = defaultMethod
+                    worker = defaultWorker
+                }
             }
+            .confirmationDialog(
+                "Remove the Work Task link from this pruning record?",
+                isPresented: $showUnlinkDialog,
+                titleVisibility: .visible
+            ) {
+                Button("Keep Work Task but unlink") {
+                    unlinkKeepTask = true
+                    unlinkDeleteTask = false
+                }
+                if accessControl?.canDelete ?? false {
+                    Button("Delete Work Task and unlink", role: .destructive) {
+                        unlinkDeleteTask = true
+                        unlinkKeepTask = false
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The pruning record keeps its quarters either way \u{2014} unlinking only affects Work Task reporting.")
+            }
+        }
+    }
+
+    /// Preloads the form from the entry being edited, including the linked
+    /// Work Task's REAL labour lines (stable ids preserved for the diff).
+    private func preload(from entry: PruningEntry) {
+        date = entry.date
+        worker = entry.worker
+        labourHoursText = numText(entry.labourHours)
+        includeTimes = entry.startTime != nil || entry.finishTime != nil
+        if let start = entry.startTime { startTime = start }
+        if let finish = entry.finishTime { finishTime = finish }
+        method = entry.method
+        notes = entry.notes
+        guard let task = linkedTask else { return }
+        workTaskType = task.taskType
+        let lines = dataStore.workTaskLabourLines.filter { $0.workTaskId == task.id }
+        if lines.isEmpty {
+            var first = PruningLabourLineDraft()
+            first.workerType = entry.worker
+            first.hoursText = numText(entry.labourHours)
+            labourLines = [first]
+        } else {
+            labourLines = lines.map { line in
+                PruningLabourLineDraft(
+                    id: line.id,
+                    operatorCategoryId: line.operatorCategoryId,
+                    workerType: line.workerType,
+                    countText: "\(line.workerCount)",
+                    hoursText: numText(line.hoursPerWorker),
+                    rateText: numText(line.hourlyRate)
+                )
+            }
+            originalLineIds = Set(lines.map(\.id))
+        }
+    }
+
+    /// Before-save summary so the user sees exactly what the edit changes.
+    @ViewBuilder
+    private func editSummarySection(_ original: PruningEntry) -> some View {
+        let oldQuarters = original.segments.count
+        let newQuarters = segments.count
+        let newHours: Double? = showsTaskFields
+            ? (labourPersonHours > 0 ? labourPersonHours : nil)
+            : Double(labourHoursText.replacingOccurrences(of: ",", with: "."))
+        let vintage = VintageResolver.vintageYear(
+            for: date,
+            seasonStartMonth: dataStore.settings.seasonStartMonth,
+            seasonStartDay: dataStore.settings.seasonStartDay
+        )
+        Section {
+            LabeledContent("Quarters", value: "\(oldQuarters) \u{2192} \(newQuarters)")
+            LabeledContent(
+                "Row equivalents",
+                value: "\((Double(oldQuarters) / 4.0).formatted(.number.precision(.fractionLength(0...2)))) \u{2192} \((Double(newQuarters) / 4.0).formatted(.number.precision(.fractionLength(0...2))))"
+            )
+            LabeledContent(
+                "Person-hours",
+                value: "\(original.labourHours.map { hoursLabel($0) } ?? "\u{2014}") \u{2192} \(newHours.map { hoursLabel($0) } ?? "\u{2014}")"
+            )
+            if showsTaskFields, hasRatedLine {
+                LabeledContent("Labour cost", value: currencyLabel(labourTotalCost))
+            }
+            LabeledContent("Vintage", value: String(vintage))
+        } header: {
+            Text("Edit Summary")
+        } footer: {
+            Text("Quarters completed by other entries are never taken over \u{2014} any conflict is reported after sync.")
         }
     }
 
@@ -987,6 +1226,12 @@ private struct PruningEntrySheet: View {
     }
 
     private func save() {
+        if let original = existingEntry {
+            saveEdit(original)
+            onSaved()
+            dismiss()
+            return
+        }
         // Make sure the season row exists before the entry references it —
         // recording work on an unconfigured block auto-creates the season.
         let season: PruningBlockSetup
@@ -1025,6 +1270,72 @@ private struct PruningEntrySheet: View {
         pruningStore.addEntry(entry)
         onSaved()
         dismiss()
+    }
+
+    /// Applies an edit: updates the local entry (which queues the
+    /// `update_pruning_entry` push) and synchronises / creates / unlinks the
+    /// linked Work Task through the existing offline-safe work-task stores.
+    /// Every id is stable, so retries never duplicate a task or line.
+    private func saveEdit(_ original: PruningEntry) {
+        var updated = original
+        updated.date = date
+        updated.segments = segments
+        updated.worker = worker.trimmingCharacters(in: .whitespaces)
+        updated.startTime = includeTimes ? startTime : nil
+        updated.finishTime = includeTimes ? finishTime : nil
+        updated.method = method
+        updated.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.estimatedVines = PruningCalculator.vines(for: segments, rows: rows)
+        updated.labourHours = Double(labourHoursText.replacingOccurrences(of: ",", with: "."))
+
+        if willUnlink, let taskId = original.workTaskId {
+            // Explicit user choice from the unlink dialog — never silent.
+            if unlinkDeleteTask { dataStore.deleteWorkTask(taskId) }
+            updated.workTaskId = nil
+        } else if hasLinkedTask, showsTaskFields, let current = linkedTask {
+            // Synchronise the reusable fields onto the linked task. The SQL 119
+            // trigger re-resolves the task's costing vintage from the new date,
+            // so date edits across the season boundary move costs with them.
+            var task = current
+            task.date = date
+            task.taskType = workTaskType
+            task.durationHours = labourPersonHours
+            task.notes = composedTaskNotes
+            dataStore.updateWorkTask(task)
+            // Labour-line diff: stable ids update the canonical rows, new
+            // lines carry their minted ids, removed lines soft-delete.
+            for draft in labourLines where draft.isValid {
+                let line = WorkTaskLabourLine(
+                    id: draft.id,
+                    workTaskId: task.id,
+                    vineyardId: vineyardId,
+                    workDate: date,
+                    operatorCategoryId: draft.operatorCategoryId,
+                    workerType: draft.workerType.trimmingCharacters(in: .whitespaces),
+                    workerCount: draft.workerCount,
+                    hoursPerWorker: draft.hoursPerWorker,
+                    hourlyRate: draft.hourlyRate,
+                    notes: ""
+                )
+                if originalLineIds.contains(draft.id) {
+                    dataStore.updateWorkTaskLabourLine(line)
+                } else {
+                    dataStore.addWorkTaskLabourLine(line)
+                }
+            }
+            let keptIds = Set(labourLines.filter { $0.isValid }.map(\.id))
+            for removedId in originalLineIds.subtracting(keptIds) {
+                dataStore.deleteWorkTaskLabourLine(removedId)
+            }
+            // Person-hours convention: the entry's labour hours = sum of all
+            // live labour-line person-hours — entry and task never disagree.
+            updated.labourHours = labourPersonHours > 0 ? labourPersonHours : nil
+        } else if !hasLinkedTask, createWorkTask {
+            updated.workTaskId = createLinkedWorkTask()
+            updated.labourHours = labourPersonHours > 0 ? labourPersonHours : nil
+        }
+
+        pruningStore.updateEntry(updated)
     }
 }
 

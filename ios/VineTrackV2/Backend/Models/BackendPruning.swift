@@ -318,6 +318,139 @@ nonisolated struct RecordPruningEntryParams: Encodable, Sendable {
     }
 }
 
+// MARK: - update_pruning_entry (SQL 120)
+
+/// Parameters for the transaction-safe `update_pruning_entry` RPC (sql/120).
+/// Sends the FULL desired state of the entry — including the complete new
+/// quarter set — so an offline replay is idempotent. Every key is encoded
+/// explicitly (nils as JSON null) so the PostgREST call shape never varies.
+nonisolated struct UpdatePruningEntryParams: Encodable, Sendable {
+    typealias Segment = RecordPruningEntryParams.Segment
+
+    let entryId: UUID
+    let entryDate: String
+    let worker: String
+    let labourHours: Double?
+    let startTime: Date?
+    let finishTime: Date?
+    let method: String
+    let notes: String
+    let estimatedVines: Int
+    let segments: [Segment]
+    let workTaskId: UUID?
+    /// True explicitly unlinks the Work Task server-side. Derived from the
+    /// edited local state: a nil `workTaskId` on an edit means the link was
+    /// removed (or never existed — clearing an already-null link is a no-op).
+    let clearWorkTask: Bool
+    let clientUpdatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case entryId = "p_entry_id"
+        case entryDate = "p_entry_date"
+        case worker = "p_worker"
+        case labourHours = "p_labour_hours"
+        case startTime = "p_start_time"
+        case finishTime = "p_finish_time"
+        case method = "p_method"
+        case notes = "p_notes"
+        case estimatedVines = "p_estimated_vines"
+        case segments = "p_segments"
+        case workTaskId = "p_work_task_id"
+        case clearWorkTask = "p_clear_work_task"
+        case clientUpdatedAt = "p_client_updated_at"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(entryId, forKey: .entryId)
+        try container.encode(entryDate, forKey: .entryDate)
+        try container.encode(worker, forKey: .worker)
+        if let labourHours {
+            try container.encode(labourHours, forKey: .labourHours)
+        } else {
+            try container.encodeNil(forKey: .labourHours)
+        }
+        if let startTime {
+            try container.encode(startTime, forKey: .startTime)
+        } else {
+            try container.encodeNil(forKey: .startTime)
+        }
+        if let finishTime {
+            try container.encode(finishTime, forKey: .finishTime)
+        } else {
+            try container.encodeNil(forKey: .finishTime)
+        }
+        try container.encode(method, forKey: .method)
+        try container.encode(notes, forKey: .notes)
+        try container.encode(estimatedVines, forKey: .estimatedVines)
+        try container.encode(segments, forKey: .segments)
+        if let workTaskId {
+            try container.encode(workTaskId, forKey: .workTaskId)
+        } else {
+            try container.encodeNil(forKey: .workTaskId)
+        }
+        try container.encode(clearWorkTask, forKey: .clearWorkTask)
+        try container.encode(clientUpdatedAt, forKey: .clientUpdatedAt)
+    }
+
+    init(from entry: PruningEntry, clientUpdatedAt: Date) {
+        self.entryId = entry.id
+        self.entryDate = PruningSyncDate.ymd(from: entry.date)
+        self.worker = entry.worker
+        self.labourHours = entry.labourHours
+        self.startTime = entry.startTime
+        self.finishTime = entry.finishTime
+        self.method = entry.method.rawValue
+        self.notes = entry.notes
+        self.estimatedVines = entry.estimatedVines
+        self.workTaskId = entry.workTaskId
+        self.clearWorkTask = entry.workTaskId == nil
+        self.clientUpdatedAt = clientUpdatedAt
+        self.segments = entry.segments.map {
+            Segment(row: $0.row, segment: $0.quarter, rowId: $0.rowId, label: "\($0.row)")
+        }
+    }
+}
+
+/// Decoded response of `update_pruning_entry` — includes the structured
+/// quarter-conflict report so a materially different save is never silent.
+nonisolated struct UpdatePruningEntryResult: Decodable, Sendable {
+    nonisolated struct Conflict: Decodable, Sendable {
+        let row: Int?
+        let segment: Int?
+        let reason: String?
+    }
+
+    let entryId: UUID?
+    let seasonId: UUID?
+    let vintageYear: Int?
+    let requested: Int?
+    let attributed: Int?
+    let removed: Int?
+    let added: Int?
+    let conflicts: [Conflict]?
+    let workTaskConflict: Bool?
+    /// "entry_not_found" (create hasn't landed yet — retry later) or
+    /// "entry_reversed" (drop the edit).
+    let error: String?
+    /// True when a newer edit already applied — the queued edit is obsolete.
+    let stale: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case entryId = "entry_id"
+        case seasonId = "season_id"
+        case vintageYear = "vintage_year"
+        case requested
+        case attributed
+        case removed
+        case added
+        case conflicts
+        case workTaskConflict = "work_task_conflict"
+        case error
+        case stale
+    }
+}
+
 // MARK: - pruning_row_segments
 
 nonisolated struct BackendPruningSegment: Codable, Sendable, Identifiable {

@@ -59,6 +59,12 @@ class PruningStore(context: Context) {
         return updated
     }
 
+    fun updateEntry(vineyardId: String, entry: PruningEntry): List<PruningEntry> {
+        val updated = loadEntries(vineyardId).map { if (it.id == entry.id) entry else it }
+        saveEntries(vineyardId, updated)
+        return updated
+    }
+
     fun deleteEntry(vineyardId: String, entryId: String): List<PruningEntry> {
         val updated = loadEntries(vineyardId).filterNot { it.id == entryId }
         saveEntries(vineyardId, updated)
