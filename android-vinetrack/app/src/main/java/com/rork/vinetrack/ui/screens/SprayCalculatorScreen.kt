@@ -960,7 +960,7 @@ private fun ChemLineEditor(
                                 Column {
                                     Text(saved.displayName)
                                     val sub = buildList {
-                                        if (saved.ratePerHa > 0) add("${fmtNum(saved.ratePerHa, 1)} ${saved.unit}/ha")
+                                        if (saved.ratePerHa > 0) add("${fmtRate(saved.ratePerHa)} ${saved.unit}/ha")
                                         if (canEditCost) saved.costPerUnit?.takeIf { it > 0 }?.let { add("$${fmtNum(it, 2)}/${saved.unit}") }
                                     }.joinToString(" · ")
                                     if (sub.isNotEmpty()) Text(sub, fontSize = 12.sp, color = vine.textSecondary)
@@ -970,7 +970,7 @@ private fun ChemLineEditor(
                                 line.savedChemicalId = saved.id
                                 line.name = saved.displayName
                                 line.unit = saved.unit
-                                if (saved.ratePerHa > 0 && line.rate.isBlank()) line.rate = fmtNum(saved.ratePerHa, 1)
+                                if (saved.ratePerHa > 0 && line.rate.isBlank()) line.rate = fmtRate(saved.ratePerHa)
                                 line.costPerUnit = if (canEditCost) saved.costPerUnit?.takeIf { it > 0 } else null
                                 menu = false
                                 onChanged()
@@ -1115,3 +1115,11 @@ private fun Spacer12() = androidx.compose.foundation.layout.Spacer(Modifier.heig
 
 private fun fmtNum(value: Double, decimals: Int): String =
     if (decimals == 0) value.toLong().toString() else String.format(Locale.US, "%.${decimals}f", value)
+
+/**
+ * Chemical-rate formatting: up to 3 decimals with trailing zeros trimmed, so
+ * a 0.15 L/100L rate shows as "0.15" (never "0" or "0.2") and 200 stays "200".
+ */
+private fun fmtRate(value: Double): String =
+    if (value % 1.0 == 0.0) value.toLong().toString()
+    else String.format(Locale.US, "%.3f", value).trimEnd('0').trimEnd('.')

@@ -94,15 +94,6 @@ android {
         buildConfigField("String", "REVENUECAT_ANDROID_API_KEY", "\"$revenueCatAndroidKey\"")
     }
 
-    signingConfigs {
-        create("rorkPlayUpload") {
-            storeFile = file("/home/user/rork-app/android-vinetrack/app/play-upload-key.jks")
-            storePassword = "rork-play-upload"
-            keyAlias = "upload"
-            keyPassword = "rork-play-upload"
-        }
-    }
-
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -110,7 +101,7 @@ android {
             // persistent project upload key automatically when exporting an
             // AAB for Play Console — never hardcode a keystore here (an
             // absolute sandbox path breaks the export build environment).
-            signingConfig = signingConfigs.getByName("rorkPlayUpload")
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

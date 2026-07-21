@@ -377,11 +377,11 @@ private val solidUnits: List<String> = listOf("Kg", "g")
 private fun unitsForForm(form: String): List<String> = if (form == "Solid") solidUnits else liquidUnits
 private fun formForUnit(unit: String): String = if (unit == "Kg" || unit == "g") "Solid" else "Liquid"
 
-/** iOS `formatRate`: blank for 0, no decimals for integers, else 2 decimals. */
+/** iOS `formatRate`: blank for 0, no decimals for integers, else up to 3 decimals (trailing zeros trimmed). */
 private fun formatRate(value: Double): String = when {
     value == 0.0 -> ""
     value % 1.0 == 0.0 -> "%.0f".format(value)
-    else -> "%.2f".format(value)
+    else -> "%.3f".format(value).trimEnd('0').trimEnd('.')
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1108,7 +1108,8 @@ private fun formatChemCurrency(value: Double): String {
 }
 
 private fun trimNum(value: Double): String =
-    if (value % 1.0 == 0.0) value.toInt().toString() else "%.1f".format(value)
+    if (value % 1.0 == 0.0) value.toInt().toString()
+    else "%.3f".format(value).trimEnd('0').trimEnd('.')
 
 private fun String.numericFilter(): String = filter { c -> c.isDigit() || c == '.' || c == ',' }
 

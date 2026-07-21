@@ -140,19 +140,19 @@ struct ChemicalDetailRow: View {
                 }
 
                 if !ratesPerHa.isEmpty {
-                    Text(ratesPerHa.map { "\($0.label): \(String(format: "%.0f", chemical.unit.fromBase($0.value)))/ha" }.joined(separator: " · "))
+                    Text(ratesPerHa.map { "\($0.label): \(SprayRateFormatter.format(chemical.unit.fromBase($0.value)))/ha" }.joined(separator: " · "))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 if !ratesPer100L.isEmpty {
-                    Text(ratesPer100L.map { "\($0.label): \(String(format: "%.0f", chemical.unit.fromBase($0.value)))/100L" }.joined(separator: " · "))
+                    Text(ratesPer100L.map { "\($0.label): \(SprayRateFormatter.format(chemical.unit.fromBase($0.value)))/100L" }.joined(separator: " · "))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 if ratesPerHa.isEmpty && ratesPer100L.isEmpty && chemical.ratePerHa > 0 {
-                    Text("\(String(format: "%.2f", chemical.ratePerHa)) \(chemical.unit.rawValue)/Ha")
+                    Text("\(SprayRateFormatter.format(chemical.ratePerHa)) \(chemical.unit.rawValue)/Ha")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

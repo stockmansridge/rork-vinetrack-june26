@@ -480,6 +480,11 @@ struct ActiveTripView: View {
         }
         .navigationTitle(navTitle)
         .navigationBarTitleDisplayMode(.inline)
+        // Hide the floating tab bar for the whole active trip so the bottom
+        // control strip (row banner, tank controls, Pause/End) is always
+        // clear and tappable in the cab. The tab bar returns when the trip
+        // ends and this view is swapped out.
+        .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -527,43 +532,6 @@ struct ActiveTripView: View {
                         .contentShape(.rect)
                 }
                 .accessibilityLabel("Trip options")
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                // Stacked status pill: speed prominent on top, GPS quality
-                // and ETA stacked below as secondary info. Keeps the
-                // three-dot menu visually isolated to the far right so the
-                // operator can tap it without hitting the status chip.
-                VStack(alignment: .trailing, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "speedometer")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Text(speedDisplayText)
-                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .contentTransition(.numericText())
-                            .animation(.snappy, value: displayedSpeedKmh)
-                            .monospacedDigit()
-                    }
-                    HStack(spacing: 8) {
-                        gpsQualityPill
-                        HStack(spacing: 3) {
-                            Image(systemName: "clock.fill")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.orange)
-                            Text(timeLeftText)
-                                .font(.system(.caption, design: .rounded, weight: .semibold))
-                                .foregroundStyle(.orange)
-                                .contentTransition(.numericText())
-                                .animation(.snappy, value: timeLeftText)
-                                .monospacedDigit()
-                        }
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(.ultraThinMaterial, in: .rect(cornerRadius: 14))
-                .padding(.trailing, 4)
             }
         }
         .sheet(isPresented: $showSummary) {
@@ -1177,6 +1145,46 @@ struct ActiveTripView: View {
                 .frame(maxWidth: .infinity)
             }
             .padding(.vertical, 12)
+
+            // Live status strip: speed, GPS quality and time remaining moved
+            // out of the navigation toolbar (where the floating pill covered
+            // the title and map) and into the fixed info bar instead.
+            HStack(spacing: 0) {
+                HStack(spacing: 4) {
+                    Image(systemName: "speedometer")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text(speedDisplayText)
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .contentTransition(.numericText())
+                        .animation(.snappy, value: displayedSpeedKmh)
+                        .monospacedDigit()
+                }
+                .frame(maxWidth: .infinity)
+
+                Divider().frame(height: 16)
+
+                gpsQualityPill
+                    .frame(maxWidth: .infinity)
+
+                Divider().frame(height: 16)
+
+                HStack(spacing: 3) {
+                    Image(systemName: "clock.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.orange)
+                    Text(timeLeftText)
+                        .font(.system(.caption, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.orange)
+                        .contentTransition(.numericText())
+                        .animation(.snappy, value: timeLeftText)
+                        .monospacedDigit()
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .padding(.vertical, 6)
+            .background(Color(.tertiarySystemGroupedBackground))
 
             if !trip.rowSequence.isEmpty {
                 VStack(spacing: 4) {

@@ -1499,7 +1499,7 @@ struct SprayCalculatorView: View {
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Rate").font(.caption2).foregroundStyle(.secondary)
-                    Text("\(String(format: "%.1f", chemResult.unit.fromBase(chemResult.selectedRate))) \(chemResult.unit.rawValue)/\(chemResult.basis == .perHectare ? "ha" : "100L")")
+                    Text("\(SprayRateFormatter.format(chemResult.unit.fromBase(chemResult.selectedRate))) \(chemResult.unit.rawValue)/\(chemResult.basis == .perHectare ? "ha" : "100L")")
                         .font(.caption.weight(.medium))
                 }
                 Spacer()
@@ -2263,7 +2263,7 @@ private struct CalcChemicalLineCard: View {
                                         line.selectedRateId = rate.id
                                         line.basis = rate.basis
                                     } label: {
-                                        Text("\(rate.label): \(String(format: "%.0f", chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/ha")
+                                        Text("\(rate.label): \(SprayRateFormatter.format(chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/ha")
                                     }
                                 }
                             }
@@ -2275,7 +2275,7 @@ private struct CalcChemicalLineCard: View {
                                         line.selectedRateId = rate.id
                                         line.basis = rate.basis
                                     } label: {
-                                        Text("\(rate.label): \(String(format: "%.0f", chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/100L")
+                                        Text("\(rate.label): \(SprayRateFormatter.format(chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/100L")
                                     }
                                 }
                             }
@@ -2369,7 +2369,7 @@ private struct CalcChemicalLineCard: View {
                                         line.basis = rate.basis
                                     } label: {
                                         HStack {
-                                            Text("\(rate.label): \(String(format: "%.0f", chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/ha")
+                                            Text("\(rate.label): \(SprayRateFormatter.format(chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/ha")
                                             if line.selectedRateId == rate.id {
                                                 Spacer()
                                                 Image(systemName: "checkmark")
@@ -2387,7 +2387,7 @@ private struct CalcChemicalLineCard: View {
                                         line.basis = rate.basis
                                     } label: {
                                         HStack {
-                                            Text("\(rate.label): \(String(format: "%.0f", chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/100L")
+                                            Text("\(rate.label): \(SprayRateFormatter.format(chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/100L")
                                             if line.selectedRateId == rate.id {
                                                 Spacer()
                                                 Image(systemName: "checkmark")
@@ -2402,7 +2402,7 @@ private struct CalcChemicalLineCard: View {
                         let label: String = {
                             guard let r = selectedRate else { return "Select rate" }
                             let suffix = r.basis == .perHectare ? "/ha" : "/100L"
-                            return "\(r.label): \(String(format: "%.0f", chem.unit.fromBase(r.value))) \(chem.unit.rawValue)\(suffix)"
+                            return "\(r.label): \(SprayRateFormatter.format(chem.unit.fromBase(r.value))) \(chem.unit.rawValue)\(suffix)"
                         }()
                         HStack(spacing: 8) {
                             Text(label)
@@ -2474,7 +2474,7 @@ private struct CalcChemicalLineCard: View {
             }
             HStack(spacing: 8) {
                 TextField(
-                    String(format: "%.1f", recommendedRateDisplay),
+                    SprayRateFormatter.format(recommendedRateDisplay),
                     text: $overrideText
                 )
                 .keyboardType(.decimalPad)
@@ -2494,7 +2494,7 @@ private struct CalcChemicalLineCard: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
-            Text("Recommended: \(String(format: "%.1f", recommendedRateDisplay)) \(chem.unit.rawValue)\(basisLabel)")
+            Text("Recommended: \(SprayRateFormatter.format(recommendedRateDisplay)) \(chem.unit.rawValue)\(basisLabel)")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -2504,7 +2504,7 @@ private struct CalcChemicalLineCard: View {
 
     private func syncOverrideText() {
         if let value = line.overrideRate {
-            let formatted = String(format: "%.2f", value)
+            let formatted = SprayRateFormatter.format(value)
             if overrideText != formatted, Double(overrideText) != value {
                 overrideText = formatted
             }
@@ -2734,7 +2734,7 @@ private struct CalcChemicalResultRow: View {
                         .font(.subheadline.weight(.medium))
                 }
                 Spacer()
-                Text("\(String(format: "%.0f", result.unit.fromBase(result.selectedRate))) \(result.unit.rawValue)/\(result.basis == .perHectare ? "ha" : "100L")")
+                Text("\(SprayRateFormatter.format(result.unit.fromBase(result.selectedRate))) \(result.unit.rawValue)/\(result.basis == .perHectare ? "ha" : "100L")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
