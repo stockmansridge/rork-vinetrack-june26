@@ -1636,7 +1636,9 @@ private fun ActiveTripHud(
     // Zoom held stable across follow updates. Re-captured from the camera only
     // when the operator taps Recenter — GPS ticks never change zoom.
     var followZoom by remember { mutableFloatStateOf(18f) }
-    var showRowChips by remember { mutableStateOf(true) }
+    // Floating left/right row labels start hidden (iOS parity) — the map
+    // stays clear by default and the SwapHoriz control brings them back.
+    var showRowChips by remember { mutableStateOf(false) }
     // iOS canShowRowSides parity: the side chips are gated on the device-local
     // "row tracking" preference in addition to the on-map toggle.
     val hudContext = LocalContext.current
@@ -1847,12 +1849,48 @@ private fun ActiveTripHud(
                 HudCircleButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = onBack)
                 Column(modifier = Modifier.weight(1f)) {
                     Text(trip.displayLabel, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1)
-                    Text(
-                        if (trip.isPaused) "Paused" else "Recording",
-                        color = if (trip.isPaused) VineColors.Orange else VineColors.Warning,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            if (trip.isPaused) "Paused" else "Recording",
+                            color = if (trip.isPaused) VineColors.Orange else VineColors.Warning,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        // Tappable spray record title in the top bar (iOS
+                        // parity) — replaces the old spray banner row so the
+                        // map keeps that height. Opens the trip details where
+                        // the full spray record lives.
+                        if (linkedSpray != null) {
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable(onClick = onShowDetails)
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            ) {
+                                Icon(
+                                    Icons.Filled.WaterDrop,
+                                    contentDescription = null,
+                                    tint = VineColors.LeafGreen,
+                                    modifier = Modifier.size(12.dp),
+                                )
+                                Text(
+                                    linkedSpray.displayLabel,
+                                    color = VineColors.LeafGreen,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                )
+                                Icon(
+                                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                    contentDescription = "Open spray record",
+                                    tint = Color.White.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(12.dp),
+                                )
+                            }
+                        }
+                    }
                 }
                 HudCircleButton(Icons.Filled.Notes, "Trip details", onClick = onShowDetails)
             }
@@ -2297,10 +2335,10 @@ private fun ActiveTripControls(
 }
 
 /**
- * Live tank-session controls (Stage 3F-2b): Start Tank when no tank is open,
- * End Tank (with confirmation) when one is active. Mirrors the iOS tank card
- * semantics. No fill timer (parked for 3F-2c). Spray trips only; hidden while
- * paused. Persists via the dedicated tank-session patch.
+ * Live tank-session controls (Stage 3F-2b), compressed to a single line:
+ * water-drop icon + status text (including the inline filling timer) on the
+ * left, compact Fill and Start/End Tank buttons on the right. Mirrors the
+ * one-line iOS tank bar so the map keeps the reclaimed height.
  */
 @Composable
 private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: SprayRecord?, busy: Boolean) {
@@ -2326,50 +2364,34 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Icon(Icons.Filled.LocalDrink, contentDescription = null, tint = VineColors.Cyan, modifier = Modifier.size(16.dp))
-            Text("Tanks", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-            Spacer(Modifier.weight(1f))
-            if (isFilling && fillStartMs != null) {
-                val elapsed = ((nowMs - fillStartMs) / 1000).coerceAtLeast(0L)
-                Text(
-                    "Filling ${formatFillElapsed(elapsed)}",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = VineColors.Cyan,
-                )
-            } else {
-                val summary = when {
-                    active != null -> if (totalTanks > 0) "Tank $active of $totalTanks" else "Tank $active"
-                    totalTanks > 0 -> "$completedCount of $totalTanks done"
-                    completedCount > 0 -> "$completedCount done"
-                    else -> "Not started"
-                }
-                Text(summary, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
-            }
+    val statusText = buildString {
+        append(
+            when {
+                active != null -> if (totalTanks > 0) "Tank $active of $totalTanks" else "Tank $active"
+                totalTanks > 0 -> "Tank $completedCount of $totalTanks done"
+                completedCount > 0 -> "$completedCount done"
+                else -> "Tank not started"
+            },
+        )
+        if (isFilling && fillStartMs != null) {
+            val elapsed = ((nowMs - fillStartMs) / 1000).coerceAtLeast(0L)
+            append(" \u2022 Filling ${formatFillElapsed(elapsed)}")
         }
-        if (active != null) {
-            Button(
-                onClick = { confirmEnd = true },
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Orange),
-            ) {
-                Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text("  End tank")
-            }
-        } else {
-            Button(
-                onClick = { vm.startTankSession(trip.id) },
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Cyan),
-            ) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text("  Start tank")
-            }
-        }
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(Icons.Filled.LocalDrink, contentDescription = null, tint = VineColors.Cyan, modifier = Modifier.size(16.dp))
+        Text(
+            statusText,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (active != null || isFilling) VineColors.Cyan else vine.textSecondary,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
         // Optional fill timer (device-local setting). Mirrors iOS: filling a
         // tank happens between tanks, so Start Fill is offered only when no
         // tank is active. Stop Fill is always available while filling.
@@ -2378,20 +2400,45 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
                 OutlinedButton(
                     onClick = { vm.stopFillTimer(trip.id) },
                     enabled = !busy,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.height(36.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp),
                 ) {
-                    Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(18.dp), tint = VineColors.Cyan)
-                    Text("  Stop fill", color = VineColors.Cyan)
+                    Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(16.dp), tint = VineColors.Cyan)
+                    Text(" Stop fill", color = VineColors.Cyan, fontSize = 12.sp)
                 }
             } else if (active == null) {
                 OutlinedButton(
                     onClick = { vm.startFillTimer(trip.id) },
                     enabled = !busy,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.height(36.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp),
                 ) {
-                    Icon(Icons.Filled.Timer, contentDescription = null, modifier = Modifier.size(18.dp), tint = VineColors.Cyan)
-                    Text("  Start fill", color = VineColors.Cyan)
+                    Icon(Icons.Filled.Timer, contentDescription = null, modifier = Modifier.size(16.dp), tint = VineColors.Cyan)
+                    Text(" Fill", color = VineColors.Cyan, fontSize = 12.sp)
                 }
+            }
+        }
+        if (active != null) {
+            Button(
+                onClick = { confirmEnd = true },
+                enabled = !busy,
+                modifier = Modifier.height(36.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Orange),
+            ) {
+                Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+                Text(" End tank", fontSize = 12.sp)
+            }
+        } else {
+            Button(
+                onClick = { vm.startTankSession(trip.id) },
+                enabled = !busy,
+                modifier = Modifier.height(36.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Cyan),
+            ) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                Text(" Start tank", fontSize = 12.sp)
             }
         }
     }

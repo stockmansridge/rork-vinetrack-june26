@@ -20,7 +20,9 @@ struct ActiveTripView: View {
     @State private var lastNavCameraUpdate: Date = .distantPast
     @State private var smoothedCourse: Double?
     @State private var noGpsToast: Bool = false
-    @State private var showRowIndicator: Bool = true
+    /// Floating "Row 21 / Row 20" labels on the map. Off by default to keep
+    /// the map clear; the arrow map-control button toggles them back on.
+    @State private var showRowIndicator: Bool = false
     @State private var showPinOverlay: Bool = true
     @State private var showManualCorrection: Bool = false
     @State private var showEndConfirmation: Bool = false
@@ -470,7 +472,6 @@ struct ActiveTripView: View {
                 }
 
                 if let record = sprayRecord {
-                    sprayBanner(record: record)
                     tankControls(record: record)
                 }
 
@@ -478,7 +479,6 @@ struct ActiveTripView: View {
             }
             .background(Color(.systemGroupedBackground))
         }
-        .navigationTitle(navTitle)
         .navigationBarTitleDisplayMode(.inline)
         // Hide the floating tab bar for the whole active trip so the bottom
         // control strip (row banner, tank controls, Pause/End) is always
@@ -486,6 +486,40 @@ struct ActiveTripView: View {
         // ends and this view is swapped out.
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
+            // Trip heading sits on the left; the tappable spray record name
+            // takes the centre slot (replacing the old spray banner row above
+            // the tank controls, freeing that height for the map).
+            ToolbarItem(placement: .topBarLeading) {
+                Text(navTitle)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            if let record = sprayRecord {
+                ToolbarItem(placement: .principal) {
+                    NavigationLink {
+                        SprayRecordDetailView(record: record)
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "sprinkler.and.droplets.fill")
+                                .font(.caption)
+                                .foregroundStyle(VineyardTheme.leafGreen)
+                            Text(record.sprayReference.isEmpty ? "Spray Record" : record.sprayReference)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(VineyardTheme.leafGreen)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .frame(minHeight: 44)
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Open spray record")
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Section("Fix what the app thinks") {
@@ -1655,33 +1689,6 @@ struct ActiveTripView: View {
         .animation(.easeInOut(duration: 0.25), value: warn)
     }
 
-    private func sprayBanner(record: SprayRecord) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "sprinkler.and.droplets.fill")
-                .font(.title3)
-                .foregroundStyle(VineyardTheme.leafGreen)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(record.sprayReference.isEmpty ? "Spray Record" : record.sprayReference)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                Text("\(record.tanks.count) tank\(record.tanks.count == 1 ? "" : "s") • \(record.date.formatted(date: .abbreviated, time: .omitted))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            NavigationLink {
-                SprayRecordDetailView(record: record)
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(VineyardTheme.leafGreen.opacity(0.08))
-    }
-
     // MARK: - Trip controls
 
     private var tripControls: some View {
@@ -1877,121 +1884,81 @@ struct ActiveTripView: View {
         liveTrip.tankSessions.filter { $0.endTime != nil }.count
     }
 
+    /// Single-line tank bar: status text on the left, compact Fill and
+    /// Start/End Tank buttons on the right. Replaces the old two-row card
+    /// (plus dots) so the map gets the reclaimed height.
     @ViewBuilder
     private func tankControls(record: SprayRecord) -> some View {
         let totalTanks = max(record.tanks.count, liveTrip.totalTanks)
-        let active = liveTrip.activeTankNumber
         let fillEnabled = store.settings.fillTimerEnabled
 
-        VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                Image(systemName: "drop.fill")
-                    .font(.title3)
-                    .foregroundStyle(.cyan)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text("TANK")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(.secondary)
-                        if let n = active {
-                            Text("\(n)\(totalTanks > 0 ? " of \(totalTanks)" : "")")
-                                .font(.system(.title3, design: .rounded, weight: .bold))
-                                .foregroundStyle(.cyan)
-                        } else {
-                            Text(totalTanks > 0 ? "\(completedTankCount) of \(totalTanks) done" : "Not started")
-                                .font(.system(.title3, design: .rounded, weight: .bold))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    if let session = openTankSession {
-                        if let idx = record.tanks.firstIndex(where: { $0.tankNumber == session.tankNumber }) {
-                            let tank = record.tanks[idx]
-                            Text("\(Int(tank.waterVolume)) L water • \(Int(tank.areaPerTank * 100) / 100) ha")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } else if !hasActiveTank, completedTankCount < record.tanks.count {
-                        let next = record.tanks[completedTankCount]
-                        Text("Next: Tank \(next.tankNumber) • \(Int(next.waterVolume)) L")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                if isFilling {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text("FILLING")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(.cyan)
-                        Text(formatFillElapsed(fillElapsed))
-                            .font(.system(.title3, design: .monospaced, weight: .bold))
-                            .foregroundStyle(.cyan)
-                            .contentTransition(.numericText())
-                    }
-                }
-            }
+        HStack(spacing: 8) {
+            Image(systemName: "drop.fill")
+                .font(.subheadline)
+                .foregroundStyle(.cyan)
 
-            HStack(spacing: 8) {
-                if hasActiveTank {
+            Text(tankStatusText(record: record, totalTanks: totalTanks))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(hasActiveTank || isFilling ? .cyan : .secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .monospacedDigit()
+                .contentTransition(.numericText())
+
+            Spacer(minLength: 8)
+
+            if fillEnabled {
+                if isFilling {
                     Button {
-                        showEndTankConfirmation = true
+                        tracking.stopFillTimer()
                     } label: {
-                        Label("End Tank", systemImage: "stop.circle.fill")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
+                        Label("Stop Fill", systemImage: "stop.fill")
+                            .font(.caption.weight(.semibold))
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.orange)
-                    .disabled(!accessControl.canCreateOperationalRecords)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.cyan)
                 } else {
                     Button {
-                        tracking.startTank()
+                        tracking.startFillTimer()
                     } label: {
-                        Label("Start Tank", systemImage: "play.circle.fill")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
+                        Label("Fill", systemImage: "timer")
+                            .font(.caption.weight(.semibold))
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .tint(.cyan)
-                    .disabled(!accessControl.canCreateOperationalRecords)
-                }
-
-                if fillEnabled {
-                    if isFilling {
-                        Button {
-                            tracking.stopFillTimer()
-                        } label: {
-                            Label("Stop Fill", systemImage: "stop.fill")
-                                .font(.subheadline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.cyan)
-                    } else {
-                        Button {
-                            tracking.startFillTimer()
-                        } label: {
-                            Label("Start Fill", systemImage: "timer")
-                                .font(.subheadline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.cyan)
-                        .disabled(hasActiveTank || !accessControl.canCreateOperationalRecords)
-                    }
+                    .disabled(hasActiveTank || !accessControl.canCreateOperationalRecords)
                 }
             }
 
-            if !liveTrip.tankSessions.isEmpty {
-                tankProgressDots(total: totalTanks)
+            if hasActiveTank {
+                Button {
+                    showEndTankConfirmation = true
+                } label: {
+                    Label("End Tank", systemImage: "stop.circle.fill")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(.orange)
+                .disabled(!accessControl.canCreateOperationalRecords)
+            } else {
+                Button {
+                    tracking.startTank()
+                } label: {
+                    Label("Start Tank", systemImage: "play.circle.fill")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(.cyan)
+                .disabled(!accessControl.canCreateOperationalRecords)
             }
         }
+        .frame(minHeight: 44)
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 4)
         .background(Color(.secondarySystemGroupedBackground))
         .confirmationDialog("End this tank?", isPresented: $showEndTankConfirmation) {
             Button("End Tank", role: .destructive) {
@@ -2001,20 +1968,29 @@ struct ActiveTripView: View {
         }
     }
 
-    private func tankProgressDots(total: Int) -> some View {
-        let count = max(total, liveTrip.tankSessions.count)
-        return HStack(spacing: 4) {
-            ForEach(0..<count, id: \.self) { i in
-                let number = i + 1
-                let session = liveTrip.tankSessions.first(where: { $0.tankNumber == number })
-                let isComplete = session?.endTime != nil
-                let isActive = session?.endTime == nil && session?.startRow != nil
-                Circle()
-                    .fill(isComplete ? Color.cyan : (isActive ? Color.cyan.opacity(0.5) : Color.secondary.opacity(0.2)))
-                    .frame(height: 6)
-                    .frame(maxWidth: .infinity)
+    /// One-line tank status, including the inline filling timer when the
+    /// fill timer is running.
+    private func tankStatusText(record: SprayRecord, totalTanks: Int) -> String {
+        var text: String
+        if let n = liveTrip.activeTankNumber {
+            text = "Tank \(n)\(totalTanks > 0 ? " of \(totalTanks)" : "")"
+            if let session = openTankSession,
+               let tank = record.tanks.first(where: { $0.tankNumber == session.tankNumber }) {
+                text += " • \(Int(tank.waterVolume)) L"
             }
+        } else if totalTanks > 0 {
+            text = "Tank \(completedTankCount) of \(totalTanks) done"
+            if completedTankCount < record.tanks.count {
+                let next = record.tanks[completedTankCount]
+                text += " • Next: \(Int(next.waterVolume)) L"
+            }
+        } else {
+            text = "Tank not started"
         }
+        if isFilling {
+            text += " • Filling \(formatFillElapsed(fillElapsed))"
+        }
+        return text
     }
 
     private func formatFillElapsed(_ seconds: TimeInterval) -> String {
