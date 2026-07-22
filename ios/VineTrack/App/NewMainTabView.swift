@@ -80,7 +80,7 @@ struct NewMainTabView: View {
             NavigationStack {
                 SprayProgramView()
             }
-            .tabItem { Label("Program", systemImage: "sprinkler.and.droplets.fill") }
+            .tabItem { Label("Program", systemImage: "drop.fill") }
             .tag(3)
 
             BackendSettingsView()
