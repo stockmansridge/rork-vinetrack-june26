@@ -212,9 +212,14 @@ private fun SprayEquipmentRow(
     }
 }
 
+/**
+ * Full add/edit form for spray rigs & tanks (name, capacity, serial, VIN).
+ * Shared with the spray calculator's "+" button so both entry points use the
+ * identical Settings form — matching iOS behaviour.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SprayEquipmentFormSheet(
+internal fun SprayEquipmentFormSheet(
     vm: AppViewModel,
     existing: SprayEquipment?,
     onDismiss: () -> Unit,

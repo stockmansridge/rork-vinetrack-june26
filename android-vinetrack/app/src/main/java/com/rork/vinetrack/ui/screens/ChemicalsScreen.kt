@@ -384,9 +384,14 @@ private fun formatRate(value: Double): String = when {
     else -> "%.3f".format(value).trimEnd('0').trimEnd('.')
 }
 
+/**
+ * Full add/edit chemical form (all fields + Search with AI). Shared with the
+ * spray calculator's "Add New Chemical to List" button so both entry points
+ * use the identical Settings form — matching iOS behaviour.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChemicalFormSheet(
+internal fun ChemicalFormSheet(
     vm: AppViewModel,
     existing: SavedChemical?,
     canViewFinancials: Boolean,

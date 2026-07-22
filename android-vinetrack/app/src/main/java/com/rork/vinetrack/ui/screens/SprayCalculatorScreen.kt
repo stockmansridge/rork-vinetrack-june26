@@ -97,20 +97,16 @@ import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
 import com.rork.vinetrack.data.CanopyWaterRates
 import com.rork.vinetrack.data.CanopyWaterRatesStore
-import com.rork.vinetrack.data.SavedChemicalRepository
 import com.rork.vinetrack.data.SprayCalculator
-import com.rork.vinetrack.data.SprayEquipmentRepository
 import com.rork.vinetrack.data.SprayRecordRepository
 import com.rork.vinetrack.data.TrackingPattern
 import com.rork.vinetrack.data.TripRowSequencePlanner
 import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_100L
 import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_HECTARE
-import com.rork.vinetrack.data.model.ChemicalRate
 import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.data.model.chemicalUnitFromBase
-import com.rork.vinetrack.data.model.chemicalUnitToBase
 import com.rork.vinetrack.data.model.resolveSprayTrip
 import com.rork.vinetrack.data.model.sprayOperationTypes
 import com.rork.vinetrack.ui.AppUiState
@@ -933,15 +929,27 @@ fun SprayCalculatorScreen(
     }
 
     if (showAddEquipment) {
-        AddSprayEquipmentSheet(
+        // Full Settings form (Spray Rigs & Tanks) — includes Serial number and
+        // VIN, matching iOS. Auto-select whatever rig appears while it's open.
+        val equipmentIdsBefore = remember { state.sprayEquipment.map { it.id }.toSet() }
+        LaunchedEffect(state.sprayEquipment) {
+            state.sprayEquipment.firstOrNull { it.id !in equipmentIdsBefore }?.let { added ->
+                sprayEquipmentId = added.id
+            }
+        }
+        SprayEquipmentFormSheet(
             vm = vm,
+            existing = null,
             onDismiss = { showAddEquipment = false },
         )
     }
 
     if (showAddChemicalToList) {
-        AddChemicalToListSheet(
+        // Full Settings chemical form — all fields plus Search with AI, matching iOS.
+        ChemicalFormSheet(
             vm = vm,
+            existing = null,
+            canViewFinancials = canEditCost,
             onDismiss = { showAddChemicalToList = false },
         )
     }
@@ -1371,74 +1379,6 @@ private fun EquipmentSummaryCard(
     }
 }
 
-/** Inline add-equipment sheet — small port of the Spray Equipment form. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AddSprayEquipmentSheet(
-    vm: AppViewModel,
-    onDismiss: () -> Unit,
-) {
-    val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var name by remember { mutableStateOf("") }
-    var capacity by remember { mutableStateOf("") }
-    var saving by remember { mutableStateOf(false) }
-
-    ModalBottomSheet(onDismissRequest = { if (!saving) onDismiss() }, sheetState = sheetState) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Text("New equipment", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("Equipment name") },
-                placeholder = { Text("e.g. Main sprayer") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = capacity,
-                onValueChange = { capacity = it.filter { c -> c.isDigit() || c == '.' } },
-                label = { Text("Tank capacity (litres)") },
-                placeholder = { Text("e.g. 400") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text(
-                "Tank capacity drives the tank-mix calculation, so set it for accurate results.",
-                fontSize = 12.sp,
-                color = vine.textSecondary,
-            )
-            Button(
-                onClick = {
-                    if (saving) return@Button
-                    saving = true
-                    vm.createSprayEquipment(
-                        SprayEquipmentRepository.EquipmentInput(
-                            name = name.trim(),
-                            tankCapacityLitres = capacity.toDoubleOrNull() ?: 0.0,
-                            serialNumber = null,
-                            vinNumber = null,
-                        ),
-                    ) { _ ->
-                        saving = false
-                        onDismiss()
-                    }
-                },
-                enabled = !saving && name.trim().isNotEmpty(),
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
-            ) {
-                if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-                else Text("Add equipment")
-            }
-        }
-    }
-}
-
 // ── Chemicals ────────────────────────────────────────────────────────────────
 
 /** iOS-style chemical line card: picker, rate menu, override, label links. */
@@ -1660,124 +1600,6 @@ private fun CalcChemicalLineCard(
                 color = vine.textSecondary,
                 modifier = Modifier.padding(top = 4.dp),
             )
-        }
-    }
-}
-
-/** Minimal "Add New Chemical to List" sheet — creates a saved chemical. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AddChemicalToListSheet(
-    vm: AppViewModel,
-    onDismiss: () -> Unit,
-) {
-    val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var name by remember { mutableStateOf("") }
-    var unit by remember { mutableStateOf("Litres") }
-    var rateHaText by remember { mutableStateOf("") }
-    var rate100Text by remember { mutableStateOf("") }
-    var labelUrl by remember { mutableStateOf("") }
-    var saving by remember { mutableStateOf(false) }
-    val unitOptions = listOf("Litres", "mL", "Kg", "g")
-
-    ModalBottomSheet(onDismissRequest = { if (!saving) onDismiss() }, sheetState = sheetState) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Text("New chemical", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("Chemical name") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            var unitMenu by remember { mutableStateOf(false) }
-            ExposedDropdownMenuBox(expanded = unitMenu, onExpandedChange = { unitMenu = it }) {
-                OutlinedTextField(
-                    value = unit,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Unit") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = unitMenu) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
-                )
-                ExposedDropdownMenu(expanded = unitMenu, onDismissRequest = { unitMenu = false }) {
-                    unitOptions.forEach { opt ->
-                        DropdownMenuItem(text = { Text(opt) }, onClick = { unit = opt; unitMenu = false })
-                    }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = rateHaText,
-                    onValueChange = { rateHaText = it.filter { c -> c.isDigit() || c == '.' } },
-                    label = { Text("Rate ($unit/ha)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.weight(1f),
-                )
-                OutlinedTextField(
-                    value = rate100Text,
-                    onValueChange = { rate100Text = it.filter { c -> c.isDigit() || c == '.' } },
-                    label = { Text("Rate ($unit/100L)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            OutlinedTextField(
-                value = labelUrl,
-                onValueChange = { labelUrl = it },
-                label = { Text("Label URL (optional)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Button(
-                onClick = {
-                    if (saving) return@Button
-                    val rateHa = rateHaText.toDoubleOrNull()
-                    val rate100 = rate100Text.toDoubleOrNull()
-                    val rates = buildList {
-                        rateHa?.takeIf { it > 0 }?.let {
-                            add(ChemicalRate(UUID.randomUUID().toString(), "Default", chemicalUnitToBase(unit, it), CHEMICAL_RATE_PER_HECTARE))
-                        }
-                        rate100?.takeIf { it > 0 }?.let {
-                            add(ChemicalRate(UUID.randomUUID().toString(), "Default", chemicalUnitToBase(unit, it), CHEMICAL_RATE_PER_100L))
-                        }
-                    }
-                    saving = true
-                    vm.createSavedChemical(
-                        SavedChemicalRepository.ChemicalInput(
-                            name = name.trim(),
-                            unit = unit,
-                            ratePerHa = rateHa ?: 0.0,
-                            rates = rates,
-                            activeIngredient = null,
-                            chemicalGroup = null,
-                            use = null,
-                            problem = null,
-                            manufacturer = null,
-                            notes = null,
-                            modeOfAction = null,
-                            labelUrl = labelUrl.trim().takeIf { it.isNotEmpty() },
-                            productUrl = null,
-                            purchase = null,
-                        ),
-                    ) { ok ->
-                        saving = false
-                        if (ok) onDismiss()
-                    }
-                },
-                enabled = !saving && name.trim().isNotEmpty(),
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
-            ) {
-                if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-                else Text("Add chemical")
-            }
         }
     }
 }
