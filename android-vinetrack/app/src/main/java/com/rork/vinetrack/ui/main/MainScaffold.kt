@@ -98,6 +98,9 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
     // When true, the Program tab opens straight into the Spray Calculator
     // (e.g. the "Spray Trip" option from the Trips start-trip chooser).
     var programOpenCalculator by rememberSaveable { mutableStateOf(false) }
+    // Optional spray record/template id to pre-fill the Spray Calculator with
+    // (e.g. "Start from Template" in the Spray Trip setup chooser).
+    var programCalculatorPrefill by rememberSaveable { mutableStateOf<String?>(null) }
     // When true, opening the Pins tab starts in List view (e.g. the Home
     // "pins need attention" banner), mirroring iOS PinsView(initialViewMode: .list).
     var pinsOpenInList by rememberSaveable { mutableStateOf(false) }
@@ -225,7 +228,8 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
                 vm, state, modifier,
                 initialSelectedTripId = tripsSelection,
                 onSelectionConsumed = { tripsSelection = null },
-                onStartSprayTrip = {
+                onStartSprayTrip = { prefillId ->
+                    programCalculatorPrefill = prefillId
                     programOpenCalculator = true
                     tab = MainTab.Program
                 },
@@ -239,7 +243,11 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
                 vm, state, modifier,
                 onBack = null,
                 initialOpenCalculator = programOpenCalculator,
-                onCalculatorConsumed = { programOpenCalculator = false },
+                initialCalculatorPrefillId = programCalculatorPrefill,
+                onCalculatorConsumed = {
+                    programOpenCalculator = false
+                    programCalculatorPrefill = null
+                },
                 onOpenTrip = { tripId ->
                     tripsSelection = tripId
                     tab = MainTab.Trip

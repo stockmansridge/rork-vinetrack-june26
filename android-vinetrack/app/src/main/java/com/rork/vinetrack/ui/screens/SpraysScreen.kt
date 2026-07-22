@@ -150,17 +150,21 @@ fun SpraysScreen(
     onBack: (() -> Unit)? = null,
     onOpenTrip: ((String) -> Unit)? = null,
     initialOpenCalculator: Boolean = false,
+    initialCalculatorPrefillId: String? = null,
     onCalculatorConsumed: () -> Unit = {},
 ) {
     var selectedId by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
     var creatingTemplate by remember { mutableStateOf(false) }
     var calculating by remember { mutableStateOf(false) }
+    // Template/record id the Spray Calculator should be pre-filled from.
+    var calculatorPrefillId by remember { mutableStateOf<String?>(null) }
 
     // When navigated here to start a spray trip (e.g. the Trips chooser),
     // open the Spray Calculator once, then clear the external request.
     LaunchedEffect(initialOpenCalculator) {
         if (initialOpenCalculator) {
+            calculatorPrefillId = initialCalculatorPrefillId
             calculating = true
             onCalculatorConsumed()
         }
@@ -173,14 +177,15 @@ fun SpraysScreen(
         ?: state.sprayJobTemplates.firstOrNull { it.id == selectedId }
 
     if (calculating) {
-        androidx.activity.compose.BackHandler { calculating = false }
+        androidx.activity.compose.BackHandler { calculating = false; calculatorPrefillId = null }
         SprayCalculatorScreen(
             vm = vm,
             state = state,
             modifier = modifier,
-            onBack = { calculating = false },
-            onSaved = { calculating = false },
+            onBack = { calculating = false; calculatorPrefillId = null },
+            onSaved = { calculating = false; calculatorPrefillId = null },
             onJobStarted = onOpenTrip,
+            prefillRecordId = calculatorPrefillId,
         )
         return
     }
@@ -199,7 +204,7 @@ fun SpraysScreen(
                 onSelect = { selectedId = it.id },
                 onAdd = { creating = true },
                 onAddTemplate = { creatingTemplate = true },
-                onOpenCalculator = { calculating = true },
+                onOpenCalculator = { calculatorPrefillId = null; calculating = true },
             )
         } else {
             SprayDetailView(

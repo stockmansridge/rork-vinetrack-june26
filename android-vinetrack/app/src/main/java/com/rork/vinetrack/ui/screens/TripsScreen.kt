@@ -245,12 +245,14 @@ fun TripsScreen(
     modifier: Modifier = Modifier,
     initialSelectedTripId: String? = null,
     onSelectionConsumed: () -> Unit = {},
-    onStartSprayTrip: () -> Unit = {},
+    onStartSprayTrip: (prefillRecordId: String?) -> Unit = {},
     onGoHome: () -> Unit = {},
 ) {
     var selectedId by remember { mutableStateOf<String?>(null) }
     var choosing by remember { mutableStateOf(false) }
     var starting by remember { mutableStateOf(false) }
+    // Spray Trip setup chooser (template / custom / resume), mirroring iOS.
+    var sprayTripSetup by remember { mutableStateOf(false) }
 
     // When navigated here with a specific trip (e.g. just-started spray job),
     // open that trip's detail once, then clear the external request.
@@ -262,6 +264,25 @@ fun TripsScreen(
     }
 
     val selected = state.trips.firstOrNull { it.id == selectedId }
+
+    if (sprayTripSetup) {
+        androidx.activity.compose.BackHandler { sprayTripSetup = false }
+        SprayTripSetupScreen(
+            vm = vm,
+            state = state,
+            modifier = modifier,
+            onBack = { sprayTripSetup = false },
+            onOpenCalculator = { prefillId ->
+                sprayTripSetup = false
+                onStartSprayTrip(prefillId)
+            },
+            onOpenTrip = { tripId ->
+                sprayTripSetup = false
+                selectedId = tripId
+            },
+        )
+        return
+    }
 
     AnimatedContent(
         targetState = selected,
@@ -294,7 +315,7 @@ fun TripsScreen(
                 choosing = false
                 when (type) {
                     TripChoiceType.MAINTENANCE -> starting = true
-                    TripChoiceType.SPRAY -> onStartSprayTrip()
+                    TripChoiceType.SPRAY -> sprayTripSetup = true
                 }
             },
         )
