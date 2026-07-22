@@ -1,6 +1,6 @@
 //
 //  SyncStatusCenter.swift
-//  VineTrackV2
+//  VineTrack
 //
 //  Lightweight, app-wide aggregator of sync + network status. It does NOT
 //  perform any syncing itself — the main shell (`NewMainTabView`) owns the

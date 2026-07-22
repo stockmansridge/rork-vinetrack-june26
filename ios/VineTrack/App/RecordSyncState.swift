@@ -1,6 +1,6 @@
 //
 //  RecordSyncState.swift
-//  VineTrackV2
+//  VineTrack
 //
 //  Shared foundation for per-record sync badges. A single record (a trip, pin,
 //  spray record, etc.) can be in one of four coarse states, derived from the

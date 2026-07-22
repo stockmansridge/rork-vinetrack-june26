@@ -1,6 +1,6 @@
 //
 //  OfflineVineyardMapView.swift
-//  VineTrackV2
+//  VineTrack
 //
 //  Overlay-only vineyard map used when the device is offline or Apple
 //  hybrid/satellite tiles cannot load. It draws paddock polygons, rows,

@@ -1,6 +1,6 @@
 //
 //  RecordSyncBadge.swift
-//  VineTrackV2
+//  VineTrack
 //
 //  Reusable, read-only per-record sync badge. Shows a small dot/icon plus a
 //  short label where space allows. It never blocks interaction — it is purely

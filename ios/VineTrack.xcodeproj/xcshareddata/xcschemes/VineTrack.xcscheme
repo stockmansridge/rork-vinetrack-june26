@@ -14,9 +14,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "105FC5792E9EAD3100EA8BCF"
-               BuildableName = "VineTrackV2.app"
-               BlueprintName = "VineTrackV2"
-               ReferencedContainer = "container:VineTrackV2.xcodeproj">
+               BuildableName = "VineTrack.app"
+               BlueprintName = "VineTrack"
+               ReferencedContainer = "container:VineTrack.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -36,9 +36,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "105FC5792E9EAD3100EA8BCF"
-            BuildableName = "VineTrackV2.app"
-            BlueprintName = "VineTrackV2"
-            ReferencedContainer = "container:VineTrackV2.xcodeproj">
+            BuildableName = "VineTrack.app"
+            BlueprintName = "VineTrack"
+            ReferencedContainer = "container:VineTrack.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -53,9 +53,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "105FC5792E9EAD3100EA8BCF"
-            BuildableName = "VineTrackV2.app"
-            BlueprintName = "VineTrackV2"
-            ReferencedContainer = "container:VineTrackV2.xcodeproj">
+            BuildableName = "VineTrack.app"
+            BlueprintName = "VineTrack"
+            ReferencedContainer = "container:VineTrack.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

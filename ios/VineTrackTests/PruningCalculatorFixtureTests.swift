@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import VineTrackV2
+@testable import VineTrack
 
 /// SHARED PRUNING CALCULATION FIXTURE — the same deterministic fixture exists
 /// as `PruningCalculatorFixtureTest.kt` in the Android unit-test source set,

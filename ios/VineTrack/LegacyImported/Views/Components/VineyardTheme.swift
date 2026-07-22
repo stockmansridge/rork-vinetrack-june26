@@ -31,7 +31,7 @@ enum VineyardTheme {
 
     // MARK: - Global Appearance
     /// Configures UIKit appearance proxies so navigation bars, tab bars, and toolbars
-    /// match the VineTrackV2 brand instead of falling back to default iOS system blue.
+    /// match the VineTrack brand instead of falling back to default iOS system blue.
     static func applyGlobalAppearance() {
         let tintUI = UIColor.systemBlue
         let textUI = UIColor.label

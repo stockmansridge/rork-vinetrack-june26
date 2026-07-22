@@ -1,6 +1,6 @@
 //
-//  VineTrackV2App.swift
-//  VineTrackV2
+//  VineTrackApp.swift
+//  VineTrack
 //
 //  Created by Rork on April 27, 2026.
 //
@@ -11,7 +11,7 @@ import SwiftUI
 import SwiftData
 
 @main
-struct VineTrackV2App: App {
+struct VineTrackApp: App {
     @State private var auth = NewBackendAuthService()
     @State private var biometric = BiometricAuthService()
     @State private var migratedStore = MigratedDataStore()

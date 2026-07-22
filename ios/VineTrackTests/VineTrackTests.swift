@@ -1,14 +1,14 @@
 //
-//  VineTrackV2Tests.swift
-//  VineTrackV2Tests
+//  VineTrackTests.swift
+//  VineTrackTests
 //
 //  Created by Rork on April 27, 2026.
 //
 
 import Testing
-@testable import VineTrackV2
+@testable import VineTrack
 
-struct VineTrackV2Tests {
+struct VineTrackTests {
 
     // MARK: - Every Second Row sequence (multi-block, parity-preserving)
 

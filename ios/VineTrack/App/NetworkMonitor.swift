@@ -1,6 +1,6 @@
 //
 //  NetworkMonitor.swift
-//  VineTrackV2
+//  VineTrack
 //
 //  Network reachability observer used to drive the offline map fallback.
 //  Field navigation must never depend on cellular coverage, so views observe

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Centralised configuration layer for VineTrackV2.
+/// Centralised configuration layer for VineTrack.
 ///
 /// Reads values in this priority order:
 ///   1. Generated `Config` (build-time injected EXPO_PUBLIC_* values)

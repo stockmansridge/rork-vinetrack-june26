@@ -1,13 +1,13 @@
 //
-//  VineTrackV2UITestsLaunchTests.swift
-//  VineTrackV2UITests
+//  VineTrackUITestsLaunchTests.swift
+//  VineTrackUITests
 //
 //  Created by Rork on April 27, 2026.
 //
 
 import XCTest
 
-final class VineTrackV2UITestsLaunchTests: XCTestCase {
+final class VineTrackUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true

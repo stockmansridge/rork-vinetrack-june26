@@ -3,7 +3,7 @@ import Foundation
 enum LegacyStorage {
     static let storageDirectory: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let dir = docs.appendingPathComponent("VineTrackV2Data", isDirectory: true)
+        let dir = docs.appendingPathComponent("VineTrackData", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
