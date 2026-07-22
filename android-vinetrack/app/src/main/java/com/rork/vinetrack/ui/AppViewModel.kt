@@ -633,6 +633,18 @@ data class AppUiState(
         return TripSyncBadge.QUEUED
     }
 
+    /**
+     * Coarse per-spray-record sync state derived from the pending outbox,
+     * mirroring iOS `RecordSyncState.forSprayRecord`. Display-only.
+     */
+    fun spraySyncState(recordId: String): TripSyncBadge {
+        val items = pendingSyncItems.filter { it.clientId == recordId && it.entityType == PendingEntityType.SPRAY_RECORD }
+        if (items.isEmpty()) return TripSyncBadge.SYNCED
+        if (items.any { it.status == "failed" }) return TripSyncBadge.ERROR
+        if (items.any { it.status == "in_progress" }) return TripSyncBadge.SYNCING
+        return TripSyncBadge.QUEUED
+    }
+
     /** The caller's role in the selected vineyard, if known. */
     val currentRole: String? get() = members.firstOrNull { it.userId == currentUserId }?.role?.lowercase()
     /** Only owners and managers may edit launcher buttons (matches iOS + RLS). */

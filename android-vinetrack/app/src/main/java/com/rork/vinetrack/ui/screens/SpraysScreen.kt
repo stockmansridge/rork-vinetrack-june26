@@ -61,7 +61,11 @@ import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.LocalDrink
 import androidx.compose.material.icons.filled.LocalGasStation
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Spa
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -104,6 +108,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.RegionFormatter
@@ -119,7 +124,6 @@ import com.rork.vinetrack.data.model.SprayChemical
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.SprayStatus
 import com.rork.vinetrack.data.model.SprayTank
-import com.rork.vinetrack.data.model.VineyardMachine
 import com.rork.vinetrack.data.model.formatTripDuration
 import com.rork.vinetrack.data.model.resolveSprayEquipmentName
 import com.rork.vinetrack.data.model.resolveSprayTrip
@@ -130,6 +134,7 @@ import com.rork.vinetrack.data.model.sprayOperationTypes
 import com.rork.vinetrack.data.model.windDirectionOptions
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.TripSyncBadge
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
@@ -564,17 +569,35 @@ private fun SprayListView(
                     ) {
                         if (filter == SprayFilter.TEMPLATES) {
                             items(templates, key = { it.id }) { record ->
-                                SprayRow(record, state.machines, state.trips, onClick = { onSelect(record) })
+                                SprayRow(
+                                    record = record,
+                                    trips = state.trips,
+                                    syncBadge = state.spraySyncState(record.id),
+                                    isPortalTemplate = state.sprayRecords.none { it.id == record.id },
+                                    onClick = { onSelect(record) },
+                                )
                             }
                         } else {
                             if (filter == SprayFilter.ALL && templates.isNotEmpty()) {
                                 item { SectionHeader("Templates", onLight = true) }
                                 items(templates, key = { "tmpl-${it.id}" }) { record ->
-                                    SprayRow(record, state.machines, state.trips, onClick = { onSelect(record) })
+                                    SprayRow(
+                                        record = record,
+                                        trips = state.trips,
+                                        syncBadge = state.spraySyncState(record.id),
+                                        isPortalTemplate = state.sprayRecords.none { it.id == record.id },
+                                        onClick = { onSelect(record) },
+                                    )
                                 }
                             }
                             items(filtered, key = { it.id }) { record ->
-                                SprayRow(record, state.machines, state.trips, onClick = { onSelect(record) })
+                                SprayRow(
+                                    record = record,
+                                    trips = state.trips,
+                                    syncBadge = state.spraySyncState(record.id),
+                                    isPortalTemplate = false,
+                                    onClick = { onSelect(record) },
+                                )
                             }
                         }
                     }
@@ -749,8 +772,19 @@ private fun ImportStatRow(label: String, value: String) {
     }
 }
 
+/**
+ * One spray record row, mirroring the iOS `SprayProgramView.recordRow` layout:
+ * status icon, reference, calendar date, paddock (grape-leaf, olive), portal
+ * template lock note, full chemical list, then a trailing tank count + sync tick.
+ */
 @Composable
-private fun SprayRow(record: SprayRecord, machines: List<VineyardMachine>, trips: List<com.rork.vinetrack.data.model.Trip>, onClick: () -> Unit) {
+private fun SprayRow(
+    record: SprayRecord,
+    trips: List<com.rork.vinetrack.data.model.Trip>,
+    syncBadge: TripSyncBadge,
+    isPortalTemplate: Boolean,
+    onClick: () -> Unit,
+) {
     val vine = LocalVineColors.current
     val status = if (record.isTemplate) null else sprayRecordStatus(record, trips)
     val (icon, iconTint) = when {
@@ -760,6 +794,7 @@ private fun SprayRow(record: SprayRecord, machines: List<VineyardMachine>, trips
         status == SprayStatus.COMPLETED -> Icons.Filled.CheckCircle to VineColors.LeafGreen
         else -> Icons.Filled.WaterDrop to VineColors.Cyan
     }
+    val paddockName = resolveSprayTrip(record, trips)?.paddockName?.takeIf { it.isNotBlank() }
     VineyardCard(modifier = Modifier.clickable { onClick() }) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(
@@ -768,25 +803,54 @@ private fun SprayRow(record: SprayRecord, machines: List<VineyardMachine>, trips
             ) {
                 Icon(icon, contentDescription = null, tint = iconTint)
             }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(record.displayLabel, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, fontSize = 16.sp, maxLines = 1)
-                val sub = listOfNotNull(
-                    if (record.isTemplate) "Template" else record.operationType?.takeIf { it.isNotBlank() },
-                    if (record.isTemplate) null else formatSprayDate(record.dateEpochMs),
-                ).joinToString(" · ")
-                if (sub.isNotBlank()) Text(sub, fontSize = 13.sp, color = vine.textSecondary, maxLines = 1)
-                val chems = record.chemicalNames
-                val chemLine = when {
-                    chems.isEmpty() && record.tankCount > 0 -> "${record.tankCount} tank${if (record.tankCount == 1) "" else "s"}"
-                    chems.isEmpty() -> null
-                    chems.size <= 2 -> chems.joinToString(", ")
-                    else -> "${chems.take(2).joinToString(", ")} +${chems.size - 2}"
+                formatSprayDate(record.dateEpochMs)?.let { date ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Filled.CalendarToday, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(12.dp))
+                        Text(date, fontSize = 12.sp, color = vine.textSecondary, maxLines = 1)
+                    }
                 }
-                chemLine?.let { Text(it, fontSize = 12.sp, color = vine.textSecondary, maxLines = 1) }
+                paddockName?.let { name ->
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Filled.Spa, contentDescription = null, tint = VineColors.Olive, modifier = Modifier.size(12.dp))
+                        Text(name, fontSize = 12.sp, color = VineColors.Olive, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                if (isPortalTemplate) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Filled.Lock, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(11.dp))
+                        Text("Admin portal template", fontSize = 11.sp, color = vine.textSecondary, maxLines = 1)
+                    }
+                }
+                val chems = record.chemicalNames.filter { it.isNotBlank() }
+                if (chems.isNotEmpty()) {
+                    Text(chems.joinToString(", "), fontSize = 12.sp, color = vine.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(
+                    "${record.tankCount} tank${if (record.tankCount == 1) "" else "s"}",
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                )
+                SpraySyncTick(syncBadge)
             }
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary)
         }
     }
+}
+
+/** Small per-record sync state icon, mirroring the iOS `RecordSyncBadge` (icon only). */
+@Composable
+private fun SpraySyncTick(state: TripSyncBadge) {
+    val (icon, tint) = when (state) {
+        TripSyncBadge.SYNCED -> Icons.Filled.CheckCircle to VineColors.Success
+        TripSyncBadge.QUEUED -> Icons.Filled.Schedule to VineColors.Warning
+        TripSyncBadge.SYNCING -> Icons.Filled.Sync to VineColors.Primary
+        TripSyncBadge.ERROR -> Icons.Outlined.ErrorOutline to VineColors.Destructive
+    }
+    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(14.dp))
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
