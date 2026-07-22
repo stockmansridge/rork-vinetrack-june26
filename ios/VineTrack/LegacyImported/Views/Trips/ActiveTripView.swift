@@ -486,15 +486,10 @@ struct ActiveTripView: View {
         // ends and this view is swapped out.
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
-            // Trip heading sits on the left; the tappable spray record name
-            // takes the centre slot (replacing the old spray banner row above
-            // the tank controls, freeing that height for the map).
-            ToolbarItem(placement: .topBarLeading) {
-                Text(navTitle)
-                    .font(.headline)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
+            // The tappable spray record name takes the centre slot (replacing
+            // the old spray banner row above the tank controls, freeing that
+            // height for the map). The old non-interactive "Trip" heading
+            // circle on the left served no function and was removed.
             if let record = sprayRecord {
                 ToolbarItem(placement: .principal) {
                     NavigationLink {
@@ -558,6 +553,15 @@ struct ActiveTripView: View {
                         copyDiagnosticsToClipboard()
                     } label: {
                         Label("Copy diagnostics", systemImage: "doc.on.clipboard")
+                    }
+                    Divider()
+                    // Emergency escape hatch: jump to the Home tab to reach
+                    // any other tool while the trip keeps recording in the
+                    // background. Returning to the Trip tab re-opens this view.
+                    Button {
+                        NotificationCenter.default.post(name: .vineTrackGoHome, object: nil)
+                    } label: {
+                        Label("Go to Home (trip keeps running)", systemImage: "house")
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -1737,12 +1741,19 @@ struct ActiveTripView: View {
                     Text("Trip Paused")
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.orange)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                     Spacer(minLength: 8)
                     Button {
                         showAddBlocks = true
                     } label: {
+                        // fixedSize keeps the label on one line — without it
+                        // the squeezed HStack wrapped the text one letter per
+                        // line when the pause bar appeared.
                         Label("Add block", systemImage: "plus.square")
                             .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                     }

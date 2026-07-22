@@ -229,6 +229,11 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
                     programOpenCalculator = true
                     tab = MainTab.Program
                 },
+                // Emergency escape from the live trip HUD — the trip keeps
+                // recording; the Trip tab re-opens it via the active banner.
+                onGoHome = {
+                    tab = MainTab.Home; tool = null; pinMode = null; launcherMode = null; pinsOpenInList = false
+                },
             )
             MainTab.Program -> SpraysScreen(
                 vm, state, modifier,

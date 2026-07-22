@@ -67,6 +67,8 @@ import androidx.compose.material.icons.filled.LocalDrink
 import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Paid
 import androidx.compose.material.icons.filled.Notes
@@ -244,6 +246,7 @@ fun TripsScreen(
     initialSelectedTripId: String? = null,
     onSelectionConsumed: () -> Unit = {},
     onStartSprayTrip: () -> Unit = {},
+    onGoHome: () -> Unit = {},
 ) {
     var selectedId by remember { mutableStateOf<String?>(null) }
     var choosing by remember { mutableStateOf(false) }
@@ -279,6 +282,7 @@ fun TripsScreen(
                 state = state,
                 tripId = trip.id,
                 onBack = { selectedId = null },
+                onGoHome = onGoHome,
             )
         }
     }
@@ -903,6 +907,7 @@ private fun TripDetailView(
     state: AppUiState,
     tripId: String,
     onBack: () -> Unit,
+    onGoHome: () -> Unit = {},
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
@@ -943,6 +948,7 @@ private fun TripDetailView(
             onBack = onBack,
             onShowDetails = { showLiveHud = false },
             onEndConfirmed = { ending = true },
+            onGoHome = onGoHome,
         )
     } else {
     Scaffold(
@@ -1615,6 +1621,7 @@ private fun ActiveTripHud(
     onBack: () -> Unit,
     onShowDetails: () -> Unit,
     onEndConfirmed: () -> Unit,
+    onGoHome: () -> Unit = {},
 ) {
     val vine = LocalVineColors.current
     val path = remember(trip.pathPoints) { trip.pathPoints?.mapNotNull { it.toLatLng() } ?: emptyList() }
@@ -1848,7 +1855,9 @@ private fun ActiveTripHud(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 HudCircleButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = onBack)
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(trip.displayLabel, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1)
+                    // The non-functional trip heading was removed (iOS parity)
+                    // — the status pill and tappable spray record name carry
+                    // the trip identity.
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
                             if (trip.isPaused) "Paused" else "Recording",
@@ -1893,6 +1902,23 @@ private fun ActiveTripHud(
                     }
                 }
                 HudCircleButton(Icons.Filled.Notes, "Trip details", onClick = onShowDetails)
+                // Overflow menu with the emergency escape back to Home. The
+                // trip keeps recording in the background; returning to the
+                // Trip tab re-opens this HUD via the active-trip banner.
+                Box {
+                    var hudMenuOpen by remember { mutableStateOf(false) }
+                    HudCircleButton(Icons.Filled.MoreVert, "Trip options", onClick = { hudMenuOpen = true })
+                    DropdownMenu(expanded = hudMenuOpen, onDismissRequest = { hudMenuOpen = false }) {
+                        DropdownMenuItem(
+                            leadingIcon = { Icon(Icons.Filled.Home, contentDescription = null) },
+                            text = { Text("Go to Home (trip keeps running)") },
+                            onClick = {
+                                hudMenuOpen = false
+                                onGoHome()
+                            },
+                        )
+                    }
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 HudStat(Icons.Filled.Schedule, clockDuration(durationSeconds), "Time", Modifier.weight(1f))

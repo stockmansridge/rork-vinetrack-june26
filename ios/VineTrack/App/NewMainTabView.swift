@@ -1,5 +1,13 @@
 import SwiftUI
 import CoreLocation
+import Combine
+
+extension Notification.Name {
+    /// Posted from the live trip's overflow menu ("Go to Home") so the
+    /// operator can reach any other tool while the trip keeps recording.
+    /// Observed here to flip the tab selection back to Home.
+    static let vineTrackGoHome = Notification.Name("VineTrackGoHome")
+}
 
 struct NewMainTabView: View {
     @Environment(NewBackendAuthService.self) private var auth
@@ -151,6 +159,12 @@ struct NewMainTabView: View {
                 if scenePhase != .active { return }
                 await runFullSweep(alertRefresh: .refresh)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .vineTrackGoHome)) { _ in
+            // Emergency escape from the live trip HUD — the trip keeps
+            // running (TripTrackingService is app-wide); returning to the
+            // Trip tab re-opens the active trip view.
+            selectedTab = 0
         }
         .onChange(of: alertService.pendingNavigation) { _, action in
             guard let action else { return }
