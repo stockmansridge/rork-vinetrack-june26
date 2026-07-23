@@ -31,14 +31,32 @@ fun KeepScreenAwake(enabled: Boolean) {
 
     DisposableEffect(context, shouldKeepAwake) {
         val window = context.findActivityOrNull()?.window
-        if (window != null && shouldKeepAwake) {
+        val holding = window != null && shouldKeepAwake
+        if (holding) {
+            awakeHolders += 1
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
         onDispose {
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            // Ref-counted like the iOS ScreenAwakeManager owner set: only the
+            // last holder clears the flag, so a screen leaving composition
+            // (e.g. trip detail) can't turn off keep-awake that another live
+            // screen (e.g. the active-trip scaffold hold) still needs.
+            if (holding) {
+                awakeHolders = (awakeHolders - 1).coerceAtLeast(0)
+                if (awakeHolders == 0) {
+                    window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            }
         }
     }
 }
+
+/**
+ * Number of live [KeepScreenAwake] instances currently holding the flag.
+ * Single-activity app, main-thread only (composition effects), so a plain
+ * counter is sufficient.
+ */
+private var awakeHolders: Int = 0
 
 /** Walks the [ContextWrapper] chain to find the hosting [Activity], if any. */
 private fun Context.findActivityOrNull(): Activity? {

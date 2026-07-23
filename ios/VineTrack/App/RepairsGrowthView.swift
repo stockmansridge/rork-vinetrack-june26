@@ -159,6 +159,15 @@ struct RepairsGrowthView: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
+        .onAppear {
+            // Operators keep this buttons page open while working rows — hold
+            // the screen awake like ActiveTripView (same owner-counted manager,
+            // gated by the "Keep screen awake during trips" preference).
+            ScreenAwakeManager.shared.acquire("RepairsGrowthView")
+        }
+        .onDisappear {
+            ScreenAwakeManager.shared.release("RepairsGrowthView")
+        }
     }
 
     private func attachPhoto(data: Data?) {

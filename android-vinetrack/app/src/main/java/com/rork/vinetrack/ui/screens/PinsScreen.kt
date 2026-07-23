@@ -118,6 +118,9 @@ import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.PinSyncState
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.components.KeepScreenAwake
+import com.rork.vinetrack.ui.components.compassTrueHeading
+import com.rork.vinetrack.ui.components.rememberCompassHeading
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -966,7 +969,14 @@ private fun PinEditSheetHost(
                             longitude = loc?.second,
                             buttonName = fields.title,
                             buttonColor = colorToken,
-                            heading = if (hasGps) target.bearing else null,
+                            // Correct the launch-time compass heading to true
+                            // north when a location is known; keep the raw
+                            // magnetic value otherwise rather than dropping it.
+                            heading = target.bearing?.let { b ->
+                                val hLat = loc?.first
+                                val hLng = loc?.second
+                                if (hLat != null && hLng != null) compassTrueHeading(b, hLat, hLng) else b
+                            },
                             attachToRow = hasGps,
                             photoUri = photoUri,
                         ) { ok ->
@@ -1356,6 +1366,17 @@ fun PinCategoryLauncherScreen(
     var locating by remember { mutableStateOf(false) }
     val vineyardName = state.selectedVineyard?.name?.takeIf { it.isNotBlank() } ?: "Vineyard"
 
+    // Live magnetometer heading so dropped pins record the direction the phone
+    // is *facing* even when standing still — the GPS fix bearing is course over
+    // ground and only exists while moving, which is why launcher pins were
+    // saved without a direction. Mirrors the iOS CLLocation heading capture.
+    val compassHeadingDegrees by rememberCompassHeading()
+
+    // Operators keep this launcher open while working rows (often mid-trip):
+    // hold the screen awake exactly like the active-trip screen, gated by the
+    // same "Keep screen awake during trips" preference.
+    KeepScreenAwake(enabled = true)
+
     // Quick-pin workflow state (iOS RepairsGrowthView parity).
     // Pending duplicate confirmation sheet for a quick-tapped pin.
     var duplicatePrompt by remember { mutableStateOf<PendingPinDuplicate?>(null) }
@@ -1425,7 +1446,9 @@ fun PinCategoryLauncherScreen(
                 longitude = lng,
                 buttonName = category,
                 buttonColor = colorToken,
-                heading = loc.bearing,
+                // Compass-first (converted to true north at the drop location);
+                // fall back to the GPS course when the device has no compass.
+                heading = compassHeadingDegrees?.let { compassTrueHeading(it, lat, lng) } ?: loc.bearing,
                 attachToRow = true,
                 photoUri = null,
                 onCreatedPin = { pin ->
@@ -1485,7 +1508,9 @@ fun PinCategoryLauncherScreen(
 
     /** Open the full New Pin form for manual/custom creation (current [mode]). */
     fun openFullForm() {
-        editing = PinEditTarget.New(mode = mode)
+        // Snapshot the compass at launch so a manually-created pin still
+        // records the facing direction (magnetic; corrected to true on save).
+        editing = PinEditTarget.New(mode = mode, bearing = compassHeadingDegrees)
     }
 
     /** Quick-tap a category: capture a GPS fix, then quick-create or fall back. */

@@ -39,6 +39,7 @@ import kotlinx.coroutines.launch
 import com.rork.vinetrack.ui.theme.VineColors
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.components.KeepScreenAwake
 import com.rork.vinetrack.ui.screens.BlocksScreen
 import com.rork.vinetrack.ui.screens.CostReportsScreen
 import com.rork.vinetrack.ui.screens.DiseaseRiskScreen
@@ -107,6 +108,12 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
     // When true, the Setup Wizard is shown as a full-screen overlay (opened from
     // the Home wizard card). Mirrors the iOS SetupWizardView sheet.
     var showSetupWizard by rememberSaveable { mutableStateOf(false) }
+
+    // Live trip mode holds the screen awake app-wide — not just while the trip
+    // detail screen is open — so the display never dims mid-trip while the
+    // operator is on another tab (e.g. dropping Repairs/Growth pins). Gated by
+    // the "Keep screen awake during trips" preference, like iOS.
+    KeepScreenAwake(enabled = state.activeTrip != null)
 
     // One-time reconciliation between this device's legacy local season start
     // and the shared vineyard value (owners/managers only — sql/108).
