@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -97,6 +98,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -161,9 +163,30 @@ fun PinsScreen(
     var isExporting by remember { mutableStateOf(false) }
     // Current GPS fix, used to show each pin's distance (iOS PinRowView parity).
     var userLocation by remember { mutableStateOf<Pair<Double, Double>?>(null) }
-    LaunchedEffect(Unit) {
+    // Ask for location permission on entry when missing (the one-shot fetch
+    // previously skipped silently, leaving every distance as "—"), then keep
+    // the fix fresh with a light poll. A failed fetch never clears a good fix.
+    val distancePermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
         if (vm.hasLocationPermission()) {
-            vm.fetchCurrentLocation { userLocation = it }
+            vm.fetchCurrentLocation { fix -> if (fix != null) userLocation = fix }
+        }
+    }
+    LaunchedEffect(Unit) {
+        if (!vm.hasLocationPermission()) {
+            distancePermission.launch(
+                arrayOf(
+                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
+            )
+        }
+        while (true) {
+            if (vm.hasLocationPermission()) {
+                vm.fetchCurrentLocation { fix -> if (fix != null) userLocation = fix }
+            }
+            delay(10_000L)
         }
     }
 
@@ -2021,7 +2044,13 @@ private fun PinHeaderSyncIcon(sync: PinSyncState, tint: Color) {
     )
 }
 
-/** Compact icon+label quick-action button used in the Pins list rows (iOS ActionButton parity). */
+/**
+ * Compact icon+label quick-action button used in the Pins list rows (iOS
+ * ActionButton parity). In dark mode the raw palette colours (especially leaf
+ * green) are too dim against a near-black background, so the tint is
+ * brightened and the background/border strengthened so the tiles read as
+ * buttons.
+ */
 @Composable
 private fun PinActionButton(
     icon: ImageVector,
@@ -2031,22 +2060,26 @@ private fun PinActionButton(
     busy: Boolean = false,
     onClick: () -> Unit,
 ) {
+    val isDark = LocalVineColors.current.isDark
+    val tint = if (isDark) lerp(color, Color.White, 0.35f) else color
+    val shape = RoundedCornerShape(8.dp)
     Column(
         modifier = modifier
             .padding(horizontal = 3.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(color.copy(alpha = 0.1f))
+            .clip(shape)
+            .background(color.copy(alpha = if (isDark) 0.28f else 0.1f))
+            .then(if (isDark) Modifier.border(1.dp, tint.copy(alpha = 0.4f), shape) else Modifier)
             .clickable(enabled = !busy, onClick = onClick)
             .padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         if (busy) {
-            CircularProgressIndicator(modifier = Modifier.size(18.dp), color = color, strokeWidth = 2.dp)
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), color = tint, strokeWidth = 2.dp)
         } else {
-            Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(18.dp))
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(18.dp))
         }
-        Text(label, fontSize = 9.sp, fontWeight = FontWeight.Medium, color = color)
+        Text(label, fontSize = 9.sp, fontWeight = FontWeight.Medium, color = tint)
     }
 }
 

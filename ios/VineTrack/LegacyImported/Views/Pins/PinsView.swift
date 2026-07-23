@@ -1069,6 +1069,13 @@ struct ActionButton: View {
     let label: String
     let color: Color
     let action: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// In dark mode the raw palette colours (especially leaf green) are too dim
+    /// against a near-black background, so brighten the icon/label tint.
+    private var tint: Color {
+        colorScheme == .dark ? color.mix(with: .white, by: 0.35) : color
+    }
 
     var body: some View {
         Button(action: action) {
@@ -1078,9 +1085,13 @@ struct ActionButton: View {
                 Text(label)
                     .font(.system(size: 9, weight: .medium))
             }
-            .foregroundStyle(color)
+            .foregroundStyle(tint)
             .frame(width: 64, height: 40)
-            .background(color.opacity(0.1), in: .rect(cornerRadius: 8))
+            .background(color.opacity(colorScheme == .dark ? 0.28 : 0.1), in: .rect(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(tint.opacity(colorScheme == .dark ? 0.4 : 0), lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
     }
