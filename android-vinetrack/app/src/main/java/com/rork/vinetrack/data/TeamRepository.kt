@@ -141,6 +141,32 @@ class TeamRepository(private val session: SessionStore) {
         }
     }
 
+    /**
+     * Best-effort: asks the `send-invitation-email` edge function to email the
+     * invitee via Resend. Never throws — the invitation row is already stored,
+     * so the invitee can always accept in-app; the returned status
+     * ("sent" / "failed" / "unconfigured") lets the UI report delivery
+     * honestly. Mirrors the iOS `InvitationEmailService`.
+     */
+    suspend fun sendInvitationEmail(invitationId: String): String = withContext(Dispatchers.IO) {
+        try {
+            requireConfig()
+            val token = session.accessToken ?: return@withContext "failed"
+            val response = SupabaseClient.http.post(SupabaseClient.functionUrl("send-invitation-email")) {
+                authHeaders(token)
+                contentType(ContentType.Application.Json)
+                setBody(SendInviteEmailArgs(invitationId))
+            }
+            if (response.status.isSuccess()) {
+                response.body<InviteEmailResponse>().emailStatus ?: "unknown"
+            } else {
+                "failed"
+            }
+        } catch (e: Exception) {
+            "failed"
+        }
+    }
+
     private suspend inline fun <reified T> rpc(name: String, args: T) = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -201,6 +227,14 @@ class TeamRepository(private val session: SessionStore) {
 
     @Serializable
     private data class ProfileUpsertArg(val id: String, val email: String)
+
+    @Serializable
+    private data class SendInviteEmailArgs(val invitationId: String)
+
+    @Serializable
+    private data class InviteEmailResponse(
+        @SerialName("emailStatus") val emailStatus: String? = null,
+    )
 
     @Serializable
     private data class CreateInvitationArgs(

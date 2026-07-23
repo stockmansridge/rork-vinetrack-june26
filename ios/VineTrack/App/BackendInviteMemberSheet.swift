@@ -13,8 +13,10 @@ struct BackendInviteMemberSheet: View {
     @State private var isSending: Bool = false
     @State private var errorMessage: String?
     @State private var showSuccess: Bool = false
+    @State private var successMessage: String = ""
 
     private let teamRepository: any TeamRepositoryProtocol = SupabaseTeamRepository()
+    private let invitationEmailService = InvitationEmailService()
 
     private var availableRoles: [BackendRole] {
         BackendRole.allCases.filter { $0 != .owner }
@@ -77,7 +79,7 @@ struct BackendInviteMemberSheet: View {
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: "info.circle")
                             .foregroundStyle(VineyardTheme.info)
-                        Text("No email is sent yet. The invited person will see the invite for \(vineyardName) when they sign in with this email address.")
+                        Text("An email invitation will be sent to this address. They can also see the invite for \(vineyardName) when they sign in with this email address.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -85,11 +87,12 @@ struct BackendInviteMemberSheet: View {
 
                 if showSuccess {
                     Section {
-                        HStack {
+                        HStack(alignment: .top, spacing: 10) {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundStyle(VineyardTheme.leafGreen)
-                            Text("Invitation sent successfully!")
+                            Text(successMessage)
                                 .font(.subheadline.weight(.medium))
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
@@ -137,13 +140,19 @@ struct BackendInviteMemberSheet: View {
         isSending = true
         defer { isSending = false }
         do {
-            _ = try await teamRepository.inviteMember(
+            let invitation = try await teamRepository.inviteMember(
                 vineyardId: vineyardId,
                 email: trimmed,
                 role: role,
                 operatorCategoryId: operatorCategoryId,
                 expiresAt: nil
             )
+            // Best-effort email notification — never fatal. The invite is
+            // already stored, so the invitee can always accept in-app.
+            let emailStatus = await invitationEmailService.send(invitationId: invitation.id)
+            successMessage = emailStatus == "sent"
+                ? "Invitation email sent to \(trimmed)."
+                : "Invitation created, but the email couldn't be sent. They'll still see the invite when they sign in with \(trimmed)."
             showSuccess = true
             email = ""
             operatorCategoryId = nil
@@ -151,7 +160,7 @@ struct BackendInviteMemberSheet: View {
             // First-invite milestone: surface the web portal prompt for
             // managers so they discover desktop team management.
             PortalPromptTracker.requestIfUnseen(.firstInvite)
-            try? await Task.sleep(for: .seconds(1.2))
+            try? await Task.sleep(for: .seconds(2.0))
             dismiss()
         } catch {
             errorMessage = error.localizedDescription

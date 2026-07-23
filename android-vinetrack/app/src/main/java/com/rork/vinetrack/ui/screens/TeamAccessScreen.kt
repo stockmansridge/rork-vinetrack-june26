@@ -205,6 +205,7 @@ fun TeamAccessScreen(
             }
 
             state.teamError?.let { Text(it, fontSize = 12.sp, color = VineColors.Destructive) }
+            state.teamNotice?.let { Text(it, fontSize = 12.sp, color = VineColors.Success) }
         }
     }
 
@@ -345,7 +346,7 @@ private fun InviteMemberDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    "No email is sent yet. The invited person will see the invite for $vineyardName when they sign in with this email address.",
+                    "An email invitation will be sent to this address. They can also see the invite for $vineyardName when they sign in with this email address.",
                     fontSize = 11.sp,
                     color = vine.textSecondary,
                 )

@@ -492,6 +492,8 @@ data class AppUiState(
     /** True while a team mutation (invite/role/remove/transfer) is in flight. */
     val teamBusy: Boolean = false,
     val teamError: String? = null,
+    /** Transient info message after a team action (e.g. invite email delivery status). */
+    val teamNotice: String? = null,
     /** Saved alert preferences for the selected vineyard (null until loaded). */
     val alertPreferences: AlertPreferences? = null,
     val alertPrefsLoading: Boolean = false,
@@ -8145,11 +8147,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun inviteMember(email: String, role: String, operatorCategoryId: String?, onResult: (Boolean) -> Unit) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
         viewModelScope.launch {
-            _ui.update { it.copy(teamBusy = true, teamError = null) }
+            _ui.update { it.copy(teamBusy = true, teamError = null, teamNotice = null) }
             try {
-                teamRepo.inviteMember(vineyardId, email, role, operatorCategoryId)
+                val invitation = teamRepo.inviteMember(vineyardId, email, role, operatorCategoryId)
                 loadPendingInvitations()
-                _ui.update { it.copy(teamBusy = false) }
+                // Best-effort email notification — never fatal. The invite is
+                // already stored, so the invitee can always accept in-app.
+                val emailStatus = teamRepo.sendInvitationEmail(invitation.id)
+                val notice = when (emailStatus) {
+                    "sent" -> "Invitation email sent to ${email.trim()}."
+                    else ->
+                        "Invitation created, but the email couldn't be sent. " +
+                            "They'll still see the invite when they sign in with ${email.trim()}."
+                }
+                _ui.update { it.copy(teamBusy = false, teamNotice = notice) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 signOut(); onResult(false)
@@ -8279,6 +8290,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearTeamError() { _ui.update { it.copy(teamError = null) } }
+
+    /** Clears the transient team notice (invite email delivery status). */
+    fun clearTeamNotice() { _ui.update { it.copy(teamNotice = null) } }
 
     // MARK: - Spray equipment (owner/manager-managed spray rigs & tanks)
 
