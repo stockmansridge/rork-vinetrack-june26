@@ -154,6 +154,11 @@ fun PinsScreen(
     // null = All statuses; true = Completed; false = Open. Defaults to Open
     // ("Not done"), mirroring the iOS shared completion filter.
     var statusFilter by remember { mutableStateOf<Boolean?>(false) }
+    // Advanced filters (iOS PinFilterSheet parity): specific issue/growth names
+    // and blocks, chosen from the Filters sheet opened by the bar's button.
+    var selectedNames by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var selectedPaddockIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showFilterSheet by remember { mutableStateOf(false) }
 
     // Per-pin action state (iOS list-row parity).
     var photoTarget by remember { mutableStateOf<Pin?>(null) }
@@ -197,13 +202,23 @@ fun PinsScreen(
     val sourcePins = remember(state.pins, state.growthRecords) {
         state.pins + synthesizeGrowthPins(state.pins, state.growthRecords)
     }
-    val visiblePins = remember(sourcePins, modeFilter, statusFilter) {
+    val visiblePins = remember(sourcePins, modeFilter, statusFilter, selectedNames, selectedPaddockIds) {
         sourcePins.filter { pin ->
             (modeFilter == null || pin.mode == modeFilter) &&
-                (statusFilter == null || pin.isCompleted == statusFilter)
+                (statusFilter == null || pin.isCompleted == statusFilter) &&
+                (selectedNames.isEmpty() || pin.displayTitle in selectedNames) &&
+                (selectedPaddockIds.isEmpty() || (pin.paddockId != null && pin.paddockId in selectedPaddockIds))
         }
             // Newest first, mirroring the iOS pin list ordering.
             .sortedByDescending { parseIsoMillis(it.createdAt) ?: Long.MIN_VALUE }
+    }
+    // Options offered by the Filters sheet (iOS uniqueNames/uniquePaddocks parity).
+    val uniqueNames = remember(sourcePins) {
+        sourcePins.map { it.displayTitle }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+    val uniquePaddocks = remember(sourcePins, state.paddocks) {
+        val ids = sourcePins.mapNotNullTo(HashSet()) { it.paddockId }
+        state.paddocks.filter { it.id in ids }.sortedBy { it.name }
     }
     // Resolve each pin's configured colour (iOS nameColorMap parity).
     val colorMap = remember(state.repairButtons, state.growthButtons) { pinColorMap(state) }
@@ -327,8 +342,10 @@ fun PinsScreen(
             PinsFilterBar(
                 modeFilter = modeFilter,
                 statusFilter = statusFilter,
+                activeFilterCount = (if (selectedNames.isEmpty()) 0 else 1) + (if (selectedPaddockIds.isEmpty()) 0 else 1),
                 onModeFilter = { modeFilter = it },
                 onStatusFilter = { statusFilter = it },
+                onOpenFilters = { showFilterSheet = true },
             )
             when (viewMode) {
                 PinsViewMode.Map -> VineyardMapContent(
@@ -420,6 +437,19 @@ fun PinsScreen(
             dismissButton = {
                 TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
             },
+        )
+    }
+
+    if (showFilterSheet) {
+        PinFilterSheet(
+            selectedNames = selectedNames,
+            selectedPaddockIds = selectedPaddockIds,
+            uniqueNames = uniqueNames,
+            colorMap = colorMap,
+            paddocks = uniquePaddocks,
+            onNames = { selectedNames = it },
+            onPaddocks = { selectedPaddockIds = it },
+            onDismiss = { showFilterSheet = false },
         )
     }
 
@@ -519,8 +549,10 @@ private fun PinsViewModeButton(icon: ImageVector, desc: String, selected: Boolea
 private fun PinsFilterBar(
     modeFilter: String?,
     statusFilter: Boolean?,
+    activeFilterCount: Int,
     onModeFilter: (String?) -> Unit,
     onStatusFilter: (Boolean?) -> Unit,
+    onOpenFilters: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     Row(
@@ -535,9 +567,140 @@ private fun PinsFilterBar(
         PinModeFilterChip("Repairs", modeFilter == "Repairs") { onModeFilter("Repairs") }
         PinModeFilterChip("Growth", modeFilter == "Growth") { onModeFilter("Growth") }
         Box(Modifier.size(width = 1.dp, height = 22.dp).background(vine.textSecondary.copy(alpha = 0.3f)))
+        PinsFilterButton(activeFilterCount, onOpenFilters)
+        Box(Modifier.size(width = 1.dp, height = 22.dp).background(vine.textSecondary.copy(alpha = 0.3f)))
         PinModeFilterChip("Both", statusFilter == null) { onStatusFilter(null) }
         PinModeFilterChip("Not Done", statusFilter == false) { onStatusFilter(false) }
         PinModeFilterChip("Done", statusFilter == true) { onStatusFilter(true) }
+    }
+}
+
+/**
+ * "Filters" pill that opens the advanced name/block filter sheet (iOS filterBar
+ * parity), turning blue with a count badge while any advanced filter is active.
+ */
+@Composable
+private fun PinsFilterButton(activeFilterCount: Int, onClick: () -> Unit) {
+    val vine = LocalVineColors.current
+    val active = activeFilterCount > 0
+    val contentColor = if (active) Color.White else vine.textPrimary
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (active) VineColors.Primary else vine.textSecondary.copy(alpha = 0.12f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Filled.Tune, contentDescription = "Open filters", tint = contentColor, modifier = Modifier.size(14.dp))
+        Text("Filters", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = contentColor)
+        if (active) {
+            Box(
+                modifier = Modifier.size(16.dp).clip(CircleShape).background(Color.White),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("$activeFilterCount", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = VineColors.Primary)
+            }
+        }
+    }
+}
+
+/**
+ * Advanced filter sheet (iOS PinFilterSheet parity): pick specific issue/growth
+ * names (with their configured colour dot) and blocks. Reset clears both.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PinFilterSheet(
+    selectedNames: Set<String>,
+    selectedPaddockIds: Set<String>,
+    uniqueNames: kotlin.collections.List<String>,
+    colorMap: Map<String, String>,
+    paddocks: kotlin.collections.List<Paddock>,
+    onNames: (Set<String>) -> Unit,
+    onPaddocks: (Set<String>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
+    val hasActiveFilters = selectedNames.isNotEmpty() || selectedPaddockIds.isNotEmpty()
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = vine.cardBackground) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(Modifier.fillMaxWidth()) {
+                if (hasActiveFilters) {
+                    TextButton(
+                        onClick = {
+                            onNames(emptySet())
+                            onPaddocks(emptySet())
+                        },
+                        modifier = Modifier.align(Alignment.CenterStart),
+                    ) { Text("Reset") }
+                }
+                Text(
+                    "Filters",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = vine.textPrimary,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterEnd)) {
+                    Text("Done", fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            Text("ISSUE / GROWTH", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PinModeFilterChip("All", selectedNames.isEmpty()) { onNames(emptySet()) }
+                uniqueNames.forEach { name ->
+                    val dotColor = colorMap[name]?.let { launcherColor(it) } ?: Color(0xFF8E8E93)
+                    val isActive = name in selectedNames
+                    FilterChip(
+                        selected = isActive,
+                        onClick = {
+                            onNames(if (isActive) selectedNames - name else selectedNames + name)
+                        },
+                        label = { Text(name) },
+                        leadingIcon = {
+                            Box(Modifier.size(12.dp).clip(CircleShape).background(dotColor))
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = dotColor.copy(alpha = 0.22f),
+                            selectedLabelColor = dotColor,
+                        ),
+                    )
+                }
+            }
+
+            Text("BLOCK", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
+            if (paddocks.isEmpty()) {
+                Text("No blocks recorded on these pins yet.", fontSize = 13.sp, color = vine.textSecondary)
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    PinModeFilterChip("All", selectedPaddockIds.isEmpty()) { onPaddocks(emptySet()) }
+                    paddocks.forEach { paddock ->
+                        val isActive = paddock.id in selectedPaddockIds
+                        PinModeFilterChip(paddock.name, isActive) {
+                            onPaddocks(if (isActive) selectedPaddockIds - paddock.id else selectedPaddockIds + paddock.id)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
