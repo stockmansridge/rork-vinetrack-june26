@@ -461,12 +461,29 @@ final class PinSyncService {
             return
         }
 
+        let nameColorMap = Self.buttonNameColorMap(for: vineyardId)
         for backendPin in remote {
-            await applyRemote(backendPin, vineyardId: vineyardId, store: store)
+            await applyRemote(backendPin, vineyardId: vineyardId, store: store, nameColorMap: nameColorMap)
         }
     }
 
-    private func applyRemote(_ backendPin: BackendPin, vineyardId: UUID, store: MigratedDataStore) async {
+    /// Button-name → colour-token map for a vineyard, loaded straight from the
+    /// persisted launcher configuration (falling back to the defaults) so pins
+    /// with no stored colour resolve exactly like Android's `pinColor`.
+    private static func buttonNameColorMap(for vineyardId: UUID) -> [String: String] {
+        let persistence = PersistenceStore.shared
+        let repair: [ButtonConfig] = persistence.load(key: MigratedDataStore.repairButtonsKey(for: vineyardId))
+            ?? ButtonConfig.defaultRepairButtons(for: vineyardId)
+        let growth: [ButtonConfig] = persistence.load(key: MigratedDataStore.growthButtonsKey(for: vineyardId))
+            ?? ButtonConfig.defaultGrowthButtons(for: vineyardId)
+        var map: [String: String] = [:]
+        for config in repair + growth where map[config.name] == nil {
+            map[config.name] = config.color
+        }
+        return map
+    }
+
+    private func applyRemote(_ backendPin: BackendPin, vineyardId: UUID, store: MigratedDataStore, nameColorMap: [String: String]) async {
         let existingIndex = store.pins.firstIndex { $0.id == backendPin.id }
 
         // Soft-deleted remotely.
@@ -494,7 +511,8 @@ final class PinSyncService {
 
         guard var mapped = backendPin.toVinePin(
             preservingPhoto: existingPhotoData,
-            preservingCreatedByText: existingCreatedByText
+            preservingCreatedByText: existingCreatedByText,
+            nameColorMap: nameColorMap
         ) else { return }
 
         // If the remote has a photoPath, try the disk cache first, then
@@ -553,11 +571,32 @@ final class PinSyncMetadata {
         /// Records whose last upsert/delete push failed while still pending.
         var failedUpserts: Set<UUID> = []
         var failedDeletes: Set<UUID> = []
+        /// Version of the remote→local pin mapping logic that last populated the
+        /// local cache. Bumping `currentMappingVersion` forces one full re-pull
+        /// so already-cached pins are re-mapped with the newer logic
+        /// (title/colour fallbacks for Android-created pins).
+        var mappingVersion: Int? = nil
     }
+
+    /// Bump when `BackendPin.toVinePin` mapping rules change in a way that
+    /// should rewrite pins already cached on the device.
+    private static let currentMappingVersion = 2
 
     init(persistence: PersistenceStore = .shared) {
         self.persistence = persistence
-        self.state = persistence.load(key: key) ?? State()
+        var loaded: State = persistence.load(key: key) ?? State()
+        if loaded.mappingVersion != Self.currentMappingVersion {
+            // Old cache was mapped with stale logic (blank names / hardcoded
+            // blue for Android pins) — clear the sync cursors so the next sync
+            // re-downloads and re-maps every pin. Pending local edits still win
+            // via the last-write-wins check.
+            loaded.lastSyncByVineyard = [:]
+            loaded.mappingVersion = Self.currentMappingVersion
+            self.state = loaded
+            persistence.save(loaded, key: key)
+            return
+        }
+        self.state = loaded
     }
 
     var pendingUpserts: [UUID: Date] { state.pendingUpserts }

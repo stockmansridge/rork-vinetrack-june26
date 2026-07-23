@@ -147,6 +147,16 @@ nonisolated struct BackendPinUpsert: Encodable, Sendable {
     }
 }
 
+private extension Optional where Wrapped == String {
+    /// The wrapped string trimmed of whitespace, or nil when absent/empty —
+    /// lets `??` chains skip empty-string values coming from Android rows.
+    var nonEmptyTrimmed: String? {
+        guard let trimmed = self?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+}
+
 extension BackendPin {
     /// Map a local VinePin into a BackendPin upsert payload.
     /// `photoPath` is the Supabase Storage path; raw photo bytes are uploaded
@@ -186,10 +196,28 @@ extension BackendPin {
 
     /// Map a remote BackendPin into a local VinePin. Returns nil if the remote
     /// row is missing critical coordinates.
-    func toVinePin(preservingPhoto existingPhoto: Data? = nil, preservingCreatedByText existingCreatedByText: String? = nil) -> VinePin? {
+    /// - Parameter nameColorMap: button-name → colour-token map from the
+    ///   vineyard's launcher configuration, used when the row has no stored
+    ///   colour (Android parity — old Android pins saved neither name nor colour
+    ///   in the button columns).
+    func toVinePin(
+        preservingPhoto existingPhoto: Data? = nil,
+        preservingCreatedByText existingCreatedByText: String? = nil,
+        nameColorMap: [String: String] = [:]
+    ) -> VinePin? {
         guard let latitude, let longitude else { return nil }
         let resolvedSide = PinSide(rawValue: side ?? "") ?? .left
         let pinMode = PinMode(rawValue: mode ?? "") ?? .repairs
+        // Android historically saved the pin's name only in `title` (and often
+        // an empty string — not NULL — in `button_name`), so treat empty as
+        // missing and fall back through title, then category.
+        let resolvedName = buttonName.nonEmptyTrimmed ?? title.nonEmptyTrimmed ?? category.nonEmptyTrimmed ?? ""
+        // Colour: the stored token wins; otherwise resolve from the vineyard's
+        // button configuration by name (matching Android), then a mode accent —
+        // never a hardcoded blue.
+        let resolvedColor = buttonColor.nonEmptyTrimmed
+            ?? nameColorMap[resolvedName].nonEmptyTrimmed
+            ?? (pinMode == .growth ? "darkgreen" : "red")
         return VinePin(
             id: id,
             vineyardId: vineyardId,
@@ -198,10 +226,8 @@ extension BackendPin {
             // Preserve a genuinely-missing heading as nil so the UI can show
             // "—" instead of a misleading North (0°).
             heading: heading,
-            // Android historically saved the pin's name only in `title`, so
-            // fall back to it (then category) before showing a blank bar.
-            buttonName: buttonName ?? title ?? category ?? "",
-            buttonColor: buttonColor ?? "blue",
+            buttonName: resolvedName,
+            buttonColor: resolvedColor,
             side: resolvedSide,
             mode: pinMode,
             paddockId: paddockId,
