@@ -212,7 +212,7 @@ struct GrowthObservationActionView: View {
         let createdPin = store.createPinFromButton(
             button: button,
             coordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading ?? 0,
+            heading: locationService.heading?.trueHeading,
             side: side,
             paddockId: resolved.paddockId,
             rowNumber: resolved.rowNumber,
@@ -239,7 +239,7 @@ struct GrowthObservationActionView: View {
             stageCode: stage.code,
             stageDescription: stage.description,
             coordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading ?? 0,
+            heading: locationService.heading?.trueHeading,
             side: pendingSide,
             paddockId: resolved.paddockId,
             rowNumber: resolved.rowNumber,

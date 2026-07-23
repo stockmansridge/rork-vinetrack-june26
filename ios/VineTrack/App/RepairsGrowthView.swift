@@ -379,7 +379,7 @@ struct RepairsGrowthView: View {
         resolved: PinContextResolver.Resolved,
         attachment: PinAttachmentResolver.Attachment
     ) {
-        let heading = locationService.heading?.trueHeading ?? 0
+        let heading = locationService.heading?.trueHeading
         let pin = store.createPinFromButton(
             button: button,
             coordinate: coord,
@@ -446,7 +446,7 @@ struct RepairsGrowthView: View {
         resolved: PinContextResolver.Resolved,
         attachment: PinAttachmentResolver.Attachment
     ) {
-        let heading = locationService.heading?.trueHeading ?? 0
+        let heading = locationService.heading?.trueHeading
         let pin = store.createGrowthStagePin(
             stageCode: stage.code,
             stageDescription: stage.description,

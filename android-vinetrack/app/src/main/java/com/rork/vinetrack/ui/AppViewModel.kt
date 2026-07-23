@@ -4130,6 +4130,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         isCompleted: Boolean,
         latitude: Double?,
         longitude: Double?,
+        // iOS-parity identity: the launcher button's name and colour token so
+        // other devices render the pin identically without this vineyard's
+        // button configuration. Defaults keep older callers compiling.
+        buttonName: String? = null,
+        buttonColor: String? = null,
+        /** Device bearing at drop time (degrees 0–360), when the fix had one. */
+        heading: Double? = null,
         photoUri: Uri? = null,
         // True only for launcher pins dropped at a real GPS fix: snap the pin to
         // the nearest mapped vine row and persist the row-attachment columns.
@@ -4167,9 +4174,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             paddockId = paddockId,
             title = title.ifBlank { null },
             category = category?.ifBlank { null },
+            buttonName = (buttonName ?: title).ifBlank { null },
+            buttonColor = buttonColor?.ifBlank { null },
             mode = mode.ifBlank { null },
             notes = notes?.ifBlank { null },
             side = side?.ifBlank { null },
+            heading = heading,
             rowNumber = resolvedRowNumber,
             pinRowNumber = attachment?.pinRowNumber,
             pinSide = attachment?.pinSide,
@@ -4253,9 +4263,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             paddockId = input.paddockId,
             title = input.title,
             category = input.category,
+            buttonName = input.buttonName,
+            buttonColor = input.buttonColor,
             mode = input.mode,
             notes = input.notes,
             side = input.side,
+            heading = input.heading,
             rowNumber = input.rowNumber,
             isCompleted = input.isCompleted,
             latitude = input.latitude,
@@ -5440,6 +5453,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 null
             }
             onResult(point?.let { it.latitude to it.longitude })
+        }
+    }
+
+    /**
+     * One-shot GPS fix including the device bearing (when the fix carries one)
+     * for dropping a pin with iOS-parity "facing" info. Same source as
+     * [fetchCurrentLocation]; kept separate so existing lat/lng callers are
+     * untouched.
+     */
+    fun fetchCurrentFix(onResult: (CoordinatePoint?) -> Unit) {
+        viewModelScope.launch {
+            val point = try {
+                LocationTracker(getApplication()).currentLocation()
+            } catch (_: Exception) {
+                null
+            }
+            onResult(point)
         }
     }
 

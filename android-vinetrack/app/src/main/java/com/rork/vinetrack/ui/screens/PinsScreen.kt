@@ -108,6 +108,7 @@ import coil3.compose.AsyncImage
 import com.rork.vinetrack.data.PinDuplicateChecker
 import com.rork.vinetrack.data.PinExporter
 import com.rork.vinetrack.data.RowAttachment
+import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.LauncherButton
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
@@ -166,8 +167,15 @@ fun PinsScreen(
         }
     }
 
-    val visiblePins = remember(state.pins, modeFilter, statusFilter) {
-        state.pins.filter { pin ->
+    // Source pins: real synced pins plus a fallback synthesis for any
+    // growth_stage_records rows without a matching pin (iOS PinsView parity).
+    // This guarantees growth-stage observations always appear here even when
+    // the originating pins row sync was missed or delayed.
+    val sourcePins = remember(state.pins, state.growthRecords) {
+        state.pins + synthesizeGrowthPins(state.pins, state.growthRecords)
+    }
+    val visiblePins = remember(sourcePins, modeFilter, statusFilter) {
+        sourcePins.filter { pin ->
             (modeFilter == null || pin.mode == modeFilter) &&
                 (statusFilter == null || pin.isCompleted == statusFilter)
         }
@@ -341,8 +349,9 @@ fun PinsScreen(
 
     // Selected-pin detail sheet (map tap → summary first, iOS parity). Resolved
     // fresh from state so completion/photo/sync changes update live; if the pin
-    // is deleted while open, the sheet closes itself.
-    val detailPin = detailPinId?.let { id -> state.pins.firstOrNull { it.id == id } }
+    // is deleted while open, the sheet closes itself. Includes synthesized
+    // growth-record pins so their map markers open a detail sheet too.
+    val detailPin = detailPinId?.let { id -> sourcePins.firstOrNull { it.id == id } }
     if (detailPinId != null && detailPin == null) {
         LaunchedEffect(detailPinId) { detailPinId = null }
     }
@@ -406,6 +415,42 @@ fun PinsScreen(
             dismissButton = {
                 TextButton(onClick = { showExportSheet = false }) { Text("Cancel") }
             },
+        )
+    }
+}
+
+/**
+ * Fallback pins synthesized from growth-stage observations that have no
+ * matching pin row (iOS `PinsView.sourcePins` parity). Matches on the
+ * observation's originating pin id (falling back to the record id) and only
+ * synthesizes rows carrying a real coordinate.
+ */
+internal fun synthesizeGrowthPins(
+    pins: kotlin.collections.List<Pin>,
+    growthRecords: kotlin.collections.List<com.rork.vinetrack.data.model.GrowthStageRecord>,
+): kotlin.collections.List<Pin> {
+    if (growthRecords.isEmpty()) return emptyList()
+    val localIds = pins.mapTo(HashSet()) { it.id }
+    return growthRecords.mapNotNull { record ->
+        val pinId = record.pinId?.takeIf { it.isNotBlank() } ?: record.id
+        if (pinId in localIds) return@mapNotNull null
+        val lat = record.latitude ?: return@mapNotNull null
+        val lon = record.longitude ?: return@mapNotNull null
+        Pin(
+            id = pinId,
+            vineyardId = record.vineyardId,
+            paddockId = record.paddockId,
+            buttonName = "Growth Stage ${record.stageCode}",
+            buttonColor = "darkgreen",
+            mode = "Growth",
+            notes = record.notes,
+            side = record.side,
+            rowNumber = record.rowNumber,
+            isCompleted = false,
+            latitude = lat,
+            longitude = lon,
+            photoPath = record.photoPaths?.firstOrNull(),
+            createdAt = record.observedAt ?: record.createdAt,
         )
     }
 }
@@ -717,6 +762,10 @@ private fun PinEditSheetHost(
                             "Pin saved — attached to row $rowLabel"
                         }
                     }
+                    // iOS-parity identity: persist the pin's name as button_name
+                    // and, when the title matches a configured launcher button,
+                    // its colour token as button_color.
+                    val colorToken = pinColorMap(state)[fields.title]?.ifBlank { null }
                     val doCreate: () -> Unit = {
                         vm.createPin(
                             title = fields.title,
@@ -729,6 +778,9 @@ private fun PinEditSheetHost(
                             isCompleted = fields.isCompleted,
                             latitude = loc?.first,
                             longitude = loc?.second,
+                            buttonName = fields.title,
+                            buttonColor = colorToken,
+                            heading = if (hasGps) target.bearing else null,
                             attachToRow = hasGps,
                             photoUri = photoUri,
                         ) { ok ->
@@ -1160,14 +1212,18 @@ fun PinCategoryLauncherScreen(
      * ([PinDuplicateChecker]) and offline-safe create ([AppViewModel.createPin]).
      * No full form is shown for this common path.
      */
-    fun quickCreate(category: String, side: String, loc: Pair<Double, Double>) {
-        val lat = loc.first
-        val lng = loc.second
+    fun quickCreate(category: String, side: String, loc: CoordinatePoint) {
+        val lat = loc.latitude
+        val lng = loc.longitude
         val paddock = state.paddocks.firstOrNull { RowAttachment.containsPoint(it, lat, lng) }
         val paddockId = paddock?.id
         val attachment = RowAttachment.resolve(paddock, lat, lng, side)
         val offline = !state.isOnline
         val autoPhotoEnabled = AppPreferencesStore(context).load().autoPhotoPrompt
+        // iOS-parity identity: store the tapped button's name and colour token
+        // on the pin so every device renders it identically.
+        val buttons = if (mode == "Growth") state.growthButtons else state.repairButtons
+        val colorToken = buttons.firstOrNull { it.name == category }?.color?.ifBlank { null }
 
         val doCreate: () -> Unit = {
             vm.createPin(
@@ -1181,6 +1237,9 @@ fun PinCategoryLauncherScreen(
                 isCompleted = false,
                 latitude = lat,
                 longitude = lng,
+                buttonName = category,
+                buttonColor = colorToken,
+                heading = loc.bearing,
                 attachToRow = true,
                 photoUri = null,
                 onCreatedPin = { pin ->
@@ -1246,7 +1305,7 @@ fun PinCategoryLauncherScreen(
     /** Quick-tap a category: capture a GPS fix, then quick-create or fall back. */
     fun launchCategory(category: String, side: String) {
         locating = true
-        vm.fetchCurrentLocation { loc ->
+        vm.fetchCurrentFix { loc ->
             locating = false
             if (loc != null) {
                 quickCreate(category, side, loc)
@@ -2158,6 +2217,8 @@ private sealed interface PinEditTarget {
         /** GPS fix captured at launch time; null falls back to paddock centroid. */
         val latitude: Double? = null,
         val longitude: Double? = null,
+        /** Device bearing at launch time (degrees 0–360), when the fix had one. */
+        val bearing: Double? = null,
     ) : PinEditTarget
     data class Existing(val pin: Pin) : PinEditTarget
 }

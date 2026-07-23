@@ -63,11 +63,14 @@ internal fun pinColorMap(state: AppUiState): Map<String, String> {
 }
 
 /**
- * Resolve a pin's display colour from its configured button colour, matching on
- * the stored button name (then the display title), and falling back to the mode
- * accent when no configured button matches.
+ * Resolve a pin's display colour. The stored `button_color` token (written at
+ * drop time by both apps — iOS `Color.fromString(pin.buttonColor)` parity)
+ * always wins; only when no colour was stored do we fall back to matching the
+ * pin's button name against the vineyard's launcher configuration, then the
+ * mode accent.
  */
 internal fun pinColor(pin: Pin, colorMap: Map<String, String>): Color {
+    pin.buttonColor?.trim()?.takeIf { it.isNotBlank() }?.let { return launcherColor(it) }
     val token = pin.buttonName?.takeIf { it.isNotBlank() }?.let { colorMap[it] }
         ?: colorMap[pin.displayTitle]
     return if (!token.isNullOrBlank()) launcherColor(token) else pinModeColor(pin.mode)

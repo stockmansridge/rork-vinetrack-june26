@@ -526,7 +526,7 @@ final class TripTrackingService {
         guard var pin = store.createPinFromButton(
             button: button,
             coordinate: pinCoordinate,
-            heading: locationService?.heading?.trueHeading ?? 0,
+            heading: locationService?.heading?.trueHeading,
             side: side,
             paddockId: resolvedPaddock,
             rowNumber: resolvedRow,

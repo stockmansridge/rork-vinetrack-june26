@@ -45,7 +45,7 @@ struct PinsView: View {
                 vineyardId: record.vineyardId,
                 latitude: lat,
                 longitude: lon,
-                heading: 0,
+                heading: nil,
                 buttonName: "Growth Stage \(record.stageCode)",
                 buttonColor: "darkgreen",
                 side: PinSide(rawValue: record.side ?? "") ?? .right,
@@ -851,7 +851,8 @@ struct PinRowView: View {
     @State private var showFullPhoto: Bool = false
 
     private var headingText: String {
-        let h = pin.heading
+        // No recorded compass direction — show an honest dash, not North.
+        guard let h = pin.heading else { return "\u{2014}" }
         switch h {
         case 337.5..<360, 0..<22.5: return "N"
         case 22.5..<67.5: return "NE"
@@ -925,13 +926,14 @@ struct PinRowView: View {
                 }()
                 let sideLabel = (pin.pinSide ?? pin.side).rawValue
 
-                let fullFacing = PinAttachmentFormatter.fullCompassName(degrees: pin.heading)
+                // Only claim a facing direction when one was actually recorded.
+                let facingSuffix = pin.heading.map { " facing \(PinAttachmentFormatter.fullCompassName(degrees: $0))" } ?? ""
                 if let drivingPathText {
-                    Text("Row \(drivingPathText) — \(sideLabel) hand side facing \(fullFacing)")
+                    Text("Row \(drivingPathText) — \(sideLabel) hand side\(facingSuffix)")
                         .font(.subheadline)
                         .foregroundStyle(.primary)
                 } else {
-                    Text("\(sideLabel) hand side facing \(fullFacing)")
+                    Text("\(sideLabel) hand side\(facingSuffix)")
                         .font(.subheadline)
                         .foregroundStyle(.primary)
                 }
@@ -964,7 +966,7 @@ struct PinRowView: View {
             HStack(spacing: 0) {
                 InfoTag(icon: "location.fill", text: formattedDistance)
                 Spacer()
-                InfoTag(icon: "safari", text: "\(headingText) (\(Int(pin.heading))\u{00B0})")
+                InfoTag(icon: "safari", text: pin.heading.map { "\(headingText) (\(Int($0))\u{00B0})" } ?? "\u{2014}")
                 Spacer()
                 InfoTag(icon: "clock", text: fmt.formatDateTime(pin.timestamp))
             }
@@ -1250,7 +1252,8 @@ struct PinDetailSheet: View {
     }
 
     private var compassDirection: String {
-        let h = pin.heading
+        // No recorded compass direction — show an honest dash, not North.
+        guard let h = pin.heading else { return "\u{2014}" }
         switch h {
         case 337.5..<360, 0..<22.5: return "N"
         case 22.5..<67.5: return "NE"
@@ -1359,10 +1362,10 @@ struct PinDetailSheet: View {
                         }
                         if let drivingPath = pin.drivingRowNumber {
                             let side = (pin.pinSide ?? pin.side).rawValue
-                            let facing = PinAttachmentFormatter.fullCompassName(degrees: pin.heading)
+                            let facingSuffix = pin.heading.map { " facing \(PinAttachmentFormatter.fullCompassName(degrees: $0))" } ?? ""
                             LabeledContent(
                                 "Driving path",
-                                value: "Row \(String(format: "%.1f", drivingPath)) — \(side) hand side facing \(facing)"
+                                value: "Row \(String(format: "%.1f", drivingPath)) — \(side) hand side\(facingSuffix)"
                             )
                         }
                     } else if let rowNumber = pin.rowNumber {
@@ -1370,7 +1373,7 @@ struct PinDetailSheet: View {
                         LabeledContent("Row", value: "\(rowNumber).5")
                         LabeledContent("Side", value: "\(pin.side.rawValue) hand side")
                     }
-                    LabeledContent("Facing", value: "\(compassDirection) (\(Int(pin.heading))\u{00B0})")
+                    LabeledContent("Facing", value: pin.heading.map { "\(compassDirection) (\(Int($0))\u{00B0})" } ?? "\u{2014}")
                     if let createdByName = resolveDisplayName(userId: pin.createdByUserId, fallbackText: pin.createdBy) {
                         LabeledContent("Created by", value: createdByName)
                     }

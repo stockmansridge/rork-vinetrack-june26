@@ -195,8 +195,12 @@ extension BackendPin {
             vineyardId: vineyardId,
             latitude: latitude,
             longitude: longitude,
-            heading: heading ?? 0,
-            buttonName: buttonName ?? "",
+            // Preserve a genuinely-missing heading as nil so the UI can show
+            // "—" instead of a misleading North (0°).
+            heading: heading,
+            // Android historically saved the pin's name only in `title`, so
+            // fall back to it (then category) before showing a blank bar.
+            buttonName: buttonName ?? title ?? category ?? "",
             buttonColor: buttonColor ?? "blue",
             side: resolvedSide,
             mode: pinMode,

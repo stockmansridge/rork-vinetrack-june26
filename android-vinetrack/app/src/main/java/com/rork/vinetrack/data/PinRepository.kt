@@ -46,9 +46,16 @@ class PinRepository(private val session: SessionStore) {
         @SerialName("trip_id") val tripId: String? = null,
         val title: String? = null,
         val category: String? = null,
+        // iOS-parity identity columns: the launcher button's name and colour
+        // token, stored on the row so every device renders the same colour
+        // without needing the vineyard's button configuration.
+        @SerialName("button_name") val buttonName: String? = null,
+        @SerialName("button_color") val buttonColor: String? = null,
         val mode: String? = null,
         val notes: String? = null,
         val side: String? = null,
+        /** Device bearing captured at drop time (degrees 0–360), when available. */
+        val heading: Double? = null,
         @SerialName("row_number") val rowNumber: Int? = null,
         // Row-attachment columns, populated when a GPS launcher pin snaps to a
         // mapped vine row. Left null (and untouched) for non-snapped pins.

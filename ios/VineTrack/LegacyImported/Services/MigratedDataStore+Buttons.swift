@@ -123,7 +123,7 @@ extension MigratedDataStore {
     func createPinFromButton(
         button: ButtonConfig,
         coordinate: CLLocationCoordinate2D,
-        heading: Double,
+        heading: Double?,
         side: PinSide = .right,
         paddockId: UUID? = nil,
         rowNumber: Int? = nil,
@@ -169,7 +169,7 @@ extension MigratedDataStore {
         stageCode: String,
         stageDescription: String,
         coordinate: CLLocationCoordinate2D,
-        heading: Double,
+        heading: Double?,
         side: PinSide = .right,
         paddockId: UUID? = nil,
         rowNumber: Int? = nil,

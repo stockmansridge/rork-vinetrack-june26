@@ -367,7 +367,7 @@ struct PinDropView: View {
         store.createPinFromButton(
             button: button,
             coordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading ?? 0,
+            heading: locationService.heading?.trueHeading,
             side: side,
             paddockId: selectedPaddockId,
             rowNumber: rowNumber,
@@ -389,7 +389,7 @@ struct PinDropView: View {
             stageCode: stage.code,
             stageDescription: stage.description,
             coordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading ?? 0,
+            heading: locationService.heading?.trueHeading,
             side: pendingSide,
             paddockId: selectedPaddockId,
             rowNumber: rowNumber,

@@ -159,7 +159,15 @@ class LocationTracker(context: Context) {
     private suspend fun lastKnown(): CoordinatePoint? = suspendCancellableCoroutine { cont ->
         client.lastLocation
             .addOnSuccessListener { loc ->
-                cont.resume(loc?.let { CoordinatePoint(it.latitude, it.longitude) })
+                cont.resume(
+                    loc?.let {
+                        CoordinatePoint(
+                            latitude = it.latitude,
+                            longitude = it.longitude,
+                            bearing = if (it.hasBearing()) it.bearing.toDouble() else null,
+                        )
+                    },
+                )
             }
             .addOnFailureListener { cont.resume(null) }
     }
@@ -169,7 +177,15 @@ class LocationTracker(context: Context) {
         val cts = CancellationTokenSource()
         client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
             .addOnSuccessListener { loc ->
-                cont.resume(loc?.let { CoordinatePoint(it.latitude, it.longitude) })
+                cont.resume(
+                    loc?.let {
+                        CoordinatePoint(
+                            latitude = it.latitude,
+                            longitude = it.longitude,
+                            bearing = if (it.hasBearing()) it.bearing.toDouble() else null,
+                        )
+                    },
+                )
             }
             .addOnFailureListener { cont.resume(null) }
         cont.invokeOnCancellation { cts.cancel() }

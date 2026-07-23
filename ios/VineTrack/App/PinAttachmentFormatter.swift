@@ -52,7 +52,11 @@ nonisolated enum PinAttachmentFormatter {
         guard let path = pin.drivingRowNumber else { return nil }
         let formatted = formatPath(path)
         let side = pin.pinSide ?? pin.side
-        let facing = fullCompassName(degrees: pin.heading)
+        // Only claim a facing direction when one was actually recorded.
+        guard let heading = pin.heading else {
+            return "Row \(formatted) — \(side.rawValue) hand side"
+        }
+        let facing = fullCompassName(degrees: heading)
         return "Row \(formatted) — \(side.rawValue) hand side facing \(facing)"
     }
 

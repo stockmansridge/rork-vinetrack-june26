@@ -43,7 +43,7 @@ struct PinDuplicateWarningSheet: View {
     }
 
     private var fullFacing: String {
-        PinAttachmentFormatter.fullCompassName(degrees: existingPin.heading)
+        existingPin.heading.map { PinAttachmentFormatter.fullCompassName(degrees: $0) } ?? "\u{2014}"
     }
 
     var body: some View {

@@ -208,7 +208,7 @@ struct PinDropConfirmationSheet: View {
             errorMessage = "Enter valid coordinates or wait for GPS."
             return
         }
-        let heading = locationService.heading?.trueHeading ?? 0
+        let heading = locationService.heading?.trueHeading
         let rowNumber = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
         let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalNotes: String? = trimmedNotes.isEmpty ? nil : trimmedNotes

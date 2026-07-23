@@ -6,7 +6,9 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
     var vineyardId: UUID
     let latitude: Double
     let longitude: Double
-    let heading: Double
+    /// Compass direction at drop time (degrees, 0–360). Nil when the device
+    /// had no heading fix — shown honestly as "—" instead of a fake North.
+    let heading: Double?
     let buttonName: String
     let buttonColor: String
     let side: PinSide
@@ -67,7 +69,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         vineyardId: UUID = UUID(),
         latitude: Double,
         longitude: Double,
-        heading: Double,
+        heading: Double?,
         buttonName: String,
         buttonColor: String,
         side: PinSide,
@@ -144,7 +146,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         vineyardId = try c.decode(UUID.self, forKey: .vineyardId)
         latitude = try c.decode(Double.self, forKey: .latitude)
         longitude = try c.decode(Double.self, forKey: .longitude)
-        heading = try c.decode(Double.self, forKey: .heading)
+        heading = try c.decodeIfPresent(Double.self, forKey: .heading)
         buttonName = try c.decode(String.self, forKey: .buttonName)
         buttonColor = try c.decode(String.self, forKey: .buttonColor)
         side = try c.decode(PinSide.self, forKey: .side)

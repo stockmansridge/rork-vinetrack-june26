@@ -79,8 +79,9 @@ struct PinsPDFService {
                 y += 8
             }
 
-            func headingText(for heading: Double) -> String {
-                PinAttachmentFormatter.fullCompassName(degrees: heading)
+            func headingText(for heading: Double?) -> String {
+                guard let heading else { return "\u{2014}" }
+                return PinAttachmentFormatter.fullCompassName(degrees: heading)
             }
 
             PDFHeaderHelper.drawHeader(
@@ -328,7 +329,7 @@ struct PinsPDFService {
                 escapeCSV(report.paddockName),
                 escapeCSV(rowStr),
                 escapeCSV("\(pin.side.rawValue) hand side"),
-                escapeCSV("\(heading) (\(Int(pin.heading))°)"),
+                escapeCSV(pin.heading.map { "\(heading) (\(Int($0))°)" } ?? "\u{2014}"),
                 escapeCSV(statusStr),
                 escapeCSV(createdBy),
                 escapeCSV(completedBy),
@@ -354,8 +355,9 @@ struct PinsPDFService {
         return url
     }
 
-    private static func headingText(for heading: Double) -> String {
-        PinAttachmentFormatter.fullCompassName(degrees: heading)
+    private static func headingText(for heading: Double?) -> String {
+        guard let heading else { return "\u{2014}" }
+        return PinAttachmentFormatter.fullCompassName(degrees: heading)
     }
 
     private static func escapeCSV(_ value: String) -> String {

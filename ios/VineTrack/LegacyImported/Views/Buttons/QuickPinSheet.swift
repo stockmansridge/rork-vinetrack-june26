@@ -251,7 +251,7 @@ struct QuickPinSheet: View {
             stageCode: stage.code,
             stageDescription: stage.description,
             coordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading ?? 0,
+            heading: locationService.heading?.trueHeading,
             side: side,
             paddockId: selectedPaddockId,
             rowNumber: rowNumber,
@@ -267,7 +267,7 @@ struct QuickPinSheet: View {
         store.createPinFromButton(
             button: button,
             coordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading ?? 0,
+            heading: locationService.heading?.trueHeading,
             side: side,
             paddockId: selectedPaddockId,
             rowNumber: rowNumber,
