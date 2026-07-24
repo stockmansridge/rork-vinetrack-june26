@@ -1,32 +1,59 @@
 // Supabase Edge Function: send-invitation-email
 //
-// Emails a vineyard team invitation to the invited address via Resend.
+// Emails a vineyard team invitation to the invited address via the shared
+// Resend email module (supabase/functions/_shared/email/). Used by iOS,
+// Android and the Lovable portal — for both NEW invitations
+// (create_invitation → here) and RESENDS (resend_invitation → here).
 //
 // The apps are responsible for the DURABLE path: they call the
-// `create_invitation` RPC first (owner/manager enforced server-side), so the
-// invitation row always exists before this function runs. This function only
-// handles the best-effort email notification — the invitee can always accept
-// in-app by signing in with the invited email, even if delivery fails.
+// `create_invitation` / `resend_invitation` RPCs first (owner/manager
+// enforced server-side), so the invitation row always exists before this
+// function runs. This function only handles the best-effort email
+// notification — the invitee can always accept in-app by signing in with the
+// invited email, even if delivery fails. The invitation is NEVER modified or
+// deleted here, so a failed email preserves the invitation.
 //
 // Authorization: the caller's JWT is forwarded to PostgREST, so RLS decides
 // whether the caller may see the invitation (owner/manager of the vineyard or
 // the invitee). Unknown/foreign invitation ids return 404.
 //
 // Request (POST JSON):
-//   { "invitationId": string (uuid) }
+//   {
+//     "invitationId": string (uuid),
+//     "sourcePlatform"?: "ios" | "android" | "portal",   // for delivery log
+//     "context"?: "new" | "resend"                        // for delivery log
+//   }
 //
 // Response 200 JSON:
-//   { emailStatus: "sent" | "failed" | "unconfigured", providerId?: string }
+//   {
+//     success: boolean,          // invitation loaded + email accepted by provider
+//     email_sent: boolean,
+//     error_code?: string,       // e.g. "email_configuration_missing"
+//     emailStatus: "sent" | "failed" | "unconfigured",  // legacy field
+//     providerId?: string
+//   }
 //
 // Errors return { error: string } with appropriate HTTP status.
 //
-// Required secrets:
-//   RESEND_API_KEY     — Resend API key (same one used by support-request)
-//   INVITE_FROM_EMAIL  — optional verified sender, e.g. "VineTrack <invites@yourdomain.com>"
+// Required secret: RESEND_API_KEY. Sender defaults come from the shared
+// config (verified domain send.vinetrack.com.au) — there is NO fallback to
+// onboarding@resend.dev.
 
 // deno-lint-ignore-file no-explicit-any
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sendEmail } from "../_shared/email/client.ts";
+import {
+  configurationMissingBody,
+  FROM_INVITES,
+  REPLY_TO,
+  resendApiKey,
+} from "../_shared/email/config.ts";
+import { logSendOutcome, logSubmitted } from "../_shared/email/logging.ts";
+import {
+  invitationSubject,
+  renderInvitationEmail,
+} from "../_shared/email/templates/invitation.ts";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -35,24 +62,11 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// Resend requires a verified domain; fall back to their shared test sender so
-// delivery still works before a custom domain is configured.
-const INVITE_FROM_EMAIL = Deno.env.get("INVITE_FROM_EMAIL") ??
-  "VineTrack <onboarding@resend.dev>";
-
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
   });
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 Deno.serve(async (req: Request) => {
@@ -88,6 +102,11 @@ Deno.serve(async (req: Request) => {
   if (!invitationId) {
     return json({ error: "Missing invitationId" }, 400);
   }
+  const sourcePlatform = typeof body?.sourcePlatform === "string" &&
+      ["ios", "android", "portal"].includes(body.sourcePlatform)
+    ? body.sourcePlatform
+    : "unknown";
+  const sendContext = body?.context === "resend" ? "resend" : "new";
 
   // Caller-scoped client: RLS decides whether this user may see the
   // invitation (vineyard owner/manager or the invitee themselves).
@@ -96,9 +115,14 @@ Deno.serve(async (req: Request) => {
     global: { headers: { Authorization: authHeader } },
   });
 
+  const { data: userData } = await userClient.auth.getUser();
+  const actorUserId: string | null = userData?.user?.id ?? null;
+
   const { data: invitation, error: loadError } = await userClient
     .from("invitations")
-    .select("id, vineyard_id, email, role, status, expires_at, invited_by, vineyards(name)")
+    .select(
+      "id, vineyard_id, email, role, status, expires_at, invited_by, vineyards(name)",
+    )
     .eq("id", invitationId)
     .maybeSingle();
 
@@ -117,11 +141,18 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Invitation has no valid email" }, 422);
   }
 
-  // Service-role client only for the inviter's display name (profiles RLS
-  // hides other users' rows from the caller).
+  // Service-role client for the inviter's display name (profiles RLS hides
+  // other users' rows) and for delivery-event logging.
   const admin = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false },
   });
+
+  if (!resendApiKey()) {
+    console.log(
+      `[send-invitation-email] id=${invitationId} emailStatus=unconfigured (no RESEND_API_KEY)`,
+    );
+    return json(configurationMissingBody());
+  }
 
   let inviterName = "A vineyard manager";
   if (invitation.invited_by) {
@@ -141,81 +172,64 @@ Deno.serve(async (req: Request) => {
   const role = String(invitation.role ?? "member");
   const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
 
-  const apiKey = Deno.env.get("RESEND_API_KEY") ?? "";
-  if (!apiKey) {
+  // Each send attempt (new or resend) gets its own delivery-event row.
+  const eventId = await logSubmitted(admin, {
+    emailType: "invitation",
+    recipientEmail: toEmail,
+    sourcePlatform,
+    actorUserId,
+    metadata: {
+      invitation_id: invitationId,
+      vineyard_id: invitation.vineyard_id,
+      role,
+      context: sendContext,
+      template: "invitation",
+    },
+  });
+
+  const result = await sendEmail({
+    from: FROM_INVITES,
+    to: toEmail,
+    replyTo: REPLY_TO,
+    subject: invitationSubject(vineyardName),
+    html: renderInvitationEmail({
+      inviterName,
+      vineyardName,
+      roleLabel,
+      inviteeEmail: toEmail,
+      expiresAt: invitation.expires_at ?? null,
+    }),
+    // One idempotency key per invitation + delivery event, so a network retry
+    // of the SAME attempt cannot double-send, while explicit resends (new
+    // event row) still go out.
+    idempotencyKey: eventId ? `invitation/${invitationId}/${eventId}` : undefined,
+  });
+
+  await logSendOutcome(admin, eventId, result);
+
+  if (!result.ok) {
     console.log(
-      `[send-invitation-email] id=${invitationId} emailStatus=unconfigured (no RESEND_API_KEY)`,
+      `[send-invitation-email] id=${invitationId} emailStatus=failed ${result.errorCode}: ${result.errorDetail}`,
     );
-    return json({ emailStatus: "unconfigured" });
-  }
-
-  const expiryLine = invitation.expires_at
-    ? `<p style="color:#888">This invitation expires on ${
-      escapeHtml(new Date(invitation.expires_at).toDateString())
-    }.</p>`
-    : "";
-
-  const subject = `You're invited to join ${vineyardName} on VineTrack`;
-  const html = `
-    <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px">
-      <h2 style="color:#2e5339;margin-bottom:4px">VineTrack invitation</h2>
-      <p><strong>${escapeHtml(inviterName)}</strong> has invited you to join
-        <strong>${escapeHtml(vineyardName)}</strong> on VineTrack as
-        <strong>${escapeHtml(roleLabel)}</strong>.</p>
-      <p>To accept the invitation:</p>
-      <ol>
-        <li>Download or open the <strong>VineTrack</strong> app on your phone.</li>
-        <li>Sign in (or create an account) using <strong>this email address</strong>: ${escapeHtml(toEmail)}</li>
-        <li>Your pending invitation for ${escapeHtml(vineyardName)} will appear — tap <strong>Accept</strong> to join the team.</li>
-      </ol>
-      ${expiryLine}
-      <hr style="border:none;border-top:1px solid #eee;margin:20px 0"/>
-      <p style="color:#888;font-size:12px">
-        You received this email because someone invited ${escapeHtml(toEmail)}
-        to a vineyard team on VineTrack. If you weren't expecting this, you can
-        ignore this email — nothing is shared until you accept.
-      </p>
-    </div>
-  `;
-
-  try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        from: INVITE_FROM_EMAIL,
-        to: [toEmail],
-        subject,
-        html,
-      }),
+    // 200 because the invitation itself is safely stored; the client
+    // surfaces the email status honestly.
+    return json({
+      success: false,
+      email_sent: false,
+      error_code: result.errorCode,
+      emailStatus: result.errorCode === "email_configuration_missing"
+        ? "unconfigured"
+        : "failed",
     });
-
-    if (!res.ok) {
-      const text = await res.text();
-      console.log(
-        `[send-invitation-email] id=${invitationId} emailStatus=failed Resend HTTP ${res.status}: ${text.slice(0, 300)}`,
-      );
-      // 200 because the invitation itself is safely stored; the client
-      // surfaces the email status honestly.
-      return json({ emailStatus: "failed" });
-    }
-
-    const data: any = await res.json();
-    const providerId: string | null = typeof data?.id === "string"
-      ? data.id
-      : null;
-    console.log(
-      `[send-invitation-email] id=${invitationId} to=${toEmail} emailStatus=sent providerId=${providerId ?? "-"}`,
-    );
-    return json({ emailStatus: "sent", providerId });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.log(
-      `[send-invitation-email] id=${invitationId} emailStatus=failed ${message}`,
-    );
-    return json({ emailStatus: "failed" });
   }
+
+  console.log(
+    `[send-invitation-email] id=${invitationId} to=${toEmail} context=${sendContext} emailStatus=sent providerId=${result.providerId ?? "-"}`,
+  );
+  return json({
+    success: true,
+    email_sent: true,
+    emailStatus: "sent",
+    providerId: result.providerId,
+  });
 });
