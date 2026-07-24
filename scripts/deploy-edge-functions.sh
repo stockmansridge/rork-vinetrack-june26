@@ -24,7 +24,20 @@
 set -euo pipefail
 
 PROJECT_REF="${PROJECT_REF:-tbafuqwruefgkbyxrxyb}"
-FUNCTIONS=("${FUNCTIONS[@]:-davis-proxy willyweather-proxy open-meteo-proxy wunderground-proxy weather-current weather-nearby-stations chemical-info-lookup tractor-fuel-lookup}")
+if [ -n "${FUNCTIONS:-}" ]; then
+  # Space-separated override, e.g. FUNCTIONS="send-invitation-email support-request"
+  read -r -a FUNCTIONS <<<"$FUNCTIONS"
+else
+  FUNCTIONS=(
+    davis-proxy willyweather-proxy open-meteo-proxy wunderground-proxy
+    weather-current weather-nearby-stations chemical-info-lookup
+    tractor-fuel-lookup
+    # Unified email system (shared module in supabase/functions/_shared/email/)
+    send-invitation-email support-request
+    test-resend-email test-invitation-email test-support-staff-email
+    test-support-receipt-email test-notification-email
+  )
+fi
 
 section() { printf "\n=== %s ===\n" "$1"; }
 

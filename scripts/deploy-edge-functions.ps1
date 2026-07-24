@@ -27,7 +27,7 @@
 [CmdletBinding()]
 param(
     [string]$ProjectRef = "tbafuqwruefgkbyxrxyb",
-    [string[]]$Functions = @("davis-proxy", "willyweather-proxy", "open-meteo-proxy", "wunderground-proxy", "weather-current", "weather-nearby-stations", "chemical-info-lookup", "tractor-fuel-lookup"),
+    [string[]]$Functions = @("davis-proxy", "willyweather-proxy", "open-meteo-proxy", "wunderground-proxy", "weather-current", "weather-nearby-stations", "chemical-info-lookup", "tractor-fuel-lookup", "send-invitation-email", "support-request", "test-resend-email", "test-invitation-email", "test-support-staff-email", "test-support-receipt-email", "test-notification-email"),
     [switch]$ListAfter = $true,
     [switch]$SkipVerify
 )
