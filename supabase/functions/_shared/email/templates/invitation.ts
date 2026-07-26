@@ -2,6 +2,17 @@
 // by iOS, Android and the Lovable portal (all via send-invitation-email).
 
 import { escapeHtml, renderLayout } from "../layout.ts";
+import {
+  bodyText,
+  introText,
+  orderedSteps,
+  panel,
+  primaryButton,
+  sectionHeading,
+  smallText,
+  summaryCard,
+} from "../styles.ts";
+import { VINETRACK_WEBSITE_URL } from "../brand.ts";
 
 export interface InvitationTemplateInput {
   inviterName: string;
@@ -19,35 +30,47 @@ export function invitationSubject(vineyardName: string, isTest = false): string 
 }
 
 export function renderInvitationEmail(input: InvitationTemplateInput): string {
-  const expiryLine = input.expiresAt
-    ? `<p style="color:#888888">This invitation expires on ${
-      escapeHtml(new Date(input.expiresAt).toDateString())
-    }.</p>`
-    : "";
+  const vineyard = escapeHtml(input.vineyardName);
+  const inviter = escapeHtml(input.inviterName);
+  const role = escapeHtml(input.roleLabel);
+  const email = escapeHtml(input.inviteeEmail);
+
+  const expiresLabel = input.expiresAt
+    ? escapeHtml(new Date(input.expiresAt).toDateString())
+    : null;
+
+  const summaryRows = [
+    { label: "Vineyard", valueHtml: vineyard },
+    { label: "Invited by", valueHtml: inviter },
+    { label: "Role", valueHtml: role },
+    { label: "Invited email", valueHtml: email },
+    ...(expiresLabel ? [{ label: "Expires", valueHtml: expiresLabel }] : []),
+  ];
 
   const bodyHtml = `
-    <p><strong>${escapeHtml(input.inviterName)}</strong> has invited you to join
-      <strong>${escapeHtml(input.vineyardName)}</strong> on VineTrack as
-      <strong>${escapeHtml(input.roleLabel)}</strong>.</p>
-    <p>To accept the invitation:</p>
-    <ol style="padding-left:20px">
-      <li>Download or open the <strong>VineTrack</strong> app on your phone.</li>
-      <li>Sign in (or create an account) using <strong>this email address</strong>: ${
-    escapeHtml(input.inviteeEmail)
-  }</li>
-      <li>Your pending invitation for ${
-    escapeHtml(input.vineyardName)
-  } will appear — tap <strong>Accept</strong> to join the team.</li>
-    </ol>
-    ${expiryLine}
+    ${introText(`<strong>${inviter}</strong> has invited you to join <strong>${vineyard}</strong> on VineTrack as <strong>${role}</strong>.`)}
+    ${summaryCard(summaryRows)}
+    ${sectionHeading("How to accept")}
+    ${orderedSteps([
+      `Download or open the <strong>VineTrack</strong> app on your phone.`,
+      `Sign in (or create an account) using <strong>${email}</strong>.`,
+      `Your pending invitation for <strong>${vineyard}</strong> will appear &mdash; tap <strong>Accept</strong> to join the team.`,
+    ])}
+    ${primaryButton("Open VineTrack", VINETRACK_WEBSITE_URL)}
+    ${panel(
+      `<strong>Important:</strong> you must sign in using the same email address this invitation was sent to.`,
+      "warning",
+    )}
+    ${smallText("Nothing is shared with you until you accept the invitation.", 0)}
   `;
 
   return renderLayout({
-    title: "Vineyard team invitation",
+    title: `You\u2019ve been invited to join ${input.vineyardName}`,
+    preheader:
+      `${input.inviterName} invited you to join ${input.vineyardName} on VineTrack as ${input.roleLabel}.`,
     bodyHtml,
     testBanner: input.isTest === true,
-    footerHtml: `You received this email because someone invited ${
-      escapeHtml(input.inviteeEmail)
-    } to a vineyard team on VineTrack. If you weren't expecting this, you can ignore this email — nothing is shared until you accept.`,
+    footerHtml:
+      `You received this email because someone invited ${email} to a vineyard team on VineTrack. If you weren\u2019t expecting this, you can ignore this email &mdash; nothing is shared until you accept.`,
   });
 }
