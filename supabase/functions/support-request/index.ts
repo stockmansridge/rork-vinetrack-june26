@@ -1,82 +1,33 @@
 // Supabase Edge Function: support-request
 //
-// Sends BOTH support emails for a persisted support request via the shared
-// Resend email module (supabase/functions/_shared/email/):
-//   1. Staff notification  → VineTrack support inbox (may include signed
-//      attachment links — staff-only email).
-//   2. Submitter receipt   → the person who submitted the request (never
-//      includes internal notes or signed attachment URLs).
+// Sends the two production support emails for an already-persisted support
+// request. The client owns the durable flow: upload attachments, insert
+// public.support_requests, then invoke this function. A mail failure never
+// deletes, rolls back, or otherwise invalidates the saved request.
 //
-// The apps own the DURABLE path: they upload attachments and insert the
-// public.support_requests row (RLS-protected) BEFORE calling this function.
-// This function only handles best-effort email — the support request remains
-// valid even if either email fails, and is never modified or deleted here
-// beyond recording delivery status.
-//
-// Request (POST JSON):
-//   {
-//     "request_id": "uuid",                 // canonical (legacy: requestId)
-//     "source_platform"?: "ios" | "android" | "portal" | "portal_diagnostics"
-//   }
-//
-// Response 200 JSON (request found — durable record already stored):
-//   {
-//     success: true,
-//     staff_email_sent: boolean,
-//     receipt_email_sent: boolean,
-//     staff_event_id: string | null,
-//     receipt_event_id: string | null,
-//     error_code?: "email_configuration_missing" | "email_send_failed",
-//     emailStatus: "sent" | "failed" | "unconfigured",   // legacy (staff email)
-//     providerId?: string                                 // legacy (staff email)
-//   }
-//
-// Errors (non-200): { success:false, error_code, message } for
-// invalid_request (400) and support request not found (404).
-//
-// Delivery logging: each attempt writes its own email_delivery_events row —
-// email_type "support_staff" and "support_receipt". The legacy
-// support_requests.email_status columns keep tracking the STAFF email so
-// existing mobile builds behave unchanged.
-//
-// Required secret: RESEND_API_KEY. Senders come from the shared config
-// (verified domain send.vinetrack.com.au) — the old fallback to
-// onboarding@resend.dev has been removed.
+// Canonical request:
+// { "request_id": "uuid", "source_platform": "ios" | "android" | "portal" | "unknown" }
+// `requestId` and `sourcePlatform` remain accepted for older app releases.
 
 // deno-lint-ignore-file no-explicit-any
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendEmail } from "../_shared/email/client.ts";
-import {
-  FROM_SUPPORT,
-  REPLY_TO,
-  resendApiKey,
-  SUPPORT_TO_EMAIL,
-} from "../_shared/email/config.ts";
+import { FROM_SUPPORT, REPLY_TO, SUPPORT_TO_EMAIL } from "../_shared/email/config.ts";
 import { logSendOutcome, logSubmitted } from "../_shared/email/logging.ts";
-import {
-  renderSupportStaffEmail,
-  supportStaffSubject,
-} from "../_shared/email/templates/support-staff.ts";
-import {
-  renderSupportReceiptEmail,
-  summariseMessage,
-  supportReceiptSubject,
-} from "../_shared/email/templates/support-receipt.ts";
+import { renderSupportStaffEmail, supportStaffSubject } from "../_shared/email/templates/support-staff.ts";
+import { renderSupportReceiptEmail, summariseMessage, supportReceiptSubject } from "../_shared/email/templates/support-receipt.ts";
+import type { SendEmailResult } from "../_shared/email/types.ts";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const ALLOWED_SOURCE_PLATFORMS = [
-  "ios",
-  "android",
-  "portal",
-  "portal_diagnostics",
-] as const;
+const ALLOWED_SOURCE_PLATFORMS = ["ios", "android", "portal", "unknown"] as const;
+const ATTACHMENTS_BUCKET = "support-attachments";
+const ATTACHMENT_LINK_TTL_SECONDS = 60 * 60 * 24;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -85,141 +36,76 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+function failedResult(errorCode: SendEmailResult["errorCode"], errorDetail: string): SendEmailResult {
+  return { ok: false, providerId: null, errorCode, errorDetail };
+}
+
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: CORS_HEADERS });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS_HEADERS });
   if (req.method !== "POST") {
-    return json(
-      { success: false, error_code: "invalid_request", message: "Method not allowed", error: "Method not allowed" },
-      405,
-    );
+    return json({ success: false, error_code: "invalid_request", message: "Method not allowed" }, 405);
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  if (!supabaseUrl || !serviceRoleKey) {
-    return json(
-      {
-        success: false,
-        error_code: "invalid_request",
-        message: "Server is missing Supabase service configuration",
-        error: "Server is missing Supabase service configuration",
-      },
-      500,
-    );
+  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
+    return json({ success: false, error_code: "server_configuration_missing", message: "Support email is temporarily unavailable." }, 500);
+  }
+
+  const authHeader = req.headers.get("Authorization") ?? "";
+  if (!authHeader.toLowerCase().startsWith("bearer ")) {
+    return json({ success: false, error_code: "unauthenticated", message: "Sign in is required." }, 401);
   }
 
   let body: any;
   try {
     body = await req.json();
   } catch {
-    return json(
-      { success: false, error_code: "invalid_request", message: "Invalid JSON body", error: "Invalid JSON body" },
-      400,
-    );
+    return json({ success: false, error_code: "invalid_request", message: "Invalid request." }, 400);
   }
 
-  const requestId =
-    typeof body?.request_id === "string" && body.request_id.trim()
-      ? body.request_id.trim()
-      : typeof body?.requestId === "string"
-      ? body.requestId.trim()
-      : "";
+  const requestId = typeof body?.request_id === "string" && body.request_id.trim()
+    ? body.request_id.trim()
+    : typeof body?.requestId === "string" && body.requestId.trim()
+    ? body.requestId.trim()
+    : "";
   if (!requestId) {
-    return json(
-      { success: false, error_code: "invalid_request", message: "Missing request_id", error: "Missing requestId" },
-      400,
-    );
+    return json({ success: false, error_code: "invalid_request", message: "Missing request_id." }, 400);
   }
 
   const rawPlatform = typeof body?.source_platform === "string"
     ? body.source_platform
     : typeof body?.sourcePlatform === "string"
     ? body.sourcePlatform
-    : "";
-  const sourcePlatform = (ALLOWED_SOURCE_PLATFORMS as readonly string[])
-      .includes(rawPlatform)
+    : "unknown";
+  const sourcePlatform = (ALLOWED_SOURCE_PLATFORMS as readonly string[]).includes(rawPlatform)
     ? rawPlatform
     : "unknown";
 
-  const admin = createClient(supabaseUrl, serviceRoleKey, {
+  // Authenticate with the caller JWT before loading through the service role.
+  // Possessing a support-request UUID is never enough to trigger an email.
+  const userClient = createClient(supabaseUrl, anonKey, {
     auth: { persistSession: false },
+    global: { headers: { Authorization: authHeader } },
   });
+  const { data: userData, error: userError } = await userClient.auth.getUser();
+  const actorUserId = userData?.user?.id ?? null;
+  if (userError || !actorUserId) {
+    return json({ success: false, error_code: "unauthenticated", message: "Your session has expired. Please sign in again." }, 401);
+  }
 
-  // Load the persisted support request.
+  const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
   const { data: row, error: loadError } = await admin
     .from("support_requests")
     .select("*")
     .eq("id", requestId)
-    .single();
-
+    .maybeSingle();
   if (loadError || !row) {
-    return json(
-      {
-        success: false,
-        error_code: "invalid_request",
-        message: "Support request not found",
-        error: "Support request not found",
-      },
-      404,
-    );
+    return json({ success: false, error_code: "not_found", message: "Support request not found." }, 404);
   }
-
-  const actorUserId: string | null = typeof row.user_id === "string"
-    ? row.user_id
-    : null;
-
-  // Legacy status columns on the support_requests row track the STAFF email.
-  async function recordStatus(
-    emailStatus: string,
-    providerId: string | null,
-    emailError: string | null,
-  ) {
-    await admin
-      .from("support_requests")
-      .update({
-        email_status: emailStatus,
-        email_provider_id: providerId,
-        email_error: emailError,
-        email_sent_at: emailStatus === "sent" ? new Date().toISOString() : null,
-      })
-      .eq("id", requestId);
-  }
-
-  // No provider configured — the request is still safely stored (200).
-  if (!resendApiKey()) {
-    await recordStatus("unconfigured", null, "RESEND_API_KEY not configured");
-    console.log(
-      `[support-request] id=${requestId} emailStatus=unconfigured (no RESEND_API_KEY)`,
-    );
-    return json({
-      success: true,
-      staff_email_sent: false,
-      receipt_email_sent: false,
-      staff_event_id: null,
-      receipt_event_id: null,
-      error_code: "email_configuration_missing",
-      message:
-        "The support request was received, but email delivery is not configured.",
-      emailStatus: "unconfigured",
-    });
-  }
-
-  // Signed URLs (7 days) for attachments — STAFF EMAIL ONLY.
-  const attachmentPaths: string[] = Array.isArray(row.attachment_paths)
-    ? row.attachment_paths
-    : [];
-  const attachmentLinks: string[] = [];
-  for (const path of attachmentPaths) {
-    try {
-      const { data: signed } = await admin.storage
-        .from("support-attachments")
-        .createSignedUrl(path, 60 * 60 * 24 * 7);
-      if (signed?.signedUrl) attachmentLinks.push(signed.signedUrl);
-    } catch (_) {
-      // Ignore individual signing failures — the path is still recorded.
-    }
+  if (row.user_id !== actorUserId) {
+    return json({ success: false, error_code: "permission_denied", message: "You are not allowed to send email for this support request." }, 403);
   }
 
   const category = String(row.category ?? "general");
@@ -227,27 +113,43 @@ Deno.serve(async (req: Request) => {
   const message = String(row.message ?? "");
   const submitterName = String(row.submitter_name ?? "");
   const submitterEmail = String(row.submitter_email ?? "").trim().toLowerCase();
+  const receiptRecipientIsValid = submitterEmail.includes("@");
   const submittedAt = String(row.created_at ?? new Date().toISOString());
 
-  // ---------------------------------------------------------------------
-  // 1. Staff notification
-  // ---------------------------------------------------------------------
+  const attachmentPaths = Array.isArray(row.attachment_paths) ? row.attachment_paths : [];
+  const safeAttachmentPrefix = `${actorUserId}/${requestId}/`;
+  const attachmentLinks: string[] = [];
+  for (const path of attachmentPaths) {
+    if (typeof path !== "string" || !path.startsWith(safeAttachmentPrefix)) continue;
+    const { data: signed } = await admin.storage
+      .from(ATTACHMENTS_BUCKET)
+      .createSignedUrl(path, ATTACHMENT_LINK_TTL_SECONDS);
+    if (signed?.signedUrl) attachmentLinks.push(signed.signedUrl);
+  }
+
+  // Create separate event rows before attempting either send. These logs only
+  // contain safe provenance — never HTML, tokens, or private attachment URLs.
   const staffEventId = await logSubmitted(admin, {
     emailType: "support_staff",
     recipientEmail: SUPPORT_TO_EMAIL,
     sourcePlatform,
     actorUserId,
-    metadata: {
-      support_request_id: requestId,
-      category,
-      template: "support_staff",
-    },
+    metadata: { support_request_id: requestId, template: "support-staff" },
   });
+  const receiptEventId = receiptRecipientIsValid
+    ? await logSubmitted(admin, {
+      emailType: "support_receipt",
+      recipientEmail: submitterEmail,
+      sourcePlatform,
+      actorUserId,
+      metadata: { support_request_id: requestId, template: "support-receipt" },
+    })
+    : null;
 
   const staffResult = await sendEmail({
     from: FROM_SUPPORT,
     to: SUPPORT_TO_EMAIL,
-    replyTo: submitterEmail || undefined,
+    replyTo: receiptRecipientIsValid ? submitterEmail : undefined,
     subject: supportStaffSubject(category, subject),
     html: renderSupportStaffEmail({
       requestId,
@@ -257,45 +159,21 @@ Deno.serve(async (req: Request) => {
       submitterName,
       submitterEmail,
       vineyardName: String(row.vineyard_name ?? ""),
+      submittedAt,
       attachmentLinks,
       appPlatform: String(row.app_platform ?? ""),
       appVersion: String(row.app_version ?? ""),
       appBuild: String(row.app_build ?? ""),
       deviceModel: String(row.device_model ?? ""),
       osVersion: String(row.os_version ?? ""),
-      userId: String(row.user_id ?? ""),
+      userId: actorUserId,
     }),
-    idempotencyKey: staffEventId
-      ? `support-staff/${requestId}/${staffEventId}`
-      : undefined,
+    idempotencyKey: `support-staff/${requestId}`,
   });
-
   await logSendOutcome(admin, staffEventId, staffResult);
-  await recordStatus(
-    staffResult.ok ? "sent" : "failed",
-    staffResult.providerId,
-    staffResult.ok ? null : `${staffResult.errorCode}: ${staffResult.errorDetail}`,
-  );
 
-  // ---------------------------------------------------------------------
-  // 2. Submitter receipt (no internal notes, no signed attachment links)
-  // ---------------------------------------------------------------------
-  let receiptEventId: string | null = null;
-  let receiptSent = false;
-  if (submitterEmail && submitterEmail.includes("@")) {
-    receiptEventId = await logSubmitted(admin, {
-      emailType: "support_receipt",
-      recipientEmail: submitterEmail,
-      sourcePlatform,
-      actorUserId,
-      metadata: {
-        support_request_id: requestId,
-        category,
-        template: "support_receipt",
-      },
-    });
-
-    const receiptResult = await sendEmail({
+  const receiptResult = receiptRecipientIsValid
+    ? await sendEmail({
       from: FROM_SUPPORT,
       to: submitterEmail,
       replyTo: REPLY_TO,
@@ -308,37 +186,42 @@ Deno.serve(async (req: Request) => {
         submittedAt,
         submitterName,
       }),
-      idempotencyKey: receiptEventId
-        ? `support-receipt/${requestId}/${receiptEventId}`
-        : undefined,
-    });
+      idempotencyKey: `support-receipt/${requestId}`,
+    })
+    : failedResult("invalid_recipient", "Support request has no valid submitter email");
+  await logSendOutcome(admin, receiptEventId, receiptResult);
 
-    await logSendOutcome(admin, receiptEventId, receiptResult);
-    receiptSent = receiptResult.ok;
-  }
+  // Maintain legacy staff-delivery fields without making the request itself
+  // contingent on email success.
+  await admin.from("support_requests").update({
+    email_status: staffResult.ok ? "sent" : "failed",
+    email_provider_id: staffResult.providerId,
+    email_error: staffResult.ok ? null : `${staffResult.errorCode ?? "provider_rejected"}: ${staffResult.errorDetail ?? "Unknown error"}`,
+    email_sent_at: staffResult.ok ? new Date().toISOString() : null,
+  }).eq("id", requestId);
 
-  const anyFailed = !staffResult.ok ||
-    (Boolean(submitterEmail) && !receiptSent);
-  console.log(
-    `[support-request] id=${requestId} staff=${staffResult.ok ? "sent" : "failed"} receipt=${receiptSent ? "sent" : submitterEmail ? "failed" : "skipped"} providerId=${staffResult.providerId ?? "-"}`,
-  );
+  const staffSent = staffResult.ok;
+  const receiptSent = receiptResult.ok;
+  const bothFailed = !staffSent && !receiptSent;
+  const partialFailure = !bothFailed && (!staffSent || !receiptSent);
+  console.log(`[support-request] id=${requestId} staff=${staffSent ? "sent" : "failed"} receipt=${receiptSent ? "sent" : "failed"}`);
 
-  // Always 200 — the durable support request exists regardless of email.
   return json({
     success: true,
-    staff_email_sent: staffResult.ok,
+    request_saved: true,
+    staff_email_sent: staffSent,
     receipt_email_sent: receiptSent,
     staff_event_id: staffEventId,
     receipt_event_id: receiptEventId,
-    ...(anyFailed ? { error_code: "email_send_failed" } : {}),
-    ...(anyFailed
-      ? {
-        message:
-          "The support request was received, but one or more emails could not be sent.",
-      }
-      : {}),
-    // Legacy fields (staff email) kept for existing mobile builds.
-    emailStatus: staffResult.ok ? "sent" : "failed",
+    ...(bothFailed ? {
+      error_code: "email_send_failed",
+      message: "The support request was received, but the notification emails could not be sent.",
+    } : partialFailure ? {
+      error_code: "partial_email_failure",
+      message: "The support request was received, but one confirmation email could not be sent.",
+    } : {}),
+    // Compatibility fields for older mobile builds.
+    emailStatus: staffSent ? "sent" : "failed",
     providerId: staffResult.providerId ?? undefined,
   });
 });

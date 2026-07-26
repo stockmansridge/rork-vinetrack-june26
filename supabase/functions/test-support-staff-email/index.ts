@@ -46,6 +46,7 @@ Deno.serve(async (req: Request) => {
       submitterName: prepared.adminName,
       submitterEmail: prepared.recipientEmail,
       vineyardName: "Example Vineyard",
+      submittedAt: new Date().toISOString(),
       attachmentLinks: [],
       appPlatform: "diagnostics",
       appVersion: "—",

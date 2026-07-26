@@ -87,23 +87,25 @@ nonisolated struct SupabaseSupportRepository: Sendable {
             .insert(insert)
             .execute()
 
-        // 3. Best-effort email notification.
-        let emailStatus = await notifyEmail(requestId: requestId, token: session.accessToken)
+        // 3. Invoke production email delivery after the durable row is saved.
+        // A delivery failure remains non-fatal because the request already exists.
+        let emailOutcome = await notifyEmail(requestId: requestId, token: session.accessToken)
 
         return SupportSubmissionResult(
-            emailStatus: emailStatus,
+            requestSaved: true,
+            staffEmailSent: emailOutcome.staffEmailSent,
+            receiptEmailSent: emailOutcome.receiptEmailSent,
             attachmentCount: attachmentPaths.count
         )
     }
 
-    /// Invokes the edge function and returns the reported email status. Any
-    /// failure here is non-fatal — the request is already stored — so we return
-    /// a best-guess status rather than throwing.
-    private func notifyEmail(requestId: UUID, token: String) async -> String {
+    /// Invokes the edge function and returns each accepted email outcome. Any
+    /// failure here is non-fatal because the durable request row already exists.
+    private func notifyEmail(requestId: UUID, token: String) async -> SupportEmailOutcome {
         let base = AppConfig.supabaseURL.absoluteString
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: "\(base)/functions/v1/\(Self.edgeFunctionName)") else {
-            return "unknown"
+            return .notSent
         }
 
         var req = URLRequest(url: url)
@@ -113,25 +115,38 @@ nonisolated struct SupabaseSupportRepository: Sendable {
         req.setValue(AppConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.httpBody = try? JSONSerialization.data(
-            withJSONObject: ["requestId": requestId.uuidString.lowercased()]
+            withJSONObject: [
+                "request_id": requestId.uuidString.lowercased(),
+                "source_platform": "ios"
+            ]
         )
 
         do {
             let (data, response) = try await URLSession.shared.data(for: req)
-            guard let http = response as? HTTPURLResponse else { return "unknown" }
+            guard let http = response as? HTTPURLResponse else { return .notSent }
             let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            if (200..<300).contains(http.statusCode),
-               let status = body?["emailStatus"] as? String {
-                print("[SupportRequest] id=\(requestId.uuidString.lowercased()) emailStatus=\(status)")
-                return status
+            if (200..<300).contains(http.statusCode), body?["success"] as? Bool == true {
+                let outcome = SupportEmailOutcome(
+                    staffEmailSent: body?["staff_email_sent"] as? Bool ?? false,
+                    receiptEmailSent: body?["receipt_email_sent"] as? Bool ?? false
+                )
+                print("[SupportRequest] id=\(requestId.uuidString.lowercased()) staff=\(outcome.staffEmailSent) receipt=\(outcome.receiptEmailSent)")
+                return outcome
             }
             print("[SupportRequest] id=\(requestId.uuidString.lowercased()) email notify HTTP \(http.statusCode)")
-            return "failed"
+            return .notSent
         } catch {
             print("[SupportRequest] id=\(requestId.uuidString.lowercased()) email notify error=\(error.localizedDescription)")
-            return "failed"
+            return .notSent
         }
     }
+}
+
+nonisolated private struct SupportEmailOutcome: Sendable {
+    let staffEmailSent: Bool
+    let receiptEmailSent: Bool
+
+    static let notSent = SupportEmailOutcome(staffEmailSent: false, receiptEmailSent: false)
 }
 
 nonisolated private extension String {

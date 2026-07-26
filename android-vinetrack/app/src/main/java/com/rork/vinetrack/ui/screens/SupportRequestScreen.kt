@@ -106,7 +106,7 @@ fun SupportRequestScreen(
         }
     }
 
-    val canSubmit = subject.isNotBlank() && message.isNotBlank() && !isSubmitting
+    val canSubmit = subject.isNotBlank() && message.isNotBlank() && email.contains("@") && !isSubmitting
 
     Scaffold(
         modifier = modifier,
@@ -305,8 +305,7 @@ fun SupportRequestScreen(
                                 )
                             }.onSuccess { result = it }
                                 .onFailure {
-                                    errorMessage = "Could not send your request: ${it.message ?: "unknown error"}. " +
-                                        "Please check your connection and try again — your message has not been discarded."
+                                    errorMessage = "Your support request could not be submitted. Please try again."
                                 }
                             isSubmitting = false
                         }
@@ -379,9 +378,10 @@ private fun SupportSuccess(
     onBack: (() -> Unit)?,
 ) {
     val vine = LocalVineColors.current
-    val detail = when (result.emailStatus) {
-        "sent" -> "Your message has been saved and our team has been notified. We'll be in touch via email soon."
-        else -> "Your message has been saved and our team will see it. We'll be in touch via email soon."
+    val detail = if (result.bothEmailsSent) {
+        "Your support request has been received. A confirmation email has been sent to you."
+    } else {
+        "Your support request has been received, but the confirmation email could not be sent."
     }
     Column(
         modifier = Modifier

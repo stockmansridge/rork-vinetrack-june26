@@ -12,6 +12,7 @@ export interface SupportStaffTemplateInput {
   submitterName: string;
   submitterEmail: string;
   vineyardName: string;
+  submittedAt: string;
   attachmentLinks: string[];
   appPlatform: string;
   appVersion: string;
@@ -35,7 +36,10 @@ export function renderSupportStaffEmail(input: SupportStaffTemplateInput): strin
   const isTest = input.isTest === true;
   const reference = isTest ? "Sample request" : input.requestId;
   const userReference = isTest ? "Sample user" : (input.userId || "Not available");
-  const submittedAt = new Date().toUTCString();
+  const submittedDate = new Date(input.submittedAt);
+  const submittedAt = Number.isNaN(submittedDate.getTime())
+    ? input.submittedAt
+    : submittedDate.toUTCString();
   const sender = input.submitterName.trim()
     ? `${escapeHtml(input.submitterName.trim())} &lt;${escapeHtml(input.submitterEmail || "Not available")}&gt;`
     : escapeHtml(input.submitterEmail || "Not available");

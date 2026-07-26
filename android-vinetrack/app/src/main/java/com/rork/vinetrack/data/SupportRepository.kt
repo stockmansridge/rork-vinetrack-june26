@@ -37,13 +37,17 @@ data class SupportDiagnostics(
 
 /**
  * Outcome of submitting a support request. The DB insert is the durable path,
- * so success means the request is stored; [emailStatus] reflects best-effort
- * email delivery ("sent" | "failed" | "unconfigured" | "unknown").
+ * so success means the request is stored; each email delivery outcome is
+ * reported independently.
  */
 data class SupportSubmissionResult(
-    val emailStatus: String,
+    val requestSaved: Boolean,
+    val staffEmailSent: Boolean,
+    val receiptEmailSent: Boolean,
     val attachmentCount: Int,
-)
+) {
+    val bothEmailsSent: Boolean get() = staffEmailSent && receiptEmailSent
+}
 
 /**
  * Backend pathway for the in-app support / feedback / feature-request form,
@@ -129,24 +133,36 @@ class SupportRepository(private val session: SessionStore) {
             else -> throw BackendError.Server(insertResponse.status.value, insertResponse.bodyAsText())
         }
 
-        // 3. Best-effort email notification — never fatal.
-        val emailStatus = notifyEmail(requestId, token)
-        SupportSubmissionResult(emailStatus = emailStatus, attachmentCount = attachmentPaths.size)
+        // 3. Invoke production email delivery after the durable row is saved.
+        // A delivery failure is non-fatal because the request already exists.
+        val emailOutcome = notifyEmail(requestId, token)
+        SupportSubmissionResult(
+            requestSaved = true,
+            staffEmailSent = emailOutcome.staffEmailSent,
+            receiptEmailSent = emailOutcome.receiptEmailSent,
+            attachmentCount = attachmentPaths.size,
+        )
     }
 
-    private suspend fun notifyEmail(requestId: String, token: String): String = try {
+    private suspend fun notifyEmail(requestId: String, token: String): SupportEmailOutcome = try {
         val response = SupabaseClient.http.post(SupabaseClient.functionUrl(EDGE_FUNCTION)) {
             authHeaders(token)
             contentType(ContentType.Application.Json)
-            setBody(NotifyArgs(requestId))
+            setBody(NotifyArgs(requestId = requestId, sourcePlatform = "android"))
         }
         if (response.status.isSuccess()) {
-            response.body<NotifyResponse>().emailStatus ?: "unknown"
+            response.body<NotifyResponse>().let { result ->
+                if (result.success) {
+                    SupportEmailOutcome(result.staffEmailSent, result.receiptEmailSent)
+                } else {
+                    SupportEmailOutcome.NotSent
+                }
+            }
         } else {
-            "failed"
+            SupportEmailOutcome.NotSent
         }
-    } catch (e: Exception) {
-        "failed"
+    } catch (_: Exception) {
+        SupportEmailOutcome.NotSent
     }
 
     private fun requireConfig() {
@@ -161,10 +177,26 @@ class SupportRepository(private val session: SessionStore) {
     }
 
     @Serializable
-    private data class NotifyArgs(val requestId: String)
+    private data class NotifyArgs(
+        @SerialName("request_id") val requestId: String,
+        @SerialName("source_platform") val sourcePlatform: String,
+    )
 
     @Serializable
-    private data class NotifyResponse(@SerialName("emailStatus") val emailStatus: String? = null)
+    private data class NotifyResponse(
+        val success: Boolean = false,
+        @SerialName("staff_email_sent") val staffEmailSent: Boolean = false,
+        @SerialName("receipt_email_sent") val receiptEmailSent: Boolean = false,
+    )
+
+    private data class SupportEmailOutcome(
+        val staffEmailSent: Boolean,
+        val receiptEmailSent: Boolean,
+    ) {
+        companion object {
+            val NotSent = SupportEmailOutcome(staffEmailSent = false, receiptEmailSent = false)
+        }
+    }
 
     @Serializable
     private data class SupportRequestInsert(

@@ -23,16 +23,15 @@ nonisolated enum SupportRequestCategory: String, CaseIterable, Sendable, Identif
     }
 }
 
-/// Outcome of submitting a support request. The DB insert is the durable path,
-/// so `stored` is always true on success; `emailStatus` reflects best-effort
-/// email delivery to the support inbox.
+/// Outcome of submitting a support request. A successful result always means
+/// the durable request row exists; each email outcome is reported independently.
 nonisolated struct SupportSubmissionResult: Sendable {
-    /// Email delivery status reported by the edge function:
-    /// "sent" | "failed" | "unconfigured" | "unknown".
-    let emailStatus: String
+    let requestSaved: Bool
+    let staffEmailSent: Bool
+    let receiptEmailSent: Bool
     let attachmentCount: Int
 
-    var emailDelivered: Bool { emailStatus == "sent" }
+    var bothEmailsSent: Bool { staffEmailSent && receiptEmailSent }
 }
 
 /// Snapshot of the device / app for diagnostics attached to a support request.

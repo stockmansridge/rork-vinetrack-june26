@@ -32,6 +32,7 @@ struct SupportRequestView: View {
     private var canSubmit: Bool {
         !subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && email.contains("@")
             && !isSubmitting
     }
 
@@ -209,15 +210,10 @@ struct SupportRequestView: View {
     }
 
     private func successDetail(_ result: SupportSubmissionResult) -> String {
-        let base = "Your message has been saved and our team has been notified."
-        switch result.emailStatus {
-        case "sent":
-            return base + " We'll be in touch via email soon."
-        case "failed", "unconfigured", "unknown":
-            return "Your message has been saved and our team will see it. We'll be in touch via email soon."
-        default:
-            return base
+        if result.bothEmailsSent {
+            return "Your support request has been received. A confirmation email has been sent to you."
         }
+        return "Your support request has been received, but the confirmation email could not be sent."
     }
 
     // MARK: - Submit
@@ -247,7 +243,7 @@ struct SupportRequestView: View {
             )
             result = outcome
         } catch {
-            errorMessage = "Could not send your request: \(error.localizedDescription). Please check your connection and try again — your message has not been discarded."
+            errorMessage = "Your support request could not be submitted. Please try again."
         }
     }
 
