@@ -23,7 +23,11 @@ nonisolated struct InvitationEmailService: Sendable {
 
     /// Invokes the edge function and returns the reported email status.
     /// Never throws — delivery is best-effort.
-    func send(invitationId: UUID) async -> String {
+    func send(
+        invitationId: UUID,
+        sourcePlatform: String,
+        context: String
+    ) async -> String {
         guard provider.isConfigured else { return "unconfigured" }
         guard let session = try? await provider.client.auth.session else {
             return "failed"
@@ -42,7 +46,11 @@ nonisolated struct InvitationEmailService: Sendable {
         req.setValue(AppConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
         req.httpBody = try? JSONSerialization.data(
-            withJSONObject: ["invitationId": invitationId.uuidString.lowercased()]
+            withJSONObject: [
+                "invitation_id": invitationId.uuidString.lowercased(),
+                "source_platform": sourcePlatform,
+                "context": context,
+            ]
         )
 
         do {

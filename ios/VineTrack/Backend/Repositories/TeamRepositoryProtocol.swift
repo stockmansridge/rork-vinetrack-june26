@@ -18,6 +18,8 @@ protocol TeamRepositoryProtocol: Sendable {
         expiresAt: Date?
     ) async throws -> BackendInvitation
     func listPendingInvitations() async throws -> [BackendInvitation]
+    /// Restores an existing invitation to pending and extends its expiry without creating a duplicate.
+    func resendInvitation(invitationId: UUID, extendDays: Int) async throws -> BackendInvitation
     func acceptInvitation(invitationId: UUID) async throws
     func declineInvitation(invitationId: UUID) async throws
     func transferOwnership(vineyardId: UUID, newOwnerId: UUID, removeOldOwner: Bool) async throws

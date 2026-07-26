@@ -141,6 +141,22 @@ class TeamRepository(private val session: SessionStore) {
         }
     }
 
+    /** Restores one existing invitation to pending and extends it without creating a duplicate. */
+    suspend fun resendInvitation(invitationId: String, extendDays: Int = 14): Invitation = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("resend_invitation")) {
+            authHeaders(token)
+            contentType(ContentType.Application.Json)
+            setBody(ResendInvitationArgs(invitationId, extendDays))
+        }
+        when {
+            response.status.isSuccess() -> response.body()
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
     /**
      * Best-effort: asks the `send-invitation-email` edge function to email the
      * invitee via Resend. Never throws — the invitation row is already stored,
@@ -148,14 +164,18 @@ class TeamRepository(private val session: SessionStore) {
      * ("sent" / "failed" / "unconfigured") lets the UI report delivery
      * honestly. Mirrors the iOS `InvitationEmailService`.
      */
-    suspend fun sendInvitationEmail(invitationId: String): String = withContext(Dispatchers.IO) {
+    suspend fun sendInvitationEmail(
+        invitationId: String,
+        sourcePlatform: String,
+        context: String,
+    ): String = withContext(Dispatchers.IO) {
         try {
             requireConfig()
             val token = session.accessToken ?: return@withContext "failed"
             val response = SupabaseClient.http.post(SupabaseClient.functionUrl("send-invitation-email")) {
                 authHeaders(token)
                 contentType(ContentType.Application.Json)
-                setBody(SendInviteEmailArgs(invitationId))
+                setBody(SendInviteEmailArgs(invitationId, sourcePlatform, context))
             }
             if (response.status.isSuccess()) {
                 response.body<InviteEmailResponse>().emailStatus ?: "unknown"
@@ -221,6 +241,12 @@ class TeamRepository(private val session: SessionStore) {
     )
 
     @Serializable
+    private data class ResendInvitationArgs(
+        @SerialName("p_invitation_id") val invitationId: String,
+        @SerialName("p_extend_days") val extendDays: Int,
+    )
+
+    @Serializable
     private data class InvitationIdArg(
         @SerialName("p_invitation_id") val invitationId: String,
     )
@@ -229,7 +255,11 @@ class TeamRepository(private val session: SessionStore) {
     private data class ProfileUpsertArg(val id: String, val email: String)
 
     @Serializable
-    private data class SendInviteEmailArgs(val invitationId: String)
+    private data class SendInviteEmailArgs(
+        @SerialName("invitation_id") val invitationId: String,
+        @SerialName("source_platform") val sourcePlatform: String,
+        val context: String,
+    )
 
     @Serializable
     private data class InviteEmailResponse(

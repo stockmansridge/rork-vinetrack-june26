@@ -108,6 +108,18 @@ final class SupabaseTeamRepository: TeamRepositoryProtocol {
             .value
     }
 
+    func resendInvitation(invitationId: UUID, extendDays: Int = 14) async throws -> BackendInvitation {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let invitation: BackendInvitation = try await provider.client
+            .rpc("resend_invitation", params: ResendInvitationRequest(
+                invitationId: invitationId,
+                extendDays: extendDays
+            ))
+            .execute()
+            .value
+        return invitation
+    }
+
     func acceptInvitation(invitationId: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         try await ensureCurrentUserProfileExists()
@@ -220,6 +232,16 @@ nonisolated private struct CreateInvitationRequest: Encodable, Sendable {
         try c.encode(role, forKey: .role)
         try c.encode(operatorCategoryId, forKey: .operatorCategoryId)
         try c.encode(expiresAt, forKey: .expiresAt)
+    }
+}
+
+nonisolated private struct ResendInvitationRequest: Encodable, Sendable {
+    let invitationId: UUID
+    let extendDays: Int
+
+    enum CodingKeys: String, CodingKey {
+        case invitationId = "p_invitation_id"
+        case extendDays = "p_extend_days"
     }
 }
 

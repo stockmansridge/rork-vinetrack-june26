@@ -8146,30 +8146,79 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Invite a member by email + role (owner/manager only, enforced server-side). */
     fun inviteMember(email: String, role: String, operatorCategoryId: String?, onResult: (Boolean) -> Unit) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        val isOperator = role.equals("operator", ignoreCase = true)
+        val validCategoryIds = _ui.value.operatorCategories
+            .filter { it.vineyardId == vineyardId && it.deletedAt == null }
+            .map { it.id }
+        val resolvedCategoryId = if (isOperator) operatorCategoryId else null
+        if (isOperator && validCategoryIds.isEmpty()) {
+            _ui.update { it.copy(teamError = "No worker types are configured for this vineyard. Add one in Vineyard Settings before inviting an operator.") }
+            onResult(false)
+            return
+        }
+        if (isOperator && resolvedCategoryId !in validCategoryIds) {
+            _ui.update { it.copy(teamError = "This worker type is no longer available for this vineyard. Select another worker type and try again.") }
+            onResult(false)
+            return
+        }
         viewModelScope.launch {
             _ui.update { it.copy(teamBusy = true, teamError = null, teamNotice = null) }
             try {
-                val invitation = teamRepo.inviteMember(vineyardId, email, role, operatorCategoryId)
+                val invitation = teamRepo.inviteMember(vineyardId, email, role, resolvedCategoryId)
                 loadPendingInvitations()
-                // Best-effort email notification — never fatal. The invite is
-                // already stored, so the invitee can always accept in-app.
-                val emailStatus = teamRepo.sendInvitationEmail(invitation.id)
+                val emailStatus = teamRepo.sendInvitationEmail(
+                    invitationId = invitation.id,
+                    sourcePlatform = "android",
+                    context = "new",
+                )
                 val notice = when (emailStatus) {
                     "sent" -> "Invitation email sent to ${email.trim()}."
-                    else ->
-                        "Invitation created, but the email couldn't be sent. " +
-                            "They'll still see the invite when they sign in with ${email.trim()}."
+                    else -> "The invitation was created, but the email could not be sent. " +
+                        "They can still accept it after signing in with the invited email address."
                 }
                 _ui.update { it.copy(teamBusy = false, teamNotice = notice) }
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 signOut(); onResult(false)
             } catch (e: BackendError.Server) {
-                _ui.update { it.copy(teamBusy = false, teamError = friendlyWriteError(e.code)) }
+                val message = if (e.message?.contains("Worker type not found", ignoreCase = true) == true) {
+                    "This worker type is no longer available for this vineyard. Select another worker type and try again."
+                } else {
+                    friendlyWriteError(e.code)
+                }
+                _ui.update { it.copy(teamBusy = false, teamError = message) }
                 onResult(false)
             } catch (e: Exception) {
                 _ui.update { it.copy(teamBusy = false, teamError = "Couldn't send the invitation. Check your connection.") }
                 onResult(false)
+            }
+        }
+    }
+
+    /** Resends a pending invitation after renewing the same invitation row. */
+    fun resendInvitation(invitationId: String, email: String) {
+        viewModelScope.launch {
+            _ui.update { it.copy(teamBusy = true, teamError = null, teamNotice = null) }
+            try {
+                val invitation = teamRepo.resendInvitation(invitationId)
+                val emailStatus = teamRepo.sendInvitationEmail(
+                    invitationId = invitation.id,
+                    sourcePlatform = "android",
+                    context = "resend",
+                )
+                val notice = if (emailStatus == "sent") {
+                    "Invitation email sent to ${email.trim()}."
+                } else {
+                    "The invitation remains active, but the email could not be sent."
+                }
+                loadPendingInvitations()
+                _ui.update { it.copy(teamBusy = false, teamNotice = notice) }
+            } catch (e: BackendError.Unauthorized) {
+                signOut()
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(teamBusy = false, teamError = friendlyWriteError(e.code)) }
+            } catch (e: Exception) {
+                _ui.update { it.copy(teamBusy = false, teamError = "Couldn't resend the invitation. Check your connection.") }
             }
         }
     }

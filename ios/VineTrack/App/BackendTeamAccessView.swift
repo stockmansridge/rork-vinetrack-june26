@@ -219,19 +219,29 @@ struct BackendTeamAccessView: View {
     }
 
     private func invitationRow(_ invitation: BackendInvitation) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(invitation.email)
-                .font(.subheadline.weight(.medium))
-            HStack(spacing: 6) {
-                Text(invitation.role.rawValue.capitalized)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(VineyardTheme.leafGreen)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(VineyardTheme.leafGreen.opacity(0.12), in: Capsule())
-                Text(invitation.status.capitalized)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(invitation.email)
+                    .font(.subheadline.weight(.medium))
+                HStack(spacing: 6) {
+                    Text(invitation.role.rawValue.capitalized)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(VineyardTheme.leafGreen)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(VineyardTheme.leafGreen.opacity(0.12), in: Capsule())
+                    Text(invitation.status.capitalized)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if canManage {
+                Button("Resend") {
+                    Task { await resendInvitation(invitation) }
+                }
+                .buttonStyle(.bordered)
+                .disabled(isLoading)
             }
         }
         .padding(.vertical, 2)
@@ -260,6 +270,26 @@ struct BackendTeamAccessView: View {
             pendingInvitations = deduped
         } catch {
             // Non-fatal — members still display.
+        }
+    }
+
+    private func resendInvitation(_ invitation: BackendInvitation) async {
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        do {
+            let renewed = try await teamRepository.resendInvitation(invitationId: invitation.id, extendDays: 14)
+            let emailStatus = await InvitationEmailService().send(
+                invitationId: renewed.id,
+                sourcePlatform: "ios",
+                context: "resend"
+            )
+            if emailStatus != "sent" {
+                errorMessage = "The invitation remains active, but the email could not be sent."
+            }
+            await reload()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 

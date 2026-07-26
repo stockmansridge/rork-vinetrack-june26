@@ -152,6 +152,12 @@ fun TeamAccessScreen(
                                     Text(inv.status.replaceFirstChar { it.uppercase() }, fontSize = 12.sp, color = vine.textSecondary)
                                 }
                                 RoleChip(TeamRole.from(inv.role))
+                                if (canManage) {
+                                    TextButton(
+                                        onClick = { vm.resendInvitation(inv.id, inv.email) },
+                                        enabled = !state.teamBusy,
+                                    ) { Text("Resend") }
+                                }
                             }
                             if (index < state.pendingInvitations.lastIndex) {
                                 Box(modifier = Modifier.fillMaxWidth().size(0.5.dp).background(vine.cardBorder))
@@ -328,7 +334,15 @@ private fun InviteMemberDialog(
     var email by remember { mutableStateOf("") }
     var role by remember { mutableStateOf(TeamRole.Operator) }
     var categoryId by remember { mutableStateOf<String?>(null) }
+    val requiresWorkerType = role == TeamRole.Operator
     val emailValid = email.contains("@") && email.contains(".")
+
+    LaunchedEffect(role) {
+        if (role != TeamRole.Operator) categoryId = null
+    }
+    LaunchedEffect(categories.map { it.id }) {
+        if (categoryId != null && categories.none { it.id == categoryId }) categoryId = null
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Invite Member") },
@@ -354,25 +368,34 @@ private fun InviteMemberDialog(
                 RolePicker(selected = role, onSelect = { role = it })
                 Text("Some features and values are hidden based on the assigned role.", fontSize = 11.sp, color = vine.textSecondary)
 
-                Text("Default Worker Type", fontWeight = FontWeight.SemiBold)
-                OperatorCategoryPicker(
-                    categories = categories,
-                    selected = categoryId,
-                    onSelect = { categoryId = it },
-                )
-                Text(
+                if (requiresWorkerType) {
+                    Text("Worker Type", fontWeight = FontWeight.SemiBold)
                     if (categories.isEmpty()) {
-                        "Create worker types in Spray Management \u2192 Worker Types to assign a default hourly rate at invite time."
+                        Text(
+                            "No worker types are configured for this vineyard. Add one in Vineyard Settings before inviting an operator.",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
                     } else {
-                        "Optional. Applied to the new member's profile on accept and used as a fallback for trip cost calculations."
-                    },
-                    fontSize = 11.sp,
-                    color = vine.textSecondary,
-                )
+                        OperatorCategoryPicker(
+                            categories = categories,
+                            selected = categoryId,
+                            onSelect = { categoryId = it },
+                        )
+                        Text(
+                            "A worker type is required for operator invitations and must belong to this vineyard.",
+                            fontSize = 11.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onInvite(email.trim(), role, categoryId) }, enabled = emailValid && !busy) {
+            TextButton(
+                onClick = { onInvite(email.trim(), role, if (requiresWorkerType) categoryId else null) },
+                enabled = emailValid && !busy && (!requiresWorkerType || (categories.isNotEmpty() && categoryId != null)),
+            ) {
                 Text("Send")
             }
         },
