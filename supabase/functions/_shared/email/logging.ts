@@ -8,6 +8,9 @@
 
 import type { DeliveryLogContext, SendEmailResult } from "./types.ts";
 
+/** Non-visible provenance marker for confirming the live email renderer version. */
+export const EMAIL_TEMPLATE_VERSION = "email-layout-v2";
+
 /**
  * Inserts a `submitted` delivery event and returns its id (or null if the
  * insert fails — logging must never break email delivery).
@@ -26,7 +29,10 @@ export async function logSubmitted(
         actor_user_id: context.actorUserId,
         provider: "resend",
         status: "submitted",
-        metadata: context.metadata ?? {},
+        metadata: {
+          ...(context.metadata ?? {}),
+          template_version: EMAIL_TEMPLATE_VERSION,
+        },
       })
       .select("id")
       .single();
