@@ -1,10 +1,8 @@
-// Generic notification template — infrastructure for future email alerts
-// (weather, disease-risk, spray reminders, task assignments, etc.).
-//
-// Accepts ONLY structured fields; clients can never inject arbitrary HTML.
-// Nothing sends these automatically yet.
+// Generic notification template — structured infrastructure for future alerts.
+// Client input is escaped; arbitrary HTML is never accepted.
 
 import { escapeHtml, renderLayout } from "../layout.ts";
+import { bodyText, fallbackUrl, primaryButton, statusBadge } from "../styles.ts";
 import type { NotificationClass } from "../types.ts";
 
 export interface NotificationTemplateInput {
@@ -16,61 +14,33 @@ export interface NotificationTemplateInput {
   isTest?: boolean;
 }
 
-const CLASS_STYLES: Record<NotificationClass, { label: string; color: string }> = {
-  information: { label: "Information", color: "#2563eb" },
-  reminder: { label: "Reminder", color: "#2e5339" },
-  warning: { label: "Warning", color: "#b45309" },
-  critical: { label: "Critical", color: "#b91c1c" },
+const CLASSES: Record<NotificationClass, { label: string; panel: "green" | "warning" | "error" | "neutral" }> = {
+  information: { label: "Information", panel: "neutral" },
+  reminder: { label: "Reminder", panel: "green" },
+  warning: { label: "Warning", panel: "warning" },
+  critical: { label: "Critical", panel: "error" },
 };
 
 export function isNotificationClass(value: string): value is NotificationClass {
-  return value === "information" || value === "reminder" ||
-    value === "warning" || value === "critical";
+  return value === "information" || value === "reminder" || value === "warning" || value === "critical";
 }
 
-export function notificationSubject(
-  input: Pick<NotificationTemplateInput, "title" | "notificationType" | "isTest">,
-): string {
-  const prefix = input.notificationType === "critical"
-    ? "[Critical] "
-    : input.notificationType === "warning"
-    ? "[Warning] "
-    : "";
-  const base = `${prefix}${input.title} — VineTrack`;
-  return input.isTest ? `[TEST] ${base}` : base;
+export function notificationSubject(input: Pick<NotificationTemplateInput, "title" | "notificationType" | "isTest">): string {
+  const prefix = input.notificationType === "critical" ? "[Critical] " : input.notificationType === "warning" ? "[Warning] " : "";
+  return input.isTest ? `[TEST] ${prefix}${input.title} — VineTrack` : `${prefix}${input.title} — VineTrack`;
 }
 
-export function renderNotificationEmail(
-  input: NotificationTemplateInput,
-): string {
-  const style = CLASS_STYLES[input.notificationType];
-
-  const isSafeActionUrl = typeof input.actionUrl === "string" &&
-    /^https:\/\//i.test(input.actionUrl.trim());
-  const actionHtml = isSafeActionUrl
-    ? `<p style="margin:20px 0">
-        <a href="${escapeHtml(input.actionUrl!.trim())}"
-           style="background:${style.color};color:#ffffff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;font-size:14px;display:inline-block">
-          ${escapeHtml(input.actionLabel?.trim() || "Open VineTrack")}
-        </a>
-      </p>`
-    : "";
-
-  const bodyHtml = `
-    <p style="margin:0 0 12px">
-      <span style="background:${style.color}1a;color:${style.color};font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;letter-spacing:0.4px;text-transform:uppercase">
-        ${escapeHtml(style.label)}
-      </span>
-    </p>
-    <p style="white-space:pre-wrap">${escapeHtml(input.summary)}</p>
-    ${actionHtml}
-  `;
+export function renderNotificationEmail(input: NotificationTemplateInput): string {
+  const category = CLASSES[input.notificationType];
+  const actionUrl = typeof input.actionUrl === "string" && /^https:\/\//i.test(input.actionUrl.trim()) ? input.actionUrl.trim() : null;
+  const actionHtml = actionUrl ? `${primaryButton(escapeHtml(input.actionLabel?.trim() || "Open VineTrack"), escapeHtml(actionUrl))}${fallbackUrl(escapeHtml(actionUrl))}` : "";
 
   return renderLayout({
     title: input.title,
-    bodyHtml,
+    preheader: input.summary,
     testBanner: input.isTest === true,
-    footerHtml:
-      "You received this notification from VineTrack. Notification preferences will be manageable in the app.",
+    aboveTitleHtml: statusBadge(category.label, category.panel),
+    bodyHtml: `${bodyText(escapeHtml(input.summary).replace(/\n/g, "<br />"), actionUrl ? 0 : 0)}${actionHtml}`,
+    footerHtml: "You received this notification from VineTrack. Notification preferences will be manageable in the app.",
   });
 }
