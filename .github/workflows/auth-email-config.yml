@@ -1,0 +1,266 @@
+name: Auth Email Config — VineTrack
+
+# Manages Supabase Auth email settings for project tbafuqwruefgkbyxrxyb via the
+# Supabase Management API. Four actions:
+#
+#   audit           — read-only. Prints the current Auth email configuration to
+#                     the job summary and uploads a redacted snapshot artifact.
+#   apply-templates — sets the branded recovery / signup-confirmation /
+#                     email-change subjects + HTML templates from
+#                     supabase/auth-templates/, and adds the portal recovery
+#                     routes to the redirect allowlist. Does NOT touch SMTP.
+#   enable-smtp     — switches Auth email delivery to Resend custom SMTP
+#                     (smtp.resend.com:465, username `resend`). Requires the
+#                     RESEND_API_KEY repo secret. Run apply-templates first.
+#   rollback-smtp   — disables custom SMTP, reverting to Supabase built-in
+#                     email delivery. Templates are left in place.
+#
+# Every run (including audit) uploads a pre-change snapshot artifact so the
+# previous configuration is always recorded before any modification.
+# Secrets are never printed: smtp_pass and key-like values are redacted.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Action to perform"
+        required: true
+        default: "audit"
+        type: choice
+        options:
+          - audit
+          - apply-templates
+          - enable-smtp
+          - rollback-smtp
+      sender_email:
+        description: "SMTP sender email (enable-smtp only)"
+        required: false
+        default: "notifications@vinetrack.com.au"
+      sender_name:
+        description: "SMTP sender name (enable-smtp only)"
+        required: false
+        default: "VineTrack"
+
+env:
+  PROJECT_REF: tbafuqwruefgkbyxrxyb
+  API_BASE: https://api.supabase.com/v1
+
+jobs:
+  auth-config:
+    name: ${{ github.event.inputs.action }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch current auth config (pre-change snapshot)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::error::SUPABASE_ACCESS_TOKEN repo secret is not set"; exit 1
+          fi
+          http=$(curl -s -o /tmp/auth_raw.json -w "%{http_code}" \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            "$API_BASE/projects/$PROJECT_REF/config/auth")
+          if [ "$http" -ge 300 ]; then
+            echo "::error::Failed to read auth config (HTTP $http)"; cat /tmp/auth_raw.json; exit 1
+          fi
+          # Redact secret-like values; keep template contents intact for rollback.
+          jq 'with_entries(
+                if (.key | test("pass|secret|private_key|client_secret|api_key"; "i"))
+                   and (.value != null and .value != "" and .value != false)
+                then .value = "<redacted>"
+                else . end
+              )' /tmp/auth_raw.json > auth-config-snapshot.json
+          rm -f /tmp/auth_raw.json
+
+      - name: Upload snapshot artifact (rollback record)
+        uses: actions/upload-artifact@v4
+        with:
+          name: auth-config-snapshot-${{ github.event.inputs.action }}-${{ github.run_id }}
+          path: auth-config-snapshot.json
+          retention-days: 90
+
+      - name: Audit report
+        if: ${{ github.event.inputs.action == 'audit' }}
+        run: |
+          {
+            echo "## Supabase Auth email audit — $PROJECT_REF"
+            echo ""
+            jq -r '
+              def flag(v): if v == null or (v|tostring) == "" then "_(not set / Supabase default)_" else (v|tostring) end;
+              def tpl(v): if v == null or v == "" then "Supabase default" else "custom (\(v|length) chars)" end;
+              "| Setting | Value |",
+              "|---|---|",
+              "| Site URL | \(flag(.site_url)) |",
+              "| Redirect URL allowlist | \(flag(.uri_allow_list)) |",
+              "| Email sign-in enabled | \(flag(.external_email_enabled)) |",
+              "| Signup autoconfirm (skips confirmation email) | \(flag(.mailer_autoconfirm)) |",
+              "| Secure email change (confirm both addresses) | \(flag(.mailer_secure_email_change_enabled)) |",
+              "| Email OTP expiry (seconds) | \(flag(.mailer_otp_exp)) |",
+              "| Email OTP length | \(flag(.mailer_otp_length)) |",
+              "| Emails per hour rate limit | \(flag(.rate_limit_email_sent)) |",
+              "| Custom SMTP host | \(flag(.smtp_host)) |",
+              "| Custom SMTP port | \(flag(.smtp_port)) |",
+              "| Custom SMTP username | \(flag(.smtp_user)) |",
+              "| SMTP sender name | \(flag(.smtp_sender_name)) |",
+              "| SMTP sender email | \(flag(.smtp_admin_email)) |",
+              "| SMTP min interval between emails (s) | \(flag(.smtp_max_frequency)) |",
+              "| Recovery subject | \(flag(.mailer_subjects_recovery)) |",
+              "| Recovery template | \(tpl(.mailer_templates_recovery_content)) |",
+              "| Signup confirmation subject | \(flag(.mailer_subjects_confirmation)) |",
+              "| Signup confirmation template | \(tpl(.mailer_templates_confirmation_content)) |",
+              "| Email change subject | \(flag(.mailer_subjects_email_change)) |",
+              "| Email change template | \(tpl(.mailer_templates_email_change_content)) |",
+              "| Magic link subject | \(flag(.mailer_subjects_magic_link)) |",
+              "| Magic link template | \(tpl(.mailer_templates_magic_link_content)) |"
+            ' auth-config-snapshot.json
+            echo ""
+            if jq -e '.smtp_host == null or .smtp_host == ""' auth-config-snapshot.json > /dev/null; then
+              echo "**SMTP status: Supabase built-in email service** (rate-limited, not Resend)."
+            else
+              echo "**SMTP status: custom SMTP is configured** (host above)."
+            fi
+            echo ""
+            echo "Full redacted snapshot uploaded as a run artifact (90-day retention)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate templates contain required variables
+        if: ${{ github.event.inputs.action == 'apply-templates' }}
+        run: |
+          fail=0
+          grep -q '{{ \.Token }}' supabase/auth-templates/recovery.html || { echo "::error::recovery.html missing {{ .Token }}"; fail=1; }
+          grep -q '{{ \.ConfirmationURL }}' supabase/auth-templates/recovery.html || { echo "::error::recovery.html missing {{ .ConfirmationURL }}"; fail=1; }
+          grep -q '{{ \.ConfirmationURL }}' supabase/auth-templates/confirmation.html || { echo "::error::confirmation.html missing {{ .ConfirmationURL }}"; fail=1; }
+          grep -q '{{ \.ConfirmationURL }}' supabase/auth-templates/email-change.html || { echo "::error::email-change.html missing {{ .ConfirmationURL }}"; fail=1; }
+          exit $fail
+
+      - name: Apply templates and redirect allowlist
+        if: ${{ github.event.inputs.action == 'apply-templates' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          # Merge the portal recovery routes into the existing allowlist
+          # (comma-separated). Never removes existing entries.
+          current=$(jq -r '.uri_allow_list // ""' auth-config-snapshot.json)
+          for url in \
+            "https://portal.vinetrack.com.au/reset-password" \
+            "https://portal.vinetrack.com.au/auth/callback"; do
+            case ",$current," in
+              *",$url,"*) ;;
+              *) current="${current:+$current,}$url" ;;
+            esac
+          done
+          jq -n \
+            --rawfile recovery supabase/auth-templates/recovery.html \
+            --rawfile confirmation supabase/auth-templates/confirmation.html \
+            --rawfile emailchange supabase/auth-templates/email-change.html \
+            --arg allowlist "$current" \
+            '{
+              mailer_subjects_recovery: "Reset your VineTrack password",
+              mailer_templates_recovery_content: $recovery,
+              mailer_subjects_confirmation: "Confirm your VineTrack account",
+              mailer_templates_confirmation_content: $confirmation,
+              mailer_subjects_email_change: "Confirm your new VineTrack email address",
+              mailer_templates_email_change_content: $emailchange,
+              uri_allow_list: $allowlist
+            }' > /tmp/payload.json
+          http=$(curl -s -o /tmp/resp.json -w "%{http_code}" -X PATCH \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            "$API_BASE/projects/$PROJECT_REF/config/auth" \
+            -d @/tmp/payload.json)
+          if [ "$http" -ge 300 ]; then
+            echo "::error::Template update failed (HTTP $http)"; cat /tmp/resp.json; exit 1
+          fi
+          {
+            echo "## Templates + redirect allowlist applied"
+            echo ""
+            echo "- Recovery subject: **Reset your VineTrack password** (contains both the six-digit code and the reset link)"
+            echo "- Signup subject: **Confirm your VineTrack account**"
+            echo "- Email change subject: **Confirm your new VineTrack email address**"
+            echo "- Redirect allowlist now: \`$current\`"
+            echo ""
+            echo "SMTP was NOT changed by this action. Previous config is in this run's snapshot artifact."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enable Resend custom SMTP
+        if: ${{ github.event.inputs.action == 'enable-smtp' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SENDER_EMAIL: ${{ github.event.inputs.sender_email }}
+          SENDER_NAME: ${{ github.event.inputs.sender_name }}
+        run: |
+          if [ -z "$RESEND_API_KEY" ]; then
+            echo "::error::RESEND_API_KEY repo secret is not set — add it before enabling SMTP"; exit 1
+          fi
+          # Guard: warn loudly if templates were never customised (the default
+          # Supabase recovery template has no six-digit-code guidance).
+          if jq -e '(.mailer_templates_recovery_content // "") == ""' auth-config-snapshot.json > /dev/null; then
+            echo "::warning::Recovery template is still the Supabase default — run apply-templates first."
+          fi
+          jq -n \
+            --arg pass "$RESEND_API_KEY" \
+            --arg email "$SENDER_EMAIL" \
+            --arg name "$SENDER_NAME" \
+            '{
+              smtp_host: "smtp.resend.com",
+              smtp_port: "465",
+              smtp_user: "resend",
+              smtp_pass: $pass,
+              smtp_admin_email: $email,
+              smtp_sender_name: $name,
+              smtp_max_frequency: 1
+            }' > /tmp/payload.json
+          http=$(curl -s -o /tmp/resp.json -w "%{http_code}" -X PATCH \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            "$API_BASE/projects/$PROJECT_REF/config/auth" \
+            -d @/tmp/payload.json)
+          rm -f /tmp/payload.json
+          if [ "$http" -ge 300 ]; then
+            echo "::error::SMTP update failed (HTTP $http)"; cat /tmp/resp.json; exit 1
+          fi
+          rm -f /tmp/resp.json
+          {
+            echo "## Resend custom SMTP enabled"
+            echo ""
+            echo "- Activated at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            echo "- Host: smtp.resend.com, port 465 (TLS), username: resend"
+            echo "- Sender: $SENDER_NAME <$SENDER_EMAIL>"
+            echo ""
+            echo "**Run the post-activation tests now** (docs/auth-email-smtp-runbook.md, section 5):"
+            echo "mobile six-digit recovery, portal link recovery, signup confirmation."
+            echo ""
+            echo "**Rollback:** re-run this workflow with action \`rollback-smtp\`. The"
+            echo "pre-change configuration is preserved in this run's snapshot artifact."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Rollback — disable custom SMTP
+        if: ${{ github.event.inputs.action == 'rollback-smtp' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          http=$(curl -s -o /tmp/resp.json -w "%{http_code}" -X PATCH \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            "$API_BASE/projects/$PROJECT_REF/config/auth" \
+            -d '{"smtp_host": null, "smtp_port": null, "smtp_user": null, "smtp_pass": null, "smtp_admin_email": null, "smtp_sender_name": null}')
+          if [ "$http" -ge 300 ]; then
+            echo "::error::SMTP rollback failed (HTTP $http)"; cat /tmp/resp.json; exit 1
+          fi
+          rm -f /tmp/resp.json
+          {
+            echo "## Custom SMTP disabled — reverted to Supabase built-in email"
+            echo ""
+            echo "- Reverted at: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            echo "- Templates and redirect allowlist were left unchanged."
+            echo "- Built-in delivery is heavily rate-limited (a few emails/hour) — suitable"
+            echo "  only as an emergency fallback."
+            echo ""
+            echo "Verify password recovery works, then investigate the Resend failure"
+            echo "before re-enabling (docs/auth-email-smtp-runbook.md, section 6)."
+          } >> "$GITHUB_STEP_SUMMARY"
