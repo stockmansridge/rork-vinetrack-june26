@@ -135,13 +135,16 @@ struct IrrigationCalculatorFixtureTests {
     }
 
     private func row(rowId: String, blockId: String, blockName: String, number: Int,
-                     emitters: Int? = nil, vines: Int? = nil, length: Double? = nil) -> IrrigationAvailableRow {
+                     emitters: Int? = nil, vines: Int? = nil, length: Double? = nil,
+                     emitterBasis: String? = nil, vineBasis: String? = nil) -> IrrigationAvailableRow {
         var json: [String: Any] = [
             "row_id": rowId, "block_id": blockId, "block_name": blockName, "row_number": number
         ]
         if let emitters { json["emitter_count"] = emitters }
         if let vines { json["vine_count"] = vines }
         if let length { json["row_length_metres"] = length }
+        if let emitterBasis { json["emitter_count_basis"] = emitterBasis }
+        if let vineBasis { json["vine_count_basis"] = vineBasis }
         return availableRow(json)
     }
 
@@ -198,6 +201,58 @@ struct IrrigationCalculatorFixtureTests {
         #expect(result.blocks[0].percentage == 75)
         #expect(result.blocks[0].rowCount == 3)
         #expect(result.blocks[1].percentage == 25)
+    }
+
+    // MARK: SQL 127 basis honesty (parity with sql/127 asserts and
+    // IrrigationCalculatorFixtureTest.kt)
+
+    @Test func spacingDerivedEmitterEstimatesKeepRowLengthBasis() {
+        let result = IrrigationRowWeighting.allocate(rows: [
+            row(rowId: "00000000-0000-0000-0000-00000000A001", blockId: blockA, blockName: "A",
+                number: 1, emitters: 430, vines: 103, length: 215.01,
+                emitterBasis: "row_length_spacing", vineBasis: "row_length_spacing"),
+            row(rowId: "00000000-0000-0000-0000-00000000B001", blockId: blockB, blockName: "B",
+                number: 1, emitters: 143, vines: 34, length: 71.67,
+                emitterBasis: "row_length_spacing", vineBasis: "row_length_spacing")
+        ])
+        #expect(result.basis == .rowLength)
+        #expect(result.blocks[0].percentage == 75)
+    }
+
+    @Test func reconciledBlockTotalVinesAreAValidVineBasis() {
+        let result = IrrigationRowWeighting.allocate(rows: [
+            row(rowId: "00000000-0000-0000-0000-00000000A001", blockId: blockA, blockName: "A",
+                number: 1, emitters: 200, vines: 120, length: 100,
+                emitterBasis: "row_length_spacing", vineBasis: "block_total_proportional"),
+            row(rowId: "00000000-0000-0000-0000-00000000B001", blockId: blockB, blockName: "B",
+                number: 1, emitters: 200, vines: 40, length: 100,
+                emitterBasis: "row_length_spacing", vineBasis: "block_total_proportional")
+        ])
+        #expect(result.basis == .vineCount)
+        #expect(result.blocks[0].percentage == 75)
+    }
+
+    @Test func exactEmitterBasisStillWins() {
+        let result = IrrigationRowWeighting.allocate(rows: [
+            row(rowId: "00000000-0000-0000-0000-00000000A001", blockId: blockA, blockName: "A",
+                number: 1, emitters: 300, length: 100, emitterBasis: "exact"),
+            row(rowId: "00000000-0000-0000-0000-00000000B001", blockId: blockB, blockName: "B",
+                number: 1, emitters: 100, length: 100, emitterBasis: "exact")
+        ])
+        #expect(result.basis == .emitterCount)
+        #expect(result.blocks[0].percentage == 75)
+    }
+
+    @Test func missingRowLengthWithSpacingDerivedDataFallsBackToEqualRows() {
+        let result = IrrigationRowWeighting.allocate(rows: [
+            row(rowId: "00000000-0000-0000-0000-00000000A001", blockId: blockA, blockName: "A",
+                number: 1, emitters: 200, vines: 50, length: 100,
+                emitterBasis: "row_length_spacing", vineBasis: "row_length_spacing"),
+            row(rowId: "00000000-0000-0000-0000-00000000B069", blockId: blockB, blockName: "B",
+                number: 69, emitterBasis: "unavailable", vineBasis: "unavailable")
+        ])
+        #expect(result.basis == .equalRows)
+        #expect(result.blocks[0].percentage == 50)
     }
 
     @Test func rowRangeSummaryCompressesOnlyContiguousRuns() {

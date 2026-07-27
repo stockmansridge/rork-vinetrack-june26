@@ -77,8 +77,14 @@ data class IrrigationAvailableRow(
     @SerialName("row_number") val rowNumber: Int,
     @SerialName("row_label") val rowLabel: String? = null,
     @SerialName("vine_count") val vineCount: Int? = null,
+    /** SQL 127 basis: exact | block_total_proportional | row_length_spacing | unavailable. */
+    @SerialName("vine_count_basis") val vineCountBasis: String? = null,
+    @SerialName("vine_count_is_estimated") val vineCountIsEstimated: Boolean? = null,
     @SerialName("emitter_count") val emitterCount: Int? = null,
+    @SerialName("emitter_count_basis") val emitterCountBasis: String? = null,
+    @SerialName("emitter_count_is_estimated") val emitterCountIsEstimated: Boolean? = null,
     @SerialName("row_length_metres") val rowLengthMetres: Double? = null,
+    @SerialName("geometry_warning") val geometryWarning: String? = null,
     @SerialName("connected_valve_ids") val connectedValveIds: List<String> = emptyList(),
     @SerialName("connected_valve_names") val connectedValveNames: List<String> = emptyList(),
 ) {
@@ -95,11 +101,39 @@ data class IrrigationValveRowLink(
     @SerialName("row_number") val rowNumber: Int = 0,
     @SerialName("row_label") val rowLabel: String? = null,
     @SerialName("vine_count") val vineCount: Int? = null,
+    @SerialName("vine_count_basis") val vineCountBasis: String? = null,
+    @SerialName("vine_count_is_estimated") val vineCountIsEstimated: Boolean? = null,
     @SerialName("emitter_count") val emitterCount: Int? = null,
+    @SerialName("emitter_count_basis") val emitterCountBasis: String? = null,
+    @SerialName("emitter_count_is_estimated") val emitterCountIsEstimated: Boolean? = null,
     @SerialName("row_length_metres") val rowLengthMetres: Double? = null,
     @SerialName("weighting_basis") val weightingBasis: String? = null,
     @SerialName("row_weight") val rowWeight: Double? = null,
     @SerialName("block_name") val blockName: String? = null,
+    /** Snapshot timestamp (SQL 127 `saved_at`, ISO string). */
+    @SerialName("saved_at") val savedAt: String? = null,
+)
+
+/**
+ * Per-block coverage vs water-share summary returned by
+ * `set_irrigation_valve_rows` (SQL 127 `block_summaries`).
+ */
+@Serializable
+data class IrrigationRowBlockSummary(
+    @SerialName("block_id") val blockId: String,
+    @SerialName("block_name") val blockName: String? = null,
+    @SerialName("selected_row_count") val selectedRowCount: Int = 0,
+    @SerialName("total_block_row_count") val totalBlockRowCount: Int? = null,
+    @SerialName("selected_row_length_metres") val selectedRowLengthMetres: Double? = null,
+    @SerialName("total_block_row_length_metres") val totalBlockRowLengthMetres: Double? = null,
+    @SerialName("selected_vine_count") val selectedVineCount: Int? = null,
+    @SerialName("selected_emitter_count") val selectedEmitterCount: Int? = null,
+    @SerialName("row_coverage_percent") val rowCoveragePercent: Double? = null,
+    @SerialName("length_coverage_percent") val lengthCoveragePercent: Double? = null,
+    /** Server-authoritative share of the VALVE's water. */
+    @SerialName("allocation_percentage") val allocationPercentage: Double? = null,
+    @SerialName("weighting_basis") val weightingBasis: String? = null,
+    val warnings: List<String> = emptyList(),
 )
 
 /** Result of `set_irrigation_valve_rows` — backend percentages are authoritative. */
@@ -107,6 +141,7 @@ data class IrrigationValveRowLink(
 data class IrrigationValveRowsResult(
     @SerialName("weighting_basis") val weightingBasis: String? = null,
     val blocks: List<IrrigationValveBlockRow> = emptyList(),
+    @SerialName("block_summaries") val blockSummaries: List<IrrigationRowBlockSummary> = emptyList(),
     val warnings: List<String> = emptyList(),
 )
 
@@ -537,11 +572,20 @@ object IrrigationLocalCalc {
         return parts.joinToString(", ")
     }
 
-    /** ONE common basis for the whole selection: emitters → vines → length → equal. */
+    /**
+     * ONE common basis for the whole selection, honouring the SQL 127 basis
+     * metadata so estimates never overstate precision (spacing-derived counts
+     * are just row-length weighting): emitters (exact only) → vines (exact or
+     * reconciled block totals) → length → equal. Missing basis keeps the
+     * legacy 'exact' interpretation (SQL 126 parity fixtures).
+     */
     fun rowBasis(rows: List<IrrigationAvailableRow>): String = when {
         rows.isEmpty() -> "equal_rows"
-        rows.all { (it.emitterCount ?: 0) > 0 } -> "emitter_count"
-        rows.all { (it.vineCount ?: 0) > 0 } -> "vine_count"
+        rows.all { (it.emitterCount ?: 0) > 0 && (it.emitterCountBasis ?: "exact") == "exact" } -> "emitter_count"
+        rows.all {
+            (it.vineCount ?: 0) > 0 &&
+                (it.vineCountBasis ?: "exact") in listOf("exact", "block_total_proportional")
+        } -> "vine_count"
         rows.all { (it.rowLengthMetres ?: 0.0) > 0 } -> "row_length"
         else -> "equal_rows"
     }

@@ -144,10 +144,13 @@ class IrrigationCalculatorFixtureTest {
         emitters: Int? = null,
         vines: Int? = null,
         length: Double? = null,
+        emitterBasis: String? = null,
+        vineBasis: String? = null,
     ) = IrrigationAvailableRow(
         rowId = rowId, blockId = blockId, blockName = blockName,
         rowNumber = number, emitterCount = emitters, vineCount = vines,
         rowLengthMetres = length,
+        emitterCountBasis = emitterBasis, vineCountBasis = vineBasis,
     )
 
     @Test
@@ -203,6 +206,98 @@ class IrrigationCalculatorFixtureTest {
         assertEquals(75.0, result.blocks[0].percentage, 0.0001)
         assertEquals(3, result.blocks[0].rowCount)
         assertEquals(25.0, result.blocks[1].percentage, 0.0001)
+    }
+
+    // ------------------------------------------------------------------------
+    // SQL 127 basis-honesty fixture — mirrors the assert block in
+    // sql/127_irrigation_row_estimates.sql and IrrigationCalculatorFixtureTests.swift.
+    // ------------------------------------------------------------------------
+
+    @Test
+    fun `spacing-derived emitter estimates keep the row-length basis`() {
+        val result = IrrigationLocalCalc.rowWeighting(
+            listOf(
+                row(
+                    "a1", "00000000-0000-0000-0000-000000000001", "A", 1,
+                    emitters = 430, vines = 103, length = 215.01,
+                    emitterBasis = "row_length_spacing", vineBasis = "row_length_spacing",
+                ),
+                row(
+                    "b1", "00000000-0000-0000-0000-000000000002", "B", 1,
+                    emitters = 143, vines = 34, length = 71.67,
+                    emitterBasis = "row_length_spacing", vineBasis = "row_length_spacing",
+                ),
+            ),
+        )
+        assertEquals("row_length", result.basis)
+        assertEquals(75.0, result.blocks[0].percentage, 0.0001)
+    }
+
+    @Test
+    fun `reconciled block-total vines are a valid vine basis`() {
+        val result = IrrigationLocalCalc.rowWeighting(
+            listOf(
+                row(
+                    "a1", "00000000-0000-0000-0000-000000000001", "A", 1,
+                    emitters = 200, vines = 120, length = 100.0,
+                    emitterBasis = "row_length_spacing", vineBasis = "block_total_proportional",
+                ),
+                row(
+                    "b1", "00000000-0000-0000-0000-000000000002", "B", 1,
+                    emitters = 200, vines = 40, length = 100.0,
+                    emitterBasis = "row_length_spacing", vineBasis = "block_total_proportional",
+                ),
+            ),
+        )
+        assertEquals("vine_count", result.basis)
+        assertEquals(75.0, result.blocks[0].percentage, 0.0001)
+    }
+
+    @Test
+    fun `exact emitter basis still wins and legacy rows stay exact`() {
+        val exact = IrrigationLocalCalc.rowWeighting(
+            listOf(
+                row(
+                    "a1", "00000000-0000-0000-0000-000000000001", "A", 1,
+                    emitters = 300, length = 100.0, emitterBasis = "exact",
+                ),
+                row(
+                    "b1", "00000000-0000-0000-0000-000000000002", "B", 1,
+                    emitters = 100, length = 100.0, emitterBasis = "exact",
+                ),
+            ),
+        )
+        assertEquals("emitter_count", exact.basis)
+        assertEquals(75.0, exact.blocks[0].percentage, 0.0001)
+
+        // Rows without basis metadata keep the legacy exact interpretation
+        // (covered by the SQL 126 fixtures above) — spot check:
+        val legacy = IrrigationLocalCalc.rowWeighting(
+            listOf(
+                row("a1", "00000000-0000-0000-0000-000000000001", "A", 1, emitters = 130, length = 100.0),
+                row("b1", "00000000-0000-0000-0000-000000000002", "B", 1, emitters = 70, length = 60.0),
+            ),
+        )
+        assertEquals("emitter_count", legacy.basis)
+    }
+
+    @Test
+    fun `missing row length with spacing-derived data falls back to equal rows`() {
+        val result = IrrigationLocalCalc.rowWeighting(
+            listOf(
+                row(
+                    "a1", "00000000-0000-0000-0000-000000000001", "A", 1,
+                    emitters = 200, vines = 50, length = 100.0,
+                    emitterBasis = "row_length_spacing", vineBasis = "row_length_spacing",
+                ),
+                row(
+                    "b69", "00000000-0000-0000-0000-000000000002", "B", 69,
+                    emitterBasis = "unavailable", vineBasis = "unavailable",
+                ),
+            ),
+        )
+        assertEquals("equal_rows", result.basis)
+        assertEquals(50.0, result.blocks[0].percentage, 0.0001)
     }
 
     @Test

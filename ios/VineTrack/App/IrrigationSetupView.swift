@@ -784,6 +784,24 @@ struct IrrigationValveBlocksEditor: View {
         }
     }
 
+    /// "215.01 m · ≈103 vines · ≈430 emitters" — shared SQL 127 estimates,
+    /// never calculated on-device. Missing values are explained, never blank.
+    private func rowDetail(_ row: IrrigationAvailableRow) -> String {
+        var parts: [String] = []
+        parts.append(row.rowLengthMetres.map { String(format: "%.2f m", $0) } ?? "Length unavailable")
+        if let vines = row.vineCount {
+            parts.append("\(row.vineCountIsEstimated == true ? "≈" : "")\(vines) vines")
+        } else {
+            parts.append("Vines unavailable")
+        }
+        if let emitters = row.emitterCount {
+            parts.append("\(row.emitterCountIsEstimated == true ? "≈" : "")\(emitters) emitters")
+        } else {
+            parts.append("Emitters unavailable")
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private func rowToggle(_ row: IrrigationAvailableRow) -> some View {
         let isSelected = selectedRowIds.contains(row.rowId)
         let otherValves = (row.connectedValveNames ?? []).filter { $0 != valve.name }
@@ -798,6 +816,9 @@ struct IrrigationValveBlocksEditor: View {
                     Text(row.displayLabel)
                         .font(.subheadline)
                         .foregroundStyle(.primary)
+                    Text(rowDetail(row))
+                        .font(.caption2)
+                        .foregroundStyle(row.rowLengthMetres == nil ? .orange : .secondary)
                     if !otherValves.isEmpty {
                         Text("Also: \(otherValves.joined(separator: ", "))")
                             .font(.caption2)
@@ -805,15 +826,6 @@ struct IrrigationValveBlocksEditor: View {
                     }
                 }
                 Spacer()
-                if let length = row.rowLengthMetres {
-                    Text(String(format: "%.0f m", length))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Length unavailable")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                }
             }
         }
         .buttonStyle(.plain)
@@ -829,6 +841,11 @@ struct IrrigationValveBlocksEditor: View {
         /// Share of the VALVE's water — the server-authoritative allocation
         /// percentage (or the provisional preview while editing).
         let share: Double?
+        /// SQL 127 estimated totals — shown only when every selected row in the
+        /// block carries a value (partial sums are never presented as totals).
+        let vines: Int?
+        let emitters: Int?
+        let anyEstimated: Bool
         var id: UUID { blockId }
         /// Proportion of THIS BLOCK's rows selected — display only, never sent
         /// to the server as an allocation percentage.
@@ -847,17 +864,23 @@ struct IrrigationValveBlocksEditor: View {
         if hasUnsavedRowChanges || savedLinks.isEmpty {
             let provisional = IrrigationRowWeighting.allocate(rows: selectedRows)
             let shares = Dictionary(uniqueKeysWithValues: provisional.blocks.map { ($0.blockId, $0.percentage) })
-            var grouped: [UUID: (name: String, numbers: [Int])] = [:]
-            for row in selectedRows {
-                var entry = grouped[row.blockId] ?? (row.blockName, [])
-                entry.numbers.append(row.rowNumber)
-                grouped[row.blockId] = entry
-            }
-            return grouped
-                .map { RowSummaryBlock(blockId: $0.key, blockName: $0.value.name,
-                                       selectedNumbers: $0.value.numbers,
-                                       totalRows: totals[$0.key]?.total ?? 0,
-                                       share: shares[$0.key]) }
+            let byBlock = Dictionary(grouping: selectedRows, by: \.blockId)
+            return byBlock
+                .map { blockId, rowsInBlock in
+                    RowSummaryBlock(
+                        blockId: blockId,
+                        blockName: rowsInBlock.first?.blockName ?? "Block",
+                        selectedNumbers: rowsInBlock.map(\.rowNumber),
+                        totalRows: totals[blockId]?.total ?? 0,
+                        share: shares[blockId],
+                        vines: rowsInBlock.allSatisfy { $0.vineCount != nil }
+                            ? rowsInBlock.reduce(0) { $0 + ($1.vineCount ?? 0) } : nil,
+                        emitters: rowsInBlock.allSatisfy { $0.emitterCount != nil }
+                            ? rowsInBlock.reduce(0) { $0 + ($1.emitterCount ?? 0) } : nil,
+                        anyEstimated: rowsInBlock.contains {
+                            $0.vineCountIsEstimated == true || $0.emitterCountIsEstimated == true
+                        })
+                }
                 .sorted { $0.blockName < $1.blockName }
         }
         let shares: [UUID: Double] = savedBlocks.reduce(into: [:]) { dict, block in
@@ -865,17 +888,23 @@ struct IrrigationValveBlocksEditor: View {
                 dict[block.blockId] = pct
             }
         }
-        var grouped: [UUID: (name: String, numbers: [Int])] = [:]
-        for link in savedLinks {
-            var entry = grouped[link.blockId] ?? (link.blockName ?? totals[link.blockId]?.name ?? "Block", [])
-            entry.numbers.append(link.rowNumber)
-            grouped[link.blockId] = entry
-        }
-        return grouped
-            .map { RowSummaryBlock(blockId: $0.key, blockName: $0.value.name,
-                                   selectedNumbers: $0.value.numbers,
-                                   totalRows: totals[$0.key]?.total ?? 0,
-                                   share: shares[$0.key]) }
+        let byBlock = Dictionary(grouping: savedLinks, by: \.blockId)
+        return byBlock
+            .map { blockId, linksInBlock in
+                RowSummaryBlock(
+                    blockId: blockId,
+                    blockName: linksInBlock.first?.blockName ?? totals[blockId]?.name ?? "Block",
+                    selectedNumbers: linksInBlock.map(\.rowNumber),
+                    totalRows: totals[blockId]?.total ?? 0,
+                    share: shares[blockId],
+                    vines: linksInBlock.allSatisfy { $0.vineCount != nil }
+                        ? linksInBlock.reduce(0) { $0 + ($1.vineCount ?? 0) } : nil,
+                    emitters: linksInBlock.allSatisfy { $0.emitterCount != nil }
+                        ? linksInBlock.reduce(0) { $0 + ($1.emitterCount ?? 0) } : nil,
+                    anyEstimated: linksInBlock.contains {
+                        $0.vineCountIsEstimated == true || $0.emitterCountIsEstimated == true
+                    })
+            }
             .sorted { $0.blockName < $1.blockName }
     }
 
@@ -889,15 +918,15 @@ struct IrrigationValveBlocksEditor: View {
     }
 
     /// Backend-derived totals only — never presented unless every row/block
-    /// carries the value (per-row vines/emitters are not configured today).
+    /// carries the value (SQL 127 supplies shared estimates; partial sums are
+    /// never presented as totals).
     private var summaryVineTotal: Int? {
         if hasUnsavedRowChanges || savedLinks.isEmpty {
             guard !selectedRows.isEmpty, selectedRows.allSatisfy({ ($0.vineCount ?? 0) > 0 }) else { return nil }
             return selectedRows.reduce(0) { $0 + ($1.vineCount ?? 0) }
         }
-        let rowsBlocks = savedBlocks.filter { $0.allocationMethod == "rows" }
-        guard !rowsBlocks.isEmpty, rowsBlocks.allSatisfy({ $0.servicedVineCount != nil }) else { return nil }
-        return rowsBlocks.reduce(0) { $0 + ($1.servicedVineCount ?? 0) }
+        guard !savedLinks.isEmpty, savedLinks.allSatisfy({ $0.vineCount != nil }) else { return nil }
+        return savedLinks.reduce(0) { $0 + ($1.vineCount ?? 0) }
     }
 
     private var summaryEmitterTotal: Int? {
@@ -905,9 +934,17 @@ struct IrrigationValveBlocksEditor: View {
             guard !selectedRows.isEmpty, selectedRows.allSatisfy({ ($0.emitterCount ?? 0) > 0 }) else { return nil }
             return selectedRows.reduce(0) { $0 + ($1.emitterCount ?? 0) }
         }
-        let rowsBlocks = savedBlocks.filter { $0.allocationMethod == "rows" }
-        guard !rowsBlocks.isEmpty, rowsBlocks.allSatisfy({ $0.servicedEmitterCount != nil }) else { return nil }
-        return rowsBlocks.reduce(0) { $0 + ($1.servicedEmitterCount ?? 0) }
+        guard !savedLinks.isEmpty, savedLinks.allSatisfy({ $0.emitterCount != nil }) else { return nil }
+        return savedLinks.reduce(0) { $0 + ($1.emitterCount ?? 0) }
+    }
+
+    /// True when any displayed vine/emitter value is a SQL 127 estimate —
+    /// drives the ≈ prefix and the "estimates" explanation.
+    private var summaryValuesEstimated: Bool {
+        if hasUnsavedRowChanges || savedLinks.isEmpty {
+            return selectedRows.contains { $0.vineCountIsEstimated == true || $0.emitterCountIsEstimated == true }
+        }
+        return savedLinks.contains { $0.vineCountIsEstimated == true || $0.emitterCountIsEstimated == true }
     }
 
     private var summaryRowsMissingLength: Int {
@@ -949,6 +986,12 @@ struct IrrigationValveBlocksEditor: View {
                         Text("Rows \(IrrigationRowWeighting.rangeSummary(block.selectedNumbers))")
                             .foregroundStyle(.secondary)
                     }
+                    LabeledContent("Estimated vines") {
+                        Text(block.vines.map { "\(block.anyEstimated ? "≈" : "")\($0)" } ?? "Not available")
+                    }
+                    LabeledContent("Estimated emitters") {
+                        Text(block.emitters.map { "\(block.anyEstimated ? "≈" : "")\($0)" } ?? "Not available")
+                    }
                     if let coverage = block.coveragePercent {
                         LabeledContent("Block coverage") {
                             Text(String(format: "%.1f%%", coverage))
@@ -962,10 +1005,15 @@ struct IrrigationValveBlocksEditor: View {
             }
 
             if !blocks.isEmpty {
-                LabeledContent("Vines (selected rows)",
-                               value: summaryVineTotal.map(String.init) ?? "Not available")
-                LabeledContent("Emitters (selected rows)",
-                               value: summaryEmitterTotal.map(String.init) ?? "Not available")
+                LabeledContent(summaryValuesEstimated ? "Estimated vines (selected rows)" : "Vines (selected rows)",
+                               value: summaryVineTotal.map { "\(summaryValuesEstimated ? "≈" : "")\($0)" } ?? "Not available")
+                LabeledContent(summaryValuesEstimated ? "Estimated emitters (selected rows)" : "Emitters (selected rows)",
+                               value: summaryEmitterTotal.map { "\(summaryValuesEstimated ? "≈" : "")\($0)" } ?? "Not available")
+                if summaryVineTotal != nil || summaryEmitterTotal != nil, summaryValuesEstimated {
+                    Text("Vine and emitter counts are estimates based on mapped row length and Vineyard Setup information.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if summaryVineTotal == nil || summaryEmitterTotal == nil {
                     Text(displayBasisRaw == "row_length"
                          ? "Row length is currently used to calculate the block water split. Per-row vine and emitter counts are not available."

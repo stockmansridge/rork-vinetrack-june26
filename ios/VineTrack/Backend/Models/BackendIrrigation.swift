@@ -106,8 +106,14 @@ nonisolated struct IrrigationAvailableRow: Decodable, Sendable, Identifiable, Ha
     let rowNumber: Int
     let rowLabel: String?
     let vineCount: Int?
+    /// SQL 127 basis: exact | block_total_proportional | row_length_spacing | unavailable.
+    let vineCountBasis: String?
+    let vineCountIsEstimated: Bool?
     let emitterCount: Int?
+    let emitterCountBasis: String?
+    let emitterCountIsEstimated: Bool?
     let rowLengthMetres: Double?
+    let geometryWarning: String?
     let connectedValveIds: [UUID]?
     let connectedValveNames: [String]?
 
@@ -120,8 +126,13 @@ nonisolated struct IrrigationAvailableRow: Decodable, Sendable, Identifiable, Ha
         case rowNumber = "row_number"
         case rowLabel = "row_label"
         case vineCount = "vine_count"
+        case vineCountBasis = "vine_count_basis"
+        case vineCountIsEstimated = "vine_count_is_estimated"
         case emitterCount = "emitter_count"
+        case emitterCountBasis = "emitter_count_basis"
+        case emitterCountIsEstimated = "emitter_count_is_estimated"
         case rowLengthMetres = "row_length_metres"
+        case geometryWarning = "geometry_warning"
         case connectedValveIds = "connected_valve_ids"
         case connectedValveNames = "connected_valve_names"
     }
@@ -138,11 +149,17 @@ nonisolated struct IrrigationValveRowLink: Decodable, Sendable, Identifiable, Ha
     let rowNumber: Int
     let rowLabel: String?
     let vineCount: Int?
+    let vineCountBasis: String?
+    let vineCountIsEstimated: Bool?
     let emitterCount: Int?
+    let emitterCountBasis: String?
+    let emitterCountIsEstimated: Bool?
     let rowLengthMetres: Double?
     let weightingBasis: String?
     let rowWeight: Double?
     let blockName: String?
+    /// Snapshot timestamp (SQL 127 `saved_at`, ISO string).
+    let savedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -152,11 +169,53 @@ nonisolated struct IrrigationValveRowLink: Decodable, Sendable, Identifiable, Ha
         case rowNumber = "row_number"
         case rowLabel = "row_label"
         case vineCount = "vine_count"
+        case vineCountBasis = "vine_count_basis"
+        case vineCountIsEstimated = "vine_count_is_estimated"
         case emitterCount = "emitter_count"
+        case emitterCountBasis = "emitter_count_basis"
+        case emitterCountIsEstimated = "emitter_count_is_estimated"
         case rowLengthMetres = "row_length_metres"
         case weightingBasis = "weighting_basis"
         case rowWeight = "row_weight"
         case blockName = "block_name"
+        case savedAt = "saved_at"
+    }
+}
+
+/// Per-block coverage vs water-share summary returned by
+/// `set_irrigation_valve_rows` (SQL 127 `block_summaries`).
+nonisolated struct IrrigationRowBlockSummary: Decodable, Sendable, Identifiable, Hashable {
+    let blockId: UUID
+    let blockName: String?
+    let selectedRowCount: Int
+    let totalBlockRowCount: Int?
+    let selectedRowLengthMetres: Double?
+    let totalBlockRowLengthMetres: Double?
+    let selectedVineCount: Int?
+    let selectedEmitterCount: Int?
+    let rowCoveragePercent: Double?
+    let lengthCoveragePercent: Double?
+    /// Server-authoritative share of the VALVE's water.
+    let allocationPercentage: Double?
+    let weightingBasis: String?
+    let warnings: [String]?
+
+    var id: UUID { blockId }
+
+    enum CodingKeys: String, CodingKey {
+        case blockId = "block_id"
+        case blockName = "block_name"
+        case selectedRowCount = "selected_row_count"
+        case totalBlockRowCount = "total_block_row_count"
+        case selectedRowLengthMetres = "selected_row_length_metres"
+        case totalBlockRowLengthMetres = "total_block_row_length_metres"
+        case selectedVineCount = "selected_vine_count"
+        case selectedEmitterCount = "selected_emitter_count"
+        case rowCoveragePercent = "row_coverage_percent"
+        case lengthCoveragePercent = "length_coverage_percent"
+        case allocationPercentage = "allocation_percentage"
+        case weightingBasis = "weighting_basis"
+        case warnings
     }
 }
 
@@ -165,10 +224,12 @@ nonisolated struct IrrigationValveRowLink: Decodable, Sendable, Identifiable, Ha
 nonisolated struct IrrigationValveRowsResult: Decodable, Sendable {
     let weightingBasis: String?
     let blocks: [IrrigationValveBlock]
+    let blockSummaries: [IrrigationRowBlockSummary]?
     let warnings: [String]
 
     enum CodingKeys: String, CodingKey {
         case weightingBasis = "weighting_basis"
+        case blockSummaries = "block_summaries"
         case blocks, warnings
     }
 }
@@ -221,12 +282,23 @@ nonisolated enum IrrigationRowWeighting {
         return parts.joined(separator: ", ")
     }
 
-    /// Resolves ONE common basis for the whole selection (never mixes units):
-    /// emitters → vines → row length → equal rows.
+    /// Resolves ONE common basis for the whole selection (never mixes units),
+    /// honouring the SQL 127 basis metadata so estimates never overstate
+    /// precision: spacing-derived counts are just row-length weighting.
+    ///   emitters (exact only) → vines (exact or reconciled block totals)
+    ///   → row length → equal rows. Missing basis keeps the legacy 'exact'
+    ///   interpretation (SQL 126 parity fixtures).
     static func basis(for rows: [IrrigationAvailableRow]) -> Basis {
         guard !rows.isEmpty else { return .equalRows }
-        if rows.allSatisfy({ ($0.emitterCount ?? 0) > 0 }) { return .emitterCount }
-        if rows.allSatisfy({ ($0.vineCount ?? 0) > 0 }) { return .vineCount }
+        if rows.allSatisfy({ ($0.emitterCount ?? 0) > 0 && ($0.emitterCountBasis ?? "exact") == "exact" }) {
+            return .emitterCount
+        }
+        if rows.allSatisfy({
+            ($0.vineCount ?? 0) > 0
+            && ["exact", "block_total_proportional"].contains($0.vineCountBasis ?? "exact")
+        }) {
+            return .vineCount
+        }
         if rows.allSatisfy({ ($0.rowLengthMetres ?? 0) > 0 }) { return .rowLength }
         return .equalRows
     }

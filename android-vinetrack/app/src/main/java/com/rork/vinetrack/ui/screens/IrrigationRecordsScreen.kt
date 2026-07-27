@@ -1178,6 +1178,19 @@ private fun ValveBlocksEditor(
                                     )
                                     Column(Modifier.weight(1f)) {
                                         Text(row.displayLabel, style = MaterialTheme.typography.bodyMedium)
+                                        // "215.01 m · ≈103 vines · ≈430 emitters" — shared
+                                        // SQL 127 estimates, never calculated on-device.
+                                        val detail = listOf(
+                                            row.rowLengthMetres?.let { String.format(Locale.US, "%.2f m", it) } ?: "Length unavailable",
+                                            row.vineCount?.let { "${if (row.vineCountIsEstimated == true) "≈" else ""}$it vines" } ?: "Vines unavailable",
+                                            row.emitterCount?.let { "${if (row.emitterCountIsEstimated == true) "≈" else ""}$it emitters" } ?: "Emitters unavailable",
+                                        ).joinToString(" · ")
+                                        Text(
+                                            detail,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (row.rowLengthMetres == null) Color(0xFFEF6C00)
+                                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
                                         if (otherValves.isNotEmpty()) {
                                             Text(
                                                 "Also: ${otherValves.joinToString(", ")}",
@@ -1185,20 +1198,6 @@ private fun ValveBlocksEditor(
                                                 color = Color(0xFFEF6C00),
                                             )
                                         }
-                                    }
-                                    val length = row.rowLengthMetres
-                                    if (length != null) {
-                                        Text(
-                                            String.format(Locale.US, "%.0f m", length),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    } else {
-                                        Text(
-                                            "Length unavailable",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color(0xFFEF6C00),
-                                        )
                                     }
                                 }
                             }
@@ -1218,6 +1217,11 @@ private fun ValveBlocksEditor(
                         val selectedNumbers: List<Int>,
                         val totalRows: Int,
                         val share: Double?,
+                        // SQL 127 estimated totals — shown only when every selected
+                        // row in the block carries a value (never partial sums).
+                        val vines: Int?,
+                        val emitters: Int?,
+                        val anyEstimated: Boolean,
                     )
                     val summaryBlocks: List<SummaryBlock> = if (dirty || savedLinks.isEmpty()) {
                         val shares = IrrigationLocalCalc.rowWeighting(selectedRows).blocks
@@ -1229,6 +1233,13 @@ private fun ValveBlocksEditor(
                                 selectedNumbers = rowsInBlock.map { it.rowNumber },
                                 totalRows = totalsByBlock[blockId]?.size ?: 0,
                                 share = shares[blockId],
+                                vines = if (rowsInBlock.all { it.vineCount != null })
+                                    rowsInBlock.sumOf { it.vineCount ?: 0 } else null,
+                                emitters = if (rowsInBlock.all { it.emitterCount != null })
+                                    rowsInBlock.sumOf { it.emitterCount ?: 0 } else null,
+                                anyEstimated = rowsInBlock.any {
+                                    it.vineCountIsEstimated == true || it.emitterCountIsEstimated == true
+                                },
                             )
                         }.sortedBy { it.blockName }
                     } else {
@@ -1243,6 +1254,13 @@ private fun ValveBlocksEditor(
                                 selectedNumbers = linksInBlock.map { it.rowNumber },
                                 totalRows = totalsByBlock[blockId]?.size ?: 0,
                                 share = shares[blockId],
+                                vines = if (linksInBlock.all { it.vineCount != null })
+                                    linksInBlock.sumOf { it.vineCount ?: 0 } else null,
+                                emitters = if (linksInBlock.all { it.emitterCount != null })
+                                    linksInBlock.sumOf { it.emitterCount ?: 0 } else null,
+                                anyEstimated = linksInBlock.any {
+                                    it.vineCountIsEstimated == true || it.emitterCountIsEstimated == true
+                                },
                             )
                         }.sortedBy { it.blockName }
                     }
@@ -1254,23 +1272,27 @@ private fun ValveBlocksEditor(
                             ?: if (selectedRows.isEmpty()) null else IrrigationLocalCalc.rowBasis(selectedRows)
                     }
                     val usingSaved = !dirty && savedLinks.isNotEmpty()
-                    // Backend-derived totals only — never presented unless every
-                    // row/block carries the value.
+                    // Backend-derived totals only — SQL 127 supplies shared
+                    // estimates; partial sums are never presented as totals.
                     val vineTotal: Int? = if (usingSaved) {
-                        val rowsBlocks = savedBlocks.filter { it.allocationMethod == "rows" }
-                        if (rowsBlocks.isNotEmpty() && rowsBlocks.all { it.servicedVineCount != null })
-                            rowsBlocks.sumOf { it.servicedVineCount ?: 0 } else null
+                        if (savedLinks.all { it.vineCount != null })
+                            savedLinks.sumOf { it.vineCount ?: 0 } else null
                     } else {
                         if (selectedRows.isNotEmpty() && selectedRows.all { (it.vineCount ?: 0) > 0 })
                             selectedRows.sumOf { it.vineCount ?: 0 } else null
                     }
                     val emitterTotal: Int? = if (usingSaved) {
-                        val rowsBlocks = savedBlocks.filter { it.allocationMethod == "rows" }
-                        if (rowsBlocks.isNotEmpty() && rowsBlocks.all { it.servicedEmitterCount != null })
-                            rowsBlocks.sumOf { it.servicedEmitterCount ?: 0 } else null
+                        if (savedLinks.all { it.emitterCount != null })
+                            savedLinks.sumOf { it.emitterCount ?: 0 } else null
                     } else {
                         if (selectedRows.isNotEmpty() && selectedRows.all { (it.emitterCount ?: 0) > 0 })
                             selectedRows.sumOf { it.emitterCount ?: 0 } else null
+                    }
+                    // Drives the ≈ prefix and the shared "estimates" explanation.
+                    val valuesEstimated = if (usingSaved) {
+                        savedLinks.any { it.vineCountIsEstimated == true || it.emitterCountIsEstimated == true }
+                    } else {
+                        selectedRows.any { it.vineCountIsEstimated == true || it.emitterCountIsEstimated == true }
                     }
                     val missingLength = if (usingSaved) {
                         savedLinks.count { it.rowLengthMetres == null }
@@ -1314,6 +1336,14 @@ private fun ValveBlocksEditor(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
+                            DetailLine(
+                                "Estimated vines",
+                                block.vines?.let { "${if (block.anyEstimated) "≈" else ""}$it" } ?: "Not available",
+                            )
+                            DetailLine(
+                                "Estimated emitters",
+                                block.emitters?.let { "${if (block.anyEstimated) "≈" else ""}$it" } ?: "Not available",
+                            )
                             if (block.totalRows > 0) {
                                 DetailLine(
                                     "Block coverage",
@@ -1327,8 +1357,21 @@ private fun ValveBlocksEditor(
                         }
 
                         if (summaryBlocks.isNotEmpty()) {
-                            DetailLine("Vines (selected rows)", vineTotal?.toString() ?: "Not available")
-                            DetailLine("Emitters (selected rows)", emitterTotal?.toString() ?: "Not available")
+                            DetailLine(
+                                if (valuesEstimated) "Estimated vines (selected rows)" else "Vines (selected rows)",
+                                vineTotal?.let { "${if (valuesEstimated) "≈" else ""}$it" } ?: "Not available",
+                            )
+                            DetailLine(
+                                if (valuesEstimated) "Estimated emitters (selected rows)" else "Emitters (selected rows)",
+                                emitterTotal?.let { "${if (valuesEstimated) "≈" else ""}$it" } ?: "Not available",
+                            )
+                            if ((vineTotal != null || emitterTotal != null) && valuesEstimated) {
+                                Text(
+                                    "Vine and emitter counts are estimates based on mapped row length and Vineyard Setup information.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                             if (vineTotal == null || emitterTotal == null) {
                                 Text(
                                     if (displayBasis == "row_length")
