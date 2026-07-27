@@ -199,4 +199,15 @@ struct IrrigationCalculatorFixtureTests {
         #expect(result.blocks[0].rowCount == 3)
         #expect(result.blocks[1].percentage == 25)
     }
+
+    @Test func rowRangeSummaryCompressesOnlyContiguousRuns() {
+        // 1,2,5,8 must display as "1–2, 5, 8" — never "1–8".
+        #expect(IrrigationRowWeighting.rangeSummary([1, 2, 5, 8]) == "1–2, 5, 8")
+        #expect(IrrigationRowWeighting.rangeSummary([8, 5, 2, 1]) == "1–2, 5, 8")
+        #expect(IrrigationRowWeighting.rangeSummary([1, 2, 3, 4]) == "1–4")
+        #expect(IrrigationRowWeighting.rangeSummary([7]) == "7")
+        #expect(IrrigationRowWeighting.rangeSummary([1, 10, 13, 14, 15, 18, 22, 23, 24, 25]) == "1, 10, 13–15, 18, 22–25")
+        #expect(IrrigationRowWeighting.rangeSummary([]) == "")
+        #expect(IrrigationRowWeighting.rangeSummary([3, 3, 4]) == "3–4")
+    }
 }

@@ -73,7 +73,9 @@ import com.rork.vinetrack.data.IrrigationRepository
 import com.rork.vinetrack.data.IrrigationSessionRow
 import com.rork.vinetrack.data.IrrigationSetupStatus
 import com.rork.vinetrack.data.IrrigationSystemRow
+import com.rork.vinetrack.data.IrrigationValveBlockRow
 import com.rork.vinetrack.data.IrrigationValveRow
+import com.rork.vinetrack.data.IrrigationValveRowLink
 import com.rork.vinetrack.data.IrrigationValveRowsResult
 import com.rork.vinetrack.data.IrrigationValveValidation
 import com.rork.vinetrack.data.IrrigationVintageSummary
@@ -765,7 +767,8 @@ private fun SetupContent(
                     item(key = valve.id) {
                         SetupRowCard(
                             title = valve.name,
-                            subtitle = "${valve.systemName ?: "System"} · ${valve.activeBlockCount ?: 0} block(s)",
+                            subtitle = "${valve.systemName ?: "System"} · " +
+                                (status?.valves?.firstOrNull { it.valveId == valve.id }?.configurationSummary ?: "Not configured"),
                             trailing = valve.configuredFlowLph?.let { IrrigationUnits.flow(it, fmt) }
                                 ?: if (valve.isActive) "No flow" else "Inactive",
                         ) { editingValve = valve }
@@ -798,19 +801,26 @@ private fun SetupContent(
                     )
                 } else {
                     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        item {
+                            Text(
+                                "Each valve shows its saved connection method and readiness. Select a valve to configure its connections.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         valves.filter { it.isActive }.forEach { valve ->
                             item(key = valve.id) {
                                 val vs = status?.valves?.firstOrNull { it.valveId == valve.id }
+                                val ready = vs?.allocationOk == true
                                 SetupRowCard(
                                     title = valve.name,
-                                    subtitle = "Tap to assign blocks",
+                                    subtitle = vs?.configurationSummary ?: "Not configured",
                                     trailing = when {
-                                        vs == null -> ""
-                                        vs.allocationOk -> "100%"
-                                        vs.blockCount == 0 -> "Not connected"
-                                        else -> String.format(Locale.US, "%.1f%%", vs.allocationTotal)
+                                        ready -> "Ready to record"
+                                        vs == null || vs.blockCount == 0 -> "Configure connections"
+                                        else -> "Setup required"
                                     },
-                                    trailingColor = if (vs?.allocationOk == true) Color(0xFF2E7D32) else Color(0xFFEF6C00),
+                                    trailingColor = if (ready) Color(0xFF2E7D32) else Color(0xFFEF6C00),
                                 ) { blocksValve = valve }
                             }
                         }
@@ -1037,6 +1047,12 @@ private fun ValveBlocksEditor(
     var rowSearch by remember { mutableStateOf("") }
     var serverResult by remember { mutableStateOf<IrrigationValveRowsResult?>(null) }
 
+    // Saved state — kept strictly separate from the local draft so the UI can
+    // always distinguish "Current saved configuration" from "Unsaved preview".
+    var savedLinks by remember { mutableStateOf<List<IrrigationValveRowLink>>(emptyList()) }
+    var savedBlocks by remember { mutableStateOf<List<IrrigationValveBlockRow>>(emptyList()) }
+    var showClearConfirm by remember { mutableStateOf(false) }
+
     LaunchedEffect(valve.id) {
         runCatching {
             val existing = repo.listValveBlocks(vineyardId, valve.id)
@@ -1045,6 +1061,8 @@ private fun ValveBlocksEditor(
             }
             availableRows = repo.listAvailableRows(vineyardId)
             val links = repo.listValveRows(vineyardId, valve.id)
+            savedBlocks = existing
+            savedLinks = links
             selectedRowIds = links.mapNotNull { it.rowId }.toSet()
             if (existing.any { it.allocationMethod == "rows" }) {
                 mode = "rows"
@@ -1056,6 +1074,8 @@ private fun ValveBlocksEditor(
     val total = rows.sumOf { it.pct.replace(",", ".").toDoubleOrNull() ?: 0.0 }
     val totalOk = rows.isNotEmpty() && abs(total - 100.0) <= 0.05
     val selectedRows = availableRows.filter { selectedRowIds.contains(it.rowId) }
+    val savedRowIds = savedLinks.mapNotNull { it.rowId }.toSet()
+    val hasUnsavedRowChanges = selectedRowIds != savedRowIds
 
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
@@ -1166,11 +1186,18 @@ private fun ValveBlocksEditor(
                                             )
                                         }
                                     }
-                                    row.rowLengthMetres?.let {
+                                    val length = row.rowLengthMetres
+                                    if (length != null) {
                                         Text(
-                                            String.format(Locale.US, "%.0f m", it),
+                                            String.format(Locale.US, "%.0f m", length),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    } else {
+                                        Text(
+                                            "Length unavailable",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFFEF6C00),
                                         )
                                     }
                                 }
@@ -1180,37 +1207,148 @@ private fun ValveBlocksEditor(
                 }
 
                 item {
-                    val provisional = IrrigationLocalCalc.rowWeighting(selectedRows)
+                    val dirty = hasUnsavedRowChanges
+                    val totalsByBlock = availableRows.groupBy { it.blockId }
+                    // Saved configurations derive rows from list_irrigation_valve_rows;
+                    // unsaved edits derive them from the local selection. Exact selection
+                    // is NEVER inferred from row_start/row_end.
+                    data class SummaryBlock(
+                        val blockId: String,
+                        val blockName: String,
+                        val selectedNumbers: List<Int>,
+                        val totalRows: Int,
+                        val share: Double?,
+                    )
+                    val summaryBlocks: List<SummaryBlock> = if (dirty || savedLinks.isEmpty()) {
+                        val shares = IrrigationLocalCalc.rowWeighting(selectedRows).blocks
+                            .associate { it.blockId to it.percentage }
+                        selectedRows.groupBy { it.blockId }.map { (blockId, rowsInBlock) ->
+                            SummaryBlock(
+                                blockId = blockId,
+                                blockName = rowsInBlock.first().blockName,
+                                selectedNumbers = rowsInBlock.map { it.rowNumber },
+                                totalRows = totalsByBlock[blockId]?.size ?: 0,
+                                share = shares[blockId],
+                            )
+                        }.sortedBy { it.blockName }
+                    } else {
+                        val shares = savedBlocks
+                            .filter { it.allocationMethod == "rows" && it.allocationPercentage != null }
+                            .associate { it.blockId to (it.allocationPercentage ?: 0.0) }
+                        savedLinks.groupBy { it.blockId }.map { (blockId, linksInBlock) ->
+                            SummaryBlock(
+                                blockId = blockId,
+                                blockName = linksInBlock.first().blockName
+                                    ?: totalsByBlock[blockId]?.firstOrNull()?.blockName ?: "Block",
+                                selectedNumbers = linksInBlock.map { it.rowNumber },
+                                totalRows = totalsByBlock[blockId]?.size ?: 0,
+                                share = shares[blockId],
+                            )
+                        }.sortedBy { it.blockName }
+                    }
+                    val displayBasis: String? = if (dirty) {
+                        if (selectedRows.isEmpty()) null else IrrigationLocalCalc.rowBasis(selectedRows)
+                    } else {
+                        serverResult?.weightingBasis
+                            ?: savedLinks.firstOrNull()?.weightingBasis
+                            ?: if (selectedRows.isEmpty()) null else IrrigationLocalCalc.rowBasis(selectedRows)
+                    }
+                    val usingSaved = !dirty && savedLinks.isNotEmpty()
+                    // Backend-derived totals only — never presented unless every
+                    // row/block carries the value.
+                    val vineTotal: Int? = if (usingSaved) {
+                        val rowsBlocks = savedBlocks.filter { it.allocationMethod == "rows" }
+                        if (rowsBlocks.isNotEmpty() && rowsBlocks.all { it.servicedVineCount != null })
+                            rowsBlocks.sumOf { it.servicedVineCount ?: 0 } else null
+                    } else {
+                        if (selectedRows.isNotEmpty() && selectedRows.all { (it.vineCount ?: 0) > 0 })
+                            selectedRows.sumOf { it.vineCount ?: 0 } else null
+                    }
+                    val emitterTotal: Int? = if (usingSaved) {
+                        val rowsBlocks = savedBlocks.filter { it.allocationMethod == "rows" }
+                        if (rowsBlocks.isNotEmpty() && rowsBlocks.all { it.servicedEmitterCount != null })
+                            rowsBlocks.sumOf { it.servicedEmitterCount ?: 0 } else null
+                    } else {
+                        if (selectedRows.isNotEmpty() && selectedRows.all { (it.emitterCount ?: 0) > 0 })
+                            selectedRows.sumOf { it.emitterCount ?: 0 } else null
+                    }
+                    val missingLength = if (usingSaved) {
+                        savedLinks.count { it.rowLengthMetres == null }
+                    } else {
+                        selectedRows.count { it.rowLengthMetres == null }
+                    }
+
                     Column(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
                             .background(VineColors.Cyan.copy(alpha = 0.08f)).padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Text(
-                            if (serverResult == null) "Summary (provisional — saved values come from the server)" else "Summary",
+                            if (dirty) "Unsaved preview" else "Current saved configuration",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold,
                         )
-                        DetailLine("Selected rows", selectedRows.size.toString())
-                        val result = serverResult
-                        if (result != null) {
-                            DetailLine("Blocks supplied", result.blocks.size.toString())
-                            DetailLine("Allocation basis", IrrigationLocalCalc.basisLabel(result.weightingBasis))
-                            result.blocks.forEach { block ->
-                                DetailLine(
-                                    block.blockName ?: "Block",
-                                    String.format(Locale.US, "%.1f%%", block.allocationPercentage ?: 0.0),
+                        if (savedRowIds.isNotEmpty()) {
+                            DetailLine("Saved", "${savedRowIds.size} row${if (savedRowIds.size == 1) "" else "s"}")
+                        }
+                        if (dirty) {
+                            DetailLine("Draft", "${selectedRows.size} row${if (selectedRows.size == 1) "" else "s"} selected")
+                        }
+                        if (dirty && selectedRows.isEmpty() && savedRowIds.isNotEmpty()) {
+                            Text(
+                                "All rows have been removed from the draft. The saved configuration remains active until you save.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFFEF6C00),
+                            )
+                        }
+                        displayBasis?.let { DetailLine("Allocation basis", IrrigationLocalCalc.basisLabel(it)) }
+
+                        summaryBlocks.forEach { block ->
+                            Spacer(Modifier.height(2.dp))
+                            Text(block.blockName, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                            DetailLine("Rows", "${block.selectedNumbers.size} / ${block.totalRows} rows")
+                            if (block.selectedNumbers.isNotEmpty()) {
+                                Text(
+                                    "Rows ${IrrigationLocalCalc.rangeSummary(block.selectedNumbers)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                        } else if (selectedRows.isNotEmpty()) {
-                            DetailLine("Blocks supplied", provisional.blocks.size.toString())
-                            DetailLine("Allocation basis", IrrigationLocalCalc.basisLabel(provisional.basis))
-                            provisional.blocks.forEach { share ->
-                                DetailLine(share.blockName, String.format(Locale.US, "%.1f%%", share.percentage))
+                            if (block.totalRows > 0) {
+                                DetailLine(
+                                    "Block coverage",
+                                    String.format(Locale.US, "%.1f%%", block.selectedNumbers.size.toDouble() / block.totalRows * 100.0),
+                                )
                             }
-                            if (provisional.basis == "equal_rows") {
+                            DetailLine(
+                                if (dirty) "Share of valve water (preview)" else "Share of valve water",
+                                block.share?.let { String.format(Locale.US, "%.1f%%", it) } ?: "—",
+                            )
+                        }
+
+                        if (summaryBlocks.isNotEmpty()) {
+                            DetailLine("Vines (selected rows)", vineTotal?.toString() ?: "Not available")
+                            DetailLine("Emitters (selected rows)", emitterTotal?.toString() ?: "Not available")
+                            if (vineTotal == null || emitterTotal == null) {
                                 Text(
-                                    "Water allocation is being estimated from the number of selected rows because emitter, vine-count and row-length information is incomplete.",
+                                    if (displayBasis == "row_length")
+                                        "Row length is currently used to calculate the block water split. Per-row vine and emitter counts are not available."
+                                    else
+                                        "Per-row vine and emitter counts have not been configured.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (missingLength > 0) {
+                                Text(
+                                    "$missingLength selected row${if (missingLength == 1) " does" else "s do"} not have complete mapped start and end points, so their length is unavailable.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFFEF6C00),
+                                )
+                            }
+                            if (displayBasis == "equal_rows") {
+                                Text(
+                                    "Allocation is estimated by selected row count because complete row lengths are unavailable.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Color(0xFFEF6C00),
                                 )
@@ -1278,6 +1416,15 @@ private fun ValveBlocksEditor(
             }
         }
         }
+        if (mode == "rows" && selectedRowIds.isEmpty() && availableRows.isNotEmpty()) {
+            item {
+                Text(
+                    "Select at least one row before saving.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         error?.let { item { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
         item {
             Button(
@@ -1286,12 +1433,18 @@ private fun ValveBlocksEditor(
                         isSaving = true
                         error = null
                         if (mode == "rows") {
-                            runCatching {
-                                repo.setValveRows(vineyardId, valve.id, selectedRowIds.toList())
-                            }.onSuccess { result ->
-                                serverResult = result
-                                if (result.warnings.isEmpty()) onDone()
-                            }.onFailure { error = it.message }
+                            if (selectedRowIds.isEmpty()) {
+                                error = "Select at least one row before saving."
+                            } else {
+                                runCatching {
+                                    repo.setValveRows(vineyardId, valve.id, selectedRowIds.toList())
+                                }.onSuccess { result ->
+                                    serverResult = result
+                                    savedBlocks = result.blocks
+                                    savedLinks = runCatching { repo.listValveRows(vineyardId, valve.id) }.getOrDefault(savedLinks)
+                                    if (result.warnings.isEmpty()) onDone()
+                                }.onFailure { error = it.message }
+                            }
                         } else {
                             runCatching {
                                 repo.setValveBlocks(
@@ -1317,6 +1470,45 @@ private fun ValveBlocksEditor(
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.Cyan),
             ) { Text(if (isSaving) "Saving…" else if (mode == "rows") "Save Row Connections" else "Save Block Connections") }
         }
+        if (mode == "rows" && savedRowIds.isNotEmpty()) {
+            item {
+                OutlinedButton(
+                    onClick = { showClearConfirm = true },
+                    enabled = !isSaving,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Clear saved connections", color = MaterialTheme.colorScheme.error) }
+            }
+        }
+    }
+
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            title = { Text("Clear saved connections?") },
+            text = { Text("This valve will no longer have any connected rows and cannot record irrigation until it is configured again.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showClearConfirm = false
+                    scope.launch {
+                        isSaving = true
+                        error = null
+                        // The shared RPC treats an EMPTY selection as an explicit
+                        // disconnect — an empty draft is never silently saved.
+                        runCatching { repo.setValveRows(vineyardId, valve.id, emptyList()) }
+                            .onSuccess {
+                                savedLinks = emptyList()
+                                savedBlocks = emptyList()
+                                selectedRowIds = emptySet()
+                                serverResult = null
+                                onDone()
+                            }
+                            .onFailure { error = it.message }
+                        isSaving = false
+                    }
+                }) { Text("Clear", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { showClearConfirm = false }) { Text("Cancel") } },
+        )
     }
 }
 

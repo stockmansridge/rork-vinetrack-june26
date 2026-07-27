@@ -62,6 +62,7 @@ data class IrrigationValveBlockRow(
     @SerialName("allocation_percentage") val allocationPercentage: Double? = null,
     @SerialName("serviced_area_m2") val servicedAreaM2: Double? = null,
     @SerialName("serviced_vine_count") val servicedVineCount: Int? = null,
+    @SerialName("serviced_emitter_count") val servicedEmitterCount: Int? = null,
     @SerialName("row_start") val rowStart: Int? = null,
     @SerialName("row_end") val rowEnd: Int? = null,
     @SerialName("block_name") val blockName: String? = null,
@@ -93,6 +94,9 @@ data class IrrigationValveRowLink(
     @SerialName("row_id") val rowId: String? = null,
     @SerialName("row_number") val rowNumber: Int = 0,
     @SerialName("row_label") val rowLabel: String? = null,
+    @SerialName("vine_count") val vineCount: Int? = null,
+    @SerialName("emitter_count") val emitterCount: Int? = null,
+    @SerialName("row_length_metres") val rowLengthMetres: Double? = null,
     @SerialName("weighting_basis") val weightingBasis: String? = null,
     @SerialName("row_weight") val rowWeight: Double? = null,
     @SerialName("block_name") val blockName: String? = null,
@@ -146,7 +150,20 @@ data class IrrigationValveStatus(
     @SerialName("allocation_total") val allocationTotal: Double = 0.0,
     @SerialName("allocation_ok") val allocationOk: Boolean = false,
     @SerialName("has_configured_flow") val hasConfiguredFlow: Boolean = false,
-)
+    @SerialName("uses_rows") val usesRows: Boolean = false,
+    @SerialName("row_count") val rowCount: Int = 0,
+) {
+    /** "Rows · 20 rows · 1 block · 100%", "Manual % · 1 block · 100%" or "Not configured". */
+    val configurationSummary: String
+        get() {
+            if (blockCount == 0) return "Not configured"
+            val parts = mutableListOf(if (usesRows) "Rows" else "Manual %")
+            if (usesRows) parts += "$rowCount row${if (rowCount == 1) "" else "s"}"
+            parts += "$blockCount block${if (blockCount == 1) "" else "s"}"
+            parts += if (allocationOk) "100%" else String.format(java.util.Locale.US, "%.1f%%", allocationTotal)
+            return parts.joinToString(" · ")
+        }
+}
 
 @Serializable
 data class IrrigationSetupStatus(
@@ -499,6 +516,26 @@ object IrrigationLocalCalc {
     }
 
     fun round4(value: Double): Double = (value * 10_000.0).roundToLong() / 10_000.0
+
+    /**
+     * Compresses ONLY genuinely contiguous runs for display:
+     * [1, 2, 5, 8] → "1–2, 5, 8" (never "1–8"). Duplicates are ignored.
+     */
+    fun rangeSummary(rowNumbers: List<Int>): String {
+        val sorted = rowNumbers.toSortedSet().toList()
+        if (sorted.isEmpty()) return ""
+        val parts = mutableListOf<String>()
+        var start = sorted.first()
+        var prev = sorted.first()
+        for (n in sorted.drop(1)) {
+            if (n == prev + 1) { prev = n; continue }
+            parts += if (start == prev) "$start" else "$start–$prev"
+            start = n
+            prev = n
+        }
+        parts += if (start == prev) "$start" else "$start–$prev"
+        return parts.joinToString(", ")
+    }
 
     /** ONE common basis for the whole selection: emitters → vines → length → equal. */
     fun rowBasis(rows: List<IrrigationAvailableRow>): String = when {

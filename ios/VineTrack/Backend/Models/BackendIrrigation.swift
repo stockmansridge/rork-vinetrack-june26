@@ -137,6 +137,9 @@ nonisolated struct IrrigationValveRowLink: Decodable, Sendable, Identifiable, Ha
     let rowId: UUID?
     let rowNumber: Int
     let rowLabel: String?
+    let vineCount: Int?
+    let emitterCount: Int?
+    let rowLengthMetres: Double?
     let weightingBasis: String?
     let rowWeight: Double?
     let blockName: String?
@@ -148,6 +151,9 @@ nonisolated struct IrrigationValveRowLink: Decodable, Sendable, Identifiable, Ha
         case rowId = "row_id"
         case rowNumber = "row_number"
         case rowLabel = "row_label"
+        case vineCount = "vine_count"
+        case emitterCount = "emitter_count"
+        case rowLengthMetres = "row_length_metres"
         case weightingBasis = "weighting_basis"
         case rowWeight = "row_weight"
         case blockName = "block_name"
@@ -196,6 +202,24 @@ nonisolated enum IrrigationRowWeighting {
     }
 
     static func round4(_ value: Double) -> Double { (value * 10_000).rounded() / 10_000 }
+
+    /// Compresses ONLY genuinely contiguous runs for display:
+    /// [1, 2, 5, 8] → "1–2, 5, 8" (never "1–8"). Duplicates are ignored.
+    static func rangeSummary(_ rowNumbers: [Int]) -> String {
+        let sorted = Array(Set(rowNumbers)).sorted()
+        guard let first = sorted.first else { return "" }
+        var parts: [String] = []
+        var start = first
+        var prev = first
+        for n in sorted.dropFirst() {
+            if n == prev + 1 { prev = n; continue }
+            parts.append(start == prev ? "\(start)" : "\(start)–\(prev)")
+            start = n
+            prev = n
+        }
+        parts.append(start == prev ? "\(start)" : "\(start)–\(prev)")
+        return parts.joined(separator: ", ")
+    }
 
     /// Resolves ONE common basis for the whole selection (never mixes units):
     /// emitters → vines → row length → equal rows.
@@ -321,6 +345,8 @@ nonisolated struct IrrigationSetupStatus: Decodable, Sendable {
         let allocationTotal: Double
         let allocationOk: Bool
         let hasConfiguredFlow: Bool
+        let usesRows: Bool?
+        let rowCount: Int?
 
         var id: UUID { valveId }
 
@@ -331,6 +357,25 @@ nonisolated struct IrrigationSetupStatus: Decodable, Sendable {
             case allocationTotal = "allocation_total"
             case allocationOk = "allocation_ok"
             case hasConfiguredFlow = "has_configured_flow"
+            case usesRows = "uses_rows"
+            case rowCount = "row_count"
+        }
+
+        /// "Rows · 20 rows · 1 block", "Manual % · 1 block" or "Not configured".
+        var configurationSummary: String {
+            guard blockCount > 0 else { return "Not configured" }
+            var parts: [String] = [(usesRows ?? false) ? "Rows" : "Manual %"]
+            if usesRows ?? false {
+                let rows = rowCount ?? 0
+                parts.append("\(rows) row\(rows == 1 ? "" : "s")")
+            }
+            parts.append("\(blockCount) block\(blockCount == 1 ? "" : "s")")
+            if allocationOk {
+                parts.append("100%")
+            } else {
+                parts.append(String(format: "%.1f%%", allocationTotal))
+            }
+            return parts.joined(separator: " · ")
         }
     }
 

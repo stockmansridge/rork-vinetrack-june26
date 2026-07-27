@@ -204,4 +204,16 @@ class IrrigationCalculatorFixtureTest {
         assertEquals(3, result.blocks[0].rowCount)
         assertEquals(25.0, result.blocks[1].percentage, 0.0001)
     }
+
+    @Test
+    fun `row range summary compresses only contiguous runs`() {
+        // 1,2,5,8 must display as "1–2, 5, 8" — never "1–8".
+        assertEquals("1–2, 5, 8", IrrigationLocalCalc.rangeSummary(listOf(1, 2, 5, 8)))
+        assertEquals("1–2, 5, 8", IrrigationLocalCalc.rangeSummary(listOf(8, 5, 2, 1)))
+        assertEquals("1–4", IrrigationLocalCalc.rangeSummary(listOf(1, 2, 3, 4)))
+        assertEquals("7", IrrigationLocalCalc.rangeSummary(listOf(7)))
+        assertEquals("1, 10, 13–15, 18, 22–25", IrrigationLocalCalc.rangeSummary(listOf(1, 10, 13, 14, 15, 18, 22, 23, 24, 25)))
+        assertEquals("", IrrigationLocalCalc.rangeSummary(emptyList()))
+        assertEquals("3–4", IrrigationLocalCalc.rangeSummary(listOf(3, 3, 4)))
+    }
 }
