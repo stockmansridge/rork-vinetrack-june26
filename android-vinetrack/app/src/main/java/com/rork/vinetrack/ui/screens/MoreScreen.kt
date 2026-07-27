@@ -64,7 +64,11 @@ fun MoreScreen(
                     tool.group == group &&
                         tool != ToolRoute.RolesPermissions &&
                         tool != ToolRoute.SprayManagement &&
-                        (tool != ToolRoute.CostReports || canViewCosting)
+                        (tool != ToolRoute.CostReports || canViewCosting) &&
+                        // Irrigation Records is System Administrator gated during
+                        // Phase 1 (server enforces the same gate via
+                        // has_irrigation_records_access — hiding is not the boundary).
+                        (tool != ToolRoute.IrrigationRecords || state.isSystemAdmin)
                 }
                 if (tools.isNotEmpty()) {
                     item(key = "header-${group.name}") {

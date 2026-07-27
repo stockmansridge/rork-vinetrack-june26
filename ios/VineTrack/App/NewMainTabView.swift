@@ -1069,6 +1069,18 @@ private struct NewHomeTabView: View {
                     iconTile(title: "Pruning Tracker", icon: "scissors", tint: .teal)
                 }
                 .buttonStyle(.plain)
+                // Irrigation Records is gated to System Administrators during
+                // Phase 1 testing. The server enforces the same gate via
+                // has_irrigation_records_access — hiding this tile is not the
+                // security boundary.
+                if systemAdmin.isSystemAdmin {
+                    NavigationLink {
+                        IrrigationRecordsView()
+                    } label: {
+                        iconTile(title: "Irrigation Records", icon: "drop.circle.fill", tint: .cyan)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .padding(.horizontal)
         }
@@ -1093,6 +1105,7 @@ private struct NewHomeTabView: View {
         case "Disease Risk": return "Downy/Powdery/Botrytis"
         case "Yield Determination": return "Pruning bud-load"
         case "Pruning Tracker": return "Row progress & crew rates"
+        case "Irrigation Records": return "Water applied, valves & blocks"
         case "Fertiliser Calculator": return "Rates, packs & costs"
         case "Manage Users": return "Team & roles"
         case "Vineyard Setup": return "Blocks & rows"

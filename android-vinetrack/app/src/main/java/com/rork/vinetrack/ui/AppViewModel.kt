@@ -32,6 +32,7 @@ import com.rork.vinetrack.data.FuelLogCreateSync
 import com.rork.vinetrack.data.FuelLogDeleteSync
 import com.rork.vinetrack.data.DamageRecordRepository
 import com.rork.vinetrack.data.FuelLogRepository
+import com.rork.vinetrack.data.IrrigationRepository
 import com.rork.vinetrack.data.FuelLogUpdateSync
 import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.MaintenanceLogCreateSync
@@ -717,6 +718,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val regionSettingsStore = RegionSettingsStore(app)
     private val regionSettingsRepo = RegionSettingsRepository(session)
     private val operationPrefsStore = OperationPrefsStore(app)
+
+    /** Irrigation Records (SQL 125) — System Administrator gated during Phase 1. */
+    val irrigationRepository = IrrigationRepository(session, app)
 
     // --- Subscription / access gate (parity with iOS SubscriptionService +
     // VineTrackAccessResolver). RevenueCat sells only the Google Play Solo

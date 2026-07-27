@@ -235,7 +235,7 @@ private fun DashboardContent(
 
             OverviewSection(state, onOpenMap)
 
-            OperationalToolsSection(onOpenTab = onOpenTab, onOpenTool = onOpenTool)
+            OperationalToolsSection(onOpenTab = onOpenTab, onOpenTool = onOpenTool, isSystemAdmin = state.isSystemAdmin)
 
             if (canChangeSettings) {
                 ManagementSection(onOpenTool = onOpenTool)
@@ -942,8 +942,25 @@ private data class ToolItem(
 private fun OperationalToolsSection(
     onOpenTab: (MainTab) -> Unit,
     onOpenTool: (ToolRoute) -> Unit,
+    isSystemAdmin: Boolean = false,
 ) {
-    val tools = listOf(
+    val tools = buildList {
+        addAll(baseOperationalTools(onOpenTool))
+        // Irrigation Records is System Administrator gated during Phase 1.
+        // The server enforces the same gate via has_irrigation_records_access.
+        if (isSystemAdmin) {
+            add(
+                ToolItem("Irrigation Records", "Water applied, valves & blocks", Icons.Filled.WaterDrop, VineColors.Cyan) {
+                    onOpenTool(ToolRoute.IrrigationRecords)
+                },
+            )
+        }
+    }
+    OperationalToolsGrid(tools)
+}
+
+private fun baseOperationalTools(onOpenTool: (ToolRoute) -> Unit): List<ToolItem> {
+    return listOf(
         ToolItem("Work Tasks", "Log & calculate", Icons.Filled.Group, VineColors.Indigo) { onOpenTool(ToolRoute.WorkTasks) },
         ToolItem("Maintenance Log", "Repairs & jobs", Icons.Filled.Build, VineColors.EarthBrown) { onOpenTool(ToolRoute.Maintenance) },
         ToolItem("Fuel Log", "Purchases & refuelling", Icons.Filled.LocalGasStation, VineColors.Pink) { onOpenTool(ToolRoute.FuelLog) },
@@ -956,6 +973,10 @@ private fun OperationalToolsSection(
         ToolItem("Fertiliser Calculator", "Rates, packs & costs", Icons.Filled.Grain, VineColors.LeafGreen) { onOpenTool(ToolRoute.FertiliserCalculator) },
         ToolItem("Pruning Tracker", "Row progress & crew rates", Icons.Filled.ContentCut, VineColors.Cyan) { onOpenTool(ToolRoute.PruningTracker) },
     )
+}
+
+@Composable
+private fun OperationalToolsGrid(tools: List<ToolItem>) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
