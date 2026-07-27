@@ -94,6 +94,165 @@ nonisolated struct IrrigationValveBlock: Identifiable, Decodable, Sendable, Hash
     }
 }
 
+// MARK: - Row-based allocation (SQL 126)
+
+/// One selectable vineyard row (from `list_irrigation_available_rows`).
+/// Rows come from the block's configured row records (`paddocks.rows`) — the
+/// server never invents generic 1…N rows.
+nonisolated struct IrrigationAvailableRow: Decodable, Sendable, Identifiable, Hashable {
+    let rowId: UUID
+    let blockId: UUID
+    let blockName: String
+    let rowNumber: Int
+    let rowLabel: String?
+    let vineCount: Int?
+    let emitterCount: Int?
+    let rowLengthMetres: Double?
+    let connectedValveIds: [UUID]?
+    let connectedValveNames: [String]?
+
+    var id: UUID { rowId }
+
+    enum CodingKeys: String, CodingKey {
+        case rowId = "row_id"
+        case blockId = "block_id"
+        case blockName = "block_name"
+        case rowNumber = "row_number"
+        case rowLabel = "row_label"
+        case vineCount = "vine_count"
+        case emitterCount = "emitter_count"
+        case rowLengthMetres = "row_length_metres"
+        case connectedValveIds = "connected_valve_ids"
+        case connectedValveNames = "connected_valve_names"
+    }
+
+    var displayLabel: String { rowLabel ?? "Row \(rowNumber)" }
+}
+
+/// One saved valve→row link (from `list_irrigation_valve_rows`).
+nonisolated struct IrrigationValveRowLink: Decodable, Sendable, Identifiable, Hashable {
+    let id: UUID
+    let valveId: UUID
+    let blockId: UUID
+    let rowId: UUID?
+    let rowNumber: Int
+    let rowLabel: String?
+    let weightingBasis: String?
+    let rowWeight: Double?
+    let blockName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case valveId = "valve_id"
+        case blockId = "block_id"
+        case rowId = "row_id"
+        case rowNumber = "row_number"
+        case rowLabel = "row_label"
+        case weightingBasis = "weighting_basis"
+        case rowWeight = "row_weight"
+        case blockName = "block_name"
+    }
+}
+
+/// Result of `set_irrigation_valve_rows` — the BACKEND percentages are the
+/// authoritative values shown after saving.
+nonisolated struct IrrigationValveRowsResult: Decodable, Sendable {
+    let weightingBasis: String?
+    let blocks: [IrrigationValveBlock]
+    let warnings: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case weightingBasis = "weighting_basis"
+        case blocks, warnings
+    }
+}
+
+/// Mirror of the SQL `_irrigation_rows_weighting` core (sql/126) for
+/// PROVISIONAL previews only — the server result is always authoritative.
+nonisolated enum IrrigationRowWeighting {
+    enum Basis: String, Sendable {
+        case emitterCount = "emitter_count"
+        case vineCount = "vine_count"
+        case rowLength = "row_length"
+        case equalRows = "equal_rows"
+
+        var label: String {
+            switch self {
+            case .emitterCount: return "Emitter count"
+            case .vineCount: return "Vine count"
+            case .rowLength: return "Row length"
+            case .equalRows: return "Equal rows (estimate)"
+            }
+        }
+    }
+
+    struct BlockShare: Sendable, Identifiable {
+        let blockId: UUID
+        let blockName: String
+        let rowCount: Int
+        let weight: Double
+        let percentage: Double
+        var id: UUID { blockId }
+    }
+
+    static func round4(_ value: Double) -> Double { (value * 10_000).rounded() / 10_000 }
+
+    /// Resolves ONE common basis for the whole selection (never mixes units):
+    /// emitters → vines → row length → equal rows.
+    static func basis(for rows: [IrrigationAvailableRow]) -> Basis {
+        guard !rows.isEmpty else { return .equalRows }
+        if rows.allSatisfy({ ($0.emitterCount ?? 0) > 0 }) { return .emitterCount }
+        if rows.allSatisfy({ ($0.vineCount ?? 0) > 0 }) { return .vineCount }
+        if rows.allSatisfy({ ($0.rowLengthMetres ?? 0) > 0 }) { return .rowLength }
+        return .equalRows
+    }
+
+    /// Same maths and rounding as SQL: blocks ordered by block id text, 4 dp
+    /// percentages, and the LAST block absorbs the remainder → exactly 100.
+    static func allocate(rows: [IrrigationAvailableRow]) -> (basis: Basis, blocks: [BlockShare]) {
+        guard !rows.isEmpty else { return (.equalRows, []) }
+        let resolved = basis(for: rows)
+
+        func weight(_ row: IrrigationAvailableRow) -> Double {
+            switch resolved {
+            case .emitterCount: return Double(row.emitterCount ?? 0)
+            case .vineCount: return Double(row.vineCount ?? 0)
+            case .rowLength: return row.rowLengthMetres ?? 0
+            case .equalRows: return 1
+            }
+        }
+
+        let total = rows.reduce(0.0) { $0 + weight($1) }
+        guard total > 0 else { return (resolved, []) }
+
+        var grouped: [UUID: (name: String, count: Int, weight: Double)] = [:]
+        for row in rows {
+            var entry = grouped[row.blockId] ?? (row.blockName, 0, 0)
+            entry.count += 1
+            entry.weight += weight(row)
+            entry.name = row.blockName
+            grouped[row.blockId] = entry
+        }
+
+        let ordered = grouped.sorted { $0.key.uuidString.lowercased() < $1.key.uuidString.lowercased() }
+        var shares: [BlockShare] = []
+        var pctSum = 0.0
+        for (index, element) in ordered.enumerated() {
+            let pct: Double
+            if index < ordered.count - 1 {
+                pct = round4(element.value.weight / total * 100)
+                pctSum += pct
+            } else {
+                pct = round4(100 - pctSum)
+            }
+            shares.append(BlockShare(blockId: element.key, blockName: element.value.name,
+                                     rowCount: element.value.count, weight: element.value.weight,
+                                     percentage: pct))
+        }
+        return (resolved, shares)
+    }
+}
+
 // MARK: - Setup status (wizard)
 
 nonisolated struct IrrigationSetupStatus: Decodable, Sendable {

@@ -124,6 +124,35 @@ nonisolated private struct SetValveBlocksParams: Encodable, Sendable {
     }
 }
 
+nonisolated private struct ListAvailableRowsParams: Encodable, Sendable {
+    let vineyardId: UUID
+    let blockId: UUID?
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "p_vineyard_id"
+        case blockId = "p_block_id"
+    }
+}
+
+nonisolated private struct ListValveRowsParams: Encodable, Sendable {
+    let vineyardId: UUID
+    let valveId: UUID?
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "p_vineyard_id"
+        case valveId = "p_valve_id"
+    }
+}
+
+nonisolated private struct SetValveRowsParams: Encodable, Sendable {
+    let vineyardId: UUID
+    let valveId: UUID
+    let rowIds: [UUID]
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "p_vineyard_id"
+        case valveId = "p_valve_id"
+        case rowIds = "p_row_ids"
+    }
+}
+
 nonisolated private struct ValidateParams: Encodable, Sendable {
     let vineyardId: UUID
     let valveId: UUID
@@ -356,6 +385,31 @@ final class SupabaseIrrigationRepository {
         try await client
             .rpc("set_irrigation_valve_blocks", params: SetValveBlocksParams(
                 vineyardId: vineyardId, valveId: valveId, blocks: blocks))
+            .execute().value
+    }
+
+    // MARK: Row-based allocation (SQL 126)
+
+    /// The vineyard's REAL configured rows, grouped/sortable by block.
+    func listAvailableRows(vineyardId: UUID, blockId: UUID? = nil) async throws -> [IrrigationAvailableRow] {
+        try await client
+            .rpc("list_irrigation_available_rows", params: ListAvailableRowsParams(vineyardId: vineyardId, blockId: blockId))
+            .execute().value
+    }
+
+    func listValveRows(vineyardId: UUID, valveId: UUID? = nil) async throws -> [IrrigationValveRowLink] {
+        try await client
+            .rpc("list_irrigation_valve_rows", params: ListValveRowsParams(vineyardId: vineyardId, valveId: valveId))
+            .execute().value
+    }
+
+    /// Atomically replaces the valve's row links; the server derives the block
+    /// connections and authoritative percentages (allocation_method = rows).
+    @discardableResult
+    func setValveRows(vineyardId: UUID, valveId: UUID, rowIds: [UUID]) async throws -> IrrigationValveRowsResult {
+        try await client
+            .rpc("set_irrigation_valve_rows", params: SetValveRowsParams(
+                vineyardId: vineyardId, valveId: valveId, rowIds: rowIds))
             .execute().value
     }
 

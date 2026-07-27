@@ -123,4 +123,80 @@ struct IrrigationCalculatorFixtureTests {
         // mm → inches
         #expect(abs(IrrigationLocalCalculator.millimetresToInches(25.4) - 1.0) < 0.000001)
     }
+
+    // MARK: Row-based weighting fixture (parity with SQL 126 asserts and
+    // IrrigationCalculatorFixtureTest.kt)
+
+    private func availableRow(
+        _ json: [String: Any]
+    ) -> IrrigationAvailableRow {
+        let data = try! JSONSerialization.data(withJSONObject: json)
+        return try! JSONDecoder().decode(IrrigationAvailableRow.self, from: data)
+    }
+
+    private func row(rowId: String, blockId: String, blockName: String, number: Int,
+                     emitters: Int? = nil, vines: Int? = nil, length: Double? = nil) -> IrrigationAvailableRow {
+        var json: [String: Any] = [
+            "row_id": rowId, "block_id": blockId, "block_name": blockName, "row_number": number
+        ]
+        if let emitters { json["emitter_count"] = emitters }
+        if let vines { json["vine_count"] = vines }
+        if let length { json["row_length_metres"] = length }
+        return availableRow(json)
+    }
+
+    private let blockA = "00000000-0000-0000-0000-000000000001"
+    private let blockB = "00000000-0000-0000-0000-000000000002"
+
+    @Test func rowWeightingEmitterBasisTotalsExactly100() {
+        let result = IrrigationRowWeighting.allocate(rows: [
+            row(rowId: "00000000-0000-0000-0000-00000000A001", blockId: blockA, blockName: "Block 1A",
+                number: 1, emitters: 130, vines: 65, length: 100),
+            row(rowId: "00000000-0000-0000-0000-00000000A002", blockId: blockA, blockName: "Block 1A",
+                number: 2, emitters: 70, vines: 35, length: 60),
+            row(rowId: "00000000-0000-0000-0000-00000000B001", blockId: blockB, blockName: "Block 1B",
+                number: 1, emitters: 100, vines: 50, length: 80)
+        ])
+        #expect(result.basis == .emitterCount)
+        #expect(result.blocks.count == 2)
+        #expect(result.blocks[0].percentage == 66.6667)
+        #expect(result.blocks[1].percentage == 33.3333)
+        #expect(result.blocks.reduce(0) { $0 + $1.percentage } == 100)
+    }
+
+    @Test func rowWeightingNeverMixesUnits() {
+        // One row missing emitters but all rows have vines → vine basis.
+        let vines = IrrigationRowWeighting.allocate(rows: [
+            row(rowId: "00000000-0000-0000-0000-00000000A001", blockId: blockA, blockName: "A",
+                number: 1, emitters: 130, vines: 60, length: 100),
+            row(rowId: "00000000-0000-0000-0000-00000000B001", blockId: blockB, blockName: "B",
+                number: 1, vines: 40, length: 80)
+        ])
+        #expect(vines.basis == .vineCount)
+        #expect(vines.blocks[0].percentage == 60)
+
+        // Lengths only → row-length basis.
+        let lengths = IrrigationRowWeighting.allocate(rows: [
+            row(rowId: "00000000-0000-0000-0000-00000000A001", blockId: blockA, blockName: "A",
+                number: 1, length: 150),
+            row(rowId: "00000000-0000-0000-0000-00000000B001", blockId: blockB, blockName: "B",
+                number: 1, length: 50)
+        ])
+        #expect(lengths.basis == .rowLength)
+        #expect(lengths.blocks[0].percentage == 75)
+    }
+
+    @Test func rowWeightingEqualRowsFallback() {
+        // Non-sequential selection 1,2,5 + 8 stays explicit rows; A 3 rows, B 1 row → 75 / 25.
+        let result = IrrigationRowWeighting.allocate(rows: [
+            row(rowId: "00000000-0000-0000-0000-00000000A001", blockId: blockA, blockName: "A", number: 1),
+            row(rowId: "00000000-0000-0000-0000-00000000A002", blockId: blockA, blockName: "A", number: 2),
+            row(rowId: "00000000-0000-0000-0000-00000000A005", blockId: blockA, blockName: "A", number: 5),
+            row(rowId: "00000000-0000-0000-0000-00000000B008", blockId: blockB, blockName: "B", number: 8)
+        ])
+        #expect(result.basis == .equalRows)
+        #expect(result.blocks[0].percentage == 75)
+        #expect(result.blocks[0].rowCount == 3)
+        #expect(result.blocks[1].percentage == 25)
+    }
 }

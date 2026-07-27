@@ -62,7 +62,48 @@ data class IrrigationValveBlockRow(
     @SerialName("allocation_percentage") val allocationPercentage: Double? = null,
     @SerialName("serviced_area_m2") val servicedAreaM2: Double? = null,
     @SerialName("serviced_vine_count") val servicedVineCount: Int? = null,
+    @SerialName("row_start") val rowStart: Int? = null,
+    @SerialName("row_end") val rowEnd: Int? = null,
     @SerialName("block_name") val blockName: String? = null,
+)
+
+/** One selectable vineyard row (from `list_irrigation_available_rows`). */
+@Serializable
+data class IrrigationAvailableRow(
+    @SerialName("row_id") val rowId: String,
+    @SerialName("block_id") val blockId: String,
+    @SerialName("block_name") val blockName: String,
+    @SerialName("row_number") val rowNumber: Int,
+    @SerialName("row_label") val rowLabel: String? = null,
+    @SerialName("vine_count") val vineCount: Int? = null,
+    @SerialName("emitter_count") val emitterCount: Int? = null,
+    @SerialName("row_length_metres") val rowLengthMetres: Double? = null,
+    @SerialName("connected_valve_ids") val connectedValveIds: List<String> = emptyList(),
+    @SerialName("connected_valve_names") val connectedValveNames: List<String> = emptyList(),
+) {
+    val displayLabel: String get() = rowLabel ?: "Row $rowNumber"
+}
+
+/** One saved valve→row link (from `list_irrigation_valve_rows`). */
+@Serializable
+data class IrrigationValveRowLink(
+    val id: String,
+    @SerialName("valve_id") val valveId: String,
+    @SerialName("block_id") val blockId: String,
+    @SerialName("row_id") val rowId: String? = null,
+    @SerialName("row_number") val rowNumber: Int = 0,
+    @SerialName("row_label") val rowLabel: String? = null,
+    @SerialName("weighting_basis") val weightingBasis: String? = null,
+    @SerialName("row_weight") val rowWeight: Double? = null,
+    @SerialName("block_name") val blockName: String? = null,
+)
+
+/** Result of `set_irrigation_valve_rows` — backend percentages are authoritative. */
+@Serializable
+data class IrrigationValveRowsResult(
+    @SerialName("weighting_basis") val weightingBasis: String? = null,
+    val blocks: List<IrrigationValveBlockRow> = emptyList(),
+    val warnings: List<String> = emptyList(),
 )
 
 @Serializable
@@ -430,6 +471,81 @@ object IrrigationLocalCalc {
         val gallonsPerLitre = if (usGallon) US_GALLONS_PER_LITRE else IMPERIAL_GALLONS_PER_LITRE
         return litresPerHectare * gallonsPerLitre / ACRES_PER_HECTARE
     }
+
+    // =========================================================================
+    // Row-based weighting — mirror of sql/126 `_irrigation_rows_weighting`.
+    // PROVISIONAL previews only; the server result is always authoritative.
+    // =========================================================================
+
+    data class RowBlockShare(
+        val blockId: String,
+        val blockName: String,
+        val rowCount: Int,
+        val weight: Double,
+        val percentage: Double,
+    )
+
+    data class RowWeightingResult(
+        val basis: String,
+        val blocks: List<RowBlockShare>,
+    )
+
+    fun basisLabel(basis: String?): String = when (basis) {
+        "emitter_count" -> "Emitter count"
+        "vine_count" -> "Vine count"
+        "row_length" -> "Row length"
+        "equal_rows" -> "Equal rows (estimate)"
+        else -> basis ?: "—"
+    }
+
+    fun round4(value: Double): Double = (value * 10_000.0).roundToLong() / 10_000.0
+
+    /** ONE common basis for the whole selection: emitters → vines → length → equal. */
+    fun rowBasis(rows: List<IrrigationAvailableRow>): String = when {
+        rows.isEmpty() -> "equal_rows"
+        rows.all { (it.emitterCount ?: 0) > 0 } -> "emitter_count"
+        rows.all { (it.vineCount ?: 0) > 0 } -> "vine_count"
+        rows.all { (it.rowLengthMetres ?: 0.0) > 0 } -> "row_length"
+        else -> "equal_rows"
+    }
+
+    /**
+     * Same maths and rounding as the SQL core: blocks ordered by block id text,
+     * 4 dp percentages, the LAST block absorbs the remainder → exactly 100.
+     */
+    fun rowWeighting(rows: List<IrrigationAvailableRow>): RowWeightingResult {
+        if (rows.isEmpty()) return RowWeightingResult("equal_rows", emptyList())
+        val basis = rowBasis(rows)
+
+        fun weight(row: IrrigationAvailableRow): Double = when (basis) {
+            "emitter_count" -> (row.emitterCount ?: 0).toDouble()
+            "vine_count" -> (row.vineCount ?: 0).toDouble()
+            "row_length" -> row.rowLengthMetres ?: 0.0
+            else -> 1.0
+        }
+
+        val total = rows.sumOf { weight(it) }
+        if (total <= 0) return RowWeightingResult(basis, emptyList())
+
+        val grouped = rows.groupBy { it.blockId }.entries.sortedBy { it.key.lowercase() }
+        var pctSum = 0.0
+        val blocks = grouped.mapIndexed { index, entry ->
+            val blockWeight = entry.value.sumOf { weight(it) }
+            val pct = if (index < grouped.size - 1) {
+                round4(blockWeight / total * 100.0).also { pctSum += it }
+            } else {
+                round4(100.0 - pctSum)
+            }
+            RowBlockShare(
+                blockId = entry.key,
+                blockName = entry.value.first().blockName,
+                rowCount = entry.value.size,
+                weight = blockWeight,
+                percentage = pct,
+            )
+        }
+        return RowWeightingResult(basis, blocks)
+    }
 }
 
 // =============================================================================
@@ -556,6 +672,39 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
                     })
                 }
             })
+        })))
+    }
+
+    // MARK: Row-based allocation (SQL 126)
+
+    /** The vineyard's REAL configured rows, grouped/sortable by block. */
+    suspend fun listAvailableRows(vineyardId: String, blockId: String? = null): List<IrrigationAvailableRow> =
+        withContext(Dispatchers.IO) {
+            decode(ensureSuccess(rpc("list_irrigation_available_rows", buildJsonObject {
+                put("p_vineyard_id", vineyardId)
+                blockId?.let { put("p_block_id", it) }
+            })))
+        }
+
+    suspend fun listValveRows(vineyardId: String, valveId: String? = null): List<IrrigationValveRowLink> =
+        withContext(Dispatchers.IO) {
+            decode(ensureSuccess(rpc("list_irrigation_valve_rows", buildJsonObject {
+                put("p_vineyard_id", vineyardId)
+                valveId?.let { put("p_valve_id", it) }
+            })))
+        }
+
+    /**
+     * Atomically replaces the valve's row links; the server derives the block
+     * connections and authoritative percentages (allocation_method = rows).
+     */
+    suspend fun setValveRows(
+        vineyardId: String, valveId: String, rowIds: List<String>,
+    ): IrrigationValveRowsResult = withContext(Dispatchers.IO) {
+        decode(ensureSuccess(rpc("set_irrigation_valve_rows", buildJsonObject {
+            put("p_vineyard_id", vineyardId)
+            put("p_valve_id", valveId)
+            put("p_row_ids", buildJsonArray { rowIds.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) } })
         })))
     }
 

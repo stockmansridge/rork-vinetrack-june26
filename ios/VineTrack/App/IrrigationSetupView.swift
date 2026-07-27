@@ -495,9 +495,15 @@ private struct IrrigationValveForm: View {
     }
 }
 
-// MARK: - Valve → block allocation editor
+// MARK: - Valve → block allocation editor (Manual % / Rows)
 
 struct IrrigationValveBlocksEditor: View {
+    enum AllocationMode: String, CaseIterable, Identifiable {
+        case manual = "Manual %"
+        case rows = "Rows"
+        var id: String { rawValue }
+    }
+
     struct AllocationRow: Identifiable {
         let id = UUID()
         var blockId: UUID?
@@ -510,10 +516,18 @@ struct IrrigationValveBlocksEditor: View {
     let valve: IrrigationValve
     let onSaved: () async -> Void
 
+    @State private var mode: AllocationMode = .manual
     @State private var rows: [AllocationRow] = []
     @State private var isLoading = true
     @State private var isSaving = false
     @State private var errorMessage: String?
+
+    // Rows mode state
+    @State private var availableRows: [IrrigationAvailableRow] = []
+    @State private var selectedRowIds: Set<UUID> = []
+    @State private var expandedBlocks: Set<UUID> = []
+    @State private var rowSearch = ""
+    @State private var serverResult: IrrigationValveRowsResult?
 
     private let repository = SupabaseIrrigationRepository.shared
 
@@ -522,14 +536,45 @@ struct IrrigationValveBlocksEditor: View {
     }
     private var totalOk: Bool { abs(total - 100) <= 0.05 && !rows.isEmpty }
 
+    private var selectedRows: [IrrigationAvailableRow] {
+        availableRows.filter { selectedRowIds.contains($0.rowId) }
+    }
+
+    private var rowsByBlock: [(blockId: UUID, blockName: String, rows: [IrrigationAvailableRow])] {
+        var order: [UUID] = []
+        var grouped: [UUID: (String, [IrrigationAvailableRow])] = [:]
+        for row in availableRows {
+            if grouped[row.blockId] == nil {
+                grouped[row.blockId] = (row.blockName, [])
+                order.append(row.blockId)
+            }
+            grouped[row.blockId]?.1.append(row)
+        }
+        return order.compactMap { id in
+            guard let entry = grouped[id] else { return nil }
+            return (id, entry.0, entry.1)
+        }
+    }
+
     var body: some View {
         List {
             Section {
-                Text("Connect \(valve.name) to the blocks it waters. Active allocations must total 100%.")
+                Text(mode == .manual
+                     ? "Connect \(valve.name) to the blocks it waters. Active allocations must total 100%."
+                     : "Select the exact vineyard rows \(valve.name) supplies. VineTrack derives the blocks and water split from your selection.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                Picker("Allocation Method", selection: $mode) {
+                    ForEach(AllocationMode.allCases) { m in
+                        Text(m.rawValue).tag(m)
+                    }
+                }
+                .pickerStyle(.segmented)
             }
 
+            if mode == .rows {
+                rowsSections
+            } else {
             Section("Blocks") {
                 ForEach($rows) { $row in
                     HStack {
@@ -574,6 +619,7 @@ struct IrrigationValveBlocksEditor: View {
                         .foregroundStyle(total > 100 ? .red : .orange)
                 }
             }
+            }
 
             if let errorMessage {
                 Text(errorMessage)
@@ -588,13 +634,15 @@ struct IrrigationValveBlocksEditor: View {
                     if isSaving {
                         ProgressView().frame(maxWidth: .infinity)
                     } else {
-                        Text("Save Block Connections")
+                        Text(mode == .rows ? "Save Row Connections" : "Save Block Connections")
                             .frame(maxWidth: .infinity)
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.cyan)
-                .disabled((!totalOk && !rows.isEmpty) || isSaving || rows.contains { $0.blockId == nil })
+                .disabled(isSaving || (mode == .manual
+                    ? ((!totalOk && !rows.isEmpty) || rows.contains { $0.blockId == nil })
+                    : selectedRowIds.isEmpty))
             }
         }
         .navigationTitle(valve.name)
@@ -602,15 +650,160 @@ struct IrrigationValveBlocksEditor: View {
         .task { await load() }
     }
 
+    // MARK: Rows mode sections
+
+    @ViewBuilder
+    private var rowsSections: some View {
+        if availableRows.isEmpty {
+            Section {
+                Text(isLoading
+                     ? "Loading vineyard rows…"
+                     : "No vineyard rows are configured. Map rows for your blocks in Vineyard Blocks before using row-based allocation.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            if availableRows.count > 30 {
+                Section {
+                    TextField("Search rows (e.g. 12)", text: $rowSearch)
+                        .textInputAutocapitalization(.never)
+                }
+            }
+
+            ForEach(rowsByBlock, id: \.blockId) { group in
+                let visible = group.rows.filter {
+                    rowSearch.isEmpty || $0.displayLabel.localizedCaseInsensitiveContains(rowSearch)
+                }
+                let selectedCount = group.rows.filter { selectedRowIds.contains($0.rowId) }.count
+                Section {
+                    DisclosureGroup(isExpanded: Binding(
+                        get: { expandedBlocks.contains(group.blockId) || !rowSearch.isEmpty },
+                        set: { expanded in
+                            if expanded { expandedBlocks.insert(group.blockId) }
+                            else { expandedBlocks.remove(group.blockId) }
+                        }
+                    )) {
+                        HStack {
+                            Button("Select All") {
+                                selectedRowIds.formUnion(group.rows.map(\.rowId))
+                                serverResult = nil
+                            }
+                            .font(.caption.weight(.semibold))
+                            .buttonStyle(.bordered)
+                            Button("Clear") {
+                                selectedRowIds.subtract(group.rows.map(\.rowId))
+                                serverResult = nil
+                            }
+                            .font(.caption.weight(.semibold))
+                            .buttonStyle(.bordered)
+                            Spacer()
+                        }
+                        ForEach(visible) { row in
+                            rowToggle(row)
+                        }
+                    } label: {
+                        HStack {
+                            Text(group.blockName)
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Text("\(selectedCount) of \(group.rows.count) rows")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(selectedCount > 0 ? .cyan : .secondary)
+                        }
+                    }
+                }
+            }
+
+            rowsSummarySection
+        }
+    }
+
+    private func rowToggle(_ row: IrrigationAvailableRow) -> some View {
+        let isSelected = selectedRowIds.contains(row.rowId)
+        let otherValves = (row.connectedValveNames ?? []).filter { $0 != valve.name }
+        return Button {
+            if isSelected { selectedRowIds.remove(row.rowId) } else { selectedRowIds.insert(row.rowId) }
+            serverResult = nil
+        } label: {
+            HStack {
+                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(isSelected ? .cyan : .secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(row.displayLabel)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                    if !otherValves.isEmpty {
+                        Text("Also: \(otherValves.joined(separator: ", "))")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                Spacer()
+                if let length = row.rowLengthMetres {
+                    Text(String(format: "%.0f m", length))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var rowsSummarySection: some View {
+        let provisional = IrrigationRowWeighting.allocate(rows: selectedRows)
+        Section(serverResult == nil ? "Summary (provisional — saved values come from the server)" : "Summary") {
+            LabeledContent("Selected rows", value: "\(selectedRows.count)")
+            LabeledContent("Blocks supplied", value: "\(provisional.blocks.count)")
+            if let result = serverResult {
+                LabeledContent("Allocation basis",
+                               value: IrrigationRowWeighting.Basis(rawValue: result.weightingBasis ?? "")?.label
+                                      ?? (result.weightingBasis ?? "—"))
+                ForEach(result.blocks) { block in
+                    LabeledContent(block.blockName ?? "Block",
+                                   value: String(format: "%.1f%%", block.allocationPercentage ?? 0))
+                }
+            } else if !selectedRows.isEmpty {
+                LabeledContent("Allocation basis", value: provisional.basis.label)
+                ForEach(provisional.blocks) { share in
+                    LabeledContent(share.blockName, value: String(format: "%.1f%%", share.percentage))
+                }
+            }
+            if !selectedRows.isEmpty && IrrigationRowWeighting.basis(for: selectedRows) == .equalRows && serverResult == nil {
+                Text("Water allocation is being estimated from the number of selected rows because emitter, vine-count and row-length information is incomplete.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            if let warnings = serverResult?.warnings, !warnings.isEmpty {
+                ForEach(warnings, id: \.self) { warning in
+                    Text(warning)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
     private func load() async {
         guard let vineyardId = store.selectedVineyardId else { return }
         isLoading = true
         defer { isLoading = false }
         do {
-            let existing = try await repository.listValveBlocks(vineyardId: vineyardId, valveId: valve.id)
+            async let existingTask = repository.listValveBlocks(vineyardId: vineyardId, valveId: valve.id)
+            async let availableTask = repository.listAvailableRows(vineyardId: vineyardId)
+            async let linksTask = repository.listValveRows(vineyardId: vineyardId, valveId: valve.id)
+            let existing = try await existingTask
+            availableRows = try await availableTask
+            let links = try await linksTask
+
             rows = existing.map {
                 AllocationRow(blockId: $0.blockId,
                               percentage: $0.allocationPercentage.map { String(format: "%g", $0) } ?? "")
+            }
+            selectedRowIds = Set(links.compactMap(\.rowId))
+            if existing.contains(where: { $0.allocationMethod == "rows" }) {
+                mode = .rows
+                expandedBlocks = Set(links.map(\.blockId))
             }
         } catch {
             errorMessage = friendlyIrrigationError(error)
@@ -622,17 +815,27 @@ struct IrrigationValveBlocksEditor: View {
         isSaving = true
         errorMessage = nil
         defer { isSaving = false }
-        let inputs: [IrrigationValveBlockInput] = rows.compactMap { row in
-            guard let blockId = row.blockId,
-                  let pct = Double(row.percentage.replacingOccurrences(of: ",", with: ".")) else { return nil }
-            return IrrigationValveBlockInput(
-                blockId: blockId, allocationPercentage: pct,
-                servicedAreaM2: nil, servicedVineCount: nil, servicedEmitterCount: nil)
-        }
         do {
-            _ = try await repository.setValveBlocks(vineyardId: vineyardId, valveId: valve.id, blocks: inputs)
-            await onSaved()
-            dismiss()
+            if mode == .rows {
+                // The backend response carries the AUTHORITATIVE percentages.
+                serverResult = try await repository.setValveRows(
+                    vineyardId: vineyardId, valveId: valve.id, rowIds: Array(selectedRowIds))
+                await onSaved()
+                if serverResult?.warnings.isEmpty ?? true {
+                    dismiss()
+                }
+            } else {
+                let inputs: [IrrigationValveBlockInput] = rows.compactMap { row in
+                    guard let blockId = row.blockId,
+                          let pct = Double(row.percentage.replacingOccurrences(of: ",", with: ".")) else { return nil }
+                    return IrrigationValveBlockInput(
+                        blockId: blockId, allocationPercentage: pct,
+                        servicedAreaM2: nil, servicedVineCount: nil, servicedEmitterCount: nil)
+                }
+                _ = try await repository.setValveBlocks(vineyardId: vineyardId, valveId: valve.id, blocks: inputs)
+                await onSaved()
+                dismiss()
+            }
         } catch {
             errorMessage = friendlyIrrigationError(error)
         }

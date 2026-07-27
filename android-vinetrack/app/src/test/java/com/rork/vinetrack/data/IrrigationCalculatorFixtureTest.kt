@@ -130,4 +130,78 @@ class IrrigationCalculatorFixtureTest {
         assertTrue(abs(IrrigationLocalCalc.litresPerHectareToGallonsPerAcre(2100.0, usGallon = true) - 224.504) < 0.01)
         assertEquals(1.0, 25.4 / IrrigationLocalCalc.MM_PER_INCH, 0.000001)
     }
+
+    // ------------------------------------------------------------------------
+    // Row-based weighting fixture — mirrors the assert block in
+    // sql/126_irrigation_row_allocations.sql and IrrigationCalculatorFixtureTests.swift.
+    // ------------------------------------------------------------------------
+
+    private fun row(
+        rowId: String,
+        blockId: String,
+        blockName: String,
+        number: Int,
+        emitters: Int? = null,
+        vines: Int? = null,
+        length: Double? = null,
+    ) = IrrigationAvailableRow(
+        rowId = rowId, blockId = blockId, blockName = blockName,
+        rowNumber = number, emitterCount = emitters, vineCount = vines,
+        rowLengthMetres = length,
+    )
+
+    @Test
+    fun `row weighting emitter basis totals exactly 100`() {
+        val result = IrrigationLocalCalc.rowWeighting(
+            listOf(
+                row("a1", "00000000-0000-0000-0000-000000000001", "Block 1A", 1, emitters = 130, vines = 65, length = 100.0),
+                row("a2", "00000000-0000-0000-0000-000000000001", "Block 1A", 2, emitters = 70, vines = 35, length = 60.0),
+                row("b1", "00000000-0000-0000-0000-000000000002", "Block 1B", 1, emitters = 100, vines = 50, length = 80.0),
+            ),
+        )
+        assertEquals("emitter_count", result.basis)
+        assertEquals(66.6667, result.blocks[0].percentage, 0.0001)
+        assertEquals(33.3333, result.blocks[1].percentage, 0.0001)
+        assertEquals(100.0, result.blocks.sumOf { it.percentage }, 0.0)
+    }
+
+    @Test
+    fun `row weighting never mixes units - falls back to common basis`() {
+        // One row missing emitters but all rows have vines → vine basis.
+        val vines = IrrigationLocalCalc.rowWeighting(
+            listOf(
+                row("a1", "00000000-0000-0000-0000-000000000001", "A", 1, emitters = 130, vines = 60, length = 100.0),
+                row("b1", "00000000-0000-0000-0000-000000000002", "B", 1, vines = 40, length = 80.0),
+            ),
+        )
+        assertEquals("vine_count", vines.basis)
+        assertEquals(60.0, vines.blocks[0].percentage, 0.0001)
+
+        // Lengths only → row-length basis.
+        val lengths = IrrigationLocalCalc.rowWeighting(
+            listOf(
+                row("a1", "00000000-0000-0000-0000-000000000001", "A", 1, length = 150.0),
+                row("b1", "00000000-0000-0000-0000-000000000002", "B", 1, length = 50.0),
+            ),
+        )
+        assertEquals("row_length", lengths.basis)
+        assertEquals(75.0, lengths.blocks[0].percentage, 0.0001)
+    }
+
+    @Test
+    fun `row weighting equal rows fallback`() {
+        // Non-sequential selection 1,2,5 + 8 stays explicit rows; A 3 rows, B 1 row → 75 / 25.
+        val result = IrrigationLocalCalc.rowWeighting(
+            listOf(
+                row("a1", "00000000-0000-0000-0000-000000000001", "A", 1),
+                row("a2", "00000000-0000-0000-0000-000000000001", "A", 2),
+                row("a5", "00000000-0000-0000-0000-000000000001", "A", 5),
+                row("b8", "00000000-0000-0000-0000-000000000002", "B", 8),
+            ),
+        )
+        assertEquals("equal_rows", result.basis)
+        assertEquals(75.0, result.blocks[0].percentage, 0.0001)
+        assertEquals(3, result.blocks[0].rowCount)
+        assertEquals(25.0, result.blocks[1].percentage, 0.0001)
+    }
 }

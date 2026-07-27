@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
@@ -62,7 +63,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import com.rork.vinetrack.data.AreaUnit
 import com.rork.vinetrack.data.IrrigationAllocationConfig
+import com.rork.vinetrack.data.IrrigationAvailableRow
 import com.rork.vinetrack.data.IrrigationBlockResult
 import com.rork.vinetrack.data.IrrigationLocalCalc
 import com.rork.vinetrack.data.IrrigationPreviewResult
@@ -71,9 +74,12 @@ import com.rork.vinetrack.data.IrrigationSessionRow
 import com.rork.vinetrack.data.IrrigationSetupStatus
 import com.rork.vinetrack.data.IrrigationSystemRow
 import com.rork.vinetrack.data.IrrigationValveRow
+import com.rork.vinetrack.data.IrrigationValveRowsResult
 import com.rork.vinetrack.data.IrrigationValveValidation
 import com.rork.vinetrack.data.IrrigationVintageSummary
 import com.rork.vinetrack.data.PendingIrrigationSession
+import com.rork.vinetrack.data.RegionFormatter
+import com.rork.vinetrack.data.VolumeUnit
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.theme.VineColors
@@ -95,11 +101,43 @@ import kotlin.math.roundToInt
 
 private val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
 
-private fun formatVolumeL(litres: Double): String = when {
-    litres >= 1_000_000 -> String.format(Locale.US, "%.2f ML", litres / 1_000_000)
-    litres >= 10_000 -> String.format(Locale.US, "%.1f kL", litres / 1_000)
-    litres >= 100 -> String.format(Locale.US, "%.0f L", litres)
-    else -> String.format(Locale.US, "%.1f L", litres)
+// Region-aware irrigation display formatting — the Android twin of the iOS
+// `IrrigationFormat` helpers. Stored values stay canonical (litres / mm / L/ha);
+// only the DISPLAY converts to metric, US customary or Imperial gallons.
+private object IrrigationUnits {
+    private fun usesUSGallon(fmt: RegionFormatter): Boolean =
+        fmt.settings.countryCode.uppercase() == "US" || fmt.settings.countryCode.uppercase() == "CA"
+
+    /** Auto-scaling volume: litres → kL → ML for metric; gallons for US/Imperial. */
+    fun volume(litres: Double, fmt: RegionFormatter): String = when (VolumeUnit.from(fmt.settings.volumeUnit)) {
+        VolumeUnit.Litres -> when {
+            litres >= 1_000_000 -> String.format(Locale.US, "%.2f ML", litres / 1_000_000)
+            litres >= 10_000 -> String.format(Locale.US, "%.1f kL", litres / 1_000)
+            else -> fmt.formatVolume(litres, if (litres < 100) 1 else 0)
+        }
+        VolumeUnit.Gallons -> fmt.formatVolume(litres, 0)
+    }
+
+    fun flow(litresPerHour: Double, fmt: RegionFormatter): String =
+        "${fmt.formatVolume(litresPerHour, 0)}/h"
+
+    fun perVine(litres: Double, fmt: RegionFormatter): String =
+        "${fmt.formatVolume(litres, 2)}/vine"
+
+    fun perHectare(litresPerHectare: Double, fmt: RegionFormatter): String =
+        if (VolumeUnit.from(fmt.settings.volumeUnit) == VolumeUnit.Litres &&
+            AreaUnit.from(fmt.settings.areaUnit) == AreaUnit.Hectares
+        ) {
+            String.format(Locale.US, "%.0f L/ha", litresPerHectare)
+        } else {
+            val galPerAcre = IrrigationLocalCalc.litresPerHectareToGallonsPerAcre(litresPerHectare, usesUSGallon(fmt))
+            String.format(Locale.US, "%.0f gal/ac", galPerAcre)
+        }
+
+    fun depth(mm: Double, fmt: RegionFormatter): String = when (AreaUnit.from(fmt.settings.areaUnit)) {
+        AreaUnit.Hectares -> String.format(Locale.US, "%.2f mm", mm)
+        AreaUnit.Acres -> String.format(Locale.US, "%.3f in", mm / IrrigationLocalCalc.MM_PER_INCH)
+    }
 }
 
 private fun formatMinutes(minutes: Int): String {
@@ -252,6 +290,7 @@ fun IrrigationRecordsScreen(
                     IrrigationNav.Detail -> DetailContent(
                         repo = repo,
                         sessionId = detailSessionId,
+                        fmt = state.regionFormatter,
                         onChanged = { scope.launch { reload() } },
                         onEdit = { session ->
                             editSession = session
@@ -309,6 +348,7 @@ private fun LandingContent(
     onRetryPending: () -> Unit,
 ) {
     val vineyardName = state.vineyards.firstOrNull { it.id == state.selectedVineyardId }?.name ?: "Vineyard"
+    val fmt = state.regionFormatter
 
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -393,8 +433,8 @@ private fun LandingContent(
 
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatCard("Vintage Water", summary?.let { formatVolumeL(it.totalVolumeLitres) } ?: "—", Modifier.weight(1f))
-                StatCard("This Month", summary?.let { formatVolumeL(it.monthVolumeLitres) } ?: "—", Modifier.weight(1f))
+                StatCard("Vintage Water", summary?.let { IrrigationUnits.volume(it.totalVolumeLitres, fmt) } ?: "—", Modifier.weight(1f))
+                StatCard("This Month", summary?.let { IrrigationUnits.volume(it.monthVolumeLitres, fmt) } ?: "—", Modifier.weight(1f))
             }
         }
         item {
@@ -412,12 +452,12 @@ private fun LandingContent(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatCard(
                         "Avg Water / Vine",
-                        summary.waterLitresPerVine?.let { String.format(Locale.US, "%.2f L/vine", it) } ?: "—",
+                        summary.waterLitresPerVine?.let { IrrigationUnits.perVine(it, fmt) } ?: "—",
                         Modifier.weight(1f),
                     )
                     StatCard(
                         "Irrigation Depth",
-                        summary.irrigationDepthMm?.let { String.format(Locale.US, "%.2f mm", it) } ?: "—",
+                        summary.irrigationDepthMm?.let { IrrigationUnits.depth(it, fmt) } ?: "—",
                         Modifier.weight(1f),
                     )
                 }
@@ -437,7 +477,7 @@ private fun LandingContent(
         } else {
             recent.forEach { session ->
                 item(key = session.id) {
-                    SessionRowCard(session) { onOpenSession(session.id) }
+                    SessionRowCard(session, fmt) { onOpenSession(session.id) }
                 }
             }
         }
@@ -458,7 +498,7 @@ private fun StatCard(title: String, value: String, modifier: Modifier = Modifier
 }
 
 @Composable
-private fun SessionRowCard(session: IrrigationSessionRow, onClick: () -> Unit) {
+private fun SessionRowCard(session: IrrigationSessionRow, fmt: RegionFormatter, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
@@ -487,7 +527,7 @@ private fun SessionRowCard(session: IrrigationSessionRow, onClick: () -> Unit) {
         }
         Column(horizontalAlignment = Alignment.End) {
             Text(
-                formatVolumeL(session.totalVolumeLitres),
+                IrrigationUnits.volume(session.totalVolumeLitres, fmt),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 textDecoration = if (session.status == "reversed") TextDecoration.LineThrough else null,
@@ -660,6 +700,7 @@ private fun SetupContent(
 ) {
     val vineyardId = state.selectedVineyardId ?: return
     val scope = rememberCoroutineScope()
+    val fmt = state.regionFormatter
 
     var tab by remember { mutableIntStateOf(0) }
     var systems by remember { mutableStateOf<List<IrrigationSystemRow>>(emptyList()) }
@@ -725,7 +766,7 @@ private fun SetupContent(
                         SetupRowCard(
                             title = valve.name,
                             subtitle = "${valve.systemName ?: "System"} · ${valve.activeBlockCount ?: 0} block(s)",
-                            trailing = valve.configuredFlowLph?.let { String.format(Locale.US, "%.0f L/h", it) }
+                            trailing = valve.configuredFlowLph?.let { IrrigationUnits.flow(it, fmt) }
                                 ?: if (valve.isActive) "No flow" else "Inactive",
                         ) { editingValve = valve }
                     }
@@ -983,29 +1024,205 @@ private fun ValveBlocksEditor(
     val scope = rememberCoroutineScope()
     data class RowState(val key: String, var blockId: String?, var pct: String)
 
+    var mode by remember { mutableStateOf("manual") }
     var rows by remember { mutableStateOf<List<RowState>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var isSaving by remember { mutableStateOf(false) }
 
+    // Rows-method state (SQL 126). Percentages shown after saving come from
+    // the BACKEND response — the local weighting is provisional only.
+    var availableRows by remember { mutableStateOf<List<IrrigationAvailableRow>>(emptyList()) }
+    var selectedRowIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var expandedBlocks by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var rowSearch by remember { mutableStateOf("") }
+    var serverResult by remember { mutableStateOf<IrrigationValveRowsResult?>(null) }
+
     LaunchedEffect(valve.id) {
         runCatching {
-            rows = repo.listValveBlocks(vineyardId, valve.id).map {
+            val existing = repo.listValveBlocks(vineyardId, valve.id)
+            rows = existing.map {
                 RowState(UUID.randomUUID().toString(), it.blockId, it.allocationPercentage?.toString() ?: "")
+            }
+            availableRows = repo.listAvailableRows(vineyardId)
+            val links = repo.listValveRows(vineyardId, valve.id)
+            selectedRowIds = links.mapNotNull { it.rowId }.toSet()
+            if (existing.any { it.allocationMethod == "rows" }) {
+                mode = "rows"
+                expandedBlocks = links.map { it.blockId }.toSet()
             }
         }.onFailure { error = it.message }
     }
 
     val total = rows.sumOf { it.pct.replace(",", ".").toDoubleOrNull() ?: 0.0 }
     val totalOk = rows.isNotEmpty() && abs(total - 100.0) <= 0.05
+    val selectedRows = availableRows.filter { selectedRowIds.contains(it.rowId) }
 
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Text(
-                "Connect ${valve.name} to the blocks it waters. Active allocations must total 100%.",
+                if (mode == "manual") {
+                    "Connect ${valve.name} to the blocks it waters. Active allocations must total 100%."
+                } else {
+                    "Select the exact vineyard rows ${valve.name} supplies. VineTrack derives the blocks and water split from your selection."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = mode == "manual", onClick = { mode = "manual" }, label = { Text("Manual %") })
+                FilterChip(selected = mode == "rows", onClick = { mode = "rows" }, label = { Text("Rows") })
+            }
+        }
+
+        if (mode == "rows") {
+            if (availableRows.isEmpty()) {
+                item {
+                    Text(
+                        "No vineyard rows are configured. Map rows for your blocks in Vineyard Blocks before using row-based allocation.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                if (availableRows.size > 30) {
+                    item {
+                        OutlinedTextField(
+                            value = rowSearch,
+                            onValueChange = { rowSearch = it },
+                            label = { Text("Search rows (e.g. 12)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+
+                val grouped = availableRows.groupBy { it.blockId }
+                grouped.forEach { (blockId, blockRows) ->
+                    val blockName = blockRows.first().blockName
+                    val selectedCount = blockRows.count { selectedRowIds.contains(it.rowId) }
+                    val expanded = expandedBlocks.contains(blockId) || rowSearch.isNotEmpty()
+                    item(key = "block_$blockId") {
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                                .clickable {
+                                    expandedBlocks = if (expanded) expandedBlocks - blockId else expandedBlocks + blockId
+                                }
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(blockName, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            Text(
+                                "$selectedCount of ${blockRows.size} rows",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (selectedCount > 0) VineColors.Cyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    if (expanded) {
+                        item(key = "block_actions_$blockId") {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = {
+                                    selectedRowIds = selectedRowIds + blockRows.map { it.rowId }
+                                    serverResult = null
+                                }) { Text("Select All") }
+                                TextButton(onClick = {
+                                    selectedRowIds = selectedRowIds - blockRows.map { it.rowId }.toSet()
+                                    serverResult = null
+                                }) { Text("Clear") }
+                            }
+                        }
+                        blockRows.filter {
+                            rowSearch.isEmpty() || it.displayLabel.contains(rowSearch, ignoreCase = true)
+                        }.forEach { row ->
+                            item(key = "row_${row.rowId}") {
+                                val isSelected = selectedRowIds.contains(row.rowId)
+                                val otherValves = row.connectedValveNames.filter { it != valve.name }
+                                Row(
+                                    Modifier.fillMaxWidth()
+                                        .clickable {
+                                            selectedRowIds = if (isSelected) selectedRowIds - row.rowId else selectedRowIds + row.rowId
+                                            serverResult = null
+                                        }
+                                        .padding(horizontal = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Checkbox(
+                                        checked = isSelected,
+                                        onCheckedChange = {
+                                            selectedRowIds = if (isSelected) selectedRowIds - row.rowId else selectedRowIds + row.rowId
+                                            serverResult = null
+                                        },
+                                    )
+                                    Column(Modifier.weight(1f)) {
+                                        Text(row.displayLabel, style = MaterialTheme.typography.bodyMedium)
+                                        if (otherValves.isNotEmpty()) {
+                                            Text(
+                                                "Also: ${otherValves.joinToString(", ")}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFFEF6C00),
+                                            )
+                                        }
+                                    }
+                                    row.rowLengthMetres?.let {
+                                        Text(
+                                            String.format(Locale.US, "%.0f m", it),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    val provisional = IrrigationLocalCalc.rowWeighting(selectedRows)
+                    Column(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                            .background(VineColors.Cyan.copy(alpha = 0.08f)).padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            if (serverResult == null) "Summary (provisional — saved values come from the server)" else "Summary",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        DetailLine("Selected rows", selectedRows.size.toString())
+                        val result = serverResult
+                        if (result != null) {
+                            DetailLine("Blocks supplied", result.blocks.size.toString())
+                            DetailLine("Allocation basis", IrrigationLocalCalc.basisLabel(result.weightingBasis))
+                            result.blocks.forEach { block ->
+                                DetailLine(
+                                    block.blockName ?: "Block",
+                                    String.format(Locale.US, "%.1f%%", block.allocationPercentage ?: 0.0),
+                                )
+                            }
+                        } else if (selectedRows.isNotEmpty()) {
+                            DetailLine("Blocks supplied", provisional.blocks.size.toString())
+                            DetailLine("Allocation basis", IrrigationLocalCalc.basisLabel(provisional.basis))
+                            provisional.blocks.forEach { share ->
+                                DetailLine(share.blockName, String.format(Locale.US, "%.1f%%", share.percentage))
+                            }
+                            if (provisional.basis == "equal_rows") {
+                                Text(
+                                    "Water allocation is being estimated from the number of selected rows because emitter, vine-count and row-length information is incomplete.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFFEF6C00),
+                                )
+                            }
+                        }
+                        serverResult?.warnings?.forEach { warning ->
+                            Text(warning, style = MaterialTheme.typography.bodySmall, color = Color(0xFFEF6C00))
+                        }
+                    }
+                }
+            }
+        } else {
         rows.forEachIndexed { index, row ->
             item(key = row.key) {
                 Column(
@@ -1060,6 +1277,7 @@ private fun ValveBlocksEditor(
                 )
             }
         }
+        }
         error?.let { item { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
         item {
             Button(
@@ -1067,24 +1285,37 @@ private fun ValveBlocksEditor(
                     scope.launch {
                         isSaving = true
                         error = null
-                        runCatching {
-                            repo.setValveBlocks(
-                                vineyardId, valve.id,
-                                rows.mapNotNull { row ->
-                                    val blockId = row.blockId ?: return@mapNotNull null
-                                    val pct = row.pct.replace(",", ".").toDoubleOrNull() ?: return@mapNotNull null
-                                    blockId to pct
-                                },
-                            )
-                        }.onSuccess { onDone() }
-                            .onFailure { error = it.message }
+                        if (mode == "rows") {
+                            runCatching {
+                                repo.setValveRows(vineyardId, valve.id, selectedRowIds.toList())
+                            }.onSuccess { result ->
+                                serverResult = result
+                                if (result.warnings.isEmpty()) onDone()
+                            }.onFailure { error = it.message }
+                        } else {
+                            runCatching {
+                                repo.setValveBlocks(
+                                    vineyardId, valve.id,
+                                    rows.mapNotNull { row ->
+                                        val blockId = row.blockId ?: return@mapNotNull null
+                                        val pct = row.pct.replace(",", ".").toDoubleOrNull() ?: return@mapNotNull null
+                                        blockId to pct
+                                    },
+                                )
+                            }.onSuccess { onDone() }
+                                .onFailure { error = it.message }
+                        }
                         isSaving = false
                     }
                 },
-                enabled = (totalOk || rows.isEmpty()) && !isSaving && rows.none { it.blockId == null },
+                enabled = !isSaving && if (mode == "rows") {
+                    selectedRowIds.isNotEmpty()
+                } else {
+                    (totalOk || rows.isEmpty()) && rows.none { it.blockId == null }
+                },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.Cyan),
-            ) { Text(if (isSaving) "Saving…" else "Save Block Connections") }
+            ) { Text(if (isSaving) "Saving…" else if (mode == "rows") "Save Row Connections" else "Save Block Connections") }
         }
     }
 }
@@ -1104,6 +1335,7 @@ private fun RecordContent(
 ) {
     val vineyardId = state.selectedVineyardId ?: return
     val scope = rememberCoroutineScope()
+    val fmt = state.regionFormatter
     val source = editSession ?: duplicateFrom
 
     var systems by remember { mutableStateOf<List<IrrigationSystemRow>>(emptyList()) }
@@ -1257,7 +1489,7 @@ private fun RecordContent(
                     savedMessage = if (saved.duplicate == true) {
                         "This irrigation record was already saved."
                     } else {
-                        "Irrigation recorded: ${formatVolumeL(saved.totalVolumeLitres)} across ${saved.blocks.size} block(s)."
+                        "Irrigation recorded: ${IrrigationUnits.volume(saved.totalVolumeLitres, fmt)} across ${saved.blocks.size} block(s)."
                     }
                 }
                 .onFailure { e ->
@@ -1347,7 +1579,7 @@ private fun RecordContent(
                 val flow = validation?.configuredFlowLph
                 if (flow != null) {
                     Text(
-                        "Configured flow: ${String.format(Locale.US, "%.0f", flow)} L/h",
+                        "Configured flow: ${IrrigationUnits.flow(flow, fmt)}",
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 } else {
@@ -1406,16 +1638,16 @@ private fun RecordContent(
             }
         }
         preview?.let { p ->
-            item { PreviewSummary(p.totalVolumeLitres, p.effectiveVolumeLitres, p.flowLphUsed) }
+            item { PreviewSummary(p.totalVolumeLitres, p.effectiveVolumeLitres, p.flowLphUsed, fmt) }
             p.blocks.forEach { block ->
-                item { PreviewBlockRow(block) }
+                item { PreviewBlockRow(block, fmt) }
             }
             p.warnings.forEach { warning ->
                 item { Text(warning, color = Color(0xFFEF6C00), style = MaterialTheme.typography.bodySmall) }
             }
         }
         localPreview?.let { p ->
-            item { PreviewSummary(p.totalVolumeLitres, p.effectiveVolumeLitres, null) }
+            item { PreviewSummary(p.totalVolumeLitres, p.effectiveVolumeLitres, null, fmt) }
             p.blocks.forEach { block ->
                 item {
                     PreviewBlockRow(
@@ -1428,6 +1660,7 @@ private fun RecordContent(
                             waterLitresPerHectare = block.waterLitresPerHectare,
                             irrigationDepthMm = block.irrigationDepthMm,
                         ),
+                        fmt,
                     )
                 }
             }
@@ -1482,29 +1715,29 @@ private fun RecordContent(
 }
 
 @Composable
-private fun PreviewSummary(total: Double, effective: Double?, flowUsed: Double?) {
+private fun PreviewSummary(total: Double, effective: Double?, flowUsed: Double?, fmt: RegionFormatter) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
             .background(VineColors.Cyan.copy(alpha = 0.08f)).padding(12.dp),
     ) {
-        Text("Total water: ${formatVolumeL(total)}", fontWeight = FontWeight.SemiBold)
-        effective?.let { Text("Effective water: ${formatVolumeL(it)}", style = MaterialTheme.typography.bodySmall) }
-        flowUsed?.let { Text("Flow used: ${String.format(Locale.US, "%.0f", it)} L/h", style = MaterialTheme.typography.bodySmall) }
+        Text("Total water: ${IrrigationUnits.volume(total, fmt)}", fontWeight = FontWeight.SemiBold)
+        effective?.let { Text("Effective water: ${IrrigationUnits.volume(it, fmt)}", style = MaterialTheme.typography.bodySmall) }
+        flowUsed?.let { Text("Flow used: ${IrrigationUnits.flow(it, fmt)}", style = MaterialTheme.typography.bodySmall) }
     }
 }
 
 @Composable
-private fun PreviewBlockRow(block: IrrigationBlockResult) {
+private fun PreviewBlockRow(block: IrrigationBlockResult, fmt: RegionFormatter) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
         Row {
             Text(block.blockName ?: "Block", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             Text(String.format(Locale.US, "%.1f%%", block.allocationPercentage), style = MaterialTheme.typography.bodySmall)
         }
         val parts = buildList {
-            add(formatVolumeL(block.allocatedVolumeLitres))
-            block.waterLitresPerVine?.let { add(String.format(Locale.US, "%.2f L/vine", it)) }
-            block.waterLitresPerHectare?.let { add(String.format(Locale.US, "%.0f L/ha", it)) }
-            block.irrigationDepthMm?.let { add(String.format(Locale.US, "%.2f mm", it)) }
+            add(IrrigationUnits.volume(block.allocatedVolumeLitres, fmt))
+            block.waterLitresPerVine?.let { add(IrrigationUnits.perVine(it, fmt)) }
+            block.waterLitresPerHectare?.let { add(IrrigationUnits.perHectare(it, fmt)) }
+            block.irrigationDepthMm?.let { add(IrrigationUnits.depth(it, fmt)) }
         }
         Text(parts.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -1521,6 +1754,7 @@ private fun HistoryContent(
     onOpenSession: (String) -> Unit,
 ) {
     val vineyardId = state.selectedVineyardId ?: return
+    val fmt = state.regionFormatter
     var sessions by remember { mutableStateOf<List<IrrigationSessionRow>>(emptyList()) }
     var totalCount by remember { mutableIntStateOf(0) }
     var includeReversed by remember { mutableStateOf(false) }
@@ -1550,7 +1784,7 @@ private fun HistoryContent(
             }
         }
         sessions.forEach { session ->
-            item(key = session.id) { SessionRowCard(session) { onOpenSession(session.id) } }
+            item(key = session.id) { SessionRowCard(session, fmt) { onOpenSession(session.id) } }
         }
     }
 }
@@ -1559,6 +1793,7 @@ private fun HistoryContent(
 private fun DetailContent(
     repo: IrrigationRepository,
     sessionId: String?,
+    fmt: RegionFormatter,
     onChanged: () -> Unit,
     onEdit: (IrrigationSessionRow) -> Unit,
     onDuplicate: (IrrigationSessionRow) -> Unit,
@@ -1591,7 +1826,7 @@ private fun DetailContent(
                     DetailLine("Valve", s.valveName ?: "—")
                     DetailLine("Duration", formatMinutes(s.durationMinutes))
                     DetailLine("Method", s.calculationMethod.replace('_', ' '))
-                    s.flowLph?.let { DetailLine("Flow", String.format(Locale.US, "%.0f L/h", it)) }
+                    s.flowLph?.let { DetailLine("Flow", IrrigationUnits.flow(it, fmt)) }
                     DetailLine("Status", s.status.replaceFirstChar { it.uppercase() })
                     DetailLine(
                         "Source",
@@ -1602,8 +1837,8 @@ private fun DetailContent(
                             else -> s.sourceType
                         },
                     )
-                    DetailLine("Total water", formatVolumeL(s.totalVolumeLitres))
-                    s.effectiveVolumeLitres?.let { DetailLine("Effective water", formatVolumeL(it)) }
+                    DetailLine("Total water", IrrigationUnits.volume(s.totalVolumeLitres, fmt))
+                    s.effectiveVolumeLitres?.let { DetailLine("Effective water", IrrigationUnits.volume(it, fmt)) }
                 }
             }
             item { Text("Blocks", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
@@ -1615,10 +1850,10 @@ private fun DetailContent(
                             Text(String.format(Locale.US, "%.1f%%", block.allocationPercentage), style = MaterialTheme.typography.bodySmall)
                         }
                         val parts = buildList {
-                            add(formatVolumeL(block.allocatedVolumeLitres))
-                            block.waterLitresPerVine?.let { add(String.format(Locale.US, "%.2f L/vine", it)) }
-                            block.waterLitresPerHectare?.let { add(String.format(Locale.US, "%.0f L/ha", it)) }
-                            block.irrigationDepthMm?.let { add(String.format(Locale.US, "%.2f mm", it)) }
+                            add(IrrigationUnits.volume(block.allocatedVolumeLitres, fmt))
+                            block.waterLitresPerVine?.let { add(IrrigationUnits.perVine(it, fmt)) }
+                            block.waterLitresPerHectare?.let { add(IrrigationUnits.perHectare(it, fmt)) }
+                            block.irrigationDepthMm?.let { add(IrrigationUnits.depth(it, fmt)) }
                         }
                         Text(parts.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -1681,6 +1916,7 @@ private fun DetailLine(label: String, value: String) {
 @Composable
 private fun ReportsContent(repo: IrrigationRepository, state: AppUiState) {
     val vineyardId = state.selectedVineyardId ?: return
+    val fmt = state.regionFormatter
     var tab by remember { mutableIntStateOf(0) }
     var vintage by remember { mutableStateOf<IrrigationVintageSummary?>(null) }
     var valveRows by remember { mutableStateOf<List<com.rork.vinetrack.data.IrrigationValveSummaryRow>>(emptyList()) }
@@ -1722,20 +1958,20 @@ private fun ReportsContent(repo: IrrigationRepository, state: AppUiState) {
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             Text("Vintage ${v.vintageYear}", fontWeight = FontWeight.SemiBold)
-                            DetailLine("Total water", formatVolumeL(v.totalVolumeLitres))
-                            v.effectiveVolumeLitres?.let { DetailLine("Effective water", formatVolumeL(it)) }
+                            DetailLine("Total water", IrrigationUnits.volume(v.totalVolumeLitres, fmt))
+                            v.effectiveVolumeLitres?.let { DetailLine("Effective water", IrrigationUnits.volume(it, fmt)) }
                             DetailLine("Total runtime", formatMinutes(v.totalRuntimeMinutes))
                             DetailLine("Sessions", v.sessionCount.toString())
                             v.averageSessionMinutes?.let { DetailLine("Average session", formatMinutes(it.roundToInt())) }
-                            v.waterLitresPerVine?.let { DetailLine("Water per vine", String.format(Locale.US, "%.2f L/vine", it)) }
-                            v.irrigationDepthMm?.let { DetailLine("Irrigation depth", String.format(Locale.US, "%.2f mm", it)) }
+                            v.waterLitresPerVine?.let { DetailLine("Water per vine", IrrigationUnits.perVine(it, fmt)) }
+                            v.irrigationDepthMm?.let { DetailLine("Irrigation depth", IrrigationUnits.depth(it, fmt)) }
                         }
                     }
                 }
                 1 -> valveRows.forEach { row ->
                     item(key = row.valveId) {
                         ReportCard(
-                            row.valveName, formatVolumeL(row.totalVolumeLitres),
+                            row.valveName, IrrigationUnits.volume(row.totalVolumeLitres, fmt),
                             "${row.sessionCount} sessions · ${formatMinutes(row.totalRuntimeMinutes)} · last ${row.lastIrrigationDate ?: "—"}",
                         )
                     }
@@ -1743,34 +1979,34 @@ private fun ReportsContent(repo: IrrigationRepository, state: AppUiState) {
                 2 -> blockRows.forEach { row ->
                     item(key = row.blockId) {
                         val parts = buildList {
-                            row.waterLitresPerVine?.let { add(String.format(Locale.US, "%.2f L/vine", it)) }
-                            row.waterLitresPerHectare?.let { add(String.format(Locale.US, "%.0f L/ha", it)) }
-                            row.irrigationDepthMm?.let { add(String.format(Locale.US, "%.2f mm", it)) }
+                            row.waterLitresPerVine?.let { add(IrrigationUnits.perVine(it, fmt)) }
+                            row.waterLitresPerHectare?.let { add(IrrigationUnits.perHectare(it, fmt)) }
+                            row.irrigationDepthMm?.let { add(IrrigationUnits.depth(it, fmt)) }
                             add("last ${row.lastIrrigationDate ?: "—"}")
                         }
-                        ReportCard(row.blockName ?: "Block", formatVolumeL(row.totalVolumeLitres), parts.joinToString(" · "))
+                        ReportCard(row.blockName ?: "Block", IrrigationUnits.volume(row.totalVolumeLitres, fmt), parts.joinToString(" · "))
                     }
                 }
                 3 -> varietyRows.forEach { row ->
                     item(key = row.varietyName) {
                         val parts = buildList {
                             row.totalServicedVines?.let { add("$it vines") }
-                            row.averageWaterLitresPerVine?.let { add(String.format(Locale.US, "%.2f L/vine", it)) }
-                            row.averageWaterLitresPerHectare?.let { add(String.format(Locale.US, "%.0f L/ha", it)) }
-                            row.irrigationDepthMm?.let { add(String.format(Locale.US, "%.2f mm", it)) }
+                            row.averageWaterLitresPerVine?.let { add(IrrigationUnits.perVine(it, fmt)) }
+                            row.averageWaterLitresPerHectare?.let { add(IrrigationUnits.perHectare(it, fmt)) }
+                            row.irrigationDepthMm?.let { add(IrrigationUnits.depth(it, fmt)) }
                         }
-                        ReportCard(row.varietyName, formatVolumeL(row.totalVolumeLitres), parts.joinToString(" · "))
+                        ReportCard(row.varietyName, IrrigationUnits.volume(row.totalVolumeLitres, fmt), parts.joinToString(" · "))
                     }
                 }
                 4 -> dailyRows.forEach { row ->
                     item(key = row.date) {
-                        ReportCard(row.date, formatVolumeL(row.totalVolumeLitres), "${row.sessionCount} session(s) · ${formatMinutes(row.runtimeMinutes)}")
+                        ReportCard(row.date, IrrigationUnits.volume(row.totalVolumeLitres, fmt), "${row.sessionCount} session(s) · ${formatMinutes(row.runtimeMinutes)}")
                     }
                 }
                 else -> monthlyRows.forEach { row ->
                     item(key = row.month) {
-                        val depth = row.irrigationDepthMm?.let { " · ${String.format(Locale.US, "%.2f mm", it)}" } ?: ""
-                        ReportCard(row.month, formatVolumeL(row.totalVolumeLitres), "${row.sessionCount} session(s)$depth")
+                        val depth = row.irrigationDepthMm?.let { " · ${IrrigationUnits.depth(it, fmt)}" } ?: ""
+                        ReportCard(row.month, IrrigationUnits.volume(row.totalVolumeLitres, fmt), "${row.sessionCount} session(s)$depth")
                     }
                 }
             }
