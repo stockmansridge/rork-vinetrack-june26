@@ -311,4 +311,52 @@ class IrrigationCalculatorFixtureTest {
         assertEquals("", IrrigationLocalCalc.rangeSummary(emptyList()))
         assertEquals("3–4", IrrigationLocalCalc.rangeSummary(listOf(3, 3, 4)))
     }
+
+    // Session start/end times (SQL 130 parity). Mirrors
+    // `_irrigation_validate_session_times` (sql/130) and
+    // `IrrigationLocalCalculator.minutesBetweenTimes` / `endOfSession` on iOS.
+
+    @Test
+    fun `same-day times derive duration`() {
+        // 08:30 -> 11:45 = 3 hr 15 min.
+        assertEquals(195, IrrigationLocalCalc.minutesBetweenTimes(8 * 60 + 30, 11 * 60 + 45))
+    }
+
+    @Test
+    fun `partial hour times`() {
+        // 10:00 -> 11:30 = 90 min.
+        assertEquals(90, IrrigationLocalCalc.minutesBetweenTimes(10 * 60, 11 * 60 + 30))
+    }
+
+    @Test
+    fun `overnight times roll to the following day`() {
+        // 22:00 -> 02:00 next day = 4 hours; never negative.
+        assertEquals(240, IrrigationLocalCalc.minutesBetweenTimes(22 * 60, 2 * 60))
+    }
+
+    @Test
+    fun `equal times are invalid`() {
+        // Zero-minute session must be rejected, not saved as 0 or 1440.
+        assertNull(IrrigationLocalCalc.minutesBetweenTimes(8 * 60 + 30, 8 * 60 + 30))
+    }
+
+    @Test
+    fun `editing either time recalculates duration`() {
+        // End 11:45 -> 12:15 recalculates 195 -> 225; start 08:30 -> 09:00 gives 195.
+        assertEquals(225, IrrigationLocalCalc.minutesBetweenTimes(8 * 60 + 30, 12 * 60 + 15))
+        assertEquals(195, IrrigationLocalCalc.minutesBetweenTimes(9 * 60, 12 * 60 + 15))
+    }
+
+    @Test
+    fun `start plus duration calculates the end`() {
+        // 08:30 + 195 min -> 11:45 same day.
+        val sameDay = IrrigationLocalCalc.endOfSession(8 * 60 + 30, 195)
+        assertEquals(11 * 60 + 45, sameDay.minutesOfDay)
+        assertEquals(0, sameDay.daysLater)
+
+        // 22:00 + 5 h -> 03:00 the following day.
+        val overnight = IrrigationLocalCalc.endOfSession(22 * 60, 300)
+        assertEquals(3 * 60, overnight.minutesOfDay)
+        assertEquals(1, overnight.daysLater)
+    }
 }

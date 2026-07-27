@@ -265,4 +265,55 @@ struct IrrigationCalculatorFixtureTests {
         #expect(IrrigationRowWeighting.rangeSummary([]) == "")
         #expect(IrrigationRowWeighting.rangeSummary([3, 3, 4]) == "3–4")
     }
+
+    // MARK: Session start/end times (SQL 130 parity)
+    // Mirrors `_irrigation_validate_session_times` (sql/130) and
+    // `IrrigationLocalCalc.minutesBetweenTimes` / `endOfSession` on Android.
+
+    @Test func sameDayTimesDeriveDuration() {
+        // 08:30 → 11:45 = 3 hr 15 min.
+        #expect(IrrigationLocalCalculator.minutesBetweenTimes(
+            startMinutesOfDay: 8 * 60 + 30, endMinutesOfDay: 11 * 60 + 45) == 195)
+    }
+
+    @Test func partialHourTimes() {
+        // 10:00 → 11:30 = 90 min.
+        #expect(IrrigationLocalCalculator.minutesBetweenTimes(
+            startMinutesOfDay: 10 * 60, endMinutesOfDay: 11 * 60 + 30) == 90)
+    }
+
+    @Test func overnightTimesRollToFollowingDay() {
+        // 22:00 → 02:00 next day = 4 hours; never negative.
+        #expect(IrrigationLocalCalculator.minutesBetweenTimes(
+            startMinutesOfDay: 22 * 60, endMinutesOfDay: 2 * 60) == 240)
+    }
+
+    @Test func equalTimesAreInvalid() {
+        // Zero-minute session must be rejected, not saved as 0 or 1440.
+        #expect(IrrigationLocalCalculator.minutesBetweenTimes(
+            startMinutesOfDay: 8 * 60 + 30, endMinutesOfDay: 8 * 60 + 30) == nil)
+    }
+
+    @Test func editingEitherTimeRecalculatesDuration() {
+        // Changing the end from 11:45 to 12:15 recalculates 195 → 225;
+        // changing the start from 08:30 to 09:00 recalculates 225 → 195.
+        #expect(IrrigationLocalCalculator.minutesBetweenTimes(
+            startMinutesOfDay: 8 * 60 + 30, endMinutesOfDay: 12 * 60 + 15) == 225)
+        #expect(IrrigationLocalCalculator.minutesBetweenTimes(
+            startMinutesOfDay: 9 * 60, endMinutesOfDay: 12 * 60 + 15) == 195)
+    }
+
+    @Test func startPlusDurationCalculatesEnd() {
+        // 08:30 + 195 min → 11:45 same day.
+        let sameDay = IrrigationLocalCalculator.endOfSession(
+            startMinutesOfDay: 8 * 60 + 30, durationMinutes: 195)
+        #expect(sameDay.minutesOfDay == 11 * 60 + 45)
+        #expect(sameDay.daysLater == 0)
+
+        // 22:00 + 5 h → 03:00 the following day.
+        let overnight = IrrigationLocalCalculator.endOfSession(
+            startMinutesOfDay: 22 * 60, durationMinutes: 300)
+        #expect(overnight.minutesOfDay == 3 * 60)
+        #expect(overnight.daysLater == 1)
+    }
 }

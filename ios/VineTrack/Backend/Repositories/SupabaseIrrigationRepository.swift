@@ -229,8 +229,11 @@ nonisolated private struct UpdateSessionParams: Encodable, Sendable {
     let meterStartLitres: Double?
     let meterFinishLitres: Double?
     let totalVolumeLitres: Double?
+    let startedAt: Date?
+    let finishedAt: Date?
     let notes: String?
     let useCurrentConfiguration: Bool
+    let clearTimes: Bool
     enum CodingKeys: String, CodingKey {
         case id = "p_id"
         case sessionDate = "p_session_date"
@@ -240,8 +243,11 @@ nonisolated private struct UpdateSessionParams: Encodable, Sendable {
         case meterStartLitres = "p_meter_start_litres"
         case meterFinishLitres = "p_meter_finish_litres"
         case totalVolumeLitres = "p_total_volume_litres"
+        case startedAt = "p_started_at"
+        case finishedAt = "p_finished_at"
         case notes = "p_notes"
         case useCurrentConfiguration = "p_use_current_configuration"
+        case clearTimes = "p_clear_times"
     }
 }
 
@@ -462,15 +468,18 @@ final class SupabaseIrrigationRepository {
     @discardableResult
     func updateSession(id: UUID, sessionDate: String?, durationMinutes: Int?,
                        method: IrrigationCalculationMethod?, flow: Double?, meterStart: Double?,
-                       meterFinish: Double?, totalVolume: Double?, notes: String?,
+                       meterFinish: Double?, totalVolume: Double?,
+                       startedAt: Date? = nil, finishedAt: Date? = nil,
+                       clearTimes: Bool = false, notes: String?,
                        useCurrentConfiguration: Bool) async throws -> IrrigationSession {
         try await client
             .rpc("update_irrigation_session", params: UpdateSessionParams(
                 id: id, sessionDate: sessionDate, durationMinutes: durationMinutes,
                 calculationMethod: method?.rawValue, flowLitresPerHour: flow,
                 meterStartLitres: meterStart, meterFinishLitres: meterFinish,
-                totalVolumeLitres: totalVolume, notes: notes,
-                useCurrentConfiguration: useCurrentConfiguration))
+                totalVolumeLitres: totalVolume, startedAt: startedAt, finishedAt: finishedAt,
+                notes: notes, useCurrentConfiguration: useCurrentConfiguration,
+                clearTimes: clearTimes))
             .execute().value
     }
 

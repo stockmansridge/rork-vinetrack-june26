@@ -155,6 +155,9 @@ struct IrrigationSessionDetailView: View {
     private func detailSections(_ session: IrrigationSession) -> some View {
         Section("Session") {
             LabeledContent("Date", value: IrrigationFormat.displayDate(session.sessionDate))
+            if let times = IrrigationFormat.timeRange(startedAt: session.startedAt, finishedAt: session.finishedAt) {
+                LabeledContent("Times", value: times)
+            }
             LabeledContent("Vintage", value: String(session.vintageYear))
             LabeledContent("System", value: session.systemName ?? "—")
             LabeledContent("Valve", value: session.valveName ?? "—")

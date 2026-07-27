@@ -26,8 +26,9 @@ struct IrrigationRecordEntryView: View {
     @State private var meterStart = ""
     @State private var meterFinish = ""
     @State private var totalVolume = ""
-    @State private var useStartFinish = false
+    @State private var useStartTime = false
     @State private var startTime = Date()
+    @State private var useEndTime = false
     @State private var finishTime = Date()
     @State private var notes = ""
     @State private var useCurrentConfiguration = false
@@ -46,14 +47,97 @@ struct IrrigationRecordEntryView: View {
     private var formatter: RegionFormatter { RegionFormatter(settings: store.settings.regionSettings) }
     private var isEditing: Bool { editingSession != nil }
 
+    // MARK: Start/end time handling (SQL 130)
+
+    private var startMinutesOfDay: Int? {
+        guard useStartTime else { return nil }
+        let c = Calendar.current.dateComponents([.hour, .minute], from: startTime)
+        return (c.hour ?? 0) * 60 + (c.minute ?? 0)
+    }
+
+    private var endMinutesOfDay: Int? {
+        guard useStartTime, useEndTime else { return nil }
+        let c = Calendar.current.dateComponents([.hour, .minute], from: finishTime)
+        return (c.hour ?? 0) * 60 + (c.minute ?? 0)
+    }
+
+    /// Derived duration when both times are set; `nil` when times are equal
+    /// (invalid) or when either time is missing. Overnight rolls to next day.
+    private var derivedDurationMinutes: Int? {
+        guard let start = startMinutesOfDay, let end = endMinutesOfDay else { return nil }
+        return IrrigationLocalCalculator.minutesBetweenTimes(startMinutesOfDay: start, endMinutesOfDay: end)
+    }
+
+    private var isOvernight: Bool {
+        guard let start = startMinutesOfDay, let end = endMinutesOfDay else { return false }
+        return end < start
+    }
+
+    private var bothTimesSet: Bool { useStartTime && useEndTime }
+
     private var totalDurationMinutes: Int {
-        if useStartFinish {
-            let minutes = Int(finishTime.timeIntervalSince(startTime) / 60)
-            return max(minutes, 0)
-        }
+        if let derived = derivedDurationMinutes { return derived }
+        if bothTimesSet { return 0 }  // equal start/end — invalid, blocks saving
         let hours = Int(durationHours) ?? 0
         let minutes = Int(durationMinutes) ?? 0
         return hours * 60 + minutes
+    }
+
+    /// Turning a time toggle off returns the duration to an editable field,
+    /// preserving the last valid derived value.
+    private var startTimeBinding: Binding<Bool> {
+        Binding(get: { useStartTime }, set: { on in
+            if !on {
+                preserveDerivedDuration()
+                useEndTime = false
+            }
+            useStartTime = on
+        })
+    }
+
+    private var endTimeBinding: Binding<Bool> {
+        Binding(get: { useEndTime }, set: { on in
+            if !on { preserveDerivedDuration() }
+            useEndTime = on
+        })
+    }
+
+    private func preserveDerivedDuration() {
+        guard let derived = derivedDurationMinutes else { return }
+        durationHours = "\(derived / 60)"
+        durationMinutes = "\(derived % 60)"
+    }
+
+    private func formattedTimeOfDay(_ minutesOfDay: Int) -> String {
+        let cal = Calendar.current
+        let base = cal.startOfDay(for: sessionDate)
+        let date = cal.date(byAdding: .minute, value: minutesOfDay, to: base) ?? base
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+
+    /// Absolute timestamps built from the LOCAL session date + wall-clock
+    /// times in the device timezone. An end earlier than (or equal to) the
+    /// start ends on the following day; with start + duration the calculated
+    /// end is submitted as a convenience.
+    private func resolvedTimestamps() -> (start: Date?, finish: Date?) {
+        guard useStartTime else { return (nil, nil) }
+        let cal = Calendar.current
+        let sc = cal.dateComponents([.hour, .minute], from: startTime)
+        guard let start = cal.date(bySettingHour: sc.hour ?? 0, minute: sc.minute ?? 0,
+                                   second: 0, of: sessionDate) else { return (nil, nil) }
+        if useEndTime {
+            let ec = cal.dateComponents([.hour, .minute], from: finishTime)
+            guard var end = cal.date(bySettingHour: ec.hour ?? 0, minute: ec.minute ?? 0,
+                                     second: 0, of: sessionDate) else { return (start, nil) }
+            if end <= start {
+                end = cal.date(byAdding: .day, value: 1, to: end) ?? end
+            }
+            return (start, end)
+        }
+        if totalDurationMinutes > 0 {
+            return (start, cal.date(byAdding: .minute, value: totalDurationMinutes, to: start))
+        }
+        return (start, nil)
     }
 
     private var availableValves: [IrrigationValve] {
@@ -181,11 +265,28 @@ struct IrrigationRecordEntryView: View {
     private var dateDurationSection: some View {
         Section("Date & duration") {
             DatePicker("Date", selection: $sessionDate, displayedComponents: .date)
-            Toggle("Enter start & finish times", isOn: $useStartFinish)
-            if useStartFinish {
-                DatePicker("Start", selection: $startTime, displayedComponents: [.date, .hourAndMinute])
-                DatePicker("Finish", selection: $finishTime, displayedComponents: [.date, .hourAndMinute])
-                LabeledContent("Duration", value: IrrigationFormat.duration(minutes: totalDurationMinutes))
+            Toggle("Start time", isOn: startTimeBinding.animation())
+            if useStartTime {
+                DatePicker("Starts", selection: $startTime, displayedComponents: .hourAndMinute)
+                Toggle("End time", isOn: endTimeBinding.animation())
+                if useEndTime {
+                    DatePicker("Ends", selection: $finishTime, displayedComponents: .hourAndMinute)
+                }
+            }
+            if bothTimesSet {
+                if let derived = derivedDurationMinutes {
+                    LabeledContent("Duration", value: IrrigationFormat.duration(minutes: derived))
+                    if isOvernight {
+                        Label("Ends the following day", systemImage: "moon.stars")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Label("End time must be different from start time.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             } else {
                 HStack {
                     TextField("Hours", text: $durationHours)
@@ -196,6 +297,14 @@ struct IrrigationRecordEntryView: View {
                         .keyboardType(.numberPad)
                     Text("min")
                         .foregroundStyle(.secondary)
+                }
+                if useStartTime, totalDurationMinutes > 0 {
+                    let end = IrrigationLocalCalculator.endOfSession(
+                        startMinutesOfDay: startMinutesOfDay ?? 0,
+                        durationMinutes: totalDurationMinutes)
+                    LabeledContent("Calculated end",
+                                   value: formattedTimeOfDay(end.minutesOfDay)
+                                          + (end.daysLater > 0 ? " next day" : ""))
                 }
             }
         }
@@ -376,6 +485,16 @@ struct IrrigationRecordEntryView: View {
             }
             durationHours = "\(source.durationMinutes / 60)"
             durationMinutes = "\(source.durationMinutes % 60)"
+            if editingSession != nil, let startedIso = source.startedAt,
+               let started = IrrigationFormat.parseTimestamp(startedIso) {
+                useStartTime = true
+                startTime = started
+                if let finishedIso = source.finishedAt,
+                   let finished = IrrigationFormat.parseTimestamp(finishedIso) {
+                    useEndTime = true
+                    finishTime = finished
+                }
+            }
             if method == .sessionFlow, let flow = source.flowLitresPerHour {
                 sessionFlow = String(format: "%g", flow)
             }
@@ -484,13 +603,20 @@ struct IrrigationRecordEntryView: View {
         let totalValue = method == .totalVolume
             ? Double(totalVolume.replacingOccurrences(of: ",", with: ".")) : nil
 
+        let times = resolvedTimestamps()
+
         if let editing = editingSession {
             do {
+                // Clearing is explicit: the session had stored times and the
+                // user switched the start time off.
+                let clearTimes = editing.startedAt != nil && !useStartTime
                 _ = try await repository.updateSession(
                     id: editing.id, sessionDate: dateString,
                     durationMinutes: totalDurationMinutes, method: method,
                     flow: flowValue, meterStart: meterStartValue,
                     meterFinish: meterFinishValue, totalVolume: totalValue,
+                    startedAt: times.start, finishedAt: times.finish,
+                    clearTimes: clearTimes,
                     notes: notes.isEmpty ? nil : notes,
                     useCurrentConfiguration: useCurrentConfiguration)
                 saveMessage = "The irrigation record was updated and all block allocations were recalculated."
@@ -518,8 +644,8 @@ struct IrrigationRecordEntryView: View {
             meterStartLitres: meterStartValue,
             meterFinishLitres: meterFinishValue,
             totalVolumeLitres: totalValue,
-            startedAt: useStartFinish ? startTime : nil,
-            finishedAt: useStartFinish ? finishTime : nil,
+            startedAt: times.start,
+            finishedAt: times.finish,
             notes: notes.isEmpty ? nil : notes,
             localTotalVolumeLitres: localPreview?.totalVolumeLitres ?? preview?.totalVolumeLitres,
             createdAt: Date())

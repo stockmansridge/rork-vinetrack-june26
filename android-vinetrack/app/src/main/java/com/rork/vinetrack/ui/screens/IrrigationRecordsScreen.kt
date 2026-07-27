@@ -103,6 +103,61 @@ import kotlin.math.roundToInt
 
 private val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
 
+// MARK: Session start/end times (SQL 130). Timestamps are built from the
+// LOCAL session date + wall-clock time in the device timezone so the local
+// date relationship is preserved; overnight ends roll to the following day.
+
+private fun irrigationTimestamp(sessionDate: String, minutesOfDay: Int, addDays: Int): String? {
+    val parsed = runCatching { dayFormat.parse(sessionDate) }.getOrNull() ?: return null
+    val cal = Calendar.getInstance()
+    cal.time = parsed
+    cal.set(Calendar.HOUR_OF_DAY, minutesOfDay / 60)
+    cal.set(Calendar.MINUTE, minutesOfDay % 60)
+    cal.set(Calendar.SECOND, 0)
+    cal.set(Calendar.MILLISECOND, 0)
+    if (addDays > 0) cal.add(Calendar.DAY_OF_MONTH, addDays)
+    return SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).format(cal.time)
+}
+
+private fun parseIrrigationTimestamp(iso: String): Date? {
+    val patterns = listOf(
+        "yyyy-MM-dd'T'HH:mm:ssXXX",
+        "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXX",
+        "yyyy-MM-dd'T'HH:mm:ss.SSSXXX",
+    )
+    for (pattern in patterns) {
+        runCatching { SimpleDateFormat(pattern, Locale.US).parse(iso) }.getOrNull()?.let { return it }
+    }
+    return null
+}
+
+private fun minutesOfDay(date: Date): Int {
+    val cal = Calendar.getInstance()
+    cal.time = date
+    return cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
+}
+
+private fun formatTimeOfDay(minutesOfDay: Int): String {
+    val cal = Calendar.getInstance()
+    cal.set(Calendar.HOUR_OF_DAY, minutesOfDay / 60)
+    cal.set(Calendar.MINUTE, minutesOfDay % 60)
+    return SimpleDateFormat("h:mm a", Locale.getDefault()).format(cal.time).lowercase(Locale.getDefault())
+}
+
+/** "8:30 am–11:45 am" (with " next day" for overnight), or start alone. */
+private fun irrigationTimeRange(startedAt: String?, finishedAt: String?): String? {
+    val start = startedAt?.let { parseIrrigationTimestamp(it) } ?: return null
+    val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
+    val startText = timeFormat.format(start).lowercase(Locale.getDefault())
+    val finish = finishedAt?.let { parseIrrigationTimestamp(it) } ?: return startText
+    val finishText = timeFormat.format(finish).lowercase(Locale.getDefault())
+    val calStart = Calendar.getInstance().apply { time = start }
+    val calFinish = Calendar.getInstance().apply { time = finish }
+    val sameDay = calStart.get(Calendar.YEAR) == calFinish.get(Calendar.YEAR) &&
+        calStart.get(Calendar.DAY_OF_YEAR) == calFinish.get(Calendar.DAY_OF_YEAR)
+    return if (sameDay) "$startText–$finishText" else "$startText–$finishText next day"
+}
+
 // Region-aware irrigation display formatting — the Android twin of the iOS
 // `IrrigationFormat` helpers. Stored values stay canonical (litres / mm / L/ha);
 // only the DISPLAY converts to metric, US customary or Imperial gallons.
@@ -1584,6 +1639,13 @@ private fun RecordContent(
     var showDatePicker by remember { mutableStateOf(false) }
     var durationHours by remember { mutableStateOf(source?.let { (it.durationMinutes / 60).toString() } ?: "") }
     var durationMins by remember { mutableStateOf(source?.let { (it.durationMinutes % 60).toString() } ?: "") }
+    // Optional start/end times (SQL 130); prefilled only when editing.
+    var startMinutes by remember {
+        mutableStateOf(editSession?.startedAt?.let { parseIrrigationTimestamp(it) }?.let { minutesOfDay(it) })
+    }
+    var endMinutes by remember {
+        mutableStateOf(editSession?.finishedAt?.let { parseIrrigationTimestamp(it) }?.let { minutesOfDay(it) })
+    }
     var method by remember { mutableStateOf(source?.calculationMethod ?: "configured_flow") }
     var sessionFlow by remember {
         mutableStateOf(if (source?.calculationMethod == "session_flow") source.flowLph?.toString() ?: "" else "")
@@ -1602,7 +1664,19 @@ private fun RecordContent(
     var isSaving by remember { mutableStateOf(false) }
     var savedMessage by remember { mutableStateOf<String?>(null) }
 
-    val durationMinutes = (durationHours.toIntOrNull() ?: 0) * 60 + (durationMins.toIntOrNull() ?: 0)
+    // When both times are set their difference is authoritative (read-only
+    // duration); equal times are invalid and block saving.
+    val derivedDuration = startMinutes?.let { s -> endMinutes?.let { e -> IrrigationLocalCalc.minutesBetweenTimes(s, e) } }
+    val bothTimesSet = startMinutes != null && endMinutes != null
+    val durationMinutes = derivedDuration
+        ?: if (bothTimesSet) 0 else (durationHours.toIntOrNull() ?: 0) * 60 + (durationMins.toIntOrNull() ?: 0)
+
+    fun preserveDerivedDuration() {
+        derivedDuration?.let {
+            durationHours = (it / 60).toString()
+            durationMins = (it % 60).toString()
+        }
+    }
 
     LaunchedEffect(vineyardId) {
         runCatching {
@@ -1687,12 +1761,29 @@ private fun RecordContent(
             val meterFinishValue = if (method == "meter_readings") meterFinish.replace(",", ".").toDoubleOrNull() else null
             val totalValue = if (method == "total_volume") totalVolume.replace(",", ".").toDoubleOrNull() else null
 
+            val sMin = startMinutes
+            val eMin = endMinutes
+            val startedAtIso = sMin?.let { irrigationTimestamp(sessionDate, it, 0) }
+            val finishedAtIso = when {
+                sMin == null -> null
+                eMin != null -> irrigationTimestamp(sessionDate, eMin, if (eMin <= sMin) 1 else 0)
+                durationMinutes > 0 -> {
+                    val end = IrrigationLocalCalc.endOfSession(sMin, durationMinutes)
+                    irrigationTimestamp(sessionDate, end.minutesOfDay, end.daysLater)
+                }
+                else -> null
+            }
+
             if (editSession != null) {
                 runCatching {
                     repo.updateSession(
                         editSession.id, sessionDate, durationMinutes, method,
                         flowValue, meterStartValue, meterFinishValue, totalValue,
-                        notes.ifEmpty { null }, useCurrentConfig,
+                        startedAt = startedAtIso, finishedAt = finishedAtIso,
+                        // Clearing is explicit: the session had stored times
+                        // and the user removed the start time.
+                        clearTimes = editSession.startedAt != null && sMin == null,
+                        notes = notes.ifEmpty { null }, useCurrentConfiguration = useCurrentConfig,
                     )
                 }.onSuccess {
                     savedMessage = "The irrigation record was updated and all block allocations were recalculated."
@@ -1716,6 +1807,8 @@ private fun RecordContent(
                 meterStartLitres = meterStartValue,
                 meterFinishLitres = meterFinishValue,
                 totalVolumeLitres = totalValue,
+                startedAt = startedAtIso,
+                finishedAt = finishedAtIso,
                 notes = notes.ifEmpty { null },
                 localTotalVolumeLitres = localPreview?.totalVolumeLitres ?: preview?.totalVolumeLitres,
             )
@@ -1791,9 +1884,98 @@ private fun RecordContent(
             )
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = durationHours, onValueChange = { durationHours = it }, label = { Text("Hours") }, singleLine = true, modifier = Modifier.weight(1f))
-                OutlinedTextField(value = durationMins, onValueChange = { durationMins = it }, label = { Text("Minutes") }, singleLine = true, modifier = Modifier.weight(1f))
+            val context = androidx.compose.ui.platform.LocalContext.current
+            fun pickTime(initial: Int?, onPicked: (Int) -> Unit) {
+                val init = initial ?: (8 * 60)
+                android.app.TimePickerDialog(
+                    context,
+                    { _, hour, minute -> onPicked(hour * 60 + minute) },
+                    init / 60, init % 60, false,
+                ).show()
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Times (optional)", style = MaterialTheme.typography.labelMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = startMinutes?.let { formatTimeOfDay(it) } ?: "",
+                        onValueChange = {}, readOnly = true, singleLine = true,
+                        label = { Text("Start time") },
+                        modifier = Modifier.weight(1f),
+                        trailingIcon = {
+                            TextButton(onClick = { pickTime(startMinutes) { startMinutes = it } }) { Text("Set") }
+                        },
+                    )
+                    OutlinedTextField(
+                        value = endMinutes?.let { formatTimeOfDay(it) } ?: "",
+                        onValueChange = {}, readOnly = true, singleLine = true,
+                        label = { Text("End time") },
+                        enabled = startMinutes != null,
+                        modifier = Modifier.weight(1f),
+                        trailingIcon = {
+                            TextButton(
+                                enabled = startMinutes != null,
+                                onClick = { pickTime(endMinutes) { endMinutes = it } },
+                            ) { Text("Set") }
+                        },
+                    )
+                }
+                if (startMinutes != null) {
+                    Row {
+                        TextButton(onClick = {
+                            preserveDerivedDuration()
+                            startMinutes = null
+                            endMinutes = null
+                        }) { Text("Clear times") }
+                        if (endMinutes != null) {
+                            TextButton(onClick = {
+                                preserveDerivedDuration()
+                                endMinutes = null
+                            }) { Text("Clear end") }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            if (bothTimesSet) {
+                if (derivedDuration == null) {
+                    Text(
+                        "End time must be different from start time.",
+                        color = Color(0xFFEF6C00),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            "Duration: ${formatMinutes(derivedDuration)}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        if (endMinutes!! <= startMinutes!!) {
+                            Text(
+                                "Ends the following day",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(value = durationHours, onValueChange = { durationHours = it }, label = { Text("Hours") }, singleLine = true, modifier = Modifier.weight(1f))
+                        OutlinedTextField(value = durationMins, onValueChange = { durationMins = it }, label = { Text("Minutes") }, singleLine = true, modifier = Modifier.weight(1f))
+                    }
+                    val sMin = startMinutes
+                    if (sMin != null && durationMinutes > 0) {
+                        val end = IrrigationLocalCalc.endOfSession(sMin, durationMinutes)
+                        Text(
+                            "Calculated end: ${formatTimeOfDay(end.minutesOfDay)}${if (end.daysLater > 0) " next day" else ""}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
             }
         }
         item {
@@ -2060,6 +2242,7 @@ private fun DetailContent(
                     DetailLine("System", s.systemName ?: "—")
                     DetailLine("Valve", s.valveName ?: "—")
                     DetailLine("Duration", formatMinutes(s.durationMinutes))
+                    irrigationTimeRange(s.startedAt, s.finishedAt)?.let { DetailLine("Times", it) }
                     DetailLine("Method", s.calculationMethod.replace('_', ' '))
                     s.flowLph?.let { DetailLine("Flow", IrrigationUnits.flow(it, fmt)) }
                     DetailLine("Status", s.status.replaceFirstChar { it.uppercase() })

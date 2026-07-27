@@ -614,6 +614,10 @@ nonisolated struct IrrigationSession: Decodable, Sendable, Identifiable, Hashabl
     let meterFinishLitres: Double?
     let totalVolumeLitres: Double
     let effectiveVolumeLitres: Double?
+    /// ISO-8601 timestamps (SQL 130) — kept as strings so decoding never
+    /// depends on the client decoder's date strategy.
+    let startedAt: String?
+    let finishedAt: String?
     let status: String
     let sourceType: String
     let notes: String?
@@ -637,6 +641,8 @@ nonisolated struct IrrigationSession: Decodable, Sendable, Identifiable, Hashabl
         case meterFinishLitres = "meter_finish_litres"
         case totalVolumeLitres = "total_volume_litres"
         case effectiveVolumeLitres = "effective_volume_litres"
+        case startedAt = "started_at"
+        case finishedAt = "finished_at"
         case sourceType = "source_type"
         case systemName = "system_name"
         case valveName = "valve_name"
@@ -859,6 +865,25 @@ nonisolated enum IrrigationLocalCalculator {
 
     static func round3(_ value: Double) -> Double { (value * 1000).rounded() / 1000 }
     static func round2(_ value: Double) -> Double { (value * 100).rounded() / 100 }
+
+    // MARK: Session time parity (SQL 130)
+
+    /// Minutes between two wall-clock times of day. Returns `nil` when the
+    /// times are equal (a zero-minute session is invalid); an end earlier
+    /// than the start rolls to the following day (overnight session).
+    /// Mirrors `_irrigation_validate_session_times` in sql/130.
+    static func minutesBetweenTimes(startMinutesOfDay: Int, endMinutesOfDay: Int) -> Int? {
+        let diff = endMinutesOfDay - startMinutesOfDay
+        if diff == 0 { return nil }
+        return diff > 0 ? diff : diff + 1440
+    }
+
+    /// End time of day for a start + duration entry. `daysLater > 0` means
+    /// the session finishes on a following day (overnight).
+    static func endOfSession(startMinutesOfDay: Int, durationMinutes: Int) -> (minutesOfDay: Int, daysLater: Int) {
+        let total = startMinutesOfDay + durationMinutes
+        return (total % 1440, total / 1440)
+    }
 
     static func totalVolume(
         method: IrrigationCalculationMethod,

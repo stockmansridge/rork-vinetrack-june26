@@ -61,6 +61,30 @@ enum IrrigationFormat {
         guard let date = dateFormat.date(from: isoDate) else { return isoDate }
         return date.formatted(date: .abbreviated, time: .omitted)
     }
+
+    // MARK: Session start/end times (SQL 130)
+
+    /// Parses the ISO-8601 timestamptz strings returned by the session RPCs
+    /// (with or without fractional seconds).
+    static func parseTimestamp(_ iso: String) -> Date? {
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        if let date = plain.date(from: iso) { return date }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: iso)
+    }
+
+    /// "8:30 am–11:45 am" (with " next day" for overnight sessions), or the
+    /// start alone when no end was recorded. `nil` when no times exist.
+    static func timeRange(startedAt: String?, finishedAt: String?) -> String? {
+        guard let startedAt, let start = parseTimestamp(startedAt) else { return nil }
+        let startText = start.formatted(date: .omitted, time: .shortened)
+        guard let finishedAt, let finish = parseTimestamp(finishedAt) else { return startText }
+        let finishText = finish.formatted(date: .omitted, time: .shortened)
+        let sameDay = Calendar.current.isDate(start, inSameDayAs: finish)
+        return sameDay ? "\(startText)–\(finishText)" : "\(startText)–\(finishText) next day"
+    }
 }
 
 // MARK: - Irrigation Records hub (feature-gated)

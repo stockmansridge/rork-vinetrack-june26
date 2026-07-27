@@ -291,6 +291,9 @@ data class IrrigationSessionRow(
     @SerialName("meter_finish_litres") val meterFinishLitres: Double? = null,
     @SerialName("total_volume_litres") val totalVolumeLitres: Double = 0.0,
     @SerialName("effective_volume_litres") val effectiveVolumeLitres: Double? = null,
+    // ISO-8601 timestamps (SQL 130) — kept as strings; parsing happens in the UI.
+    @SerialName("started_at") val startedAt: String? = null,
+    @SerialName("finished_at") val finishedAt: String? = null,
     val status: String = "completed",
     @SerialName("source_type") val sourceType: String = "manual_android",
     val notes: String? = null,
@@ -391,6 +394,8 @@ data class PendingIrrigationSession(
     val meterStartLitres: Double? = null,
     val meterFinishLitres: Double? = null,
     val totalVolumeLitres: Double? = null,
+    val startedAt: String? = null,
+    val finishedAt: String? = null,
     val notes: String? = null,
     val localTotalVolumeLitres: Double? = null,
     val createdAtEpochMs: Long = System.currentTimeMillis(),
@@ -424,6 +429,28 @@ object IrrigationLocalCalc {
 
     fun round3(value: Double): Double = (value * 1000.0).roundToLong() / 1000.0
     fun round2(value: Double): Double = (value * 100.0).roundToLong() / 100.0
+
+    // MARK: Session time parity (SQL 130)
+
+    /**
+     * Minutes between two wall-clock times of day. Returns null when the
+     * times are equal (a zero-minute session is invalid); an end earlier
+     * than the start rolls to the following day (overnight session).
+     * Mirrors `_irrigation_validate_session_times` in sql/130.
+     */
+    fun minutesBetweenTimes(startMinutesOfDay: Int, endMinutesOfDay: Int): Int? {
+        val diff = endMinutesOfDay - startMinutesOfDay
+        if (diff == 0) return null
+        return if (diff > 0) diff else diff + 1440
+    }
+
+    data class SessionEnd(val minutesOfDay: Int, val daysLater: Int)
+
+    /** End time of day for a start + duration entry (daysLater > 0 = overnight). */
+    fun endOfSession(startMinutesOfDay: Int, durationMinutes: Int): SessionEnd {
+        val total = startMinutesOfDay + durationMinutes
+        return SessionEnd(total % 1440, total / 1440)
+    }
 
     fun totalVolume(
         method: String,
@@ -841,6 +868,8 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
                 pending.meterStartLitres?.let { put("p_meter_start_litres", it) }
                 pending.meterFinishLitres?.let { put("p_meter_finish_litres", it) }
                 pending.totalVolumeLitres?.let { put("p_total_volume_litres", it) }
+                pending.startedAt?.let { put("p_started_at", it) }
+                pending.finishedAt?.let { put("p_finished_at", it) }
                 pending.notes?.let { put("p_notes", it) }
                 put("p_source_type", "manual_android")
             })))
@@ -849,7 +878,9 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
     suspend fun updateSession(
         id: String, sessionDate: String? = null, durationMinutes: Int? = null,
         method: String? = null, flowLph: Double? = null, meterStart: Double? = null,
-        meterFinish: Double? = null, totalVolume: Double? = null, notes: String? = null,
+        meterFinish: Double? = null, totalVolume: Double? = null,
+        startedAt: String? = null, finishedAt: String? = null,
+        clearTimes: Boolean = false, notes: String? = null,
         useCurrentConfiguration: Boolean = false,
     ): IrrigationSessionRow = withContext(Dispatchers.IO) {
         decode(ensureSuccess(rpc("update_irrigation_session", buildJsonObject {
@@ -861,6 +892,9 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
             meterStart?.let { put("p_meter_start_litres", it) }
             meterFinish?.let { put("p_meter_finish_litres", it) }
             totalVolume?.let { put("p_total_volume_litres", it) }
+            startedAt?.let { put("p_started_at", it) }
+            finishedAt?.let { put("p_finished_at", it) }
+            put("p_clear_times", clearTimes)
             notes?.let { put("p_notes", it) }
             put("p_use_current_configuration", useCurrentConfiguration)
         })))
