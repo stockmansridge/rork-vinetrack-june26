@@ -27,7 +27,11 @@
 [CmdletBinding()]
 param(
     [string]$ProjectRef = "tbafuqwruefgkbyxrxyb",
-    [string[]]$Functions = @("davis-proxy", "willyweather-proxy", "open-meteo-proxy", "wunderground-proxy", "weather-current", "weather-nearby-stations", "chemical-info-lookup", "tractor-fuel-lookup", "send-invitation-email", "support-request", "test-resend-email", "test-invitation-email", "test-support-staff-email", "test-support-receipt-email", "test-notification-email"),
+    # NOTE: revenuecat-webhook needs its secret set ONCE before first deploy:
+    #   supabase secrets set REVENUECAT_WEBHOOK_SECRET="<random long secret>" --project-ref tbafuqwruefgkbyxrxyb
+    # Then configure the same value as the Authorization header in the
+    # RevenueCat dashboard webhook settings.
+    [string[]]$Functions = @("davis-proxy", "willyweather-proxy", "open-meteo-proxy", "wunderground-proxy", "weather-current", "weather-nearby-stations", "chemical-info-lookup", "tractor-fuel-lookup", "send-invitation-email", "support-request", "test-resend-email", "test-invitation-email", "test-support-staff-email", "test-support-receipt-email", "test-notification-email", "revenuecat-webhook"),
     [switch]$ListAfter = $true,
     [switch]$SkipVerify
 )

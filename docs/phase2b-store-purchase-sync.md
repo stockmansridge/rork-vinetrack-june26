@@ -57,9 +57,22 @@ SQL 135 appends to the SQL 132 row (first 30 columns unchanged):
 
 ## RevenueCat dashboard audit (user actions — no API access from Rork)
 
-The sandbox has no RevenueCat secret key, so the live dashboard items must
-be confirmed in the dashboard (or provide a secret API key and Rork can run
-them via the REST API):
+Private secrets are never exposed to the Rork agent sandbox (by design), so
+the live audit runs where your keys are available — your own terminal:
+
+```bash
+export REVENUECAT_SECRET_API_KEY=sk_...
+export REVENUECAT_PROJECT_ID=proj...   # optional if you have one project
+deno run --allow-net --allow-env scripts/revenuecat-config-audit.ts \
+  --customer <jonathan-supabase-user-id>
+```
+
+The script is strictly read-only (GET only, v2 API — never creates
+customers) and covers items 1–3, 6 and part of 7 below automatically,
+plus a `billing_product_catalog` cross-check when `V2_SUPABASE_URL` +
+`V2_SERVICE_ROLE_KEY` are also exported. Items it cannot reach via the
+public API (webhook config/delivery history, store credentials,
+Targeting/Experiments) remain dashboard checks:
 
 1. Entitlement identifier is exactly `pro`; note any `premium` remnants.
 2. Every active Apple + Google product is attached to `pro`; record the real
@@ -81,8 +94,14 @@ REAL product ids and set `is_active = true` (SQL editor, service role).
 
 1. Apply sql/133 → sql/134 → sql/135 (SQL editor).
 2. Run `sql/tests/135_store_entitlement_tests.sql` (transaction-rolled-back).
-3. Set the `REVENUECAT_WEBHOOK_SECRET` function secret; deploy
-   `revenuecat-webhook` (see docs/deploy-edge-functions.md).
+3. Set the `REVENUECAT_WEBHOOK_SECRET` function secret, then deploy:
+
+   ```bash
+   supabase secrets set REVENUECAT_WEBHOOK_SECRET="<random long secret>" --project-ref tbafuqwruefgkbyxrxyb
+   FUNCTIONS="revenuecat-webhook" ./scripts/deploy-edge-functions.sh
+   ```
+
+   (`revenuecat-webhook` is now in the default list of both deploy scripts.)
 4. Configure the RevenueCat webhook (URL + Authorization header) for
    production events.
 5. Activate real product mappings in `billing_product_catalog`.

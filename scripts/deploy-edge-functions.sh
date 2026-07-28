@@ -36,6 +36,12 @@ else
     send-invitation-email support-request
     test-resend-email test-invitation-email test-support-staff-email
     test-support-receipt-email test-notification-email
+    # Phase 2B — RevenueCat store-purchase synchronisation.
+    # BEFORE first deploy, set the webhook secret (never commit it):
+    #   supabase secrets set REVENUECAT_WEBHOOK_SECRET="<random long secret>" --project-ref tbafuqwruefgkbyxrxyb
+    # Then configure the same value as the Authorization header in the
+    # RevenueCat dashboard webhook settings.
+    revenuecat-webhook
   )
 fi
 
