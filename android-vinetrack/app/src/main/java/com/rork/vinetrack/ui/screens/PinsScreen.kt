@@ -40,7 +40,6 @@ import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Directions
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.GridView
@@ -144,9 +143,9 @@ fun PinsScreen(
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
-    var editing by remember { mutableStateOf<PinEditTarget?>(null) }
-    // Pin selected from a map marker tap — shows the detail bottom sheet first
-    // (iOS PinDetailSheet parity); the edit form only opens from its Edit action.
+    // Pin selected from a map marker tap or a list row — both entry points open
+    // the same read-only detail sheet (iOS PinDetailSheet parity). Only Notes is
+    // editable there; the full edit form is reserved for creating new pins.
     var detailPinId by rememberSaveable { mutableStateOf<String?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -366,7 +365,7 @@ fun PinsScreen(
                     modeFilter = modeFilter,
                     statusFilter = statusFilter,
                     uploadingPinId = uploadingPinId,
-                    onEdit = { editing = PinEditTarget.Existing(it) },
+                    onOpen = { detailPinId = it.id },
                     onToggle = { vm.togglePinCompleted(it) },
                     onMap = { openMap(it) },
                     onDirections = { openDirections(it) },
@@ -381,16 +380,7 @@ fun PinsScreen(
         }
     }
 
-    val target = editing
-    if (target != null) {
-        PinEditSheetHost(
-            vm, state, target,
-            onDismiss = { editing = null },
-            onConfirmation = { msg -> scope.launch { snackbarHostState.showSnackbar(msg) } },
-        )
-    }
-
-    // Selected-pin detail sheet (map tap → summary first, iOS parity). Resolved
+    // Selected-pin detail sheet (map tap or list row, iOS parity). Resolved
     // fresh from state so completion/photo/sync changes update live; if the pin
     // is deleted while open, the sheet closes itself. Includes synthesized
     // growth-record pins so their map markers open a detail sheet too.
@@ -407,10 +397,28 @@ fun PinsScreen(
             sync = state.pinSyncState(detailPin.id),
             canDelete = state.currentRole in setOf("owner", "manager", "supervisor"),
             photoBusy = uploadingPinId == detailPin.id,
+            // Synthesized growth-record pins have no backing pins row, so their
+            // notes stay read-only (a save would have nothing to update).
+            canEditNotes = state.pins.any { it.id == detailPin.id },
             onDismiss = { detailPinId = null },
-            onEdit = {
-                detailPinId = null
-                editing = PinEditTarget.Existing(detailPin)
+            onSaveNotes = { newNotes ->
+                // Notes are the only field editable after creation (iOS parity).
+                // All other fields pass through unchanged.
+                vm.updatePin(
+                    pinId = detailPin.id,
+                    title = detailPin.title ?: "",
+                    mode = detailPin.mode ?: "",
+                    category = detailPin.category,
+                    notes = newNotes,
+                    side = detailPin.side,
+                    paddockId = detailPin.paddockId,
+                    rowNumber = detailPin.rowNumber,
+                    isCompleted = detailPin.isCompleted,
+                ) { ok ->
+                    scope.launch {
+                        snackbarHostState.showSnackbar(if (ok) "Notes saved" else "Couldn't save the notes")
+                    }
+                }
             },
             onDirections = { openDirections(detailPin) },
             onPhoto = {
@@ -718,7 +726,7 @@ private fun PinsListMode(
     modeFilter: String?,
     statusFilter: Boolean?,
     uploadingPinId: String?,
-    onEdit: (Pin) -> Unit,
+    onOpen: (Pin) -> Unit,
     onToggle: (Pin) -> Unit,
     onMap: (Pin) -> Unit,
     onDirections: (Pin) -> Unit,
@@ -775,7 +783,7 @@ private fun PinsListMode(
                     userLocation = userLocation,
                     sync = state.pinSyncState(pin.id),
                     photoBusy = uploadingPinId == pin.id,
-                    onClick = { onEdit(pin) },
+                    onClick = { onOpen(pin) },
                     onToggle = { onToggle(pin) },
                     onMap = { onMap(pin) },
                     onDirections = { onDirections(pin) },
@@ -2926,10 +2934,9 @@ private fun PinPhotoSection(
 // MARK: Selected-pin detail sheet (map tap), iOS PinDetailSheet parity.
 
 /**
- * Bottom sheet shown when a pin marker is tapped on the map (iOS
- * `PinDetailSheet` parity). The map stays visible behind it; the sheet shows
- * the pin's summary, quick actions, photo, notes and details. The full edit
- * form only opens from the explicit Edit action.
+ * Bottom sheet shown when a pin is selected from the map or the list (iOS
+ * `PinDetailSheet` parity). All pin fields are read-only; only Notes is
+ * editable after creation. Done saves any note change and closes the sheet.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -2941,8 +2948,9 @@ private fun PinDetailSheet(
     sync: PinSyncState,
     canDelete: Boolean,
     photoBusy: Boolean,
+    canEditNotes: Boolean,
     onDismiss: () -> Unit,
-    onEdit: () -> Unit,
+    onSaveNotes: (String) -> Unit,
     onDirections: () -> Unit,
     onPhoto: () -> Unit,
     onToggle: () -> Unit,
@@ -2952,9 +2960,19 @@ private fun PinDetailSheet(
     // Half-height first so the tapped pin stays visible on the map; drag up for
     // the full details.
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = false)
+    // Editable notes draft (iOS PinDetailSheet parity — Notes is the only
+    // editable field). Saved on Done or when the sheet is dismissed, so a swipe
+    // down never silently discards a typed note.
+    var notesDraft by remember(pin.id) { mutableStateOf(pin.notes ?: "") }
+    fun saveNotesIfChanged() {
+        if (canEditNotes && notesDraft != (pin.notes ?: "")) onSaveNotes(notesDraft)
+    }
 
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            saveNotesIfChanged()
+            onDismiss()
+        },
         sheetState = sheetState,
         containerColor = vine.cardBackground,
     ) {
@@ -3011,9 +3029,9 @@ private fun PinDetailSheet(
                 if (sync.needsAttention) StatusBadge("Needs attention", VineColors.Destructive)
             }
 
-            // Quick actions (iOS ActionButton row parity, plus explicit Edit).
+            // Quick actions (iOS ActionButton row parity — no Edit; the pin's
+            // fields are read-only after creation, matching iOS).
             Row(modifier = Modifier.fillMaxWidth()) {
-                PinActionButton(Icons.Filled.Edit, "Edit", VineColors.Primary, modifier = Modifier.weight(1f), onClick = onEdit)
                 PinActionButton(Icons.Filled.Directions, "Directions", VineColors.LeafGreen, modifier = Modifier.weight(1f), onClick = onDirections)
                 PinActionButton(Icons.Filled.PhotoCamera, "Photo", VineColors.Purple, modifier = Modifier.weight(1f), busy = photoBusy, onClick = onPhoto)
                 PinActionButton(
@@ -3033,7 +3051,9 @@ private fun PinDetailSheet(
                 PinDetailPhoto(vm = vm, photoPath = pin.photoPath)
             }
 
-            // Notes preview.
+            // Notes — the only editable field (iOS PinDetailSheet parity).
+            // Synthesized growth-record pins have no backing pin row, so their
+            // notes remain a read-only preview.
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -3043,11 +3063,22 @@ private fun PinDetailSheet(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text("Notes", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
-                Text(
-                    pin.notes?.takeIf { it.isNotBlank() } ?: "No notes",
-                    fontSize = 14.sp,
-                    color = if (pin.notes.isNullOrBlank()) vine.textSecondary else vine.textPrimary,
-                )
+                if (canEditNotes) {
+                    OutlinedTextField(
+                        value = notesDraft,
+                        onValueChange = { notesDraft = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Add notes\u2026", color = vine.textSecondary) },
+                        minLines = 2,
+                        maxLines = 6,
+                    )
+                } else {
+                    Text(
+                        pin.notes?.takeIf { it.isNotBlank() } ?: "No notes",
+                        fontSize = 14.sp,
+                        color = if (pin.notes.isNullOrBlank()) vine.textSecondary else vine.textPrimary,
+                    )
+                }
             }
 
             // Details (iOS Details section parity).
@@ -3090,7 +3121,14 @@ private fun PinDetailSheet(
                 }
             }
 
-            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Done") }
+            // Done saves any note change and closes the sheet (iOS parity).
+            TextButton(
+                onClick = {
+                    saveNotesIfChanged()
+                    onDismiss()
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Done") }
         }
     }
 }
