@@ -417,6 +417,11 @@ nonisolated struct IrrigationSetupStatus: Decodable, Sendable {
         let allocationTotal: Double
         let allocationOk: Bool
         let hasConfiguredFlow: Bool
+        /// SQL 131 — explicit valve flow OR emitter-derived flow available.
+        let automaticFlowReady: Bool?
+        let resolvedFlowLitresPerHour: Double?
+        let resolvedFlowSource: String?
+        let resolvedFlowEmitterCount: Int?
         let usesRows: Bool?
         let rowCount: Int?
 
@@ -429,6 +434,10 @@ nonisolated struct IrrigationSetupStatus: Decodable, Sendable {
             case allocationTotal = "allocation_total"
             case allocationOk = "allocation_ok"
             case hasConfiguredFlow = "has_configured_flow"
+            case automaticFlowReady = "automatic_flow_ready"
+            case resolvedFlowLitresPerHour = "resolved_flow_litres_per_hour"
+            case resolvedFlowSource = "resolved_flow_source"
+            case resolvedFlowEmitterCount = "resolved_flow_emitter_count"
             case usesRows = "uses_rows"
             case rowCount = "row_count"
         }
@@ -497,6 +506,14 @@ nonisolated struct IrrigationValveValidation: Decodable, Sendable {
     let hasConfiguredFlow: Bool
     let configuredFlowLitresPerHour: Double?
     let requiresVolumeEntry: Bool
+    /// SQL 131 resolved-flow fields (optional so pre-131 responses and old
+    /// offline caches still decode).
+    let configuredFlowAvailable: Bool?
+    let resolvedFlowLitresPerHour: Double?
+    let resolvedFlowSource: String?
+    let resolvedFlowIsEstimated: Bool?
+    let resolvedFlowWarning: String?
+    let resolvedFlowEmitterCount: Int?
     let allocations: [IrrigationAllocationConfig]
     let allocationTotal: Double
     let issues: [String]
@@ -508,9 +525,37 @@ nonisolated struct IrrigationValveValidation: Decodable, Sendable {
         case hasConfiguredFlow = "has_configured_flow"
         case configuredFlowLitresPerHour = "configured_flow_litres_per_hour"
         case requiresVolumeEntry = "requires_volume_entry"
+        case configuredFlowAvailable = "configured_flow_available"
+        case resolvedFlowLitresPerHour = "resolved_flow_litres_per_hour"
+        case resolvedFlowSource = "resolved_flow_source"
+        case resolvedFlowIsEstimated = "resolved_flow_is_estimated"
+        case resolvedFlowWarning = "resolved_flow_warning"
+        case resolvedFlowEmitterCount = "resolved_flow_emitter_count"
         case allocations
         case allocationTotal = "allocation_total"
         case issues
+    }
+
+    /// The server decides configured-flow availability (SQL 131); pre-131
+    /// responses fall back to the stored valve flow presence.
+    var automaticFlowAvailable: Bool { configuredFlowAvailable ?? hasConfiguredFlow }
+
+    /// Flow value used for configured-flow calculations and offline previews.
+    var flowForCalculation: Double? { resolvedFlowLitresPerHour ?? configuredFlowLitresPerHour }
+
+    var resolvedFlowSourceLabel: String? { IrrigationFlowSource.label(resolvedFlowSource) }
+}
+
+/// Shared labels for SQL 131 `resolved_flow_source` values.
+nonisolated enum IrrigationFlowSource {
+    static func label(_ source: String?) -> String? {
+        switch source {
+        case "measured_valve_flow": return "Measured valve flow"
+        case "configured_valve_flow": return "Configured valve flow"
+        case "row_emitter_flow": return "Connected row emitters \u{00D7} block emitter output"
+        case "block_emitter_flow": return "Connected block emitters \u{00D7} block emitter output"
+        default: return nil
+        }
     }
 }
 
@@ -554,6 +599,10 @@ nonisolated struct IrrigationPreview: Decodable, Sendable {
     let valveName: String?
     let irrigationSystemName: String?
     let flowLitresPerHourUsed: Double?
+    /// SQL 131 — how the configured flow was resolved for this preview.
+    let flowSource: String?
+    let flowIsEstimated: Bool?
+    let flowExplanation: String?
     let vintageYear: Int?
 
     enum CodingKeys: String, CodingKey {
@@ -564,6 +613,9 @@ nonisolated struct IrrigationPreview: Decodable, Sendable {
         case valveName = "valve_name"
         case irrigationSystemName = "irrigation_system_name"
         case flowLitresPerHourUsed = "flow_litres_per_hour_used"
+        case flowSource = "flow_source"
+        case flowIsEstimated = "flow_is_estimated"
+        case flowExplanation = "flow_explanation"
         case vintageYear = "vintage_year"
     }
 }
@@ -978,4 +1030,95 @@ nonisolated enum IrrigationLocalCalculator {
     }
 
     static func millimetresToInches(_ mm: Double) -> Double { mm / millimetresPerInch }
+
+    // MARK: Configured-flow resolution parity (SQL 131)
+
+    /// One connected block's flow-derivation inputs, mirroring the jsonb
+    /// components fed to `_irrigation_resolve_flow` in sql/131.
+    struct FlowComponent: Sendable {
+        let blockName: String
+        let isRows: Bool
+        let emitterCount: Double?
+        let flowPerEmitterLph: Double?
+        let blockConfiguredFlowLph: Double?
+
+        init(blockName: String, isRows: Bool, emitterCount: Double?,
+             flowPerEmitterLph: Double?, blockConfiguredFlowLph: Double? = nil) {
+            self.blockName = blockName
+            self.isRows = isRows
+            self.emitterCount = emitterCount
+            self.flowPerEmitterLph = flowPerEmitterLph
+            self.blockConfiguredFlowLph = blockConfiguredFlowLph
+        }
+    }
+
+    struct ResolvedFlow: Sendable {
+        let flowLitresPerHour: Double?
+        let source: String
+        let isEstimated: Bool?
+        let warning: String?
+        let emitterCount: Int?
+    }
+
+    /// Byte-for-byte mirror of `_irrigation_resolve_flow` (sql/131):
+    /// measured valve flow → configured valve flow → connected emitter flow →
+    /// unavailable. A partial total is never returned; missing components
+    /// resolve to nil, never zero. Used ONLY for offline parity — the server
+    /// value is always authoritative.
+    static func resolveFlow(measuredValveFlow: Double?,
+                            configuredValveFlow: Double?,
+                            components: [FlowComponent]) -> ResolvedFlow {
+        if let measured = measuredValveFlow, measured > 0 {
+            return ResolvedFlow(flowLitresPerHour: measured, source: "measured_valve_flow",
+                                isEstimated: false, warning: nil, emitterCount: nil)
+        }
+        if let configured = configuredValveFlow, configured > 0 {
+            return ResolvedFlow(flowLitresPerHour: configured, source: "configured_valve_flow",
+                                isEstimated: false, warning: nil, emitterCount: nil)
+        }
+
+        var warnings: [String] = []
+        var total = 0.0
+        var totalEmitters = 0.0
+        var allEmitters = true
+        var allRows = true
+        var anyResolved = false
+
+        if components.isEmpty {
+            warnings.append("Automatic flow is unavailable because this valve has no active block connections.")
+        }
+        for component in components {
+            if !component.isRows { allRows = false }
+            if !component.isRows, let blockFlow = component.blockConfiguredFlowLph, blockFlow > 0 {
+                total += round3(blockFlow)
+                allEmitters = false
+                anyResolved = true
+            } else if let emitters = component.emitterCount, emitters > 0,
+                      let flowPerEmitter = component.flowPerEmitterLph, flowPerEmitter > 0 {
+                total += round3(emitters * flowPerEmitter)
+                totalEmitters += emitters
+                anyResolved = true
+            } else {
+                if (component.flowPerEmitterLph ?? 0) <= 0 {
+                    warnings.append("Automatic flow is unavailable because \(component.blockName) does not have a valid flow-per-emitter value.")
+                }
+                if (component.emitterCount ?? 0) <= 0 {
+                    warnings.append("Automatic flow is unavailable because \(component.blockName) does not have a complete saved emitter count.")
+                }
+            }
+        }
+        if !warnings.isEmpty || !anyResolved {
+            if warnings.isEmpty {
+                warnings.append("Automatic flow is unavailable because the connected blocks cannot be safely calculated.")
+            }
+            return ResolvedFlow(flowLitresPerHour: nil, source: "unavailable",
+                                isEstimated: nil, warning: warnings.first, emitterCount: nil)
+        }
+        return ResolvedFlow(
+            flowLitresPerHour: round3(total),
+            source: allRows ? "row_emitter_flow" : "block_emitter_flow",
+            isEstimated: true,
+            warning: nil,
+            emitterCount: allEmitters && totalEmitters > 0 ? Int(totalEmitters) : nil)
+    }
 }

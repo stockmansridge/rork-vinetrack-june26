@@ -359,4 +359,119 @@ class IrrigationCalculatorFixtureTest {
         assertEquals(3 * 60, overnight.minutesOfDay)
         assertEquals(1, overnight.daysLater)
     }
+
+    // ------------------------------------------------------------------------
+    // Configured-flow resolution (SQL 131 parity). Mirrors the assert block in
+    // sql/131_irrigation_configured_flow_resolution.sql and
+    // IrrigationCalculatorFixtureTests.swift.
+    // ------------------------------------------------------------------------
+
+    private val w1RowsComponent = IrrigationLocalCalc.FlowComponent(
+        blockName = "Pinot Noir", isRows = true, emitterCount = 7931.0, flowPerEmitterLph = 1.6,
+    )
+
+    @Test
+    fun `measured valve flow is priority one`() {
+        val resolved = IrrigationLocalCalc.resolveFlow(9000.0, 8000.0, listOf(w1RowsComponent))
+        assertEquals("measured_valve_flow", resolved.source)
+        assertEquals(9000.0, resolved.flowLitresPerHour!!, 0.0)
+        assertEquals(false, resolved.isEstimated)
+    }
+
+    @Test
+    fun `configured valve flow is priority two`() {
+        val resolved = IrrigationLocalCalc.resolveFlow(null, 8000.0, listOf(w1RowsComponent))
+        assertEquals("configured_valve_flow", resolved.source)
+        assertEquals(8000.0, resolved.flowLitresPerHour!!, 0.0)
+    }
+
+    @Test
+    fun `row emitter flow W1 example`() {
+        // 7,931 emitters × 1.6 L/h = 12,689.6 L/h; × 3 h = 38,068.8 L.
+        val resolved = IrrigationLocalCalc.resolveFlow(null, null, listOf(w1RowsComponent))
+        assertEquals(12689.6, resolved.flowLitresPerHour!!, 0.0001)
+        assertEquals("row_emitter_flow", resolved.source)
+        assertEquals(true, resolved.isEstimated)
+        assertEquals(7931, resolved.emitterCount)
+        assertEquals(
+            38068.8,
+            IrrigationLocalCalc.totalVolume("configured_flow", resolved.flowLitresPerHour, 180, null, null, null),
+            0.0001,
+        )
+    }
+
+    @Test
+    fun `blocks with different emitter outputs sum separately`() {
+        val resolved = IrrigationLocalCalc.resolveFlow(
+            null, null,
+            listOf(
+                IrrigationLocalCalc.FlowComponent("Pinot Noir", true, 4000.0, 1.6),
+                IrrigationLocalCalc.FlowComponent("Primitivo", true, 2000.0, 2.0),
+            ),
+        )
+        assertEquals(10400.0, resolved.flowLitresPerHour!!, 0.0001)
+        assertEquals(6000, resolved.emitterCount)
+    }
+
+    @Test
+    fun `missing flow per emitter is unavailable not zero`() {
+        val resolved = IrrigationLocalCalc.resolveFlow(
+            null, null,
+            listOf(IrrigationLocalCalc.FlowComponent("Pinot Noir", true, 7931.0, null)),
+        )
+        assertNull(resolved.flowLitresPerHour)
+        assertEquals("unavailable", resolved.source)
+        assertTrue(resolved.warning!!.contains("Pinot Noir does not have a valid flow-per-emitter value"))
+    }
+
+    @Test
+    fun `one incomplete block never yields a partial total`() {
+        val resolved = IrrigationLocalCalc.resolveFlow(
+            null, null,
+            listOf(
+                IrrigationLocalCalc.FlowComponent("Pinot Noir", true, 4000.0, 1.6),
+                IrrigationLocalCalc.FlowComponent("Primitivo", true, null, 2.0),
+            ),
+        )
+        assertNull(resolved.flowLitresPerHour)
+        assertEquals("unavailable", resolved.source)
+        assertTrue(resolved.warning!!.contains("Primitivo does not have a complete saved emitter count"))
+    }
+
+    @Test
+    fun `manual percentage with emitter data uses block emitter flow`() {
+        val resolved = IrrigationLocalCalc.resolveFlow(
+            null, null,
+            listOf(IrrigationLocalCalc.FlowComponent("Pinot Noir", false, 5000.0, 1.6)),
+        )
+        assertEquals(8000.0, resolved.flowLitresPerHour!!, 0.0001)
+        assertEquals("block_emitter_flow", resolved.source)
+    }
+
+    @Test
+    fun `block specific configured flow contributes`() {
+        val resolved = IrrigationLocalCalc.resolveFlow(
+            null, null,
+            listOf(
+                IrrigationLocalCalc.FlowComponent("Pinot Noir", false, null, null, 5000.0),
+                IrrigationLocalCalc.FlowComponent("Primitivo", false, 4000.0, 1.6),
+            ),
+        )
+        assertEquals(11400.0, resolved.flowLitresPerHour!!, 0.0001)
+        // The emitter total only surfaces when EVERY contributing block used emitters.
+        assertNull(resolved.emitterCount)
+    }
+
+    @Test
+    fun `invalid explicit flows fall through to derivation`() {
+        val resolved = IrrigationLocalCalc.resolveFlow(0.0, -5.0, listOf(w1RowsComponent))
+        assertEquals("row_emitter_flow", resolved.source)
+    }
+
+    @Test
+    fun `no block connections is unavailable`() {
+        val resolved = IrrigationLocalCalc.resolveFlow(null, null, emptyList())
+        assertEquals("unavailable", resolved.source)
+        assertTrue(resolved.warning!!.contains("no active block connections"))
+    }
 }

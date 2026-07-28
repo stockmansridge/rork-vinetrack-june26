@@ -820,12 +820,20 @@ private fun SetupContent(
             1 -> LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 valves.forEach { valve ->
                     item(key = valve.id) {
+                        // SQL 131: the trailing value shows the RESOLVED operational
+                        // flow (explicit valve flow or emitter-derived automatic flow).
+                        val vs = status?.valves?.firstOrNull { it.valveId == valve.id }
+                        val resolvedFlow = vs?.resolvedFlowLph ?: valve.configuredFlowLph
+                        val autoDerived = vs?.automaticFlowReady == true && valve.configuredFlowLph == null
                         SetupRowCard(
                             title = valve.name,
                             subtitle = "${valve.systemName ?: "System"} · " +
-                                (status?.valves?.firstOrNull { it.valveId == valve.id }?.configurationSummary ?: "Not configured"),
-                            trailing = valve.configuredFlowLph?.let { IrrigationUnits.flow(it, fmt) }
-                                ?: if (valve.isActive) "No flow" else "Inactive",
+                                (vs?.configurationSummary ?: "Not configured") +
+                                (vs?.resolvedFlowEmitterCount?.takeIf { autoDerived }
+                                    ?.let { " · Derived from $it connected emitters" } ?: ""),
+                            trailing = resolvedFlow?.let {
+                                IrrigationUnits.flow(it, fmt) + (if (autoDerived) " (auto)" else "")
+                            } ?: if (valve.isActive) "No flow" else "Inactive",
                         ) { editingValve = valve }
                     }
                 }
@@ -888,6 +896,7 @@ private fun SetupContent(
                     item { CoverageRow("Active systems", s.required.activeSystemCount, s.required.activeSystemCount) }
                     item { CoverageRow("Valves fully allocated", s.required.fullyAllocatedValveCount, s.required.activeValveCount) }
                     item { CoverageRow("Valves with configured flow", s.required.valvesWithConfiguredFlow, s.required.activeValveCount) }
+                    item { CoverageRow("Valves with automatic flow", s.required.valvesWithAutomaticFlow ?: s.required.valvesWithConfiguredFlow, s.required.activeValveCount) }
                     item { HorizontalDivider() }
                     item { Text("Data coverage", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
                     item { CoverageRow("Block area", s.recommended.blocksWithArea, s.recommended.totalActiveBlocks) }
@@ -1657,6 +1666,9 @@ private fun RecordContent(
     }
     var notes by remember { mutableStateOf(editSession?.notes ?: "") }
     var useCurrentConfig by remember { mutableStateOf(false) }
+    // SQL 131 — advanced measurement options stay hidden while the default
+    // configured-flow workflow is available.
+    var showAdvancedMethods by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf<IrrigationPreviewResult?>(null) }
     var localPreview by remember { mutableStateOf<IrrigationLocalCalc.Result?>(null) }
     var offlinePreview by remember { mutableStateOf(false) }
@@ -1696,7 +1708,7 @@ private fun RecordContent(
 
     val availableValves = valves.filter { it.isActive && (systemId == null || it.irrigationSystemId == systemId) }
     val canPreview = valveId != null && durationMinutes > 0 && when (method) {
-        "configured_flow" -> validation?.hasConfiguredFlow == true
+        "configured_flow" -> validation?.automaticFlowAvailable == true
         "session_flow" -> (sessionFlow.replace(",", ".").toDoubleOrNull() ?: 0.0) > 0
         "total_volume" -> (totalVolume.replace(",", ".").toDoubleOrNull() ?: 0.0) > 0
         "meter_readings" -> {
@@ -1729,7 +1741,7 @@ private fun RecordContent(
                 if (v != null) {
                     runCatching {
                         val flow = when (method) {
-                            "configured_flow" -> v.configuredFlowLph
+                            "configured_flow" -> v.flowForCalculation
                             "session_flow" -> sessionFlow.replace(",", ".").toDoubleOrNull()
                             else -> null
                         }
@@ -1978,30 +1990,54 @@ private fun RecordContent(
                 }
             }
         }
+        // SQL 131 default workflow: when a configured flow resolves
+        // automatically, no measurement method needs selecting — the picker
+        // stays behind an advanced action.
+        val defaultFlowWorkflow = validation?.automaticFlowAvailable == true &&
+            method == "configured_flow" && !showAdvancedMethods
         item {
             Text("Water calculation", style = MaterialTheme.typography.labelMedium)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(
-                    "configured_flow" to "Configured Flow",
-                    "session_flow" to "Session Flow",
-                    "total_volume" to "Total Volume",
-                    "meter_readings" to "Meter Readings",
-                ).forEach { (key, label) ->
-                    FilterChip(selected = method == key, onClick = { method = key }, label = { Text(label) })
+            if (!defaultFlowWorkflow) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(
+                        "configured_flow" to "Configured Flow",
+                        "session_flow" to "Session Flow",
+                        "total_volume" to "Total Volume",
+                        "meter_readings" to "Meter Readings",
+                    ).forEach { (key, label) ->
+                        FilterChip(selected = method == key, onClick = { method = key }, label = { Text(label) })
+                    }
                 }
             }
         }
         when (method) {
             "configured_flow" -> item {
-                val flow = validation?.configuredFlowLph
-                if (flow != null) {
-                    Text(
-                        "Configured flow: ${IrrigationUnits.flow(flow, fmt)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+                val v = validation
+                val flow = v?.flowForCalculation
+                if (v != null && v.automaticFlowAvailable && flow != null) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            "Calculated flow: ${IrrigationUnits.flow(flow, fmt)}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        v.resolvedFlowSourceLabel?.let { label ->
+                            Text(
+                                label + (if (v.resolvedFlowIsEstimated == true) " (estimated)" else ""),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (defaultFlowWorkflow) {
+                            TextButton(onClick = { showAdvancedMethods = true }) {
+                                Text("Change measurement method")
+                            }
+                        }
+                    }
                 } else {
                     Text(
-                        "This valve has no configured flow rate. Enter a session flow, total volume or meter readings instead.",
+                        v?.resolvedFlowWarning
+                            ?: "No configured flow source exists for this valve. Enter a session flow, total volume or meter readings instead.",
                         color = Color(0xFFEF6C00),
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -2056,6 +2092,15 @@ private fun RecordContent(
         }
         preview?.let { p ->
             item { PreviewSummary(p.totalVolumeLitres, p.effectiveVolumeLitres, p.flowLphUsed, fmt) }
+            p.flowExplanation?.let { explanation ->
+                item {
+                    Text(
+                        explanation + (if (p.flowIsEstimated == true) " (estimated)" else ""),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             p.blocks.forEach { block ->
                 item { PreviewBlockRow(block, fmt) }
             }

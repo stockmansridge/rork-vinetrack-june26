@@ -642,6 +642,13 @@ nonisolated private struct CachedValidation: Codable, Sendable {
     let hasConfiguredFlow: Bool
     let configuredFlowLitresPerHour: Double?
     let requiresVolumeEntry: Bool
+    // SQL 131 resolved-flow snapshot (optional so pre-131 caches still decode).
+    let configuredFlowAvailable: Bool?
+    let resolvedFlowLitresPerHour: Double?
+    let resolvedFlowSource: String?
+    let resolvedFlowIsEstimated: Bool?
+    let resolvedFlowWarning: String?
+    let resolvedFlowEmitterCount: Int?
     let allocations: [Allocation]
     let allocationTotal: Double
     let issues: [String]
@@ -653,6 +660,12 @@ nonisolated private struct CachedValidation: Codable, Sendable {
         hasConfiguredFlow = validation.hasConfiguredFlow
         configuredFlowLitresPerHour = validation.configuredFlowLitresPerHour
         requiresVolumeEntry = validation.requiresVolumeEntry
+        configuredFlowAvailable = validation.configuredFlowAvailable
+        resolvedFlowLitresPerHour = validation.resolvedFlowLitresPerHour
+        resolvedFlowSource = validation.resolvedFlowSource
+        resolvedFlowIsEstimated = validation.resolvedFlowIsEstimated
+        resolvedFlowWarning = validation.resolvedFlowWarning
+        resolvedFlowEmitterCount = validation.resolvedFlowEmitterCount
         allocationTotal = validation.allocationTotal
         issues = validation.issues
         allocations = validation.allocations.map {
@@ -676,6 +689,12 @@ nonisolated private struct CachedValidation: Codable, Sendable {
         if let flow = configuredFlowLitresPerHour {
             json["configured_flow_litres_per_hour"] = flow
         }
+        if let v = configuredFlowAvailable { json["configured_flow_available"] = v }
+        if let v = resolvedFlowLitresPerHour { json["resolved_flow_litres_per_hour"] = v }
+        if let v = resolvedFlowSource { json["resolved_flow_source"] = v }
+        if let v = resolvedFlowIsEstimated { json["resolved_flow_is_estimated"] = v }
+        if let v = resolvedFlowWarning { json["resolved_flow_warning"] = v }
+        if let v = resolvedFlowEmitterCount { json["resolved_flow_emitter_count"] = v }
         json["allocations"] = allocations.map { alloc in
             var dict: [String: Any] = ["block_id": alloc.blockId]
             if let v = alloc.blockName { dict["block_name"] = v }

@@ -32,6 +32,9 @@ struct IrrigationRecordEntryView: View {
     @State private var finishTime = Date()
     @State private var notes = ""
     @State private var useCurrentConfiguration = false
+    /// SQL 131 — the advanced measurement options are hidden while the
+    /// default configured-flow workflow is available.
+    @State private var showAdvancedMethods = false
 
     @State private var preview: IrrigationPreview?
     @State private var localPreview: IrrigationLocalCalculator.Result?
@@ -147,7 +150,7 @@ struct IrrigationRecordEntryView: View {
     private var canPreview: Bool {
         guard valveId != nil, totalDurationMinutes > 0 else { return false }
         switch method {
-        case .configuredFlow: return validation?.hasConfiguredFlow == true
+        case .configuredFlow: return validation?.automaticFlowAvailable == true
         case .sessionFlow: return Double(sessionFlow.replacingOccurrences(of: ",", with: ".")) ?? 0 > 0
         case .totalVolume: return Double(totalVolume.replacingOccurrences(of: ",", with: ".")) ?? 0 > 0
         case .meterReadings:
@@ -310,21 +313,47 @@ struct IrrigationRecordEntryView: View {
         }
     }
 
+    /// The default workflow: configured flow resolves automatically, so the
+    /// method picker stays out of the way behind an "advanced" disclosure.
+    private var showsDefaultFlowWorkflow: Bool {
+        validation?.automaticFlowAvailable == true && method == .configuredFlow && !showAdvancedMethods
+    }
+
     private var methodSection: some View {
         Section("Water calculation") {
-            Picker("Method", selection: $method) {
-                ForEach(IrrigationCalculationMethod.allCases) { m in
-                    Text(m.label).tag(m)
+            if !showsDefaultFlowWorkflow {
+                Picker("Method", selection: $method) {
+                    ForEach(IrrigationCalculationMethod.allCases) { m in
+                        Text(m.label).tag(m)
+                    }
                 }
+                .pickerStyle(.menu)
             }
-            .pickerStyle(.menu)
 
             switch method {
             case .configuredFlow:
-                if let flow = validation?.configuredFlowLitresPerHour {
-                    LabeledContent("Configured flow", value: IrrigationFormat.flow(flow, formatter: formatter))
+                if let validation, validation.automaticFlowAvailable,
+                   let flow = validation.flowForCalculation {
+                    LabeledContent("Calculated flow", value: IrrigationFormat.flow(flow, formatter: formatter))
+                    if let sourceLabel = validation.resolvedFlowSourceLabel {
+                        Label {
+                            Text(sourceLabel + (validation.resolvedFlowIsEstimated == true ? " (estimated)" : ""))
+                        } icon: {
+                            Image(systemName: validation.resolvedFlowIsEstimated == true
+                                  ? "function" : "checkmark.seal")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    if showsDefaultFlowWorkflow {
+                        Button("Change measurement method") {
+                            withAnimation { showAdvancedMethods = true }
+                        }
+                        .font(.caption)
+                    }
                 } else {
-                    Label("This valve has no configured flow rate. Enter a session flow, total volume or meter readings instead.",
+                    Label(validation?.resolvedFlowWarning
+                          ?? "No configured flow source exists for this valve. Enter a session flow, total volume or meter readings instead.",
                           systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
@@ -396,6 +425,15 @@ struct IrrigationRecordEntryView: View {
         }
         if let flow = preview.flowLitresPerHourUsed {
             LabeledContent("Flow used", value: IrrigationFormat.flow(flow, formatter: formatter))
+        }
+        if let explanation = preview.flowExplanation {
+            Label {
+                Text(explanation + (preview.flowIsEstimated == true ? " (estimated)" : ""))
+            } icon: {
+                Image(systemName: "info.circle")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
         ForEach(preview.blocks) { block in
             blockPreviewRow(
@@ -567,7 +605,7 @@ struct IrrigationRecordEntryView: View {
         }
         do {
             let flow: Double? = switch method {
-            case .configuredFlow: validation.configuredFlowLitresPerHour
+            case .configuredFlow: validation.flowForCalculation
             case .sessionFlow: Double(sessionFlow.replacingOccurrences(of: ",", with: "."))
             default: nil
             }

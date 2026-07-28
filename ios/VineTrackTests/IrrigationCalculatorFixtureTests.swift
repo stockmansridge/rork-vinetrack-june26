@@ -316,4 +316,104 @@ struct IrrigationCalculatorFixtureTests {
         #expect(overnight.minutesOfDay == 3 * 60)
         #expect(overnight.daysLater == 1)
     }
+
+    // MARK: Configured-flow resolution parity (SQL 131 `_irrigation_resolve_flow`)
+
+    private var w1RowsComponent: IrrigationLocalCalculator.FlowComponent {
+        .init(blockName: "Pinot Noir", isRows: true, emitterCount: 7931, flowPerEmitterLph: 1.6)
+    }
+
+    @Test func measuredValveFlowIsPriorityOne() {
+        let resolved = IrrigationLocalCalculator.resolveFlow(
+            measuredValveFlow: 9000, configuredValveFlow: 8000, components: [w1RowsComponent])
+        #expect(resolved.source == "measured_valve_flow")
+        #expect(resolved.flowLitresPerHour == 9000)
+        #expect(resolved.isEstimated == false)
+    }
+
+    @Test func configuredValveFlowIsPriorityTwo() {
+        let resolved = IrrigationLocalCalculator.resolveFlow(
+            measuredValveFlow: nil, configuredValveFlow: 8000, components: [w1RowsComponent])
+        #expect(resolved.source == "configured_valve_flow")
+        #expect(resolved.flowLitresPerHour == 8000)
+    }
+
+    @Test func rowEmitterFlowW1Example() throws {
+        // 7,931 emitters × 1.6 L/h = 12,689.6 L/h; × 3 h = 38,068.8 L.
+        let resolved = IrrigationLocalCalculator.resolveFlow(
+            measuredValveFlow: nil, configuredValveFlow: nil, components: [w1RowsComponent])
+        #expect(resolved.flowLitresPerHour == 12689.6)
+        #expect(resolved.source == "row_emitter_flow")
+        #expect(resolved.isEstimated == true)
+        #expect(resolved.emitterCount == 7931)
+        #expect(try IrrigationLocalCalculator.totalVolume(
+            method: .configuredFlow, flowLitresPerHour: resolved.flowLitresPerHour,
+            durationMinutes: 180, meterStartLitres: nil, meterFinishLitres: nil,
+            totalVolumeLitres: nil) == 38068.8)
+    }
+
+    @Test func blocksWithDifferentEmitterOutputsSumSeparately() {
+        let resolved = IrrigationLocalCalculator.resolveFlow(
+            measuredValveFlow: nil, configuredValveFlow: nil, components: [
+                .init(blockName: "Pinot Noir", isRows: true, emitterCount: 4000, flowPerEmitterLph: 1.6),
+                .init(blockName: "Primitivo", isRows: true, emitterCount: 2000, flowPerEmitterLph: 2.0)
+            ])
+        #expect(resolved.flowLitresPerHour == 10400)
+        #expect(resolved.emitterCount == 6000)
+    }
+
+    @Test func missingFlowPerEmitterIsUnavailableNotZero() {
+        let resolved = IrrigationLocalCalculator.resolveFlow(
+            measuredValveFlow: nil, configuredValveFlow: nil, components: [
+                .init(blockName: "Pinot Noir", isRows: true, emitterCount: 7931, flowPerEmitterLph: nil)
+            ])
+        #expect(resolved.flowLitresPerHour == nil)
+        #expect(resolved.source == "unavailable")
+        #expect(resolved.warning?.contains("Pinot Noir does not have a valid flow-per-emitter value") == true)
+    }
+
+    @Test func oneIncompleteBlockNeverYieldsAPartialTotal() {
+        let resolved = IrrigationLocalCalculator.resolveFlow(
+            measuredValveFlow: nil, configuredValveFlow: nil, components: [
+                .init(blockName: "Pinot Noir", isRows: true, emitterCount: 4000, flowPerEmitterLph: 1.6),
+                .init(blockName: "Primitivo", isRows: true, emitterCount: nil, flowPerEmitterLph: 2.0)
+            ])
+        #expect(resolved.flowLitresPerHour == nil)
+        #expect(resolved.source == "unavailable")
+        #expect(resolved.warning?.contains("Primitivo does not have a complete saved emitter count") == true)
+    }
+
+    @Test func manualPercentageWithEmitterDataUsesBlockEmitterFlow() {
+        let resolved = IrrigationLocalCalculator.resolveFlow(
+            measuredValveFlow: nil, configuredValveFlow: nil, components: [
+                .init(blockName: "Pinot Noir", isRows: false, emitterCount: 5000, flowPerEmitterLph: 1.6)
+            ])
+        #expect(resolved.flowLitresPerHour == 8000)
+        #expect(resolved.source == "block_emitter_flow")
+    }
+
+    @Test func blockSpecificConfiguredFlowContributes() {
+        let resolved = IrrigationLocalCalculator.resolveFlow(
+            measuredValveFlow: nil, configuredValveFlow: nil, components: [
+                .init(blockName: "Pinot Noir", isRows: false, emitterCount: nil,
+                      flowPerEmitterLph: nil, blockConfiguredFlowLph: 5000),
+                .init(blockName: "Primitivo", isRows: false, emitterCount: 4000, flowPerEmitterLph: 1.6)
+            ])
+        #expect(resolved.flowLitresPerHour == 11400)
+        // The emitter total only surfaces when EVERY contributing block used emitters.
+        #expect(resolved.emitterCount == nil)
+    }
+
+    @Test func invalidExplicitFlowsFallThroughToDerivation() {
+        let resolved = IrrigationLocalCalculator.resolveFlow(
+            measuredValveFlow: 0, configuredValveFlow: -5, components: [w1RowsComponent])
+        #expect(resolved.source == "row_emitter_flow")
+    }
+
+    @Test func noBlockConnectionsIsUnavailable() {
+        let resolved = IrrigationLocalCalculator.resolveFlow(
+            measuredValveFlow: nil, configuredValveFlow: nil, components: [])
+        #expect(resolved.source == "unavailable")
+        #expect(resolved.warning?.contains("no active block connections") == true)
+    }
 }

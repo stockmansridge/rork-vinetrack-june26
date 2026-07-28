@@ -164,6 +164,8 @@ data class IrrigationSetupRequired(
     @SerialName("fully_allocated_valve_count") val fullyAllocatedValveCount: Int = 0,
     @SerialName("allocations_ok") val allocationsOk: Boolean = false,
     @SerialName("valves_with_configured_flow") val valvesWithConfiguredFlow: Int = 0,
+    // SQL 131 — explicit valve flow OR emitter-derived flow available.
+    @SerialName("valves_with_automatic_flow") val valvesWithAutomaticFlow: Int? = null,
 )
 
 @Serializable
@@ -185,6 +187,11 @@ data class IrrigationValveStatus(
     @SerialName("allocation_total") val allocationTotal: Double = 0.0,
     @SerialName("allocation_ok") val allocationOk: Boolean = false,
     @SerialName("has_configured_flow") val hasConfiguredFlow: Boolean = false,
+    // SQL 131 — explicit valve flow OR emitter-derived flow available.
+    @SerialName("automatic_flow_ready") val automaticFlowReady: Boolean? = null,
+    @SerialName("resolved_flow_litres_per_hour") val resolvedFlowLph: Double? = null,
+    @SerialName("resolved_flow_source") val resolvedFlowSource: String? = null,
+    @SerialName("resolved_flow_emitter_count") val resolvedFlowEmitterCount: Int? = null,
     @SerialName("uses_rows") val usesRows: Boolean = false,
     @SerialName("row_count") val rowCount: Int = 0,
 ) {
@@ -229,10 +236,26 @@ data class IrrigationValveValidation(
     @SerialName("has_configured_flow") val hasConfiguredFlow: Boolean = false,
     @SerialName("configured_flow_litres_per_hour") val configuredFlowLph: Double? = null,
     @SerialName("requires_volume_entry") val requiresVolumeEntry: Boolean = false,
+    // SQL 131 resolved-flow fields (nullable so pre-131 responses and old
+    // offline caches still decode).
+    @SerialName("configured_flow_available") val configuredFlowAvailable: Boolean? = null,
+    @SerialName("resolved_flow_litres_per_hour") val resolvedFlowLph: Double? = null,
+    @SerialName("resolved_flow_source") val resolvedFlowSource: String? = null,
+    @SerialName("resolved_flow_is_estimated") val resolvedFlowIsEstimated: Boolean? = null,
+    @SerialName("resolved_flow_warning") val resolvedFlowWarning: String? = null,
+    @SerialName("resolved_flow_emitter_count") val resolvedFlowEmitterCount: Int? = null,
     val allocations: List<IrrigationAllocationConfig> = emptyList(),
     @SerialName("allocation_total") val allocationTotal: Double = 0.0,
     val issues: List<String> = emptyList(),
-)
+) {
+    /** Server-decided configured-flow availability; pre-131 falls back to the stored flow. */
+    val automaticFlowAvailable: Boolean get() = configuredFlowAvailable ?: hasConfiguredFlow
+
+    /** Flow value used for configured-flow calculations and offline previews. */
+    val flowForCalculation: Double? get() = resolvedFlowLph ?: configuredFlowLph
+
+    val resolvedFlowSourceLabel: String? get() = IrrigationLocalCalc.flowSourceLabel(resolvedFlowSource)
+}
 
 @Serializable
 data class IrrigationBlockResult(
@@ -259,6 +282,10 @@ data class IrrigationPreviewResult(
     @SerialName("valve_name") val valveName: String? = null,
     @SerialName("irrigation_system_name") val irrigationSystemName: String? = null,
     @SerialName("flow_litres_per_hour_used") val flowLphUsed: Double? = null,
+    // SQL 131 — how the configured flow was resolved for this preview.
+    @SerialName("flow_source") val flowSource: String? = null,
+    @SerialName("flow_is_estimated") val flowIsEstimated: Boolean? = null,
+    @SerialName("flow_explanation") val flowExplanation: String? = null,
     @SerialName("vintage_year") val vintageYear: Int? = null,
 )
 
@@ -450,6 +477,107 @@ object IrrigationLocalCalc {
     fun endOfSession(startMinutesOfDay: Int, durationMinutes: Int): SessionEnd {
         val total = startMinutesOfDay + durationMinutes
         return SessionEnd(total % 1440, total / 1440)
+    }
+
+    // MARK: Configured-flow resolution parity (SQL 131)
+
+    /** Shared labels for SQL 131 `resolved_flow_source` values. */
+    fun flowSourceLabel(source: String?): String? = when (source) {
+        "measured_valve_flow" -> "Measured valve flow"
+        "configured_valve_flow" -> "Configured valve flow"
+        "row_emitter_flow" -> "Connected row emitters \u00D7 block emitter output"
+        "block_emitter_flow" -> "Connected block emitters \u00D7 block emitter output"
+        else -> null
+    }
+
+    /**
+     * One connected block's flow-derivation inputs, mirroring the jsonb
+     * components fed to `_irrigation_resolve_flow` in sql/131.
+     */
+    data class FlowComponent(
+        val blockName: String,
+        val isRows: Boolean,
+        val emitterCount: Double?,
+        val flowPerEmitterLph: Double?,
+        val blockConfiguredFlowLph: Double? = null,
+    )
+
+    data class ResolvedFlow(
+        val flowLitresPerHour: Double?,
+        val source: String,
+        val isEstimated: Boolean?,
+        val warning: String?,
+        val emitterCount: Int?,
+    )
+
+    /**
+     * Byte-for-byte mirror of `_irrigation_resolve_flow` (sql/131):
+     * measured valve flow -> configured valve flow -> connected emitter flow ->
+     * unavailable. A partial total is never returned; missing components
+     * resolve to null, never zero. Offline parity only — the server value is
+     * always authoritative.
+     */
+    fun resolveFlow(
+        measuredValveFlow: Double?,
+        configuredValveFlow: Double?,
+        components: List<FlowComponent>,
+    ): ResolvedFlow {
+        if (measuredValveFlow != null && measuredValveFlow > 0) {
+            return ResolvedFlow(measuredValveFlow, "measured_valve_flow", false, null, null)
+        }
+        if (configuredValveFlow != null && configuredValveFlow > 0) {
+            return ResolvedFlow(configuredValveFlow, "configured_valve_flow", false, null, null)
+        }
+
+        val warnings = mutableListOf<String>()
+        var total = 0.0
+        var totalEmitters = 0.0
+        var allEmitters = true
+        var allRows = true
+        var anyResolved = false
+
+        if (components.isEmpty()) {
+            warnings.add("Automatic flow is unavailable because this valve has no active block connections.")
+        }
+        for (component in components) {
+            if (!component.isRows) allRows = false
+            val blockFlow = component.blockConfiguredFlowLph
+            val emitters = component.emitterCount
+            val flowPerEmitter = component.flowPerEmitterLph
+            when {
+                !component.isRows && blockFlow != null && blockFlow > 0 -> {
+                    total += round3(blockFlow)
+                    allEmitters = false
+                    anyResolved = true
+                }
+                emitters != null && emitters > 0 && flowPerEmitter != null && flowPerEmitter > 0 -> {
+                    total += round3(emitters * flowPerEmitter)
+                    totalEmitters += emitters
+                    anyResolved = true
+                }
+                else -> {
+                    if ((flowPerEmitter ?: 0.0) <= 0) {
+                        warnings.add("Automatic flow is unavailable because ${component.blockName} does not have a valid flow-per-emitter value.")
+                    }
+                    if ((emitters ?: 0.0) <= 0) {
+                        warnings.add("Automatic flow is unavailable because ${component.blockName} does not have a complete saved emitter count.")
+                    }
+                }
+            }
+        }
+        if (warnings.isNotEmpty() || !anyResolved) {
+            if (warnings.isEmpty()) {
+                warnings.add("Automatic flow is unavailable because the connected blocks cannot be safely calculated.")
+            }
+            return ResolvedFlow(null, "unavailable", null, warnings.first(), null)
+        }
+        return ResolvedFlow(
+            flowLitresPerHour = round3(total),
+            source = if (allRows) "row_emitter_flow" else "block_emitter_flow",
+            isEstimated = true,
+            warning = null,
+            emitterCount = if (allEmitters && totalEmitters > 0) totalEmitters.toInt() else null,
+        )
     }
 
     fun totalVolume(

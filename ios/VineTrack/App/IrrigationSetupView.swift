@@ -36,6 +36,7 @@ struct IrrigationSetupView: View {
     }
 
     private var vineyardId: UUID? { store.selectedVineyardId }
+    private var formatter: RegionFormatter { RegionFormatter(settings: store.settings.regionSettings) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -256,6 +257,7 @@ struct IrrigationSetupView: View {
                 }
                 Section("Per valve") {
                     ForEach(status.valves) { valve in
+                        let flowReady = valve.automaticFlowReady ?? valve.hasConfiguredFlow
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(valve.valveName)
@@ -263,14 +265,19 @@ struct IrrigationSetupView: View {
                                 Text(valve.configurationSummary)
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
+                                if flowReady, let flow = valve.resolvedFlowLitresPerHour {
+                                    Text(automaticFlowDetail(valve: valve, flow: flow))
+                                        .font(.caption2)
+                                        .foregroundStyle(.cyan)
+                                }
                             }
                             Spacer()
                             Text(valve.allocationOk ? "Ready" : (valve.blockCount == 0 ? "Not configured" : "\(String(format: "%.1f", valve.allocationTotal))%"))
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(valve.allocationOk ? .green : .orange)
-                            Image(systemName: valve.hasConfiguredFlow ? "drop.fill" : "drop")
+                            Image(systemName: flowReady ? "drop.fill" : "drop")
                                 .font(.caption)
-                                .foregroundStyle(valve.hasConfiguredFlow ? .cyan : .secondary)
+                                .foregroundStyle(flowReady ? .cyan : .secondary)
                         }
                     }
                 }
@@ -285,6 +292,18 @@ struct IrrigationSetupView: View {
                 ProgressView()
             }
         }
+    }
+
+    /// "Automatic flow ready · 12,689.6 L/h · Derived from 7,931 connected emitters".
+    private func automaticFlowDetail(valve: IrrigationSetupStatus.ValveStatus, flow: Double) -> String {
+        var parts = ["Automatic flow ready", IrrigationFormat.flow(flow, formatter: formatter)]
+        if let emitters = valve.resolvedFlowEmitterCount {
+            parts.append("Derived from \(emitters.formatted()) connected emitters")
+        } else if let label = IrrigationFlowSource.label(valve.resolvedFlowSource),
+                  valve.resolvedFlowSource != "configured_valve_flow" {
+            parts.append(label)
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func statusRow(_ title: String, _ ok: Bool, detail: String) -> some View {
