@@ -74,7 +74,16 @@ foreach ($fn in $Functions) {
         exit 1
     }
 
-    & supabase functions deploy $fn --project-ref $ProjectRef
+    if ($fn -eq "revenuecat-webhook") {
+        # CRITICAL: RevenueCat sends a shared-secret Authorization header, NOT
+        # a Supabase JWT. With gateway JWT verification on, every delivery
+        # would be rejected with 401 before the function's own auth check
+        # runs. The function authenticates itself (constant-time secret
+        # compare, fails closed when REVENUECAT_WEBHOOK_SECRET is unset).
+        & supabase functions deploy $fn --project-ref $ProjectRef --no-verify-jwt
+    } else {
+        & supabase functions deploy $fn --project-ref $ProjectRef
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Deployment failed for $fn" -ForegroundColor Red
         exit $LASTEXITCODE

@@ -1,5 +1,35 @@
 # revenuecat-webhook — test fixtures (Phase 2B)
 
+## Deploying (IMPORTANT: `--no-verify-jwt`)
+
+RevenueCat sends a shared-secret `Authorization` header, NOT a Supabase JWT.
+The function MUST be deployed with gateway JWT verification off, otherwise
+the gateway rejects every delivery with 401 before the function's own
+constant-time secret check runs:
+
+```bash
+# 1. Set the secret ONCE (never commit it; also paste the same value into
+#    RevenueCat dashboard -> Integrations -> Webhooks -> Authorization header):
+supabase secrets set REVENUECAT_WEBHOOK_SECRET="<random long secret>" --project-ref tbafuqwruefgkbyxrxyb
+
+# 2. Deploy (scripts/deploy-edge-functions.sh|.ps1 already do this):
+supabase functions deploy revenuecat-webhook --project-ref tbafuqwruefgkbyxrxyb --no-verify-jwt
+```
+
+The function fails closed: until the secret is set, every request returns
+500 "Webhook secret not configured" and nothing is stored.
+
+## Local controlled tests (no database, no secrets)
+
+The auth / idempotency / unknown-product / sanitisation behaviour is covered
+by a local harness that runs this exact function against a mock Supabase:
+
+```bash
+deno run --allow-net --allow-env --allow-run scripts/revenuecat-webhook-localtest/run-tests.ts
+```
+
+## Live test fixtures
+
 Representative payloads for exercising the webhook without real receipts or
 customer data. Replace `<SECRET>` with the value of the
 `REVENUECAT_WEBHOOK_SECRET` function secret, `<FN_URL>` with the deployed

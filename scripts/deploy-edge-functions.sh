@@ -67,7 +67,16 @@ for fn in "${FUNCTIONS[@]}"; do
     echo "Function source not found at supabase/functions/$fn" >&2
     exit 1
   fi
-  supabase functions deploy "$fn" --project-ref "$PROJECT_REF"
+  if [ "$fn" = "revenuecat-webhook" ]; then
+    # CRITICAL: RevenueCat sends a shared-secret Authorization header, NOT a
+    # Supabase JWT. With gateway JWT verification on, every delivery would be
+    # rejected with 401 before the function's own auth check runs. The
+    # function authenticates itself (constant-time secret compare, fails
+    # closed when REVENUECAT_WEBHOOK_SECRET is unset).
+    supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --no-verify-jwt
+  else
+    supabase functions deploy "$fn" --project-ref "$PROJECT_REF"
+  fi
   echo "Deployed: $fn"
 done
 
