@@ -652,6 +652,65 @@ nonisolated struct IrrigationSessionBlock: Decodable, Sendable, Identifiable, Ha
     }
 }
 
+/// Frozen controller-import metadata (SQL 142 `import_info`, snapshot `import`).
+/// Present only on sessions created by a controller import (e.g. Galcon GSI).
+nonisolated struct IrrigationImportInfo: Decodable, Sendable, Hashable {
+    let provider: String?
+    let batchId: UUID?
+    let sourceRowNumber: Int?
+    let fileName: String?
+    let unitName: String?
+    let program: String?
+    let externalValveName: String?
+    let externalStationCode: String?
+    let reportedRuntimeSeconds: Int?
+    let reportedWaterLitres: Double?
+    let reportedFlowLitresPerHour: Double?
+    let originalWaterValue: Double?
+    let originalWaterUnit: String?
+    let originalFlowValue: Double?
+    let originalFlowUnit: String?
+    let sourceComment: String?
+    let classification: String?
+    let waterFlowReconciliation: String?
+    let validationWarnings: [String]?
+    let thresholdLitres: Double?
+    let overrideThreshold: Bool?
+    let overrideTest: Bool?
+    let overrideReason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case provider, program, classification
+        case batchId = "batch_id"
+        case sourceRowNumber = "source_row_number"
+        case fileName = "file_name"
+        case unitName = "unit_name"
+        case externalValveName = "external_valve_name"
+        case externalStationCode = "external_station_code"
+        case reportedRuntimeSeconds = "reported_runtime_seconds"
+        case reportedWaterLitres = "reported_water_litres"
+        case reportedFlowLitresPerHour = "reported_flow_litres_per_hour"
+        case originalWaterValue = "original_water_value"
+        case originalWaterUnit = "original_water_unit"
+        case originalFlowValue = "original_flow_value"
+        case originalFlowUnit = "original_flow_unit"
+        case sourceComment = "source_comment"
+        case waterFlowReconciliation = "water_flow_reconciliation"
+        case validationWarnings = "validation_warnings"
+        case thresholdLitres = "threshold_litres"
+        case overrideThreshold = "override_threshold"
+        case overrideTest = "override_test"
+        case overrideReason = "override_reason"
+    }
+
+    var providerLabel: String {
+        switch provider {
+        case "galcon_gsi": return "Galcon GSI"
+        default: return provider ?? "Controller import"
+        }
+    }
+}
+
 nonisolated struct IrrigationSession: Decodable, Sendable, Identifiable, Hashable {
     let id: UUID
     let vineyardId: UUID
@@ -678,6 +737,8 @@ nonisolated struct IrrigationSession: Decodable, Sendable, Identifiable, Hashabl
     let blocks: [IrrigationSessionBlock]
     let duplicate: Bool?
     let warnings: [String]?
+    /// SQL 142 — frozen controller-import metadata (nil for manual sessions).
+    let importInfo: IrrigationImportInfo?
 
     enum CodingKeys: String, CodingKey {
         case id, status, notes, blocks, duplicate, warnings
@@ -698,10 +759,27 @@ nonisolated struct IrrigationSession: Decodable, Sendable, Identifiable, Hashabl
         case sourceType = "source_type"
         case systemName = "system_name"
         case valveName = "valve_name"
+        case importInfo = "import_info"
     }
 
     var blockNames: String {
         blocks.compactMap { $0.blockName }.joined(separator: ", ")
+    }
+
+    /// True for controller-imported sessions (read-only on mobile).
+    var isImported: Bool { sourceType == "galcon_gsi_import" || importInfo != nil }
+
+    /// Shared source labels (SQL 142 contract).
+    var sourceLabel: String {
+        switch sourceType {
+        case "manual_ios": return "iPhone"
+        case "manual_android": return "Android"
+        case "manual_portal": return "Portal"
+        case "galcon_gsi_import": return "Galcon GSI import"
+        case "csv_import": return "CSV import"
+        case "controller_api": return "Controller"
+        default: return sourceType
+        }
     }
 }
 

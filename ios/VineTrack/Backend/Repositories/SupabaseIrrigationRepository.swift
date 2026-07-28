@@ -265,6 +265,8 @@ nonisolated private struct ListSessionsParams: Encodable, Sendable {
     let valveId: UUID?
     let blockId: UUID?
     let status: String?
+    /// SQL 142: exact source, or the pseudo filters 'manual' / 'imported'.
+    let sourceType: String?
     let includeReversed: Bool
     let limit: Int
     let offset: Int
@@ -277,6 +279,7 @@ nonisolated private struct ListSessionsParams: Encodable, Sendable {
         case valveId = "p_valve_id"
         case blockId = "p_block_id"
         case status = "p_status"
+        case sourceType = "p_source_type"
         case includeReversed = "p_include_reversed"
         case limit = "p_limit"
         case offset = "p_offset"
@@ -498,15 +501,15 @@ final class SupabaseIrrigationRepository {
 
     func listSessions(vineyardId: UUID, vintageYear: Int? = nil, fromDate: String? = nil,
                       toDate: String? = nil, systemId: UUID? = nil, valveId: UUID? = nil,
-                      blockId: UUID? = nil, status: String? = nil,
+                      blockId: UUID? = nil, status: String? = nil, sourceType: String? = nil,
                       includeReversed: Bool = false, limit: Int = 50, offset: Int = 0)
     async throws -> IrrigationSessionList {
         try await client
             .rpc("list_irrigation_sessions", params: ListSessionsParams(
                 vineyardId: vineyardId, vintageYear: vintageYear, fromDate: fromDate,
                 toDate: toDate, irrigationSystemId: systemId, valveId: valveId,
-                blockId: blockId, status: status, includeReversed: includeReversed,
-                limit: limit, offset: offset))
+                blockId: blockId, status: status, sourceType: sourceType,
+                includeReversed: includeReversed, limit: limit, offset: offset))
             .execute().value
     }
 

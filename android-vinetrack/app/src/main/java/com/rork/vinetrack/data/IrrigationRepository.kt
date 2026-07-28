@@ -303,6 +303,43 @@ data class IrrigationSessionBlockRow(
     @SerialName("irrigation_depth_mm") val irrigationDepthMm: Double? = null,
 )
 
+/**
+ * Frozen controller-import metadata (SQL 142 `import_info`). Present only on
+ * sessions created by a controller import (e.g. Galcon GSI).
+ */
+@Serializable
+data class IrrigationImportInfo(
+    val provider: String? = null,
+    @SerialName("batch_id") val batchId: String? = null,
+    @SerialName("source_row_number") val sourceRowNumber: Int? = null,
+    @SerialName("file_name") val fileName: String? = null,
+    @SerialName("unit_name") val unitName: String? = null,
+    val program: String? = null,
+    @SerialName("external_valve_name") val externalValveName: String? = null,
+    @SerialName("external_station_code") val externalStationCode: String? = null,
+    @SerialName("reported_runtime_seconds") val reportedRuntimeSeconds: Int? = null,
+    @SerialName("reported_water_litres") val reportedWaterLitres: Double? = null,
+    @SerialName("reported_flow_litres_per_hour") val reportedFlowLitresPerHour: Double? = null,
+    @SerialName("original_water_value") val originalWaterValue: Double? = null,
+    @SerialName("original_water_unit") val originalWaterUnit: String? = null,
+    @SerialName("original_flow_value") val originalFlowValue: Double? = null,
+    @SerialName("original_flow_unit") val originalFlowUnit: String? = null,
+    @SerialName("source_comment") val sourceComment: String? = null,
+    val classification: String? = null,
+    @SerialName("water_flow_reconciliation") val waterFlowReconciliation: String? = null,
+    @SerialName("validation_warnings") val validationWarnings: List<String>? = null,
+    @SerialName("threshold_litres") val thresholdLitres: Double? = null,
+    @SerialName("override_threshold") val overrideThreshold: Boolean? = null,
+    @SerialName("override_test") val overrideTest: Boolean? = null,
+    @SerialName("override_reason") val overrideReason: String? = null,
+) {
+    val providerLabel: String
+        get() = when (provider) {
+            "galcon_gsi" -> "Galcon GSI"
+            else -> provider ?: "Controller import"
+        }
+}
+
 @Serializable
 data class IrrigationSessionRow(
     val id: String,
@@ -329,8 +366,25 @@ data class IrrigationSessionRow(
     val blocks: List<IrrigationSessionBlockRow> = emptyList(),
     val duplicate: Boolean? = null,
     val warnings: List<String>? = null,
+    // SQL 142 — frozen controller-import metadata (null for manual sessions).
+    @SerialName("import_info") val importInfo: IrrigationImportInfo? = null,
 ) {
     val blockNames: String get() = blocks.mapNotNull { it.blockName }.joinToString(", ")
+
+    /** True for controller-imported sessions (read-only on mobile). */
+    val isImported: Boolean get() = sourceType == "galcon_gsi_import" || importInfo != null
+
+    /** Shared source labels (SQL 142 contract). */
+    val sourceLabel: String
+        get() = when (sourceType) {
+            "manual_ios" -> "iPhone"
+            "manual_android" -> "Android"
+            "manual_portal" -> "Portal"
+            "galcon_gsi_import" -> "Galcon GSI import"
+            "csv_import" -> "CSV import"
+            "controller_api" -> "Controller"
+            else -> sourceType
+        }
 }
 
 @Serializable
@@ -1038,7 +1092,7 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
 
     suspend fun listSessions(
         vineyardId: String, vintageYear: Int? = null, valveId: String? = null,
-        status: String? = null, includeReversed: Boolean = false,
+        status: String? = null, sourceType: String? = null, includeReversed: Boolean = false,
         limit: Int = 50, offset: Int = 0,
     ): IrrigationSessionList = withContext(Dispatchers.IO) {
         decode(ensureSuccess(rpc("list_irrigation_sessions", buildJsonObject {
@@ -1046,6 +1100,8 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
             vintageYear?.let { put("p_vintage_year", it) }
             valveId?.let { put("p_valve_id", it) }
             status?.let { put("p_status", it) }
+            // SQL 142: exact source, or the pseudo filters 'manual' / 'imported'.
+            sourceType?.let { put("p_source_type", it) }
             put("p_include_reversed", includeReversed)
             put("p_limit", limit)
             put("p_offset", offset)

@@ -10,6 +10,7 @@ struct IrrigationHistoryView: View {
     @State private var valves: [IrrigationValve] = []
     @State private var filterValveId: UUID?
     @State private var filterStatus: String?
+    @State private var filterSource: String?
     @State private var includeReversed = false
     @State private var isLoading = true
     @State private var errorMessage: String?
@@ -32,7 +33,14 @@ struct IrrigationHistoryView: View {
                     Text("All statuses").tag(String?.none)
                     Text("Completed").tag(String?.some("completed"))
                     Text("Corrected").tag(String?.some("corrected"))
+                    Text("Imported").tag(String?.some("imported"))
                     Text("Reversed").tag(String?.some("reversed"))
+                }
+                Picker("Source", selection: $filterSource) {
+                    Text("All sources").tag(String?.none)
+                    Text("Manual").tag(String?.some("manual"))
+                    Text("Imported").tag(String?.some("imported"))
+                    Text("Galcon GSI").tag(String?.some("galcon_gsi_import"))
                 }
                 Toggle("Include reversed", isOn: $includeReversed)
             }
@@ -73,6 +81,7 @@ struct IrrigationHistoryView: View {
         .task(id: vineyardId) { await load() }
         .onChange(of: filterValveId) { _, _ in Task { await reload() } }
         .onChange(of: filterStatus) { _, _ in Task { await reload() } }
+        .onChange(of: filterSource) { _, _ in Task { await reload() } }
         .onChange(of: includeReversed) { _, _ in Task { await reload() } }
         .refreshable { await reload() }
     }
@@ -97,6 +106,7 @@ struct IrrigationHistoryView: View {
                 vineyardId: vineyardId,
                 valveId: filterValveId,
                 status: filterStatus,
+                sourceType: filterSource,
                 includeReversed: includeReversed || filterStatus == "reversed",
                 limit: 100)
             sessions = result.sessions
@@ -171,9 +181,15 @@ struct IrrigationSessionDetailView: View {
             }
             LabeledContent("Status") {
                 Text(session.status.capitalized)
-                    .foregroundStyle(session.status == "reversed" ? .red : (session.status == "corrected" ? .orange : .green))
+                    .foregroundStyle(session.status == "reversed" ? .red :
+                                     (session.status == "corrected" ? .orange :
+                                      (session.status == "imported" ? .cyan : .green)))
             }
-            LabeledContent("Source", value: sourceLabel(session.sourceType))
+            LabeledContent("Source", value: session.sourceLabel)
+        }
+
+        if let info = session.importInfo {
+            importSection(info)
         }
 
         Section("Water") {
@@ -233,7 +249,7 @@ struct IrrigationSessionDetailView: View {
             }
         }
 
-        if session.status != "reversed" {
+        if session.status != "reversed" && !session.isImported {
             Section {
                 NavigationLink {
                     IrrigationRecordEntryView(editingSession: session) {
@@ -262,14 +278,75 @@ struct IrrigationSessionDetailView: View {
                 .disabled(isReversing)
             }
         }
+
+        if session.status != "reversed" && session.isImported {
+            Section {
+                Text("Imported sessions are managed through the Portal import workflow. Reversing the whole import batch removes every session it created.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
-    private func sourceLabel(_ source: String) -> String {
-        switch source {
-        case "manual_ios": return "iPhone"
-        case "manual_android": return "Android"
-        case "manual_portal": return "Portal"
-        default: return source
+    /// Frozen controller-import details (SQL 142) — source data, classification
+    /// and warnings stay traceable to the original export row.
+    @ViewBuilder
+    private func importSection(_ info: IrrigationImportInfo) -> some View {
+        Section("Controller Import") {
+            LabeledContent("Provider", value: info.providerLabel)
+            if let unit = info.unitName {
+                LabeledContent("Controller", value: unit)
+            }
+            if let valve = info.externalValveName {
+                LabeledContent("Controller valve", value: valve)
+            }
+            if let program = info.program {
+                LabeledContent("Program", value: program)
+            }
+            if let water = info.originalWaterValue {
+                LabeledContent("Reported water",
+                               value: "\(water.formatted()) \(info.originalWaterUnit ?? "m\u{00B3}")")
+            }
+            if let flow = info.originalFlowValue {
+                LabeledContent("Reported flow",
+                               value: "\(flow.formatted()) \(info.originalFlowUnit ?? "m\u{00B3}/h")")
+            }
+            if let seconds = info.reportedRuntimeSeconds {
+                LabeledContent("Reported runtime",
+                               value: IrrigationFormat.duration(minutes: Int((Double(seconds) / 60.0).rounded())))
+            }
+            if let comment = info.sourceComment, !comment.isEmpty {
+                LabeledContent("Controller status", value: comment)
+            }
+            if let classification = info.classification {
+                LabeledContent("Classification", value: classification.replacingOccurrences(of: "_", with: " ").capitalized)
+            }
+            if let batchId = info.batchId {
+                LabeledContent("Import batch", value: String(batchId.uuidString.prefix(8)).lowercased())
+            }
+            if let rowNumber = info.sourceRowNumber {
+                LabeledContent("Source row", value: "#\(rowNumber)")
+            }
+            if info.overrideThreshold == true || info.overrideTest == true {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(info.overrideTest == true ? "Test-program override applied" : "Volume-threshold override applied",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                    if let reason = info.overrideReason, !reason.isEmpty {
+                        Text(reason)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if let warnings = info.validationWarnings, !warnings.isEmpty {
+                ForEach(warnings, id: \.self) { warning in
+                    Label(warning, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
         }
     }
 

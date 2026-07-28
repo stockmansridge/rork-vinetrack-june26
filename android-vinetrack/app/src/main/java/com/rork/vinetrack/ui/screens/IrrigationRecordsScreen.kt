@@ -571,7 +571,11 @@ private fun SessionRowCard(session: IrrigationSessionRow, fmt: RegionFormatter, 
                     Text(
                         session.status.replaceFirstChar { it.uppercase() },
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (session.status == "reversed") MaterialTheme.colorScheme.error else Color(0xFFEF6C00),
+                        color = when (session.status) {
+                            "reversed" -> MaterialTheme.colorScheme.error
+                            "imported" -> VineColors.Cyan
+                            else -> Color(0xFFEF6C00)
+                        },
                     )
                 }
             }
@@ -581,6 +585,13 @@ private fun SessionRowCard(session: IrrigationSessionRow, fmt: RegionFormatter, 
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
             )
+            if (session.isImported) {
+                Text(
+                    session.importInfo?.providerLabel ?: "Controller import",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = VineColors.Cyan,
+                )
+            }
         }
         Column(horizontalAlignment = Alignment.End) {
             Text(
@@ -2220,11 +2231,18 @@ private fun HistoryContent(
     var sessions by remember { mutableStateOf<List<IrrigationSessionRow>>(emptyList()) }
     var totalCount by remember { mutableIntStateOf(0) }
     var includeReversed by remember { mutableStateOf(false) }
+    // SQL 142 source filter: null = all, 'manual' = any manual, 'imported' = controller imports.
+    var sourceFilter by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(vineyardId, includeReversed) {
+    LaunchedEffect(vineyardId, includeReversed, sourceFilter) {
         runCatching {
-            val result = repo.listSessions(vineyardId, includeReversed = includeReversed, limit = 100)
+            val result = repo.listSessions(
+                vineyardId,
+                sourceType = sourceFilter,
+                includeReversed = includeReversed,
+                limit = 100,
+            )
             sessions = result.sessions
             totalCount = result.totalCount
         }.onFailure { error = it.message }
@@ -2237,6 +2255,24 @@ private fun HistoryContent(
                 Text("Include reversed", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.width(6.dp))
                 Switch(checked = includeReversed, onCheckedChange = { includeReversed = it })
+            }
+        }
+        item {
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf<Pair<String?, String>>(
+                    null to "All sources",
+                    "manual" to "Manual",
+                    "imported" to "Imported",
+                ).forEach { (value, label) ->
+                    FilterChip(
+                        selected = sourceFilter == value,
+                        onClick = { sourceFilter = value },
+                        label = { Text(label) },
+                    )
+                }
             }
         }
         error?.let { item { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) } }
@@ -2291,17 +2327,52 @@ private fun DetailContent(
                     DetailLine("Method", s.calculationMethod.replace('_', ' '))
                     s.flowLph?.let { DetailLine("Flow", IrrigationUnits.flow(it, fmt)) }
                     DetailLine("Status", s.status.replaceFirstChar { it.uppercase() })
-                    DetailLine(
-                        "Source",
-                        when (s.sourceType) {
-                            "manual_ios" -> "iPhone"
-                            "manual_android" -> "Android"
-                            "manual_portal" -> "Portal"
-                            else -> s.sourceType
-                        },
-                    )
+                    DetailLine("Source", s.sourceLabel)
                     DetailLine("Total water", IrrigationUnits.volume(s.totalVolumeLitres, fmt))
                     s.effectiveVolumeLitres?.let { DetailLine("Effective water", IrrigationUnits.volume(it, fmt)) }
+                }
+            }
+            s.importInfo?.let { info ->
+                item { Text("Controller Import", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
+                item {
+                    Column(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)).padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        DetailLine("Provider", info.providerLabel)
+                        info.unitName?.let { DetailLine("Controller", it) }
+                        info.externalValveName?.let { DetailLine("Controller valve", it) }
+                        info.program?.let { DetailLine("Program", it) }
+                        info.originalWaterValue?.let {
+                            DetailLine("Reported water", "$it ${info.originalWaterUnit ?: "m\u00B3"}")
+                        }
+                        info.originalFlowValue?.let {
+                            DetailLine("Reported flow", "$it ${info.originalFlowUnit ?: "m\u00B3/h"}")
+                        }
+                        info.reportedRuntimeSeconds?.let {
+                            DetailLine("Reported runtime", formatMinutes(((it / 60.0) + 0.5).toInt()))
+                        }
+                        info.sourceComment?.takeIf { it.isNotEmpty() }?.let { DetailLine("Controller status", it) }
+                        info.classification?.let {
+                            DetailLine("Classification", it.replace('_', ' ').replaceFirstChar { c -> c.uppercase() })
+                        }
+                        info.batchId?.let { DetailLine("Import batch", it.take(8)) }
+                        info.sourceRowNumber?.let { DetailLine("Source row", "#$it") }
+                        if (info.overrideThreshold == true || info.overrideTest == true) {
+                            Text(
+                                if (info.overrideTest == true) "Test-program override applied" else "Volume-threshold override applied",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFFEF6C00),
+                            )
+                            info.overrideReason?.takeIf { it.isNotEmpty() }?.let {
+                                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        info.validationWarnings.orEmpty().forEach { warning ->
+                            Text(warning, style = MaterialTheme.typography.labelSmall, color = Color(0xFFEF6C00))
+                        }
+                    }
                 }
             }
             item { Text("Blocks", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
@@ -2326,7 +2397,7 @@ private fun DetailContent(
                 item { Text("Notes", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
                 item { Text(noteText, style = MaterialTheme.typography.bodySmall) }
             }
-            if (s.status != "reversed") {
+            if (s.status != "reversed" && !s.isImported) {
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { onEdit(s) }, modifier = Modifier.weight(1f)) { Text("Edit") }
@@ -2339,6 +2410,15 @@ private fun DetailContent(
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                     ) { Text("Reverse Record") }
+                }
+            }
+            if (s.status != "reversed" && s.isImported) {
+                item {
+                    Text(
+                        "Imported sessions are managed through the Portal import workflow. Reversing the whole import batch removes every session it created.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }

@@ -409,19 +409,26 @@ struct IrrigationSessionRow: View {
                     Text(IrrigationFormat.displayDate(session.sessionDate))
                         .font(.subheadline.weight(.semibold))
                     if session.status != "completed" {
-                        Text(session.status.capitalized)
+                        Text(session.status == "imported" ? "Imported" : session.status.capitalized)
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(session.status == "reversed" ? Color.red.opacity(0.15) : Color.orange.opacity(0.15),
+                            .background(session.status == "reversed" ? Color.red.opacity(0.15) :
+                                        (session.status == "imported" ? Color.cyan.opacity(0.15) : Color.orange.opacity(0.15)),
                                         in: .capsule)
-                            .foregroundStyle(session.status == "reversed" ? .red : .orange)
+                            .foregroundStyle(session.status == "reversed" ? .red :
+                                             (session.status == "imported" ? .cyan : .orange))
                     }
                 }
                 Text("\(session.valveName ?? "Valve") · \(session.blockNames.isEmpty ? "No blocks" : session.blockNames)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if session.isImported {
+                    Text(session.importInfo?.providerLabel ?? "Controller import")
+                        .font(.caption2)
+                        .foregroundStyle(.cyan)
+                }
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 3) {
