@@ -894,8 +894,9 @@ private fun PinCategoryStatRow(stat: PinCategoryStat) {
 }
 
 /**
- * Wraps [PinEditSheet] with the standard create/update/delete wiring so both the
- * Observations list and the Repairs/Growth launcher share one save path.
+ * Wraps [PinEditSheet] with the create wiring (row snapping, duplicate
+ * detection, offline-safe save). New pins only — existing pins open the
+ * read-only [PinDetailSheet] where Notes is the single editable field.
  */
 @Composable
 private fun PinEditSheetHost(
@@ -911,157 +912,133 @@ private fun PinEditSheetHost(
     var pendingDuplicate by remember { mutableStateOf<PendingPinDuplicate?>(null) }
 
     PinEditSheet(
-        vm = vm,
-        state = state,
         target = target,
         paddocks = state.paddocks,
         onDismiss = onDismiss,
         onSave = { fields, photoUri, onDone ->
-            when (target) {
-                is PinEditTarget.New -> {
-                    // Prefer the GPS fix captured when the category was tapped;
-                    // fall back to the paddock centroid / vineyard coordinate.
-                    val hasGps = target.latitude != null && target.longitude != null
-                    val loc = if (hasGps) {
-                        target.latitude to target.longitude
-                    } else {
-                        defaultLocation(fields.paddockId, state)
-                    }
-                    // Resolve the snapped row attachment up front so both the
-                    // duplicate check and the post-save confirmation can reuse it.
-                    // Only snap when we have a real GPS fix; a centroid fallback
-                    // would produce a meaningless along-row distance.
-                    val paddock = state.paddocks.firstOrNull { it.id == fields.paddockId }
-                    val attachment = if (hasGps) {
-                        RowAttachment.resolve(
-                            paddock = paddock,
-                            latitude = target.latitude,
-                            longitude = target.longitude,
-                            side = fields.side?.ifBlank { null },
-                        )
-                    } else {
-                        null
-                    }
-                    // Customer-friendly confirmation echoing the attached row/side
-                    // when the pin snapped to a mapped row. Null when not attached,
-                    // so an un-snapped pin never shows a misleading row line.
-                    val dropConfirmation = attachment?.let { att ->
-                        val rowLabel = if (att.pinRowNumber % 1.0 == 0.0) {
-                            att.pinRowNumber.toInt().toString()
-                        } else {
-                            att.pinRowNumber.toString()
-                        }
-                        val sideLabel = att.pinSide?.lowercase()
-                            ?.takeIf { it == "left" || it == "right" }
-                        if (sideLabel != null) {
-                            "Pin saved — attached to row $rowLabel · $sideLabel side"
-                        } else {
-                            "Pin saved — attached to row $rowLabel"
-                        }
-                    }
-                    // iOS-parity identity: persist the pin's name as button_name
-                    // and, when the title matches a configured launcher button,
-                    // its colour token as button_color.
-                    val colorToken = pinColorMap(state)[fields.title]?.ifBlank { null }
-                    val doCreate: () -> Unit = {
-                        vm.createPin(
-                            title = fields.title,
-                            mode = fields.mode,
-                            category = fields.category,
-                            notes = fields.notes,
-                            side = fields.side,
-                            paddockId = fields.paddockId,
-                            rowNumber = fields.rowNumber,
-                            isCompleted = fields.isCompleted,
-                            latitude = loc?.first,
-                            longitude = loc?.second,
-                            buttonName = fields.title,
-                            buttonColor = colorToken,
-                            // Correct the launch-time compass heading to true
-                            // north when a location is known; keep the raw
-                            // magnetic value otherwise rather than dropping it.
-                            heading = target.bearing?.let { b ->
-                                val hLat = loc?.first
-                                val hLng = loc?.second
-                                if (hLat != null && hLng != null) compassTrueHeading(b, hLat, hLng) else b
-                            },
-                            attachToRow = hasGps,
-                            photoUri = photoUri,
-                        ) { ok ->
-                            onDone(ok)
-                            if (ok) {
-                                dropConfirmation?.let(onConfirmation)
-                                onDismiss()
-                            }
-                        }
-                    }
-                    // Duplicate detection runs only for launcher pins with a real
-                    // GPS fix. The preferred path snaps to a row and compares
-                    // along-row distance; legacy pins lacking row attachment are
-                    // caught by a conservative raw-distance fallback.
-                    // Preferred: along-row duplicate using the snapped attachment.
-                    val alongRowDup = attachment?.let {
-                        PinDuplicateChecker.nearbyAlongRow(
-                            candidate = it,
-                            paddockId = fields.paddockId,
-                            mode = fields.mode,
-                            pins = state.pins,
-                        )
-                    }
-                    // Fallback: raw-distance match against older pins without row
-                    // attachment, scoped to the same block / mode / side / manual row.
-                    val duplicate = alongRowDup ?: if (hasGps) {
-                        PinDuplicateChecker.nearbyRawDistance(
-                            latitude = target.latitude,
-                            longitude = target.longitude,
-                            paddockId = fields.paddockId,
-                            mode = fields.mode,
-                            side = fields.side?.ifBlank { null },
-                            manualRowNumber = fields.rowNumber,
-                            paddock = paddock,
-                            pins = state.pins,
-                        )
-                    } else {
-                        null
-                    }
-                    if (duplicate != null) {
-                        // Stop the save spinner and ask before creating.
-                        onDone(false)
-                        pendingDuplicate = PendingPinDuplicate(
-                            existing = duplicate.pin,
-                            rowNumber = if (duplicate.alongRow) attachment?.pinRowNumber else null,
-                            side = if (duplicate.alongRow) {
-                                attachment?.pinSide?.lowercase()
-                                    ?.takeIf { it == "left" || it == "right" }
-                            } else {
-                                null
-                            },
-                            distanceM = duplicate.distanceM,
-                            alongRow = duplicate.alongRow,
-                            onCreateAnyway = doCreate,
-                        )
-                    } else {
-                        doCreate()
-                    }
+            // Prefer the GPS fix captured when the category was tapped;
+            // fall back to the paddock centroid / vineyard coordinate.
+            val hasGps = target.latitude != null && target.longitude != null
+            val loc = if (hasGps) {
+                target.latitude to target.longitude
+            } else {
+                defaultLocation(fields.paddockId, state)
+            }
+            // Resolve the snapped row attachment up front so both the
+            // duplicate check and the post-save confirmation can reuse it.
+            // Only snap when we have a real GPS fix; a centroid fallback
+            // would produce a meaningless along-row distance.
+            val paddock = state.paddocks.firstOrNull { it.id == fields.paddockId }
+            val attachment = if (hasGps) {
+                RowAttachment.resolve(
+                    paddock = paddock,
+                    latitude = target.latitude,
+                    longitude = target.longitude,
+                    side = fields.side?.ifBlank { null },
+                )
+            } else {
+                null
+            }
+            // Customer-friendly confirmation echoing the attached row/side
+            // when the pin snapped to a mapped row. Null when not attached,
+            // so an un-snapped pin never shows a misleading row line.
+            val dropConfirmation = attachment?.let { att ->
+                val rowLabel = if (att.pinRowNumber % 1.0 == 0.0) {
+                    att.pinRowNumber.toInt().toString()
+                } else {
+                    att.pinRowNumber.toString()
                 }
-                is PinEditTarget.Existing -> {
-                    vm.updatePin(
-                        pinId = target.pin.id,
-                        title = fields.title,
-                        mode = fields.mode,
-                        category = fields.category,
-                        notes = fields.notes,
-                        side = fields.side,
-                        paddockId = fields.paddockId,
-                        rowNumber = fields.rowNumber,
-                        isCompleted = fields.isCompleted,
-                    ) { ok -> onDone(ok); if (ok) onDismiss() }
+                val sideLabel = att.pinSide?.lowercase()
+                    ?.takeIf { it == "left" || it == "right" }
+                if (sideLabel != null) {
+                    "Pin saved — attached to row $rowLabel · $sideLabel side"
+                } else {
+                    "Pin saved — attached to row $rowLabel"
                 }
             }
-        },
-        onDelete = { onDone ->
-            if (target is PinEditTarget.Existing) {
-                vm.deletePin(target.pin.id) { ok -> onDone(ok); if (ok) onDismiss() }
+            // iOS-parity identity: persist the pin's name as button_name
+            // and, when the title matches a configured launcher button,
+            // its colour token as button_color.
+            val colorToken = pinColorMap(state)[fields.title]?.ifBlank { null }
+            val doCreate: () -> Unit = {
+                vm.createPin(
+                    title = fields.title,
+                    mode = fields.mode,
+                    category = fields.category,
+                    notes = fields.notes,
+                    side = fields.side,
+                    paddockId = fields.paddockId,
+                    rowNumber = fields.rowNumber,
+                    isCompleted = fields.isCompleted,
+                    latitude = loc?.first,
+                    longitude = loc?.second,
+                    buttonName = fields.title,
+                    buttonColor = colorToken,
+                    // Correct the launch-time compass heading to true
+                    // north when a location is known; keep the raw
+                    // magnetic value otherwise rather than dropping it.
+                    heading = target.bearing?.let { b ->
+                        val hLat = loc?.first
+                        val hLng = loc?.second
+                        if (hLat != null && hLng != null) compassTrueHeading(b, hLat, hLng) else b
+                    },
+                    attachToRow = hasGps,
+                    photoUri = photoUri,
+                ) { ok ->
+                    onDone(ok)
+                    if (ok) {
+                        dropConfirmation?.let(onConfirmation)
+                        onDismiss()
+                    }
+                }
+            }
+            // Duplicate detection runs only for launcher pins with a real
+            // GPS fix. The preferred path snaps to a row and compares
+            // along-row distance; legacy pins lacking row attachment are
+            // caught by a conservative raw-distance fallback.
+            // Preferred: along-row duplicate using the snapped attachment.
+            val alongRowDup = attachment?.let {
+                PinDuplicateChecker.nearbyAlongRow(
+                    candidate = it,
+                    paddockId = fields.paddockId,
+                    mode = fields.mode,
+                    pins = state.pins,
+                )
+            }
+            // Fallback: raw-distance match against older pins without row
+            // attachment, scoped to the same block / mode / side / manual row.
+            val duplicate = alongRowDup ?: if (hasGps) {
+                PinDuplicateChecker.nearbyRawDistance(
+                    latitude = target.latitude,
+                    longitude = target.longitude,
+                    paddockId = fields.paddockId,
+                    mode = fields.mode,
+                    side = fields.side?.ifBlank { null },
+                    manualRowNumber = fields.rowNumber,
+                    paddock = paddock,
+                    pins = state.pins,
+                )
+            } else {
+                null
+            }
+            if (duplicate != null) {
+                // Stop the save spinner and ask before creating.
+                onDone(false)
+                pendingDuplicate = PendingPinDuplicate(
+                    existing = duplicate.pin,
+                    rowNumber = if (duplicate.alongRow) attachment?.pinRowNumber else null,
+                    side = if (duplicate.alongRow) {
+                        attachment?.pinSide?.lowercase()
+                            ?.takeIf { it == "left" || it == "right" }
+                    } else {
+                        null
+                    },
+                    distanceM = duplicate.distanceM,
+                    alongRow = duplicate.alongRow,
+                    onCreateAnyway = doCreate,
+                )
+            } else {
+                doCreate()
             }
         },
     )
@@ -1518,7 +1495,7 @@ fun PinCategoryLauncherScreen(
     fun openFullForm() {
         // Snapshot the compass at launch so a manually-created pin still
         // records the facing direction (magnetic; corrected to true on save).
-        editing = PinEditTarget.New(mode = mode, bearing = compassHeadingDegrees)
+        editing = PinEditTarget(mode = mode, bearing = compassHeadingDegrees)
     }
 
     /** Quick-tap a category: capture a GPS fix, then quick-create or fall back. */
@@ -2437,20 +2414,22 @@ private fun haversineMetres(lat1: Double, lon1: Double, lat2: Double, lon2: Doub
     return r * 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
 }
 
-private sealed interface PinEditTarget {
-    data class New(
-        val mode: String,
-        val category: String? = null,
-        val side: String? = null,
-        val titleDefault: String? = null,
-        /** GPS fix captured at launch time; null falls back to paddock centroid. */
-        val latitude: Double? = null,
-        val longitude: Double? = null,
-        /** Device bearing at launch time (degrees 0–360), when the fix had one. */
-        val bearing: Double? = null,
-    ) : PinEditTarget
-    data class Existing(val pin: Pin) : PinEditTarget
-}
+/**
+ * Prefill payload for the new-pin create sheet. Pins are read-only after
+ * creation (Notes-only editing on the shared [PinDetailSheet]), so there is
+ * no edit target for an existing pin.
+ */
+private data class PinEditTarget(
+    val mode: String,
+    val category: String? = null,
+    val side: String? = null,
+    val titleDefault: String? = null,
+    /** GPS fix captured at launch time; null falls back to paddock centroid. */
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    /** Device bearing at launch time (degrees 0–360), when the fix had one. */
+    val bearing: Double? = null,
+)
 
 /** Mode-specific glyph for a pin's stored `mode` raw value. */
 private fun pinModeIcon(mode: String?): ImageVector =
@@ -2501,60 +2480,6 @@ private fun PinModeFilterChip(label: String, selected: Boolean, onClick: () -> U
     )
 }
 
-/**
- * Conservative status banner shown on the pin edit sheet when a pin is saved
- * locally but not yet fully synced, or its photo is still waiting / blocked.
- * Display-only and matches the Sync Status wording; it never offers retry
- * controls and gently warns against relying on offline edit/delete for an
- * unsynced pin.
- */
-@Composable
-private fun PinSyncBanner(sync: PinSyncState) {
-    val vine = LocalVineColors.current
-    val accent = if (sync.needsAttention) VineColors.Destructive else VineColors.Warning
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(accent.copy(alpha = 0.12f))
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        if (sync.pendingCreate) {
-            Text("Pending sync", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = accent)
-            Text(
-                "This pin is saved on this device and will sync when you reconnect. Editing or deleting it works best once it has synced.",
-                fontSize = 12.sp,
-                color = vine.textSecondary,
-            )
-        }
-        if (sync.pendingCompletion && !sync.pendingCreate && !sync.needsAttention) {
-            Text("Pending sync", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = accent)
-            Text(
-                "This pin's Done/Open change is saved on this device and will sync when you reconnect.",
-                fontSize = 12.sp,
-                color = vine.textSecondary,
-            )
-        }
-        if (sync.pendingPhoto && !sync.needsAttention) {
-            Text("Photo waiting to upload", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = accent)
-            Text(
-                "The photo for this pin is saved on this device and uploads automatically once the pin has synced.",
-                fontSize = 12.sp,
-                color = vine.textSecondary,
-            )
-        }
-        if (sync.needsAttention) {
-            Text("Needs attention", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = accent)
-            Text(
-                "Something is preventing this pin from finishing sync. It will keep trying when you have a connection.",
-                fontSize = 12.sp,
-                color = vine.textSecondary,
-            )
-        }
-    }
-}
-
 private data class PinFields(
     val title: String,
     val mode: String,
@@ -2571,47 +2496,32 @@ private val pinModes = listOf("Repairs", "Growth")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PinEditSheet(
-    vm: AppViewModel,
-    state: AppUiState,
     target: PinEditTarget,
     paddocks: List<Paddock>,
     onDismiss: () -> Unit,
     onSave: (PinFields, Uri?, (Boolean) -> Unit) -> Unit,
-    onDelete: ((Boolean) -> Unit) -> Unit,
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
-    // Re-read the live pin so the photo section reflects uploads/removals.
-    val existing = (target as? PinEditTarget.Existing)?.let { t ->
-        state.pins.firstOrNull { it.id == t.pin.id } ?: t.pin
-    }
 
-    val newTarget = target as? PinEditTarget.New
-    val initialMode = newTarget?.mode ?: "Repairs"
-    var title by remember { mutableStateOf(existing?.title ?: newTarget?.titleDefault ?: newTarget?.category ?: "") }
-    var mode by remember { mutableStateOf(existing?.mode?.takeIf { it in pinModes } ?: initialMode) }
-    var category by remember { mutableStateOf(existing?.category ?: newTarget?.category ?: "") }
-    var notes by remember { mutableStateOf(existing?.notes ?: "") }
-    // Side persists to pins.side. Seeded from the launcher column or the live pin.
-    var side by remember { mutableStateOf(existing?.side ?: newTarget?.side) }
-    var paddockId by remember { mutableStateOf(existing?.paddockId) }
-    var rowText by remember { mutableStateOf(existing?.rowNumber?.toString() ?: "") }
-    var isCompleted by remember { mutableStateOf(existing?.isCompleted ?: false) }
+    var title by remember { mutableStateOf(target.titleDefault ?: target.category ?: "") }
+    var mode by remember { mutableStateOf(target.mode) }
+    var category by remember { mutableStateOf(target.category ?: "") }
+    var notes by remember { mutableStateOf("") }
+    // Side persists to pins.side. Seeded from the launcher column.
+    var side by remember { mutableStateOf(target.side) }
+    var paddockId by remember { mutableStateOf<String?>(null) }
+    var rowText by remember { mutableStateOf("") }
+    var isCompleted by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
-    var confirmDelete by remember { mutableStateOf(false) }
     var paddockMenu by remember { mutableStateOf(false) }
-    // Photo selected for a brand-new pin (uploaded after the pin is created).
+    // Photo selected for the new pin (uploaded after the pin is created).
     var pendingPhotoUri by remember { mutableStateOf<Uri?>(null) }
 
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
     ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        if (existing != null) {
-            vm.uploadPinPhoto(existing, uri) {}
-        } else {
-            pendingPhotoUri = uri
-        }
+        if (uri != null) pendingPhotoUri = uri
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
@@ -2620,16 +2530,11 @@ private fun PinEditSheet(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                if (existing == null) "New pin" else "Edit pin",
+                "New pin",
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = vine.textPrimary,
             )
-
-            existing?.let { ex ->
-                val sync = state.pinSyncState(ex.id)
-                if (sync.hasAny) PinSyncBanner(sync)
-            }
 
             OutlinedTextField(
                 value = title,
@@ -2700,32 +2605,6 @@ private fun PinEditSheet(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            // Read-only row-attachment summary when the pin snapped to a mapped row.
-            existing?.rowAttachmentLabel?.let { label ->
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Icon(
-                            Icons.Filled.Grass,
-                            contentDescription = null,
-                            tint = VineColors.LeafGreen,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Text(label, fontSize = 13.sp, color = vine.textSecondary)
-                    }
-                    existing.rowAttachmentDetail?.let { detail ->
-                        Text(
-                            detail,
-                            fontSize = 12.sp,
-                            color = vine.textSecondary,
-                            modifier = Modifier.padding(start = 22.dp),
-                        )
-                    }
-                }
-            }
-
             // Left / Right / None side selector — persists to pins.side.
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Side", fontSize = 13.sp, color = vine.textSecondary)
@@ -2753,18 +2632,13 @@ private fun PinEditSheet(
             )
 
             PinPhotoSection(
-                vm = vm,
-                pin = existing,
                 pendingPhotoUri = pendingPhotoUri,
-                busy = state.pinPhotoBusy,
                 onPick = {
                     photoPicker.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                     )
                 },
-                onRemove = {
-                    if (existing != null) vm.removePinPhoto(existing) {} else pendingPhotoUri = null
-                },
+                onRemove = { pendingPhotoUri = null },
             )
 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -2793,82 +2667,31 @@ private fun PinEditSheet(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
             ) {
-                Text(if (existing == null) "Add pin" else "Save changes")
-            }
-
-            if (existing != null) {
-                TextButton(
-                    onClick = { confirmDelete = true },
-                    enabled = !saving,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive)
-                    Text("  Delete pin", color = VineColors.Destructive)
-                }
+                Text("Add pin")
             }
         }
-    }
-
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete pin?") },
-            text = { Text("This removes the pin for your whole team. This can't be undone here.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    saving = true
-                    onDelete { saving = false }
-                }) { Text("Delete", color = VineColors.Destructive) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
-            },
-        )
     }
 }
 
 /**
- * Photo attachment for a pin. Shows the synced photo (existing pin) or the
- * locally picked image (new pin), an add/replace action, a remove action, and
- * an upload progress overlay. One photo per pin, matching the shared
- * `vineyard-pin-photos` storage pattern used by iOS and the web portal.
+ * Photo attachment for a brand-new pin: shows the locally picked image with
+ * replace/remove actions, or an "Add photo" button. The photo uploads after
+ * the pin is created, via the shared `vineyard-pin-photos` storage pattern
+ * used by iOS and the web portal. Existing pins manage their photo from the
+ * read-only detail sheet instead.
  */
 @Composable
 private fun PinPhotoSection(
-    vm: AppViewModel,
-    pin: Pin?,
     pendingPhotoUri: Uri?,
-    busy: Boolean,
     onPick: () -> Unit,
     onRemove: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val photoPath = pin?.photoPath
-    var signedUrl by remember(photoPath) { mutableStateOf<String?>(null) }
-    // Whether the signed-URL request has finished without producing a URL
-    // (offline, or a transient sign failure). Lets the UI show a calm
-    // "unavailable offline" note instead of an endless spinner. Display-only:
-    // it changes no upload/retry/storage behaviour.
-    var photoUnavailable by remember(photoPath) { mutableStateOf(false) }
-
-    LaunchedEffect(photoPath) {
-        signedUrl = null
-        photoUnavailable = false
-        if (!photoPath.isNullOrBlank()) {
-            vm.requestPinPhotoUrl(photoPath) { url ->
-                signedUrl = url
-                photoUnavailable = url.isNullOrBlank()
-            }
-        }
-    }
-
-    val hasImage = pendingPhotoUri != null || !photoPath.isNullOrBlank()
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Photo", fontSize = 13.sp, color = vine.textSecondary)
 
-        if (hasImage) {
+        if (pendingPhotoUri != null) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2877,39 +2700,20 @@ private fun PinPhotoSection(
                     .background(vine.textSecondary.copy(alpha = 0.1f)),
                 contentAlignment = Alignment.Center,
             ) {
-                val model: Any? = pendingPhotoUri ?: signedUrl
-                if (model != null) {
-                    AsyncImage(
-                        model = model,
-                        contentDescription = "Pin photo",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f),
-                    )
-                } else if (photoUnavailable) {
-                    Text(
-                        "Photo unavailable offline",
-                        fontSize = 13.sp,
-                        color = vine.textSecondary,
-                    )
-                } else {
-                    CircularProgressIndicator(color = VineColors.Primary)
-                }
-                if (busy) {
-                    Box(
-                        modifier = Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.35f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator(color = androidx.compose.ui.graphics.Color.White)
-                    }
-                }
+                AsyncImage(
+                    model = pendingPhotoUri,
+                    contentDescription = "Pin photo",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f),
+                )
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onPick, enabled = !busy, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = onPick, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Filled.PhotoCamera, contentDescription = null)
                     Text("  Replace")
                 }
-                TextButton(onClick = onRemove, enabled = !busy) {
+                TextButton(onClick = onRemove) {
                     Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive)
                     Text("  Remove", color = VineColors.Destructive)
                 }
@@ -2917,15 +2721,10 @@ private fun PinPhotoSection(
         } else {
             OutlinedButton(
                 onClick = onPick,
-                enabled = !busy,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                if (busy) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), color = VineColors.Primary)
-                } else {
-                    Icon(Icons.Outlined.AddAPhoto, contentDescription = null)
-                    Text("  Add photo")
-                }
+                Icon(Icons.Outlined.AddAPhoto, contentDescription = null)
+                Text("  Add photo")
             }
         }
     }
