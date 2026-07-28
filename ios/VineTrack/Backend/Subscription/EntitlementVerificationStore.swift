@@ -17,6 +17,22 @@ nonisolated struct EntitlementVerificationSnapshot: Codable, Equatable {
     var productStatus: String?
     /// Last known backend (Supabase) vineyard access flag, when resolved.
     var vineyardAccessActive: Bool?
+
+    // Phase 2A (SQL 132) additive fields. All optional so snapshots written
+    // by earlier builds keep decoding.
+    /// Where the verified access came from: "supabase" | "revenuecat" |
+    /// "legacy_trial".
+    var accessSource: String?
+    /// Backend plan code (e.g. "internal_unlimited") when Supabase granted.
+    var planCode: String?
+    /// Backend machine reason code (e.g. "portal_subscription").
+    var reasonCode: String?
+    /// Earliest known entitlement expiry — cached offline access must never
+    /// extend past this instant regardless of the grace window.
+    var knownExpiresAt: Date?
+    /// Whether the shared-entitlement rollout flag covered this user at the
+    /// last online verification (drives the cold-start path choice).
+    var supabaseEnforced: Bool?
 }
 
 /// Local persistence for the entitlement grace window. Single-snapshot,
@@ -55,14 +71,19 @@ final class EntitlementVerificationStore {
         defaults.removeObject(forKey: key)
     }
 
-    /// Records a fresh verification result. Preserves a previously known
-    /// vineyard access flag for the same user when a new one isn't supplied.
+    /// Records a fresh verification result. Preserves previously known
+    /// optional fields for the same user when new values aren't supplied.
     @discardableResult
     func recordVerification(
         userId: String?,
         entitled: Bool,
         productStatus: String?,
-        vineyardAccessActive: Bool? = nil
+        vineyardAccessActive: Bool? = nil,
+        accessSource: String? = nil,
+        planCode: String? = nil,
+        reasonCode: String? = nil,
+        knownExpiresAt: Date? = nil,
+        supabaseEnforced: Bool? = nil
     ) -> EntitlementVerificationSnapshot {
         let existing = load()
         let sameUser = existing?.userId == userId
@@ -71,7 +92,12 @@ final class EntitlementVerificationStore {
             lastVerifiedAt: Date(),
             wasEntitled: entitled,
             productStatus: productStatus,
-            vineyardAccessActive: vineyardAccessActive ?? (sameUser ? existing?.vineyardAccessActive : nil)
+            vineyardAccessActive: vineyardAccessActive ?? (sameUser ? existing?.vineyardAccessActive : nil),
+            accessSource: accessSource ?? (sameUser ? existing?.accessSource : nil),
+            planCode: planCode ?? (sameUser ? existing?.planCode : nil),
+            reasonCode: reasonCode ?? (sameUser ? existing?.reasonCode : nil),
+            knownExpiresAt: knownExpiresAt ?? (sameUser ? existing?.knownExpiresAt : nil),
+            supabaseEnforced: supabaseEnforced ?? (sameUser ? existing?.supabaseEnforced : nil)
         )
         save(snapshot)
         return snapshot

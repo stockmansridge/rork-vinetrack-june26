@@ -3,6 +3,7 @@ import RevenueCat
 
 struct SubscriptionPaywallView: View {
     @Environment(SubscriptionService.self) private var subscription
+    @Environment(EntitlementGate.self) private var entitlementGate
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(\.dismiss) private var dismiss
 
@@ -23,6 +24,10 @@ struct SubscriptionPaywallView: View {
         }
         .task {
             await subscription.refreshOfferings()
+            // A user can land here moments after a portal purchase or a new
+            // Billing Grant — re-check the shared entitlement so a valid
+            // Supabase grant dismisses the paywall without a purchase.
+            await entitlementGate.refresh()
         }
         .toolbar {
             if !allowDismiss {
@@ -59,6 +64,7 @@ struct SubscriptionPaywallView: View {
                     Button {
                         Task {
                             _ = await subscription.restorePurchases()
+                            await entitlementGate.refresh(force: true)
                         }
                     } label: {
                         HStack {
@@ -68,6 +74,13 @@ struct SubscriptionPaywallView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(subscription.isRestoring)
+
+                    Button {
+                        Task { await entitlementGate.refresh(force: true) }
+                    } label: {
+                        Label("Refresh Access", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .buttonStyle(.bordered)
 
                     Text("Your Apple ID confirms the trial and billing date before you subscribe. Cancel at least 24 hours before the trial ends to avoid renewal.")
                         .font(.footnote)
@@ -114,6 +127,7 @@ struct SubscriptionPaywallView: View {
         Button {
             Task {
                 let unlocked = await subscription.purchase(package: package)
+                await entitlementGate.refresh(force: true)
                 if unlocked && allowDismiss {
                     dismiss()
                 }
@@ -191,7 +205,10 @@ struct SubscriptionPaywallView: View {
             .buttonStyle(.borderedProminent)
 
             Button("Restore Purchases") {
-                Task { await subscription.restorePurchases() }
+                Task {
+                    _ = await subscription.restorePurchases()
+                    await entitlementGate.refresh(force: true)
+                }
             }
             .buttonStyle(.bordered)
         }

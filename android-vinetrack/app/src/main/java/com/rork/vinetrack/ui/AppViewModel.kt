@@ -3289,7 +3289,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             backendChecked = true
             if (access != null && access.grantsAppAccess) {
                 entitlementStore.recordVerification(
-                    userId, true, "supabase:${access.accessSourceLabel}",
+                    userId, true, access.verificationStatusLabel,
                 )
                 return true
             }

@@ -4,6 +4,7 @@ struct NewBackendRootView: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(MigratedDataStore.self) private var store
     @Environment(SubscriptionService.self) private var subscription
+    @Environment(EntitlementGate.self) private var entitlementGate
     @Environment(BiometricAuthService.self) private var biometric
     @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(\.scenePhase) private var scenePhase
@@ -78,11 +79,14 @@ struct NewBackendRootView: View {
                     markDisclaimerAcceptedLocally()
                     disclaimerAccepted = true
                 }
-            } else if subscription.hasAccess {
+            } else if entitlementGate.hasAccess {
+                // Combined access gate (Phase 2A): Supabase entitlement first,
+                // then the RevenueCat / legacy-trial / offline-cache fallbacks.
+                // A valid Supabase grant always suppresses the paywall.
                 NewMainTabView()
-            } else if !subscription.hasResolvedStatus {
+            } else if entitlementGate.isChecking {
                 subscriptionLoadingView
-            } else if subscription.shouldShowOfflineAccessNotice {
+            } else if entitlementGate.shouldShowOfflineNotice {
                 // Offline and we can't confirm access locally (grace expired or
                 // no prior verification). Show a clear "connect to verify"
                 // message instead of the paywall, which can't transact offline.
@@ -112,7 +116,9 @@ struct NewBackendRootView: View {
                 // because `isSignedIn` flipped while `didAttemptRestore`
                 // was still false (and was guarded out).
                 if auth.isSignedIn, let userId = auth.userId {
+                    entitlementGate.login(userId: userId)
                     await subscription.login(userId: userId, userCreatedAt: auth.userCreatedAt)
+                    await entitlementGate.refresh(force: true)
                     if !didApplyDefaultVineyard {
                         await loadVineyardsAndApplyDefault()
                     }
@@ -152,7 +158,9 @@ struct NewBackendRootView: View {
             guard didAttemptRestore else { return }
             if auth.isSignedIn {
                 if let userId = auth.userId {
+                    entitlementGate.login(userId: userId)
                     await subscription.login(userId: userId, userCreatedAt: auth.userCreatedAt)
+                    await entitlementGate.refresh(force: true)
                 }
                 if !didApplyDefaultVineyard {
                     await loadVineyardsAndApplyDefault()
@@ -163,6 +171,7 @@ struct NewBackendRootView: View {
                 disclaimerError = nil
                 didApplyDefaultVineyard = false
                 vineyardLoadFailedNoCache = false
+                entitlementGate.logout()
                 await subscription.logout()
             }
         }
@@ -176,8 +185,16 @@ struct NewBackendRootView: View {
                   !didCheckDisclaimer else { return }
             await checkDisclaimer()
         }
+        .onChange(of: subscription.status) { _, _ in
+            // A RevenueCat entitlement change (purchase, renewal, restore,
+            // expiry pushed via customerInfoStream) re-evaluates the combined
+            // gate so unlocks/locks apply without an app restart.
+            Task { await entitlementGate.refresh(force: true) }
+        }
         .task(id: store.selectedVineyardId) {
             if let vid = store.selectedVineyardId {
+                // Vineyard change — refresh the shared entitlement (throttled).
+                await entitlementGate.refresh()
                 DefaultDataSeeder.seedIfNeeded(store: store)
                 // Refresh shared grape-variety catalogue when a vineyard is
                 // selected so pickers and resolvers can use Supabase as the
@@ -212,6 +229,8 @@ struct NewBackendRootView: View {
                     didEnterBackground = false
                 }
                 Task { await auth.loadPendingInvitations() }
+                // Foreground return — refresh the shared entitlement (throttled).
+                Task { await entitlementGate.refresh() }
             }
             lastScenePhase = newPhase
         }
@@ -347,7 +366,7 @@ struct NewBackendRootView: View {
             && disclaimerAccepted
             && didApplyDefaultVineyard
             && store.selectedVineyard != nil
-            && subscription.hasAccess
+            && entitlementGate.hasAccess
     }
 
     private func evaluateInvitationsSheet() {
@@ -424,9 +443,9 @@ struct NewBackendRootView: View {
         if store.selectedVineyard == nil { return .noVineyards }
         if !didCheckDisclaimer { return .disclaimer }
         if !disclaimerAccepted { return .disclaimer }
-        if subscription.hasAccess { return .dashboard }
-        if !subscription.hasResolvedStatus { return .subscriptionLoading }
-        if subscription.shouldShowOfflineAccessNotice { return .offlineAccessNotice }
+        if entitlementGate.hasAccess { return .dashboard }
+        if entitlementGate.isChecking { return .subscriptionLoading }
+        if entitlementGate.shouldShowOfflineNotice { return .offlineAccessNotice }
         return .paywall
     }
 

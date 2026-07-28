@@ -14,10 +14,11 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
- * Decoded row from the Supabase RPC `get_my_vinetrack_access()` (sql/096) —
- * Android port of the iOS `BackendVineTrackAccess` model. Every field is
- * optional and unknown keys are ignored so schema evolution never breaks the
- * client. The RPC is SECURITY DEFINER and only reports the caller's own access.
+ * Decoded row from the Supabase RPC `get_my_vinetrack_access()` (sql/096,
+ * hardened + extended in sql/132) — Android port of the iOS
+ * `BackendVineTrackAccess` model. Every field is optional and unknown keys
+ * are ignored so schema evolution never breaks the client. The RPC is
+ * SECURITY DEFINER and only reports the caller's own access.
  */
 @Serializable
 data class VineTrackAccessRow(
@@ -44,16 +45,40 @@ data class VineTrackAccessRow(
     @SerialName("manual_grant_reason") val manualGrantReason: String? = null,
     @SerialName("vineyard_id") val vineyardId: String? = null,
     @SerialName("licence_id") val licenceId: String? = null,
+    // SQL 132 additive fields — all optional so this DTO parses both the
+    // old (sql/096) and new (sql/132) response shapes.
+    /**
+     * Stable machine reason: 'internal_unlimited' | 'enterprise_subscription' |
+     * 'portal_subscription' | 'assigned_licence' | 'app_store_subscription' |
+     * 'active_trial' | 'expired' | 'revoked' | 'no_entitlement'.
+     */
+    @SerialName("reason_code") val reasonCode: String? = null,
+    @SerialName("is_unlimited") val isUnlimited: Boolean? = null,
+    @SerialName("can_use_android_app") val canUseAndroidApp: Boolean? = null,
+    @SerialName("last_verified_at") val lastVerifiedAt: String? = null,
+    /** Whether the shared-entitlement rollout flag covers this caller (iOS-only today). */
+    @SerialName("enforcement_enabled") val enforcementEnabled: Boolean? = null,
+    @SerialName("manual_grant_expires_at") val manualGrantExpiresAt: String? = null,
 ) {
     /** Effective "Supabase grants access" flag, tolerant of either key (iOS parity). */
     val grantsSupabaseAccess: Boolean get() = hasSupabaseAccess ?: hasAccess ?: false
 
     /**
-     * Whether the mobile app should be unlocked via the backend. The RPC's
-     * `can_use_ios_app` flag is platform-agnostic ("can use the mobile app");
-     * defaults to the general access flag when absent, matching iOS.
+     * Whether the mobile app should be unlocked via the backend. Prefers the
+     * SQL 132 `can_use_android_app` flag; falls back to the platform-agnostic
+     * `can_use_ios_app` ("can use the mobile app") and finally to the general
+     * access flag, so both old and new resolver responses keep working.
      */
-    val grantsAppAccess: Boolean get() = grantsSupabaseAccess && (canUseIosApp ?: true)
+    val grantsAppAccess: Boolean
+        get() = grantsSupabaseAccess && (canUseAndroidApp ?: canUseIosApp ?: true)
+
+    /** Diagnostic status string persisted in the entitlement snapshot. */
+    val verificationStatusLabel: String
+        get() = buildString {
+            append("supabase:")
+            append(accessSourceLabel)
+            reasonCode?.takeIf { it.isNotBlank() }?.let { append(':').append(it) }
+        }
 
     /** Whether the client should still verify RevenueCat Solo (iOS parity). */
     val requiresSoloCheck: Boolean get() = soloCheckRequired ?: !grantsSupabaseAccess

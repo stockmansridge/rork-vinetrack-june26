@@ -3,6 +3,7 @@ import RevenueCat
 
 struct SubscriptionSettingsView: View {
     @Environment(SubscriptionService.self) private var subscription
+    @Environment(EntitlementGate.self) private var entitlementGate
     @Environment(NewBackendAuthService.self) private var auth
     @State private var showPaywall: Bool = false
     @State private var statusMessage: String?
@@ -20,6 +21,7 @@ struct SubscriptionSettingsView: View {
             if let entitlement {
                 detailsSection(entitlement)
             }
+            entitlementDiagnosticsSection
             helpSection
         }
         .navigationTitle("Subscription")
@@ -27,6 +29,7 @@ struct SubscriptionSettingsView: View {
         .task {
             await subscription.refreshCustomerInfo()
             await subscription.refreshOfferings()
+            await entitlementGate.refresh()
         }
         .sheet(isPresented: $showPaywall) {
             NavigationStack {
@@ -57,6 +60,12 @@ struct SubscriptionSettingsView: View {
     }
 
     private var statusTitle: String {
+        if entitlementGate.outcome == .grantedBySupabase {
+            if entitlementGate.lastServerAccess?.reasonCode == "internal_unlimited" {
+                return "Internal Unlimited access"
+            }
+            return entitlementGate.lastServerAccess?.planName ?? "VineTrack access active"
+        }
         if subscription.isSubscribed { return "Vineyard Tracker Pro" }
         if subscription.isInInitialFreeAccessPeriod { return "Free access active" }
         return "No active subscription"
@@ -210,9 +219,10 @@ struct SubscriptionSettingsView: View {
         isRefreshingAccess = true
         defer { isRefreshingAccess = false }
         await subscription.refreshCustomerInfo()
-        statusMessage = subscription.hasAccess
+        await entitlementGate.refresh(force: true)
+        statusMessage = entitlementGate.hasAccess
             ? "Access refreshed."
-            : (subscription.lastError ?? "Subscription not found.")
+            : (subscription.lastError ?? "No valid entitlement found.")
     }
 
     @ViewBuilder
@@ -228,6 +238,7 @@ struct SubscriptionSettingsView: View {
             Button {
                 Task {
                     let restored = await subscription.restorePurchases()
+                    await entitlementGate.refresh(force: true)
                     statusMessage = restored
                         ? "Purchases restored."
                         : (subscription.lastError ?? "No active purchases found.")
@@ -276,6 +287,87 @@ struct SubscriptionSettingsView: View {
                 LabeledContent("Trial", value: "Active")
             }
         }
+    }
+
+    // MARK: - Entitlement diagnostics (Phase 2A)
+
+    private var entitlementDiagnosticsSection: some View {
+        Section {
+            LabeledContent("Effective access", value: entitlementGate.hasAccess ? "Granted" : "Denied")
+            LabeledContent("Access state", value: entitlementGate.stateLabel)
+            if let source = diagnosticAccessSource {
+                LabeledContent("Access source", value: source)
+            }
+            if let plan = entitlementGate.lastServerAccess?.planCode {
+                LabeledContent("Plan", value: plan)
+            }
+            if let reason = entitlementGate.lastServerAccess?.reasonCode {
+                LabeledContent("Server reason", value: reason)
+            }
+            LabeledContent("Server check", value: serverCheckText)
+            LabeledContent("Result", value: entitlementGate.isUsingCachedResult ? "Cached (offline)" : "Live")
+            if let expiry = entitlementGate.lastServerAccess?.knownExpiresAt(now: Date()) {
+                LabeledContent("Known expiry", value: expiry.formatted(date: .abbreviated, time: .shortened))
+            }
+            LabeledContent("RevenueCat \"pro\"", value: subscription.isSubscribed ? "Active" : "Inactive")
+            if let rcUserId = subscription.customerInfo?.originalAppUserId {
+                LabeledContent("RevenueCat user", value: truncatedId(rcUserId))
+            }
+            LabeledContent("Shared entitlement", value: entitlementGate.enforcementEnabled ? "Enforced" : "Legacy gate")
+            if let mismatch = mismatchText {
+                Label(mismatch, systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
+            if let userId = auth.userId?.uuidString {
+                LabeledContent("Supabase user", value: truncatedId(userId))
+            }
+        } header: {
+            Text("Access diagnostics")
+        } footer: {
+            Text("VineTrack checks your account's shared entitlement first (portal subscriptions and internal grants), then the App Store subscription. No purchase details are shown here.")
+        }
+    }
+
+    private var diagnosticAccessSource: String? {
+        switch entitlementGate.outcome {
+        case .grantedBySupabase:
+            return "Supabase (\(entitlementGate.lastServerAccess?.accessSourceLabel ?? "granted"))"
+        case .grantedByRevenueCat:
+            return "RevenueCat (App Store)"
+        case .grantedByLegacyTrial:
+            return "Initial free period"
+        case .offlineCachedAccess:
+            return "Offline cache"
+        default:
+            return nil
+        }
+    }
+
+    private var serverCheckText: String {
+        guard let date = entitlementGate.lastRefreshedAt else { return "Never" }
+        let when = date.formatted(date: .abbreviated, time: .shortened)
+        switch entitlementGate.lastServerResult {
+        case .granted: return "\(when) · granted"
+        case .denied: return "\(when) · denied"
+        case .unreachable: return "\(when) · unreachable"
+        case nil: return when
+        }
+    }
+
+    private var mismatchText: String? {
+        if entitlementGate.hasServerMismatch {
+            return "RevenueCat grants access; Supabase does not. Reported for review — your access is unaffected."
+        }
+        if entitlementGate.outcome == .grantedBySupabase && !subscription.isSubscribed {
+            return "Supabase grants access; RevenueCat does not. This is expected for portal subscriptions and internal grants."
+        }
+        return nil
+    }
+
+    private func truncatedId(_ id: String) -> String {
+        guard id.count > 12 else { return id }
+        return "\(id.prefix(8))…"
     }
 
     @Environment(\.openURL) private var openURL

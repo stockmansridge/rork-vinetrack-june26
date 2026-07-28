@@ -49,7 +49,8 @@ struct VineTrackApp: App {
     @State private var historicalYieldRecordSyncService = HistoricalYieldRecordSyncService()
     @State private var pruningSyncService = PruningSyncService()
     @State private var fertiliserSyncService = FertiliserSyncService()
-    @State private var subscriptionService = SubscriptionService()
+    @State private var subscriptionService: SubscriptionService
+    @State private var entitlementGate: EntitlementGate
     @State private var alertService = AlertService()
     @State private var vineyardTripFunctionService = VineyardTripFunctionService()
     @State private var appNoticeService = AppNoticeService()
@@ -59,6 +60,12 @@ struct VineTrackApp: App {
 
     init() {
         VineyardTheme.applyGlobalAppearance()
+        // The entitlement gate combines the shared Supabase resolver with the
+        // RevenueCat fallback, so it needs the same SubscriptionService
+        // instance the rest of the app observes.
+        let subscription = SubscriptionService()
+        _subscriptionService = State(initialValue: subscription)
+        _entitlementGate = State(initialValue: EntitlementGate(subscription: subscription))
     }
 
     var sharedModelContainer: ModelContainer = {
@@ -114,6 +121,7 @@ struct VineTrackApp: App {
                         .environment(pruningSyncService)
                         .environment(fertiliserSyncService)
                         .environment(subscriptionService)
+                        .environment(entitlementGate)
                         .environment(alertService)
                         .environment(vineyardTripFunctionService)
                         .environment(appNoticeService)

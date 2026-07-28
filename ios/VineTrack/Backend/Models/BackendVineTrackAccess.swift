@@ -1,18 +1,15 @@
 import Foundation
 
-/// Decoded response from the draft Supabase RPC `get_my_vinetrack_access()`.
+/// Decoded response from the Supabase RPC `get_my_vinetrack_access()`
+/// (hardened in sql/132 — Phase 2A shared entitlement resolver).
 ///
-/// ⚠️ DRAFT / ADDITIVE ONLY. This model prepares the app for the July 2026
-/// VineTrack pricing model (Solo / Team / Enterprise). It is NOT yet wired into
-/// the global access gate — the existing RevenueCat entitlement check in
-/// `SubscriptionService` keeps deciding app access until the new system is
-/// adopted.
-///
-/// The billing schema is still a draft and the RPC shape may evolve, so EVERY
-/// field is optional and the decoder is deliberately tolerant: it accepts
-/// several alternate key spellings (e.g. `has_access` or `has_supabase_access`,
-/// `plan_code` or `plan_key`) and never fails on missing/null fields. Unknown
-/// keys are ignored.
+/// This is the shared access source enforced by `EntitlementGate` when the
+/// `use_shared_supabase_entitlement` rollout flag covers the caller
+/// (`enforcement_enabled`). Every field is optional and the decoder is
+/// deliberately tolerant: it accepts several alternate key spellings
+/// (e.g. `has_access` or `has_supabase_access`) and never fails on
+/// missing/null fields. Unknown keys are ignored, so future additive
+/// columns can never break released builds.
 nonisolated struct BackendVineTrackAccess: Decodable, Sendable, Hashable {
     /// Whether Supabase grants the caller direct (Team/Enterprise/legacy) access.
     let hasAccess: Bool?
@@ -59,6 +56,21 @@ nonisolated struct BackendVineTrackAccess: Decodable, Sendable, Hashable {
     let subscriptionId: UUID?
     let licenceId: UUID?
 
+    // SQL 132 additive fields.
+    /// Stable machine-readable reason, e.g. "internal_unlimited",
+    /// "portal_subscription", "expired", "no_entitlement".
+    let reasonCode: String?
+    /// True for Internal Unlimited manual grants.
+    let isUnlimited: Bool?
+    /// Platform mirror of `can_use_ios_app`.
+    let canUseAndroidApp: Bool?
+    /// Server timestamp of this verification (database `now()`).
+    let lastVerifiedAt: Date?
+    /// Whether the shared-entitlement rollout flag covers this caller.
+    let enforcementEnabled: Bool?
+    /// Expiry of a manual (Internal Unlimited) grant, when set.
+    let manualGrantExpiresAt: Date?
+
     // MARK: - Derived convenience
 
     /// Effective "Supabase grants access" flag, tolerant of either key.
@@ -80,6 +92,17 @@ nonisolated struct BackendVineTrackAccess: Decodable, Sendable, Hashable {
         if let planTier, !planTier.isEmpty { return planTier }
         if let reason, !reason.isEmpty { return reason }
         return "none"
+    }
+
+    /// Earliest KNOWN future expiry of the granted entitlement, used to cap
+    /// the offline cache so cached access never outlives a known expiry.
+    /// Returns nil when no future-dated expiry applies (e.g. an Internal
+    /// Unlimited grant with no expiry).
+    func knownExpiresAt(now: Date) -> Date? {
+        [manualGrantExpiresAt, currentPeriodEnd, trialEnd]
+            .compactMap { $0 }
+            .filter { $0 > now }
+            .min()
     }
 
     // MARK: - Tolerant decoding
@@ -176,5 +199,12 @@ nonisolated struct BackendVineTrackAccess: Decodable, Sendable, Hashable {
         vineyardId         = uuid("vineyard_id", "primary_vineyard_id")
         subscriptionId     = uuid("subscription_id")
         licenceId          = uuid("licence_id", "license_id", "user_licence_id", "user_license_id")
+
+        reasonCode          = string("reason_code")
+        isUnlimited         = bool("is_unlimited", "unlimited_licences")
+        canUseAndroidApp    = bool("can_use_android_app")
+        lastVerifiedAt      = date("last_verified_at")
+        enforcementEnabled  = bool("enforcement_enabled")
+        manualGrantExpiresAt = date("manual_grant_expires_at")
     }
 }
