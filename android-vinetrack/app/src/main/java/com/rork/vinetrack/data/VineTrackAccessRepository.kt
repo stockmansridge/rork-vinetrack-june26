@@ -59,6 +59,14 @@ data class VineTrackAccessRow(
     /** Whether the shared-entitlement rollout flag covers this caller (iOS-only today). */
     @SerialName("enforcement_enabled") val enforcementEnabled: Boolean? = null,
     @SerialName("manual_grant_expires_at") val manualGrantExpiresAt: String? = null,
+    // SQL 135 additive fields (Phase 2B — verified store subscriptions).
+    // All optional with defaults so old resolver responses keep parsing.
+    /** Where the purchase happened ('ios' | 'android' | 'web') — NOT where VineTrack works. */
+    @SerialName("purchase_platform") val purchasePlatform: String? = null,
+    /** Auto-renew turned off; access continues until the paid period end. */
+    @SerialName("cancel_at_period_end") val cancelAtPeriodEnd: Boolean? = null,
+    /** Provider-supplied billing-issue grace end — access holds until then. */
+    @SerialName("grace_period_end") val gracePeriodEnd: String? = null,
 ) {
     /** Effective "Supabase grants access" flag, tolerant of either key (iOS parity). */
     val grantsSupabaseAccess: Boolean get() = hasSupabaseAccess ?: hasAccess ?: false

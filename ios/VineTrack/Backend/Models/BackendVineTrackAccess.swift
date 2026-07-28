@@ -71,6 +71,15 @@ nonisolated struct BackendVineTrackAccess: Decodable, Sendable, Hashable {
     /// Expiry of a manual (Internal Unlimited) grant, when set.
     let manualGrantExpiresAt: Date?
 
+    // SQL 135 additive fields (Phase 2B — verified store subscriptions).
+    /// Where the purchase happened ('ios' | 'android' | 'web'), NOT where
+    /// VineTrack may be used — access is cross-platform.
+    let purchasePlatform: String?
+    /// Auto-renew has been turned off; access continues until period end.
+    let cancelAtPeriodEnd: Bool?
+    /// Provider-supplied billing-issue grace end — access holds until then.
+    let gracePeriodEnd: Date?
+
     // MARK: - Derived convenience
 
     /// Effective "Supabase grants access" flag, tolerant of either key.
@@ -99,10 +108,20 @@ nonisolated struct BackendVineTrackAccess: Decodable, Sendable, Hashable {
     /// Returns nil when no future-dated expiry applies (e.g. an Internal
     /// Unlimited grant with no expiry).
     func knownExpiresAt(now: Date) -> Date? {
-        [manualGrantExpiresAt, currentPeriodEnd, trialEnd]
-            .compactMap { $0 }
-            .filter { $0 > now }
-            .min()
+        // A billing-issue grace end EXTENDS an elapsed period, so when a grace
+        // window is active the later of (period end, grace end) is the real cap.
+        var candidates: [Date] = [manualGrantExpiresAt, trialEnd].compactMap { $0 }
+        switch (currentPeriodEnd, gracePeriodEnd) {
+        case let (period?, grace?):
+            candidates.append(max(period, grace))
+        case let (period?, nil):
+            candidates.append(period)
+        case let (nil, grace?):
+            candidates.append(grace)
+        case (nil, nil):
+            break
+        }
+        return candidates.filter { $0 > now }.min()
     }
 
     // MARK: - Tolerant decoding
@@ -206,5 +225,9 @@ nonisolated struct BackendVineTrackAccess: Decodable, Sendable, Hashable {
         lastVerifiedAt      = date("last_verified_at")
         enforcementEnabled  = bool("enforcement_enabled")
         manualGrantExpiresAt = date("manual_grant_expires_at")
+
+        purchasePlatform   = string("purchase_platform")
+        cancelAtPeriodEnd  = bool("cancel_at_period_end")
+        gracePeriodEnd     = date("grace_period_end")
     }
 }

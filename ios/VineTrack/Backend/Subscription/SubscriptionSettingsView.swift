@@ -238,7 +238,10 @@ struct SubscriptionSettingsView: View {
             Button {
                 Task {
                     let restored = await subscription.restorePurchases()
-                    await entitlementGate.refresh(force: true)
+                    // Restore refreshes RevenueCat CustomerInfo, then the
+                    // combined access state; the bounded post-purchase sync
+                    // waits for the server webhook without blocking access.
+                    await entitlementGate.syncAfterStorePurchase()
                     statusMessage = restored
                         ? "Purchases restored."
                         : (subscription.lastError ?? "No active purchases found.")

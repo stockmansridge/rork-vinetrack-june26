@@ -107,6 +107,53 @@ class VineTrackAccessRowCompatTest {
     }
 
     @Test
+    fun `sql135 store subscription response parses with appended fields`() {
+        // Phase 2B: a verified APPLE purchase must grant Android access —
+        // purchase_platform records where the purchase happened, not where
+        // VineTrack may be used.
+        val store = """
+            {
+              "user_id": "00000000-0000-4000-8000-000000000001",
+              "has_supabase_access": true,
+              "access_source": "solo",
+              "plan_code": "solo",
+              "billing_provider": "apple",
+              "status": "active",
+              "current_period_end": "2026-08-28T00:00:00+00:00",
+              "can_use_ios_app": true,
+              "can_use_android_app": true,
+              "can_use_portal": true,
+              "solo_check_required": false,
+              "reason_code": "app_store_subscription",
+              "purchase_platform": "ios",
+              "cancel_at_period_end": false,
+              "grace_period_end": null
+            }
+        """.trimIndent()
+
+        val row = json.decodeFromString<VineTrackAccessRow>(store)
+        assertTrue(row.grantsSupabaseAccess)
+        assertTrue(row.grantsAppAccess)
+        assertFalse(row.requiresSoloCheck)
+        assertEquals("app_store_subscription", row.reasonCode)
+        assertEquals("ios", row.purchasePlatform)
+        assertEquals(false, row.cancelAtPeriodEnd)
+        assertNull(row.gracePeriodEnd)
+    }
+
+    @Test
+    fun `sql135 fields absent in old responses never break parsing`() {
+        val old = """
+            {"has_supabase_access": true, "can_use_ios_app": true, "reason_code": "portal_subscription"}
+        """.trimIndent()
+        val row = json.decodeFromString<VineTrackAccessRow>(old)
+        assertTrue(row.grantsAppAccess)
+        assertNull(row.purchasePlatform)
+        assertNull(row.cancelAtPeriodEnd)
+        assertNull(row.gracePeriodEnd)
+    }
+
+    @Test
     fun `can_use_android_app is preferred over can_use_ios_app`() {
         // Hypothetical platform-split response: Android flag wins.
         val split = """

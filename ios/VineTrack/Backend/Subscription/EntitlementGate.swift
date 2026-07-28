@@ -136,6 +136,15 @@ final class EntitlementGate {
         case resolved(EntitlementOutcome)
     }
 
+    /// Post-purchase Supabase synchronisation state (Phase 2B §13 — webhook
+    /// propagation). Diagnostic only: access is never blocked on this.
+    enum StoreSyncState: Equatable {
+        case idle
+        case syncing
+        case synced
+        case timedOut
+    }
+
     private(set) var phase: Phase = .idle
     /// Whether the shared-entitlement rollout flag covers this user (server
     /// value; cold-starts from the last persisted snapshot).
@@ -151,6 +160,8 @@ final class EntitlementGate {
     private(set) var lastErrorDescription: String?
     /// Set when RevenueCat granted access that Supabase explicitly denied.
     private(set) var hasServerMismatch: Bool = false
+    /// Bounded post-purchase webhook sync progress (diagnostics).
+    private(set) var storeSyncState: StoreSyncState = .idle
 
     private let subscription: SubscriptionService
     private let repository: VineTrackAccessRepository
@@ -230,6 +241,7 @@ final class EntitlementGate {
         lastServerAccess = nil
         lastServerResult = nil
         isUsingCachedResult = false
+        storeSyncState = .idle
     }
 
     /// Clear all entitlement state on sign-out. The persisted snapshot is
@@ -245,7 +257,51 @@ final class EntitlementGate {
         resolvedWhileOffline = false
         lastErrorDescription = nil
         hasServerMismatch = false
+        storeSyncState = .idle
         EntitlementVerificationStore.shared.clear()
+    }
+
+    // MARK: Post-purchase synchronisation (Phase 2B)
+
+    /// Bounded polling after a purchase / Restore Purchases / RevenueCat
+    /// entitlement change: immediate → 2s → 5s → 10s (`StorePurchaseSyncPlan`).
+    /// The user already has access through the RevenueCat fallback; this waits
+    /// for the server webhook to reflect the verified purchase, then stops.
+    /// It NEVER blocks entry and never polls indefinitely — on timeout the
+    /// RevenueCat fallback stands and the next regular refresh retries.
+    func syncAfterStorePurchase() async {
+        guard currentUserId != nil, storeSyncState != .syncing else {
+            await refresh(force: true)
+            return
+        }
+        storeSyncState = .syncing
+        for (attempt, delay) in StorePurchaseSyncPlan.delays.enumerated() {
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+            guard currentUserId != nil else {
+                storeSyncState = .idle
+                return
+            }
+            await refresh(force: true)
+            let verdict = StorePurchaseSyncPlan.verdict(
+                afterAttempt: attempt,
+                serverGranted: lastServerResult == .granted,
+                revenueCatEntitled: subscription.isSubscribed
+            )
+            switch verdict {
+            case .synced:
+                storeSyncState = .synced
+                return
+            case .stopNoEntitlement:
+                storeSyncState = .idle
+                return
+            case .timedOut:
+                storeSyncState = .timedOut
+                return
+            case .retry:
+                continue
+            }
+        }
+        storeSyncState = .timedOut
     }
 
     // MARK: Refresh

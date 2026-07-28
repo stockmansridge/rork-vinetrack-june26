@@ -3329,6 +3329,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return false
     }
 
+    /**
+     * Phase 2B §13 — bounded post-purchase Supabase synchronisation.
+     * After a successful purchase / restore the user already has access via
+     * the RevenueCat fallback; this polls `get_my_vinetrack_access()` at
+     * 2s → 5s → 10s until Supabase reflects the verified store purchase
+     * (webhook propagation), then stops. Never blocks entry; never loops
+     * indefinitely; a fresh verification snapshot is recorded on success so
+     * diagnostics show the live server source.
+     */
+    private var storeSyncJob: kotlinx.coroutines.Job? = null
+
+    private fun scheduleStoreEntitlementSync() {
+        if (storeSyncJob?.isActive == true) return
+        storeSyncJob = viewModelScope.launch {
+            for (delayMs in listOf(2_000L, 5_000L, 10_000L)) {
+                kotlinx.coroutines.delay(delayMs)
+                val granted = try {
+                    val access = vineTrackAccessRepo.fetchMyAccess()
+                    if (access != null && access.grantsAppAccess) {
+                        entitlementStore.recordVerification(
+                            session.userId, true, access.verificationStatusLabel,
+                        )
+                        true
+                    } else {
+                        false
+                    }
+                } catch (_: Exception) {
+                    false // transient — RevenueCat fallback keeps access; retry
+                }
+                if (granted) return@launch
+            }
+            // Timed out: RevenueCat fallback stands; the next regular access
+            // resolution (launch/foreground) retries naturally.
+        }
+    }
+
     /** Local-only access check for offline launches — no network calls. */
     private fun hasLocalOfflineAccess(): Boolean =
         isInInitialFreeAccessPeriod() || isWithinOfflineGracePeriod(session.userId)
@@ -3432,6 +3468,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (_ui.value.route == AppRoute.Paywall) {
                         _ui.update { it.copy(route = AppRoute.Main) }
                     }
+                    // Phase 2B: bounded webhook-propagation sync — access is
+                    // already granted through RevenueCat; wait (2s/5s/10s) for
+                    // Supabase to reflect the verified purchase, then stop.
+                    scheduleStoreEntitlementSync()
                 }
                 is RevenueCatManager.PurchaseOutcome.NotEntitled -> _subscription.update {
                     it.copy(
@@ -3461,6 +3501,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (_ui.value.route == AppRoute.Paywall) {
                     _ui.update { it.copy(route = AppRoute.Main) }
                 }
+                // Phase 2B: restore refreshes CustomerInfo, then the bounded
+                // Supabase resync picks up the verified store subscription.
+                scheduleStoreEntitlementSync()
             } else {
                 _subscription.update {
                     it.copy(

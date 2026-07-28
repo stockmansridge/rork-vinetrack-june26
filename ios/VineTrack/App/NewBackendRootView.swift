@@ -188,8 +188,10 @@ struct NewBackendRootView: View {
         .onChange(of: subscription.status) { _, _ in
             // A RevenueCat entitlement change (purchase, renewal, restore,
             // expiry pushed via customerInfoStream) re-evaluates the combined
-            // gate so unlocks/locks apply without an app restart.
-            Task { await entitlementGate.refresh(force: true) }
+            // gate, then runs the bounded post-purchase Supabase sync (Phase
+            // 2B: immediate → 2s → 5s → 10s) so the verified store purchase
+            // lands in the shared entitlement without blocking entry.
+            Task { await entitlementGate.syncAfterStorePurchase() }
         }
         .task(id: store.selectedVineyardId) {
             if let vid = store.selectedVineyardId {
