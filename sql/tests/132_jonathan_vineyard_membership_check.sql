@@ -63,15 +63,48 @@ profile_default as (
 ),
 resolver_vineyard as (
   -- The vineyard the licence/grant is attached to (what the resolver
-  -- reports as its single vineyard_id).
-  select s.primary_vineyard_id, v.name as primary_vineyard_name
+  -- reports as its single vineyard_id). Mirrors sql/132: ownership is via
+  -- owner_user_id OR an active licence; vineyard_id = the caller's active
+  -- licence vineyard, falling back to the subscription's primary vineyard.
+  select
+    s.id     as subscription_id,
+    s.status as subscription_status,
+    coalesce(
+      (
+        select ul.vineyard_id
+        from public.vinetrack_user_licences ul
+        where ul.subscription_id = s.id
+          and ul.user_id = tu.user_id
+          and ul.status = 'active'
+        order by ul.id
+        limit 1
+      ),
+      s.primary_vineyard_id
+    ) as resolver_vineyard_id
   from target_user tu
   join public.vinetrack_subscriptions s
-    on s.user_id = tu.user_id
-   and s.status not in ('revoked', 'cancelled')
-  left join public.vineyards v on v.id = s.primary_vineyard_id
-  order by s.created_at desc
+    on (
+         s.owner_user_id = tu.user_id
+         or exists (
+           select 1 from public.vinetrack_user_licences l
+           where l.subscription_id = s.id
+             and l.user_id = tu.user_id
+             and l.status = 'active'
+         )
+       )
+   and s.deleted_at is null
+   and s.status in ('trialing', 'active', 'manual', 'past_due')
+  order by s.updated_at desc, s.id
   limit 1
+),
+resolver_vineyard_named as (
+  select
+    rv.subscription_id,
+    rv.subscription_status,
+    rv.resolver_vineyard_id,
+    v.name as resolver_vineyard_name
+  from resolver_vineyard rv
+  left join public.vineyards v on v.id = rv.resolver_vineyard_id
 )
 select jsonb_pretty(jsonb_build_object(
   'auth_user_found',        exists (select 1 from target_user),
@@ -99,7 +132,7 @@ select jsonb_pretty(jsonb_build_object(
   'jonathan_member_of_stockmans_ridge',
                             exists (select 1 from stockmans where jonathan_is_member and not deleted),
   'profile_default_vineyard', (select to_jsonb(pd) from profile_default pd),
-  'resolver_primary_vineyard', (select to_jsonb(rv) from resolver_vineyard rv),
+  'resolver_primary_vineyard', (select to_jsonb(rv) from resolver_vineyard_named rv),
   'note', 'The resolver returns ONE vineyard_id (the licence''s primary vineyard). '
           || 'The apps list ALL memberships separately via vineyard_members; '
           || 'entitlement access and vineyard membership remain independent.'

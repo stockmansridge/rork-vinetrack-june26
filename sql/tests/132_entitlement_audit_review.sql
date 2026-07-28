@@ -23,13 +23,16 @@ event_counts as (
   group by event_type
 ),
 latest_events as (
+  -- access_source / plan_code / reason_code are NOT columns on the audit
+  -- table — they live inside the new_state / previous_state JSONB blobs
+  -- (see sql/132 section C). Extract them for readability.
   select
     a.created_at,
     a.user_id,
     a.event_type,
-    a.access_source,
-    a.plan_code,
-    a.reason_code,
+    a.new_state ->> 'access_source' as access_source,
+    a.new_state ->> 'plan_code'     as plan_code,
+    a.new_state ->> 'reason_code'   as reason_code,
     a.platform,
     a.app_version,
     a.previous_state,
