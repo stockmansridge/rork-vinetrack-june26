@@ -55,7 +55,7 @@ where coalesce(s.unlimited_licences, false) = true
 order by s.updated_at desc;
 
 -- (c) Stockmans Ridge vineyard membership + role for that user.
-select vm.vineyard_id, v.name as vineyard_name, vm.role, vm.created_at
+select vm.vineyard_id, v.name as vineyard_name, vm.role, vm.joined_at
 from public.vineyard_members vm
 join public.vineyards v on v.id = vm.vineyard_id
 where vm.user_id = (

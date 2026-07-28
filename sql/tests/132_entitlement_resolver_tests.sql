@@ -3,9 +3,10 @@
 -- =====================================================================
 -- Database tests for the SQL 132 hardened get_my_vinetrack_access().
 --
--- HOW TO RUN: paste the whole file into the Supabase SQL editor and run.
--- Everything happens inside one transaction that is ROLLED BACK at the
--- end — no production data is created, modified, or kept.
+-- HOW TO RUN: apply sql/132_shared_entitlement_resolver.sql FIRST, then
+-- paste this whole file into the Supabase SQL editor and run. Everything
+-- happens inside one transaction that is ROLLED BACK at the end — no
+-- production data is created, modified, or kept.
 --
 -- NOT an auto-applied migration (it fabricates auth.users rows), which is
 -- why it lives in sql/tests/ rather than the numbered stream.
@@ -25,9 +26,21 @@ declare
   plan_solo     uuid;
   sub_id uuid;
   r record;
-
-  procedure_impersonate constant text := '';
 begin
+  -- Precondition: the SQL 132 resolver must already be deployed. Without
+  -- this guard, the old sql/096 function fails cryptically on the first
+  -- reference to the new reason_code column.
+  if not exists (
+    select 1
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'get_my_vinetrack_access'
+      and pg_get_function_result(p.oid) like '%reason_code%'
+  ) then
+    raise exception 'SQL 132 is not applied yet — run sql/132_shared_entitlement_resolver.sql first, then re-run these tests.';
+  end if;
+
   insert into auth.users (id, email, email_confirmed_at, created_at, updated_at, aud, role)
   values
     (u1, 'sql132-test-user-1@example.invalid', now(), now(), now(), 'authenticated', 'authenticated'),
