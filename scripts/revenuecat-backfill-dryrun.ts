@@ -1,4 +1,12 @@
-// scripts/revenuecat-backfill-dryrun.ts   (Phase 2B §14 — historical backfill)
+// scripts/revenuecat-backfill-dryrun.ts   (OPTIONAL FUTURE TOOLING — not part of Phase 2B)
+//
+// STATUS (2026-07-28): VineTrack has NO paying customers through Apple,
+// Google Play or the portal, so the historical backfill was REMOVED from
+// the Phase 2B scope. Do not run this (dry-run or --execute) as part of
+// launch validation. It is retained only as standalone, zero-maintenance
+// tooling should a future migration of pre-existing RevenueCat customers
+// ever be needed. Internal/test RevenueCat records are NOT production
+// customers and must not be backfilled.
 //
 // Enumerates RevenueCat customers, resolves canonical Supabase users, maps
 // products through billing_product_catalog, and produces the DRY-RUN report

@@ -271,6 +271,10 @@ final class SubscriptionService {
     func purchase(package: Package) async -> Bool {
         configureIfNeeded()
         guard didConfigure else { return false }
+        // Launch rule: never purchase while RevenueCat is anonymous — the
+        // webhook can only attribute a purchase whose App User ID is the
+        // Supabase auth UUID. Re-identify first; block if that fails.
+        guard await ensureIdentifiedForTransaction() else { return false }
         isPurchasing = true
         lastError = nil
         defer { isPurchasing = false }
@@ -291,6 +295,9 @@ final class SubscriptionService {
     func restorePurchases() async -> Bool {
         configureIfNeeded()
         guard didConfigure else { return false }
+        // Same identity rule as purchase(): restoring anonymously could claim
+        // a store transaction the server can never attribute to this account.
+        guard await ensureIdentifiedForTransaction() else { return false }
         isRestoring = true
         lastError = nil
         defer { isRestoring = false }
@@ -305,6 +312,25 @@ final class SubscriptionService {
     }
 
     // MARK: - Helpers
+
+    /// Guarantees RevenueCat is identified with the signed-in Supabase user
+    /// before any purchase/restore. Returns false (with a user-facing error)
+    /// when no user is signed in or re-identification fails.
+    private func ensureIdentifiedForTransaction() async -> Bool {
+        guard Purchases.shared.isAnonymous else { return true }
+        guard let userId = currentUserId else {
+            lastError = "Sign in to VineTrack first so your subscription is linked to your account."
+            return false
+        }
+        do {
+            let result = try await Purchases.shared.logIn(userId.uuidString)
+            applyCustomerInfo(result.customerInfo)
+            return true
+        } catch {
+            lastError = "Couldn't link your account before the purchase. Check your connection and try again."
+            return false
+        }
+    }
 
     private func applyCustomerInfo(_ info: CustomerInfo) {
         customerInfo = info

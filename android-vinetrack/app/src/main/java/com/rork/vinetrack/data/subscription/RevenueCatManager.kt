@@ -179,6 +179,21 @@ class RevenueCatManager(private val context: Context) {
         }
     }
 
+    /**
+     * True when the SDK is configured but still attached to an anonymous
+     * App User ID — purchases/restores must be blocked in this state because
+     * the webhook can only attribute transactions to a Supabase auth UUID.
+     */
+    fun isAnonymous(): Boolean {
+        if (!didConfigure) return true
+        return try {
+            Purchases.sharedInstance.isAnonymous
+        } catch (e: Exception) {
+            Log.w(TAG, "isAnonymous check failed: ${e.message}")
+            true
+        }
+    }
+
     /** Whether the shared `pro` entitlement is active (same check as iOS). */
     fun isEntitled(info: CustomerInfo?): Boolean =
         info?.entitlements?.get(ENTITLEMENT_ID)?.isActive == true

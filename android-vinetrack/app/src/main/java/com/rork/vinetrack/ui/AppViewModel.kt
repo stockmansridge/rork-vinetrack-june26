@@ -3365,6 +3365,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Guarantees RevenueCat is identified with the signed-in Supabase user
+     * before any purchase/restore. Returns false when no user is signed in or
+     * re-identification fails (offline / SDK error) — fail closed.
+     */
+    private suspend fun ensureRevenueCatIdentified(): Boolean {
+        if (!revenueCat.isAnonymous()) return true
+        val userId = session.userId ?: return false
+        return revenueCat.logIn(userId) != null && !revenueCat.isAnonymous()
+    }
+
     /** Local-only access check for offline launches — no network calls. */
     private fun hasLocalOfflineAccess(): Boolean =
         isInInitialFreeAccessPeriod() || isWithinOfflineGracePeriod(session.userId)
@@ -3459,6 +3470,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val rcPackage = rcPackages[packageId] ?: return
         viewModelScope.launch {
             _subscription.update { it.copy(isPurchasing = true, lastError = null) }
+            // Launch rule: never purchase while RevenueCat is anonymous — the
+            // webhook can only attribute a purchase whose App User ID is the
+            // Supabase auth UUID. Re-identify first; block if that fails.
+            if (!ensureRevenueCatIdentified()) {
+                _subscription.update {
+                    it.copy(
+                        isPurchasing = false,
+                        lastError = "Sign in to VineTrack first so your subscription is linked to your account. Check your connection and try again.",
+                    )
+                }
+                return@launch
+            }
             when (val outcome = revenueCat.purchase(activity, rcPackage)) {
                 is RevenueCatManager.PurchaseOutcome.Unlocked -> {
                     entitlementStore.recordVerification(
@@ -3492,6 +3515,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun restoreSubscriptionPurchases() {
         viewModelScope.launch {
             _subscription.update { it.copy(isRestoring = true, lastError = null) }
+            // Same identity rule as purchase(): restoring anonymously could
+            // claim a store transaction the server can never attribute.
+            if (!ensureRevenueCatIdentified()) {
+                _subscription.update {
+                    it.copy(
+                        isRestoring = false,
+                        lastError = "Sign in to VineTrack first so your subscription is linked to your account. Check your connection and try again.",
+                    )
+                }
+                return@launch
+            }
             val info = revenueCat.restore()
             if (info != null && revenueCat.isEntitled(info)) {
                 entitlementStore.recordVerification(
