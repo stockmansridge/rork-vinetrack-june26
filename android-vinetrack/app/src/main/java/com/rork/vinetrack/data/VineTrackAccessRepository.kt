@@ -67,6 +67,13 @@ data class VineTrackAccessRow(
     @SerialName("cancel_at_period_end") val cancelAtPeriodEnd: Boolean? = null,
     /** Provider-supplied billing-issue grace end — access holds until then. */
     @SerialName("grace_period_end") val gracePeriodEnd: String? = null,
+    // SQL 144 additive fields (Phase 2C.1 — server-authoritative account trial).
+    /**
+     * Earliest KNOWN future expiry of the granted source (trial end, period
+     * end + grace, manual grant expiry). Null for open-ended grants. On a
+     * trial-expired denial this carries the ORIGINAL trial end.
+     */
+    @SerialName("expires_at") val expiresAt: String? = null,
 ) {
     /** Effective "Supabase grants access" flag, tolerant of either key (iOS parity). */
     val grantsSupabaseAccess: Boolean get() = hasSupabaseAccess ?: hasAccess ?: false
@@ -96,6 +103,33 @@ data class VineTrackAccessRow(
         get() = planTier?.takeIf { it.isNotBlank() }
             ?: accessSource?.takeIf { it.isNotBlank() }
             ?: "none"
+
+    /**
+     * Earliest KNOWN future entitlement expiry in epoch millis, used to CAP
+     * the offline grace cache so cached access never outlives a known expiry
+     * (e.g. the server-authoritative trial end — SQL 143/144). Prefers the
+     * resolver's `expires_at`; falls back to the individual date columns for
+     * older resolver responses. Null when no future-dated expiry applies
+     * (e.g. an open-ended Internal Unlimited grant).
+     */
+    fun knownExpiresAtMs(nowMs: Long = System.currentTimeMillis()): Long? =
+        listOfNotNull(expiresAt, manualGrantExpiresAt, trialEnd, currentPeriodEnd, gracePeriodEnd)
+            .mapNotNull(::parseIsoToEpochMsOrNull)
+            .filter { it > nowMs }
+            .minOrNull()
+
+    private companion object {
+        /** Tolerant ISO-8601 → epoch-ms parse (Postgres timestamptz shapes). */
+        fun parseIsoToEpochMsOrNull(raw: String): Long? = try {
+            java.time.OffsetDateTime.parse(raw).toInstant().toEpochMilli()
+        } catch (_: Exception) {
+            try {
+                java.time.Instant.parse(raw).toEpochMilli()
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
 }
 
 /**

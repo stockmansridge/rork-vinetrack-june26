@@ -3288,8 +3288,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val access = vineTrackAccessRepo.fetchMyAccess()
             backendChecked = true
             if (access != null && access.grantsAppAccess) {
+                // Cache is CAPPED at the earliest known expiry (e.g. the
+                // server-authoritative trial end — SQL 143/144) so offline
+                // access never outlives it.
                 entitlementStore.recordVerification(
                     userId, true, access.verificationStatusLabel,
+                    access.knownExpiresAtMs(),
                 )
                 return true
             }
@@ -3350,6 +3354,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (access != null && access.grantsAppAccess) {
                         entitlementStore.recordVerification(
                             session.userId, true, access.verificationStatusLabel,
+                            access.knownExpiresAtMs(),
                         )
                         true
                     } else {
@@ -3397,9 +3402,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun isWithinOfflineGracePeriod(userId: String?): Boolean {
         val snapshot = entitlementStore.load(userId) ?: return false
         if (!snapshot.wasEntitled) return false
+        val nowMs = System.currentTimeMillis()
+        // The KNOWN entitlement expiry (e.g. server trial end) caps offline
+        // access regardless of the grace window (iOS parity, SQL 143/144).
+        val knownExpiry = snapshot.knownExpiresAtMs
+        if (knownExpiry != null && nowMs >= knownExpiry) return false
         val graceEndMs = snapshot.lastVerifiedAtMs +
             RevenueCatManager.OFFLINE_GRACE_DAYS * 86_400_000L
-        return System.currentTimeMillis() < graceEndMs
+        return nowMs < graceEndMs
     }
 
     /**

@@ -153,6 +153,108 @@ class VineTrackAccessRowCompatTest {
         assertNull(row.gracePeriodEnd)
     }
 
+    // ------------------------------------------------------------------
+    // SQL 144 — server-authoritative account trial (Phase 2C.1)
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `sql144 active server trial grants access`() {
+        val trial = """
+            {
+              "user_id": "00000000-0000-4000-8000-000000000001",
+              "has_supabase_access": true,
+              "access_source": "trial",
+              "plan_code": "trial",
+              "plan_tier": "trial",
+              "billing_provider": "trial",
+              "status": "trialling",
+              "trial_end": "2026-10-28T00:00:00+00:00",
+              "portal_access": true,
+              "can_use_ios_app": true,
+              "can_use_android_app": true,
+              "can_use_portal": true,
+              "solo_check_required": false,
+              "reason_code": "active_trial",
+              "purchase_platform": null,
+              "expires_at": "2026-10-28T00:00:00+00:00"
+            }
+        """.trimIndent()
+
+        val row = json.decodeFromString<VineTrackAccessRow>(trial)
+        assertTrue(row.grantsSupabaseAccess)
+        assertTrue(row.grantsAppAccess)
+        assertFalse(row.requiresSoloCheck)
+        assertEquals("active_trial", row.reasonCode)
+        // purchase_platform is NULL for the trial — never the text "none".
+        assertNull(row.purchasePlatform)
+        // The cache cap resolves to the trial end.
+        val nowMs = 1_753_660_800_000L // 2025-ish, well before the trial end
+        val cap = row.knownExpiresAtMs(nowMs)
+        assertEquals(1_792_540_800_000L, cap) // 2026-10-28T00:00:00Z
+    }
+
+    @Test
+    fun `sql144 expired server trial denies with original end`() {
+        val expired = """
+            {
+              "has_supabase_access": false,
+              "access_source": "trial",
+              "plan_code": "trial",
+              "status": "expired",
+              "trial_end": "2025-01-01T00:00:00+00:00",
+              "solo_check_required": true,
+              "reason_code": "expired",
+              "purchase_platform": null,
+              "expires_at": "2025-01-01T00:00:00+00:00"
+            }
+        """.trimIndent()
+
+        val row = json.decodeFromString<VineTrackAccessRow>(expired)
+        assertFalse(row.grantsSupabaseAccess)
+        assertFalse(row.grantsAppAccess)
+        assertTrue(row.requiresSoloCheck)
+        assertEquals("expired", row.reasonCode)
+        // A past expiry never yields a future cache cap.
+        assertNull(row.knownExpiresAtMs(1_790_000_000_000L))
+    }
+
+    @Test
+    fun `sql144 expires_at absent in old responses never breaks parsing`() {
+        val old = """
+            {"has_supabase_access": true, "can_use_ios_app": true, "reason_code": "portal_subscription"}
+        """.trimIndent()
+        val row = json.decodeFromString<VineTrackAccessRow>(old)
+        assertTrue(row.grantsAppAccess)
+        assertNull(row.expiresAt)
+        assertNull(row.knownExpiresAtMs(0L))
+    }
+
+    @Test
+    fun `knownExpiresAtMs picks the earliest future expiry`() {
+        val row = json.decodeFromString<VineTrackAccessRow>(
+            """
+            {
+              "has_supabase_access": true,
+              "trial_end": "2026-09-01T00:00:00+00:00",
+              "current_period_end": "2026-08-01T00:00:00+00:00"
+            }
+            """.trimIndent(),
+        )
+        // Both future: the earlier one caps the cache.
+        val nowMs = 1_753_660_800_000L
+        assertEquals(1_784_937_600_000L, row.knownExpiresAtMs(nowMs)) // 2026-08-01
+    }
+
+    @Test
+    fun `old snapshot without known expiry still decodes`() {
+        val legacySnapshot = """
+            {"user_id":"abc","last_verified_at_ms":1753660800000,"was_entitled":true,"product_status":"active:x"}
+        """.trimIndent()
+        val snap = json.decodeFromString<com.rork.vinetrack.data.subscription.EntitlementVerificationSnapshot>(legacySnapshot)
+        assertTrue(snap.wasEntitled)
+        assertNull(snap.knownExpiresAtMs)
+    }
+
     @Test
     fun `can_use_android_app is preferred over can_use_ios_app`() {
         // Hypothetical platform-split response: Android flag wins.

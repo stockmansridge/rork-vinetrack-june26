@@ -187,6 +187,133 @@ struct EntitlementDecisionTests {
         #expect(outcome == .offlineCachedAccess)
     }
 
+    // MARK: Server-authoritative account trial (SQL 143/144)
+
+    @Test func serverTrialGrantFlowsThroughSharedResolver() {
+        // Account created today / 1 month old / just under 3 months: the
+        // server resolver returns active_trial -> .granted, which must unlock
+        // without RevenueCat and without the local window.
+        let outcome = EntitlementDecision.resolve(
+            input(server: .granted, rcEntitled: false, freeWindow: false)
+        )
+        #expect(outcome == .grantedBySupabase)
+    }
+
+    @Test func serverTrialExpiryDeniesDespiteNothingElse() {
+        // Account over 3 months old: server returns expired -> confirmed
+        // denial; no RC, no local window -> paywall.
+        let outcome = EntitlementDecision.resolve(
+            input(server: .denied, rcEntitled: false, freeWindow: false)
+        )
+        #expect(outcome == .denied)
+    }
+
+    @Test func localTrialStillFallsBackWhenServerSaysExpired() {
+        // Transition safety: device-time window active but the server trial
+        // is expired. The temporary fallback grants (recorded as a throttled
+        // mismatch by EntitlementGate) — it must NOT be a silent denial yet.
+        let outcome = EntitlementDecision.resolve(
+            input(server: .denied, rcEntitled: false, freeWindow: true)
+        )
+        #expect(outcome == .grantedByLegacyTrial)
+    }
+
+    @Test func networkFailureWithValidCachedTrialGrants() {
+        // Server-granted trial cached 3 days ago, trial ends in the future:
+        // offline access holds (inside grace, before the known expiry).
+        let outcome = EntitlementDecision.resolve(
+            input(server: .unreachable, offline: true,
+                  cache: cache(ageDays: 3, knownExpiresAt: now.addingTimeInterval(10 * 86_400)))
+        )
+        #expect(outcome == .offlineCachedAccess)
+    }
+
+    @Test func cachedTrialPastServerExpiryNeverGrants() {
+        // Cached trial verification is recent, but the SERVER trial expiry
+        // (knownExpiresAt = trial_ends_at) has passed — the cache is dead.
+        let outcome = EntitlementDecision.resolve(
+            input(server: .unreachable, offline: true,
+                  cache: cache(ageDays: 1, knownExpiresAt: now.addingTimeInterval(-3_600)))
+        )
+        #expect(outcome == .unverified)
+    }
+
+    @Test func anotherUsersCachedTrialNeverLeaks() {
+        // User switch: the previous user's cached trial must not grant.
+        let outcome = EntitlementDecision.resolve(
+            input(server: .unreachable, offline: true,
+                  cache: cache(sameUser: false, ageDays: 1,
+                               knownExpiresAt: now.addingTimeInterval(10 * 86_400)))
+        )
+        #expect(outcome == .unverified)
+    }
+
+    @Test func paidEntitlementTakesPrecedenceOverTrialFallback() {
+        // Server grants (paid source) while the local window is also active:
+        // the shared resolver wins — never the legacy trial label.
+        let outcome = EntitlementDecision.resolve(
+            input(server: .granted, rcEntitled: true, freeWindow: true)
+        )
+        #expect(outcome == .grantedBySupabase)
+    }
+
+    // MARK: Resolver payload decoding — account trial (SQL 144)
+
+    @Test func trialResolverRowDecodesAndCapsExpiry() throws {
+        let json = """
+        {
+          "has_supabase_access": true,
+          "access_source": "trial",
+          "plan_code": "trial",
+          "plan_tier": "trial",
+          "billing_provider": "trial",
+          "status": "trialling",
+          "trial_end": 1787000000,
+          "can_use_ios_app": true,
+          "can_use_android_app": true,
+          "can_use_portal": true,
+          "solo_check_required": false,
+          "reason_code": "active_trial",
+          "purchase_platform": null,
+          "expires_at": 1787000000
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let row = try decoder.decode(BackendVineTrackAccess.self, from: Data(json.utf8))
+        #expect(row.grantsSupabaseAccess)
+        #expect(row.grantsIOSAppAccess)
+        #expect(row.reasonCode == "active_trial")
+        #expect(row.purchasePlatform == nil)   // null, never "none"
+        // The offline cache cap picks up the trial end.
+        let cap = row.knownExpiresAt(now: now)
+        #expect(cap == Date(timeIntervalSince1970: 1_787_000_000))
+    }
+
+    @Test func expiredTrialDenialDecodesWithOriginalEnd() throws {
+        let json = """
+        {
+          "has_supabase_access": false,
+          "access_source": "trial",
+          "plan_code": "trial",
+          "status": "expired",
+          "trial_end": 1700000000,
+          "solo_check_required": true,
+          "reason_code": "expired",
+          "purchase_platform": null,
+          "expires_at": 1700000000
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let row = try decoder.decode(BackendVineTrackAccess.self, from: Data(json.utf8))
+        #expect(row.grantsSupabaseAccess == false)
+        #expect(row.reasonCode == "expired")
+        #expect(row.requiresSoloCheck)
+        // A past expiry never produces a future cache cap.
+        #expect(row.knownExpiresAt(now: now) == nil)
+    }
+
     // MARK: Snapshot model compatibility
 
     @Test func oldSnapshotsDecodeWithoutNewFields() throws {

@@ -160,6 +160,11 @@ final class EntitlementGate {
     private(set) var lastErrorDescription: String?
     /// Set when RevenueCat granted access that Supabase explicitly denied.
     private(set) var hasServerMismatch: Bool = false
+    /// Set when the LOCAL 3-month trial granted access against a CONFIRMED
+    /// server denial (server-authoritative trial says expired/revoked).
+    /// Diagnostic only — reported (throttled) so the rollout can be watched;
+    /// the temporary fallback still grants during the transition.
+    private(set) var hasTrialMismatch: Bool = false
     /// Bounded post-purchase webhook sync progress (diagnostics).
     private(set) var storeSyncState: StoreSyncState = .idle
 
@@ -238,6 +243,7 @@ final class EntitlementGate {
         enforcementEnabled = snapshot?.supabaseEnforced ?? false
         phase = .idle
         hasServerMismatch = false
+        hasTrialMismatch = false
         lastServerAccess = nil
         lastServerResult = nil
         isUsingCachedResult = false
@@ -257,6 +263,7 @@ final class EntitlementGate {
         resolvedWhileOffline = false
         lastErrorDescription = nil
         hasServerMismatch = false
+        hasTrialMismatch = false
         storeSyncState = .idle
         EntitlementVerificationStore.shared.clear()
     }
@@ -378,12 +385,17 @@ final class EntitlementGate {
         resolvedWhileOffline = subscription.isOffline
         isUsingCachedResult = (outcome == .offlineCachedAccess)
         hasServerMismatch = (outcome == .grantedByRevenueCat(mismatchWithServer: true))
+        // Local legacy trial disagreeing with a CONFIRMED server denial: the
+        // server-authoritative trial (SQL 143/144) says expired/revoked while
+        // the device-time window still grants. Recorded as a throttled
+        // diagnostic; the temporary fallback keeps access during rollout.
+        hasTrialMismatch = (outcome == .grantedByLegacyTrial && serverResult == .denied)
         phase = .resolved(outcome)
         lastRefreshedAt = now
 
         persistVerification(outcome: outcome, serverResult: serverResult, serverRow: serverRow, userId: userId, now: now)
 
-        if hasServerMismatch {
+        if hasServerMismatch || hasTrialMismatch {
             await reportMismatchIfNeeded()
         }
     }
@@ -414,11 +426,14 @@ final class EntitlementGate {
                 supabaseEnforced: enforcementEnabled
             )
         case .denied:
-            let fallbackGranted: (entitled: Bool, source: String?)
+            let fallbackGranted: (entitled: Bool, source: String?, expiresAt: Date?)
             switch outcome {
-            case .grantedByRevenueCat: fallbackGranted = (true, "revenuecat")
-            case .grantedByLegacyTrial: fallbackGranted = (true, "legacy_trial")
-            default: fallbackGranted = (false, nil)
+            case .grantedByRevenueCat: fallbackGranted = (true, "revenuecat", nil)
+            case .grantedByLegacyTrial:
+                // Cache from the legacy trial is CAPPED at the trial end so
+                // offline access can never outlive the known trial expiry.
+                fallbackGranted = (true, "legacy_trial", subscription.freeAccessEndsAt)
+            default: fallbackGranted = (false, nil, nil)
             }
             EntitlementVerificationStore.shared.recordVerification(
                 userId: userId.uuidString,
@@ -427,7 +442,7 @@ final class EntitlementGate {
                 accessSource: fallbackGranted.source,
                 planCode: nil,
                 reasonCode: serverRow?.reasonCode,
-                knownExpiresAt: nil,
+                knownExpiresAt: fallbackGranted.expiresAt,
                 supabaseEnforced: enforcementEnabled
             )
         case .unreachable:

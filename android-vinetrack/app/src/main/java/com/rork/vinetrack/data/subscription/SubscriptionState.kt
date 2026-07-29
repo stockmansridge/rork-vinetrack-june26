@@ -25,6 +25,14 @@ data class EntitlementVerificationSnapshot(
     @SerialName("was_entitled") val wasEntitled: Boolean,
     /** Short, non-sensitive product/entitlement status (e.g. "active:…"). */
     @SerialName("product_status") val productStatus: String? = null,
+    // Phase 2C.1 additive field — optional so snapshots written by earlier
+    // builds keep decoding (ignoreUnknownKeys covers the reverse direction).
+    /**
+     * Earliest KNOWN entitlement expiry (epoch millis) at verification time
+     * — cached offline access must never extend past this instant regardless
+     * of the 30-day grace window (e.g. the server trial end, SQL 143/144).
+     */
+    @SerialName("known_expires_at_ms") val knownExpiresAtMs: Long? = null,
 )
 
 /**
@@ -69,12 +77,14 @@ class EntitlementVerificationStore(context: Context) {
         userId: String?,
         entitled: Boolean,
         productStatus: String?,
+        knownExpiresAtMs: Long? = null,
     ): EntitlementVerificationSnapshot {
         val snapshot = EntitlementVerificationSnapshot(
             userId = userId,
             lastVerifiedAtMs = System.currentTimeMillis(),
             wasEntitled = entitled,
             productStatus = productStatus,
+            knownExpiresAtMs = knownExpiresAtMs,
         )
         save(snapshot)
         return snapshot
