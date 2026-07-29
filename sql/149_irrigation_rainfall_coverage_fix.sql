@@ -455,7 +455,10 @@ begin
       'previous_runtime_minutes', v_prev.runtime,
       'runtime_difference_minutes', v_tot.runtime - v_prev.runtime,
       'previous_session_count', v_prev.sessions,
-      'session_count_difference', v_tot.sessions - v_prev.sessions,
+      'session_count_difference', v_tot.sessions - v_prev.sessions)
+    -- Split into a second jsonb_build_object: PostgreSQL caps function calls
+    -- at 100 arguments, and the full payload is 53 pairs = 106 arguments.
+    || jsonb_build_object(
       'rainfall_mm', (select round(sum(rb.rainfall_mm), 1)
                       from public._irrigation_rainfall_best(p_vineyard_id, v_start, v_end) rb),
       'rainfall_data_complete', v_rcov.data_complete,
