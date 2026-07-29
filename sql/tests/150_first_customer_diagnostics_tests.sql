@@ -69,6 +69,7 @@ declare
   n_subs     bigint;
   n_events   bigint;
   n_alerts   bigint;
+  n_lic      bigint;
 begin
   -- ---- fixtures ------------------------------------------------------------
   -- All users created > 3 months ago so the SQL 143 account trial is expired
