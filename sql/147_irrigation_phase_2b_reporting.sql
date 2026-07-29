@@ -1364,29 +1364,28 @@ begin
     group by pstart
   )
   select jsonb_agg(
-    r
+    ri.r
     || jsonb_build_object(
-      'month_key', r->>'period_key',
-      'month_label', to_char((r->>'period_start')::date, 'FMMonth YYYY'),
-      'month_start', r->'period_start',
-      'month_end', r->'period_end',
+      'month_key', ri.r->>'period_key',
+      'month_label', to_char((ri.r->>'period_start')::date, 'FMMonth YYYY'),
+      'month_start', ri.r->'period_start',
+      'month_end', ri.r->'period_end',
       'serviced_area_hectares', cn.area_ha,
       'litres_per_hectare', cn.lph,
       'litres_per_vine', cn.lpv,
       'previous_vintage_total_litres', coalesce(ps.total, 0),
       'previous_vintage_depth_mm', pd.depth_mm,
-      'difference_litres', (r->>'total_litres')::numeric - coalesce(ps.total, 0),
+      'difference_litres', (ri.r->>'total_litres')::numeric - coalesce(ps.total, 0),
       'difference_percent',
-        public._irrigation_pct_diff((r->>'total_litres')::numeric, ps.total))
-    order by (r->>'period_start')::date)
+        public._irrigation_pct_diff((ri.r->>'total_litres')::numeric, ps.total))
+    order by (ri.r->>'period_start')::date)
   into v_rows
   from rows_in ri
-  cross join lateral (select ri.r) x(r)
-  left join cur_norm cn on cn.pstart = (r->>'period_start')::date
+  left join cur_norm cn on cn.pstart = (ri.r->>'period_start')::date
   left join prev_sessions ps
-    on ps.pstart = ((r->>'period_start')::date - interval '1 year')::date
+    on ps.pstart = ((ri.r->>'period_start')::date - interval '1 year')::date
   left join prev_depth pd
-    on pd.pstart = ((r->>'period_start')::date - interval '1 year')::date;
+    on pd.pstart = ((ri.r->>'period_start')::date - interval '1 year')::date;
 
   return v_base || jsonb_build_object('rows', coalesce(v_rows, '[]'::jsonb));
 end;
