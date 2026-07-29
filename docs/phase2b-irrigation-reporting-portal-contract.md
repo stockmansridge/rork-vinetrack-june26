@@ -48,11 +48,31 @@ rolled back; expect `SQL 147 irrigation reporting tests: ALL PASSED`).
 ## 3. Rainfall source
 
 `public.rainfall_daily` (SQL 028) is the single rainfall source. Best source
-per day: `manual > davis_weatherlink > open_meteo`. A missing day means "no
-data" — reports return `rainfall_data_complete=false` plus a
+per day: `manual > davis_weatherlink > open_meteo`. A missing ELAPSED day
+means "no data" — reports return `rainfall_data_complete=false` plus a
 `missing_rainfall` / `partial_rainfall_coverage` warning, never a false zero.
 `combined_water_input_mm = rainfall_mm + irrigation_depth_mm` (both mm; never
 rainfall added to litres). Percent splits are null when combined input is 0.
+
+### Rainfall coverage (SQL 149 — future dates never count as missing)
+
+Coverage is measured against the elapsed part of the report period only,
+cut at the **vineyard-local** today (vineyard timezone, never the UTC date):
+
+- `rainfall_coverage_start` = period_start; `rainfall_coverage_end` =
+  `least(period_end, vineyard_local_today)`; both null for fully-future
+  periods.
+- `rainfall_expected_days` = elapsed local days only (0 when the period has
+  not started); `rainfall_observed_days` = elapsed days with a valid rainfall
+  record — a recorded **0.0 mm day counts as observed** (coverage is
+  existence-based, never `mm > 0`); `rainfall_missing_days` =
+  expected − observed; `rainfall_future_days` = days after local today.
+- `rainfall_data_complete` = `missing_days = 0`; **JSON null** when nothing is
+  expected yet (render as "not yet applicable", not as incomplete).
+- Warnings fire only for genuinely missing elapsed days, e.g. *"Rainfall data
+  is missing for 2 of 29 elapsed day(s) in this period."* Future days never
+  warn, never lower `data_quality`, and never appear as zero rainfall
+  (`rainfall_mm` stays null for future rows).
 
 ## 4. Classifications
 
@@ -162,11 +182,15 @@ All take the §6 filters unless noted. All return jsonb envelopes.
    volume_difference_litres/percent [null when base 0], previous_depth_mm,
    depth_difference_mm, previous_runtime_minutes, runtime_difference_minutes,
    previous_session_count, session_count_difference), rainfall_mm,
-   rainfall_data_complete, data_quality, warnings.
+   rainfall_data_complete, rainfall_expected_days, rainfall_observed_days,
+   rainfall_missing_days, rainfall_future_days, rainfall_coverage_start,
+   rainfall_coverage_end, data_quality, warnings.
 2. **`get_irrigation_daily_report`** (+`p_include_zero_days` default false) —
    `rows[]`: period_key (YYYY-MM-DD), totals, manual/imported/estimated/
    directly_reported litres, valves_used, blocks_irrigated, depth/effective
-   depth, rainfall_mm, combined_water_input_mm, rainfall_data_complete.
+   depth, rainfall_mm, combined_water_input_mm, rainfall_data_complete
+   (null for not-yet-elapsed rows), rainfall_expected_days,
+   rainfall_observed_days, rainfall_missing_days, rainfall_future_days.
 3. **`get_irrigation_weekly_summary`** (+`p_include_zero_weeks`) — ISO weeks;
    rows add `week_number`, period_key `IYYY-Wxx`.
 4. **`get_irrigation_monthly_report`** — every month of the vintage incl.
@@ -202,13 +226,15 @@ All take the §6 filters unless noted. All return jsonb envelopes.
     'vintage', default 'month'; extra param sits after `p_vintage_year`) —
     rows: period_key/start/end, rainfall_mm, gross_irrigation_depth_mm,
     effective_irrigation_depth_mm, combined_water_input_mm,
-    irrigation/rainfall_percent_of_combined, rainfall_data_complete. The
-    'vintage' grouping recomputes depth over the whole period (never a sum of
-    unweighted sub-period depths).
+    irrigation/rainfall_percent_of_combined, rainfall_data_complete (null for
+    not-yet-elapsed rows) + the coverage day counts (§3). The 'vintage'
+    grouping recomputes depth over the whole period (never a sum of
+    unweighted sub-period depths) and adds rainfall_coverage_start/end.
 12. **`get_irrigation_vintage_trends`** (`p_vintage_year` = latest,
     `p_vintage_count` 1–10 default 5; **no date params**) — ascending rows per
     vintage: period, litres splits, runtime, session_count, area, per-ha/vine,
-    depth/effective depth, rainfall_mm, combined, data_quality, warnings.
+    depth/effective depth, rainfall_mm, rainfall_data_complete + coverage day
+    counts (§3), combined, data_quality, warnings.
 13. **`list_irrigation_report_sessions`** (+`p_limit` ≤200 default 50,
     `p_offset`) — drill-down. Returns `{sessions:[…existing session-detail
     model… + source_group, source_label, measurement_group,
@@ -261,17 +287,26 @@ reversed + partially-allocated fixtures.
   "previous_vintage_year": 2025, "previous_total_litres": 7000,
   "volume_difference_litres": 13400, "volume_difference_percent": 191.4,
   "rainfall_mm": 8, "rainfall_data_complete": false,
+  "rainfall_expected_days": 365, "rainfall_observed_days": 2,
+  "rainfall_missing_days": 363, "rainfall_future_days": 0,
+  "rainfall_coverage_start": "2025-07-01", "rainfall_coverage_end": "2026-06-30",
   "data_quality": "partial",
   "warnings": [
     {"code":"missing_serviced_area","severity":"warning","message":"Serviced area is unavailable for 2 irrigation session(s).","affected_count":2},
     {"code":"missing_irrigation_efficiency","severity":"warning","message":"Effective irrigation could not be calculated for 2 session(s) without a frozen irrigation efficiency.","affected_count":2},
-    {"code":"partial_rainfall_coverage","severity":"warning","message":"Rainfall data is missing for 363 of 365 day(s) in this period.","affected_count":363}
+    {"code":"partial_rainfall_coverage","severity":"warning","message":"Rainfall data is missing for 363 of 365 elapsed day(s) in this period.","affected_count":363}
   ]
 }
 ```
 
-(Values from the rolled-back test fixtures; live Stockmans Ridge examples can
-be captured after SQL 147 is applied and the first Galcon import is committed.)
+(Values from the rolled-back test fixtures — a fully-ended historical period,
+so every day is expected. For an IN-PROGRESS vintage, expected days cover only
+the elapsed part: e.g. vintage 2027 on 29 July 2026 returns
+`rainfall_expected_days: 29, rainfall_future_days: 336`, and with all 29
+elapsed days recorded, `rainfall_missing_days: 0`,
+`rainfall_data_complete: true` and NO rainfall warning. Live Stockmans Ridge
+examples can be captured after SQL 147+149 are applied and the first Galcon
+import is committed.)
 
 ## 13. Portal implementation notes
 
@@ -280,6 +315,9 @@ be captured after SQL 147 is applied and the first Galcon import is committed.)
   Calculation Sources, Vintage Trends — same list as iOS/Android.
 - Charts must keep an accessible numeric table alternative.
 - Render `warnings` wherever present; show `data_quality` on Overview/Trends.
+- After SQL 149, the false "missing for 336 of 365 days" warning disappears
+  server-side — simply refresh the report; do NOT hide or patch warnings in
+  TypeScript. Treat `rainfall_data_complete: null` as "not yet applicable".
 - Display `Unassigned` variety rows honestly; do not hide them.
 - Do not compute any totals client-side; the reconciliation guarantees only
   hold for server responses.
