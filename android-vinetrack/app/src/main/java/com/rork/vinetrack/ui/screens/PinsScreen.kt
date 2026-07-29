@@ -166,6 +166,9 @@ fun PinsScreen(
     var photoTarget by remember { mutableStateOf<Pin?>(null) }
     var uploadingPinId by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<Pin?>(null) }
+    // Pin whose in-app direct-line directions view is open (iOS
+    // PinDirectionsSheet parity — no external turn-by-turn navigation).
+    var directionsPin by remember { mutableStateOf<Pin?>(null) }
     var showExportSheet by remember { mutableStateOf(false) }
     var isExporting by remember { mutableStateOf(false) }
     // Current GPS fix, used to show each pin's distance (iOS PinRowView parity).
@@ -225,6 +228,13 @@ fun PinsScreen(
     // Resolve each pin's configured colour (iOS nameColorMap parity).
     val colorMap = remember(state.repairButtons, state.growthButtons) { pinColorMap(state) }
 
+    // Delete visibility mirrors iOS canDeleteOperationalRecords (owner/manager/
+    // supervisor may delete; operators may not). An unknown role — the members
+    // list still loading or unavailable offline — keeps the button visible so
+    // an authorised user never loses Delete; the backend enforces the real
+    // permission on the delete call regardless.
+    val canDelete = state.currentRole == null || state.currentRole in setOf("owner", "manager", "supervisor")
+
     // Photo picker for attaching/replacing an existing pin's photo.
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
@@ -271,33 +281,18 @@ fun PinsScreen(
         scope.launch { snackbarHostState.showSnackbar("No maps app available to open this location.") }
     }
 
-    /** Launch turn-by-turn navigation to the pin (Google Maps, with a generic fallback). */
+    /**
+     * Open the in-app direct-line directions view (iOS PinDirectionsSheet
+     * parity): satellite imagery with a straight dashed line from the current
+     * location to the pin. Vineyard driving is off-road, so road-based
+     * turn-by-turn navigation is intentionally not used here.
+     */
     fun openDirections(pin: Pin) {
-        val lat = pin.latitude
-        val lon = pin.longitude
-        if (lat == null || lon == null) {
+        if (pin.latitude == null || pin.longitude == null) {
             scope.launch { snackbarHostState.showSnackbar("This pin has no saved location yet.") }
             return
         }
-        // Directions to the pin (a direct route from the current location).
-        // 1) Google Maps turn-by-turn, 2) Google Maps directions URL in the app,
-        // 3) browser directions URL as a final fallback.
-        val nav = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$lat,$lon"))
-            .setPackage("com.google.android.apps.maps")
-        val dirApp = Intent(
-            Intent.ACTION_VIEW,
-            Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$lat,$lon"),
-        ).setPackage("com.google.android.apps.maps")
-        val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$lat,$lon"))
-        for (intent in listOf(nav, dirApp, web)) {
-            try {
-                context.startActivity(intent)
-                return
-            } catch (_: Exception) {
-                // Try the next fallback.
-            }
-        }
-        scope.launch { snackbarHostState.showSnackbar("No maps app available for directions.") }
+        directionsPin = pin
     }
 
     fun runExport(format: PinExporter.Format) {
@@ -373,6 +368,7 @@ fun PinsScreen(
                         photoTarget = it
                         photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
+                    canDelete = canDelete,
                     onDelete = { deleteTarget = it },
                 )
                 PinsViewMode.Stats -> PinsStatsMode(visiblePins, colorMap)
@@ -395,7 +391,7 @@ fun PinsScreen(
             color = pinColor(detailPin, colorMap),
             paddockName = state.paddocks.firstOrNull { it.id == detailPin.paddockId }?.name,
             sync = state.pinSyncState(detailPin.id),
-            canDelete = state.currentRole in setOf("owner", "manager", "supervisor"),
+            canDelete = canDelete,
             photoBusy = uploadingPinId == detailPin.id,
             // Synthesized growth-record pins have no backing pins row, so their
             // notes stay read-only (a save would have nothing to update).
@@ -427,6 +423,16 @@ fun PinsScreen(
             },
             onToggle = { vm.togglePinCompleted(detailPin) },
             onDelete = { deleteTarget = detailPin },
+        )
+    }
+
+    // In-app direct-line directions (satellite view, ignores roads).
+    directionsPin?.let { pin ->
+        PinDirectionsDialog(
+            pin = pin,
+            color = pinColor(pin, colorMap),
+            userLocation = userLocation,
+            onDismiss = { directionsPin = null },
         )
     }
 
@@ -731,6 +737,7 @@ private fun PinsListMode(
     onMap: (Pin) -> Unit,
     onDirections: (Pin) -> Unit,
     onPhoto: (Pin) -> Unit,
+    canDelete: Boolean,
     onDelete: (Pin) -> Unit,
 ) {
     LazyColumn(
@@ -788,6 +795,7 @@ private fun PinsListMode(
                     onMap = { onMap(pin) },
                     onDirections = { onDirections(pin) },
                     onPhoto = { onPhoto(pin) },
+                    canDelete = canDelete,
                     onDelete = { onDelete(pin) },
                 )
             }
@@ -2050,6 +2058,7 @@ private fun PinRow(
     onMap: () -> Unit,
     onDirections: () -> Unit,
     onPhoto: () -> Unit,
+    canDelete: Boolean,
     onDelete: () -> Unit,
 ) {
     val vine = LocalVineColors.current
@@ -2141,7 +2150,9 @@ private fun PinRow(
                     modifier = Modifier.weight(1f),
                     onClick = onToggle,
                 )
-                PinActionButton(Icons.Filled.Delete, "Delete", VineColors.Destructive, modifier = Modifier.weight(1f), onClick = onDelete)
+                if (canDelete) {
+                    PinActionButton(Icons.Filled.Delete, "Delete", VineColors.Destructive, modifier = Modifier.weight(1f), onClick = onDelete)
+                }
             }
         }
     }
@@ -2369,7 +2380,7 @@ private fun usesImperialDistance(): Boolean =
     }
 
 /** Short navigation-style distance honouring the device's measurement system. */
-private fun formatShortDistance(metres: Double): String {
+internal fun formatShortDistance(metres: Double): String {
     if (usesImperialDistance()) {
         val feet = metres * 3.280839895
         return if (feet < 5280) "${feet.roundToInt()}ft"
@@ -2404,7 +2415,7 @@ private fun parseIsoMillis(value: String?): Long? {
 }
 
 /** Great-circle distance between two lat/lon points in metres. */
-private fun haversineMetres(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+internal fun haversineMetres(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
     val r = 6_371_000.0
     val dLat = Math.toRadians(lat2 - lat1)
     val dLon = Math.toRadians(lon2 - lon1)

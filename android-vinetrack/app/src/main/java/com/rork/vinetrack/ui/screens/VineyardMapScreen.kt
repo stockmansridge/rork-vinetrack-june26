@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -62,6 +63,7 @@ import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.estimatedCameraPosition
 import com.rork.vinetrack.ui.components.fitToContent
+import com.rork.vinetrack.ui.components.hasDeviceLocationPermission
 import com.rork.vinetrack.ui.components.isValidMapCoordinate
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
@@ -75,6 +77,7 @@ import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.Polygon
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Customer-facing map display modes for the overview map. */
@@ -175,6 +178,20 @@ fun VineyardMapContent(
     onPinClick: ((Pin) -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    // Show the user's location dot whenever a location permission is held
+    // (iOS UserAnnotation parity). Enabling it without a granted permission
+    // throws, so gate on a live check and re-check briefly after entry — the
+    // Pins screen requests the permission on first open, and this picks the
+    // grant up without requiring the map to be reopened.
+    var hasLocationPermission by remember { mutableStateOf(hasDeviceLocationPermission(context)) }
+    LaunchedEffect(Unit) {
+        while (!hasLocationPermission) {
+            delay(2_000L)
+            hasLocationPermission = hasDeviceLocationPermission(context)
+        }
+    }
 
     val blocks = remember(state.paddocks) { state.paddocks.filter { it.hasGeometry } }
     val locatedPins = remember(pins) { pins.filter { it.latLng() != null } }
@@ -296,10 +313,14 @@ fun VineyardMapContent(
         GoogleMap(
                 modifier = Modifier.fillMaxSize().onSizeChanged { mapSizePx = it },
                 cameraPositionState = cameraPositionState,
-                properties = MapProperties(mapType = defaults.style.toMapType()),
+                properties = MapProperties(
+                    mapType = defaults.style.toMapType(),
+                    isMyLocationEnabled = hasLocationPermission,
+                ),
                 uiSettings = MapUiSettings(
                     zoomControlsEnabled = false,
                     mapToolbarEnabled = false,
+                    myLocationButtonEnabled = false,
                     tiltGesturesEnabled = true,
                     rotationGesturesEnabled = true,
                 ),
