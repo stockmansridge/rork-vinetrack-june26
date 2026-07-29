@@ -218,6 +218,9 @@ private const val MAX_DISPLAY_ATTEMPTS = 8
 /** Minimum gap between foreground session checks (rapid start/stop cycles). */
 private const val FOREGROUND_CHECK_DEBOUNCE_MS = 30_000L
 
+/** Log tag for System Admin status resolution (gates admin-only surfaces). */
+private const val ADMIN_TAG = "VineTrackAdmin"
+
 enum class PendingSyncDisplayState(val label: String) {
     /** Enqueued, not yet attempted. */
     Pending("Waiting to sync"),
@@ -3071,6 +3074,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 signOut("Your session expired. Please sign in again.")
                 return@launch
             }
+            // Re-resolve System Admin status on foreground (parity with iOS,
+            // which refreshes SystemAdminService on every root-view activation).
+            // Cheap RPC; keeps admin-gated surfaces (e.g. Irrigation Records)
+            // from staying hidden all session after one transient startup miss.
+            loadAdminStatus()
             if (_ui.value.isOnline) replayAllPendingWrites()
         }
     }
@@ -3710,13 +3718,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Resolve platform System Admin status for the signed-in user (parity with
-     * iOS `SystemAdminService.refresh`). Best-effort and non-fatal: a failure
-     * leaves [AppUiState.isSystemAdmin] false so the Admin entry stays hidden.
-     * Runs in the background so it never blocks vineyard loading.
+     * iOS `SystemAdminService.refresh`). Best-effort and non-fatal, but NOT
+     * one-shot: a transient startup failure (network blip, token-refresh race)
+     * gets one delayed retry, and [onAppForegrounded] re-resolves on every
+     * foreground return — matching iOS, which refreshes on each root-view
+     * activation. On repeated failure the CURRENT value is kept (never forced
+     * to false) so a brief offline spell can't hide admin surfaces that were
+     * already confirmed. Sign-out resets the whole state, so no value ever
+     * leaks across users. Runs in the background; never blocks vineyard loading.
      */
     private fun loadAdminStatus() {
         viewModelScope.launch {
-            val admin = runCatching { systemAdminRepository.isSystemAdmin() }.getOrDefault(false)
+            var admin = runCatching { systemAdminRepository.isSystemAdmin() }.getOrNull()
+            if (admin == null) {
+                Log.w(ADMIN_TAG, "System admin check failed — retrying once in 2s")
+                kotlinx.coroutines.delay(2_000)
+                admin = runCatching { systemAdminRepository.isSystemAdmin() }.getOrNull()
+            }
+            if (admin == null) {
+                Log.w(ADMIN_TAG, "System admin check failed twice — keeping current value (${_ui.value.isSystemAdmin})")
+                return@launch
+            }
+            Log.d(ADMIN_TAG, "System admin status resolved: $admin")
             _ui.update { it.copy(isSystemAdmin = admin) }
         }
     }
