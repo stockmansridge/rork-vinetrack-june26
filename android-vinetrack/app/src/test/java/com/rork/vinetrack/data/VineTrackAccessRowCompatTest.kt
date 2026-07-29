@@ -190,7 +190,7 @@ class VineTrackAccessRowCompatTest {
         // The cache cap resolves to the trial end.
         val nowMs = 1_753_660_800_000L // 2025-ish, well before the trial end
         val cap = row.knownExpiresAtMs(nowMs)
-        assertEquals(1_792_540_800_000L, cap) // 2026-10-28T00:00:00Z
+        assertEquals(1_793_145_600_000L, cap) // 2026-10-28T00:00:00Z
     }
 
     @Test
@@ -242,7 +242,7 @@ class VineTrackAccessRowCompatTest {
         )
         // Both future: the earlier one caps the cache.
         val nowMs = 1_753_660_800_000L
-        assertEquals(1_784_937_600_000L, row.knownExpiresAtMs(nowMs)) // 2026-08-01
+        assertEquals(1_785_542_400_000L, row.knownExpiresAtMs(nowMs)) // 2026-08-01
     }
 
     @Test
