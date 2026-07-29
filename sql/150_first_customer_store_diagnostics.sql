@@ -234,7 +234,7 @@ begin
 
   -- 6. Issue derivation (order: hard failures first, then attention).
   if v_sub_currently_valid and not coalesce(v_ea.has_access, false) then
-    v_issues := v_issues || 'valid_store_subscription_but_access_denied';
+    v_issues := array_append(v_issues, 'valid_store_subscription_but_access_denied');
     v_overall := 'failed';
   end if;
 
@@ -243,36 +243,36 @@ begin
      and v_sub.current_period_end is not null
      and v_sub.current_period_end <= now()
      and (v_sub.grace_period_end is null or v_sub.grace_period_end <= now()) then
-    v_issues := v_issues || 'subscription_period_lapsed_without_expiry_event';
+    v_issues := array_append(v_issues, 'subscription_period_lapsed_without_expiry_event');
     v_overall := 'failed';
   end if;
 
   if v_sub.id is null then
-    v_issues := v_issues || 'no_store_subscription';
+    v_issues := array_append(v_issues, 'no_store_subscription');
   end if;
   if v_sub.id is not null and coalesce(v_sub.environment, '') = 'sandbox' then
-    v_issues := v_issues || 'sandbox_subscription';
+    v_issues := array_append(v_issues, 'sandbox_subscription');
   end if;
   if v_sub.id is not null and v_sub.status = 'expired' then
-    v_issues := v_issues || 'store_subscription_expired';
+    v_issues := array_append(v_issues, 'store_subscription_expired');
   end if;
   if v_sub.id is not null and v_ev.event_type is null then
-    v_issues := v_issues || 'no_provider_event_recorded';
+    v_issues := array_append(v_issues, 'no_provider_event_recorded');
   end if;
   if v_ev.processing_status in ('needs_review', 'failed') then
-    v_issues := v_issues || ('latest_event_' || v_ev.processing_status);
+    v_issues := array_append(v_issues, 'latest_event_' || v_ev.processing_status);
   end if;
   if v_catalogue_match is false then
-    v_issues := v_issues || 'product_not_in_active_catalogue';
+    v_issues := array_append(v_issues, 'product_not_in_active_catalogue');
   end if;
   if v_open_alerts > 0 then
-    v_issues := v_issues || 'open_billing_alerts';
+    v_issues := array_append(v_issues, 'open_billing_alerts');
   end if;
   if v_open_reviews > 0 then
-    v_issues := v_issues || 'open_review_items';
+    v_issues := array_append(v_issues, 'open_review_items');
   end if;
   if v_user.banned_until is not null and v_user.banned_until > now() then
-    v_issues := v_issues || 'account_disabled';
+    v_issues := array_append(v_issues, 'account_disabled');
   end if;
 
   if v_overall <> 'failed' and array_length(v_issues, 1) is not null then
