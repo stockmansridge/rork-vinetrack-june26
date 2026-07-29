@@ -34,20 +34,25 @@
 --     function body") — is repointed to the view capability. This releases
 --     every view-level RPC and all core-table RLS SELECT policies at once.
 --   * public._irrigation_require_access() and
---     public._irrigation_import_require_admin() now read the per-function
---     GUC `app.irrigation_capability` (bound below with ALTER FUNCTION ...
---     SET), defaulting to `view_irrigation_records` / `import_irrigation`.
---     Postgres applies a function's SET clause for the whole call, including
---     the nested require helpers, so each RPC enforces its own capability
---     without any body change.
---   * Stricter RPCs (setup, edit, reverse, reports, import reversal) get the
---     GUC bound via a verified ALTER FUNCTION loop (all overloads).
+--     public._irrigation_import_require_admin() resolve the demanded
+--     capability from the PL/pgSQL call stack (GET DIAGNOSTICS PG_CONTEXT)
+--     against the mapping table public.irrigation_rpc_capabilities,
+--     defaulting to `view_irrigation_records` / `import_irrigation`.
+--     The innermost mapped RPC on the stack wins, so each RPC enforces its
+--     own capability without any body change.
+--     (An ALTER FUNCTION ... SET GUC binding was the original design, but
+--     Supabase's postgres role cannot define custom parameters at the
+--     function level on PG 15+ — 42501 permission denied — so the stack
+--     lookup replaces it with identical semantics.)
+--   * Stricter RPCs (setup, edit, reverse, reports, import reversal) are
+--     registered in the mapping table via a verified loop.
 --   * Import-table RLS SELECT policies move from the inline system-admin
 --     check to the import capability.
 --
--- NOTE for future migrations: CREATE OR REPLACE FUNCTION drops a function's
--- SET clauses. Any migration that re-declares one of the bound RPCs below
--- MUST re-apply its `set app.irrigation_capability` binding (see §5).
+-- NOTE for future migrations: the mapping survives CREATE OR REPLACE of the
+-- RPCs (it is keyed by function name, not oid). A future migration that adds
+-- a NEW stricter-than-view RPC must insert its row into
+-- public.irrigation_rpc_capabilities (see §5).
 --
 -- Error contract (unchanged prefixes, one addition):
 --   irrigation_access_denied    — caller cannot even view Irrigation Records
@@ -157,9 +162,53 @@ revoke all on function public.has_irrigation_records_access(uuid) from public, a
 grant execute on function public.has_irrigation_records_access(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- 4. Capability-aware require helpers. Each RPC's bound GUC (see §5) decides
---    which capability is demanded; unbound RPCs keep the view/import default.
+-- 4. Capability-aware require helpers. The mapping table (§5) decides which
+--    capability each RPC demands; unmapped RPCs keep the view/import default.
+--
+--    Resolution order in _irrigation_stack_capability:
+--      1. innermost mapped RPC found on the PL/pgSQL call stack;
+--      2. the session GUC `app.irrigation_capability` (runtime set_config
+--         only — used by the SQL test-suite to exercise the helpers
+--         directly; it can never downgrade a mapped RPC because the stack
+--         match takes precedence);
+--      3. the helper's default.
 -- ---------------------------------------------------------------------------
+create table if not exists public.irrigation_rpc_capabilities (
+  function_name text primary key,
+  capability    text not null,
+  updated_at    timestamptz not null default now()
+);
+
+alter table public.irrigation_rpc_capabilities enable row level security;
+revoke all on public.irrigation_rpc_capabilities from public, anon, authenticated;
+-- No RLS policies: the table is read only through the definer helpers below.
+
+create or replace function public._irrigation_stack_capability(p_default text)
+returns text
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_ctx text;
+  v_cap text;
+begin
+  get diagnostics v_ctx = pg_context;
+  select rc.capability into v_cap
+  from regexp_split_to_table(v_ctx, E'\n') with ordinality as t(line, ord)
+  cross join lateral regexp_matches(t.line, 'function (?:[a-z0-9_]+\.)?([a-z0-9_]+)\(') as m(parts)
+  join public.irrigation_rpc_capabilities rc on rc.function_name = (m.parts)[1]
+  order by t.ord
+  limit 1;
+  return coalesce(v_cap,
+                  nullif(current_setting('app.irrigation_capability', true), ''),
+                  p_default);
+end;
+$$;
+
+revoke all on function public._irrigation_stack_capability(text) from public, anon, authenticated;
+
 create or replace function public._irrigation_require_access(p_vineyard_id uuid)
 returns void
 language plpgsql
@@ -168,8 +217,7 @@ security definer
 set search_path = public
 as $$
 declare
-  v_cap text := coalesce(nullif(current_setting('app.irrigation_capability', true), ''),
-                         'view_irrigation_records');
+  v_cap text := public._irrigation_stack_capability('view_irrigation_records');
 begin
   if p_vineyard_id is null
      or not public.irrigation_capability(p_vineyard_id, 'view_irrigation_records') then
@@ -192,8 +240,7 @@ security definer
 set search_path = public
 as $$
 declare
-  v_cap text := coalesce(nullif(current_setting('app.irrigation_capability', true), ''),
-                         'import_irrigation');
+  v_cap text := public._irrigation_stack_capability('import_irrigation');
 begin
   if p_vineyard_id is null then
     raise exception 'invalid_vineyard: vineyard is required';
@@ -207,17 +254,16 @@ $$;
 revoke all on function public._irrigation_import_require_admin(uuid) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
--- 5. Bind each stricter RPC to its capability (ALL overloads; loud failure if
---    an expected RPC is missing so a partial apply cannot go unnoticed).
---    View-level RPCs (list/get/status/preview/session detail) stay unbound
---    and use the `view_irrigation_records` default. Import RPCs stay unbound
+-- 5. Register each stricter RPC's capability in the mapping table (a name
+--    covers ALL overloads; loud failure if an expected RPC is missing so a
+--    partial apply cannot go unnoticed).
+--    View-level RPCs (list/get/status/preview/session detail) stay unmapped
+--    and use the `view_irrigation_records` default. Import RPCs stay unmapped
 --    and use the `import_irrigation` default via the import helper.
 -- ---------------------------------------------------------------------------
 do $$
 declare
   m record;
-  f record;
-  n integer;
 begin
   for m in
     select * from (values
@@ -258,19 +304,17 @@ begin
       ('reverse_irrigation_import_batch',           'reverse_irrigation_import')
     ) as t(fname, cap)
   loop
-    n := 0;
-    for f in
-      select p.oid::regprocedure as sig
-      from pg_proc p
+    if not exists (
+      select 1 from pg_proc p
       join pg_namespace ns on ns.oid = p.pronamespace
       where ns.nspname = 'public' and p.proname = m.fname
-    loop
-      execute format('alter function %s set app.irrigation_capability = %L', f.sig, m.cap);
-      n := n + 1;
-    end loop;
-    if n = 0 then
+    ) then
       raise exception 'SQL 151: expected function public.%() not found — capability binding incomplete', m.fname;
     end if;
+    insert into public.irrigation_rpc_capabilities (function_name, capability)
+    values (m.fname, m.cap)
+    on conflict (function_name) do update
+      set capability = excluded.capability, updated_at = now();
   end loop;
 end$$;
 
@@ -302,9 +346,10 @@ end$$;
 do $$
 declare
   v_missing text;
+  v_probe   text;
 begin
-  -- 7a. Every bound RPC carries the GUC in proconfig.
-  select string_agg(distinct fname, ', ') into v_missing
+  -- 7a. Every expected RPC exists AND carries a mapping row.
+  select string_agg(distinct expected.fname, ', ') into v_missing
   from (values
       ('record_irrigation_session'), ('update_irrigation_session'),
       ('reverse_irrigation_session'), ('create_irrigation_system'),
@@ -323,18 +368,47 @@ begin
       ('get_irrigation_rainfall_summary'), ('get_irrigation_vintage_trends'),
       ('list_irrigation_report_sessions'), ('reverse_irrigation_import_batch')
   ) expected(fname)
-  where exists (
-    select 1 from pg_proc p
-    join pg_namespace ns on ns.oid = p.pronamespace
-    where ns.nspname = 'public' and p.proname = expected.fname
-      and (p.proconfig is null
-           or not exists (select 1 from unnest(p.proconfig) c
-                          where c like 'app.irrigation_capability=%')));
+  where not exists (
+          select 1 from public.irrigation_rpc_capabilities rc
+          where rc.function_name = expected.fname)
+     or not exists (
+          select 1 from pg_proc p
+          join pg_namespace ns on ns.oid = p.pronamespace
+          where ns.nspname = 'public' and p.proname = expected.fname);
   if v_missing is not null then
-    raise exception 'SQL 151 validation failed — unbound RPCs: %', v_missing;
+    raise exception 'SQL 151 validation failed — unmapped RPCs: %', v_missing;
   end if;
 
-  -- 7b. Import-table policies repointed.
+  -- 7b. Live stack-resolution probe: a temporary mapped function must
+  --     resolve its capability through PG_CONTEXT exactly like a real RPC.
+  insert into public.irrigation_rpc_capabilities (function_name, capability)
+  values ('_irrigation_stack_probe_151', 'manage_irrigation_setup')
+  on conflict (function_name) do update set capability = excluded.capability;
+  create or replace function public._irrigation_stack_probe_151()
+  returns text
+  language plpgsql
+  stable
+  security definer
+  set search_path = public
+  as $probe$
+  begin
+    return public._irrigation_stack_capability('view_irrigation_records');
+  end;
+  $probe$;
+  v_probe := public._irrigation_stack_probe_151();
+  drop function public._irrigation_stack_probe_151();
+  delete from public.irrigation_rpc_capabilities
+  where function_name = '_irrigation_stack_probe_151';
+  if v_probe is distinct from 'manage_irrigation_setup' then
+    raise exception 'SQL 151 validation failed — stack capability resolution returned %', coalesce(v_probe, 'null');
+  end if;
+  -- Outside any mapped function the default must win.
+  if public._irrigation_stack_capability('view_irrigation_records')
+       is distinct from 'view_irrigation_records' then
+    raise exception 'SQL 151 validation failed — unmapped default resolution broken';
+  end if;
+
+  -- 7c. Import-table policies repointed.
   if (select count(*) from pg_policies
       where schemaname = 'public'
         and tablename in ('irrigation_import_provider_settings',
@@ -344,10 +418,10 @@ begin
     raise exception 'SQL 151 validation failed — import RLS policies incomplete';
   end if;
 
-  -- 7c. Unknown capability denies (never grants).
+  -- 7d. Unknown capability denies (never grants).
   if public.irrigation_capability(gen_random_uuid(), 'made_up_capability') then
     raise exception 'SQL 151 validation failed — unknown capability must deny';
   end if;
 
-  raise notice 'SQL 151 applied: Irrigation Records released to vineyard roles (29 RPCs bound, 4 import policies repointed).';
+  raise notice 'SQL 151 applied: Irrigation Records released to vineyard roles (29 RPCs mapped, 4 import policies repointed).';
 end$$;

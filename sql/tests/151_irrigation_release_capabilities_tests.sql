@@ -24,6 +24,14 @@ begin
   ) then
     raise exception 'SQL 151 not applied — run sql/151_irrigation_public_release_capabilities.sql first.';
   end if;
+  if to_regclass('public.irrigation_rpc_capabilities') is null then
+    raise exception 'SQL 151 (fixed version) not applied — the capability mapping table is missing.';
+  end if;
+  -- All 29 stricter RPCs must be registered in the mapping table.
+  if (select count(*) from public.irrigation_rpc_capabilities) < 29 then
+    raise exception 'SQL 151 mapping incomplete — expected 29 RPC capability rows, found %',
+      (select count(*) from public.irrigation_rpc_capabilities);
+  end if;
 end$$;
 
 do $$
@@ -170,7 +178,11 @@ begin
   exception when others then
     if sqlerrm not like 'irrigation_permission_denied%' then raise; end if;
   end;
-  -- Edit/reverse helper checks (the same helper every session RPC calls):
+  -- Edit/reverse helper checks (the same helper every session RPC calls).
+  -- NOTE: real RPCs resolve their capability from the call stack via the
+  -- irrigation_rpc_capabilities mapping; the GUC below is the documented
+  -- test-only fallback that applies ONLY when no mapped RPC is on the stack
+  -- (as here, where the helper is invoked directly).
   perform set_config('app.irrigation_capability', 'edit_irrigation', true);
   begin
     perform public._irrigation_require_access(v_yard);
@@ -238,6 +250,23 @@ begin
   assert not public.irrigation_capability(v_yard, 'made_up'),        'T8 unknown cap denies';
   assert not public.irrigation_capability(null, 'view_irrigation_records'), 'T8 null vineyard denies';
   raise notice 'T8 passed: unknown capability and null vineyard deny';
+
+  -- ---- T9. Stack resolution binds the right capability to real RPCs -------
+  -- (T3/T4 already proved this end-to-end: create_irrigation_system raised
+  -- irrigation_permission_denied for supervisor/operator, and the report
+  -- RPCs raised it for operator — all resolved via the call stack.)
+  assert (select capability from public.irrigation_rpc_capabilities
+          where function_name = 'update_irrigation_session') = 'edit_irrigation',
+         'T9 edit mapping';
+  assert (select capability from public.irrigation_rpc_capabilities
+          where function_name = 'reverse_irrigation_session') = 'reverse_irrigation',
+         'T9 reverse mapping';
+  assert (select capability from public.irrigation_rpc_capabilities
+          where function_name = 'reverse_irrigation_import_batch') = 'reverse_irrigation_import',
+         'T9 import-reversal mapping';
+  assert public._irrigation_stack_capability('view_irrigation_records') = 'view_irrigation_records',
+         'T9 unmapped default';
+  raise notice 'T9 passed: capability mapping rows and default resolution correct';
 
   raise notice 'SQL 151 irrigation capability tests: ALL PASSED';
 end$$;
