@@ -1126,6 +1126,21 @@ object IrrigationLocalCalc {
 // Repository
 // =============================================================================
 
+/** SQL 151 — role-based capability set returned by get_irrigation_capabilities. */
+@Serializable
+data class IrrigationCapabilities(
+    @SerialName("role") val role: String? = null,
+    @SerialName("is_system_admin") val isSystemAdmin: Boolean = false,
+    @SerialName("can_view_irrigation_records") val canViewIrrigationRecords: Boolean = false,
+    @SerialName("can_record_irrigation") val canRecordIrrigation: Boolean = false,
+    @SerialName("can_edit_irrigation") val canEditIrrigation: Boolean = false,
+    @SerialName("can_reverse_irrigation") val canReverseIrrigation: Boolean = false,
+    @SerialName("can_manage_irrigation_setup") val canManageIrrigationSetup: Boolean = false,
+    @SerialName("can_view_irrigation_reports") val canViewIrrigationReports: Boolean = false,
+    @SerialName("can_import_irrigation") val canImportIrrigation: Boolean = false,
+    @SerialName("can_reverse_irrigation_import") val canReverseIrrigationImport: Boolean = false,
+)
+
 /**
  * Irrigation Records data access — thin layer over the shared SQL 125 RPCs
  * (the server owns all authoritative calculation) plus an offline pending
@@ -1145,6 +1160,17 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
             put("p_vineyard_id", vineyardId)
         }))
         text.trim().equals("true", ignoreCase = true)
+    }
+
+    /**
+     * SQL 151 public release — shared role-based capability set. The server
+     * is the single source of truth; the app only mirrors these flags for
+     * visibility (every RPC enforces its own capability independently).
+     */
+    suspend fun capabilities(vineyardId: String): IrrigationCapabilities = withContext(Dispatchers.IO) {
+        decode(ensureSuccess(rpc("get_irrigation_capabilities", buildJsonObject {
+            put("p_vineyard_id", vineyardId)
+        })))
     }
 
     // MARK: Setup

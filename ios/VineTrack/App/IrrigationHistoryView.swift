@@ -127,6 +127,7 @@ struct IrrigationSessionDetailView: View {
     var onChanged: () -> Void = {}
 
     @State private var session: IrrigationSession?
+    @State private var capabilities: IrrigationCapabilities?
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var showReverseConfirm = false
@@ -249,33 +250,43 @@ struct IrrigationSessionDetailView: View {
             }
         }
 
-        if session.status != "reversed" && !session.isImported {
+        // Public release (SQL 151): actions follow the shared role capabilities.
+        // The server enforces each one independently — this is visibility only.
+        if session.status != "reversed" && !session.isImported,
+           let caps = capabilities,
+           caps.canEditIrrigation || caps.canRecordIrrigation || caps.canReverseIrrigation {
             Section {
-                NavigationLink {
-                    IrrigationRecordEntryView(editingSession: session) {
-                        Task { await reload() }
-                        onChanged()
-                    }
-                } label: {
-                    Label("Edit Record", systemImage: "pencil")
-                }
-                NavigationLink {
-                    IrrigationRecordEntryView(duplicateFrom: session) {
-                        onChanged()
-                    }
-                } label: {
-                    Label("Duplicate as New Record", systemImage: "plus.square.on.square")
-                }
-                Button(role: .destructive) {
-                    showReverseConfirm = true
-                } label: {
-                    if isReversing {
-                        ProgressView()
-                    } else {
-                        Label("Reverse Record", systemImage: "arrow.uturn.backward.circle")
+                if caps.canEditIrrigation {
+                    NavigationLink {
+                        IrrigationRecordEntryView(editingSession: session) {
+                            Task { await reload() }
+                            onChanged()
+                        }
+                    } label: {
+                        Label("Edit Record", systemImage: "pencil")
                     }
                 }
-                .disabled(isReversing)
+                if caps.canRecordIrrigation {
+                    NavigationLink {
+                        IrrigationRecordEntryView(duplicateFrom: session) {
+                            onChanged()
+                        }
+                    } label: {
+                        Label("Duplicate as New Record", systemImage: "plus.square.on.square")
+                    }
+                }
+                if caps.canReverseIrrigation {
+                    Button(role: .destructive) {
+                        showReverseConfirm = true
+                    } label: {
+                        if isReversing {
+                            ProgressView()
+                        } else {
+                            Label("Reverse Record", systemImage: "arrow.uturn.backward.circle")
+                        }
+                    }
+                    .disabled(isReversing)
+                }
             }
         }
 

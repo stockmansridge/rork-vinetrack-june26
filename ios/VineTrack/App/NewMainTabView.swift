@@ -589,7 +589,6 @@ private struct NewHomeTabView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(TripTrackingService.self) private var tripTracking
-    @Environment(SystemAdminService.self) private var systemAdmin
 
     @State private var showQuickPin: Bool = false
     @State private var showTripChoice: Bool = false
@@ -1069,18 +1068,16 @@ private struct NewHomeTabView: View {
                     iconTile(title: "Pruning Tracker", icon: "scissors", tint: .teal)
                 }
                 .buttonStyle(.plain)
-                // Irrigation Records is gated to System Administrators during
-                // Phase 1 testing. The server enforces the same gate via
-                // has_irrigation_records_access — hiding this tile is not the
-                // security boundary.
-                if systemAdmin.isSystemAdmin {
-                    NavigationLink {
-                        IrrigationRecordsView()
-                    } label: {
-                        iconTile(title: "Irrigation Records", icon: "drop.circle.fill", tint: .cyan)
-                    }
-                    .buttonStyle(.plain)
+                // Public release (SQL 151): Irrigation Records is available to
+                // all vineyard roles. The view itself resolves the caller's
+                // capabilities via get_irrigation_capabilities, and the server
+                // enforces every action independently.
+                NavigationLink {
+                    IrrigationRecordsView()
+                } label: {
+                    iconTile(title: "Irrigation Records", icon: "drop.circle.fill", tint: .cyan)
                 }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal)
         }

@@ -64,11 +64,11 @@ fun MoreScreen(
                     tool.group == group &&
                         tool != ToolRoute.RolesPermissions &&
                         tool != ToolRoute.SprayManagement &&
-                        (tool != ToolRoute.CostReports || canViewCosting) &&
-                        // Irrigation Records is System Administrator gated during
-                        // Phase 1 (server enforces the same gate via
-                        // has_irrigation_records_access — hiding is not the boundary).
-                        (tool != ToolRoute.IrrigationRecords || state.isSystemAdmin)
+                        (tool != ToolRoute.CostReports || canViewCosting)
+                    // Irrigation Records is publicly released (SQL 151): every
+                    // vineyard role may open it. The screen resolves the
+                    // caller's capabilities server-side via
+                    // get_irrigation_capabilities — hiding is not the boundary.
                 }
                 if (tools.isNotEmpty()) {
                     item(key = "header-${group.name}") {

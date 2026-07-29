@@ -5,8 +5,11 @@
 // `galcon_gsi` adapter (headers, dates, times, units, valve identity). Every
 // business rule — thresholds, Test programs, classification, duplicates,
 // mapping, commit, reversal — is enforced by the SQL 142 RPCs, which this
-// function calls WITH THE CALLER'S JWT so the System Administrator gate and
-// RLS always apply. Clients can never insert imported sessions directly.
+// function calls WITH THE CALLER'S JWT so the shared capability gate
+// (SQL 151: `import_irrigation` = vineyard Owner/Manager, or a System
+// Administrator member) and RLS always apply. Clients can never insert
+// imported sessions directly. Access followed the SQL gate automatically
+// at the public release — no code change was required here.
 //
 // Request (POST, application/json):
 //   {

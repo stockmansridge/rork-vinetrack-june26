@@ -326,6 +326,16 @@ final class SupabaseIrrigationRepository {
         return result
     }
 
+    /// SQL 151 — shared role-based capability set. The server is the single
+    /// source of truth; the app only mirrors these flags for visibility.
+    func capabilities(vineyardId: UUID) async throws -> IrrigationCapabilities {
+        struct Params: Encodable { let vineyardId: UUID
+            enum CodingKeys: String, CodingKey { case vineyardId = "p_vineyard_id" } }
+        return try await client
+            .rpc("get_irrigation_capabilities", params: Params(vineyardId: vineyardId))
+            .execute().value
+    }
+
     // MARK: Setup
 
     func listSystems(vineyardId: UUID, includeInactive: Bool = false) async throws -> [IrrigationSystem] {

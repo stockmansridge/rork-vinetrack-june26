@@ -24,6 +24,35 @@ nonisolated enum IrrigationCalculationMethod: String, CaseIterable, Codable, Sen
     }
 }
 
+/// SQL 151 public release — role-based capability set returned by
+/// `get_irrigation_capabilities`. All three clients gate visibility and
+/// actions from this shared server answer; hiding UI is never the boundary.
+nonisolated struct IrrigationCapabilities: Decodable, Sendable, Equatable {
+    let role: String?
+    let isSystemAdmin: Bool
+    let canViewIrrigationRecords: Bool
+    let canRecordIrrigation: Bool
+    let canEditIrrigation: Bool
+    let canReverseIrrigation: Bool
+    let canManageIrrigationSetup: Bool
+    let canViewIrrigationReports: Bool
+    let canImportIrrigation: Bool
+    let canReverseIrrigationImport: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case role
+        case isSystemAdmin = "is_system_admin"
+        case canViewIrrigationRecords = "can_view_irrigation_records"
+        case canRecordIrrigation = "can_record_irrigation"
+        case canEditIrrigation = "can_edit_irrigation"
+        case canReverseIrrigation = "can_reverse_irrigation"
+        case canManageIrrigationSetup = "can_manage_irrigation_setup"
+        case canViewIrrigationReports = "can_view_irrigation_reports"
+        case canImportIrrigation = "can_import_irrigation"
+        case canReverseIrrigationImport = "can_reverse_irrigation_import"
+    }
+}
+
 nonisolated struct IrrigationSystem: Identifiable, Decodable, Sendable, Hashable {
     let id: UUID
     let vineyardId: UUID

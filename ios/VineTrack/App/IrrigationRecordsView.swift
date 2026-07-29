@@ -91,13 +91,14 @@ enum IrrigationFormat {
 
 /// Operational Tools → Irrigation Records.
 ///
-/// Phase 1 gate: System Administrators only. The gate is enforced here for
-/// navigation AND server-side by `has_irrigation_records_access` — hiding the
-/// card is never the security boundary.
+/// Public release (SQL 151): visibility and actions come from the shared
+/// role-based capabilities returned by `get_irrigation_capabilities`. The
+/// server independently enforces every capability on each RPC — hiding UI
+/// here is never the security boundary.
 struct IrrigationRecordsView: View {
     @Environment(MigratedDataStore.self) private var store
-    @Environment(SystemAdminService.self) private var systemAdmin
 
+    @State private var capabilities: IrrigationCapabilities?
     @State private var status: IrrigationSetupStatus?
     @State private var summary: IrrigationVintageSummary?
     @State private var recent: [IrrigationSession] = []
@@ -119,14 +120,18 @@ struct IrrigationRecordsView: View {
 
     var body: some View {
         Group {
-            if !systemAdmin.isSystemAdmin || accessDenied {
+            if accessDenied {
                 unavailableView
             } else if isLoading && status == nil {
                 ProgressView("Loading Irrigation Records…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let status, !status.isOperational || showWizard {
-                IrrigationSetupWizardView(status: status, showWizard: $showWizard) {
-                    await reload()
+                if capabilities?.canManageIrrigationSetup == true {
+                    IrrigationSetupWizardView(status: status, showWizard: $showWizard) {
+                        await reload()
+                    }
+                } else {
+                    setupPendingView
                 }
             } else {
                 landing
@@ -143,6 +148,15 @@ struct IrrigationRecordsView: View {
             "Not Available",
             systemImage: "drop.circle",
             description: Text("Irrigation Records is not available for this account.")
+        )
+    }
+
+    /// Shown when setup is incomplete and the caller's role cannot change it.
+    private var setupPendingView: some View {
+        ContentUnavailableView(
+            "Setup Required",
+            systemImage: "gearshape",
+            description: Text("Irrigation setup has not been completed for this vineyard. Ask an Owner or Manager to finish Irrigation Setup before recording irrigation.")
         )
     }
 
@@ -169,7 +183,9 @@ struct IrrigationRecordsView: View {
                 }
 
                 primaryActions
-                summaryCards
+                if capabilities?.canViewIrrigationReports == true {
+                    summaryCards
+                }
                 recentSection
             }
             .padding(.vertical)
@@ -221,8 +237,10 @@ struct IrrigationRecordsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(text)
                     .font(.footnote)
-                Button("Open Setup Wizard") { showWizard = true }
-                    .font(.footnote.weight(.semibold))
+                if capabilities?.canManageIrrigationSetup == true {
+                    Button("Open Setup Wizard") { showWizard = true }
+                        .font(.footnote.weight(.semibold))
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -233,27 +251,33 @@ struct IrrigationRecordsView: View {
 
     private var primaryActions: some View {
         VStack(spacing: 12) {
-            NavigationLink {
-                IrrigationRecordEntryView(onSaved: { Task { await reload() } })
-            } label: {
-                Label("Record Irrigation", systemImage: "drop.fill")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.cyan.gradient, in: .rect(cornerRadius: 14))
-                    .foregroundStyle(.white)
+            if capabilities?.canRecordIrrigation == true {
+                NavigationLink {
+                    IrrigationRecordEntryView(onSaved: { Task { await reload() } })
+                } label: {
+                    Label("Record Irrigation", systemImage: "drop.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.cyan.gradient, in: .rect(cornerRadius: 14))
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             HStack(spacing: 12) {
                 secondaryButton("History", icon: "clock.arrow.circlepath") {
                     IrrigationHistoryView()
                 }
-                secondaryButton("Setup", icon: "gearshape.fill") {
-                    IrrigationSetupView(onChanged: { Task { await reload() } })
+                if capabilities?.canManageIrrigationSetup == true {
+                    secondaryButton("Setup", icon: "gearshape.fill") {
+                        IrrigationSetupView(onChanged: { Task { await reload() } })
+                    }
                 }
-                secondaryButton("Reports", icon: "chart.bar.doc.horizontal") {
-                    IrrigationReportsCentreView()
+                if capabilities?.canViewIrrigationReports == true {
+                    secondaryButton("Reports", icon: "chart.bar.doc.horizontal") {
+                        IrrigationReportsCentreView()
+                    }
                 }
             }
         }
@@ -359,7 +383,7 @@ struct IrrigationRecordsView: View {
     // MARK: Data
 
     private func reload() async {
-        guard let vineyardId, systemAdmin.isSystemAdmin else {
+        guard let vineyardId else {
             isLoading = false
             return
         }
@@ -367,15 +391,28 @@ struct IrrigationRecordsView: View {
         errorMessage = nil
         defer { isLoading = false }
         do {
+            let caps = try await repository.capabilities(vineyardId: vineyardId)
+            capabilities = caps
+            guard caps.canViewIrrigationRecords else {
+                accessDenied = true
+                return
+            }
+            accessDenied = false
             await flushPending()
             let status = try await repository.setupStatus(vineyardId: vineyardId)
             self.status = status
-            accessDenied = false
             if status.isOperational {
-                async let summaryTask = repository.vintageSummary(vineyardId: vineyardId)
-                async let recentTask = repository.listSessions(vineyardId: vineyardId, limit: 5)
-                self.summary = try await summaryTask
-                self.recent = try await recentTask.sessions
+                // The vintage summary is a report — operators do not hold the
+                // reports capability, so the server would (rightly) refuse it.
+                if caps.canViewIrrigationReports {
+                    async let summaryTask = repository.vintageSummary(vineyardId: vineyardId)
+                    async let recentTask = repository.listSessions(vineyardId: vineyardId, limit: 5)
+                    self.summary = try await summaryTask
+                    self.recent = try await recentTask.sessions
+                } else {
+                    self.summary = nil
+                    self.recent = try await repository.listSessions(vineyardId: vineyardId, limit: 5).sessions
+                }
             }
         } catch {
             let text = error.localizedDescription

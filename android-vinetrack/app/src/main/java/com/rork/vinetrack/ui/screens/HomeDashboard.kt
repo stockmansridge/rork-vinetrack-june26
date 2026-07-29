@@ -235,7 +235,7 @@ private fun DashboardContent(
 
             OverviewSection(state, onOpenMap)
 
-            OperationalToolsSection(onOpenTab = onOpenTab, onOpenTool = onOpenTool, isSystemAdmin = state.isSystemAdmin)
+            OperationalToolsSection(onOpenTab = onOpenTab, onOpenTool = onOpenTool)
 
             if (canChangeSettings) {
                 ManagementSection(onOpenTool = onOpenTool)
@@ -942,19 +942,17 @@ private data class ToolItem(
 private fun OperationalToolsSection(
     onOpenTab: (MainTab) -> Unit,
     onOpenTool: (ToolRoute) -> Unit,
-    isSystemAdmin: Boolean = false,
 ) {
     val tools = buildList {
         addAll(baseOperationalTools(onOpenTool))
-        // Irrigation Records is System Administrator gated during Phase 1.
-        // The server enforces the same gate via has_irrigation_records_access.
-        if (isSystemAdmin) {
-            add(
-                ToolItem("Irrigation Records", "Water applied, valves & blocks", Icons.Filled.WaterDrop, VineColors.Cyan) {
-                    onOpenTool(ToolRoute.IrrigationRecords)
-                },
-            )
-        }
+        // Public release (SQL 151): Irrigation Records is available to all
+        // vineyard roles. The screen resolves the caller's capabilities via
+        // get_irrigation_capabilities and the server enforces every action.
+        add(
+            ToolItem("Irrigation Records", "Water applied, valves & blocks", Icons.Filled.WaterDrop, VineColors.Cyan) {
+                onOpenTool(ToolRoute.IrrigationRecords)
+            },
+        )
     }
     OperationalToolsGrid(tools)
 }

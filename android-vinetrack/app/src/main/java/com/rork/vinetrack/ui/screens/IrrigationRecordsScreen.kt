@@ -67,6 +67,7 @@ import com.rork.vinetrack.data.AreaUnit
 import com.rork.vinetrack.data.IrrigationAllocationConfig
 import com.rork.vinetrack.data.IrrigationAvailableRow
 import com.rork.vinetrack.data.IrrigationBlockResult
+import com.rork.vinetrack.data.IrrigationCapabilities
 import com.rork.vinetrack.data.IrrigationLocalCalc
 import com.rork.vinetrack.data.IrrigationPreviewResult
 import com.rork.vinetrack.data.IrrigationRepository
@@ -244,6 +245,7 @@ fun IrrigationRecordsScreen(
     var duplicateSession by remember { mutableStateOf<IrrigationSessionRow?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var accessDenied by remember { mutableStateOf(false) }
+    var capabilities by remember { mutableStateOf<IrrigationCapabilities?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
     suspend fun reload() {
@@ -251,15 +253,28 @@ fun IrrigationRecordsScreen(
         isLoading = true
         error = null
         runCatching {
+            // Public release (SQL 151): visibility comes from the shared
+            // role capabilities. The server enforces every RPC independently.
+            val caps = repo.capabilities(vid)
+            capabilities = caps
+            if (!caps.canViewIrrigationRecords) {
+                accessDenied = true
+                return@runCatching
+            }
+            accessDenied = false
             repo.flushPending(vid)
             pendingCount = repo.pendingSessions(vid).size
             val s = repo.setupStatus(vid)
             status = s
             if (s.isOperational) {
-                summary = repo.vintageSummary(vid)
+                // The vintage summary is a report — operators do not hold the
+                // reports capability, so the server would (rightly) refuse it.
+                summary = if (caps.canViewIrrigationReports) repo.vintageSummary(vid) else null
                 recent = repo.listSessions(vid, limit = 5).sessions
             }
-            if (nav == IrrigationNav.Landing && !s.isOperational) nav = IrrigationNav.Wizard
+            if (nav == IrrigationNav.Landing && !s.isOperational && caps.canManageIrrigationSetup) {
+                nav = IrrigationNav.Wizard
+            }
         }.onFailure { e ->
             val message = e.message ?: "Unknown error"
             if (message.contains("irrigation_access_denied") || message.contains("not available")) {
@@ -309,7 +324,7 @@ fun IrrigationRecordsScreen(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when {
-                !state.isSystemAdmin || accessDenied -> UnavailableContent()
+                accessDenied -> UnavailableContent()
                 isLoading && status == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
@@ -321,6 +336,7 @@ fun IrrigationRecordsScreen(
                         recent = recent,
                         pendingCount = pendingCount,
                         error = error,
+                        capabilities = capabilities,
                         onRecord = { nav = IrrigationNav.Record },
                         onHistory = { nav = IrrigationNav.History },
                         onSetup = { nav = IrrigationNav.Setup },
@@ -361,6 +377,7 @@ fun IrrigationRecordsScreen(
                         repo = repo,
                         sessionId = detailSessionId,
                         fmt = state.regionFormatter,
+                        capabilities = capabilities,
                         onChanged = { scope.launch { reload() } },
                         onEdit = { session ->
                             editSession = session
@@ -413,6 +430,7 @@ private fun LandingContent(
     recent: List<IrrigationSessionRow>,
     pendingCount: Int,
     error: String?,
+    capabilities: IrrigationCapabilities?,
     onRecord: () -> Unit,
     onHistory: () -> Unit,
     onSetup: () -> Unit,
@@ -461,6 +479,24 @@ private fun LandingContent(
             item { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         }
 
+        // Setup incomplete and this role cannot fix it — explain instead of
+        // silently failing at record time.
+        status?.let { s ->
+            if (!s.isOperational && capabilities?.canManageIrrigationSetup != true) {
+                item {
+                    Column(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFFFFFDE7)).padding(12.dp),
+                    ) {
+                        Text(
+                            "Irrigation setup has not been completed for this vineyard. Ask an Owner or Manager to finish Irrigation Setup before recording irrigation.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
+        }
+
         status?.let { s ->
             val broken = s.valves.filter { !it.allocationOk }
             if (broken.isNotEmpty()) {
@@ -477,63 +513,73 @@ private fun LandingContent(
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
-                        TextButton(onClick = onWizard) { Text("Open Setup Wizard") }
+                        if (capabilities?.canManageIrrigationSetup == true) {
+                            TextButton(onClick = onWizard) { Text("Open Setup Wizard") }
+                        }
                     }
                 }
             }
         }
 
-        item {
-            Button(
-                onClick = onRecord,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Cyan),
-            ) {
-                Icon(Icons.Filled.WaterDrop, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Record Irrigation", fontWeight = FontWeight.SemiBold)
+        if (capabilities?.canRecordIrrigation == true) {
+            item {
+                Button(
+                    onClick = onRecord,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.Cyan),
+                ) {
+                    Icon(Icons.Filled.WaterDrop, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Record Irrigation", fontWeight = FontWeight.SemiBold)
+                }
             }
         }
 
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onHistory, modifier = Modifier.weight(1f)) { Text("History") }
-                OutlinedButton(onClick = onSetup, modifier = Modifier.weight(1f)) { Text("Setup") }
-                OutlinedButton(onClick = onReports, modifier = Modifier.weight(1f)) { Text("Reports") }
+                if (capabilities?.canManageIrrigationSetup == true) {
+                    OutlinedButton(onClick = onSetup, modifier = Modifier.weight(1f)) { Text("Setup") }
+                }
+                if (capabilities?.canViewIrrigationReports == true) {
+                    OutlinedButton(onClick = onReports, modifier = Modifier.weight(1f)) { Text("Reports") }
+                }
             }
         }
 
-        item { Text("This Vintage", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
+        if (capabilities?.canViewIrrigationReports == true) {
+            item { Text("This Vintage", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
 
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatCard("Vintage Water", summary?.let { IrrigationUnits.volume(it.totalVolumeLitres, fmt) } ?: "—", Modifier.weight(1f))
-                StatCard("This Month", summary?.let { IrrigationUnits.volume(it.monthVolumeLitres, fmt) } ?: "—", Modifier.weight(1f))
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatCard("Vintage Water", summary?.let { IrrigationUnits.volume(it.totalVolumeLitres, fmt) } ?: "—", Modifier.weight(1f))
+                    StatCard("This Month", summary?.let { IrrigationUnits.volume(it.monthVolumeLitres, fmt) } ?: "—", Modifier.weight(1f))
+                }
             }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatCard(
-                    "Irrigation Hours",
-                    summary?.let { String.format(Locale.US, "%.1f h", it.totalRuntimeMinutes / 60.0) } ?: "—",
-                    Modifier.weight(1f),
-                )
-                StatCard("Sessions", summary?.sessionCount?.toString() ?: "—", Modifier.weight(1f))
-            }
-        }
-        if (summary?.waterLitresPerVine != null || summary?.irrigationDepthMm != null) {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatCard(
-                        "Avg Water / Vine",
-                        summary.waterLitresPerVine?.let { IrrigationUnits.perVine(it, fmt) } ?: "—",
+                        "Irrigation Hours",
+                        summary?.let { String.format(Locale.US, "%.1f h", it.totalRuntimeMinutes / 60.0) } ?: "—",
                         Modifier.weight(1f),
                     )
-                    StatCard(
-                        "Irrigation Depth",
-                        summary.irrigationDepthMm?.let { IrrigationUnits.depth(it, fmt) } ?: "—",
-                        Modifier.weight(1f),
-                    )
+                    StatCard("Sessions", summary?.sessionCount?.toString() ?: "—", Modifier.weight(1f))
+                }
+            }
+            if (summary?.waterLitresPerVine != null || summary?.irrigationDepthMm != null) {
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StatCard(
+                            "Avg Water / Vine",
+                            summary.waterLitresPerVine?.let { IrrigationUnits.perVine(it, fmt) } ?: "—",
+                            Modifier.weight(1f),
+                        )
+                        StatCard(
+                            "Irrigation Depth",
+                            summary.irrigationDepthMm?.let { IrrigationUnits.depth(it, fmt) } ?: "—",
+                            Modifier.weight(1f),
+                        )
+                    }
                 }
             }
         }
@@ -2309,6 +2355,7 @@ private fun DetailContent(
     repo: IrrigationRepository,
     sessionId: String?,
     fmt: RegionFormatter,
+    capabilities: IrrigationCapabilities?,
     onChanged: () -> Unit,
     onEdit: (IrrigationSessionRow) -> Unit,
     onDuplicate: (IrrigationSessionRow) -> Unit,
@@ -2414,19 +2461,29 @@ private fun DetailContent(
                 item { Text("Notes", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
                 item { Text(noteText, style = MaterialTheme.typography.bodySmall) }
             }
+            // Public release (SQL 151): actions follow the shared role
+            // capabilities. The server enforces each one independently.
             if (s.status != "reversed" && !s.isImported) {
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { onEdit(s) }, modifier = Modifier.weight(1f)) { Text("Edit") }
-                        OutlinedButton(onClick = { onDuplicate(s) }, modifier = Modifier.weight(1f)) { Text("Duplicate") }
+                if (capabilities?.canEditIrrigation == true || capabilities?.canRecordIrrigation == true) {
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (capabilities.canEditIrrigation) {
+                                OutlinedButton(onClick = { onEdit(s) }, modifier = Modifier.weight(1f)) { Text("Edit") }
+                            }
+                            if (capabilities.canRecordIrrigation) {
+                                OutlinedButton(onClick = { onDuplicate(s) }, modifier = Modifier.weight(1f)) { Text("Duplicate") }
+                            }
+                        }
                     }
                 }
-                item {
-                    Button(
-                        onClick = { showReverseConfirm = true },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    ) { Text("Reverse Record") }
+                if (capabilities?.canReverseIrrigation == true) {
+                    item {
+                        Button(
+                            onClick = { showReverseConfirm = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        ) { Text("Reverse Record") }
+                    }
                 }
             }
             if (s.status != "reversed" && s.isImported) {
