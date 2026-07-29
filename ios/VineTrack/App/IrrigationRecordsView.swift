@@ -253,7 +253,7 @@ struct IrrigationRecordsView: View {
                     IrrigationSetupView(onChanged: { Task { await reload() } })
                 }
                 secondaryButton("Reports", icon: "chart.bar.doc.horizontal") {
-                    IrrigationReportsView()
+                    IrrigationReportsCentreView()
                 }
             }
         }

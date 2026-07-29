@@ -308,7 +308,7 @@ final class SupabaseIrrigationRepository {
         self.provider = provider
     }
 
-    private var client: SupabaseClient {
+    var client: SupabaseClient {
         get throws {
             guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
             return provider.client

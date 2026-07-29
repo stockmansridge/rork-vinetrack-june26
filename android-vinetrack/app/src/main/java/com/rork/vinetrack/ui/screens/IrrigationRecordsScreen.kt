@@ -78,7 +78,20 @@ import com.rork.vinetrack.data.IrrigationValveRow
 import com.rork.vinetrack.data.IrrigationValveRowLink
 import com.rork.vinetrack.data.IrrigationValveRowsResult
 import com.rork.vinetrack.data.IrrigationValveValidation
+import androidx.compose.material3.ModalBottomSheet
+import com.rork.vinetrack.data.IrrigationBlockReportRow
+import com.rork.vinetrack.data.IrrigationCalcSourceReportRow
+import com.rork.vinetrack.data.IrrigationPeriodReportRow
+import com.rork.vinetrack.data.IrrigationRainfallReportRow
+import com.rork.vinetrack.data.IrrigationRecordSourceReportRow
+import com.rork.vinetrack.data.IrrigationReportFilter
+import com.rork.vinetrack.data.IrrigationReportWarning
+import com.rork.vinetrack.data.IrrigationValveReportRow
+import com.rork.vinetrack.data.IrrigationVarietyReportRow
+import com.rork.vinetrack.data.IrrigationVintageOverview
 import com.rork.vinetrack.data.IrrigationVintageSummary
+import com.rork.vinetrack.data.IrrigationVintageTrendRow
+import com.rork.vinetrack.data.IrrigationWaterSourceReportRow
 import com.rork.vinetrack.data.PendingIrrigationSession
 import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.VolumeUnit
@@ -358,7 +371,11 @@ fun IrrigationRecordsScreen(
                             nav = IrrigationNav.Record
                         },
                     )
-                    IrrigationNav.Reports -> ReportsContent(repo = repo, state = state)
+                    IrrigationNav.Reports -> ReportsContent(
+                        repo = repo,
+                        state = state,
+                        onOpenSession = { detailSessionId = it; nav = IrrigationNav.Detail },
+                    )
                 }
             }
         }
@@ -2456,102 +2473,379 @@ private fun DetailLine(label: String, value: String) {
 // Reports
 // -----------------------------------------------------------------------------
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ReportsContent(repo: IrrigationRepository, state: AppUiState) {
+private fun ReportsContent(
+    repo: IrrigationRepository,
+    state: AppUiState,
+    onOpenSession: (String) -> Unit = {},
+) {
     val vineyardId = state.selectedVineyardId ?: return
     val fmt = state.regionFormatter
-    var tab by remember { mutableIntStateOf(0) }
-    var vintage by remember { mutableStateOf<IrrigationVintageSummary?>(null) }
-    var valveRows by remember { mutableStateOf<List<com.rork.vinetrack.data.IrrigationValveSummaryRow>>(emptyList()) }
-    var blockRows by remember { mutableStateOf<List<com.rork.vinetrack.data.IrrigationBlockSummaryRow>>(emptyList()) }
-    var varietyRows by remember { mutableStateOf<List<com.rork.vinetrack.data.IrrigationVarietySummaryRow>>(emptyList()) }
-    var dailyRows by remember { mutableStateOf<List<com.rork.vinetrack.data.IrrigationDailySummaryRow>>(emptyList()) }
-    var monthlyRows by remember { mutableStateOf<List<com.rork.vinetrack.data.IrrigationMonthlySummaryRow>>(emptyList()) }
-    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
-    LaunchedEffect(vineyardId) {
-        runCatching {
-            vintage = repo.vintageSummary(vineyardId)
-            valveRows = repo.valveSummary(vineyardId)
-            blockRows = repo.blockSummary(vineyardId)
-            varietyRows = repo.varietySummary(vineyardId)
-            dailyRows = repo.dailySummary(vineyardId)
-            monthlyRows = repo.monthlySummary(vineyardId)
-        }.onFailure { error = it.message }
+    val tabs = listOf(
+        "Overview", "Daily", "Weekly", "Monthly", "Blocks", "Valves",
+        "Varieties", "Water", "Rainfall", "Sources", "Trends",
+    )
+    var tab by remember { mutableIntStateOf(0) }
+    var sourceGroup by remember { mutableStateOf<String?>(null) }
+    var vintageYear by remember { mutableStateOf<Int?>(null) }
+    var rainGroup by remember { mutableStateOf("month") }
+
+    var overview by remember { mutableStateOf<IrrigationVintageOverview?>(null) }
+    var periodRows by remember { mutableStateOf<List<IrrigationPeriodReportRow>>(emptyList()) }
+    var blockReport by remember { mutableStateOf<List<IrrigationBlockReportRow>>(emptyList()) }
+    var valveReport by remember { mutableStateOf<List<IrrigationValveReportRow>>(emptyList()) }
+    var varietyReport by remember { mutableStateOf<List<IrrigationVarietyReportRow>>(emptyList()) }
+    var waterReport by remember { mutableStateOf<List<IrrigationWaterSourceReportRow>>(emptyList()) }
+    var rainReport by remember { mutableStateOf<List<IrrigationRainfallReportRow>>(emptyList()) }
+    var recordSources by remember { mutableStateOf<List<IrrigationRecordSourceReportRow>>(emptyList()) }
+    var calcSources by remember { mutableStateOf<List<IrrigationCalcSourceReportRow>>(emptyList()) }
+    var trendRows by remember { mutableStateOf<List<IrrigationVintageTrendRow>>(emptyList()) }
+    var warnings by remember { mutableStateOf<List<IrrigationReportWarning>>(emptyList()) }
+    var resolvedVintage by remember { mutableStateOf<Int?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var drillTitle by remember { mutableStateOf<String?>(null) }
+    var drillSessions by remember { mutableStateOf<List<IrrigationSessionRow>>(emptyList()) }
+
+    fun baseFilter() = IrrigationReportFilter(vintageYear = vintageYear, sourceGroup = sourceGroup)
+
+    fun openDrill(title: String, filter: IrrigationReportFilter) {
+        scope.launch {
+            runCatching { repo.listReportSessions(vineyardId, filter) }
+                .onSuccess { drillSessions = it.sessions; drillTitle = title }
+                .onFailure { error = it.message }
+        }
     }
+
+    LaunchedEffect(vineyardId, tab, sourceGroup, vintageYear, rainGroup) {
+        loading = true
+        error = null
+        val filter = baseFilter()
+        runCatching {
+            when (tab) {
+                0 -> {
+                    val o = repo.reportOverview(vineyardId, filter)
+                    overview = o; warnings = o.warnings; resolvedVintage = o.vintageYear
+                }
+                1 -> {
+                    val e = repo.reportDaily(vineyardId, filter)
+                    periodRows = e.rows.reversed(); warnings = e.warnings; resolvedVintage = e.vintageYear
+                }
+                2 -> {
+                    val e = repo.reportWeekly(vineyardId, filter)
+                    periodRows = e.rows.reversed(); warnings = e.warnings; resolvedVintage = e.vintageYear
+                }
+                3 -> {
+                    val e = repo.reportMonthly(vineyardId, filter)
+                    periodRows = e.rows; warnings = e.warnings; resolvedVintage = e.vintageYear
+                }
+                4 -> {
+                    val e = repo.reportBlocks(vineyardId, filter)
+                    blockReport = e.rows; warnings = e.warnings; resolvedVintage = e.vintageYear
+                }
+                5 -> {
+                    val e = repo.reportValves(vineyardId, filter)
+                    valveReport = e.rows; warnings = e.warnings; resolvedVintage = e.vintageYear
+                }
+                6 -> {
+                    val e = repo.reportVarieties(vineyardId, filter)
+                    varietyReport = e.rows; warnings = e.warnings; resolvedVintage = e.vintageYear
+                }
+                7 -> {
+                    val e = repo.reportWaterSources(vineyardId, filter)
+                    waterReport = e.rows; warnings = e.warnings; resolvedVintage = e.vintageYear
+                }
+                8 -> {
+                    val e = repo.reportRainfall(vineyardId, filter, rainGroup)
+                    rainReport = e.rows; warnings = e.warnings; resolvedVintage = e.vintageYear
+                }
+                9 -> {
+                    val rec = repo.reportRecordSources(vineyardId, filter)
+                    recordSources = rec.rows; warnings = rec.warnings; resolvedVintage = rec.vintageYear
+                    calcSources = repo.reportCalcSources(vineyardId, filter).rows
+                }
+                else -> {
+                    val e = repo.reportTrends(vineyardId, filter, vintageCount = 5)
+                    trendRows = e.rows; warnings = emptyList(); resolvedVintage = e.vintageYear
+                }
+            }
+        }.onFailure {
+            val message = it.message ?: "Unknown error"
+            error = if (message.contains("irrigation_access_denied")) {
+                "Irrigation reports are limited to System Administrators during validation."
+            } else message
+        }
+        loading = false
+    }
+
+    val currentYear = java.time.LocalDate.now().year
+    val vintageOptions: List<Int?> = listOf(null, currentYear + 1, currentYear, currentYear - 1, currentYear - 2)
 
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            listOf("Vintage", "Valves", "Blocks", "Varieties", "Daily", "Monthly").forEachIndexed { index, label ->
+            tabs.forEachIndexed { index, label ->
                 FilterChip(selected = tab == index, onClick = { tab = index }, label = { Text(label) })
             }
         }
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FilterChip(selected = sourceGroup == null, onClick = { sourceGroup = null }, label = { Text("All") })
+            FilterChip(selected = sourceGroup == "manual", onClick = { sourceGroup = "manual" }, label = { Text("Manual") })
+            FilterChip(selected = sourceGroup == "controller_import", onClick = { sourceGroup = "controller_import" }, label = { Text("Imported") })
+            vintageOptions.forEach { year ->
+                FilterChip(
+                    selected = vintageYear == year,
+                    onClick = { vintageYear = year },
+                    label = { Text(year?.let { "V$it" } ?: "Current") },
+                )
+            }
+            if (tab == 8) {
+                listOf("day", "week", "month", "vintage").forEach { g ->
+                    FilterChip(selected = rainGroup == g, onClick = { rainGroup = g }, label = { Text(g.replaceFirstChar { it.uppercase() }) })
+                }
+            }
+        }
+        resolvedVintage?.let {
+            Text(
+                "Vintage $it", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp)) }
+        if (loading) {
+            Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        }
 
         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             when (tab) {
-                0 -> vintage?.let { v ->
+                0 -> overview?.let { o ->
                     item {
                         Column(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
                                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)).padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            Text("Vintage ${v.vintageYear}", fontWeight = FontWeight.SemiBold)
-                            DetailLine("Total water", IrrigationUnits.volume(v.totalVolumeLitres, fmt))
-                            v.effectiveVolumeLitres?.let { DetailLine("Effective water", IrrigationUnits.volume(it, fmt)) }
-                            DetailLine("Total runtime", formatMinutes(v.totalRuntimeMinutes))
-                            DetailLine("Sessions", v.sessionCount.toString())
-                            v.averageSessionMinutes?.let { DetailLine("Average session", formatMinutes(it.roundToInt())) }
-                            v.waterLitresPerVine?.let { DetailLine("Water per vine", IrrigationUnits.perVine(it, fmt)) }
-                            v.irrigationDepthMm?.let { DetailLine("Irrigation depth", IrrigationUnits.depth(it, fmt)) }
+                            Text("Vintage ${o.vintageYear}", fontWeight = FontWeight.SemiBold)
+                            DetailLine("Total water", IrrigationUnits.volume(o.totalIrrigationLitres, fmt))
+                            DetailLine("Effective water", o.effectiveIrrigationLitres?.let { IrrigationUnits.volume(it, fmt) } ?: "—")
+                            DetailLine("Manual", IrrigationUnits.volume(o.manualLitres ?: 0.0, fmt))
+                            DetailLine("Imported", IrrigationUnits.volume(o.importedLitres ?: 0.0, fmt))
+                            DetailLine("Reported", IrrigationUnits.volume(o.directlyReportedLitres ?: 0.0, fmt))
+                            DetailLine("Measured", IrrigationUnits.volume(o.directlyMeasuredLitres ?: 0.0, fmt))
+                            DetailLine("Calculated", IrrigationUnits.volume(o.calculatedLitres ?: 0.0, fmt))
+                            DetailLine("Estimated", IrrigationUnits.volume(o.estimatedLitres ?: 0.0, fmt))
+                            DetailLine("Sessions", o.sessionCount.toString())
+                            DetailLine("Total runtime", formatMinutes(o.totalRuntimeMinutes))
+                            o.averageSessionMinutes?.let { DetailLine("Average session", formatMinutes(it.roundToInt())) }
+                        }
+                    }
+                    item {
+                        Column(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)).padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text("Coverage & normalised", fontWeight = FontWeight.SemiBold)
+                            DetailLine("Valves / blocks", "${o.valvesUsed ?: 0} / ${o.blocksIrrigated ?: 0}")
+                            DetailLine("Serviced area", o.servicedAreaHectares?.let { String.format(java.util.Locale.US, "%.2f ha", it) } ?: "—")
+                            DetailLine("Serviced vines", o.servicedVines?.toString() ?: "—")
+                            DetailLine("Per hectare", o.litresPerHectare?.let { IrrigationUnits.perHectare(it, fmt) } ?: "—")
+                            DetailLine("Per vine", o.litresPerVine?.let { IrrigationUnits.perVine(it, fmt) } ?: "—")
+                            DetailLine("Depth", o.irrigationDepthMm?.let { IrrigationUnits.depth(it, fmt) } ?: "—")
+                            DetailLine("Effective depth", o.effectiveIrrigationDepthMm?.let { IrrigationUnits.depth(it, fmt) } ?: "—")
+                            DetailLine("Rainfall", o.rainfallMm?.let { IrrigationUnits.depth(it, fmt) } ?: "—")
+                        }
+                    }
+                    item {
+                        Column(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)).padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text("Previous vintage ${o.previousVintageYear ?: ""}", fontWeight = FontWeight.SemiBold)
+                            DetailLine("Previous total", o.previousTotalLitres?.let { IrrigationUnits.volume(it, fmt) } ?: "—")
+                            DetailLine("Change", o.volumeDifferenceLitres?.let { d ->
+                                val pct = o.volumeDifferencePercent?.let { String.format(java.util.Locale.US, " (%+.1f%%)", it) } ?: ""
+                                (if (d >= 0) "+" else "") + IrrigationUnits.volume(d, fmt) + pct
+                            } ?: "—")
+                            DetailLine("Last irrigation", o.lastIrrigationDate ?: "—")
+                            o.dataQuality?.let { DetailLine("Report quality", it.replace('_', ' ')) }
                         }
                     }
                 }
-                1 -> valveRows.forEach { row ->
+                1, 2, 3 -> periodRows.forEach { row ->
+                    item(key = row.periodKey) {
+                        val title = row.monthLabel ?: row.periodKey
+                        val parts = buildList {
+                            add("${row.sessionCount} session(s)")
+                            add(formatMinutes(row.runtimeMinutes))
+                            row.irrigationDepthMm?.let { add(IrrigationUnits.depth(it, fmt)) }
+                            row.rainfallMm?.let { add("rain ${IrrigationUnits.depth(it, fmt)}") }
+                            if ((row.importedLitres ?: 0.0) > 0) add("imported ${IrrigationUnits.volume(row.importedLitres ?: 0.0, fmt)}")
+                            if (tab == 3 && (row.previousVintageTotalLitres ?: 0.0) > 0) {
+                                add("prev ${IrrigationUnits.volume(row.previousVintageTotalLitres ?: 0.0, fmt)}")
+                            }
+                        }
+                        Box(Modifier.clickable {
+                            openDrill(title, baseFilter().copy(dateFrom = row.periodStart, dateTo = row.periodEnd))
+                        }) {
+                            ReportCard(title, IrrigationUnits.volume(row.totalLitres, fmt), parts.joinToString(" · "))
+                        }
+                    }
+                }
+                4 -> blockReport.forEach { row ->
+                    item(key = row.blockId) {
+                        val parts = buildList {
+                            add("${row.sessionCount} session(s)")
+                            row.varietyName?.let { add(it) }
+                            row.litresPerVine?.let { add(IrrigationUnits.perVine(it, fmt)) }
+                            row.irrigationDepthMm?.let { add(IrrigationUnits.depth(it, fmt)) }
+                            row.combinedWaterInputMm?.let { add("combined ${IrrigationUnits.depth(it, fmt)}") }
+                            if ((row.previousVintageLitres ?: 0.0) > 0) add("prev ${IrrigationUnits.volume(row.previousVintageLitres ?: 0.0, fmt)}")
+                        }
+                        Box(Modifier.clickable {
+                            openDrill(row.blockName ?: "Block", baseFilter().copy(blockId = row.blockId))
+                        }) {
+                            ReportCard(row.blockName ?: "Block", IrrigationUnits.volume(row.totalLitres, fmt), parts.joinToString(" · "))
+                        }
+                    }
+                }
+                5 -> valveReport.forEach { row ->
                     item(key = row.valveId) {
+                        val parts = buildList {
+                            add("${row.sessionCount} session(s)")
+                            add(formatMinutes(row.runtimeMinutes))
+                            row.averageFlowLitresPerHour?.let { add("${IrrigationUnits.volume(it, fmt)}/h avg") }
+                            row.percentOfVineyardTotal?.let { add(String.format(java.util.Locale.US, "%.1f%%", it)) }
+                            row.lastUse?.let { add("last $it") }
+                        }
+                        Box(Modifier.clickable {
+                            openDrill(row.valveName, baseFilter().copy(valveId = row.valveId))
+                        }) {
+                            ReportCard(row.valveName, IrrigationUnits.volume(row.totalLitres, fmt), parts.joinToString(" · "))
+                        }
+                    }
+                }
+                6 -> varietyReport.forEach { row ->
+                    item(key = row.varietyName) {
+                        val parts = buildList {
+                            row.blockCount?.let { add("$it block(s)") }
+                            add("${row.sessionCount} session(s)")
+                            row.litresPerVine?.let { add(IrrigationUnits.perVine(it, fmt)) }
+                            row.irrigationDepthMm?.let { add(IrrigationUnits.depth(it, fmt)) }
+                            if ((row.previousVintageLitres ?: 0.0) > 0) add("prev ${IrrigationUnits.volume(row.previousVintageLitres ?: 0.0, fmt)}")
+                        }
+                        ReportCard(row.varietyName, IrrigationUnits.volume(row.totalLitres, fmt), parts.joinToString(" · "))
+                    }
+                }
+                7 -> waterReport.forEach { row ->
+                    item(key = row.waterSource) {
+                        val parts = buildList {
+                            add("${row.systemCount ?: 0} system(s) · ${row.valveCount ?: 0} valve(s)")
+                            add("${row.sessionCount} session(s)")
+                            row.percentOfVineyardTotal?.let { add(String.format(java.util.Locale.US, "%.1f%%", it)) }
+                        }
+                        ReportCard(row.waterSource, IrrigationUnits.volume(row.totalLitres, fmt), parts.joinToString(" · "))
+                    }
+                }
+                8 -> rainReport.forEach { row ->
+                    item(key = row.periodKey) {
+                        val parts = buildList {
+                            add("rain ${row.rainfallMm?.let { IrrigationUnits.depth(it, fmt) } ?: "—"}")
+                            add("irrigation ${row.grossIrrigationDepthMm?.let { IrrigationUnits.depth(it, fmt) } ?: "—"}")
+                            row.irrigationPercentOfCombined?.let { add(String.format(java.util.Locale.US, "%.0f%% irrigation", it)) }
+                            if (row.rainfallDataComplete == false) add("rainfall incomplete")
+                        }
                         ReportCard(
-                            row.valveName, IrrigationUnits.volume(row.totalVolumeLitres, fmt),
-                            "${row.sessionCount} sessions · ${formatMinutes(row.totalRuntimeMinutes)} · last ${row.lastIrrigationDate ?: "—"}",
+                            row.periodKey,
+                            row.combinedWaterInputMm?.let { IrrigationUnits.depth(it, fmt) } ?: "—",
+                            parts.joinToString(" · "),
                         )
                     }
                 }
-                2 -> blockRows.forEach { row ->
-                    item(key = row.blockId) {
-                        val parts = buildList {
-                            row.waterLitresPerVine?.let { add(IrrigationUnits.perVine(it, fmt)) }
-                            row.waterLitresPerHectare?.let { add(IrrigationUnits.perHectare(it, fmt)) }
-                            row.irrigationDepthMm?.let { add(IrrigationUnits.depth(it, fmt)) }
-                            add("last ${row.lastIrrigationDate ?: "—"}")
+                9 -> {
+                    recordSources.forEach { row ->
+                        item(key = "rec-${row.sourceType}") {
+                            val parts = buildList {
+                                add("${row.sessionCount} session(s)")
+                                row.percentOfTotalLitres?.let { add(String.format(java.util.Locale.US, "%.1f%%", it)) }
+                            }
+                            Box(Modifier.clickable {
+                                openDrill(row.sourceLabel ?: row.sourceType, baseFilter().copy(sourceType = row.sourceType))
+                            }) {
+                                ReportCard(row.sourceLabel ?: row.sourceType, IrrigationUnits.volume(row.totalLitres, fmt), parts.joinToString(" · "))
+                            }
                         }
-                        ReportCard(row.blockName ?: "Block", IrrigationUnits.volume(row.totalVolumeLitres, fmt), parts.joinToString(" · "))
                     }
-                }
-                3 -> varietyRows.forEach { row ->
-                    item(key = row.varietyName) {
-                        val parts = buildList {
-                            row.totalServicedVines?.let { add("$it vines") }
-                            row.averageWaterLitresPerVine?.let { add(IrrigationUnits.perVine(it, fmt)) }
-                            row.averageWaterLitresPerHectare?.let { add(IrrigationUnits.perHectare(it, fmt)) }
-                            row.irrigationDepthMm?.let { add(IrrigationUnits.depth(it, fmt)) }
+                    calcSources.forEach { row ->
+                        item(key = "calc-${row.calculationMethod}-${row.measurementGroup}") {
+                            val parts = buildList {
+                                row.measurementLabel?.let { add(it) }
+                                add("${row.sessionCount} session(s)")
+                                row.percentOfTotalLitres?.let { add(String.format(java.util.Locale.US, "%.1f%%", it)) }
+                            }
+                            ReportCard(row.calculationLabel ?: row.calculationMethod, IrrigationUnits.volume(row.totalLitres, fmt), parts.joinToString(" · "))
                         }
-                        ReportCard(row.varietyName, IrrigationUnits.volume(row.totalVolumeLitres, fmt), parts.joinToString(" · "))
                     }
                 }
-                4 -> dailyRows.forEach { row ->
-                    item(key = row.date) {
-                        ReportCard(row.date, IrrigationUnits.volume(row.totalVolumeLitres, fmt), "${row.sessionCount} session(s) · ${formatMinutes(row.runtimeMinutes)}")
+                else -> trendRows.forEach { row ->
+                    item(key = row.vintageYear) {
+                        val parts = buildList {
+                            add("${row.sessionCount} session(s)")
+                            row.irrigationDepthMm?.let { add(IrrigationUnits.depth(it, fmt)) }
+                            row.rainfallMm?.let { add("rain ${IrrigationUnits.depth(it, fmt)}") }
+                            row.dataQuality?.let { add(it.replace('_', ' ')) }
+                        }
+                        ReportCard("Vintage ${row.vintageYear}", IrrigationUnits.volume(row.totalLitres, fmt), parts.joinToString(" · "))
                     }
                 }
-                else -> monthlyRows.forEach { row ->
-                    item(key = row.month) {
-                        val depth = row.irrigationDepthMm?.let { " · ${IrrigationUnits.depth(it, fmt)}" } ?: ""
-                        ReportCard(row.month, IrrigationUnits.volume(row.totalVolumeLitres, fmt), "${row.sessionCount} session(s)$depth")
+            }
+            if (warnings.isNotEmpty()) {
+                item(key = "warnings-header") {
+                    Text("Data quality", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
+                }
+                warnings.forEachIndexed { index, warning ->
+                    item(key = "warning-$index") {
+                        Text(
+                            warning.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (warning.severity == "info") MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                        )
                     }
                 }
+            }
+        }
+    }
+
+    if (drillTitle != null) {
+        ModalBottomSheet(onDismissRequest = { drillTitle = null }) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(drillTitle ?: "", fontWeight = FontWeight.SemiBold)
+                if (drillSessions.isEmpty()) {
+                    Text("No sessions behind this row.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                drillSessions.take(50).forEach { session ->
+                    Box(Modifier.clickable {
+                        drillTitle = null
+                        onOpenSession(session.id)
+                    }) {
+                        ReportCard(
+                            session.sessionDate,
+                            IrrigationUnits.volume(session.totalVolumeLitres, fmt),
+                            "${session.valveName ?: ""} · ${formatMinutes(session.durationMinutes)} · ${session.sourceType}",
+                        )
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
             }
         }
     }

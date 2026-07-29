@@ -460,6 +460,290 @@ data class IrrigationMonthlySummaryRow(
     @SerialName("irrigation_depth_mm") val irrigationDepthMm: Double? = null,
 )
 
+// =============================================================================
+// Phase 2B reporting models (SQL 147 envelope contract — raw metric values)
+// =============================================================================
+
+@Serializable
+data class IrrigationReportWarning(
+    val code: String = "",
+    val severity: String? = null,
+    val message: String = "",
+    @SerialName("affected_count") val affectedCount: Int? = null,
+)
+
+@Serializable
+data class IrrigationReportEnvelope<T>(
+    val report: String? = null,
+    @SerialName("vintage_year") val vintageYear: Int? = null,
+    @SerialName("period_start") val periodStart: String? = null,
+    @SerialName("period_end") val periodEnd: String? = null,
+    @SerialName("group_by") val groupBy: String? = null,
+    @SerialName("total_litres") val totalLitres: Double? = null,
+    val rows: List<T> = emptyList(),
+    val warnings: List<IrrigationReportWarning> = emptyList(),
+)
+
+@Serializable
+data class IrrigationVintageOverview(
+    @SerialName("vintage_year") val vintageYear: Int = 0,
+    @SerialName("period_start") val periodStart: String? = null,
+    @SerialName("period_end") val periodEnd: String? = null,
+    @SerialName("total_irrigation_litres") val totalIrrigationLitres: Double = 0.0,
+    @SerialName("effective_irrigation_litres") val effectiveIrrigationLitres: Double? = null,
+    @SerialName("directly_reported_litres") val directlyReportedLitres: Double? = null,
+    @SerialName("directly_measured_litres") val directlyMeasuredLitres: Double? = null,
+    @SerialName("calculated_litres") val calculatedLitres: Double? = null,
+    @SerialName("estimated_litres") val estimatedLitres: Double? = null,
+    @SerialName("manual_litres") val manualLitres: Double? = null,
+    @SerialName("imported_litres") val importedLitres: Double? = null,
+    @SerialName("average_session_litres") val averageSessionLitres: Double? = null,
+    @SerialName("total_runtime_minutes") val totalRuntimeMinutes: Int = 0,
+    @SerialName("session_count") val sessionCount: Int = 0,
+    @SerialName("average_session_minutes") val averageSessionMinutes: Double? = null,
+    @SerialName("longest_session_minutes") val longestSessionMinutes: Int? = null,
+    @SerialName("shortest_session_minutes") val shortestSessionMinutes: Int? = null,
+    @SerialName("systems_used") val systemsUsed: Int? = null,
+    @SerialName("water_sources_used") val waterSourcesUsed: Int? = null,
+    @SerialName("valves_used") val valvesUsed: Int? = null,
+    @SerialName("blocks_irrigated") val blocksIrrigated: Int? = null,
+    @SerialName("varieties_irrigated") val varietiesIrrigated: Int? = null,
+    @SerialName("serviced_area_hectares") val servicedAreaHectares: Double? = null,
+    @SerialName("serviced_vines") val servicedVines: Int? = null,
+    @SerialName("litres_per_hectare") val litresPerHectare: Double? = null,
+    @SerialName("litres_per_vine") val litresPerVine: Double? = null,
+    @SerialName("irrigation_depth_mm") val irrigationDepthMm: Double? = null,
+    @SerialName("effective_irrigation_depth_mm") val effectiveIrrigationDepthMm: Double? = null,
+    @SerialName("first_irrigation_date") val firstIrrigationDate: String? = null,
+    @SerialName("last_irrigation_date") val lastIrrigationDate: String? = null,
+    @SerialName("days_since_last_irrigation") val daysSinceLastIrrigation: Int? = null,
+    @SerialName("highest_use_date") val highestUseDate: String? = null,
+    @SerialName("highest_use_date_litres") val highestUseDateLitres: Double? = null,
+    @SerialName("highest_use_month") val highestUseMonth: String? = null,
+    @SerialName("highest_use_month_litres") val highestUseMonthLitres: Double? = null,
+    @SerialName("previous_vintage_year") val previousVintageYear: Int? = null,
+    @SerialName("previous_total_litres") val previousTotalLitres: Double? = null,
+    @SerialName("volume_difference_litres") val volumeDifferenceLitres: Double? = null,
+    @SerialName("volume_difference_percent") val volumeDifferencePercent: Double? = null,
+    @SerialName("previous_depth_mm") val previousDepthMm: Double? = null,
+    @SerialName("depth_difference_mm") val depthDifferenceMm: Double? = null,
+    @SerialName("previous_runtime_minutes") val previousRuntimeMinutes: Int? = null,
+    @SerialName("runtime_difference_minutes") val runtimeDifferenceMinutes: Int? = null,
+    @SerialName("previous_session_count") val previousSessionCount: Int? = null,
+    @SerialName("session_count_difference") val sessionCountDifference: Int? = null,
+    @SerialName("rainfall_mm") val rainfallMm: Double? = null,
+    @SerialName("rainfall_data_complete") val rainfallDataComplete: Boolean? = null,
+    @SerialName("data_quality") val dataQuality: String? = null,
+    val warnings: List<IrrigationReportWarning> = emptyList(),
+)
+
+@Serializable
+data class IrrigationPeriodReportRow(
+    @SerialName("period_key") val periodKey: String = "",
+    @SerialName("period_start") val periodStart: String? = null,
+    @SerialName("period_end") val periodEnd: String? = null,
+    @SerialName("week_number") val weekNumber: Int? = null,
+    @SerialName("month_label") val monthLabel: String? = null,
+    @SerialName("total_litres") val totalLitres: Double = 0.0,
+    @SerialName("effective_litres") val effectiveLitres: Double? = null,
+    @SerialName("runtime_minutes") val runtimeMinutes: Int = 0,
+    @SerialName("session_count") val sessionCount: Int = 0,
+    @SerialName("manual_litres") val manualLitres: Double? = null,
+    @SerialName("imported_litres") val importedLitres: Double? = null,
+    @SerialName("estimated_litres") val estimatedLitres: Double? = null,
+    @SerialName("directly_reported_litres") val directlyReportedLitres: Double? = null,
+    @SerialName("valves_used") val valvesUsed: Int? = null,
+    @SerialName("blocks_irrigated") val blocksIrrigated: Int? = null,
+    @SerialName("serviced_area_hectares") val servicedAreaHectares: Double? = null,
+    @SerialName("litres_per_hectare") val litresPerHectare: Double? = null,
+    @SerialName("litres_per_vine") val litresPerVine: Double? = null,
+    @SerialName("irrigation_depth_mm") val irrigationDepthMm: Double? = null,
+    @SerialName("effective_depth_mm") val effectiveDepthMm: Double? = null,
+    @SerialName("rainfall_mm") val rainfallMm: Double? = null,
+    @SerialName("combined_water_input_mm") val combinedWaterInputMm: Double? = null,
+    @SerialName("rainfall_data_complete") val rainfallDataComplete: Boolean? = null,
+    @SerialName("previous_vintage_total_litres") val previousVintageTotalLitres: Double? = null,
+    @SerialName("previous_vintage_depth_mm") val previousVintageDepthMm: Double? = null,
+    @SerialName("difference_litres") val differenceLitres: Double? = null,
+    @SerialName("difference_percent") val differencePercent: Double? = null,
+)
+
+@Serializable
+data class IrrigationValveReportRow(
+    @SerialName("valve_id") val valveId: String = "",
+    @SerialName("valve_name") val valveName: String = "",
+    @SerialName("valve_number") val valveNumber: String? = null,
+    @SerialName("system_name") val systemName: String? = null,
+    @SerialName("water_source") val waterSource: String? = null,
+    @SerialName("allocation_method") val allocationMethod: String? = null,
+    @SerialName("automatic_flow_source") val automaticFlowSource: String? = null,
+    @SerialName("session_count") val sessionCount: Int = 0,
+    @SerialName("total_litres") val totalLitres: Double = 0.0,
+    @SerialName("effective_litres") val effectiveLitres: Double? = null,
+    @SerialName("runtime_minutes") val runtimeMinutes: Int = 0,
+    @SerialName("average_session_minutes") val averageSessionMinutes: Double? = null,
+    @SerialName("average_flow_litres_per_hour") val averageFlowLitresPerHour: Double? = null,
+    @SerialName("manual_litres") val manualLitres: Double? = null,
+    @SerialName("imported_litres") val importedLitres: Double? = null,
+    @SerialName("estimated_litres") val estimatedLitres: Double? = null,
+    @SerialName("directly_reported_litres") val directlyReportedLitres: Double? = null,
+    @SerialName("blocks_supplied") val blocksSupplied: Int? = null,
+    @SerialName("rows_supplied") val rowsSupplied: Int? = null,
+    @SerialName("first_use") val firstUse: String? = null,
+    @SerialName("last_use") val lastUse: String? = null,
+    @SerialName("days_since_last_use") val daysSinceLastUse: Int? = null,
+    @SerialName("percent_of_vineyard_total") val percentOfVineyardTotal: Double? = null,
+)
+
+@Serializable
+data class IrrigationBlockReportRow(
+    @SerialName("block_id") val blockId: String = "",
+    @SerialName("block_name") val blockName: String? = null,
+    @SerialName("variety_name") val varietyName: String? = null,
+    @SerialName("session_count") val sessionCount: Int = 0,
+    @SerialName("total_litres") val totalLitres: Double = 0.0,
+    @SerialName("effective_litres") val effectiveLitres: Double? = null,
+    @SerialName("runtime_minutes") val runtimeMinutes: Int? = null,
+    @SerialName("serviced_area_hectares") val servicedAreaHectares: Double? = null,
+    @SerialName("serviced_vines") val servicedVines: Int? = null,
+    @SerialName("litres_per_hectare") val litresPerHectare: Double? = null,
+    @SerialName("litres_per_vine") val litresPerVine: Double? = null,
+    @SerialName("irrigation_depth_mm") val irrigationDepthMm: Double? = null,
+    @SerialName("effective_depth_mm") val effectiveDepthMm: Double? = null,
+    @SerialName("rainfall_mm") val rainfallMm: Double? = null,
+    @SerialName("combined_water_input_mm") val combinedWaterInputMm: Double? = null,
+    @SerialName("manual_litres") val manualLitres: Double? = null,
+    @SerialName("imported_litres") val importedLitres: Double? = null,
+    @SerialName("estimated_litres") val estimatedLitres: Double? = null,
+    @SerialName("first_irrigation_date") val firstIrrigationDate: String? = null,
+    @SerialName("last_irrigation_date") val lastIrrigationDate: String? = null,
+    @SerialName("days_since_last_irrigation") val daysSinceLastIrrigation: Int? = null,
+    @SerialName("previous_vintage_litres") val previousVintageLitres: Double? = null,
+    @SerialName("difference_litres") val differenceLitres: Double? = null,
+    @SerialName("difference_percent") val differencePercent: Double? = null,
+)
+
+@Serializable
+data class IrrigationVarietyReportRow(
+    @SerialName("variety_name") val varietyName: String = "",
+    @SerialName("block_count") val blockCount: Int? = null,
+    @SerialName("session_count") val sessionCount: Int = 0,
+    @SerialName("total_litres") val totalLitres: Double = 0.0,
+    @SerialName("effective_litres") val effectiveLitres: Double? = null,
+    @SerialName("serviced_area_hectares") val servicedAreaHectares: Double? = null,
+    @SerialName("serviced_vines") val servicedVines: Int? = null,
+    @SerialName("litres_per_hectare") val litresPerHectare: Double? = null,
+    @SerialName("litres_per_vine") val litresPerVine: Double? = null,
+    @SerialName("irrigation_depth_mm") val irrigationDepthMm: Double? = null,
+    @SerialName("effective_depth_mm") val effectiveDepthMm: Double? = null,
+    @SerialName("rainfall_mm") val rainfallMm: Double? = null,
+    @SerialName("combined_water_input_mm") val combinedWaterInputMm: Double? = null,
+    @SerialName("manual_litres") val manualLitres: Double? = null,
+    @SerialName("imported_litres") val importedLitres: Double? = null,
+    @SerialName("previous_vintage_litres") val previousVintageLitres: Double? = null,
+    @SerialName("difference_litres") val differenceLitres: Double? = null,
+    @SerialName("difference_percent") val differencePercent: Double? = null,
+)
+
+@Serializable
+data class IrrigationWaterSourceReportRow(
+    @SerialName("water_source") val waterSource: String = "",
+    @SerialName("system_count") val systemCount: Int? = null,
+    @SerialName("valve_count") val valveCount: Int? = null,
+    @SerialName("session_count") val sessionCount: Int = 0,
+    @SerialName("total_litres") val totalLitres: Double = 0.0,
+    @SerialName("effective_litres") val effectiveLitres: Double? = null,
+    @SerialName("runtime_minutes") val runtimeMinutes: Int? = null,
+    @SerialName("percent_of_vineyard_total") val percentOfVineyardTotal: Double? = null,
+    @SerialName("manual_litres") val manualLitres: Double? = null,
+    @SerialName("imported_litres") val importedLitres: Double? = null,
+    @SerialName("estimated_litres") val estimatedLitres: Double? = null,
+    @SerialName("directly_reported_litres") val directlyReportedLitres: Double? = null,
+    @SerialName("first_use") val firstUse: String? = null,
+    @SerialName("last_use") val lastUse: String? = null,
+)
+
+@Serializable
+data class IrrigationCalcSourceReportRow(
+    @SerialName("calculation_method") val calculationMethod: String = "",
+    @SerialName("calculation_label") val calculationLabel: String? = null,
+    @SerialName("measurement_group") val measurementGroup: String? = null,
+    @SerialName("measurement_label") val measurementLabel: String? = null,
+    @SerialName("session_count") val sessionCount: Int = 0,
+    @SerialName("total_litres") val totalLitres: Double = 0.0,
+    @SerialName("percent_of_total_litres") val percentOfTotalLitres: Double? = null,
+    @SerialName("runtime_minutes") val runtimeMinutes: Int? = null,
+)
+
+@Serializable
+data class IrrigationRecordSourceReportRow(
+    @SerialName("source_type") val sourceType: String = "",
+    @SerialName("source_label") val sourceLabel: String? = null,
+    @SerialName("source_group") val sourceGroup: String? = null,
+    @SerialName("session_count") val sessionCount: Int = 0,
+    @SerialName("total_litres") val totalLitres: Double = 0.0,
+    @SerialName("percent_of_total_litres") val percentOfTotalLitres: Double? = null,
+    @SerialName("first_recorded_at") val firstRecordedAt: String? = null,
+    @SerialName("last_recorded_at") val lastRecordedAt: String? = null,
+)
+
+@Serializable
+data class IrrigationRainfallReportRow(
+    @SerialName("period_key") val periodKey: String = "",
+    @SerialName("period_start") val periodStart: String? = null,
+    @SerialName("period_end") val periodEnd: String? = null,
+    @SerialName("rainfall_mm") val rainfallMm: Double? = null,
+    @SerialName("gross_irrigation_depth_mm") val grossIrrigationDepthMm: Double? = null,
+    @SerialName("effective_irrigation_depth_mm") val effectiveIrrigationDepthMm: Double? = null,
+    @SerialName("combined_water_input_mm") val combinedWaterInputMm: Double? = null,
+    @SerialName("irrigation_percent_of_combined") val irrigationPercentOfCombined: Double? = null,
+    @SerialName("rainfall_percent_of_combined") val rainfallPercentOfCombined: Double? = null,
+    @SerialName("rainfall_data_complete") val rainfallDataComplete: Boolean? = null,
+)
+
+@Serializable
+data class IrrigationVintageTrendRow(
+    @SerialName("vintage_year") val vintageYear: Int = 0,
+    @SerialName("period_start") val periodStart: String? = null,
+    @SerialName("period_end") val periodEnd: String? = null,
+    @SerialName("total_litres") val totalLitres: Double = 0.0,
+    @SerialName("effective_litres") val effectiveLitres: Double? = null,
+    @SerialName("manual_litres") val manualLitres: Double? = null,
+    @SerialName("imported_litres") val importedLitres: Double? = null,
+    @SerialName("estimated_litres") val estimatedLitres: Double? = null,
+    @SerialName("directly_reported_litres") val directlyReportedLitres: Double? = null,
+    @SerialName("runtime_minutes") val runtimeMinutes: Int? = null,
+    @SerialName("session_count") val sessionCount: Int = 0,
+    @SerialName("serviced_area_hectares") val servicedAreaHectares: Double? = null,
+    @SerialName("litres_per_hectare") val litresPerHectare: Double? = null,
+    @SerialName("litres_per_vine") val litresPerVine: Double? = null,
+    @SerialName("irrigation_depth_mm") val irrigationDepthMm: Double? = null,
+    @SerialName("effective_depth_mm") val effectiveDepthMm: Double? = null,
+    @SerialName("rainfall_mm") val rainfallMm: Double? = null,
+    @SerialName("combined_water_input_mm") val combinedWaterInputMm: Double? = null,
+    @SerialName("data_quality") val dataQuality: String? = null,
+    val warnings: List<IrrigationReportWarning> = emptyList(),
+)
+
+/** Shared client-side filter for every Phase 2B report call. */
+data class IrrigationReportFilter(
+    val vintageYear: Int? = null,
+    val dateFrom: String? = null,
+    val dateTo: String? = null,
+    val systemId: String? = null,
+    val waterSource: String? = null,
+    val valveId: String? = null,
+    val blockId: String? = null,
+    val varietyId: String? = null,
+    val sourceType: String? = null,
+    val sourceGroup: String? = null,
+    val calculationMethod: String? = null,
+    val measurementGroup: String? = null,
+    val includeEstimated: Boolean = true,
+    val includeImported: Boolean = true,
+    val includeReversed: Boolean = false,
+)
+
 /** Offline pending session queued for idempotent replay (id is client-generated). */
 @Serializable
 data class PendingIrrigationSession(
@@ -1133,6 +1417,112 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
             put("p_vineyard_id", vineyardId)
             vintageYear?.let { put("p_vintage_year", it) }
         })
+
+    // MARK: Phase 2B reports (SQL 147 — backend-authoritative, enveloped)
+
+    private fun reportParams(
+        vineyardId: String,
+        f: IrrigationReportFilter,
+        includeDates: Boolean = true,
+        extra: (kotlinx.serialization.json.JsonObjectBuilder.() -> Unit)? = null,
+    ): JsonObject = buildJsonObject {
+        put("p_vineyard_id", vineyardId)
+        f.vintageYear?.let { put("p_vintage_year", it) }
+        if (includeDates) {
+            f.dateFrom?.let { put("p_date_from", it) }
+            f.dateTo?.let { put("p_date_to", it) }
+        }
+        f.systemId?.let { put("p_system_id", it) }
+        f.waterSource?.let { put("p_water_source", it) }
+        f.valveId?.let { put("p_valve_id", it) }
+        f.blockId?.let { put("p_block_id", it) }
+        f.varietyId?.let { put("p_variety_id", it) }
+        f.sourceType?.let { put("p_source_type", it) }
+        f.sourceGroup?.let { put("p_source_group", it) }
+        f.calculationMethod?.let { put("p_calculation_method", it) }
+        f.measurementGroup?.let { put("p_measurement_group", it) }
+        put("p_include_estimated", f.includeEstimated)
+        put("p_include_imported", f.includeImported)
+        put("p_include_reversed", f.includeReversed)
+        extra?.invoke(this)
+    }
+
+    suspend fun reportOverview(vineyardId: String, filter: IrrigationReportFilter): IrrigationVintageOverview =
+        withContext(Dispatchers.IO) {
+            decode(ensureSuccess(rpc("get_irrigation_vintage_overview", reportParams(vineyardId, filter))))
+        }
+
+    suspend fun reportDaily(
+        vineyardId: String, filter: IrrigationReportFilter, includeZeroDays: Boolean = false,
+    ): IrrigationReportEnvelope<IrrigationPeriodReportRow> = withContext(Dispatchers.IO) {
+        decode(ensureSuccess(rpc("get_irrigation_daily_report",
+            reportParams(vineyardId, filter) { put("p_include_zero_days", includeZeroDays) })))
+    }
+
+    suspend fun reportWeekly(vineyardId: String, filter: IrrigationReportFilter): IrrigationReportEnvelope<IrrigationPeriodReportRow> =
+        withContext(Dispatchers.IO) {
+            decode(ensureSuccess(rpc("get_irrigation_weekly_summary", reportParams(vineyardId, filter))))
+        }
+
+    suspend fun reportMonthly(vineyardId: String, filter: IrrigationReportFilter): IrrigationReportEnvelope<IrrigationPeriodReportRow> =
+        withContext(Dispatchers.IO) {
+            decode(ensureSuccess(rpc("get_irrigation_monthly_report", reportParams(vineyardId, filter))))
+        }
+
+    suspend fun reportValves(vineyardId: String, filter: IrrigationReportFilter): IrrigationReportEnvelope<IrrigationValveReportRow> =
+        withContext(Dispatchers.IO) {
+            decode(ensureSuccess(rpc("get_irrigation_valve_report", reportParams(vineyardId, filter))))
+        }
+
+    suspend fun reportBlocks(vineyardId: String, filter: IrrigationReportFilter): IrrigationReportEnvelope<IrrigationBlockReportRow> =
+        withContext(Dispatchers.IO) {
+            decode(ensureSuccess(rpc("get_irrigation_block_report", reportParams(vineyardId, filter))))
+        }
+
+    suspend fun reportVarieties(vineyardId: String, filter: IrrigationReportFilter): IrrigationReportEnvelope<IrrigationVarietyReportRow> =
+        withContext(Dispatchers.IO) {
+            decode(ensureSuccess(rpc("get_irrigation_variety_report", reportParams(vineyardId, filter))))
+        }
+
+    suspend fun reportWaterSources(vineyardId: String, filter: IrrigationReportFilter): IrrigationReportEnvelope<IrrigationWaterSourceReportRow> =
+        withContext(Dispatchers.IO) {
+            decode(ensureSuccess(rpc("get_irrigation_water_source_summary", reportParams(vineyardId, filter))))
+        }
+
+    suspend fun reportCalcSources(vineyardId: String, filter: IrrigationReportFilter): IrrigationReportEnvelope<IrrigationCalcSourceReportRow> =
+        withContext(Dispatchers.IO) {
+            decode(ensureSuccess(rpc("get_irrigation_calculation_source_summary", reportParams(vineyardId, filter))))
+        }
+
+    suspend fun reportRecordSources(vineyardId: String, filter: IrrigationReportFilter): IrrigationReportEnvelope<IrrigationRecordSourceReportRow> =
+        withContext(Dispatchers.IO) {
+            decode(ensureSuccess(rpc("get_irrigation_record_source_summary", reportParams(vineyardId, filter))))
+        }
+
+    suspend fun reportRainfall(
+        vineyardId: String, filter: IrrigationReportFilter, groupBy: String = "month",
+    ): IrrigationReportEnvelope<IrrigationRainfallReportRow> = withContext(Dispatchers.IO) {
+        decode(ensureSuccess(rpc("get_irrigation_rainfall_summary",
+            reportParams(vineyardId, filter) { put("p_group_by", groupBy) })))
+    }
+
+    suspend fun reportTrends(
+        vineyardId: String, filter: IrrigationReportFilter, vintageCount: Int = 5,
+    ): IrrigationReportEnvelope<IrrigationVintageTrendRow> = withContext(Dispatchers.IO) {
+        decode(ensureSuccess(rpc("get_irrigation_vintage_trends",
+            reportParams(vineyardId, filter, includeDates = false) { put("p_vintage_count", vintageCount) })))
+    }
+
+    /** Drill-down: sessions behind any report row (existing session model). */
+    suspend fun listReportSessions(
+        vineyardId: String, filter: IrrigationReportFilter, limit: Int = 100, offset: Int = 0,
+    ): IrrigationSessionList = withContext(Dispatchers.IO) {
+        decode(ensureSuccess(rpc("list_irrigation_report_sessions",
+            reportParams(vineyardId, filter) {
+                put("p_limit", limit)
+                put("p_offset", offset)
+            })))
+    }
 
     // MARK: Offline pending queue
 
