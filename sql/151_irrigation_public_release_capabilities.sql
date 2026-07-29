@@ -93,6 +93,13 @@ set search_path = public
 as $$
   select case
     when p_vineyard_id is null then false
+    -- Unknown capabilities deny for EVERYONE — including System Admins.
+    -- This check must run BEFORE the admin override, otherwise an admin
+    -- session would be granted a capability that does not exist.
+    when p_capability not in (
+      'view_irrigation_records','record_irrigation','edit_irrigation',
+      'reverse_irrigation','manage_irrigation_setup','view_irrigation_reports',
+      'import_irrigation','reverse_irrigation_import') then false
     -- System Administrators keep full access (must still be a member —
     -- identical to the Phase 1 gate semantics).
     when public.is_system_admin() and public.is_vineyard_member(p_vineyard_id) then true
@@ -106,7 +113,7 @@ as $$
         when 'view_irrigation_reports'   then array['owner','manager','supervisor']
         when 'import_irrigation'         then array['owner','manager']
         when 'reverse_irrigation_import' then array['owner','manager']
-        else array[]::text[]  -- unknown capability => deny
+        else array[]::text[]  -- unreachable (guarded above), kept as defence
       end)
   end;
 $$;
