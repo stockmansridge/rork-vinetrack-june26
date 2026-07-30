@@ -205,6 +205,8 @@ struct NewBackendRootView: View {
                 await syncVineyardGrapeVarieties(vineyardId: vid)
                 await syncVineyardLocation(vineyardId: vid)
                 await syncVineyardRegionSettings(vineyardId: vid)
+                // Vineyard changed — material telemetry change, report it.
+                await ClientTelemetryService.shared.reportActivity(vineyardId: vid)
             }
         }
         .task(id: auth.isSignedIn) {
@@ -214,8 +216,15 @@ struct NewBackendRootView: View {
                 // Warm the shared grape-variety catalogue right after sign-in
                 // so the cache is ready before any block screen renders.
                 await SharedGrapeVarietyCatalogCache.shared.refresh()
+                // Best-effort client telemetry heartbeat (SQL 154). Throttled
+                // internally; never blocks sign-in or normal use.
+                await ClientTelemetryService.shared.reportActivity(vineyardId: store.selectedVineyardId)
             } else {
                 systemAdmin.clearOnSignOut()
+                // Clear only the user-linked throttle cache — the random
+                // installation ID is kept (a new account creates its own
+                // separate user/client association server-side).
+                ClientTelemetryService.shared.clearUserCache()
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -233,6 +242,8 @@ struct NewBackendRootView: View {
                 Task { await auth.loadPendingInvitations() }
                 // Foreground return — refresh the shared entitlement (throttled).
                 Task { await entitlementGate.refresh() }
+                // Foreground telemetry heartbeat (throttled to 15 min).
+                Task { await ClientTelemetryService.shared.reportActivity(vineyardId: store.selectedVineyardId) }
             }
             lastScenePhase = newPhase
         }

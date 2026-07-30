@@ -160,6 +160,17 @@ nonisolated struct UserLoginActivity: Identifiable, Sendable, Hashable {
     let deviceModel: String?
     let osVersion: String?
     let status: UserActivityStatus
+    // SQL 154 — most recently active telemetry client (server-authoritative).
+    let lastAppType: String?
+    let lastPlatform: String?
+    let lastDeviceFamily: String?
+    let lastDeviceModel: String?
+    let lastOsName: String?
+    let lastOsVersion: String?
+    let lastAppVersion: String?
+    let lastAppBuild: String?
+    let lastClientSeenAt: Date?
+    let clientCount: Int
 
     var id: UUID { userId }
 
@@ -174,22 +185,39 @@ nonisolated struct UserLoginActivity: Identifiable, Sendable, Hashable {
         return email
     }
 
-    /// Combined app version + build, e.g. "1.4.2 (87)".
+    /// Combined app version + build, e.g. "1.4.2 (87)". Prefers the
+    /// telemetry heartbeat (SQL 154); falls back to the legacy
+    /// support-request metadata.
     var displayAppVersion: String? {
-        guard let appVersion, !appVersion.isEmpty else { return nil }
-        if let appBuild, !appBuild.isEmpty {
-            return "\(appVersion) (\(appBuild))"
+        let version = firstNonEmpty(lastAppVersion, appVersion)
+        guard let version else { return nil }
+        if let build = firstNonEmpty(lastAppBuild, appBuild) {
+            return "\(version) (\(build))"
         }
-        return appVersion
+        return version
     }
 
-    /// Combined device + OS, e.g. "iPhone15,2 · iOS 18.2".
+    /// Combined device + OS, e.g. "iPhone16,2 · iOS 18.6". Prefers the
+    /// telemetry heartbeat; falls back to the legacy support-request data.
     var displayDevice: String? {
-        let parts = [deviceModel, osVersion].compactMap { value -> String? in
-            guard let value, !value.isEmpty else { return nil }
-            return value
+        let model = firstNonEmpty(lastDeviceModel, deviceModel)
+        let os: String?
+        if let name = firstNonEmpty(lastOsName), let ver = firstNonEmpty(lastOsVersion) {
+            os = "\(name) \(ver)"
+        } else {
+            os = firstNonEmpty(lastOsVersion, osVersion)
         }
+        let parts = [model, os].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func firstNonEmpty(_ values: String?...) -> String? {
+        for value in values {
+            if let value, !value.trimmingCharacters(in: .whitespaces).isEmpty {
+                return value
+            }
+        }
+        return nil
     }
 }
 
@@ -208,6 +236,16 @@ nonisolated private struct UserLoginActivityRowDTO: Decodable, Sendable {
     let deviceModel: String?
     let osVersion: String?
     let status: String?
+    let lastAppType: String?
+    let lastPlatform: String?
+    let lastDeviceFamily: String?
+    let lastDeviceModel: String?
+    let lastOsName: String?
+    let lastOsVersion: String?
+    let lastAppVersion: String?
+    let lastAppBuild: String?
+    let lastClientSeenAt: Date?
+    let clientCount: Int?
 
     enum CodingKeys: String, CodingKey {
         case userId           = "user_id"
@@ -224,6 +262,16 @@ nonisolated private struct UserLoginActivityRowDTO: Decodable, Sendable {
         case deviceModel      = "device_model"
         case osVersion        = "os_version"
         case status
+        case lastAppType      = "last_app_type"
+        case lastPlatform     = "last_platform"
+        case lastDeviceFamily = "last_device_family"
+        case lastDeviceModel  = "last_device_model"
+        case lastOsName       = "last_os_name"
+        case lastOsVersion    = "last_os_version"
+        case lastAppVersion   = "last_app_version"
+        case lastAppBuild     = "last_app_build"
+        case lastClientSeenAt = "last_client_seen_at"
+        case clientCount      = "client_count"
     }
 
     func toModel() -> UserLoginActivity {
@@ -241,7 +289,17 @@ nonisolated private struct UserLoginActivityRowDTO: Decodable, Sendable {
             appBuild: appBuild,
             deviceModel: deviceModel,
             osVersion: osVersion,
-            status: UserActivityStatus(rawValue: status ?? "") ?? .never
+            status: UserActivityStatus(rawValue: status ?? "") ?? .never,
+            lastAppType: lastAppType,
+            lastPlatform: lastPlatform,
+            lastDeviceFamily: lastDeviceFamily,
+            lastDeviceModel: lastDeviceModel,
+            lastOsName: lastOsName,
+            lastOsVersion: lastOsVersion,
+            lastAppVersion: lastAppVersion,
+            lastAppBuild: lastAppBuild,
+            lastClientSeenAt: lastClientSeenAt,
+            clientCount: clientCount ?? 0
         )
     }
 }

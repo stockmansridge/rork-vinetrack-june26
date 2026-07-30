@@ -231,6 +231,17 @@ data class UserLoginActivityRow(
     @SerialName("device_model") val deviceModel: String? = null,
     @SerialName("os_version") val osVersion: String? = null,
     val status: String? = null,
+    // SQL 154 — most recently active telemetry client (server-authoritative).
+    @SerialName("last_app_type") val lastAppType: String? = null,
+    @SerialName("last_platform") val lastPlatform: String? = null,
+    @SerialName("last_device_family") val lastDeviceFamily: String? = null,
+    @SerialName("last_device_model") val lastDeviceModel: String? = null,
+    @SerialName("last_os_name") val lastOsName: String? = null,
+    @SerialName("last_os_version") val lastOsVersion: String? = null,
+    @SerialName("last_app_version") val lastAppVersion: String? = null,
+    @SerialName("last_app_build") val lastAppBuild: String? = null,
+    @SerialName("last_client_seen_at") val lastClientSeenAt: String? = null,
+    @SerialName("client_count") val clientCount: Int = 0,
 ) {
     val bestName: String
         get() {
@@ -239,18 +250,31 @@ data class UserLoginActivityRow(
             return email ?: ""
         }
 
+    /** Prefers the telemetry heartbeat (SQL 154); falls back to legacy support-request data. */
     val displayAppVersion: String?
         get() {
-            val v = appVersion?.takeIf { it.isNotEmpty() } ?: return null
-            val b = appBuild?.takeIf { it.isNotEmpty() }
+            val v = lastAppVersion?.takeIf { it.isNotEmpty() }
+                ?: appVersion?.takeIf { it.isNotEmpty() }
+                ?: return null
+            val b = lastAppBuild?.takeIf { it.isNotEmpty() }
+                ?: appBuild?.takeIf { it.isNotEmpty() }
             return if (b != null) "$v ($b)" else v
         }
 
+    /** Prefers the telemetry heartbeat (SQL 154); falls back to legacy support-request data. */
     val displayDevice: String?
-        get() = listOfNotNull(
-            deviceModel?.takeIf { it.isNotEmpty() },
-            osVersion?.takeIf { it.isNotEmpty() },
-        ).takeIf { it.isNotEmpty() }?.joinToString(" \u00b7 ")
+        get() {
+            val model = lastDeviceModel?.takeIf { it.isNotEmpty() }
+                ?: deviceModel?.takeIf { it.isNotEmpty() }
+            val osName = lastOsName?.takeIf { it.isNotEmpty() }
+            val osVer = lastOsVersion?.takeIf { it.isNotEmpty() }
+            val os = when {
+                osName != null && osVer != null -> "$osName $osVer"
+                osVer != null -> osVer
+                else -> osVersion?.takeIf { it.isNotEmpty() }
+            }
+            return listOfNotNull(model, os).takeIf { it.isNotEmpty() }?.joinToString(" \u00b7 ")
+        }
 
     val activityStatus: UserActivityStatus get() = UserActivityStatus.from(status)
 }

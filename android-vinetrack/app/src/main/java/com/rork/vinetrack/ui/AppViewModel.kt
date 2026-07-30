@@ -70,6 +70,7 @@ import com.rork.vinetrack.data.model.PruningSeasonIds
 import com.rork.vinetrack.data.model.PruningCalculator
 import com.rork.vinetrack.data.model.PruningEntry
 import com.rork.vinetrack.data.AdminRepository
+import com.rork.vinetrack.data.ClientTelemetryRepository
 import com.rork.vinetrack.data.AlertPreferencesRepository
 import com.rork.vinetrack.data.BillingGrantsRepository
 import com.rork.vinetrack.data.HomePrefsStore
@@ -724,6 +725,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Irrigation Records (SQL 125) — System Administrator gated during Phase 1. */
     val irrigationRepository = IrrigationRepository(session, app)
+
+    /** Client telemetry heartbeat (SQL 154) — best-effort, throttled. */
+    private val telemetryRepo = ClientTelemetryRepository(app, session)
 
     // --- Subscription / access gate (parity with iOS SubscriptionService +
     // VineTrackAccessResolver). RevenueCat sells only the Google Play Solo
@@ -3041,6 +3045,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 CredentialManager.create(getApplication())
                     .clearCredentialState(ClearCredentialStateRequest())
             }
+            // Clear only the user-linked telemetry throttle cache — the random
+            // installation ID is kept (a new account creates its own separate
+            // user/client association server-side).
+            runCatching { telemetryRepo.clearUserCache() }
             _ui.value = AppUiState(route = AppRoute.Login)
             _auth.value = AuthFormState(error = message)
         }
@@ -3048,6 +3056,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Elapsed-time of the last foreground session check, to debounce rapid cycles. */
     private var lastForegroundCheckMs = 0L
+
+    /**
+     * Fire-and-forget client telemetry heartbeat (SQL 154). The repository
+     * throttles internally (15 min unless the metadata signature changes);
+     * failures are swallowed — telemetry must never affect login or normal
+     * app use.
+     */
+    private fun reportClientTelemetry() {
+        if (!session.hasSession) return
+        viewModelScope.launch {
+            runCatching { telemetryRepo.reportActivity(session.selectedVineyardId) }
+        }
+    }
 
     /**
      * App returned to foreground. After long idle the persisted access token is
@@ -3079,6 +3100,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Cheap RPC; keeps admin-gated surfaces (e.g. Irrigation Records)
             // from staying hidden all session after one transient startup miss.
             loadAdminStatus()
+            // Foreground telemetry heartbeat (SQL 154, throttled to 15 min).
+            reportClientTelemetry()
             if (_ui.value.isOnline) replayAllPendingWrites()
         }
     }
@@ -3782,6 +3805,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 else -> vineyards.firstOrNull()?.id
             }
             session.selectedVineyardId = selected
+            // Post-auth telemetry heartbeat (SQL 154). Best-effort — never
+            // blocks the sign-in / bootstrap flow.
+            reportClientTelemetry()
             // Access gate (iOS parity): only evaluated once the user genuinely
             // has a vineyard — the no-vineyard onboarding always comes first.
             val hasAccess = if (selected == null) true else resolveVineTrackAccess()
@@ -3943,6 +3969,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectVineyard(id: String) {
         session.selectedVineyardId = id
+        // Vineyard changed — material telemetry change, report it (throttled).
+        reportClientTelemetry()
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
         _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList()) }
