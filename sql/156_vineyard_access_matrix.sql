@@ -14,8 +14,11 @@
 --   by its Owner's subscription, trial, or a vineyard-wide grant.
 --
 -- WHAT THIS MIGRATION CHANGES:
---   A. _user_level_access(user) — EXACT copy of the SQL 144
---      _admin_effective_access body (subscriptions + account trial only).
+--   A. _user_level_access(user) — the SQL 144 _admin_effective_access body
+--      (subscriptions + account trial only), with ONE deliberate change:
+--      vineyard-scoped grant rows (sql/155 grant_scope='vineyard') are
+--      excluded, because they fund a vineyard — never the billing
+--      anchor's account (see B.3).
 --      It is the recursion-safe "own entitlement" primitive used by the
 --      vineyard resolver below (a vineyard's owner check must never
 --      recurse back through vineyard-backed access).
@@ -164,6 +167,12 @@ begin
   join public.vinetrack_plans p on p.id = s.plan_id
   where s.deleted_at is null
     and (s.environment is null or s.environment <> 'sandbox')
+    -- A VINEYARD-SCOPED grant (sql/155) funds exactly one vineyard through
+    -- _vineyard_entitlement_for. It is NOT an account entitlement for its
+    -- billing anchor (nor for the anchor licence it asserts), otherwise the
+    -- anchor's OTHER vineyards would silently inherit owner-backed access
+    -- and scope would be inferred after all.
+    and coalesce(s.grant_scope, 'user') <> 'vineyard'
     and (
       s.owner_user_id = p_user_id
       or exists (
@@ -267,11 +276,14 @@ begin
   end
   into v_reason
   from public.vinetrack_subscriptions s2
-  where s2.owner_user_id = p_user_id
-     or exists (
-       select 1 from public.vinetrack_user_licences l2
-       where l2.subscription_id = s2.id and l2.user_id = p_user_id
-     )
+  where coalesce(s2.grant_scope, 'user') <> 'vineyard'
+    and (
+      s2.owner_user_id = p_user_id
+      or exists (
+        select 1 from public.vinetrack_user_licences l2
+        where l2.subscription_id = s2.id and l2.user_id = p_user_id
+      )
+    )
   order by s2.updated_at desc, s2.id
   limit 1;
 
@@ -308,7 +320,7 @@ $$;
 revoke all on function public._user_level_access(uuid) from public;
 
 comment on function public._user_level_access(uuid) is
-  'SQL 156 internal: recursion-safe OWN-entitlement resolver (exact SQL 144 logic — subscriptions, licences, manual grants, account trial). Used by _vineyard_entitlement_for owner checks. No client execute grant.';
+  'SQL 156 internal: recursion-safe OWN-entitlement resolver (SQL 144 logic — subscriptions, licences, user-scoped manual grants, account trial). Vineyard-scoped grants are excluded here and resolved only by _vineyard_entitlement_for, so a vineyard grant can never fund its anchor''s other vineyards. Used by _vineyard_entitlement_for owner checks. No client execute grant.';
 
 -- ---------------------------------------------------------------------------
 -- B. _vineyard_entitlement_for — which entitlement funds this vineyard?

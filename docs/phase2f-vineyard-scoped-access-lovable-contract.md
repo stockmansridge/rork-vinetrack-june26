@@ -33,6 +33,12 @@ A vineyard is funded ("entitled") by, in precedence order
 A member may enter a vineyard when they have an **active membership** AND
 (**their own account entitlement** OR the **vineyard entitlement** above).
 
+A vineyard-scoped grant is **never** an account entitlement for the account it
+is anchored to. It funds ONLY its own vineyard (step 1) and is excluded from
+the user-level resolver, so the anchor's OTHER vineyards never inherit
+owner-backed access from it (step 3). The anchor still enters the granted
+vineyard normally, through its membership.
+
 The shared resolver `get_my_vinetrack_access()` (same 34 columns) gained one
 granting step BELOW the account trial: when the user has no own entitlement
 but one of their vineyards is funded, it returns
