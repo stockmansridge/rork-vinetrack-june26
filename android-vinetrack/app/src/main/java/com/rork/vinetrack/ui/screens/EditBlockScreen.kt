@@ -75,6 +75,8 @@ import com.rork.vinetrack.data.model.PaddockVarietyAllocation
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.MapMyLocationButton
+import com.rork.vinetrack.ui.components.OverZoomSatelliteLayer
+import com.rork.vinetrack.ui.components.SATELLITE_IMAGERY_ATTRIBUTION
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -519,7 +521,9 @@ private fun BoundarySection(
             GoogleMap(
                 modifier = Modifier.fillMaxSize(),
                 cameraPositionState = camera,
-                properties = MapProperties(mapType = MapType.HYBRID, isMyLocationEnabled = hasLocationPerm),
+                // MapType.NONE + over-zoom satellite tiles so the camera can zoom
+                // past Google's imagery limit for precise point placement (iOS parity).
+                properties = MapProperties(mapType = MapType.NONE, isMyLocationEnabled = hasLocationPerm),
                 uiSettings = MapUiSettings(
                     zoomControlsEnabled = false,
                     mapToolbarEnabled = false,
@@ -530,6 +534,8 @@ private fun BoundarySection(
                 onMapClick = { boundary.add(MarkerState(it)) },
                 onMapLoaded = { mapLoaded = true },
             ) {
+                OverZoomSatelliteLayer()
+
                 val poly by remember { derivedStateOf { boundary.map { it.position } } }
                 if (poly.size >= 3) {
                     Polygon(
@@ -574,6 +580,12 @@ private fun BoundarySection(
                 onMessage = { locationMessage = it },
                 onPermissionGranted = { hasLocationPerm = true },
                 modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
+            )
+            Text(
+                SATELLITE_IMAGERY_ATTRIBUTION,
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 8.sp,
+                modifier = Modifier.align(Alignment.BottomStart).padding(start = 8.dp, bottom = 4.dp),
             )
             locationMessage?.let { msg ->
                 LaunchedEffect(msg) {

@@ -74,6 +74,8 @@ import com.rork.vinetrack.data.calculateRowLines
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.ui.components.MapMyLocationButton
+import com.rork.vinetrack.ui.components.OverZoomSatelliteLayer
+import com.rork.vinetrack.ui.components.SATELLITE_IMAGERY_ATTRIBUTION
 import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.theme.VineColors
 import kotlinx.coroutines.delay
@@ -157,7 +159,10 @@ fun BlockMapEditorScreen(
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
             cameraPositionState = camera,
-            properties = MapProperties(mapType = MapType.HYBRID, isMyLocationEnabled = hasLocationPerm),
+            // MapType.NONE + custom satellite tiles: Google's own satellite base
+            // map caps the camera at the local imagery limit, while the over-zoom
+            // layer keeps upscaling (like iOS MapKit) for precise point placement.
+            properties = MapProperties(mapType = MapType.NONE, isMyLocationEnabled = hasLocationPerm),
             uiSettings = MapUiSettings(
                 zoomControlsEnabled = false,
                 mapToolbarEnabled = false,
@@ -171,6 +176,8 @@ fun BlockMapEditorScreen(
             },
             onMapLoaded = { mapLoaded = true },
         ) {
+            OverZoomSatelliteLayer()
+
             // Context: other blocks already mapped in this vineyard.
             otherBlocks.forEach { other ->
                 val pts = other.polygonPoints
@@ -342,6 +349,11 @@ fun BlockMapEditorScreen(
                     rowAscending = rowAscending, onRowAscending = onRowAscending,
                 )
             }
+            Text(
+                SATELLITE_IMAGERY_ATTRIBUTION,
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 9.sp,
+            )
         }
 
     }
