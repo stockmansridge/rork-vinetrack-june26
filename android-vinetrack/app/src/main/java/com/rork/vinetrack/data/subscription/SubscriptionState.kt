@@ -33,6 +33,14 @@ data class EntitlementVerificationSnapshot(
      * of the 30-day grace window (e.g. the server trial end, SQL 143/144).
      */
     @SerialName("known_expires_at_ms") val knownExpiresAtMs: Long? = null,
+    // Phase 2F additive field (SQL 156) — optional so old snapshots decode.
+    /**
+     * Vineyard UUIDs confirmed accessible at the last online verification.
+     * Keyed per user via [userId]; a denial for ONE vineyard never erases
+     * another vineyard's cached access — the list is replaced only by a
+     * fresh server matrix.
+     */
+    @SerialName("accessible_vineyard_ids") val accessibleVineyardIds: List<String>? = null,
 )
 
 /**
@@ -78,16 +86,26 @@ class EntitlementVerificationStore(context: Context) {
         entitled: Boolean,
         productStatus: String?,
         knownExpiresAtMs: Long? = null,
+        accessibleVineyardIds: List<String>? = null,
     ): EntitlementVerificationSnapshot {
+        val previous = load(userId)
         val snapshot = EntitlementVerificationSnapshot(
             userId = userId,
             lastVerifiedAtMs = System.currentTimeMillis(),
             wasEntitled = entitled,
             productStatus = productStatus,
             knownExpiresAtMs = knownExpiresAtMs,
+            // Preserve the same user's known-accessible vineyards unless a
+            // fresh matrix replaces them.
+            accessibleVineyardIds = accessibleVineyardIds ?: previous?.accessibleVineyardIds,
         )
         save(snapshot)
         return snapshot
+    }
+
+    /** Removes the persisted snapshot (account switch isolation). */
+    fun clear() {
+        prefs.edit { remove(KEY) }
     }
 
     private companion object {

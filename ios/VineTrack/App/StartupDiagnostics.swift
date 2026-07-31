@@ -24,6 +24,7 @@ enum StartupDiagnostics {
         case disclaimer = "disclaimer"
         case subscriptionLoading = "subscription-loading"
         case offlineAccessNotice = "offline-access-notice"
+        case restrictedVineyard = "restricted-vineyard"
         case paywall = "paywall"
         case dashboard = "dashboard"
     }

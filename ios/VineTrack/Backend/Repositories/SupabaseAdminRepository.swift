@@ -220,15 +220,20 @@ nonisolated private struct VineyardDTO: Decodable, Sendable {
     }
 }
 
+/// Tolerant DTO for `admin_list_user_vineyards`. `is_owner` was NULL for
+/// vineyards whose `owner_id` was cleared (legacy/transferred rows) and the
+/// previous strict `Bool` decode failed the WHOLE response with "The data
+/// couldn't be read because it isn't in the correct format." — every optional
+/// now has a safe default (sql/155 also coalesces server-side).
 nonisolated private struct UserVineyardDTO: Decodable, Sendable {
     let id: UUID
     let name: String
     let role: String?
-    let isOwner: Bool
+    let isOwner: Bool?
     let country: String?
     let createdAt: Date?
     let deletedAt: Date?
-    let memberCount: Int
+    let memberCount: Int?
 
     enum CodingKeys: String, CodingKey {
         case id, name, role, country
@@ -582,9 +587,9 @@ final class SupabaseAdminRepository {
             .value
         return rows.map {
             AdminUserVineyardRow(
-                id: $0.id, name: $0.name, role: $0.role, isOwner: $0.isOwner,
+                id: $0.id, name: $0.name, role: $0.role, isOwner: $0.isOwner ?? false,
                 country: $0.country, createdAt: $0.createdAt, deletedAt: $0.deletedAt,
-                memberCount: $0.memberCount
+                memberCount: $0.memberCount ?? 0
             )
         }
     }

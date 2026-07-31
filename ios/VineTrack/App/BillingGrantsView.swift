@@ -109,8 +109,8 @@ struct BillingGrantsView: View {
             }
         }
         .sheet(isPresented: $showGrantSheet) {
-            GrantUnlimitedSheet { ownerId, vineyardId, reason, expiresAt in
-                await grant(ownerId: ownerId, vineyardId: vineyardId, reason: reason, expiresAt: expiresAt)
+            GrantUnlimitedSheet { ownerId, scope, vineyardId, reason, expiresAt in
+                await grant(ownerId: ownerId, scope: scope, vineyardId: vineyardId, reason: reason, expiresAt: expiresAt)
             }
         }
         .confirmationDialog(
@@ -216,11 +216,12 @@ struct BillingGrantsView: View {
         }
     }
 
-    private func grant(ownerId: UUID, vineyardId: UUID?, reason: String?, expiresAt: Date?) async -> String? {
+    private func grant(ownerId: UUID, scope: BillingGrantScope, vineyardId: UUID?, reason: String, expiresAt: Date?) async -> String? {
         actionError = nil
         do {
-            _ = try await repository.grantUnlimited(
+            _ = try await repository.createUnlimitedGrant(
                 ownerUserId: ownerId,
+                scope: scope,
                 vineyardId: vineyardId,
                 reason: reason,
                 expiresAt: expiresAt
@@ -262,7 +263,19 @@ struct BillingGrantsView: View {
             return "System admin required. Sign in as a system admin to continue."
         }
         if raw.contains("could not find the function") || raw.contains("pgrst202") {
-            return "Backend RPCs not found. Apply migration sql/096 to Supabase."
+            return "Backend RPCs not found. Apply migrations sql/141 and sql/155 to Supabase."
+        }
+        if raw.contains("reason_required") {
+            return "A reason is required for every grant."
+        }
+        if raw.contains("vineyard_required_for_vineyard_scope") {
+            return "Select the vineyard this grant should cover."
+        }
+        if raw.contains("grant_scope_not_allowed_for_type") {
+            return "That grant type does not support the selected scope."
+        }
+        if raw.contains("vineyard_not_found") {
+            return "That vineyard no longer exists."
         }
         return error.localizedDescription
     }
@@ -273,8 +286,8 @@ struct BillingGrantsView: View {
 private struct GrantUnlimitedSheet: View {
     @Environment(\.dismiss) private var dismiss
 
-    /// (ownerId, vineyardId?, reason?, expiresAt?) -> error string or nil
-    let onSubmit: (UUID, UUID?, String?, Date?) async -> String?
+    /// (ownerId, scope, vineyardId?, reason, expiresAt?) -> error string or nil
+    let onSubmit: (UUID, BillingGrantScope, UUID?, String, Date?) async -> String?
 
     @State private var users: [AdminUserRow] = []
     @State private var userVineyards: [AdminUserVineyardRow] = []
@@ -285,6 +298,7 @@ private struct GrantUnlimitedSheet: View {
 
     @State private var selectedUserId: UUID?
     @State private var selectedVineyardId: UUID?
+    @State private var grantScope: BillingGrantScope = .user
     @State private var reason: String = ""
     @State private var setExpiry: Bool = false
     @State private var expiresAt: Date = Calendar.current.date(byAdding: .year, value: 1, to: Date()) ?? Date()
@@ -315,9 +329,15 @@ private struct GrantUnlimitedSheet: View {
             .sorted { $0.name.lowercased() < $1.name.lowercased() }
     }
 
-    /// A vineyard must be chosen to grant — this is a vineyard-scoped flow.
+    /// User-scoped grants need a user + reason; vineyard-scoped grants also
+    /// require the vineyard every member will inherit access from.
     private var canSubmit: Bool {
-        selectedUserId != nil && selectedVineyardId != nil && !isSubmitting
+        guard selectedUserId != nil, !isSubmitting else { return false }
+        guard !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        if grantScope == .vineyard {
+            return selectedVineyardId != nil
+        }
+        return true
     }
 
     var body: some View {
@@ -369,13 +389,36 @@ private struct GrantUnlimitedSheet: View {
 
                 if selectedUser != nil {
                     Section {
+                        Picker("Grant applies to", selection: $grantScope) {
+                            Text("This user only").tag(BillingGrantScope.user)
+                            Text("An entire vineyard").tag(BillingGrantScope.vineyard)
+                        }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+                    } header: {
+                        Text("Grant applies to")
+                    } footer: {
+                        Text(grantScope == .vineyard
+                             ? "Every active member of the selected vineyard inherits access while the grant is valid. New members inherit it automatically."
+                             : "Only this account receives access. Other members of their vineyards are unaffected.")
+                    }
+                }
+
+                if selectedUser != nil && grantScope == .vineyard {
+                    Section {
                         if isLoadingVineyards {
                             HStack { ProgressView(); Text("Loading vineyards…").foregroundStyle(.secondary) }
                         } else if let vineyardError {
                             Label(vineyardError, systemImage: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange).font(.footnote)
+                            Button {
+                                guard let id = selectedUserId else { return }
+                                Task { await loadVineyards(for: id) }
+                            } label: {
+                                Label("Retry", systemImage: "arrow.clockwise")
+                            }
                         } else if ownerVineyards.isEmpty {
-                            Label("This user is not linked to any vineyard yet.", systemImage: "leaf.circle")
+                            Label("No eligible vineyards — this user is not linked to any vineyard yet.", systemImage: "leaf.circle")
                                 .foregroundStyle(.secondary).font(.footnote)
                         } else {
                             Picker("Vineyard", selection: $selectedVineyardId) {
@@ -387,9 +430,9 @@ private struct GrantUnlimitedSheet: View {
                             }
                         }
                     } header: {
-                        Text("Primary Vineyard")
+                        Text("Vineyard")
                     } footer: {
-                        Text("Only vineyards this user belongs to are shown.")
+                        Text("Only vineyards this user belongs to are shown. All active members of the chosen vineyard inherit access.")
                     }
                 }
 
@@ -397,9 +440,9 @@ private struct GrantUnlimitedSheet: View {
                     TextField("Reason / note", text: $reason, axis: .vertical)
                         .lineLimit(2...4)
                 } header: {
-                    Text("Reason")
+                    Text("Reason (required)")
                 } footer: {
-                    Text("Internal note, e.g. \"Stockman Admin\" or \"Power tester\".")
+                    Text("Required internal note, e.g. \"Stockman Admin\" or \"Power tester\".")
                 }
 
                 Section {
@@ -462,7 +505,9 @@ private struct GrantUnlimitedSheet: View {
     }
 
     /// Loads only the vineyards the selected owner belongs to, then
-    /// auto-selects when there is exactly one.
+    /// auto-selects when there is exactly one. A valid EMPTY result shows
+    /// "No eligible vineyards"; a transport/decoding failure shows the error
+    /// with a Retry option (the underlying error is kept for diagnostics).
     private func loadVineyards(for userId: UUID) async {
         isLoadingVineyards = true
         vineyardError = nil
@@ -478,7 +523,8 @@ private struct GrantUnlimitedSheet: View {
             }
         } catch {
             guard selectedUserId == userId else { return }
-            vineyardError = error.localizedDescription
+            print("[BillingGrants] fetchUserVineyards failed: \(error)")
+            vineyardError = "Couldn't load this user's vineyards. \(error.localizedDescription)"
         }
     }
 
@@ -489,7 +535,8 @@ private struct GrantUnlimitedSheet: View {
         defer { isSubmitting = false }
         let result = await onSubmit(
             ownerId,
-            selectedVineyardId,
+            grantScope,
+            grantScope == .vineyard ? selectedVineyardId : nil,
             reason.trimmingCharacters(in: .whitespacesAndNewlines),
             setExpiry ? expiresAt : nil
         )

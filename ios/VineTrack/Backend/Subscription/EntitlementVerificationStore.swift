@@ -33,6 +33,13 @@ nonisolated struct EntitlementVerificationSnapshot: Codable, Equatable {
     /// Whether the shared-entitlement rollout flag covered this user at the
     /// last online verification (drives the cold-start path choice).
     var supabaseEnforced: Bool?
+
+    // Phase 2F (SQL 156) additive field — optional so older snapshots decode.
+    /// Vineyard UUIDs confirmed accessible at the last online verification.
+    /// Keyed per user via `userId`; a denial for ONE vineyard never erases
+    /// the cached access of another — the whole list is replaced only by a
+    /// fresh server matrix.
+    var accessibleVineyardIds: [String]?
 }
 
 /// Local persistence for the entitlement grace window. Single-snapshot,
@@ -83,7 +90,8 @@ final class EntitlementVerificationStore {
         planCode: String? = nil,
         reasonCode: String? = nil,
         knownExpiresAt: Date? = nil,
-        supabaseEnforced: Bool? = nil
+        supabaseEnforced: Bool? = nil,
+        accessibleVineyardIds: [String]? = nil
     ) -> EntitlementVerificationSnapshot {
         let existing = load()
         let sameUser = existing?.userId == userId
@@ -97,7 +105,8 @@ final class EntitlementVerificationStore {
             planCode: planCode ?? (sameUser ? existing?.planCode : nil),
             reasonCode: reasonCode ?? (sameUser ? existing?.reasonCode : nil),
             knownExpiresAt: knownExpiresAt ?? (sameUser ? existing?.knownExpiresAt : nil),
-            supabaseEnforced: supabaseEnforced ?? (sameUser ? existing?.supabaseEnforced : nil)
+            supabaseEnforced: supabaseEnforced ?? (sameUser ? existing?.supabaseEnforced : nil),
+            accessibleVineyardIds: accessibleVineyardIds ?? (sameUser ? existing?.accessibleVineyardIds : nil)
         )
         save(snapshot)
         return snapshot

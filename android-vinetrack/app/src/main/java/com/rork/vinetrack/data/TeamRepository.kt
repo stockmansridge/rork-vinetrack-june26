@@ -44,14 +44,34 @@ class TeamRepository(private val session: SessionStore) {
         }
 
     /**
-     * Pending invitations visible to the signed-in user (RLS-scoped), joined to
-     * the vineyard name. Mirrors the iOS `listPendingInvitations()` (no
-     * vineyard filter) used by the first-login / waiting-for-invite flow;
-     * callers filter to the user's own email client-side, exactly like iOS.
+     * Pending invitations visible to the signed-in user. Prefers the SECURITY
+     * DEFINER RPC `list_my_pending_invitations` (sql/155), which returns the
+     * flat `vineyard_name` even though the invitee is not a member yet — the
+     * legacy embedded `vineyards(name)` join is hidden by RLS for non-members,
+     * which is why invitation cards showed no vineyard identity. Falls back to
+     * the legacy table query on older backends.
      */
     suspend fun listMyPendingInvitations(): List<Invitation> = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
+        try {
+            val rpcResponse = SupabaseClient.http.post(SupabaseClient.rpcUrl("list_my_pending_invitations")) {
+                authHeaders(token)
+                contentType(ContentType.Application.Json)
+                setBody("{}")
+            }
+            if (rpcResponse.status.isSuccess()) {
+                return@withContext rpcResponse.body<List<Invitation>>()
+            }
+            if (rpcResponse.status.value == 401 || rpcResponse.status.value == 403) {
+                throw BackendError.Unauthorized
+            }
+            // RPC missing (older backend) or transient — use the legacy query.
+        } catch (e: BackendError.Unauthorized) {
+            throw e
+        } catch (_: Exception) {
+            // Fall through to the legacy table query.
+        }
         val path = "invitations?select=*,vineyards(name)&status=eq.pending&order=created_at.desc"
         val response = SupabaseClient.http.get(SupabaseClient.restUrl(path)) {
             authHeaders(token)

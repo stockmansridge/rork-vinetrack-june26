@@ -99,13 +99,25 @@ final class SupabaseTeamRepository: TeamRepositoryProtocol {
 
     func listPendingInvitations() async throws -> [BackendInvitation] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        return try await provider.client
-            .from("invitations")
-            .select("*, vineyards(name)")
-            .eq("status", value: "pending")
-            .order("created_at", ascending: false)
-            .execute()
-            .value
+        // Prefer the SECURITY DEFINER RPC (sql/155): it returns vineyard_name
+        // even though the invitee is not a member yet — the legacy embedded
+        // vineyards(name) join is hidden by RLS for non-members, which left
+        // invitation cards without a vineyard identity.
+        do {
+            return try await provider.client
+                .rpc("list_my_pending_invitations")
+                .execute()
+                .value
+        } catch {
+            // Older backend without sql/155 — keep the legacy table query.
+            return try await provider.client
+                .from("invitations")
+                .select("*, vineyards(name)")
+                .eq("status", value: "pending")
+                .order("created_at", ascending: false)
+                .execute()
+                .value
+        }
     }
 
     func resendInvitation(invitationId: UUID, extendDays: Int = 14) async throws -> BackendInvitation {

@@ -83,7 +83,18 @@ struct NewBackendRootView: View {
                 // Combined access gate (Phase 2A): Supabase entitlement first,
                 // then the RevenueCat / legacy-trial / offline-cache fallbacks.
                 // A valid Supabase grant always suppresses the paywall.
-                NewMainTabView()
+                //
+                // Phase 2F: account access alone is not enough to OPEN the
+                // selected vineyard — when the live server matrix confirms the
+                // previously selected vineyard lost its entitlement, show the
+                // restricted-vineyard chooser instead of silently entering it.
+                // Unknown matrix (offline / older backend) never blocks entry.
+                if let vid = store.selectedVineyardId,
+                   entitlementGate.isVineyardConfirmedInaccessible(vid) {
+                    RestrictedVineyardView()
+                } else {
+                    NewMainTabView()
+                }
             } else if entitlementGate.isChecking {
                 subscriptionLoadingView
             } else if entitlementGate.shouldShowOfflineNotice {
@@ -456,7 +467,13 @@ struct NewBackendRootView: View {
         if store.selectedVineyard == nil { return .noVineyards }
         if !didCheckDisclaimer { return .disclaimer }
         if !disclaimerAccepted { return .disclaimer }
-        if entitlementGate.hasAccess { return .dashboard }
+        if entitlementGate.hasAccess {
+            if let vid = store.selectedVineyardId,
+               entitlementGate.isVineyardConfirmedInaccessible(vid) {
+                return .restrictedVineyard
+            }
+            return .dashboard
+        }
         if entitlementGate.isChecking { return .subscriptionLoading }
         if entitlementGate.shouldShowOfflineNotice { return .offlineAccessNotice }
         return .paywall

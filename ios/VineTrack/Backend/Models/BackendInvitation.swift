@@ -21,6 +21,7 @@ nonisolated struct BackendInvitation: Identifiable, Codable, Sendable {
         case expiresAt = "expires_at"
         case createdAt = "created_at"
         case vineyards
+        case vineyardName = "vineyard_name"
     }
 
     private struct VineyardRef: Codable {
@@ -37,7 +38,14 @@ nonisolated struct BackendInvitation: Identifiable, Codable, Sendable {
         invitedBy = try c.decodeIfPresent(UUID.self, forKey: .invitedBy)
         expiresAt = try c.decodeIfPresent(Date.self, forKey: .expiresAt)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
-        vineyardName = try c.decodeIfPresent(VineyardRef.self, forKey: .vineyards)?.name
+        // Prefer the flat vineyard_name (list_my_pending_invitations RPC,
+        // sql/155 — visible to invitees who are not members yet); fall back to
+        // the legacy embedded vineyards(name) join used by table queries.
+        if let flat = try? c.decodeIfPresent(String.self, forKey: .vineyardName), !flat.isEmpty {
+            vineyardName = flat
+        } else {
+            vineyardName = (try? c.decodeIfPresent(VineyardRef.self, forKey: .vineyards))??.name
+        }
     }
 
     func encode(to encoder: Encoder) throws {

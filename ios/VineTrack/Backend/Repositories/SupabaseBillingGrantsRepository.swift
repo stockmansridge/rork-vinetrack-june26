@@ -111,6 +111,31 @@ nonisolated private struct GrantParams: Encodable, Sendable {
     }
 }
 
+/// Explicit grant scope (sql/155). `user` affects only the target account;
+/// `vineyard` makes every active member of the vineyard inherit access.
+nonisolated enum BillingGrantScope: String, Sendable, CaseIterable {
+    case user
+    case vineyard
+}
+
+nonisolated private struct ScopedGrantParams: Encodable, Sendable {
+    let ownerUserId: UUID
+    let grantType: String
+    let reason: String
+    let expiresAt: Date?
+    let vineyardId: UUID?
+    let grantScope: String
+
+    enum CodingKeys: String, CodingKey {
+        case ownerUserId = "p_owner_user_id"
+        case grantType   = "p_grant_type"
+        case reason      = "p_reason"
+        case expiresAt   = "p_expires_at"
+        case vineyardId  = "p_vineyard_id"
+        case grantScope  = "p_grant_scope"
+    }
+}
+
 nonisolated private struct RevokeParams: Encodable, Sendable {
     let subscriptionId: UUID
     let revokeLicences: Bool
@@ -160,6 +185,32 @@ final class SupabaseBillingGrantsRepository {
                 vineyardId: vineyardId,
                 reason: (trimmedReason?.isEmpty == false) ? trimmedReason : nil,
                 expiresAt: expiresAt
+            ))
+            .execute()
+            .value
+        return id
+    }
+
+    /// Create an Internal Unlimited billing grant with an EXPLICIT scope
+    /// (`admin_create_billing_grant`, sql/155). Reason is mandatory; vineyard
+    /// scope requires a vineyard and unlocks all of its active members.
+    @discardableResult
+    func createUnlimitedGrant(
+        ownerUserId: UUID,
+        scope: BillingGrantScope,
+        vineyardId: UUID?,
+        reason: String,
+        expiresAt: Date?
+    ) async throws -> UUID {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let id: UUID = try await provider.client
+            .rpc("admin_create_billing_grant", params: ScopedGrantParams(
+                ownerUserId: ownerUserId,
+                grantType: "internal_unlimited",
+                reason: reason.trimmingCharacters(in: .whitespacesAndNewlines),
+                expiresAt: expiresAt,
+                vineyardId: vineyardId,
+                grantScope: scope.rawValue
             ))
             .execute()
             .value

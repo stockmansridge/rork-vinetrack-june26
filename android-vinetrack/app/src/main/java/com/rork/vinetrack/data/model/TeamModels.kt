@@ -16,9 +16,16 @@ data class Invitation(
     val role: String,
     val status: String = "pending",
     @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("expires_at") val expiresAt: String? = null,
     @SerialName("vineyards") val vineyard: InvitationVineyard? = null,
+    // Flat fields from the `list_my_pending_invitations` RPC (sql/155) — the
+    // embedded vineyards(name) join is hidden by RLS for users who are not
+    // members yet, which left invitation cards without a vineyard identity.
+    @SerialName("vineyard_name") val flatVineyardName: String? = null,
+    @SerialName("invited_by_name") val invitedByName: String? = null,
 ) {
-    val vineyardName: String? get() = vineyard?.name
+    val vineyardName: String?
+        get() = flatVineyardName?.takeIf { it.isNotBlank() } ?: vineyard?.name
 }
 
 @Serializable

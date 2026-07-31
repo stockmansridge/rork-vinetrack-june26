@@ -44,6 +44,7 @@ import com.rork.vinetrack.ui.auth.OnboardingScreen
 import com.rork.vinetrack.ui.components.LoginVineyardBackground
 import com.rork.vinetrack.ui.main.MainScaffold
 import com.rork.vinetrack.ui.screens.NoVineyardMembershipScreen
+import com.rork.vinetrack.ui.screens.RestrictedVineyardScreen
 import com.rork.vinetrack.ui.screens.SubscriptionScreen
 import com.rork.vinetrack.ui.theme.VineColors
 
@@ -94,6 +95,17 @@ fun RootScreen() {
             onAcceptInvitation = vm::acceptVineyardInvitation,
             onDeclineInvitation = vm::declineVineyardInvitation,
             onSignOut = vm::signOut,
+        )
+        AppRoute.RestrictedVineyard -> RestrictedVineyardScreen(
+            vineyards = state.vineyards,
+            accessMatrix = state.accessMatrix,
+            selectedVineyardId = state.selectedVineyardId,
+            isRestoring = subscriptionState.isRestoring,
+            isChecking = state.isRecheckingAccess,
+            onChooseVineyard = vm::switchToAccessibleVineyard,
+            onRecheckAccess = vm::recheckRestrictedVineyardAccess,
+            onRestorePurchases = vm::restoreSubscriptionPurchases,
+            onSignOut = { vm.signOut() },
         )
         AppRoute.Paywall -> SubscriptionScreen(
             state = subscriptionState,

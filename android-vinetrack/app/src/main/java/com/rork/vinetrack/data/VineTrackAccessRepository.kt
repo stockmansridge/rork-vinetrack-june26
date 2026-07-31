@@ -133,6 +133,68 @@ data class VineTrackAccessRow(
 }
 
 /**
+ * One vineyard row from `get_my_vineyard_access_matrix()` (sql/156).
+ * Server-authoritative per-vineyard decision — the client never re-derives
+ * entitlement precedence locally.
+ */
+@Serializable
+data class VineyardAccessEntry(
+    @SerialName("vineyard_id") val vineyardId: String,
+    @SerialName("vineyard_name") val vineyardName: String? = null,
+    @SerialName("membership_role") val membershipRole: String? = null,
+    @SerialName("has_vineyard_access") val hasVineyardAccess: Boolean = false,
+    @SerialName("vineyard_access_reason") val vineyardAccessReason: String? = null,
+    @SerialName("vineyard_access_source") val vineyardAccessSource: String? = null,
+    @SerialName("plan_code") val planCode: String? = null,
+    @SerialName("subscription_status") val subscriptionStatus: String? = null,
+    @SerialName("expires_at") val expiresAt: String? = null,
+    @SerialName("is_trial") val isTrial: Boolean? = null,
+    @SerialName("is_vineyard_wide") val isVineyardWide: Boolean? = null,
+    @SerialName("can_manage_billing") val canManageBilling: Boolean? = null,
+)
+
+/** Account summary from `get_my_vineyard_access_matrix()` (sql/156). */
+@Serializable
+data class VineyardAccessAccount(
+    /** full | vineyard_only | restricted | no_vineyards */
+    @SerialName("account_access_state") val accountAccessState: String? = null,
+    @SerialName("has_account_entitlement") val hasAccountEntitlement: Boolean? = null,
+    @SerialName("has_any_accessible_vineyard") val hasAnyAccessibleVineyard: Boolean? = null,
+    @SerialName("accessible_vineyard_count") val accessibleVineyardCount: Int? = null,
+    @SerialName("vineyard_count") val vineyardCount: Int? = null,
+    @SerialName("pending_invitation_count") val pendingInvitationCount: Int? = null,
+)
+
+/**
+ * Per-vineyard access matrix (sql/156). One call, one decision source:
+ * a denial for one vineyard never blanks another vineyard's access.
+ */
+@Serializable
+data class VineyardAccessMatrix(
+    val account: VineyardAccessAccount? = null,
+    val vineyards: List<VineyardAccessEntry> = emptyList(),
+) {
+    fun entryFor(vineyardId: String): VineyardAccessEntry? =
+        vineyards.firstOrNull { it.vineyardId.equals(vineyardId, ignoreCase = true) }
+
+    val accessibleVineyardIds: List<String>
+        get() = vineyards.filter { it.hasVineyardAccess }.map { it.vineyardId }
+
+    val hasAnyAccessibleVineyard: Boolean
+        get() = account?.hasAnyAccessibleVineyard ?: accessibleVineyardIds.isNotEmpty()
+
+    /**
+     * The vineyard is CONFIRMED inaccessible only when this live matrix
+     * either omits it (membership gone) or marks it denied. An unknown /
+     * missing matrix is never treated as a denial.
+     */
+    fun isVineyardConfirmedInaccessible(vineyardId: String): Boolean {
+        val entry = entryFor(vineyardId) ?: return vineyards.isNotEmpty()
+        return !entry.hasVineyardAccess
+    }
+}
+
+/**
  * Reads the caller's VineTrack entitlement from the Supabase RPC
  * `get_my_vinetrack_access()` — Android port of the iOS
  * `VineTrackAccessRepository`. Grants Team / Enterprise / internal / legacy /
@@ -167,7 +229,32 @@ class VineTrackAccessRepository(private val session: SessionStore) {
         }
     }
 
+    /**
+     * Fetch the per-vineyard access matrix (sql/156), or null when the RPC is
+     * missing on an older backend. Throws only on auth failure so callers can
+     * keep the previous matrix through transient outages.
+     */
+    suspend fun fetchAccessMatrix(): VineyardAccessMatrix? = withContext(Dispatchers.IO) {
+        if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl(MATRIX_RPC_NAME)) {
+            headers {
+                append("apikey", SupabaseClient.anonKey)
+                append("Authorization", "Bearer $token")
+            }
+            contentType(ContentType.Application.Json)
+            setBody("{}")
+        }
+        when {
+            response.status.isSuccess() -> response.body<VineyardAccessMatrix>()
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            response.status.value == 404 -> null // RPC not deployed yet
+            else -> throw BackendError.Server(response.status.value, "")
+        }
+    }
+
     private companion object {
         const val RPC_NAME = "get_my_vinetrack_access"
+        const val MATRIX_RPC_NAME = "get_my_vineyard_access_matrix"
     }
 }

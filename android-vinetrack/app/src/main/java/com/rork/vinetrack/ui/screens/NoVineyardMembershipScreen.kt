@@ -322,26 +322,31 @@ private fun InvitationCard(
                     )
                 }
                 Column(Modifier.weight(1f)) {
+                    // Vineyard identity FIRST — with several invitations the
+                    // cards must be distinguishable. A missing name is a
+                    // contract problem, so it is called out, never left blank.
                     Text(
-                        invitation.vineyardName ?: "Vineyard invitation",
+                        invitation.vineyardName ?: "Unknown vineyard",
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 15.sp,
                         color = VineColors.TextPrimaryLight,
-                        maxLines = 1,
+                        maxLines = 2,
                     )
                     Text(
-                        "Invited as ${invitation.email}",
+                        "Vineyard invitation",
                         fontSize = 12.sp,
                         color = VineColors.TextSecondaryLight,
                         maxLines = 1,
                     )
+                    Text(
+                        "Invited as ${com.rork.vinetrack.data.model.TeamRole.from(invitation.role).displayName}" +
+                            (invitation.invitedByName?.takeIf { it.isNotBlank() }?.let { " by $it" } ?: ""),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = VineColors.LeafGreen,
+                        maxLines = 1,
+                    )
                 }
-                Text(
-                    invitation.role.replaceFirstChar { it.uppercase() },
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = VineColors.LeafGreen,
-                )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(

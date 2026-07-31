@@ -146,6 +146,13 @@ final class EntitlementGate {
     }
 
     private(set) var phase: Phase = .idle
+    /// Latest server vineyard access matrix (sql/156). Nil until the first
+    /// successful fetch; a transient failure keeps the previous matrix so a
+    /// denial for one vineyard never erases another vineyard's known access.
+    private(set) var accessMatrix: VineyardAccessMatrix?
+    /// Vineyards confirmed accessible at the last ONLINE verification —
+    /// hydrated from the persisted snapshot on cold start (per user).
+    private(set) var cachedAccessibleVineyardIds: Set<UUID> = []
     /// Whether the shared-entitlement rollout flag covers this user (server
     /// value; cold-starts from the last persisted snapshot).
     private(set) var enforcementEnabled: Bool = false
@@ -170,6 +177,7 @@ final class EntitlementGate {
 
     private let subscription: SubscriptionService
     private let repository: VineTrackAccessRepository
+    private let matrixRepository: VineyardAccessMatrixRepository
     private var currentUserId: UUID?
     private var isRefreshing: Bool = false
 
@@ -177,10 +185,12 @@ final class EntitlementGate {
 
     init(
         subscription: SubscriptionService,
-        repository: VineTrackAccessRepository = VineTrackAccessRepository()
+        repository: VineTrackAccessRepository = VineTrackAccessRepository(),
+        matrixRepository: VineyardAccessMatrixRepository = VineyardAccessMatrixRepository()
     ) {
         self.subscription = subscription
         self.repository = repository
+        self.matrixRepository = matrixRepository
     }
 
     // MARK: Derived state
@@ -216,6 +226,27 @@ final class EntitlementGate {
         outcome == .unverified && resolvedWhileOffline
     }
 
+    /// Phase 2F: the selected vineyard is CONFIRMED inaccessible only when a
+    /// live server matrix exists and either omits the vineyard (no longer a
+    /// member) or marks it denied. Unknown (offline / no matrix yet) is never
+    /// treated as a denial — the app opens normally on cached access.
+    func isVineyardConfirmedInaccessible(_ vineyardId: UUID) -> Bool {
+        guard let matrix = accessMatrix else { return false }
+        guard let entry = matrix.entry(for: vineyardId) else {
+            // Not in the matrix: only restrict when the matrix is non-empty
+            // (an empty matrix usually means memberships haven't synced yet).
+            return !matrix.vineyards.isEmpty
+        }
+        return !entry.hasVineyardAccess
+    }
+
+    /// True when at least one vineyard remains accessible (live matrix first,
+    /// then the per-user cached snapshot).
+    var hasAnyAccessibleVineyard: Bool {
+        if let matrix = accessMatrix { return matrix.hasAnyAccessibleVineyard }
+        return !cachedAccessibleVineyardIds.isEmpty
+    }
+
     /// Stable label for diagnostics screens.
     var stateLabel: String {
         switch phase {
@@ -241,6 +272,10 @@ final class EntitlementGate {
         currentUserId = userId
         let snapshot = EntitlementVerificationStore.shared.load(for: userId)
         enforcementEnabled = snapshot?.supabaseEnforced ?? false
+        cachedAccessibleVineyardIds = Set(
+            (snapshot?.accessibleVineyardIds ?? []).compactMap(UUID.init(uuidString:))
+        )
+        accessMatrix = nil
         phase = .idle
         hasServerMismatch = false
         hasTrialMismatch = false
@@ -255,6 +290,8 @@ final class EntitlementGate {
     func logout() {
         currentUserId = nil
         phase = .idle
+        accessMatrix = nil
+        cachedAccessibleVineyardIds = []
         enforcementEnabled = false
         lastServerAccess = nil
         lastServerResult = nil
@@ -360,6 +397,21 @@ final class EntitlementGate {
         if serverRow != nil { lastServerAccess = serverRow }
         lastServerResult = serverResult
 
+        // Phase 2F: refresh the vineyard access matrix whenever the server is
+        // reachable. Failure keeps the previous matrix — never treated as a
+        // denial, and never blocks the account-level resolution below.
+        if serverResult != .unreachable {
+            do {
+                let matrix = try await matrixRepository.fetchMatrix()
+                guard currentUserId == userId else { return }
+                accessMatrix = matrix
+                cachedAccessibleVineyardIds = Set(matrix.accessibleVineyardIds)
+            } catch {
+                // Matrix RPC missing (older backend) or transient failure —
+                // routing falls back to the account-level decision only.
+            }
+        }
+
         let now = Date()
         let cacheInfo: EntitlementDecision.CacheInfo? = snapshot.map {
             EntitlementDecision.CacheInfo(
@@ -423,7 +475,8 @@ final class EntitlementGate {
                 planCode: serverRow?.planCode,
                 reasonCode: serverRow?.reasonCode,
                 knownExpiresAt: serverRow?.knownExpiresAt(now: now),
-                supabaseEnforced: enforcementEnabled
+                supabaseEnforced: enforcementEnabled,
+                accessibleVineyardIds: accessMatrix.map { $0.accessibleVineyardIds.map(\.uuidString) }
             )
         case .denied:
             let fallbackGranted: (entitled: Bool, source: String?, expiresAt: Date?)
@@ -443,7 +496,8 @@ final class EntitlementGate {
                 planCode: nil,
                 reasonCode: serverRow?.reasonCode,
                 knownExpiresAt: fallbackGranted.expiresAt,
-                supabaseEnforced: enforcementEnabled
+                supabaseEnforced: enforcementEnabled,
+                accessibleVineyardIds: accessMatrix.map { $0.accessibleVineyardIds.map(\.uuidString) }
             )
         case .unreachable:
             break

@@ -200,7 +200,7 @@ import java.time.Instant
 import java.util.UUID
 
 /** Top-level startup route, mirrors the iOS NewBackendRootView state machine. */
-enum class AppRoute { Restoring, Login, BiometricLock, VineyardLoading, VineyardLoadFailed, NoVineyards, Paywall, Main }
+enum class AppRoute { Restoring, Login, BiometricLock, VineyardLoading, VineyardLoadFailed, NoVineyards, RestrictedVineyard, Paywall, Main }
 
 /**
  * Derived display state for an unresolved outbox entry (Tier-A Stage F-1).
@@ -333,6 +333,14 @@ data class AppUiState(
     val onboardingCompleted: Boolean = true,
     val vineyards: List<Vineyard> = emptyList(),
     val selectedVineyardId: String? = null,
+    /**
+     * Latest server per-vineyard access matrix (sql/156, Phase 2F). Null until
+     * the first successful fetch; a transient failure keeps the previous
+     * matrix so a denial for one vineyard never erases another's known access.
+     */
+    val accessMatrix: com.rork.vinetrack.data.VineyardAccessMatrix? = null,
+    /** True while the restricted-vineyard screen is re-running access resolution. */
+    val isRecheckingAccess: Boolean = false,
     /** The user's preferred default vineyard (auto-selected on launch). */
     val defaultVineyardId: String? = null,
     /**
@@ -3318,6 +3326,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val access = vineTrackAccessRepo.fetchMyAccess()
             backendChecked = true
+            // Phase 2F: refresh the per-vineyard matrix whenever the server is
+            // reachable. Best-effort — failure keeps the previous matrix and
+            // never blocks the account-level resolution.
+            val matrix = runCatching { vineTrackAccessRepo.fetchAccessMatrix() }.getOrNull()
+            if (matrix != null) {
+                _ui.update { it.copy(accessMatrix = matrix) }
+            }
             if (access != null && access.grantsAppAccess) {
                 // Cache is CAPPED at the earliest known expiry (e.g. the
                 // server-authoritative trial end — SQL 143/144) so offline
@@ -3325,6 +3340,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 entitlementStore.recordVerification(
                     userId, true, access.verificationStatusLabel,
                     access.knownExpiresAtMs(),
+                    matrix?.accessibleVineyardIds,
                 )
                 return true
             }
@@ -3811,6 +3827,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Access gate (iOS parity): only evaluated once the user genuinely
             // has a vineyard — the no-vineyard onboarding always comes first.
             val hasAccess = if (selected == null) true else resolveVineTrackAccess()
+            // Phase 2F: account access alone is not enough to OPEN the selected
+            // vineyard — when the live matrix confirms the previously selected
+            // vineyard lost its entitlement, show the restricted-vineyard
+            // chooser instead of silently entering it (and never a global
+            // paywall while another vineyard remains accessible). An unknown
+            // matrix (offline / older backend) never blocks entry.
+            val matrix = _ui.value.accessMatrix
+            val selectedRestricted = hasAccess && selected != null &&
+                matrix?.isVineyardConfirmedInaccessible(selected) == true
             _ui.update {
                 it.copy(
                     vineyards = vineyards,
@@ -3824,6 +3849,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     route = when {
                         selected == null -> AppRoute.NoVineyards
                         !hasAccess -> AppRoute.Paywall
+                        selectedRestricted -> AppRoute.RestrictedVineyard
                         else -> AppRoute.Main
                     },
                 )
@@ -3964,6 +3990,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 session.defaultVineyardId = target
                 _ui.update { it.copy(defaultVineyardId = target) }
             }
+        }
+    }
+
+    /**
+     * Phase 2F: switch from the restricted-vineyard chooser into a vineyard
+     * the server matrix confirms accessible, then resume the normal shell.
+     */
+    fun switchToAccessibleVineyard(id: String) {
+        selectVineyard(id)
+        _ui.update { it.copy(route = AppRoute.Main) }
+    }
+
+    /**
+     * Phase 2F: re-run the full access resolution from the restricted-vineyard
+     * screen (e.g. after the Owner renews billing). Routes forward only on a
+     * confirmed improvement — never signs the user out.
+     */
+    fun recheckRestrictedVineyardAccess() {
+        if (_ui.value.isRecheckingAccess) return
+        viewModelScope.launch {
+            _ui.update { it.copy(isRecheckingAccess = true) }
+            val hasAccess = resolveVineTrackAccess()
+            val selected = _ui.value.selectedVineyardId
+            val matrix = _ui.value.accessMatrix
+            val stillRestricted = selected != null &&
+                matrix?.isVineyardConfirmedInaccessible(selected) == true
+            _ui.update {
+                it.copy(
+                    isRecheckingAccess = false,
+                    route = when {
+                        !hasAccess -> AppRoute.Paywall
+                        stillRestricted -> AppRoute.RestrictedVineyard
+                        else -> AppRoute.Main
+                    },
+                )
+            }
+            if (!hasAccess) refreshPaywall()
         }
     }
 
