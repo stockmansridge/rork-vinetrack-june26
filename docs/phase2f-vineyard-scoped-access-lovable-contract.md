@@ -1,8 +1,11 @@
 # Phase 2F — Vineyard-Scoped Access & Grant Scope: Lovable Portal Contract
 
-Backend delivered by Rork in `sql/155_billing_grant_scope.sql` and
-`sql/156_vineyard_access_matrix.sql`. Apply both (155 first), then this
-contract is live. Rollback-only tests: `sql/tests/156_phase2f_access_tests.sql`.
+Backend delivered by Rork in `sql/155_billing_grant_scope.sql`,
+`sql/156_vineyard_access_matrix.sql` and
+`sql/157_solo_vs_team_vineyard_funding.sql` (Phase 2F.1). Apply in that
+order, then this contract is live. Rollback-only tests:
+`sql/tests/156_phase2f_access_tests.sql` and
+`sql/tests/157_solo_vs_team_funding_tests.sql`.
 
 Cohort unchanged: `use_shared_supabase_entitlement` stays `internal`.
 RevenueCat fallback stays enabled. No Stripe/RevenueCat/store-catalogue changes.
@@ -21,14 +24,33 @@ A vineyard is funded ("entitled") by, in precedence order
 (`public._vineyard_entitlement_for`):
 
 1. an active **vineyard-scoped Billing Grant** (`grant_scope = 'vineyard'`,
-   `primary_vineyard_id` = the vineyard);
-2. an active **multi-seat subscription anchored to it** (tier
-   `team | enterprise | legacy`, non-manual, non-store provider, via
-   `primary_vineyard_id`) — a user-scoped grant or solo/store subscription
-   with an informational primary vineyard NEVER funds the vineyard this way;
-3. any active vineyard **Owner** (membership role `owner`, or legacy
-   `vineyards.owner_id`) whose OWN entitlement is valid — including the
-   Owner's account trial (3 calendar months from `auth.users.created_at`).
+   `primary_vineyard_id` = the vineyard) — `internal_unlimited`,
+   `complimentary_team`, `enterprise_contract`, `beta_tester`,
+   `temporary_access`, `support_access`;
+2. an active **multi-seat subscription anchored to it** (plan tier/code
+   `team | enterprise`, any non-manual provider, via `primary_vineyard_id`);
+3. an active **multi-seat subscription (`team | enterprise`) OWNED by an
+   active vineyard Owner** (membership role `owner`, or legacy
+   `vineyards.owner_id`) — the Owner must be the subscription's
+   `owner_user_id`; an assigned licence does not count;
+4. that Owner's active **account trial** (3 calendar months from
+   `auth.users.created_at`), evaluated independently of their
+   subscriptions — it funds every vineyard they own for the original
+   trial window only.
+
+**Never funds a vineyard (Phase 2F.1):**
+
+- plan tier `solo` (Solo — store, Stripe or `complimentary_solo`);
+- plan tier `legacy` (grandfathered single-user store plans, e.g.
+  `legacy_monthly`);
+- ANY **user-scoped** Billing Grant (`grant_scope = 'user'`), including
+  `internal_unlimited` — scope is explicit and never inferred from
+  `primary_vineyard_id`;
+- an **assigned licence** — it entitles the assignee only.
+
+Those users still enter EVERY vineyard where their own user-level
+entitlement plus an active membership permit it — the restriction is only
+on funding OTHER members.
 
 A member may enter a vineyard when they have an **active membership** AND
 (**their own account entitlement** OR the **vineyard entitlement** above).
@@ -80,8 +102,8 @@ Authenticated only (401/42501 otherwise). No parameters — always the caller.
       "membership_role": "owner | manager | supervisor | operator",
       "membership_status": "active",
       "has_vineyard_access": true,
-      "vineyard_access_reason": "account | vineyard_grant | vineyard_subscription | owner_subscription | owner_trial | owner_grant | no_vineyard_entitlement",
-      "vineyard_access_source": "account | vineyard_grant | vineyard_subscription | owner_subscription | owner_trial | owner_grant | none",
+      "vineyard_access_reason": "account | vineyard_grant | vineyard_subscription | owner_subscription | owner_trial | owner_plan_not_vineyard_funding | no_vineyard_entitlement",
+      "vineyard_access_source": "account | vineyard_grant | vineyard_subscription | owner_subscription | owner_trial | none",
       "plan_code": "team | internal_unlimited | trial | …",
       "subscription_status": "active | manual | trialling | …",
       "starts_at": "timestamptz | null",
@@ -102,6 +124,12 @@ Notes:
 
 - When `vineyard_access_source = "account"` the user's OWN entitlement opens
   the vineyard; plan fields describe THAT entitlement.
+- **Changed in 2F.1:** `owner_grant` is no longer emitted (a user-scoped
+  manual grant never funds a vineyard). `vineyard_access_reason` may now be
+  `owner_plan_not_vineyard_funding` when access is denied because the
+  vineyard's Owner holds only a user-level entitlement (Solo, legacy,
+  user-scoped grant or assigned licence). `vineyard_access_source` stays
+  `none` in that case. Treat any unknown reason as a plain denial.
 - The funding `subscription_id` of another owner is never returned.
 - `account_access_state` semantics:
   - `full` — own entitlement active (all memberships open);
@@ -217,10 +245,13 @@ Invitations must remain visible in the `restricted` account state.
 select public.admin_explain_vineyard_access('<user uuid>', '<vineyard uuid>');
 ```
 
-Returns jsonb: `decision` (has_vineyard_access, reason_code, access_source),
-`account_access`, `vineyard_entitlement` (funding source, grant_scope,
-billing_owner_user_id, expiry), `inheriting_members` (for vineyard-wide
-grants, cap 200), `cached_result` vs `server_result`, and `mismatch_type`
+Returns jsonb: `decision` (has_vineyard_access, reason_code, access_source,
+`account_funds_vineyard`), `account_access` (incl. `plan_funds_vineyard` —
+would this account's plan fund a whole vineyard?), `vineyard_entitlement`
+(funding source, `funding_reason_code`, grant_scope, plan_tier,
+billing_owner_user_id, expiry), `inheriting_members` (members who inherit
+the vineyard-level funding, cap 200 — empty for Solo/user-scoped
+entitlements), `cached_result` vs `server_result`, and `mismatch_type`
 (`no_cached_state | access_mismatch | reason_mismatch | null`).
 System Admin only (42501 otherwise). Suitable for an "Explain access" drawer
 in Access & Entitlements.
@@ -229,6 +260,7 @@ in Access & Entitlements.
 
 - `not_a_member` → "You don't have access to this vineyard."
 - `no_vineyard_entitlement` → "This vineyard doesn't have an active subscription, trial, or grant."
+- `owner_plan_not_vineyard_funding` → "This vineyard's Owner has a Solo plan, which covers their own account only. A Team or Enterprise plan (or a vineyard-wide grant) is needed to give the whole team access." For staff roles, prefer: "Access for this vineyard is managed by its Vineyard Owner."
 - `owner_trial` (source, active) → show "Owner trial" with expiry.
 - `vineyard_grant` (source) → show "Vineyard-wide grant" with expiry/open-ended.
 - `restricted` state, staff roles → "Access for this vineyard is managed by its Vineyard Owner."
@@ -242,3 +274,25 @@ in Access & Entitlements.
 - Resolver `access_source` may now be `'vineyard'` and `reason_code`
   `'vineyard_entitlement'`; `billing_provider`/`plan_tier` may be
   `'vineyard'`. Treat unknown values as "has access, funded by the vineyard".
+
+## 9. Phase 2F.1 delta (what changed after 2F)
+
+RPC signatures, column lists and JSON keys are **unchanged** — only the
+funding rule and two reason codes moved:
+
+- A Solo/legacy subscription, a user-scoped grant or an assigned licence no
+  longer opens a vineyard for its other members. Expect more `restricted`
+  states for staff of Solo Owners; the Owner themselves is unaffected.
+- New denial reason `owner_plan_not_vineyard_funding` (matrix,
+  `get_my_vineyard_access`, `admin_explain_vineyard_access.decision`).
+- `owner_grant` retired as a source/reason value.
+- Owner account trials are resolved independently of subscriptions, so an
+  Owner who buys Solo mid-trial keeps their invited staff evaluating until
+  the original trial end date.
+- New diagnostic fields: `decision.account_funds_vineyard`,
+  `account_access.plan_funds_vineyard`,
+  `vineyard_entitlement.funding_reason_code`,
+  `vineyard_entitlement.plan_tier`.
+- Upsell copy for Owners on Solo whose staff are locked out: "Your Solo plan
+  covers your own account. Upgrade to Team to give your vineyard's members
+  access."
