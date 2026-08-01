@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Coronavirus
+import androidx.compose.material.icons.filled.DashboardCustomize
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Grass
 import androidx.compose.material.icons.filled.Grain
@@ -66,6 +67,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -93,6 +95,7 @@ import androidx.compose.material.icons.filled.Warning
 import com.rork.vinetrack.R
 import com.rork.vinetrack.data.AlertsRepository
 import com.rork.vinetrack.data.HomePrefsStore
+import com.rork.vinetrack.data.OperationalToolLayoutResolver
 import com.rork.vinetrack.data.MapPrefsStore
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.AlertSeverity
@@ -107,6 +110,7 @@ import com.rork.vinetrack.ui.components.OverviewStat
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.main.MainTab
+import com.rork.vinetrack.ui.main.OperationalToolCatalog
 import com.rork.vinetrack.ui.main.ToolRoute
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
@@ -235,7 +239,7 @@ private fun DashboardContent(
 
             OverviewSection(state, onOpenMap)
 
-            OperationalToolsSection(onOpenTab = onOpenTab, onOpenTool = onOpenTool)
+            OperationalToolsSection(vm = vm, state = state, onOpenTool = onOpenTool)
 
             if (canChangeSettings) {
                 ManagementSection(onOpenTool = onOpenTool)
@@ -938,54 +942,73 @@ private data class ToolItem(
     val onClick: (() -> Unit)? = null,
 )
 
+/**
+ * Operational Tools grid, rendered from the shared [OperationalToolCatalog]
+ * filtered by the caller's permissions and then by the user's saved layout
+ * (SQL 159). Hidden tiles never flash: the grid waits for the locally cached
+ * layout, which is applied synchronously at sign-in.
+ */
 @Composable
 private fun OperationalToolsSection(
-    onOpenTab: (MainTab) -> Unit,
+    vm: AppViewModel,
+    state: AppUiState,
     onOpenTool: (ToolRoute) -> Unit,
 ) {
-    val tools = buildList {
-        addAll(baseOperationalTools(onOpenTool))
-        // Public release (SQL 151): Irrigation Records is available to all
-        // vineyard roles. The screen resolves the caller's capabilities via
-        // get_irrigation_capabilities and the server enforces every action.
-        add(
-            ToolItem("Irrigation Records", "Water applied, valves & blocks", Icons.Filled.WaterDrop, VineColors.Cyan) {
-                onOpenTool(ToolRoute.IrrigationRecords)
-            },
-        )
+    val vine = LocalVineColors.current
+    val layout by vm.operationalToolLayout.collectAsStateWithLifecycle()
+    val canViewCosting = state.currentRole == "owner" || state.currentRole == "manager"
+    val authorisedIds = remember(canViewCosting) { OperationalToolCatalog.authorisedIds(canViewCosting) }
+    val tools = remember(layout, authorisedIds) {
+        OperationalToolLayoutResolver.visibleToolIds(layout, authorisedIds)
+            .mapNotNull { OperationalToolCatalog.tool(it) }
     }
-    OperationalToolsGrid(tools)
-}
 
-private fun baseOperationalTools(onOpenTool: (ToolRoute) -> Unit): List<ToolItem> {
-    return listOf(
-        ToolItem("Work Tasks", "Log & calculate", Icons.Filled.Group, VineColors.Indigo) { onOpenTool(ToolRoute.WorkTasks) },
-        ToolItem("Maintenance Log", "Repairs & jobs", Icons.Filled.Build, VineColors.EarthBrown) { onOpenTool(ToolRoute.Maintenance) },
-        ToolItem("Fuel Log", "Purchases & refuelling", Icons.Filled.LocalGasStation, VineColors.Pink) { onOpenTool(ToolRoute.FuelLog) },
-        ToolItem("Irrigation Advisor", "Water planning", Icons.Filled.Opacity, VineColors.Cyan) { onOpenTool(ToolRoute.Irrigation) },
-        ToolItem("Disease Risk", "Downy/Powdery/Botrytis", Icons.Filled.Coronavirus, VineColors.LeafGreen) { onOpenTool(ToolRoute.DiseaseRisk) },
-        ToolItem("Yields", "Forecasting, Sampling & Recording", Icons.Filled.Scale, VineColors.Orange) { onOpenTool(ToolRoute.Yield) },
-        ToolItem("Growth Stage Records", "Phenology records", Icons.Filled.Spa, VineColors.LeafGreen) { onOpenTool(ToolRoute.Growth) },
-        ToolItem("Optimal Ripeness", "GDD & harvest window", Icons.Filled.Thermostat, VineColors.Orange) { onOpenTool(ToolRoute.OptimalRipeness) },
-        ToolItem("Cost Reports", "Season, block & variety", Icons.Filled.Payments, VineColors.Indigo) { onOpenTool(ToolRoute.CostReports) },
-        ToolItem("Fertiliser Calculator", "Rates, packs & costs", Icons.Filled.Grain, VineColors.LeafGreen) { onOpenTool(ToolRoute.FertiliserCalculator) },
-        ToolItem("Pruning Tracker", "Row progress & crew rates", Icons.Filled.ContentCut, VineColors.Cyan) { onOpenTool(ToolRoute.PruningTracker) },
-    )
-}
-
-@Composable
-private fun OperationalToolsGrid(tools: List<ToolItem>) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        SectionHeader("Operational Tools")
-        tools.chunked(2).forEach { rowItems ->
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                rowItems.forEach { item ->
-                    ToolCard(item, modifier = Modifier.weight(1f))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SectionHeader("Operational Tools", modifier = Modifier.weight(1f))
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color.White.copy(alpha = 0.18f))
+                    .clickable { onOpenTool(ToolRoute.CustomiseTools) }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    Icons.Filled.DashboardCustomize,
+                    contentDescription = "Customise operational tools",
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text("Customise", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        if (!layout.isReady) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(138.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(vine.cardBackground.copy(alpha = 0.4f)),
+            )
+        } else {
+            tools.chunked(2).forEach { rowItems ->
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    rowItems.forEach { def ->
+                        ToolCard(
+                            ToolItem(def.title, def.subtitle, def.icon, def.tint) { onOpenTool(def.route) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    if (rowItems.size == 1) Spacer(Modifier.weight(1f))
                 }
-                if (rowItems.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }

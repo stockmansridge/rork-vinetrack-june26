@@ -64,6 +64,8 @@ fun MoreScreen(
                     tool.group == group &&
                         tool != ToolRoute.RolesPermissions &&
                         tool != ToolRoute.SprayManagement &&
+                        // Reached from the Operational Tools grid itself.
+                        tool != ToolRoute.CustomiseTools &&
                         (tool != ToolRoute.CostReports || canViewCosting)
                     // Irrigation Records is publicly released (SQL 151): every
                     // vineyard role may open it. The screen resolves the

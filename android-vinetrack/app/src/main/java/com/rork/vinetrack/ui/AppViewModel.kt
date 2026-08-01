@@ -71,6 +71,8 @@ import com.rork.vinetrack.data.model.PruningCalculator
 import com.rork.vinetrack.data.model.PruningEntry
 import com.rork.vinetrack.data.AdminRepository
 import com.rork.vinetrack.data.ClientTelemetryRepository
+import com.rork.vinetrack.data.OperationalToolLayout
+import com.rork.vinetrack.data.OperationalToolLayoutStore
 import com.rork.vinetrack.data.AlertPreferencesRepository
 import com.rork.vinetrack.data.BillingGrantsRepository
 import com.rork.vinetrack.data.HomePrefsStore
@@ -742,6 +744,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Client telemetry heartbeat (SQL 154) — best-effort, throttled. */
     private val telemetryRepo = ClientTelemetryRepository(app, session)
+
+    /**
+     * Per-user Operational Tools layout (SQL 159) — shared with iOS and the
+     * portal. Cached locally per user so the Home grid renders the customised
+     * layout instantly, with a throttled background refresh.
+     */
+    private val operationalToolLayoutStore =
+        OperationalToolLayoutStore(app, session, viewModelScope)
+
+    /** Observed by the Home grid and the Customise Tools screen. */
+    val operationalToolLayout: StateFlow<OperationalToolLayout> = operationalToolLayoutStore.layout
+
+    /** Persists an edited layout (local first, then Supabase). */
+    fun saveOperationalToolLayout(
+        visibleToolIds: List<String>,
+        hiddenToolIds: List<String>,
+        authorisedIds: List<String>,
+    ) = operationalToolLayoutStore.save(visibleToolIds, hiddenToolIds, authorisedIds)
+
+    /** Back to the VineTrack default order for this user only. */
+    fun resetOperationalToolLayout() = operationalToolLayoutStore.resetToDefault()
+
+    /** Throttled background refresh of the saved layout. */
+    fun refreshOperationalToolLayout() = operationalToolLayoutStore.refreshFromServer()
 
     // --- Subscription / access gate (parity with iOS SubscriptionService +
     // VineTrackAccessResolver). RevenueCat sells only the Google Play Solo
@@ -3063,6 +3089,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // installation ID is kept (a new account creates its own separate
             // user/client association server-side).
             runCatching { telemetryRepo.clearUserCache() }
+            // Drop the in-memory tool layout so the next account starts from
+            // its own cached/served layout (the per-user cache stays on disk).
+            runCatching { operationalToolLayoutStore.signOut() }
             _ui.value = AppUiState(route = AppRoute.Login)
             _auth.value = AuthFormState(error = message)
         }
@@ -3116,6 +3145,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             loadAdminStatus()
             // Foreground telemetry heartbeat (SQL 154, throttled to 15 min).
             reportClientTelemetry()
+            // Pick up a layout change made on another device (throttled).
+            operationalToolLayoutStore.refreshFromServer()
             if (_ui.value.isOnline) replayAllPendingWrites()
         }
     }
@@ -3836,6 +3867,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Post-auth telemetry heartbeat (SQL 154). Best-effort — never
             // blocks the sign-in / bootstrap flow.
             reportClientTelemetry()
+            // Apply this user's cached Operational Tools layout immediately and
+            // refresh it in the background (SQL 159). Never blocks bootstrap.
+            operationalToolLayoutStore.configure(session.userId)
             // Access gate (iOS parity): only evaluated once the user genuinely
             // has a vineyard — the no-vineyard onboarding always comes first.
             val hasAccess = if (selected == null) true else resolveVineTrackAccess()

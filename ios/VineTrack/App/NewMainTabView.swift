@@ -589,6 +589,7 @@ private struct NewHomeTabView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(TripTrackingService.self) private var tripTracking
+    @Environment(OperationalToolLayoutStore.self) private var toolLayout
 
     @State private var showQuickPin: Bool = false
     @State private var showTripChoice: Bool = false
@@ -637,6 +638,14 @@ private struct NewHomeTabView: View {
             .background(LoginVineyardBackground())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden, for: .navigationBar)
+            // Per-user Operational Tools layout (sql/159). The cached layout is
+            // applied synchronously so hidden tiles never flash on screen; the
+            // server copy refreshes in the background.
+            .task(id: auth.userId) {
+                toolLayout.configure(userId: auth.userId)
+                guard auth.userId != nil else { return }
+                await toolLayout.refreshFromServer()
+            }
             .sheet(isPresented: $showQuickPin) {
                 QuickPinSheet()
             }
@@ -996,90 +1005,82 @@ private struct NewHomeTabView: View {
 
     // MARK: Operational Tools
 
+    /// Tools this user is entitled to see. Customisation is applied on top of
+    /// this — it can never reveal a tool the user has no access to.
+    private var authorisedTools: [OperationalTool] {
+        OperationalToolCatalog.authorised(canViewCosting: accessControl.canViewCosting)
+    }
+
     private var operationsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            plainSectionHeader("Operational Tools")
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                plainSectionHeader("Operational Tools")
                 NavigationLink {
-                    WorkTasksHubView()
+                    CustomiseOperationalToolsView()
                 } label: {
-                    iconTile(title: "Work Tasks", icon: "person.2.badge.gearshape.fill", tint: .indigo)
+                    Label("Customise", systemImage: "slider.horizontal.3")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.white.opacity(0.18), in: .capsule)
                 }
                 .buttonStyle(.plain)
-                NavigationLink {
-                    MaintenanceLogListView()
-                } label: {
-                    iconTile(title: "Maintenance Log", icon: "wrench.and.screwdriver.fill", tint: VineyardTheme.earthBrown)
-                }
-                .buttonStyle(.plain)
-                NavigationLink {
-                    FuelLogHubView()
-                } label: {
-                    iconTile(title: "Fuel Log", icon: "fuelpump.fill", tint: .red)
-                }
-                .buttonStyle(.plain)
-                NavigationLink {
-                    IrrigationRecommendationView()
-                } label: {
-                    iconTile(title: "Irrigation Advisor", icon: "drop.fill", tint: .cyan)
-                }
-                .buttonStyle(.plain)
-                NavigationLink {
-                    DiseaseRiskAdvisorView()
-                } label: {
-                    iconTile(title: "Disease Risk", icon: "leaf.arrow.triangle.circlepath", tint: .green)
-                }
-                .buttonStyle(.plain)
-                NavigationLink {
-                    YieldHubView()
-                } label: {
-                    iconTile(title: "Yields", icon: "chart.bar.fill", tint: .orange)
-                }
-                .buttonStyle(.plain)
-                NavigationLink {
-                    GrowthStageRecordsListView()
-                } label: {
-                    iconTile(title: "Growth Stage Records", icon: "leaf.fill", tint: VineyardTheme.leafGreen)
-                }
-                .buttonStyle(.plain)
-                NavigationLink {
-                    OptimalRipenessHubView()
-                } label: {
-                    iconTile(title: "Optimal Ripeness", icon: "thermometer.sun.fill", tint: .pink)
-                }
-                .buttonStyle(.plain)
-                if accessControl.canViewCosting {
-                    NavigationLink {
-                        CostReportsView()
-                    } label: {
-                        iconTile(title: "Cost Reports", icon: "dollarsign.circle.fill", tint: .green)
-                    }
-                    .buttonStyle(.plain)
-                }
-                NavigationLink {
-                    FertiliserCalculatorView()
-                } label: {
-                    iconTile(title: "Fertiliser Calculator", icon: "circle.hexagongrid.fill", tint: .mint)
-                }
-                .buttonStyle(.plain)
-                NavigationLink {
-                    PruningTrackerView()
-                } label: {
-                    iconTile(title: "Pruning Tracker", icon: "scissors", tint: .teal)
-                }
-                .buttonStyle(.plain)
-                // Public release (SQL 151): Irrigation Records is available to
-                // all vineyard roles. The view itself resolves the caller's
-                // capabilities via get_irrigation_capabilities, and the server
-                // enforces every action independently.
-                NavigationLink {
-                    IrrigationRecordsView()
-                } label: {
-                    iconTile(title: "Irrigation Records", icon: "drop.circle.fill", tint: .cyan)
-                }
-                .buttonStyle(.plain)
+                .accessibilityLabel("Customise operational tools")
+                .accessibilityHint("Reorder, hide or restore tools")
+                .padding(.trailing, 16)
             }
-            .padding(.horizontal)
+            if toolLayout.isReady {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    ForEach(toolLayout.visibleTools(authorised: authorisedTools)) { tool in
+                        NavigationLink {
+                            operationalToolDestination(tool.id)
+                        } label: {
+                            operationalTile(
+                                title: tool.title,
+                                subtitle: tool.subtitle,
+                                icon: tool.icon,
+                                tint: tool.tint
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal)
+                .animation(.easeInOut(duration: 0.2), value: toolLayout.savedVisibleIds)
+            } else {
+                // Neutral placeholder while the cached layout is applied — the
+                // grid must never briefly show tiles the user has hidden.
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(VineyardTheme.cardBackground.opacity(0.4))
+                    .frame(height: 138)
+                    .padding(.horizontal)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
+    /// Maps a stable catalogue ID to its destination. Adding a tool means
+    /// adding it to `OperationalToolCatalog` plus one case here.
+    @ViewBuilder
+    private func operationalToolDestination(_ toolId: String) -> some View {
+        switch toolId {
+        case "work_tasks": WorkTasksHubView()
+        case "equipment_maintenance": MaintenanceLogListView()
+        case "fuel_log": FuelLogHubView()
+        case "irrigation_advisor": IrrigationRecommendationView()
+        case "disease_risk": DiseaseRiskAdvisorView()
+        case "yield_records": YieldHubView()
+        case "growth_stages": GrowthStageRecordsListView()
+        case "optimal_ripeness": OptimalRipenessHubView()
+        case "cost_reports": CostReportsView()
+        case "fertiliser_calculator": FertiliserCalculatorView()
+        case "pruning_tracker": PruningTrackerView()
+        // Public release (SQL 151): Irrigation Records is available to all
+        // vineyard roles. The view resolves the caller's capabilities via
+        // get_irrigation_capabilities, and the server enforces every action.
+        case "irrigation_records": IrrigationRecordsView()
+        default: EmptyView()
         }
     }
 

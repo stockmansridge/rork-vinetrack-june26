@@ -6,6 +6,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Coronavirus
+import androidx.compose.material.icons.filled.DashboardCustomize
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Email
@@ -90,6 +91,7 @@ enum class ToolRoute(
     FertiliserCalculator("Fertiliser Calculator", "Rates, packs & costs", Icons.Filled.Grain, VineColors.LeafGreen, ToolGroup.Operations),
     PruningTracker("Pruning Tracker", "Row progress & crew rates", Icons.Filled.ContentCut, VineColors.Cyan, ToolGroup.Operations),
     IrrigationRecords("Irrigation Records", "Water applied, valves & blocks", Icons.Filled.WaterDrop, VineColors.Cyan, ToolGroup.Operations),
+    CustomiseTools("Customise Tools", "Reorder or hide Operational Tools", Icons.Filled.DashboardCustomize, VineColors.Indigo, ToolGroup.Operations),
     Equipment("Equipment", "Tractors, machines, spray & fuel", Icons.Filled.PrecisionManufacturing, VineColors.EarthBrown, ToolGroup.Records),
     TeamAccess("Team & Access", "Manage members and invitations", Icons.Filled.Group, VineColors.Info, ToolGroup.Account),
     RolesPermissions("Roles & Permissions", "What each role can see and do", Icons.Filled.GppGood, VineColors.Info, ToolGroup.Account),
