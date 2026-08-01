@@ -33,6 +33,7 @@ declare
   n      integer;
   ok     boolean;
   t0     timestamptz;
+  t1     timestamptz;
   arr    text[];
 begin
   -- ---- fixtures ----------------------------------------------------------
@@ -109,16 +110,26 @@ begin
   raise notice 'T4 passed: reorder + hide saved with order preserved';
 
   -- ---- T5. Re-save updates rather than duplicating ------------------------
+  -- now() is the TRANSACTION timestamp, so two writes inside this single test
+  -- transaction always share the same value (pg_sleep cannot change that).
+  -- Backdate the row first, then prove the upsert refreshes updated_at to the
+  -- current write time while preserving created_at.
+  update public.user_operational_tool_preferences
+     set updated_at = now() - interval '1 hour'
+   where user_id = u_a;
   select updated_at into t0 from public.user_operational_tool_preferences where user_id = u_a;
-  perform pg_sleep(0.01);
+  select created_at into t1 from public.user_operational_tool_preferences where user_id = u_a;
   r := public.set_my_operational_tool_preferences(
     array['work_tasks','irrigation_records'], array['fuel_log'], 1);
   select count(*) into n from public.user_operational_tool_preferences where user_id = u_a;
   assert n = 1, 'T5 no duplicate row';
   assert r->'visible_tool_ids' = '["work_tasks","irrigation_records"]'::jsonb, 'T5 layout replaced';
+  assert r->'hidden_tool_ids' = '["fuel_log"]'::jsonb, 'T5 hidden list replaced';
   assert (select updated_at from public.user_operational_tool_preferences where user_id = u_a) > t0,
-    'T5 updated_at advanced';
-  raise notice 'T5 passed: re-save upserts the same row';
+    'T5 updated_at refreshed by the upsert';
+  assert (select created_at from public.user_operational_tool_preferences where user_id = u_a) = t1,
+    'T5 created_at preserved across the upsert';
+  raise notice 'T5 passed: re-save upserts the same row (updated_at refreshed, created_at kept)';
 
   -- ---- T6. Restoring a hidden tool (client appends to the end) ------------
   r := public.set_my_operational_tool_preferences(
