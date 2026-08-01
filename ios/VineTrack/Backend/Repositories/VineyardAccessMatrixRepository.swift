@@ -18,6 +18,9 @@ nonisolated struct VineyardAccessEntry: Decodable, Sendable, Equatable {
     let isVineyardWide: Bool?
     let isBillingOwner: Bool?
     let canManageBilling: Bool?
+    /// sql/158 — presentation only: owner role AND (vineyard owner of record
+    /// OR owner of the funding entitlement). Nil on a pre-158 backend.
+    let isBillingAuthority: Bool?
     let requiresBillingAttention: Bool?
 
     enum CodingKeys: String, CodingKey {
@@ -34,6 +37,7 @@ nonisolated struct VineyardAccessEntry: Decodable, Sendable, Equatable {
         case isVineyardWide = "is_vineyard_wide"
         case isBillingOwner = "is_billing_owner"
         case canManageBilling = "can_manage_billing"
+        case isBillingAuthority = "is_billing_authority"
         case requiresBillingAttention = "requires_billing_attention"
     }
 
@@ -52,6 +56,7 @@ nonisolated struct VineyardAccessEntry: Decodable, Sendable, Equatable {
         isVineyardWide = try? c.decodeIfPresent(Bool.self, forKey: .isVineyardWide)
         isBillingOwner = try? c.decodeIfPresent(Bool.self, forKey: .isBillingOwner)
         canManageBilling = try? c.decodeIfPresent(Bool.self, forKey: .canManageBilling)
+        isBillingAuthority = try? c.decodeIfPresent(Bool.self, forKey: .isBillingAuthority)
         requiresBillingAttention = try? c.decodeIfPresent(Bool.self, forKey: .requiresBillingAttention)
     }
 }

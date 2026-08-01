@@ -3,6 +3,7 @@ package com.rork.vinetrack.ui.screens
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Groups
@@ -64,9 +66,16 @@ fun SubscriptionScreen(
     onRestore: () -> Unit,
     onRecheckAccess: () -> Unit,
     onSignOut: () -> Unit,
+    /**
+     * Set when billing was opened from the restricted-vineyard screen — the
+     * user must always be able to go back to the vineyard chooser.
+     */
+    onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val activity = LocalContext.current.findActivity()
+
+    BackHandler(enabled = onBack != null) { onBack?.invoke() }
 
     Box(
         modifier
@@ -119,8 +128,25 @@ fun SubscriptionScreen(
 
             TeamEnterpriseCard(isChecking = state.isLoading, onRecheckAccess = onRecheckAccess)
 
-            TextButton(onClick = onSignOut) {
-                Text("Sign out", color = VineColors.Destructive)
+            if (onBack != null) {
+                OutlinedButton(
+                    onClick = onBack,
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = VineColors.LeafGreen),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Back to vineyard access", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                }
+            } else {
+                TextButton(onClick = onSignOut) {
+                    Text("Sign out", color = VineColors.Destructive)
+                }
             }
         }
     }

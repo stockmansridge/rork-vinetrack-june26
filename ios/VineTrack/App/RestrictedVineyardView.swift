@@ -28,9 +28,15 @@ struct RestrictedVineyardView: View {
             ?? "this vineyard"
     }
 
-    /// The signed-in user owns the restricted vineyard (billing is theirs to fix).
-    private var isOwnerOfRestricted: Bool {
-        (selectedEntry?.membershipRole ?? "").lowercased() == "owner"
+    /// Role-aware copy + allowed actions (Phase 2F.2). The upgrade / billing
+    /// state only appears once the server matrix has loaded AND confirmed the
+    /// denial — `message.audience == .unresolved` covers every other case.
+    private var message: RestrictedVineyardMessage {
+        RestrictedVineyardMessage.make(
+            vineyardName: selectedName,
+            entry: selectedEntry,
+            isMatrixResolved: entitlementGate.accessMatrix != nil
+        )
     }
 
     /// Accessible vineyards from the live matrix, joined to locally cached
@@ -47,15 +53,24 @@ struct RestrictedVineyardView: View {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
                         Label {
-                            Text("Access to \(selectedName) has expired")
+                            Text(message.title)
                                 .font(.headline)
                         } icon: {
-                            Image(systemName: "lock.circle.fill")
-                                .foregroundStyle(.orange)
+                            Image(systemName: message.audience == .unresolved
+                                  ? "clock.arrow.circlepath"
+                                  : "lock.circle.fill")
+                                .foregroundStyle(message.audience == .unresolved
+                                                 ? Color.secondary
+                                                 : Color.orange)
                         }
-                        Text(explanationText)
+                        Text(message.body)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                        if let footnote = message.footnote {
+                            Text(footnote)
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                     .padding(.vertical, 4)
                 }
@@ -95,11 +110,21 @@ struct RestrictedVineyardView: View {
                 }
 
                 Section {
-                    if isOwnerOfRestricted {
+                    // Owners with billing authority only: Managers, Supervisors,
+                    // Operators and co-Owners are never offered a purchase.
+                    if message.showsUpgradeToTeam {
                         Button {
                             showBillingSheet = true
                         } label: {
-                            Label("Review billing", systemImage: "creditcard")
+                            Label(RestrictedVineyardMessage.upgradeActionTitle,
+                                  systemImage: "person.3.sequence.fill")
+                        }
+                    } else if message.showsReviewBilling {
+                        Button {
+                            showBillingSheet = true
+                        } label: {
+                            Label(RestrictedVineyardMessage.reviewBillingActionTitle,
+                                  systemImage: "creditcard")
                         }
                     }
                     Button {
@@ -137,13 +162,6 @@ struct RestrictedVineyardView: View {
                 }
             }
         }
-    }
-
-    private var explanationText: String {
-        if isOwnerOfRestricted {
-            return "This vineyard no longer has an active subscription, trial, or grant. Review billing to restore access for you and your team. Your other vineyards are unaffected."
-        }
-        return "Access for this vineyard is managed by its Vineyard Owner. You can keep working in your other vineyards, and any pending invitations remain available."
     }
 
     private func restorePurchases() async {

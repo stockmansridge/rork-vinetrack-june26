@@ -341,6 +341,12 @@ data class AppUiState(
     val accessMatrix: com.rork.vinetrack.data.VineyardAccessMatrix? = null,
     /** True while the restricted-vineyard screen is re-running access resolution. */
     val isRecheckingAccess: Boolean = false,
+    /**
+     * True when the billing screen was opened FROM the restricted-vineyard
+     * screen (Phase 2F.2 "Upgrade to Team"). Leaving billing then returns to
+     * the restricted-vineyard chooser instead of stranding the user.
+     */
+    val billingFromRestrictedVineyard: Boolean = false,
     /** The user's preferred default vineyard (auto-selected on launch). */
     val defaultVineyardId: String? = null,
     /**
@@ -3514,7 +3520,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (hasAccess) {
                 _subscription.update { it.copy(isLoading = false) }
                 if (_ui.value.route == AppRoute.Paywall) {
-                    _ui.update { it.copy(route = AppRoute.Main) }
+                    _ui.update {
+                        it.copy(route = routeAfterBilling(), billingFromRestrictedVineyard = false)
+                    }
                 }
             } else {
                 refreshPaywall()
@@ -3546,7 +3554,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     )
                     _subscription.update { it.copy(isPurchasing = false) }
                     if (_ui.value.route == AppRoute.Paywall) {
-                        _ui.update { it.copy(route = AppRoute.Main) }
+                        _ui.update {
+                            it.copy(route = routeAfterBilling(), billingFromRestrictedVineyard = false)
+                        }
                     }
                     // Phase 2B: bounded webhook-propagation sync — access is
                     // already granted through RevenueCat; wait (2s/5s/10s) for
@@ -3590,7 +3600,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 _subscription.update { it.copy(isRestoring = false) }
                 if (_ui.value.route == AppRoute.Paywall) {
-                    _ui.update { it.copy(route = AppRoute.Main) }
+                    _ui.update {
+                        it.copy(route = routeAfterBilling(), billingFromRestrictedVineyard = false)
+                    }
                 }
                 // Phase 2B: restore refreshes CustomerInfo, then the bounded
                 // Supabase resync picks up the verified store subscription.
@@ -3990,6 +4002,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 session.defaultVineyardId = target
                 _ui.update { it.copy(defaultVineyardId = target) }
             }
+        }
+    }
+
+    /**
+     * Where to go when the billing screen resolves account access: never into a
+     * vineyard the live server matrix still confirms inaccessible.
+     */
+    private fun routeAfterBilling(): AppRoute {
+        val selected = _ui.value.selectedVineyardId ?: return AppRoute.Main
+        val matrix = _ui.value.accessMatrix
+        return if (matrix?.isVineyardConfirmedInaccessible(selected) == true) {
+            AppRoute.RestrictedVineyard
+        } else {
+            AppRoute.Main
+        }
+    }
+
+    /**
+     * Phase 2F.2: open the existing Google Play / billing screen from the
+     * restricted-vineyard screen ("Upgrade to Team"). Only reachable for an
+     * Owner with billing authority — the screen itself decides that.
+     */
+    fun openBillingFromRestrictedVineyard() {
+        _ui.update { it.copy(route = AppRoute.Paywall, billingFromRestrictedVineyard = true) }
+        refreshPaywall()
+    }
+
+    /** Return from the billing screen to the restricted-vineyard chooser. */
+    fun closeBillingFromRestrictedVineyard() {
+        _ui.update {
+            it.copy(route = AppRoute.RestrictedVineyard, billingFromRestrictedVineyard = false)
         }
     }
 

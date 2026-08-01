@@ -151,6 +151,12 @@ data class VineyardAccessEntry(
     @SerialName("is_trial") val isTrial: Boolean? = null,
     @SerialName("is_vineyard_wide") val isVineyardWide: Boolean? = null,
     @SerialName("can_manage_billing") val canManageBilling: Boolean? = null,
+    @SerialName("is_billing_owner") val isBillingOwner: Boolean? = null,
+    /**
+     * sql/158 — presentation only: owner role AND (vineyard owner of record
+     * OR owner of the funding entitlement). Null on a pre-158 backend.
+     */
+    @SerialName("is_billing_authority") val isBillingAuthority: Boolean? = null,
 )
 
 /** Account summary from `get_my_vineyard_access_matrix()` (sql/156). */

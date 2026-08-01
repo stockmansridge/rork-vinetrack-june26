@@ -18,6 +18,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.CreditCard
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RestartAlt
@@ -39,6 +42,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.RestrictedVineyardAudience
+import com.rork.vinetrack.data.RestrictedVineyardMessage
 import com.rork.vinetrack.data.VineyardAccessMatrix
 import com.rork.vinetrack.data.model.Vineyard
 import com.rork.vinetrack.ui.theme.VineColors
@@ -49,6 +54,12 @@ import com.rork.vinetrack.ui.theme.VineColors
  * but the server matrix confirms the previously selected vineyard has lost
  * its entitlement. Deliberately NOT the paywall: the user can switch to
  * another accessible vineyard, restore purchases, or re-check access.
+ *
+ * Phase 2F.2: the copy and the available billing action are role-aware and
+ * come from the shared [RestrictedVineyardMessage] (identical wording to iOS
+ * and the portal). Only an Owner with billing authority is offered a purchase
+ * path; the upgrade state never renders until the server matrix has confirmed
+ * the denial.
  */
 @Composable
 fun RestrictedVineyardScreen(
@@ -60,13 +71,18 @@ fun RestrictedVineyardScreen(
     onChooseVineyard: (String) -> Unit,
     onRecheckAccess: () -> Unit,
     onRestorePurchases: () -> Unit,
+    onUpgradeToTeam: () -> Unit,
     onSignOut: () -> Unit,
 ) {
     val selectedEntry = selectedVineyardId?.let { accessMatrix?.entryFor(it) }
     val selectedName = selectedEntry?.vineyardName
         ?: vineyards.firstOrNull { it.id == selectedVineyardId }?.name
         ?: "this vineyard"
-    val isOwner = (selectedEntry?.membershipRole ?: "").equals("owner", ignoreCase = true)
+    val message = RestrictedVineyardMessage.make(
+        vineyardName = selectedName,
+        entry = selectedEntry,
+        isMatrixResolved = accessMatrix != null,
+    )
     val accessibleIds = accessMatrix?.accessibleVineyardIds.orEmpty().toSet()
     val accessibleVineyards = vineyards.filter { it.id in accessibleIds }
 
@@ -86,38 +102,55 @@ fun RestrictedVineyardScreen(
         ) {
             Spacer(Modifier.height(16.dp))
 
+            val isUnresolved = message.audience == RestrictedVineyardAudience.UNRESOLVED
             Box(
                 modifier = Modifier
                     .size(88.dp)
-                    .background(Color(0xFFFFB74D).copy(alpha = 0.16f), CircleShape),
+                    .background(
+                        if (isUnresolved) {
+                            VineColors.LeafGreen.copy(alpha = 0.12f)
+                        } else {
+                            Color(0xFFFFB74D).copy(alpha = 0.16f)
+                        },
+                        CircleShape,
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = Icons.Filled.Lock,
+                    imageVector = when {
+                        isUnresolved -> Icons.Filled.HourglassEmpty
+                        message.showsUpgradeToTeam -> Icons.Filled.Groups
+                        else -> Icons.Filled.Lock
+                    },
                     contentDescription = null,
-                    tint = Color(0xFFEF6C00),
+                    tint = if (isUnresolved) VineColors.LeafGreen else Color(0xFFEF6C00),
                     modifier = Modifier.size(40.dp),
                 )
             }
 
             Text(
-                text = "Access to $selectedName has expired",
+                text = message.title,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = VineColors.TextPrimaryLight,
                 textAlign = TextAlign.Center,
             )
             Text(
-                text = if (isOwner) {
-                    "This vineyard no longer has an active subscription, trial, or grant. Review billing to restore access for you and your team. Your other vineyards are unaffected."
-                } else {
-                    "Access for this vineyard is managed by its Vineyard Owner. You can keep working in your other vineyards, and any pending invitations remain available."
-                },
+                text = message.body,
                 fontSize = 14.sp,
                 color = VineColors.TextSecondaryLight,
                 textAlign = TextAlign.Center,
                 lineHeight = 20.sp,
             )
+            message.footnote?.let { footnote ->
+                Text(
+                    text = footnote,
+                    fontSize = 12.sp,
+                    color = VineColors.TextSecondaryLight.copy(alpha = 0.8f),
+                    textAlign = TextAlign.Center,
+                    lineHeight = 17.sp,
+                )
+            }
 
             if (accessibleVineyards.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
@@ -183,12 +216,46 @@ fun RestrictedVineyardScreen(
 
             Spacer(Modifier.height(8.dp))
 
+            // Billing entry point — Owners with billing authority only. Managers,
+            // Supervisors, Operators and co-Owners are never offered a purchase.
+            if (message.offersBillingAction) {
+                Button(
+                    onClick = onUpgradeToTeam,
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                ) {
+                    Icon(
+                        if (message.showsUpgradeToTeam) Icons.Filled.Groups else Icons.Filled.CreditCard,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Text(
+                        if (message.showsUpgradeToTeam) {
+                            RestrictedVineyardMessage.UPGRADE_ACTION_TITLE
+                        } else {
+                            RestrictedVineyardMessage.REVIEW_BILLING_ACTION_TITLE
+                        },
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+
             Button(
                 onClick = onRecheckAccess,
                 enabled = !isChecking,
                 modifier = Modifier.fillMaxWidth().height(50.dp),
                 shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                colors = if (message.offersBillingAction) {
+                    ButtonDefaults.buttonColors(
+                        containerColor = VineColors.LeafGreen.copy(alpha = 0.14f),
+                        contentColor = VineColors.LeafGreen,
+                    )
+                } else {
+                    ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen)
+                },
             ) {
                 if (isChecking) {
                     CircularProgressIndicator(

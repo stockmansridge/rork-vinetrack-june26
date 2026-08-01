@@ -112,6 +112,9 @@ Authenticated only (401/42501 otherwise). No parameters — always the caller.
       "is_vineyard_wide": false,            // funded by a vineyard-scoped grant
       "is_billing_owner": false,            // the caller owns the funding entitlement
       "can_manage_billing": true,           // membership role = owner
+      "is_billing_authority": true,         // NEW (2F.2 / sql 158) — owner role AND
+                                            // (vineyard owner of record OR owner of the
+                                            // funding entitlement). Presentation only.
       "can_enter_vineyard": true,
       "requires_billing_attention": false,  // owner of a denied vineyard
       "last_verified_at": "timestamptz"
@@ -296,3 +299,67 @@ funding rule and two reason codes moved:
 - Upsell copy for Owners on Solo whose staff are locked out: "Your Solo plan
   covers your own account. Upgrade to Team to give your vineyard's members
   access."
+
+## 10. Phase 2F.2 delta — role-aware restricted-vineyard screen
+
+`sql/158_vineyard_billing_authority.sql` adds **one additive key** to
+`get_my_vineyard_access_matrix()` rows and to `get_my_vineyard_access()`:
+
+```jsonc
+"is_billing_authority": true   // boolean, never null on a 158+ backend
+```
+
+`is_billing_authority = membership_role = 'owner' AND (I am the vineyard's
+owner of record OR I own the entitlement funding it)`. Nothing else changed:
+access decisions, reason codes and every other key are identical to 2F.1.
+If the key is absent (older backend), fall back to `can_manage_billing`.
+
+### Audience rules (identical on iOS, Android and the portal)
+
+Resolve the audience from the SELECTED vineyard's matrix row:
+
+- matrix not loaded yet, row missing, or `has_vineyard_access = true`
+  → **unresolved** — show a neutral checking state; never a paywall, never an
+  upgrade/purchase action.
+- `membership_role = 'owner'` and `is_billing_authority = true`
+  → **billing owner**.
+- `membership_role = 'owner'` and `is_billing_authority = false`
+  → **co-owner** (billing belongs to another Owner).
+- manager / supervisor / operator → **team member**.
+
+### Exact wording — `vineyard_access_reason = "owner_plan_not_vineyard_funding"`
+
+`{name}` is the vineyard name.
+
+- **Billing owner**
+  - Title: `{name} needs a Team plan`
+  - Body: `Your current VineTrack plan covers your own account only, so it doesn't fund access for the people working in {name}. Upgrade to a Team plan to restore access for every active member of this vineyard. Your other vineyards are unaffected.`
+  - Footnote: `Team and Enterprise plans cover all active members of a vineyard.`
+  - Action: `Upgrade to Team` → the portal's existing billing/upgrade flow.
+- **Co-owner** (no purchase action, no billing-owner identity)
+  - Title: `{name} needs a Team plan`
+  - Body: `Billing for {name} is managed by another Owner, and their current plan covers their own account only. Ask the Owner who manages this vineyard's billing to upgrade it to a Team plan. You can keep working in your other vineyards, and any pending invitations remain available.`
+- **Manager / Supervisor / Operator** (no purchase action)
+  - Title: `{name} needs a Team plan`
+  - Body: `Access for this vineyard is managed by its Vineyard Owner, and their current plan covers their own account only. Ask the Vineyard Owner to upgrade {name} to a Team plan. You can keep working in your other vineyards, and any pending invitations remain available.`
+
+### Exact wording — any other confirmed denial (e.g. `no_vineyard_entitlement`)
+
+- **Billing owner** — Title: `Access to {name} has expired`; Body: `This vineyard no longer has an active subscription, trial, or grant. Review billing to restore access for you and your team. Your other vineyards are unaffected.`; Action: `Review billing`.
+- **Co-owner** — Title: `Access to {name} has expired`; Body: `Billing for {name} is managed by another Owner. Ask them to renew this vineyard's plan. You can keep working in your other vineyards, and any pending invitations remain available.` No purchase action.
+- **Team member** — Title: `Access to {name} has expired`; Body: `Access for this vineyard is managed by its Vineyard Owner. You can keep working in your other vineyards, and any pending invitations remain available.` No purchase action.
+
+### Unresolved state
+
+- Title: `Checking your VineTrack access…`
+- Body: `We're confirming this vineyard's access with the server. This only takes a moment.`
+
+### Always available on the restricted screen, for every audience
+
+- Choose another vineyard (rows where `has_vineyard_access = true`)
+- Restore purchases (mobile) / refresh billing state (portal)
+- Check access again (re-run the matrix)
+- Pending invitations (`account.pending_invitation_count` > 0)
+
+Never reveal who the billing owner is, their email, plan or subscription id to
+a co-owner or staff member.

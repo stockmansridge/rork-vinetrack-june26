@@ -105,6 +105,7 @@ fun RootScreen() {
             onChooseVineyard = vm::switchToAccessibleVineyard,
             onRecheckAccess = vm::recheckRestrictedVineyardAccess,
             onRestorePurchases = vm::restoreSubscriptionPurchases,
+            onUpgradeToTeam = vm::openBillingFromRestrictedVineyard,
             onSignOut = { vm.signOut() },
         )
         AppRoute.Paywall -> SubscriptionScreen(
@@ -112,6 +113,12 @@ fun RootScreen() {
             onPurchase = vm::purchaseSubscription,
             onRestore = vm::restoreSubscriptionPurchases,
             onRecheckAccess = vm::recheckSubscriptionAccess,
+            // Opened from the restricted-vineyard screen: always offer a way back.
+            onBack = if (state.billingFromRestrictedVineyard) {
+                vm::closeBillingFromRestrictedVineyard
+            } else {
+                null
+            },
             onSignOut = { vm.signOut() },
         )
         AppRoute.Main ->
