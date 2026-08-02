@@ -246,8 +246,11 @@ final class GrowthStageRecordSyncService {
             let byId = Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendGrowthStageRecordUpsert] = []
             var pushedIds: [UUID] = []
+            var orphans: [UUID] = []
             for (recordId, ts) in dirty {
-                guard let record = byId[recordId], record.vineyardId == vineyardId else { continue }
+                // Reclaim queue entries with no local record — they can never
+                // upload and used to sit in the queue forever.
+                guard let record = byId[recordId] else { orphans.append(recordId); continue }
                 payloads.append(BackendGrowthStageRecord.upsert(
                     from: record,
                     createdBy: createdBy,
@@ -255,10 +258,18 @@ final class GrowthStageRecordSyncService {
                 ))
                 pushedIds.append(recordId)
             }
-            if !payloads.isEmpty {
-                try await repository.upsertGrowthStageRecords(payloads)
-                metadata.clearDirty(pushedIds)
-            }
+            metadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            let result = await SyncQueuePush.run(
+                entity: "Growth Stages",
+                ids: pushedIds,
+                payloads: payloads,
+                queuedAt: dirty,
+                vineyardId: vineyardId
+            ) { try await repository.upsertGrowthStageRecords($0) }
+            metadata.clearDirty(result.uploaded)
+            SyncIssueCenter.shared.notePending(entity: "Growth Stages", count: metadata.pendingUpserts.count)
+            if let error = result.firstRetryableError { throw error }
         }
 
         let deletes = metadata.pendingDeletes

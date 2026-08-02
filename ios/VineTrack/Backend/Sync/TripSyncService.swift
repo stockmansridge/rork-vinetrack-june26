@@ -527,8 +527,11 @@ final class TripSyncService {
             var payloads: [BackendTripUpsert] = []
             var pushedIds: [UUID] = []
             var skipped: [(UUID, String)] = []
+            var orphans: [UUID] = []
             for (tripId, ts) in dirty {
-                guard var trip = byId[tripId] else { continue }
+                // Reclaim queue entries with no local trip — they can never
+                // upload and used to sit in the queue forever.
+                guard var trip = byId[tripId] else { orphans.append(tripId); continue }
                 if trip.vineyardId != vineyardId {
                     // Try to repair: only if every paddock on the trip resolves to the
                     // currently selected vineyard. Never guess across vineyards.
@@ -550,16 +553,19 @@ final class TripSyncService {
                 payloads.append(BackendTrip.upsert(from: trip, createdBy: createdBy, clientUpdatedAt: ts))
                 pushedIds.append(tripId)
             }
-            if !payloads.isEmpty {
-                do {
-                    try await repository.upsertTrips(payloads)
-                    metadata.clearDirty(pushedIds)
-                } catch {
-                    // Isolate the failure to exactly the trips in this batch.
-                    metadata.markUpsertsFailed(pushedIds)
-                    throw error
-                }
-            }
+            metadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            let result = await SyncQueuePush.run(
+                entity: "Trips",
+                ids: pushedIds,
+                payloads: payloads,
+                queuedAt: dirty,
+                vineyardId: vineyardId
+            ) { try await repository.upsertTrips($0) }
+            metadata.clearDirty(result.uploaded)
+            metadata.markUpsertsFailed(result.failed)
+            SyncIssueCenter.shared.notePending(entity: "Trips", count: metadata.pendingUpserts.count)
+            if let error = result.firstRetryableError { throw error }
             #if DEBUG
             if !skipped.isEmpty {
                 for (id, reason) in skipped {

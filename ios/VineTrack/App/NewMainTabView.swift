@@ -321,12 +321,17 @@ struct NewMainTabView: View {
         case .none:     break
         }
         await appNoticeService.refresh()
+        // "Last full sync" is a two-way claim: it only advances when the pull
+        // half succeeded AND the upload queue actually drained. A pull-only
+        // success used to refresh the timestamp while uploads stayed stuck.
+        let sweepError = aggregateSyncError
         syncStatusCenter.syncDidFinish(
             upserts: aggregatePendingUpserts,
             deletes: aggregatePendingDeletes,
             failedUpserts: aggregateFailedUpserts,
             failedDeletes: aggregateFailedDeletes,
-            error: aggregateSyncError
+            pullSucceeded: sweepError == nil,
+            error: sweepError
         )
     }
 

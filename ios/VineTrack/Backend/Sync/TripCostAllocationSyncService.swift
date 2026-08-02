@@ -97,15 +97,28 @@ final class TripCostAllocationSyncService {
             let byId = Dictionary(store.tripCostAllocations.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendTripCostAllocationUpsert] = []
             var pushed: [UUID] = []
+            var orphans: [UUID] = []
             for (id, ts) in dirty {
-                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
+                // Reclaim queue entries whose local record no longer exists — they
+                // can never upload and used to wedge the queue forever. Records from
+                // another vineyard are still uploaded: the payload carries its own
+                // vineyard id.
+                guard let item = byId[id] else { orphans.append(id); continue }
                 payloads.append(BackendTripCostAllocation.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
                 pushed.append(id)
             }
-            if !payloads.isEmpty {
-                try await repository.upsertMany(payloads)
-                metadata.clearDirty(pushed)
-            }
+            metadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            let result = await SyncQueuePush.run(
+                entity: "Trip Costs",
+                ids: pushed,
+                payloads: payloads,
+                queuedAt: dirty,
+                vineyardId: vineyardId
+            ) { try await repository.upsertMany($0) }
+            metadata.clearDirty(result.uploaded)
+            SyncIssueCenter.shared.notePending(entity: "Trip Costs", count: metadata.pendingUpserts.count)
+            if let error = result.firstRetryableError { throw error }
         }
         for (id, _) in metadata.pendingDeletes {
             do {

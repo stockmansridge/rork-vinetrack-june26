@@ -48,9 +48,22 @@ final class SyncStatusCenter {
     /// Count of individual records whose last delete attempt failed.
     private(set) var failedDeletes: Int = 0
     /// When the last full sweep completed (success or failure).
+    ///
+    /// IMPORTANT: this is now only set when the sweep was genuinely COMPLETE —
+    /// download finished *and* every eligible upload was processed. A pull-only
+    /// success no longer refreshes it (regression: the screen advertised a fresh
+    /// "Last full sync" while 22 uploads were still stuck).
     private(set) var lastFullSyncAt: Date?
     /// When the last sweep completed with no errors.
     private(set) var lastSuccessfulSyncAt: Date?
+    /// When the download half last completed without error.
+    private(set) var lastPullAt: Date?
+    /// When the upload half last drained without leaving anything queued.
+    private(set) var lastUploadAt: Date?
+    /// When a sweep was last attempted, regardless of outcome.
+    private(set) var lastAttemptAt: Date?
+    /// When a sweep last reported an error.
+    private(set) var lastFailureAt: Date?
     /// Human-readable summary of the last sync error, if any.
     private(set) var lastError: String?
 
@@ -88,6 +101,17 @@ final class SyncStatusCenter {
     /// Mark the start of a full sweep.
     func syncDidStart() {
         isSyncing = true
+        lastAttemptAt = Date()
+    }
+
+    /// True when uploads are still outstanding after the last online attempt.
+    var hasIncompleteUploads: Bool { pendingTotal > 0 }
+
+    /// Banner shown when a sweep finished but records are still queued —
+    /// "Sync incomplete — 22 items still waiting".
+    var incompleteSummary: String? {
+        guard pendingTotal > 0 else { return nil }
+        return "Sync incomplete — \(pendingTotal) item\(pendingTotal == 1 ? "" : "s") still waiting"
     }
 
     /// Refresh the queued-item counts without touching sync timestamps. Used
@@ -100,17 +124,33 @@ final class SyncStatusCenter {
     }
 
     /// Record the outcome of a completed full sweep.
-    func syncDidFinish(upserts: Int, deletes: Int, failedUpserts: Int = 0, failedDeletes: Int = 0, error: String?) {
+    ///
+    /// `pullSucceeded` reports the download half only. "Last full sync" is a
+    /// two-way claim, so it advances only when the pull succeeded, nothing
+    /// errored, and the upload queue actually drained.
+    func syncDidFinish(
+        upserts: Int,
+        deletes: Int,
+        failedUpserts: Int = 0,
+        failedDeletes: Int = 0,
+        pullSucceeded: Bool = true,
+        error: String?
+    ) {
         isSyncing = false
         pendingUpserts = upserts
         pendingDeletes = deletes
         self.failedUpserts = failedUpserts
         self.failedDeletes = failedDeletes
         let now = Date()
-        lastFullSyncAt = now
-        if error == nil {
+        let uploadsDrained = (upserts + deletes) == 0
+
+        if pullSucceeded { lastPullAt = now }
+        if uploadsDrained && error == nil { lastUploadAt = now }
+        if pullSucceeded && uploadsDrained && error == nil {
+            lastFullSyncAt = now
             lastSuccessfulSyncAt = now
         }
+        if error != nil { lastFailureAt = now }
         lastError = error
     }
 
@@ -119,8 +159,8 @@ final class SyncStatusCenter {
     func displayState(isOnline: Bool) -> DisplayState {
         if isSyncing { return .syncing }
         if !isOnline { return .offline }
-        if lastError != nil { return .error }
         if pendingTotal > 0 { return .pending(pendingTotal) }
+        if lastError != nil { return .error }
         return .synced
     }
 

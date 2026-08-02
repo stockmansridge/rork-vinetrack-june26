@@ -1019,9 +1019,15 @@ struct SyncSettingsView: View {
     @Environment(PruningSyncService.self) private var pruningSync
     @Environment(FertiliserSyncService.self) private var fertiliserSync
 
+    /// Per-record queue failures recorded by the shared upload driver.
+    private var issueCenter: SyncIssueCenter { SyncIssueCenter.shared }
+    @State private var isIssuesExpanded: Bool = false
+    @State private var didCopyDiagnostics: Bool = false
+
     var body: some View {
         Form {
             statusSection
+            syncIssuesSection
             Section {
                 Button {
                     Task { await pinSync.syncPinsForSelectedVineyard() }
@@ -1329,11 +1335,30 @@ struct SyncSettingsView: View {
                         .foregroundStyle(.orange)
                 }
             }
-            LabeledContent("Last full sync", value: syncCenter.lastFullSyncAt?.formatted(date: .abbreviated, time: .shortened) ?? "Not yet")
+            if let incomplete = syncCenter.incompleteSummary, network.isOnline, !syncCenter.isSyncing {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                        .foregroundStyle(.orange)
+                    Text(incomplete)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.orange)
+                }
+            }
+            // Separate download success from upload success — "Last full sync"
+            // is a two-way claim and only advances when the queue is empty.
+            LabeledContent("Last full sync", value: stamp(syncCenter.lastFullSyncAt))
                 .font(.footnote)
-            if syncCenter.lastSuccessfulSyncAt != syncCenter.lastFullSyncAt {
-                LabeledContent("Last successful sync", value: syncCenter.lastSuccessfulSyncAt?.formatted(date: .abbreviated, time: .shortened) ?? "Not yet")
+            LabeledContent("Last download", value: stamp(syncCenter.lastPullAt))
+                .font(.footnote)
+            LabeledContent("Last upload cleared", value: stamp(syncCenter.lastUploadAt))
+                .font(.footnote)
+            LabeledContent("Last attempt", value: stamp(syncCenter.lastAttemptAt))
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            if let failure = syncCenter.lastFailureAt {
+                LabeledContent("Last failure", value: stamp(failure))
                     .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
             if let error = syncCenter.lastError {
                 LabeledContent("Last sync error", value: error)
@@ -1357,6 +1382,88 @@ struct SyncSettingsView: View {
             Text(network.isOnline
                  ? "Everything you record is queued and uploaded automatically. Tap Refresh & sync now to push immediately."
                  : "You're offline. Records keep saving locally and will sync as soon as you reconnect.")
+        }
+    }
+
+    private func stamp(_ date: Date?) -> String {
+        date?.formatted(date: .abbreviated, time: .shortened) ?? "Not yet"
+    }
+
+    // MARK: - Sync issues
+
+    /// Expandable breakdown of what is still queued and why — shown only when
+    /// records remain after an online attempt.
+    @ViewBuilder
+    private var syncIssuesSection: some View {
+        let summaries = issueCenter.summaries
+        if !summaries.isEmpty {
+            Section {
+                DisclosureGroup(isExpanded: $isIssuesExpanded) {
+                    ForEach(summaries) { summary in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(summary.entity)
+                                    .font(.subheadline.weight(.medium))
+                                Spacer()
+                                Text("\(summary.waiting) waiting")
+                                    .font(.footnote.monospacedDigit())
+                                    .foregroundStyle(summary.permanent > 0 ? .orange : .secondary)
+                            }
+                            Text(summary.reason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if summary.permanent > 0 {
+                                Text("\(summary.permanent) need\(summary.permanent == 1 ? "s" : "") attention — nothing has been deleted.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                            }
+                            Button {
+                                issueCenter.clearIssues(
+                                    issueCenter.issues.values
+                                        .filter { $0.entity == summary.entity }
+                                        .map(\.id)
+                                )
+                                syncCenter.requestManualSync()
+                            } label: {
+                                Label("Retry \(summary.entity)", systemImage: "arrow.clockwise")
+                                    .font(.caption.weight(.semibold))
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(syncCenter.isSyncing || !network.isOnline)
+                            .accessibilityHint("Attempts to upload the queued \(summary.entity) again")
+                        }
+                        .padding(.vertical, 2)
+                    }
+
+                    Button {
+                        syncCenter.requestManualSync()
+                    } label: {
+                        Label("Retry all", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(syncCenter.isSyncing || !network.isOnline)
+
+                    Button {
+                        UIPasteboard.general.string = issueCenter.diagnosticsText()
+                        didCopyDiagnostics = true
+                    } label: {
+                        Label(didCopyDiagnostics ? "Diagnostics copied" : "Copy diagnostics", systemImage: didCopyDiagnostics ? "checkmark" : "doc.on.doc")
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text("Sync issues")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text("\(summaries.reduce(0) { $0 + $1.waiting })")
+                            .font(.footnote.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } footer: {
+                Text("Your records are safe on this device. VineTrack keeps retrying anything that can succeed — nothing is ever discarded automatically.")
+            }
         }
     }
 

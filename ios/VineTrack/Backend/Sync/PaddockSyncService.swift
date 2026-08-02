@@ -272,15 +272,26 @@ final class PaddockSyncService {
             let byId = Dictionary(store.paddocks.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendPaddockUpsert] = []
             var pushedIds: [UUID] = []
+            var orphans: [UUID] = []
             for (paddockId, ts) in dirty {
-                guard let paddock = byId[paddockId], paddock.vineyardId == vineyardId else { continue }
+                // Queue entries whose local block no longer exists can never
+                // upload — reclaim them instead of retrying them forever.
+                guard let paddock = byId[paddockId] else { orphans.append(paddockId); continue }
                 payloads.append(BackendPaddock.upsert(from: paddock, createdBy: createdBy, clientUpdatedAt: ts))
                 pushedIds.append(paddockId)
             }
-            if !payloads.isEmpty {
-                try await repository.upsertPaddocks(payloads)
-                metadata.clearDirty(pushedIds)
-            }
+            metadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            let result = await SyncQueuePush.run(
+                entity: "Blocks",
+                ids: pushedIds,
+                payloads: payloads,
+                queuedAt: dirty,
+                vineyardId: vineyardId
+            ) { try await repository.upsertPaddocks($0) }
+            metadata.clearDirty(result.uploaded)
+            SyncIssueCenter.shared.notePending(entity: "Blocks", count: metadata.pendingUpserts.count)
+            if let error = result.firstRetryableError { throw error }
         }
 
         let deletes = metadata.pendingDeletes

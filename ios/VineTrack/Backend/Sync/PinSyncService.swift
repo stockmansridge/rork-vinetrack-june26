@@ -305,9 +305,14 @@ final class PinSyncService {
             let pinsById = Dictionary(store.pins.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendPinUpsert] = []
             var pushedIds: [UUID] = []
+            var orphans: [UUID] = []
             var photoUploadFailures: [String] = []
             for (pinId, ts) in dirty {
-                guard var pin = pinsById[pinId], pin.vineyardId == vineyardId else { continue }
+                // Reclaim queue entries whose local pin no longer exists — they
+                // can never upload and used to wedge the queue forever. Pins
+                // belonging to another vineyard are still pushed: the payload
+                // carries their own vineyard id.
+                guard var pin = pinsById[pinId] else { orphans.append(pinId); continue }
                 // Self-heal: stamp the current authenticated user as the
                 // creator if the pin was created without one. Never
                 // overwrite an existing non-nil value — that would lose
@@ -370,17 +375,25 @@ final class PinSyncService {
                     print("[PinSync] upsert payload JSON: \(str)")
                 }
                 #endif
-                do {
-                    try await repository.upsertPins(payloads)
-                    metadata.clearDirty(pushedIds)
-                    PinSyncDiagnostics.shared.recordBatchResult(count: payloads.count, success: true, errorMessage: nil)
-                } catch {
-                    // Isolate the failure to exactly the pins in this batch.
-                    metadata.markUpsertsFailed(pushedIds)
-                    PinSyncDiagnostics.shared.recordBatchResult(count: payloads.count, success: false, errorMessage: error.localizedDescription)
-                    throw error
-                }
+                let result = await SyncQueuePush.run(
+                    entity: "Pins",
+                    ids: pushedIds,
+                    payloads: payloads,
+                    queuedAt: dirty,
+                    vineyardId: vineyardId
+                ) { try await repository.upsertPins($0) }
+                metadata.clearDirty(result.uploaded)
+                metadata.markUpsertsFailed(result.failed)
+                PinSyncDiagnostics.shared.recordBatchResult(
+                    count: payloads.count,
+                    success: !result.hasFailures,
+                    errorMessage: result.hasFailures ? "\(result.failed.count) of \(payloads.count) pin(s) rejected" : nil
+                )
+                if let error = result.firstRetryableError { throw error }
             }
+            metadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            SyncIssueCenter.shared.notePending(entity: "Pins", count: metadata.pendingUpserts.count)
             if !photoUploadFailures.isEmpty {
                 errorMessage = "Some pin photos failed to upload: \(photoUploadFailures.first ?? "unknown")"
             }

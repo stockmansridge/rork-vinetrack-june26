@@ -295,6 +295,9 @@ private struct GrantUnlimitedSheet: View {
     @State private var isLoadingVineyards: Bool = false
     @State private var listError: String?
     @State private var vineyardError: String?
+    /// Full sanitised decode/transport report kept for support — never shown
+    /// inline, only offered via "Copy diagnostics".
+    @State private var vineyardDiagnostics: String?
 
     @State private var selectedUserId: UUID?
     @State private var selectedVineyardId: UUID?
@@ -417,6 +420,14 @@ private struct GrantUnlimitedSheet: View {
                             } label: {
                                 Label("Retry", systemImage: "arrow.clockwise")
                             }
+                            if let vineyardDiagnostics {
+                                Button {
+                                    UIPasteboard.general.string = vineyardDiagnostics
+                                } label: {
+                                    Label("Copy diagnostics", systemImage: "doc.on.doc")
+                                        .font(.footnote)
+                                }
+                            }
                         } else if ownerVineyards.isEmpty {
                             Label("No eligible vineyards — this user is not linked to any vineyard yet.", systemImage: "leaf.circle")
                                 .foregroundStyle(.secondary).font(.footnote)
@@ -511,6 +522,7 @@ private struct GrantUnlimitedSheet: View {
     private func loadVineyards(for userId: UUID) async {
         isLoadingVineyards = true
         vineyardError = nil
+        vineyardDiagnostics = nil
         defer { isLoadingVineyards = false }
         do {
             let rows = try await adminRepository.fetchUserVineyards(userId: userId)
@@ -521,10 +533,19 @@ private struct GrantUnlimitedSheet: View {
             if active.count == 1 {
                 selectedVineyardId = active.first?.id
             }
+        } catch let failure as RPCDecodingFailure {
+            guard selectedUserId == userId else { return }
+            // Keep the FULL contract mismatch in diagnostics; show the operator
+            // a plain sentence plus Retry. Never a bare "data couldn't be read".
+            print("[BillingGrants] admin_list_user_vineyards decode failure\n\(failure.diagnostics)")
+            vineyardDiagnostics = failure.diagnostics
+            vineyardError = failure.errorDescription
         } catch {
             guard selectedUserId == userId else { return }
-            print("[BillingGrants] fetchUserVineyards failed: \(error)")
-            vineyardError = "Couldn't load this user's vineyards. \(error.localizedDescription)"
+            let detail = BackendErrorDiagnostics.classify(error, endpoint: "admin_list_user_vineyards")
+            print("[BillingGrants] admin_list_user_vineyards failed\n\(detail.technicalDetail)")
+            vineyardDiagnostics = detail.technicalDetail
+            vineyardError = "Couldn't load this user's vineyards. \(detail.friendlyMessage)"
         }
     }
 

@@ -271,15 +271,21 @@ final class PruningSyncService {
             let byId = Dictionary(pruningStore.setups.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendPruningSeasonUpsert] = []
             var pushed: [UUID] = []
+            var orphans: [UUID] = []
             for (id, ts) in dirty {
-                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
+                // Reclaim queue entries with no local season — they can never
+                // upload and used to sit in the queue forever.
+                guard let item = byId[id] else { orphans.append(id); continue }
                 payloads.append(BackendPruningSeason.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
                 pushed.append(id)
             }
+            seasonMetadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
             if !payloads.isEmpty {
                 do {
                     try await repository.upsertSeasons(payloads)
                     seasonMetadata.clearDirty(pushed)
+                    SyncIssueCenter.shared.clearIssues(pushed)
                 } catch {
                     let message = String(describing: error).lowercased()
                     if message.contains("pruning_seasons_active_unique") || message.contains("duplicate key") || message.contains("23505") {
@@ -289,12 +295,23 @@ final class PruningSyncService {
                         // wedge the queue forever — drop the local copy and
                         // let the pull adopt the server's canonical row.
                         seasonMetadata.clearDirty(pushed)
+                        SyncIssueCenter.shared.clearIssues(pushed)
                         print("[PruningSync] season push hit the active-season unique index — adopting the server row instead")
                     } else {
-                        throw error
+                        // Isolate: one bad season must not block the others.
+                        let result = await SyncQueuePush.run(
+                            entity: "Pruning Seasons",
+                            ids: pushed,
+                            payloads: payloads,
+                            queuedAt: dirty,
+                            vineyardId: vineyardId
+                        ) { try await repository.upsertSeasons($0) }
+                        seasonMetadata.clearDirty(result.uploaded)
+                        if let error = result.firstRetryableError { throw error }
                     }
                 }
             }
+            SyncIssueCenter.shared.notePending(entity: "Pruning Seasons", count: seasonMetadata.pendingUpserts.count)
         }
         for (id, _) in seasonMetadata.pendingDeletes {
             do {

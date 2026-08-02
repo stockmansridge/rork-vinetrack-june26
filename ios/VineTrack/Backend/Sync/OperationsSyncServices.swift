@@ -213,8 +213,13 @@ final class WorkTaskSyncService {
             let byId = Dictionary(store.workTasks.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendWorkTaskUpsert] = []
             var pushed: [UUID] = []
+            var orphans: [UUID] = []
             for (id, ts) in dirty {
-                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
+                // Reclaim queue entries whose local record no longer exists — they
+                // can never upload and used to wedge the queue forever. Records from
+                // another vineyard are still uploaded: the payload carries its own
+                // vineyard id.
+                guard let item = byId[id] else { orphans.append(id); continue }
                 payloads.append(BackendWorkTask.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
                 pushed.append(id)
                 #if DEBUG
@@ -226,15 +231,19 @@ final class WorkTaskSyncService {
                 """)
                 #endif
             }
-            if !payloads.isEmpty {
-                do {
-                    try await repository.upsertMany(payloads)
-                    metadata.clearDirty(pushed)
-                } catch {
-                    metadata.markUpsertsFailed(pushed)
-                    throw error
-                }
-            }
+            metadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            let result = await SyncQueuePush.run(
+                entity: "Work Tasks",
+                ids: pushed,
+                payloads: payloads,
+                queuedAt: dirty,
+                vineyardId: vineyardId
+            ) { try await repository.upsertMany($0) }
+            metadata.clearDirty(result.uploaded)
+            metadata.markUpsertsFailed(result.failed)
+            SyncIssueCenter.shared.notePending(entity: "Work Tasks", count: metadata.pendingUpserts.count)
+            if let error = result.firstRetryableError { throw error }
         }
         let pendingDeletes = metadata.pendingDeletes
         if !pendingDeletes.isEmpty {
@@ -387,17 +396,30 @@ final class WorkTaskLabourLineSyncService {
             let byId = Dictionary(store.workTaskLabourLines.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendWorkTaskLabourLineUpsert] = []
             var pushed: [UUID] = []
+            var orphans: [UUID] = []
             for (id, ts) in dirty {
-                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
+                // Reclaim queue entries whose local record no longer exists — they
+                // can never upload and used to wedge the queue forever. Records from
+                // another vineyard are still uploaded: the payload carries its own
+                // vineyard id.
+                guard let item = byId[id] else { orphans.append(id); continue }
                 payloads.append(BackendWorkTaskLabourLine.upsert(
                     from: item, createdBy: userId, updatedBy: userId, clientUpdatedAt: ts
                 ))
                 pushed.append(id)
             }
-            if !payloads.isEmpty {
-                try await repository.upsertMany(payloads)
-                metadata.clearDirty(pushed)
-            }
+            metadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            let result = await SyncQueuePush.run(
+                entity: "Work Task Labour",
+                ids: pushed,
+                payloads: payloads,
+                queuedAt: dirty,
+                vineyardId: vineyardId
+            ) { try await repository.upsertMany($0) }
+            metadata.clearDirty(result.uploaded)
+            SyncIssueCenter.shared.notePending(entity: "Work Task Labour", count: metadata.pendingUpserts.count)
+            if let error = result.firstRetryableError { throw error }
         }
         let pendingDeletes = metadata.pendingDeletes
         if !pendingDeletes.isEmpty {
@@ -564,17 +586,30 @@ final class WorkTaskMachineLineSyncService {
             let byId = Dictionary(store.workTaskMachineLines.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendWorkTaskMachineLineUpsert] = []
             var pushed: [UUID] = []
+            var orphans: [UUID] = []
             for (id, ts) in dirty {
-                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
+                // Reclaim queue entries whose local record no longer exists — they
+                // can never upload and used to wedge the queue forever. Records from
+                // another vineyard are still uploaded: the payload carries its own
+                // vineyard id.
+                guard let item = byId[id] else { orphans.append(id); continue }
                 payloads.append(BackendWorkTaskMachineLine.upsert(
                     from: item, createdBy: userId, updatedBy: userId, clientUpdatedAt: ts
                 ))
                 pushed.append(id)
             }
-            if !payloads.isEmpty {
-                try await repository.upsertMany(payloads)
-                metadata.clearDirty(pushed)
-            }
+            metadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            let result = await SyncQueuePush.run(
+                entity: "Work Task Machinery",
+                ids: pushed,
+                payloads: payloads,
+                queuedAt: dirty,
+                vineyardId: vineyardId
+            ) { try await repository.upsertMany($0) }
+            metadata.clearDirty(result.uploaded)
+            SyncIssueCenter.shared.notePending(entity: "Work Task Machinery", count: metadata.pendingUpserts.count)
+            if let error = result.firstRetryableError { throw error }
         }
         let pendingDeletes = metadata.pendingDeletes
         var firstDeleteError: Error?
@@ -719,17 +754,30 @@ final class WorkTaskPaddockSyncService {
             let byId = Dictionary(store.workTaskPaddocks.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendWorkTaskPaddockUpsert] = []
             var pushed: [UUID] = []
+            var orphans: [UUID] = []
             for (id, ts) in dirty {
-                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
+                // Reclaim queue entries whose local record no longer exists — they
+                // can never upload and used to wedge the queue forever. Records from
+                // another vineyard are still uploaded: the payload carries its own
+                // vineyard id.
+                guard let item = byId[id] else { orphans.append(id); continue }
                 payloads.append(BackendWorkTaskPaddock.upsert(
                     from: item, createdBy: userId, updatedBy: userId, clientUpdatedAt: ts
                 ))
                 pushed.append(id)
             }
-            if !payloads.isEmpty {
-                try await repository.upsertMany(payloads)
-                metadata.clearDirty(pushed)
-            }
+            metadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            let result = await SyncQueuePush.run(
+                entity: "Work Task Blocks",
+                ids: pushed,
+                payloads: payloads,
+                queuedAt: dirty,
+                vineyardId: vineyardId
+            ) { try await repository.upsertMany($0) }
+            metadata.clearDirty(result.uploaded)
+            SyncIssueCenter.shared.notePending(entity: "Work Task Blocks", count: metadata.pendingUpserts.count)
+            if let error = result.firstRetryableError { throw error }
         }
         let pendingDeletes = metadata.pendingDeletes
         if !pendingDeletes.isEmpty {
@@ -893,20 +941,28 @@ final class MaintenanceLogSyncService {
             let byId = Dictionary(store.maintenanceLogs.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendMaintenanceLogUpsert] = []
             var pushed: [UUID] = []
+            var orphans: [UUID] = []
             var photoUploadFailures: [String] = []
             for (id, ts) in dirty {
-                guard var item = byId[id], item.vineyardId == vineyardId else { continue }
+                // Reclaim queue entries whose local record no longer exists — they
+                // can never upload and used to wedge the queue forever. Records from
+                // another vineyard are still uploaded: the payload carries its own
+                // vineyard id.
+                guard var item = byId[id] else { orphans.append(id); continue }
+                // Photos live under the record's OWN vineyard, not whichever
+                // vineyard happens to be selected during this sweep.
+                let photoVineyardId = item.vineyardId
                 // If the log has a local invoice photo but no synced path, upload first.
                 if let data = item.invoicePhotoData, item.photoPath == nil {
                     SharedImageCache.shared.saveImageData(
                         data,
-                        for: .maintenancePhoto(vineyardId: vineyardId, maintenanceId: item.id),
+                        for: .maintenancePhoto(vineyardId: photoVineyardId, maintenanceId: item.id),
                         remotePath: nil,
                         remoteUpdatedAt: nil
                     )
                     do {
                         let path = try await photoStorage.uploadPhoto(
-                            vineyardId: vineyardId,
+                            vineyardId: photoVineyardId,
                             maintenanceId: item.id,
                             imageData: data
                         )
@@ -923,10 +979,18 @@ final class MaintenanceLogSyncService {
                 payloads.append(BackendMaintenanceLog.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
                 pushed.append(id)
             }
-            if !payloads.isEmpty {
-                try await repository.upsertMany(payloads)
-                metadata.clearDirty(pushed)
-            }
+            metadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            let result = await SyncQueuePush.run(
+                entity: "Maintenance Logs",
+                ids: pushed,
+                payloads: payloads,
+                queuedAt: dirty,
+                vineyardId: vineyardId
+            ) { try await repository.upsertMany($0) }
+            metadata.clearDirty(result.uploaded)
+            SyncIssueCenter.shared.notePending(entity: "Maintenance Logs", count: metadata.pendingUpserts.count)
+            if let error = result.firstRetryableError { throw error }
             if !photoUploadFailures.isEmpty {
                 let first = photoUploadFailures.first ?? "unknown"
                 errorMessage = "Some maintenance photos failed to upload: \(first)"
@@ -1116,20 +1180,29 @@ final class YieldEstimationSessionSyncService {
             let byId = Dictionary(store.yieldSessions.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendYieldEstimationSessionUpsert] = []
             var pushed: [UUID] = []
+            var orphans: [UUID] = []
             for (id, ts) in dirty {
-                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
+                // Reclaim queue entries whose local record no longer exists — they
+                // can never upload and used to wedge the queue forever. Records from
+                // another vineyard are still uploaded: the payload carries its own
+                // vineyard id.
+                guard let item = byId[id] else { orphans.append(id); continue }
                 payloads.append(BackendYieldEstimationSession.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
                 pushed.append(id)
             }
-            if !payloads.isEmpty {
-                do {
-                    try await repository.upsertMany(payloads)
-                    metadata.clearDirty(pushed)
-                } catch {
-                    metadata.markUpsertsFailed(pushed)
-                    throw error
-                }
-            }
+            metadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            let result = await SyncQueuePush.run(
+                entity: "Yield Estimates",
+                ids: pushed,
+                payloads: payloads,
+                queuedAt: dirty,
+                vineyardId: vineyardId
+            ) { try await repository.upsertMany($0) }
+            metadata.clearDirty(result.uploaded)
+            metadata.markUpsertsFailed(result.failed)
+            SyncIssueCenter.shared.notePending(entity: "Yield Estimates", count: metadata.pendingUpserts.count)
+            if let error = result.firstRetryableError { throw error }
         }
         for (id, _) in metadata.pendingDeletes {
             do {
@@ -1291,20 +1364,29 @@ final class DamageRecordSyncService {
             let byId = Dictionary(store.damageRecords.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendDamageRecordUpsert] = []
             var pushed: [UUID] = []
+            var orphans: [UUID] = []
             for (id, ts) in dirty {
-                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
+                // Reclaim queue entries whose local record no longer exists — they
+                // can never upload and used to wedge the queue forever. Records from
+                // another vineyard are still uploaded: the payload carries its own
+                // vineyard id.
+                guard let item = byId[id] else { orphans.append(id); continue }
                 payloads.append(BackendDamageRecord.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
                 pushed.append(id)
             }
-            if !payloads.isEmpty {
-                do {
-                    try await repository.upsertMany(payloads)
-                    metadata.clearDirty(pushed)
-                } catch {
-                    metadata.markUpsertsFailed(pushed)
-                    throw error
-                }
-            }
+            metadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            let result = await SyncQueuePush.run(
+                entity: "Damage Records",
+                ids: pushed,
+                payloads: payloads,
+                queuedAt: dirty,
+                vineyardId: vineyardId
+            ) { try await repository.upsertMany($0) }
+            metadata.clearDirty(result.uploaded)
+            metadata.markUpsertsFailed(result.failed)
+            SyncIssueCenter.shared.notePending(entity: "Damage Records", count: metadata.pendingUpserts.count)
+            if let error = result.firstRetryableError { throw error }
         }
         let pendingDeletes = metadata.pendingDeletes
         if !pendingDeletes.isEmpty {
@@ -1465,15 +1547,28 @@ final class HistoricalYieldRecordSyncService {
             let byId = Dictionary(store.historicalYieldRecords.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendHistoricalYieldRecordUpsert] = []
             var pushed: [UUID] = []
+            var orphans: [UUID] = []
             for (id, ts) in dirty {
-                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
+                // Reclaim queue entries whose local record no longer exists — they
+                // can never upload and used to wedge the queue forever. Records from
+                // another vineyard are still uploaded: the payload carries its own
+                // vineyard id.
+                guard let item = byId[id] else { orphans.append(id); continue }
                 payloads.append(BackendHistoricalYieldRecord.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
                 pushed.append(id)
             }
-            if !payloads.isEmpty {
-                try await repository.upsertMany(payloads)
-                metadata.clearDirty(pushed)
-            }
+            metadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            let result = await SyncQueuePush.run(
+                entity: "Historical Yields",
+                ids: pushed,
+                payloads: payloads,
+                queuedAt: dirty,
+                vineyardId: vineyardId
+            ) { try await repository.upsertMany($0) }
+            metadata.clearDirty(result.uploaded)
+            SyncIssueCenter.shared.notePending(entity: "Historical Yields", count: metadata.pendingUpserts.count)
+            if let error = result.firstRetryableError { throw error }
         }
         for (id, _) in metadata.pendingDeletes {
             do {

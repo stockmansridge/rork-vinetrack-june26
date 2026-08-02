@@ -140,6 +140,9 @@ final class NewBackendAuthService {
         applyUser(nil)
         pendingInvitations = []
         defaultVineyardId = nil
+        // Queue diagnostics are per-user: never let one account's stuck-record
+        // reasons leak into the next sign-in.
+        SyncIssueCenter.shared.clearAll()
     }
 
     @discardableResult

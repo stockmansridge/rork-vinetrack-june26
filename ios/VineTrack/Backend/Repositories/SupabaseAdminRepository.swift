@@ -220,20 +220,33 @@ nonisolated private struct VineyardDTO: Decodable, Sendable {
     }
 }
 
-/// Tolerant DTO for `admin_list_user_vineyards`. `is_owner` was NULL for
-/// vineyards whose `owner_id` was cleared (legacy/transferred rows) and the
-/// previous strict `Bool` decode failed the WHOLE response with "The data
-/// couldn't be read because it isn't in the correct format." — every optional
-/// now has a safe default (sql/155 also coalesces server-side).
+/// Strict response model for `admin_list_user_vineyards` (sql/155 §G).
+///
+/// Contract, column by column:
+///   * `id`            uuid      — required. Accepts any UUID string casing.
+///   * `name`          text      — required by the schema, but a NULL must not
+///                                 destroy the whole list, so it decodes as
+///                                 optional and the row is labelled.
+///   * `role`          text NULL — null when the user is owner-of-record only.
+///   * `is_owner`      bool      — coalesced server-side; still optional here so
+///                                 an older deployed function can't break the
+///                                 screen.
+///   * `country`       text NULL
+///   * `created_at`    timestamptz NULL
+///   * `deleted_at`    timestamptz NULL — non-null means soft-deleted.
+///   * `member_count`  bigint    — number OR string, both accepted.
+///
+/// Unknown extra columns are ignored by design, so the server can add fields
+/// without breaking released builds.
 nonisolated private struct UserVineyardDTO: Decodable, Sendable {
-    let id: UUID
-    let name: String
+    let id: FlexibleUUID
+    let name: String?
     let role: String?
     let isOwner: Bool?
     let country: String?
     let createdAt: Date?
     let deletedAt: Date?
-    let memberCount: Int?
+    let memberCount: FlexibleInt?
 
     enum CodingKeys: String, CodingKey {
         case id, name, role, country
@@ -579,17 +592,34 @@ final class SupabaseAdminRepository {
         }
     }
 
+    /// Vineyards a specific user belongs to (`admin_list_user_vineyards`).
+    ///
+    /// Decoded from the RAW response so a contract mismatch produces a full
+    /// diagnostic (coding path, expected type, actual JSON type, HTTP status,
+    /// sanitised body) instead of the opaque "The data couldn't be read because
+    /// it isn't in the correct format." An EMPTY result is a valid empty array,
+    /// never an error — the caller renders "No eligible vineyards".
     func fetchUserVineyards(userId: UUID) async throws -> [AdminUserVineyardRow] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let rows: [UserVineyardDTO] = try await provider.client
+        let response = try await provider.client
             .rpc("admin_list_user_vineyards", params: UserIdParams(userId: userId))
             .execute()
-            .value
+        let rows: [UserVineyardDTO] = try RPCDecoding.rows(
+            UserVineyardDTO.self,
+            from: response.data,
+            status: response.status,
+            endpoint: "admin_list_user_vineyards"
+        )
         return rows.map {
             AdminUserVineyardRow(
-                id: $0.id, name: $0.name, role: $0.role, isOwner: $0.isOwner ?? false,
-                country: $0.country, createdAt: $0.createdAt, deletedAt: $0.deletedAt,
-                memberCount: $0.memberCount ?? 0
+                id: $0.id.value,
+                name: ($0.name?.isEmpty == false) ? ($0.name ?? "") : "Unnamed vineyard",
+                role: $0.role,
+                isOwner: $0.isOwner ?? false,
+                country: $0.country,
+                createdAt: $0.createdAt,
+                deletedAt: $0.deletedAt,
+                memberCount: $0.memberCount?.value ?? 0
             )
         }
     }

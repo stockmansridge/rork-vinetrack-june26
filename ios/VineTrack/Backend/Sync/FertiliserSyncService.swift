@@ -1,6 +1,14 @@
 import Foundation
 import Observation
 
+/// A fertiliser record plus its per-block allocations, pushed as one unit so
+/// the shared queue driver can isolate a single failing record without
+/// stranding the rest of the queue.
+nonisolated struct FertiliserPushBundle: Encodable, Sendable {
+    let record: BackendFertiliserRecordUpsert
+    let allocations: [BackendFertiliserAllocation]
+}
+
 /// Sync service for the Fertiliser Calculator (System Admin only while in
 /// development). Standard management-sync template over `fertiliser_records`
 /// and the per-block `fertiliser_record_allocations` child rows (pushed with
@@ -92,22 +100,34 @@ final class FertiliserSyncService {
         let dirty = recordMetadata.pendingUpserts
         if !dirty.isEmpty {
             let byId = Dictionary(fertStore.records.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-            var recordPayloads: [BackendFertiliserRecordUpsert] = []
-            var allocationPayloads: [BackendFertiliserAllocation] = []
+            var bundles: [FertiliserPushBundle] = []
             var pushed: [UUID] = []
+            var orphans: [UUID] = []
             for (id, ts) in dirty {
-                guard let item = byId[id], item.vineyardId == vineyardId else { continue }
-                recordPayloads.append(BackendFertiliserRecord.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
-                allocationPayloads.append(contentsOf: item.allocations.map {
-                    BackendFertiliserAllocation.upsert(from: $0, record: item)
-                })
+                // Reclaim queue entries with no local record — they can never
+                // upload and used to sit in the queue forever.
+                guard let item = byId[id] else { orphans.append(id); continue }
+                bundles.append(FertiliserPushBundle(
+                    record: BackendFertiliserRecord.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts),
+                    allocations: item.allocations.map { BackendFertiliserAllocation.upsert(from: $0, record: item) }
+                ))
                 pushed.append(id)
             }
-            if !recordPayloads.isEmpty {
-                try await repository.upsertRecords(recordPayloads)
-                try await repository.upsertAllocations(allocationPayloads)
-                recordMetadata.clearDirty(pushed)
+            recordMetadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            let result = await SyncQueuePush.run(
+                entity: "Fertiliser Records",
+                ids: pushed,
+                payloads: bundles,
+                queuedAt: dirty,
+                vineyardId: vineyardId
+            ) { batch in
+                try await repository.upsertRecords(batch.map(\.record))
+                try await repository.upsertAllocations(batch.flatMap(\.allocations))
             }
+            recordMetadata.clearDirty(result.uploaded)
+            SyncIssueCenter.shared.notePending(entity: "Fertiliser Records", count: recordMetadata.pendingUpserts.count)
+            if let error = result.firstRetryableError { throw error }
         }
         for (id, _) in recordMetadata.pendingDeletes {
             do {
