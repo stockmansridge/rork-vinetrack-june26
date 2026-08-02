@@ -24,7 +24,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Map
-import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -34,7 +33,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -62,18 +60,22 @@ import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapType
 import com.google.maps.android.compose.MapUiSettings
-import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
-import com.google.maps.android.compose.Polygon
-import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.rork.vinetrack.data.BlockRowLayout
 import com.rork.vinetrack.data.LocationTracker
-import com.rork.vinetrack.data.calculateRowLines
+import com.rork.vinetrack.data.RowInput
+import com.rork.vinetrack.data.RowNumbering
+import com.rork.vinetrack.data.blockRowLayout
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PaddockVarietyAllocation
+import com.rork.vinetrack.data.normaliseRowDirection
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.components.BlockBoundaryOverlay
+import com.rork.vinetrack.ui.components.BlockRowLabelsOverlay
+import com.rork.vinetrack.ui.components.BlockRowLinesOverlay
 import com.rork.vinetrack.ui.components.MapMyLocationButton
 import com.rork.vinetrack.ui.components.OverZoomSatelliteLayer
 import com.rork.vinetrack.ui.components.SATELLITE_IMAGERY_ATTRIBUTION
@@ -83,10 +85,8 @@ import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.time.Instant
-import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
-private val EditAmber = Color(0xFFFF9500)
 
 /**
  * Create / edit a block (paddock), mirroring the iOS `EditPaddockSheet`: name,
@@ -113,12 +113,20 @@ fun EditBlockScreen(
             existing?.polygonPoints?.forEach { add(MarkerState(LatLng(it.latitude, it.longitude))) }
         }
     }
-    var rowDirection by remember { mutableStateOf(existing?.rowDirection ?: 0.0) }
+    // A saved direction of e.g. 204.8° describes the same parallel lines as
+    // 24.8°, so it is normalised on load — the layout is unchanged on screen and
+    // the canonical value is what gets written on the next save.
+    var rowDirection by remember { mutableStateOf(normaliseRowDirection(existing?.rowDirection ?: 0.0)) }
     var rowCount by remember { mutableStateOf(existing?.rowCount ?: 0) }
     var rowWidth by remember { mutableStateOf(existing?.rowWidth ?: 2.5) }
     var rowOffset by remember { mutableStateOf(existing?.rowOffset ?: 0.0) }
-    var rowStartNumber by remember { mutableStateOf(1) }
-    var rowAscending by remember { mutableStateOf(true) }
+    // Recover the numbering the block was saved with so reopening it reproduces
+    // the same first/last labels instead of silently resetting to 1.
+    val savedNumbering = remember(existing?.id) {
+        RowNumbering.fromSavedRows(existing?.rows?.map { it.number } ?: emptyList())
+    }
+    var rowStartNumber by remember { mutableStateOf(savedNumbering.startNumber) }
+    var rowAscending by remember { mutableStateOf(savedNumbering.ascending) }
     var vineSpacing by remember { mutableStateOf(existing?.vineSpacing ?: 1.0) }
     var postSpacing by remember { mutableStateOf(existing?.intermediatePostSpacing?.let { formatNum(it) } ?: "") }
     var flowPerEmitter by remember { mutableStateOf(existing?.flowPerEmitter?.let { formatNum(it) } ?: "") }
@@ -142,11 +150,29 @@ fun EditBlockScreen(
 
     val canSave by remember { derivedStateOf { name.isNotBlank() && !saving } }
 
-    var showMapEditor by remember { mutableStateOf(false) }
+    var editorMode by remember { mutableStateOf<BlockEditorMode?>(null) }
     var showSoilEditor by remember { mutableStateOf(false) }
     val canEditSoil = state.currentRole in setOf("owner", "manager", "supervisor", "operator")
 
-    if (showMapEditor) {
+    /** The one canonical layout — the preview and the editor share it exactly. */
+    val previewLayout: BlockRowLayout = run {
+        val poly by remember {
+            derivedStateOf { boundary.map { CoordinatePoint(it.position.latitude, it.position.longitude) } }
+        }
+        remember(poly, rowDirection, rowCount, rowWidth, rowOffset, rowStartNumber, rowAscending) {
+            blockRowLayout(
+                polygon = poly,
+                direction = rowDirection,
+                count = rowCount,
+                width = rowWidth,
+                offset = rowOffset,
+                numbering = RowNumbering(startNumber = rowStartNumber, ascending = rowAscending),
+            )
+        }
+    }
+
+    val openEditorMode = editorMode
+    if (openEditorMode != null) {
         BlockMapEditorScreen(
             boundary = boundary,
             otherBlocks = state.paddocks.filter { it.id != existing?.id },
@@ -160,11 +186,12 @@ fun EditBlockScreen(
             rowOffset = rowOffset, onRowOffset = { rowOffset = it },
             rowStartNumber = rowStartNumber, onRowStartNumber = { rowStartNumber = it },
             rowAscending = rowAscending, onRowAscending = { rowAscending = it },
-            onDone = { showMapEditor = false },
+            onDone = { editorMode = null },
             modifier = modifier,
             // Camera state is scoped to this vineyard + block, so reopening a
             // different block never restores the previous block's position.
             cameraKey = "${state.selectedVineyardId ?: "-"}:${existing?.id ?: "new-block"}",
+            initialMode = openEditorMode,
         )
         return
     }
@@ -247,57 +274,31 @@ fun EditBlockScreen(
                 )
             }
 
-            // Immersive full-screen boundary + row editor (Apple-style)
+            // Immersive full-screen boundary + row editor — the ONE place the
+            // boundary and rows can be changed.
             FullMapEditorButton(
                 hasBoundary = boundary.size >= 3,
-                onClick = { showMapEditor = true },
+                onClick = { editorMode = BlockEditorMode.Boundary },
             )
 
-            // Boundary editor
-            BoundarySection(
+            // Read-only preview of the current draft geometry.
+            BlockPreviewSection(
                 boundary = boundary,
-                rowLines = remember {
-                    derivedStateOf {
-                        val poly = boundary.map { CoordinatePoint(it.position.latitude, it.position.longitude) }
-                        calculateRowLines(poly, rowDirection, rowCount, rowWidth, rowOffset)
-                    }
-                }.value,
+                layout = previewLayout,
                 vineyardCenter = state.selectedVineyard?.let { v ->
                     val lat = v.latitude; val lng = v.longitude
                     if (lat != null && lng != null) LatLng(lat, lng) else null
                 },
+                onEdit = { editorMode = BlockEditorMode.Boundary },
             )
 
-            // Row configuration
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeader("Row Configuration", onLight = true)
-                VineyardCard {
-                    SliderRow("Direction", "${rowDirection.roundToInt()}°", rowDirection.toFloat(), 0f..360f) {
-                        rowDirection = it.toDouble()
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    StepperRow("Row count", rowCount, 0, 500) { rowCount = it }
-                    Spacer(Modifier.height(8.dp))
-                    SliderRow("Row spacing", "%.1f m".format(rowWidth), rowWidth.toFloat(), 0.5f..6f) {
-                        rowWidth = it.toDouble()
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    SliderRow("Shift rows", "%.0f m".format(rowOffset), rowOffset.toFloat(), -50f..50f) {
-                        rowOffset = it.toDouble()
-                    }
-                }
-            }
-
-            if (rowCount > 0) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SectionHeader("Row Numbering", onLight = true)
-                    VineyardCard {
-                        StepperRow("Start number", rowStartNumber, 1, 999) { rowStartNumber = it }
-                        Spacer(Modifier.height(10.dp))
-                        RowPositionPicker(rowStartNumber, rowCount, rowAscending) { rowAscending = it }
-                    }
-                }
-            }
+            // Row layout — summary only; editing happens on the full-screen map.
+            RowLayoutSummary(
+                layout = previewLayout,
+                rowCount = rowCount,
+                boundaryPoints = boundary.size,
+                onEdit = { editorMode = BlockEditorMode.Rows },
+            )
 
             // Live block summary (area, rows, total length, vines)
             run {
@@ -475,45 +476,50 @@ fun EditBlockScreen(
     }
 }
 
+/**
+ * READ-ONLY preview of the block's saved/draft geometry.
+ *
+ * It renders exactly what the full-screen editor renders — the same
+ * [blockRowLayout] output through the same overlays — but has no editing
+ * affordances at all: no draggable markers, no pins, no midpoint controls. A
+ * map tap opens the full-screen editor rather than dropping a boundary point,
+ * so the boundary can only ever be changed in one place.
+ */
 @Composable
-private fun BoundarySection(
+private fun BlockPreviewSection(
     boundary: androidx.compose.runtime.snapshots.SnapshotStateList<MarkerState>,
-    rowLines: List<com.rork.vinetrack.data.RowLine>,
+    layout: BlockRowLayout,
     vineyardCenter: LatLng?,
+    onEdit: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     val camera = rememberCameraPositionState()
     var mapLoaded by remember { mutableStateOf(false) }
-    var framed by remember { mutableStateOf(false) }
     val context = LocalContext.current
     var hasLocationPerm by remember { mutableStateOf(LocationTracker(context).hasPermission) }
     var locationMessage by remember { mutableStateOf<String?>(null) }
 
-    // Frame only after the map has a measured size — a bounds update on an
-    // unmeasured map fails silently and leaves the camera at 0,0.
-    LaunchedEffect(mapLoaded) {
-        if (!mapLoaded || framed) return@LaunchedEffect
-        val pts = boundary.map { it.position }
-        if (pts.isNotEmpty()) {
-            camera.fitToContent(points = pts, paddingPx = 120, singlePointZoom = 17f)
-        } else if (vineyardCenter != null) {
-            camera.fitToContent(points = listOf(vineyardCenter), singlePointZoom = 16f)
+    val boundaryPoints by remember { derivedStateOf { boundary.map { it.position } } }
+    val framePoints = remember(boundaryPoints, layout) {
+        boundaryPoints + layout.framePoints.map { LatLng(it.latitude, it.longitude) }
+    }
+
+    // Re-frames whenever the geometry itself changes — so returning from the
+    // editor immediately shows the new boundary and rows at a sensible zoom
+    // instead of whatever the editor was left at. Panning/zooming by hand does
+    // not change the geometry, so it is never fought by this effect.
+    LaunchedEffect(mapLoaded, framePoints) {
+        if (!mapLoaded) return@LaunchedEffect
+        when {
+            framePoints.isNotEmpty() ->
+                camera.fitToContent(points = framePoints, paddingPx = 96, singlePointZoom = 17f, animate = true)
+            vineyardCenter != null ->
+                camera.fitToContent(points = listOf(vineyardCenter), singlePointZoom = 16f)
         }
-        framed = true
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionHeader("Boundary", onLight = true, modifier = Modifier.weight(1f))
-            if (boundary.isNotEmpty()) {
-                IconButton(onClick = { if (boundary.isNotEmpty()) boundary.removeAt(boundary.lastIndex) }) {
-                    Icon(Icons.Filled.Undo, contentDescription = "Undo last point", tint = vine.textSecondary)
-                }
-                IconButton(onClick = { boundary.clear() }) {
-                    Icon(Icons.Filled.Delete, contentDescription = "Clear boundary", tint = VineColors.Destructive)
-                }
-            }
-        }
+        SectionHeader("Boundary & Rows", onLight = true)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -524,9 +530,9 @@ private fun BoundarySection(
             GoogleMap(
                 modifier = Modifier.fillMaxSize(),
                 cameraPositionState = camera,
-                // MapType.NONE + over-zoom satellite tiles so the camera can zoom
-                // past Google's imagery limit for precise point placement (iOS parity).
-                properties = MapProperties(mapType = MapType.NONE, isMyLocationEnabled = hasLocationPerm),
+                // Real base map + over-zoom imagery, matching the editor, so the
+                // preview can never render as a blank canvas.
+                properties = MapProperties(mapType = MapType.NORMAL, isMyLocationEnabled = hasLocationPerm),
                 uiSettings = MapUiSettings(
                     zoomControlsEnabled = false,
                     mapToolbarEnabled = false,
@@ -534,47 +540,29 @@ private fun BoundarySection(
                     rotationGesturesEnabled = false,
                     tiltGesturesEnabled = false,
                 ),
-                onMapClick = { boundary.add(MarkerState(it)) },
+                // A tap is navigation, never an edit.
+                onMapClick = { onEdit() },
                 onMapLoaded = { mapLoaded = true },
             ) {
                 OverZoomSatelliteLayer()
-
-                val poly by remember { derivedStateOf { boundary.map { it.position } } }
-                if (poly.size >= 3) {
-                    Polygon(
-                        points = poly,
-                        fillColor = EditAmber.copy(alpha = 0.12f),
-                        strokeColor = EditAmber,
-                        strokeWidth = 3f,
-                    )
-                }
-                boundary.forEach { ms ->
-                    Marker(
-                        state = ms,
-                        draggable = true,
-                        onClick = { boundary.remove(ms); true },
-                    )
-                }
-                rowLines.forEach { line ->
-                    Polyline(
-                        points = listOf(
-                            LatLng(line.start.latitude, line.start.longitude),
-                            LatLng(line.end.latitude, line.end.longitude),
-                        ),
-                        color = Color.White.copy(alpha = 0.7f),
-                        width = 2f,
-                    )
-                }
+                BlockBoundaryOverlay(points = boundaryPoints)
+                BlockRowLinesOverlay(layout)
+                BlockRowLabelsOverlay(layout)
             }
-            if (boundary.isEmpty()) {
+            if (boundaryPoints.isEmpty()) {
                 Box(
-                    Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.25f)),
+                    Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)).clickable { onEdit() },
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Filled.Map, contentDescription = null, tint = Color.White)
                         Spacer(Modifier.height(6.dp))
-                        Text("Tap the map to add boundary points", color = Color.White, fontSize = 13.sp)
+                        Text("No boundary yet", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Tap to draw it on the full-screen map",
+                            color = Color.White.copy(alpha = 0.8f),
+                            fontSize = 12.sp,
+                        )
                     }
                 }
             }
@@ -608,11 +596,78 @@ private fun BoundarySection(
             }
         }
         Text(
-            if (boundary.isEmpty()) "Tap to add points · drag to move · tap a point to remove"
-            else "${boundary.size} points · tap to add · drag to move · tap a point to remove",
+            buildString {
+                append(if (boundaryPoints.isEmpty()) "Preview only" else "${boundaryPoints.size} points")
+                if (layout.rows.isNotEmpty()) append(" · ${layout.rows.size} rows")
+                append(" · Tap Edit boundary & rows on map to make changes")
+            },
             color = vine.textSecondary,
             fontSize = 12.sp,
         )
+    }
+}
+
+/**
+ * Read-only row-layout summary. Row values are edited on the full-screen map
+ * so the numbers here can never disagree with the geometry drawn above them.
+ */
+@Composable
+private fun RowLayoutSummary(
+    layout: BlockRowLayout,
+    rowCount: Int,
+    boundaryPoints: Int,
+    onEdit: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader("Row Layout", onLight = true)
+        VineyardCard {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SummaryLine("Direction", "${RowInput.formatDecimal(layout.direction)}°")
+                SummaryLine("Rows", if (rowCount > 0) "$rowCount" else "—")
+                SummaryLine("Row width", "${RowInput.formatDecimal(layout.width)} m")
+                SummaryLine("Shift", "${RowInput.formatDecimal(layout.offset)} m")
+                if (rowCount > 0) {
+                    SummaryLine(
+                        "Numbering",
+                        "Row ${layout.numbering.firstNumber(rowCount)} → Row ${layout.numbering.lastNumber(rowCount)}",
+                    )
+                }
+                if (rowCount > 0 && boundaryPoints < 3) {
+                    Text(
+                        "Row settings are saved but this block has no boundary yet, so no rows can be drawn. " +
+                            "Nothing has been changed — open the map editor to draw the boundary.",
+                        color = VineColors.Destructive, fontSize = 12.sp,
+                    )
+                } else if (rowCount > 0 && layout.isEmpty) {
+                    Text(
+                        "These saved row settings place no rows inside the boundary. " +
+                            "Nothing has been changed — open the map editor to review the direction, width and shift.",
+                        color = VineColors.Destructive, fontSize = 12.sp,
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+                TextButton(onClick = onEdit) {
+                    Icon(Icons.Filled.Map, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.size(6.dp))
+                    Text("Edit row layout")
+                }
+            }
+        }
+        Text(
+            "Row direction, count, width, shift and numbering are set on the full-screen map.",
+            color = vine.textSecondary,
+            fontSize = 12.sp,
+        )
+    }
+}
+
+@Composable
+private fun SummaryLine(label: String, value: String) {
+    val vine = LocalVineColors.current
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = vine.textSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Text(value, color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -638,34 +693,6 @@ private fun SliderRow(
                 thumbColor = VineColors.LeafGreen,
                 activeTrackColor = VineColors.LeafGreen,
             ),
-        )
-    }
-}
-
-@Composable
-private fun StepperRow(label: String, value: Int, min: Int, max: Int, onChange: (Int) -> Unit) {
-    val vine = LocalVineColors.current
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = vine.textPrimary, modifier = Modifier.weight(1f), fontSize = 14.sp)
-        IconButton(onClick = { if (value > min) onChange(value - 1) }) {
-            Icon(Icons.Filled.Close, contentDescription = "Decrease", tint = vine.textSecondary, modifier = Modifier.size(16.dp))
-        }
-        Text("$value", color = vine.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-        IconButton(onClick = { if (value < max) onChange(value + 1) }) {
-            Icon(Icons.Filled.Add, contentDescription = "Increase", tint = VineColors.LeafGreen, modifier = Modifier.size(18.dp))
-        }
-    }
-}
-
-@Composable
-private fun ToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    val vine = LocalVineColors.current
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = vine.textPrimary, modifier = Modifier.weight(1f), fontSize = 14.sp)
-        Switch(
-            checked = checked,
-            onCheckedChange = onChange,
-            colors = androidx.compose.material3.SwitchDefaults.colors(checkedTrackColor = VineColors.LeafGreen),
         )
     }
 }
@@ -897,44 +924,6 @@ private fun FullMapEditorButton(hasBoundary: Boolean, onClick: () -> Unit) {
             )
         }
         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color.White)
-    }
-}
-
-@Composable
-private fun RowPositionPicker(startNumber: Int, rowCount: Int, ascending: Boolean, onChange: (Boolean) -> Unit) {
-    val vine = LocalVineColors.current
-    val firstNum = if (ascending) startNumber else startNumber + maxOf(rowCount - 1, 0)
-    val lastNum = if (ascending) startNumber + maxOf(rowCount - 1, 0) else startNumber
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Row 1 position", color = vine.textSecondary, fontSize = 13.sp)
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(vine.appBackground)
-                .border(1.dp, vine.cardBorder, RoundedCornerShape(12.dp))
-                .clickable { onChange(!ascending) }
-                .padding(vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            RowEnd("Left", firstNum, Modifier.weight(1f))
-            Box(
-                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(17.dp)).background(VineColors.LeafGreen.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Filled.SwapHoriz, contentDescription = "Swap row direction", tint = VineColors.LeafGreen, modifier = Modifier.size(18.dp))
-            }
-            RowEnd("Right", lastNum, Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun RowEnd(label: String, number: Int, modifier: Modifier = Modifier) {
-    val vine = LocalVineColors.current
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(label, color = vine.textSecondary, fontSize = 11.sp)
-        Text("Row $number", color = VineColors.LeafGreen, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 

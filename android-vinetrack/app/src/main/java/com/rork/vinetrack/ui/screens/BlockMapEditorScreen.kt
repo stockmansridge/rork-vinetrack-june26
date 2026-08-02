@@ -1,6 +1,7 @@
 package com.rork.vinetrack.ui.screens
 
 import android.util.Log
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -9,8 +10,12 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,20 +24,28 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -58,11 +71,21 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.android.gms.maps.CameraUpdateFactory
@@ -74,17 +97,28 @@ import com.google.maps.android.compose.MapType
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.MarkerComposable
 import com.google.maps.android.compose.MarkerState
-import com.google.maps.android.compose.Polygon
-import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.rork.vinetrack.data.BlockEditorLayout
+import com.rork.vinetrack.data.BlockRowLayout
 import com.rork.vinetrack.data.BoundaryEdit
 import com.rork.vinetrack.data.BoundaryEditor
 import com.rork.vinetrack.data.BoundaryMidpoint
 import com.rork.vinetrack.data.LocationTracker
+import com.rork.vinetrack.data.RowInput
+import com.rork.vinetrack.data.RowLimits
+import com.rork.vinetrack.data.RowNumbering
+import com.rork.vinetrack.data.blockRowLayout
 import com.rork.vinetrack.data.calculateRowLines
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.normaliseRowDirection
+import com.rork.vinetrack.data.stepRowDirection
+import com.rork.vinetrack.ui.components.BlockBoundaryOverlay
+import com.rork.vinetrack.ui.components.BlockGeometryColors
+import com.rork.vinetrack.ui.components.BlockRowLabelsOverlay
+import com.rork.vinetrack.ui.components.BlockRowLinesOverlay
 import com.rork.vinetrack.ui.components.MapMyLocationButton
+import com.rork.vinetrack.ui.components.OtherBlockOutlines
 import com.rork.vinetrack.ui.components.OverZoomSatelliteLayer
 import com.rork.vinetrack.ui.components.SATELLITE_IMAGERY_ATTRIBUTION
 import com.rork.vinetrack.ui.components.SatelliteTileStatus
@@ -96,7 +130,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.cos
-import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 private const val TAG = "BlockMapEditor"
@@ -104,26 +137,31 @@ private const val TAG = "BlockMapEditor"
 /** How long the Google Map may take to report `onMapLoaded` before we offer a retry. */
 private const val MAP_LOAD_TIMEOUT_MS = 12_000L
 
-private val BoundaryBlue = Color(0xFF0A84FF)
-private val BoundaryAmber = Color(0xFFFF9500)
+private val BoundaryBlue = BlockGeometryColors.Boundary
+private val PanelSurface = Color(0xF21C1C1E)
 
-private enum class EditorMode { Boundary, Rows }
+/** Which half of the editor is active. Also picks the screen's entry mode. */
+enum class BlockEditorMode { Boundary, Rows }
 
 /**
- * Immersive, fullscreen boundary + row-layout editor — the Android parity for
- * the iOS `BoundaryMapEditor` + `RowConfigMapOverlay`. A segmented control
- * switches between drawing the block boundary (tap to add, drag numbered
- * handles to move, tap a circular ⊕ midpoint to insert a point into a segment)
- * and configuring rows (direction / count / spacing / shift / numbering) with a
- * live row preview.
+ * The ONE place a block's boundary and row layout can be edited.
  *
- * Map stack: a real Google base map with the over-zoom satellite layer on top.
- * If imagery is momentarily missing the base map stays visible, so the editor
- * can never leave the user on a blank grey canvas.
+ * The block form's map is a read-only preview; every mutation happens here, on
+ * the shared draft state, so the two surfaces can never disagree about what the
+ * block looks like.
  *
- * Operates directly on the shared [boundary] handle list so edits persist back
- * into the parent [EditBlockScreen] form, and surfaces row config through value
- * + setter pairs.
+ * Layout:
+ *  * top — close, a Boundary/Rows segmented control, and the two distinct map
+ *    controls (centre on my location, fit geometry),
+ *  * bottom — a compact bar anchored directly above the app navigation in
+ *    Boundary mode, or a draggable, collapsible row sheet capped at half the
+ *    usable map height in Rows mode.
+ *
+ * Rows are generated by the canonical [blockRowLayout] from the CURRENT draft
+ * parameters, so every control updates the overlay in the same Compose frame.
+ *
+ * Map stack: a real Google base map with the over-zoom satellite layer on top,
+ * so missing imagery can never leave the grower on a blank canvas.
  */
 @Composable
 fun BlockMapEditorScreen(
@@ -150,10 +188,12 @@ fun BlockMapEditorScreen(
      * position.
      */
     cameraKey: String = "block",
+    initialMode: BlockEditorMode = BlockEditorMode.Boundary,
 ) {
-    var mode by remember { mutableStateOf(EditorMode.Boundary) }
+    var mode by remember(cameraKey) { mutableStateOf(initialMode) }
     var showTip by remember { mutableStateOf(true) }
     var showClearConfirm by remember { mutableStateOf(false) }
+    var sheetExpanded by remember { mutableStateOf(initialMode == BlockEditorMode.Rows) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -165,12 +205,16 @@ fun BlockMapEditorScreen(
     var hasLocationPerm by remember { mutableStateOf(LocationTracker(context).hasPermission) }
     var locationMessage by remember { mutableStateOf<String?>(null) }
 
+    /** Measured chrome, so "Fit" frames into the part of the map still visible. */
+    var topChromePx by remember { mutableStateOf(0) }
+    var bottomPanelPx by remember { mutableStateOf(0) }
+
     /** Reversible edits, newest last. Scoped to the block being edited. */
     val undoStack = remember(cameraKey) { mutableStateListOf<BoundaryEdit>() }
 
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val fitPadding = remember(density) { with(density) { 56.dp.roundToPx() } }
+    val fitPadding = remember(density) { with(density) { 48.dp.roundToPx() } }
+    val anchorGap = BlockEditorLayout.BOTTOM_ANCHOR_GAP_DP.dp
 
     // Seed the camera synchronously so the map NEVER starts at the world
     // default (0,0) — that is what produced the "blank map" reports.
@@ -189,20 +233,33 @@ fun BlockMapEditorScreen(
     val polyCoords by remember {
         derivedStateOf { boundary.map { CoordinatePoint(it.position.latitude, it.position.longitude) } }
     }
-    val rowLines by remember {
-        derivedStateOf { calculateRowLines(polyCoords, rowDirection, rowCount, rowWidth, rowOffset) }
+
+    // THE live row layout. Keyed on every draft parameter, so a slider drag, a
+    // typed digit or a dragged boundary point all regenerate the overlay in the
+    // same frame as the control that changed. (The previous implementation
+    // memoised this with no keys and therefore drew the row set the editor
+    // opened with, forever.)
+    val layout: BlockRowLayout = remember(
+        polyCoords, rowDirection, rowCount, rowWidth, rowOffset, rowStartNumber, rowAscending,
+    ) {
+        blockRowLayout(
+            polygon = polyCoords,
+            direction = rowDirection,
+            count = rowCount,
+            width = rowWidth,
+            offset = rowOffset,
+            numbering = RowNumbering(startNumber = rowStartNumber, ascending = rowAscending),
+        )
     }
+
     val areaHa by remember { derivedStateOf { polygonAreaHectares(polyCoords) } }
     val midpoints by remember { derivedStateOf { BoundaryEditor.midpoints(polyCoords) } }
 
-    /** Every coordinate the "Fit vineyard boundary" control can frame. */
-    val fitTargets: List<LatLng> = remember(polyCoords, rowLines, mode) {
-        val points = boundary.map { it.position }.toMutableList()
-        if (mode == EditorMode.Rows) {
-            rowLines.forEach { line ->
-                points += LatLng(line.start.latitude, line.start.longitude)
-                points += LatLng(line.end.latitude, line.end.longitude)
-            }
+    /** Every coordinate the "Fit" control can frame in the current mode. */
+    val fitTargets: List<LatLng> = remember(polyCoords, layout, mode) {
+        val points = polyCoords.map { LatLng(it.latitude, it.longitude) }.toMutableList()
+        if (mode == BlockEditorMode.Rows) {
+            layout.framePoints.forEach { points += LatLng(it.latitude, it.longitude) }
         }
         points.validMapPoints()
     }
@@ -247,20 +304,15 @@ fun BlockMapEditorScreen(
 
     suspend fun frameGeometry(animate: Boolean) {
         val points = fitTargets
-        when {
-            points.size >= 2 -> camera.fitToContent(
-                points = points,
-                paddingPx = fitPadding,
-                singlePointZoom = BoundaryEditor.SINGLE_POINT_ZOOM,
-                animate = animate,
-            )
-            points.size == 1 -> camera.fitToContent(
-                points = points,
-                singlePointZoom = BoundaryEditor.SINGLE_POINT_ZOOM,
-                animate = animate,
-            )
-            else -> return
-        }
+        if (points.isEmpty()) return
+        camera.fitToContent(
+            points = points,
+            paddingPx = fitPadding,
+            singlePointZoom = BoundaryEditor.SINGLE_POINT_ZOOM,
+            animate = animate,
+            topInsetPx = topChromePx,
+            bottomInsetPx = bottomPanelPx + with(density) { anchorGap.roundToPx() },
+        )
         // Never leave the camera past the imagery's supported maximum.
         val zoom = camera.position.zoom
         val clamped = BoundaryEditor.clampZoom(zoom)
@@ -323,7 +375,15 @@ fun BlockMapEditorScreen(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize().background(Color(0xFF1C1C1E))) {
+    // Edits live on the shared draft state, so leaving the editor — by the
+    // Done button OR the system back gesture — always returns them to the form.
+    BackHandler { onDone() }
+
+    BoxWithConstraints(modifier = modifier.fillMaxSize().background(Color(0xFF1C1C1E))) {
+        val usableHeightDp = maxHeight.value.toInt()
+        val collapsedSheetDp = BlockEditorLayout.ROW_SHEET_COLLAPSED_HEIGHT_DP.dp
+        val expandedSheetDp = BlockEditorLayout.expandedSheetHeightDp(usableHeightDp).dp
+
         key(mapAttempt) {
             GoogleMap(
                 modifier = Modifier.fillMaxSize(),
@@ -347,7 +407,8 @@ fun BlockMapEditorScreen(
                     rotationGesturesEnabled = false,
                 ),
                 onMapClick = { latLng ->
-                    if (mode == EditorMode.Boundary) addPoint(latLng)
+                    // Only the Boundary half of the editor treats a tap as an edit.
+                    if (mode == BlockEditorMode.Boundary) addPoint(latLng)
                 },
                 onMapLoaded = {
                     mapLoaded = true
@@ -366,45 +427,21 @@ fun BlockMapEditorScreen(
                 )
 
                 // Context: other blocks already mapped in this vineyard.
-                otherBlocks.forEach { other ->
-                    val pts = other.polygonPoints
-                    if (pts != null && pts.size > 2) {
-                        Polygon(
-                            points = pts.map { LatLng(it.latitude, it.longitude) },
-                            fillColor = BoundaryAmber.copy(alpha = 0.10f),
-                            strokeColor = BoundaryAmber.copy(alpha = 0.7f),
-                            strokeWidth = 2f,
-                        )
-                    }
-                }
+                OtherBlockOutlines(
+                    otherBlocks.mapNotNull { other ->
+                        other.polygonPoints
+                            ?.takeIf { it.size > 2 }
+                            ?.map { LatLng(it.latitude, it.longitude) }
+                    },
+                )
 
-                val poly = boundary.map { it.position }
-                if (poly.size >= 3) {
-                    Polygon(
-                        points = poly,
-                        fillColor = BoundaryBlue.copy(alpha = 0.15f),
-                        strokeColor = BoundaryBlue,
-                        strokeWidth = 3f,
-                    )
-                } else if (poly.size == 2) {
-                    // Two points draw a line only — never a self-closing polygon.
-                    Polyline(points = poly, color = BoundaryBlue, width = 3f)
-                }
+                BlockBoundaryOverlay(points = boundary.map { it.position })
 
-                // Row lines preview (first/last highlighted).
-                rowLines.forEachIndexed { index, line ->
-                    val isEdge = index == 0 || index == rowLines.lastIndex
-                    Polyline(
-                        points = listOf(
-                            LatLng(line.start.latitude, line.start.longitude),
-                            LatLng(line.end.latitude, line.end.longitude),
-                        ),
-                        color = if (isEdge) Color(0xFF34C759) else Color.White.copy(alpha = 0.75f),
-                        width = if (isEdge) 4f else 2f,
-                    )
-                }
+                // Live rows — always drawn, in BOTH modes, above the boundary fill.
+                BlockRowLinesOverlay(layout)
+                BlockRowLabelsOverlay(layout)
 
-                if (mode == EditorMode.Boundary) {
+                if (mode == BlockEditorMode.Boundary) {
                     // Draggable numbered vertices — always above the midpoints.
                     boundary.forEachIndexed { index, ms ->
                         key(ms) {
@@ -433,7 +470,7 @@ fun BlockMapEditorScreen(
                                 state = ms,
                                 draggable = true,
                                 anchor = Offset(0.5f, 0.5f),
-                                zIndex = 2f,
+                                zIndex = 7f,
                                 title = "Boundary point ${index + 1}",
                                 onClick = { true },
                             ) {
@@ -452,7 +489,7 @@ fun BlockMapEditorScreen(
                                 midpoint.key,
                                 state = state,
                                 anchor = Offset(0.5f, 0.5f),
-                                zIndex = 1f,
+                                zIndex = 6f,
                                 title = midpoint.accessibilityLabel,
                                 onClick = {
                                     insertMidpoint(midpoint)
@@ -469,11 +506,14 @@ fun BlockMapEditorScreen(
 
         // Top chrome: close + segmented control + the two DISTINCT map actions.
         Column(
-            modifier = Modifier.fillMaxWidth().padding(top = statusTop + 8.dp, start = 12.dp, end = 12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .onSizeChanged { topChromePx = it.height }
+                .padding(top = statusTop + 8.dp, start = 12.dp, end = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                GlassCircleButton(Icons.Filled.Close, "Done", onClick = onDone)
+                GlassCircleButton(Icons.Filled.Check, "Done", onClick = onDone)
                 Spacer(Modifier.weight(1f))
                 SegmentedToggle(mode = mode, onChange = { mode = it })
                 Spacer(Modifier.weight(1f))
@@ -488,7 +528,11 @@ fun BlockMapEditorScreen(
                     // 2 — frame the drawn geometry. Different icon, different job.
                     GlassCircleButton(
                         icon = Icons.Filled.CropFree,
-                        contentDescription = "Fit vineyard boundary",
+                        contentDescription = if (mode == BlockEditorMode.Rows) {
+                            "Fit boundary and rows"
+                        } else {
+                            "Fit vineyard boundary"
+                        },
                         enabled = canFit,
                     ) {
                         scope.launch { frameGeometry(animate = true) }
@@ -538,7 +582,7 @@ fun BlockMapEditorScreen(
             }
 
             AnimatedVisibility(
-                visible = showTip && mode == EditorMode.Boundary,
+                visible = showTip && mode == BlockEditorMode.Boundary,
                 enter = fadeIn() + slideInVertically(),
                 exit = fadeOut() + slideOutVertically(),
             ) {
@@ -565,17 +609,25 @@ fun BlockMapEditorScreen(
             }
         }
 
-        // Bottom controls.
+        // Bottom controls — anchored to the bottom of the usable map area, which
+        // already sits directly above the VineTrack navigation bar (the host
+        // Scaffold consumes both it and the system navigation inset).
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(start = 12.dp, end = 12.dp, bottom = navBottom + 16.dp),
+                .onSizeChanged { bottomPanelPx = it.height }
+                .padding(start = 10.dp, end = 10.dp, bottom = anchorGap),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            if (mode == EditorMode.Boundary) {
-                BoundaryControls(
+            Text(
+                SATELLITE_IMAGERY_ATTRIBUTION,
+                color = Color.White.copy(alpha = 0.55f),
+                fontSize = 9.sp,
+            )
+            if (mode == BlockEditorMode.Boundary) {
+                BoundaryControlBar(
                     pointCount = boundary.size,
                     areaHa = areaHa,
                     canUndo = undoStack.isNotEmpty(),
@@ -584,8 +636,14 @@ fun BlockMapEditorScreen(
                     onClear = { showClearConfirm = true },
                 )
             } else {
-                RowControlPanel(
+                RowLayoutSheet(
+                    layout = layout,
                     hasBoundary = boundary.size >= 3,
+                    expanded = sheetExpanded,
+                    onExpanded = { sheetExpanded = it },
+                    collapsedHeight = collapsedSheetDp,
+                    expandedHeight = expandedSheetDp,
+                    onFitRows = { scope.launch { frameGeometry(animate = true) } },
                     rowDirection = rowDirection, onRowDirection = onRowDirection,
                     rowCount = rowCount, onRowCount = onRowCount,
                     rowWidth = rowWidth, onRowWidth = onRowWidth,
@@ -594,11 +652,6 @@ fun BlockMapEditorScreen(
                     rowAscending = rowAscending, onRowAscending = onRowAscending,
                 )
             }
-            Text(
-                SATELLITE_IMAGERY_ATTRIBUTION,
-                color = Color.White.copy(alpha = 0.55f),
-                fontSize = 9.sp,
-            )
         }
     }
 
@@ -625,7 +678,7 @@ fun BlockMapEditorScreen(
     }
 
     LaunchedEffect(mode) {
-        if (mode == EditorMode.Rows) showTip = false
+        if (mode == BlockEditorMode.Rows) showTip = false
     }
 }
 
@@ -661,7 +714,7 @@ private fun MapFailureCard(
 }
 
 @Composable
-private fun SegmentedToggle(mode: EditorMode, onChange: (EditorMode) -> Unit) {
+private fun SegmentedToggle(mode: BlockEditorMode, onChange: (BlockEditorMode) -> Unit) {
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
@@ -669,8 +722,8 @@ private fun SegmentedToggle(mode: EditorMode, onChange: (EditorMode) -> Unit) {
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        SegmentChip("Boundary", mode == EditorMode.Boundary) { onChange(EditorMode.Boundary) }
-        SegmentChip("Rows", mode == EditorMode.Rows) { onChange(EditorMode.Rows) }
+        SegmentChip("Boundary", mode == BlockEditorMode.Boundary) { onChange(BlockEditorMode.Boundary) }
+        SegmentChip("Rows", mode == BlockEditorMode.Rows) { onChange(BlockEditorMode.Rows) }
     }
 }
 
@@ -717,8 +770,13 @@ private fun GlassCircleButton(
     }
 }
 
+/**
+ * Boundary mode's bottom bar: one summary line, one action row, minimum
+ * practical height — it hugs the bottom of the map instead of floating over
+ * the boundary points.
+ */
 @Composable
-private fun BoundaryControls(
+private fun BoundaryControlBar(
     pointCount: Int,
     areaHa: Double,
     canUndo: Boolean,
@@ -726,25 +784,26 @@ private fun BoundaryControls(
     onUndo: () -> Unit,
     onClear: () -> Unit,
 ) {
-    Box(
+    Column(
         modifier = Modifier
+            .fillMaxWidth()
             .clip(RoundedCornerShape(18.dp))
-            .background(Color(0xE61C1C1E))
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .background(PanelSurface)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(
-                buildString {
-                    append("$pointCount point").append(if (pointCount == 1) "" else "s")
-                    if (areaHa > 0) append("  ·  %.2f ha".format(areaHa))
-                },
-                color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                PillButton("Add at Center", Icons.Filled.Add, filled = true, onClick = onAddCenter)
-                PillButton("Undo", Icons.Filled.Undo, enabled = canUndo, onClick = onUndo)
-                PillButton("Clear", Icons.Filled.Delete, destructive = true, enabled = pointCount > 0, onClick = onClear)
-            }
+        Text(
+            buildString {
+                append("$pointCount point").append(if (pointCount == 1) "" else "s")
+                if (areaHa > 0) append("  ·  %.2f ha".format(areaHa))
+            },
+            color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PillButton("Add at Center", Icons.Filled.Add, filled = true, onClick = onAddCenter)
+            PillButton("Undo", Icons.Filled.Undo, enabled = canUndo, onClick = onUndo)
+            PillButton("Clear", Icons.Filled.Delete, destructive = true, enabled = pointCount > 0, onClick = onClear)
         }
     }
 }
@@ -765,7 +824,6 @@ private fun PillButton(
     val fg = when {
         !enabled -> Color.White.copy(alpha = 0.3f)
         destructive -> Color(0xFFFF6B6B)
-        filled -> Color.White
         else -> Color.White
     }
     Row(
@@ -782,9 +840,22 @@ private fun PillButton(
     }
 }
 
+/**
+ * Rows mode's control surface: a draggable bottom sheet.
+ *
+ * Collapsed it is a one-line summary plus two actions; expanded it is capped at
+ * half the usable map height and scrolls internally, so the live row overlay is
+ * always visible behind it while values change.
+ */
 @Composable
-private fun RowControlPanel(
+private fun RowLayoutSheet(
+    layout: BlockRowLayout,
     hasBoundary: Boolean,
+    expanded: Boolean,
+    onExpanded: (Boolean) -> Unit,
+    collapsedHeight: androidx.compose.ui.unit.Dp,
+    expandedHeight: androidx.compose.ui.unit.Dp,
+    onFitRows: () -> Unit,
     rowDirection: Double, onRowDirection: (Double) -> Unit,
     rowCount: Int, onRowCount: (Int) -> Unit,
     rowWidth: Double, onRowWidth: (Double) -> Unit,
@@ -792,101 +863,368 @@ private fun RowControlPanel(
     rowStartNumber: Int, onRowStartNumber: (Int) -> Unit,
     rowAscending: Boolean, onRowAscending: (Boolean) -> Unit,
 ) {
-    val firstNum = if (rowAscending) rowStartNumber else rowStartNumber + maxOf(rowCount - 1, 0)
-    val lastNum = if (rowAscending) rowStartNumber + maxOf(rowCount - 1, 0) else rowStartNumber
-    Box(
+    val density = LocalDensity.current
+    val collapsedPx = with(density) { collapsedHeight.toPx() }
+    val expandedPx = with(density) { expandedHeight.toPx().coerceAtLeast(collapsedPx) }
+    var dragPx by remember { mutableStateOf(0f) }
+    val basePx = if (expanded) expandedPx else collapsedPx
+    val heightPx = (basePx - dragPx).coerceIn(collapsedPx, expandedPx)
+    val height = with(density) { heightPx.toDp() }
+
+    val dragState = rememberDraggableState { delta -> dragPx += delta }
+
+    Column(
         modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(Color(0xF21C1C1E))
-            .padding(16.dp),
+            .fillMaxWidth()
+            .height(height)
+            .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 20.dp, bottomEnd = 20.dp))
+            .background(PanelSurface),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (!hasBoundary) {
-                Text(
-                    "Draw a boundary with at least 3 points to preview rows.",
-                    color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp,
+        // Grab handle — drag to resize, tap to toggle.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .draggable(
+                    state = dragState,
+                    orientation = Orientation.Vertical,
+                    onDragStopped = {
+                        val travel = expandedPx - collapsedPx
+                        val progress = if (travel > 0f) (heightPx - collapsedPx) / travel else 0f
+                        onExpanded(progress >= BlockEditorLayout.ROW_SHEET_SNAP_FRACTION.toFloat())
+                        dragPx = 0f
+                    },
                 )
-            }
-            // Direction
-            DarkSliderRow(
-                label = "Direction",
-                value = "${"%.1f".format(rowDirection)}°",
-                sliderValue = rowDirection.toFloat(),
-                range = 0f..360f,
-                onMinus = { onRowDirection(maxOf(0.0, rowDirection - 0.5)) },
-                onPlus = { onRowDirection(minOf(360.0, rowDirection + 0.5)) },
-                onChange = { onRowDirection(it.toDouble()) },
+                .clickable { onExpanded(!expanded) }
+                .padding(vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 38.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(Color.White.copy(alpha = 0.35f)),
             )
-            DarkDivider()
-            // Row count stepper
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Rows", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
-                StepperControl(
-                    value = rowCount,
-                    onMinus = { if (rowCount > 0) onRowCount(rowCount - 1) },
-                    onPlus = { if (rowCount < 500) onRowCount(rowCount + 1) },
-                )
-            }
-            DarkDivider()
-            DarkSliderRow(
-                label = "Row Width",
-                value = "%.1f m".format(rowWidth),
-                sliderValue = rowWidth.toFloat(),
-                range = 0f..4f,
-                onMinus = { onRowWidth(maxOf(0.0, rowWidth - 0.1)) },
-                onPlus = { onRowWidth(minOf(4.0, rowWidth + 0.1)) },
-                onChange = { onRowWidth(it.toDouble()) },
+        }
+
+        // Always-visible summary line.
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                "%s° · %d rows · %s m".format(
+                    RowInput.formatDecimal(rowDirection),
+                    rowCount,
+                    RowInput.formatDecimal(rowWidth),
+                ),
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
             )
-            DarkDivider()
-            DarkSliderRow(
-                label = "Shift Rows",
-                value = "%.1f m".format(rowOffset),
-                sliderValue = rowOffset.toFloat(),
-                range = -50f..50f,
-                onMinus = { onRowOffset(rowOffset - 0.5) },
-                onPlus = { onRowOffset(rowOffset + 0.5) },
-                onChange = { onRowOffset(it.toDouble()) },
-                trailing = {
+            Icon(
+                if (expanded) Icons.Filled.ExpandMore else Icons.Filled.ExpandLess,
+                contentDescription = if (expanded) "Collapse row layout" else "Edit row layout",
+                tint = Color.White.copy(alpha = 0.8f),
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .clickable { onExpanded(!expanded) },
+            )
+        }
+
+        if (!expanded) {
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                PillButton("Edit row layout", Icons.Filled.Add, filled = true) { onExpanded(true) }
+                PillButton("Fit rows", Icons.Filled.CropFree, onClick = onFitRows)
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (!hasBoundary) {
                     Text(
-                        "Reset",
-                        color = if (rowOffset != 0.0) BoundaryBlue else Color.White.copy(alpha = 0.3f),
-                        fontSize = 12.sp,
-                        modifier = Modifier.clickable(enabled = rowOffset != 0.0) { onRowOffset(0.0) },
+                        "Draw a boundary with at least 3 points to preview rows.",
+                        color = Color(0xFFFFD60A), fontSize = 12.sp,
                     )
-                },
-            )
-            if (rowCount > 0) {
-                DarkDivider()
-                // Row numbering
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Start number", color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
-                    StepperControl(
-                        value = rowStartNumber,
-                        onMinus = { if (rowStartNumber > 1) onRowStartNumber(rowStartNumber - 1) },
-                        onPlus = { if (rowStartNumber < 9999) onRowStartNumber(rowStartNumber + 1) },
+                } else if (rowCount > 0 && layout.isEmpty) {
+                    Text(
+                        "These settings place no rows inside the boundary — check the shift and row width.",
+                        color = Color(0xFFFFD60A), fontSize = 12.sp,
                     )
                 }
-                // Row 1 position picker (left/right)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color.White.copy(alpha = 0.08f))
-                        .clickable { onRowAscending(!rowAscending) }
-                        .padding(vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    NumberEnd("Left", firstNum, Modifier.weight(1f))
-                    Box(
-                        modifier = Modifier.size(36.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.12f)),
-                        contentAlignment = Alignment.Center,
+
+                // Direction — 0–180 only: a row is an axis, not a heading.
+                ControlRow(
+                    label = "Direction",
+                    field = {
+                        NumericEntry(
+                            canonical = RowInput.formatDecimal(rowDirection),
+                            keyboardType = KeyboardType.Decimal,
+                            suffix = "°",
+                            onTyped = { text -> RowInput.direction(text)?.let(onRowDirection) },
+                        )
+                    },
+                )
+                SliderStrip(
+                    value = rowDirection.toFloat(),
+                    range = RowLimits.DIRECTION_MIN.toFloat()..RowLimits.DIRECTION_MAX.toFloat(),
+                    onMinus = { onRowDirection(stepRowDirection(rowDirection, -0.5)) },
+                    onPlus = { onRowDirection(stepRowDirection(rowDirection, 0.5)) },
+                    onChange = { onRowDirection(normaliseRowDirection(RowInput.roundToDecimals(it.toDouble()))) },
+                )
+
+                DarkDivider()
+
+                ControlRow(
+                    label = "Rows",
+                    field = {
+                        NumericEntry(
+                            canonical = rowCount.toString(),
+                            keyboardType = KeyboardType.Number,
+                            onTyped = { text -> RowInput.count(text)?.let(onRowCount) },
+                        )
+                    },
+                    trailing = {
+                        Stepper(
+                            onMinus = { if (rowCount > RowLimits.COUNT_MIN) onRowCount(rowCount - 1) },
+                            onPlus = { if (rowCount < RowLimits.COUNT_MAX) onRowCount(rowCount + 1) },
+                        )
+                    },
+                )
+
+                DarkDivider()
+
+                ControlRow(
+                    label = "Row width",
+                    field = {
+                        NumericEntry(
+                            canonical = RowInput.formatDecimal(rowWidth),
+                            keyboardType = KeyboardType.Decimal,
+                            suffix = "m",
+                            onTyped = { text -> RowInput.width(text)?.let(onRowWidth) },
+                        )
+                    },
+                )
+                SliderStrip(
+                    value = rowWidth.toFloat(),
+                    range = RowLimits.WIDTH_MIN.toFloat()..RowLimits.WIDTH_MAX.toFloat(),
+                    onMinus = { onRowWidth((rowWidth - 0.1).coerceAtLeast(RowLimits.WIDTH_MIN)) },
+                    onPlus = { onRowWidth((rowWidth + 0.1).coerceAtMost(RowLimits.WIDTH_MAX)) },
+                    onChange = { onRowWidth(RowInput.roundToDecimals(it.toDouble())) },
+                )
+
+                DarkDivider()
+
+                ControlRow(
+                    label = "Shift rows",
+                    field = {
+                        NumericEntry(
+                            canonical = RowInput.formatDecimal(rowOffset),
+                            keyboardType = KeyboardType.Decimal,
+                            suffix = "m",
+                            onTyped = { text -> RowInput.shift(text)?.let(onRowOffset) },
+                        )
+                    },
+                    trailing = {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "±",
+                                color = BoundaryBlue,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .clickable { onRowOffset(-rowOffset) }
+                                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                            )
+                            Text(
+                                "Reset",
+                                color = if (rowOffset != 0.0) BoundaryBlue else Color.White.copy(alpha = 0.3f),
+                                fontSize = 12.sp,
+                                modifier = Modifier.clickable(enabled = rowOffset != 0.0) { onRowOffset(0.0) },
+                            )
+                        }
+                    },
+                )
+                SliderStrip(
+                    value = rowOffset.toFloat(),
+                    range = -50f..50f,
+                    onMinus = { onRowOffset((rowOffset - 0.5).coerceAtLeast(RowLimits.SHIFT_MIN)) },
+                    onPlus = { onRowOffset((rowOffset + 0.5).coerceAtMost(RowLimits.SHIFT_MAX)) },
+                    onChange = { onRowOffset(RowInput.roundToDecimals(it.toDouble())) },
+                )
+
+                if (rowCount > 0) {
+                    DarkDivider()
+                    ControlRow(
+                        label = "Start number",
+                        field = {
+                            NumericEntry(
+                                canonical = rowStartNumber.toString(),
+                                keyboardType = KeyboardType.Number,
+                                onTyped = { text -> RowInput.startNumber(text)?.let(onRowStartNumber) },
+                            )
+                        },
+                        trailing = {
+                            Stepper(
+                                onMinus = { if (rowStartNumber > RowLimits.START_NUMBER_MIN) onRowStartNumber(rowStartNumber - 1) },
+                                onPlus = { if (rowStartNumber < RowLimits.START_NUMBER_MAX) onRowStartNumber(rowStartNumber + 1) },
+                            )
+                        },
+                    )
+                    // Numbering side — reverses the LABELS only, never the geometry.
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.White.copy(alpha = 0.08f))
+                            .clickable { onRowAscending(!rowAscending) }
+                            .padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Filled.SwapHoriz, contentDescription = "Swap row direction", tint = BoundaryBlue, modifier = Modifier.size(20.dp))
+                        NumberEnd("First", layout.numbering.firstNumber(rowCount), Modifier.weight(1f))
+                        Box(
+                            modifier = Modifier.size(36.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Filled.SwapHoriz,
+                                contentDescription = "Swap row numbering side",
+                                tint = BoundaryBlue,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                        NumberEnd("Last", layout.numbering.lastNumber(rowCount), Modifier.weight(1f))
                     }
-                    NumberEnd("Right", lastNum, Modifier.weight(1f))
+                    PillButton("Fit rows", Icons.Filled.CropFree, onClick = onFitRows)
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ControlRow(
+    label: String,
+    field: @Composable () -> Unit,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(label, color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        field()
+        trailing?.invoke()
+    }
+}
+
+/**
+ * Direct numeric entry for a row parameter.
+ *
+ * While the field has focus the grower's own text is preserved verbatim, so an
+ * incomplete value like `24.` never clears the row overlay — [onTyped] simply
+ * does not fire until the text parses, leaving the last valid value in place.
+ * On blur the field snaps back to the canonical, clamped value.
+ */
+@Composable
+private fun NumericEntry(
+    canonical: String,
+    keyboardType: KeyboardType,
+    onTyped: (String) -> Unit,
+    suffix: String? = null,
+) {
+    var field by remember { mutableStateOf(TextFieldValue(canonical)) }
+    var focused by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+
+    // Keep in step with slider / stepper changes, but never fight the keyboard.
+    LaunchedEffect(canonical, focused) {
+        if (!focused && field.text != canonical) field = TextFieldValue(canonical)
+    }
+
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.White.copy(alpha = 0.12f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        BasicTextField(
+            value = field,
+            onValueChange = { next ->
+                field = next
+                onTyped(next.text)
+            },
+            singleLine = true,
+            textStyle = TextStyle(
+                color = Color.White,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.End,
+            ),
+            cursorBrush = SolidColor(BoundaryBlue),
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+            modifier = Modifier
+                .width(66.dp)
+                .onFocusChanged { st ->
+                    if (st.isFocused && !focused) {
+                        // Select the current value so it can be typed straight over.
+                        field = field.copy(selection = TextRange(0, field.text.length))
+                    }
+                    focused = st.isFocused
+                },
+        )
+        if (suffix != null) {
+            Text(suffix, color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
+private fun SliderStrip(
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onMinus: () -> Unit,
+    onPlus: () -> Unit,
+    onChange: (Float) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        CircleIcon(Icons.AutoMirrored.Filled.ArrowBack, "Decrease", onMinus)
+        Slider(
+            value = value.coerceIn(range.start, range.endInclusive),
+            onValueChange = onChange,
+            valueRange = range,
+            modifier = Modifier.weight(1f).heightIn(max = 28.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = Color.White,
+                activeTrackColor = BoundaryBlue,
+                inactiveTrackColor = Color.White.copy(alpha = 0.2f),
+            ),
+        )
+        CircleIcon(Icons.AutoMirrored.Filled.ArrowForward, "Increase", onPlus)
+    }
+}
+
+@Composable
+private fun Stepper(onMinus: () -> Unit, onPlus: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        CircleIcon(Icons.Filled.Remove, "Decrease", onMinus)
+        CircleIcon(Icons.Filled.Add, "Increase", onPlus)
     }
 }
 
@@ -899,59 +1237,12 @@ private fun NumberEnd(label: String, number: Int, modifier: Modifier = Modifier)
 }
 
 @Composable
-private fun StepperControl(value: Int, onMinus: () -> Unit, onPlus: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        CircleIcon(Icons.Filled.Remove, "Decrease", onMinus)
-        Text("$value", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(44.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        CircleIcon(Icons.Filled.Add, "Increase", onPlus)
-    }
-}
-
-@Composable
 private fun CircleIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, cd: String, onClick: () -> Unit) {
     Box(
-        modifier = Modifier.size(34.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.12f)).clickable(onClick = onClick),
+        modifier = Modifier.size(32.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.12f)).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = cd, tint = BoundaryBlue, modifier = Modifier.size(18.dp))
-    }
-}
-
-@Composable
-private fun DarkSliderRow(
-    label: String,
-    value: String,
-    sliderValue: Float,
-    range: ClosedFloatingPointRange<Float>,
-    onMinus: () -> Unit,
-    onPlus: () -> Unit,
-    onChange: (Float) -> Unit,
-    trailing: (@Composable () -> Unit)? = null,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(label, color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
-            Text(value, color = BoundaryBlue, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            if (trailing != null) {
-                Spacer(Modifier.width(12.dp))
-                trailing()
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CircleIcon(Icons.AutoMirrored.Filled.ArrowBack, "Decrease", onMinus)
-            Slider(
-                value = sliderValue.coerceIn(range.start, range.endInclusive),
-                onValueChange = onChange,
-                valueRange = range,
-                modifier = Modifier.weight(1f),
-                colors = SliderDefaults.colors(
-                    thumbColor = Color.White,
-                    activeTrackColor = BoundaryBlue,
-                    inactiveTrackColor = Color.White.copy(alpha = 0.2f),
-                ),
-            )
-            CircleIcon(Icons.AutoMirrored.Filled.ArrowForward, "Increase", onPlus)
-        }
+        Icon(icon, contentDescription = cd, tint = BoundaryBlue, modifier = Modifier.size(17.dp))
     }
 }
 
