@@ -119,9 +119,43 @@ data class PruningEntry(
     /** The Work Task created from this recording (at most one per entry). */
     val workTaskId: String? = null,
     val createdAtMs: Long = 0L,
+    /**
+     * Server `updated_at` — the ONLY signal that distinguishes an edited
+     * record from an untouched one in the Activity Report. 0 until the entry
+     * has been pulled back from the server.
+     */
+    val updatedAtMs: Long = 0L,
+    /** Server `created_by` (the account that entered the record). */
+    val enteredBy: String? = null,
+    /**
+     * Server `deleted_at` — a REVERSED entry. Reversed entries are retained
+     * locally for the Activity Report's audit history and are excluded from
+     * every progress/rate/forecast calculation.
+     */
+    val reversedAtMs: Long = 0L,
 ) {
     /** A full row = 1.0; each quarter = 0.25. */
     val rowEquivalents: Double get() = segments.size / 4.0
+
+    /** Reversed entries are audit history only — never progress, never rates. */
+    val isReversed: Boolean get() = reversedAtMs > 0L
+
+    /** Hours between the recorded start and finish times (HH:mm). */
+    val durationHours: Double?
+        get() {
+            val start = parseHhmmMinutes(startTime) ?: return null
+            val finish = parseHhmmMinutes(finishTime) ?: return null
+            val span = finish - start
+            return if (span > 0) span / 60.0 else null
+        }
+
+    private fun parseHhmmMinutes(value: String?): Int? {
+        val parts = value?.split(":") ?: return null
+        if (parts.size < 2) return null
+        val hour = parts[0].toIntOrNull() ?: return null
+        val minute = parts[1].take(2).toIntOrNull() ?: return null
+        return hour * 60 + minute
+    }
 }
 
 /** Pruning method keys + labels (matches the iOS `PruningMethod` cases). */

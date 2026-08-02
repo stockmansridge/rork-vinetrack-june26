@@ -128,6 +128,8 @@ class PruningSyncRepository(private val session: SessionStore) {
         @SerialName("estimated_vines_completed") val estimatedVinesCompleted: Int? = null,
         @SerialName("work_task_id") val workTaskId: String? = null,
         @SerialName("created_at") val createdAt: String? = null,
+        @SerialName("created_by") val createdBy: String? = null,
+        @SerialName("updated_at") val updatedAt: String? = null,
         @SerialName("deleted_at") val deletedAt: String? = null,
     ) {
         /** Segments are attributed separately from `pruning_row_segments`. */
@@ -147,6 +149,9 @@ class PruningSyncRepository(private val session: SessionStore) {
             estimatedVines = estimatedVinesCompleted ?: 0,
             workTaskId = workTaskId,
             createdAtMs = parseInstantMs(createdAt),
+            updatedAtMs = parseInstantMs(updatedAt),
+            enteredBy = createdBy,
+            reversedAtMs = parseInstantMs(deletedAt),
         )
     }
 

@@ -172,6 +172,16 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
     /// The Work Task created from this recording (at most one per entry).
     var workTaskId: UUID?
     var createdAt: Date
+    /// Server `updated_at` — the ONLY signal that distinguishes an edited
+    /// record from an untouched one in the Activity Report. Nil until the
+    /// entry has been pulled back from the server.
+    var updatedAt: Date?
+    /// Server `created_by` (the account that entered the record).
+    var enteredBy: UUID?
+    /// Server `deleted_at` — a REVERSED entry. Reversed entries are retained
+    /// locally for the Activity Report's audit history and are excluded from
+    /// every progress/rate/forecast calculation (see `PruningStore.entries`).
+    var reversedAt: Date?
 
     init(
         id: UUID = UUID(),
@@ -188,7 +198,10 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
         notes: String = "",
         estimatedVines: Int = 0,
         workTaskId: UUID? = nil,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        updatedAt: Date? = nil,
+        enteredBy: UUID? = nil,
+        reversedAt: Date? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -205,10 +218,24 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
         self.notes = notes
         self.workTaskId = workTaskId
         self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.enteredBy = enteredBy
+        self.reversedAt = reversedAt
     }
 
     /// A full row = 1.0; each quarter = 0.25.
     var rowEquivalents: Double { Double(segments.count) / 4.0 }
+
+    /// Reversed entries are audit history only — never progress, never rates.
+    var isReversed: Bool { reversedAt != nil }
+
+    /// Person-hours span between the recorded start and finish times.
+    var durationHours: Double? {
+        guard let startTime, let finishTime else { return nil }
+        let seconds = finishTime.timeIntervalSince(startTime)
+        guard seconds > 0 else { return nil }
+        return seconds / 3_600
+    }
 }
 
 /// Schedule status for a block, derived from projected finish vs due date.

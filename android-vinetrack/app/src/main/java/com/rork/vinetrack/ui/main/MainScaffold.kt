@@ -410,7 +410,7 @@ private fun ToolHost(
         ToolRoute.Maintenance -> MaintenanceScreen(vm, state, modifier, onBack)
         ToolRoute.FuelLog -> FuelLogScreen(vm, state, modifier, onBack)
         ToolRoute.FertiliserCalculator -> FertiliserCalculatorScreen(vm, state, modifier, onBack, onOpenProducts = { onOpenTool(ToolRoute.SprayManagement) })
-        ToolRoute.PruningTracker -> PruningTrackerScreen(vm, state, modifier, onBack)
+        ToolRoute.PruningTracker -> PruningTrackerScreen(vm, state, modifier, onBack, onOpenWorkTasks = { onOpenTool(ToolRoute.WorkTasks) })
         ToolRoute.IrrigationRecords -> IrrigationRecordsScreen(vm, state, modifier, onBack)
         ToolRoute.CustomiseTools -> CustomiseToolsScreen(vm, state, modifier, onBack = onBack)
         ToolRoute.Equipment -> EquipmentScreen(vm, state, modifier, onBack, onOpenFuelLog = { onOpenTool(ToolRoute.FuelLog) })

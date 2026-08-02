@@ -69,6 +69,7 @@ struct PruningTrackerView: View {
                     pendingSyncBanner
                 }
                 dashboardCard
+                activityReportLink
                 blockList
                 Spacer(minLength: 24)
             }
@@ -77,6 +78,16 @@ struct PruningTrackerView: View {
         .background(VineyardTheme.appBackground)
         .navigationTitle("Pruning Tracker")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    PruningActivityReportView(pruningStore: pruningStore)
+                } label: {
+                    Image(systemName: "tablecells")
+                }
+                .accessibilityLabel("Activity Report")
+            }
+        }
         .refreshable {
             await pruningSync.syncForSelectedVineyard()
         }
@@ -234,6 +245,40 @@ struct PruningTrackerView: View {
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// Entry point to the full vineyard-wide Activity Report. The compact
+    /// per-block history stays where it is for quick access.
+    private var activityReportLink: some View {
+        NavigationLink {
+            PruningActivityReportView(pruningStore: pruningStore)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "tablecells")
+                    .font(.headline)
+                    .foregroundStyle(VineyardTheme.leafGreen)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Activity Report")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text("Every pruning job for this vineyard — sort, filter, search and open records.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(VineyardTheme.cardBackground, in: .rect(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(VineyardTheme.cardBorder, lineWidth: 0.5))
+            .padding(.horizontal)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open the pruning Activity Report")
     }
 
     // MARK: Block list

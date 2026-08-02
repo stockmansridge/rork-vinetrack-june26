@@ -8,6 +8,10 @@ struct PruningBlockDetailView: View {
     @Environment(\.accessControl) private var accessControl
     let paddock: Paddock
     let pruningStore: PruningStore
+    /// Deep link from the Pruning Activity Report: open with this entry
+    /// already in edit mode so the report reuses THIS edit flow and its RPC
+    /// rather than introducing a second editing path.
+    var initialEditEntryId: UUID?
 
     @State private var selectedSegments: Set<PruningSegment> = []
     @State private var showEntrySheet: Bool = false
@@ -83,6 +87,11 @@ struct PruningBlockDetailView: View {
                 }
                 .accessibilityLabel("Block pruning setup")
             }
+        }
+        .onAppear {
+            guard let initialEditEntryId, editingEntry == nil,
+                  let entry = entries.first(where: { $0.id == initialEditEntryId }) else { return }
+            beginEdit(entry)
         }
         .safeAreaInset(edge: .bottom) {
             if !selectedSegments.isEmpty || editingEntry != nil {

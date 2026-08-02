@@ -35,6 +35,8 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.TableChart
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.SyncProblem
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -123,6 +125,7 @@ fun PruningTrackerScreen(
     state: AppUiState,
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
+    onOpenWorkTasks: () -> Unit = {},
 ) {
     val vine = LocalVineColors.current
     val vineyardId = state.selectedVineyardId
@@ -142,6 +145,14 @@ fun PruningTrackerScreen(
     }
     var selectedPaddockId by rememberSaveable { mutableStateOf<String?>(null) }
     var blockSort by rememberSaveable { mutableStateOf("alphabetical") }
+    var showActivityReport by rememberSaveable { mutableStateOf(false) }
+    /** Deep link from the Activity Report: open the block with this entry in edit mode. */
+    var pendingEditEntryId by rememberSaveable { mutableStateOf<String?>(null) }
+    // Active AND reversed entries — the audit history the report needs. Every
+    // calculation path keeps using the active-only [entries] list.
+    val auditEntries = remember(vineyardId, entries) {
+        vineyardId?.let { vm.pruningAuditEntries(it) } ?: emptyList()
+    }
 
     // Initial fetch + reconcile when the screen opens or the vineyard changes;
     // shows the local cache instantly and merges the server state on top.
@@ -172,6 +183,30 @@ fun PruningTrackerScreen(
     }
     val selectedPaddock = paddocks.firstOrNull { it.id == selectedPaddockId }
 
+    if (showActivityReport && selectedPaddock == null && vineyardId != null) {
+        BackHandler { showActivityReport = false }
+        PruningActivityReportScreen(
+            auditEntries = auditEntries,
+            setups = setups,
+            paddocks = paddocks,
+            workTasks = state.workTasks,
+            labourLines = state.vineyardLabourLines.orEmpty(),
+            members = state.members,
+            canViewCosting = state.currentRole == "owner" || state.currentRole == "manager",
+            onBack = { showActivityReport = false },
+            onEditEntry = { entry ->
+                pendingEditEntryId = entry.id
+                selectedPaddockId = entry.paddockId
+                showActivityReport = false
+            },
+            onReverseEntry = { entry -> entries = vm.deletePruningEntry(vineyardId, entry.id) },
+            onDeleteWorkTask = { vm.deleteWorkTask(it) { } },
+            onOpenWorkTasks = onOpenWorkTasks,
+            modifier = modifier,
+        )
+        return
+    }
+
     if (selectedPaddock != null && vineyardId != null) {
         BackHandler { selectedPaddockId = null }
         PruningBlockDetail(
@@ -179,7 +214,11 @@ fun PruningTrackerScreen(
             vineyardId = vineyardId,
             setup = setups.firstOrNull { it.paddockId == selectedPaddock.id },
             blockEntries = entries.filter { it.paddockId == selectedPaddock.id }.sortedByDescending { it.date },
-            onBack = { selectedPaddockId = null },
+            initialEditEntryId = pendingEditEntryId,
+            onBack = {
+                selectedPaddockId = null
+                pendingEditEntryId = null
+            },
             onUpsertSetup = { setups = vm.upsertPruningSetup(vineyardId, it) },
             onAddEntry = { entry, taskDraft ->
                 // Ensure the season row exists before the entry references it —
@@ -338,6 +377,15 @@ fun PruningTrackerScreen(
             TopAppBar(
                 title = { Text("Pruning Tracker") },
                 navigationIcon = { BackNavIcon(onBack) },
+                actions = {
+                    IconButton(onClick = { showActivityReport = true }) {
+                        Icon(
+                            Icons.Filled.TableChart,
+                            contentDescription = "Activity Report",
+                            tint = vine.textPrimary,
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
@@ -364,6 +412,9 @@ fun PruningTrackerScreen(
                         },
                     )
                 }
+            }
+            item(key = "activity-report") {
+                PruningActivityReportEntryCard(onOpen = { showActivityReport = true })
             }
             item(key = "dashboard") {
                 PruningDashboardCard(
@@ -403,6 +454,46 @@ fun PruningTrackerScreen(
                 }
             }
             item(key = "bottom-space") { Spacer(Modifier.height(24.dp)) }
+        }
+    }
+}
+
+/**
+ * Entry point to the full vineyard-wide Activity Report. The compact per-block
+ * history stays where it is for quick access.
+ */
+@Composable
+private fun PruningActivityReportEntryCard(onOpen: () -> Unit) {
+    val vine = LocalVineColors.current
+    PruningCard {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpen)
+                .padding(14.dp),
+        ) {
+            Icon(
+                Icons.Filled.TableChart,
+                contentDescription = null,
+                tint = VineColors.Primary,
+                modifier = Modifier.size(20.dp),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Activity Report", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                Text(
+                    "Every pruning job for this vineyard — sort, filter, search and open records.",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
+            }
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = vine.textSecondary,
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }
@@ -813,6 +904,8 @@ private fun PruningBlockDetail(
     vineyardId: String,
     setup: PruningBlockSetup?,
     blockEntries: List<PruningEntry>,
+    /** Deep link from the Activity Report — open with this entry in edit mode. */
+    initialEditEntryId: String? = null,
     onBack: () -> Unit,
     onUpsertSetup: (PruningBlockSetup) -> Unit,
     onAddEntry: (PruningEntry, PruningWorkTaskDraft?) -> Unit,
@@ -861,6 +954,14 @@ private fun PruningBlockDetail(
     fun cancelEdit() {
         editingEntry = null
         selected = emptySet()
+    }
+
+    // Deep link from the Activity Report: reuse THIS edit flow (and its RPC)
+    // rather than introducing a second editing path.
+    LaunchedEffect(initialEditEntryId, blockEntries) {
+        val target = initialEditEntryId ?: return@LaunchedEffect
+        if (editingEntry != null) return@LaunchedEffect
+        blockEntries.firstOrNull { it.id == target }?.let { beginEdit(it) }
     }
 
     Scaffold(

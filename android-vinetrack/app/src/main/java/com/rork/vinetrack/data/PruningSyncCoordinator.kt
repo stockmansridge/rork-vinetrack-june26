@@ -42,7 +42,16 @@ class PruningSyncCoordinator(
 
     fun setups(vineyardId: String): List<PruningBlockSetup> = store.loadSetups(vineyardId)
 
-    fun entries(vineyardId: String): List<PruningEntry> = store.loadEntries(vineyardId)
+    /**
+     * Entries that still count as work done. Reversed entries stay in the
+     * cache purely as Activity Report audit history and must never reach a
+     * progress, rate or forecast calculation.
+     */
+    fun entries(vineyardId: String): List<PruningEntry> =
+        store.loadEntries(vineyardId).filterNot { it.isReversed }
+
+    /** Audit view for the Pruning Activity Report — active AND reversed. */
+    fun auditEntries(vineyardId: String): List<PruningEntry> = store.loadEntries(vineyardId)
 
     // MARK: Local-first writes
 
@@ -206,7 +215,7 @@ class PruningSyncCoordinator(
      * local segments until the push lands. Falls back to the cache offline.
      */
     suspend fun refresh(vineyardId: String): Pair<List<PruningBlockSetup>, List<PruningEntry>> {
-        if (!canSync()) return store.loadSetups(vineyardId) to store.loadEntries(vineyardId)
+        if (!canSync()) return store.loadSetups(vineyardId) to entries(vineyardId)
         // Un-wedge: writes that exhausted their retries BEFORE the SQL 116
         // server fix landed sit at BLOCKED forever (replay only picks up
         // PENDING/FAILED). An explicit refresh grants them a new retry cycle
@@ -276,7 +285,10 @@ class PruningSyncCoordinator(
             // the device while still unsynced.
             val seededEntries = localEntries
                 .filter {
-                    it.id !in remoteEntryIds && it.id !in pendingEntryCreateIds &&
+                    // A reversed entry is audit history — never re-push it,
+                    // that would resurrect reversed work on the server.
+                    !it.isReversed &&
+                        it.id !in remoteEntryIds && it.id !in pendingEntryCreateIds &&
                         it.id !in pendingEntryEditIds && it.id !in pendingEntryDeleteIds
                 }
             seededEntries.forEach { entry ->
@@ -287,19 +299,36 @@ class PruningSyncCoordinator(
                     clientId = entry.id,
                 )
             }
+            // Reversed (server soft-deleted) rows are RETAINED as audit history
+            // for the Activity Report — flagged, and filtered out of every
+            // calculation path by [entries]. Locally reversed rows whose delete
+            // is still queued are kept from the cache for the same reason.
             val mergedEntries = remoteEntries
                 .filter {
-                    it.deletedAt == null && it.id !in pendingEntryDeleteIds &&
+                    it.id !in pendingEntryDeleteIds &&
                         it.id !in pendingEntryCreateIds && it.id !in pendingEntryEditIds
                 }
-                .map { it.toModel(segmentsByEntry[it.id].orEmpty()) } +
-                localEntries.filter { it.id in pendingEntryCreateIds || it.id in pendingEntryEditIds } +
+                .map { row ->
+                    val model = row.toModel(segmentsByEntry[row.id].orEmpty())
+                    if (model.isReversed && model.segments.isEmpty()) {
+                        // The server no longer attributes quarters to a reversed
+                        // entry; keep the recorded ones for the audit trail.
+                        val cached = localEntries.firstOrNull { it.id == row.id }?.segments.orEmpty()
+                        model.copy(segments = cached)
+                    } else {
+                        model
+                    }
+                } +
+                localEntries.filter {
+                    it.id in pendingEntryCreateIds || it.id in pendingEntryEditIds ||
+                        it.id in pendingEntryDeleteIds
+                } +
                 seededEntries
             store.saveEntries(vineyardId, mergedEntries)
 
-            mergedSetups to mergedEntries
+            mergedSetups to mergedEntries.filterNot { it.isReversed }
         } catch (_: Exception) {
-            store.loadSetups(vineyardId) to store.loadEntries(vineyardId)
+            store.loadSetups(vineyardId) to entries(vineyardId)
         }
     }
 

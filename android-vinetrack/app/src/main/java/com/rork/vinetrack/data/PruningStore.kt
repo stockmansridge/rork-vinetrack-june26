@@ -65,9 +65,19 @@ class PruningStore(context: Context) {
         return updated
     }
 
+    /**
+     * Reverses an entry. The row is RETAINED in the cache (flagged
+     * [PruningEntry.reversedAtMs]) so the Pruning Activity Report keeps the
+     * audit trail; every read path that feeds progress, rates and forecasts
+     * filters reversed entries out, so progress reverts exactly as before.
+     * Returns the ACTIVE entries.
+     */
     fun deleteEntry(vineyardId: String, entryId: String): List<PruningEntry> {
-        val updated = loadEntries(vineyardId).filterNot { it.id == entryId }
+        val now = System.currentTimeMillis()
+        val updated = loadEntries(vineyardId).map {
+            if (it.id == entryId && !it.isReversed) it.copy(reversedAtMs = now) else it
+        }
         saveEntries(vineyardId, updated)
-        return updated
+        return updated.filterNot { it.isReversed }
     }
 }

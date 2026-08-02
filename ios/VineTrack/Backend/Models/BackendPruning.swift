@@ -151,6 +151,7 @@ nonisolated struct BackendPruningEntry: Codable, Sendable, Identifiable {
     let estimatedVinesCompleted: Int?
     let workTaskId: UUID?
     let createdAt: Date?
+    let createdBy: UUID?
     let updatedAt: Date?
     let deletedAt: Date?
     let clientUpdatedAt: Date?
@@ -171,6 +172,7 @@ nonisolated struct BackendPruningEntry: Codable, Sendable, Identifiable {
         case estimatedVinesCompleted = "estimated_vines_completed"
         case workTaskId = "work_task_id"
         case createdAt = "created_at"
+        case createdBy = "created_by"
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
         case clientUpdatedAt = "client_updated_at"
@@ -193,7 +195,10 @@ nonisolated struct BackendPruningEntry: Codable, Sendable, Identifiable {
             notes: notes ?? "",
             estimatedVines: estimatedVinesCompleted ?? 0,
             workTaskId: workTaskId,
-            createdAt: createdAt ?? Date()
+            createdAt: createdAt ?? Date(),
+            updatedAt: updatedAt,
+            enteredBy: createdBy,
+            reversedAt: deletedAt
         )
     }
 }

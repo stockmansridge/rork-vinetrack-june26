@@ -3219,6 +3219,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun pruningEntries(vineyardId: String): List<PruningEntry> =
         pruningSyncCoordinator.entries(vineyardId)
 
+    /**
+     * Audit view for the Pruning Activity Report — active AND reversed
+     * entries. Reversed entries are audit history only; [pruningEntries]
+     * keeps them out of every progress, rate and forecast calculation.
+     */
+    fun pruningAuditEntries(vineyardId: String): List<PruningEntry> =
+        pruningSyncCoordinator.auditEntries(vineyardId)
+
     fun upsertPruningSetup(vineyardId: String, setup: PruningBlockSetup): List<PruningBlockSetup> =
         pruningSyncCoordinator.upsertSetup(vineyardId, setup)
 

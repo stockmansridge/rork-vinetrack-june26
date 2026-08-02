@@ -54,14 +54,29 @@ final class PruningStore {
 
     // MARK: Entries
 
+    /// Every entry that still counts as work done. Reversed entries are kept
+    /// in `entries` purely as Activity Report audit history and must never
+    /// reach a progress, rate or forecast calculation.
+    var activeEntries: [PruningEntry] { entries.filter { !$0.isReversed } }
+
     func entries(for paddockId: UUID) -> [PruningEntry] {
         entries
-            .filter { $0.paddockId == paddockId }
+            .filter { $0.paddockId == paddockId && !$0.isReversed }
             .sorted { $0.date > $1.date }
     }
 
     func entries(forVineyard vineyardId: UUID) -> [PruningEntry] {
-        entries.filter { $0.vineyardId == vineyardId }
+        entries.filter { $0.vineyardId == vineyardId && !$0.isReversed }
+    }
+
+    /// Audit view for the Pruning Activity Report — active AND reversed
+    /// entries for the vineyard, newest first.
+    func auditEntries(forVineyard vineyardId: UUID) -> [PruningEntry] {
+        entries
+            .filter { $0.vineyardId == vineyardId }
+            .sorted {
+                $0.date == $1.date ? $0.createdAt > $1.createdAt : $0.date > $1.date
+            }
     }
 
     func addEntry(_ entry: PruningEntry) {
@@ -80,8 +95,18 @@ final class PruningStore {
         onEntryEdited?(entry.id)
     }
 
+    /// Reverses an entry. The row is RETAINED locally (flagged `reversedAt`)
+    /// so the Activity Report keeps the audit trail; every calculation path
+    /// already filters reversed entries out, so progress reverts exactly as
+    /// before. The queued push is still `delete_pruning_entry`.
     func deleteEntry(id: UUID) {
-        entries.removeAll { $0.id == id }
+        guard let index = entries.firstIndex(where: { $0.id == id }) else {
+            onEntryDeleted?(id)
+            return
+        }
+        if entries[index].reversedAt == nil {
+            entries[index].reversedAt = Date()
+        }
         persistEntries()
         onEntryDeleted?(id)
     }
@@ -108,6 +133,15 @@ final class PruningStore {
         } else {
             entries.append(entry)
         }
+        persistEntries()
+    }
+
+    /// A reversal seen on the server. The row stays as audit history with its
+    /// values intact; only the reversal stamp is applied.
+    func applyRemoteEntryReversal(id: UUID, reversedAt: Date) {
+        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
+        guard entries[index].reversedAt != reversedAt else { return }
+        entries[index].reversedAt = reversedAt
         persistEntries()
     }
 
@@ -158,6 +192,9 @@ final class PruningStore {
         for index in entries.indices where entries[index].vineyardId == vineyardId {
             let id = entries[index].id
             guard !protectedIds.contains(id) else { continue }
+            // A reversed entry keeps its recorded quarters for the audit trail;
+            // the server no longer attributes any segment to it.
+            guard !entries[index].isReversed else { continue }
             let remote = (segmentsByEntry[id] ?? []).sorted {
                 ($0.row, $0.quarter) < ($1.row, $1.quarter)
             }
