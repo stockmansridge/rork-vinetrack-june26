@@ -34,6 +34,8 @@
 --     damage_delete_permission_denied   errcode 42501
 --     damage_record_not_found           errcode P0002
 --     damage_record_already_deleted     errcode 22023
+--
+-- Idempotent: safe to re-run over an already-applied SQL 160.
 -- =====================================================================
 
 -- ----- 1. deleted_by column -------------------------------------------------
@@ -86,7 +88,14 @@ as $function$
     );
 $function$;
 
+-- Supabase sets ALTER DEFAULT PRIVILEGES ... GRANT ALL ON FUNCTIONS TO
+-- anon, authenticated, service_role for objects created by `postgres` in
+-- schema public, so a freshly created function is executable by `anon`
+-- before we say anything. `revoke ... from public` only drops the PUBLIC
+-- pseudo-role grant, not that explicit anon grant — it must be revoked by
+-- name. service_role is left intact (trusted server-side callers).
 revoke all on function public.can_manage_vineyard_damage(uuid) from public;
+revoke all on function public.can_manage_vineyard_damage(uuid) from anon;
 grant execute on function public.can_manage_vineyard_damage(uuid) to authenticated;
 
 comment on function public.can_manage_vineyard_damage(uuid) is
@@ -160,6 +169,7 @@ end;
 $function$;
 
 revoke all on function public.delete_damage_record(uuid, uuid) from public;
+revoke all on function public.delete_damage_record(uuid, uuid) from anon;
 grant execute on function public.delete_damage_record(uuid, uuid) to authenticated;
 
 comment on function public.delete_damage_record(uuid, uuid) is
@@ -195,4 +205,5 @@ end;
 $function$;
 
 revoke all on function public.soft_delete_damage_record(uuid) from public;
+revoke all on function public.soft_delete_damage_record(uuid) from anon;
 grant execute on function public.soft_delete_damage_record(uuid) to authenticated;

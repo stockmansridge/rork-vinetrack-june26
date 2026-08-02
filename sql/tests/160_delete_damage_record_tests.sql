@@ -10,6 +10,7 @@
 -- Test map
 --   T1  Schema: deleted_by exists, nullable, uuid, FK to auth.users
 --   T2  Function signatures, security definer, fixed search_path, grants
+--       (incl. anon revoked by name — Supabase default privileges grant it)
 --   T3  can_manage_vineyard_damage: Owner / co-Owner / Manager / SysAdmin
 --   T4  can_manage_vineyard_damage: Supervisor / Operator / non-member
 --   T5  Manager deletes a record in their own vineyard (happy path)
@@ -188,10 +189,17 @@ begin
     'T2e authenticated must be able to execute delete_damage_record';
   assert has_function_privilege('authenticated', 'public.can_manage_vineyard_damage(uuid)', 'execute'),
     'T2f authenticated must be able to execute can_manage_vineyard_damage';
+  -- Supabase default privileges grant EXECUTE on new public functions to
+  -- anon as well, so SQL 160 revokes anon by name (revoking PUBLIC alone
+  -- does not remove it).
   assert not has_function_privilege('anon', 'public.delete_damage_record(uuid, uuid)', 'execute'),
     'T2g anon must NOT be able to execute delete_damage_record';
   assert not has_function_privilege('public', 'public.delete_damage_record(uuid, uuid)', 'execute'),
     'T2h PUBLIC must NOT be able to execute delete_damage_record';
+  assert not has_function_privilege('anon', 'public.can_manage_vineyard_damage(uuid)', 'execute'),
+    'T2i anon must NOT be able to execute can_manage_vineyard_damage';
+  assert not has_function_privilege('anon', 'public.soft_delete_damage_record(uuid)', 'execute'),
+    'T2j anon must NOT be able to execute soft_delete_damage_record';
   raise notice 'T2 passed: security definer, fixed search_path, authenticated-only grants';
 
   -- =====================================================================
