@@ -10668,14 +10668,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * vineyard reload. Mirrors [loadVineyardData]'s work-task handling: fresh
      * server reads are written through to the snapshot cache and unresolved
      * offline writes are overlaid; any failure keeps existing in-memory data.
+     *
+     * [onComplete] fires once the attempt has finished (success OR failure) so
+     * a caller waiting on a specific task — e.g. the Pruning Activity Report's
+     * per-task deep link — can stop showing a spinner and decide whether the
+     * task is genuinely unavailable.
      */
-    fun refreshWorkTasks() {
-        val vineyardId = _ui.value.selectedVineyardId ?: return
+    fun refreshWorkTasks(onComplete: (() -> Unit)? = null) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run {
+            onComplete?.invoke()
+            return
+        }
         val userId = session.userId
         viewModelScope.launch {
             val tasks = try {
                 repo.listWorkTasks(vineyardId)
             } catch (e: Exception) {
+                onComplete?.invoke()
                 return@launch
             }
             val paddockJoins = try {
@@ -10688,7 +10697,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 null
             }
-            if (_ui.value.selectedVineyardId != vineyardId) return@launch
+            if (_ui.value.selectedVineyardId != vineyardId) {
+                onComplete?.invoke()
+                return@launch
+            }
             runCatching { domainCache.saveWorkTasks(userId, vineyardId, tasks) }
             val pendingSnapshot = pendingWrites.list()
             val overlaid = PendingWriteOverlay.overlayWorkTaskHeaders(tasks, pendingSnapshot, vineyardId)
@@ -10701,6 +10713,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     vineyardLabourLines = labourLines ?: st.vineyardLabourLines,
                 )
             }
+            onComplete?.invoke()
         }
     }
 

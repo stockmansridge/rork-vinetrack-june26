@@ -83,6 +83,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,6 +97,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.text.KeyboardOptions
+import com.rork.vinetrack.data.WorkTaskDeepLink
+import com.rork.vinetrack.data.WorkTaskDeepLinkState
 import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
@@ -185,6 +188,135 @@ fun WorkTasksScreen(
             onDismiss = { editing = null },
             onSaved = { editing = null },
         )
+    }
+}
+
+/**
+ * Opens ONE Work Task by id — the per-task deep link used by the Pruning
+ * Activity Report's "Open Work Task" action.
+ *
+ * Reuses the exact same [WorkTaskDetailView] and edit sheet as the Work Tasks
+ * tool, so viewing and editing behave (and are permitted) identically. The
+ * local cache renders the first frame; the backend is only awaited when the
+ * task isn't cached, and a task that has genuinely gone shows a friendly
+ * message instead of an empty screen. Nothing here touches the caller's
+ * navigation state — [onBack] simply returns to the report as it was.
+ */
+@Composable
+fun WorkTaskDeepLinkScreen(
+    vm: AppViewModel,
+    state: AppUiState,
+    taskId: String,
+    modifier: Modifier = Modifier,
+    onBack: () -> Unit,
+) {
+    var hasRefreshed by rememberSaveable(taskId) { mutableStateOf(false) }
+    var retryToken by remember(taskId) { mutableStateOf(0) }
+    var editing by remember { mutableStateOf<WorkTask?>(null) }
+
+    LaunchedEffect(taskId, retryToken) {
+        if (WorkTaskDeepLink.needsRefresh(taskId, state.workTasks)) {
+            // Cache can't answer — wait for the server before claiming it's gone.
+            hasRefreshed = false
+            vm.refreshWorkTasks { hasRefreshed = true }
+        } else {
+            // Cache answered: show it now and freshen in the background.
+            hasRefreshed = true
+            vm.refreshWorkTasks()
+        }
+    }
+
+    when (val link = WorkTaskDeepLink.resolve(taskId, state.workTasks, hasRefreshed)) {
+        is WorkTaskDeepLinkState.Available -> WorkTaskDetailView(
+            vm = vm,
+            state = state,
+            taskId = link.task.id,
+            onBack = onBack,
+            onEdit = { editing = it },
+        )
+        WorkTaskDeepLinkState.Resolving -> WorkTaskDeepLinkStatus(
+            modifier = modifier,
+            isLoading = true,
+            onBack = onBack,
+            onRetry = null,
+        )
+        WorkTaskDeepLinkState.Unavailable, WorkTaskDeepLinkState.Closed -> WorkTaskDeepLinkStatus(
+            modifier = modifier,
+            isLoading = false,
+            onBack = onBack,
+            onRetry = { retryToken++ },
+        )
+    }
+
+    editing?.let { task ->
+        WorkTaskSheet(
+            vm = vm,
+            state = state,
+            existing = task,
+            onDismiss = { editing = null },
+            onSaved = { editing = null },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WorkTaskDeepLinkStatus(
+    modifier: Modifier,
+    isLoading: Boolean,
+    onBack: () -> Unit,
+    onRetry: (() -> Unit)?,
+) {
+    val vine = LocalVineColors.current
+    Scaffold(
+        modifier = modifier,
+        containerColor = vine.appBackground,
+        topBar = {
+            TopAppBar(
+                title = { Text(if (isLoading) "Work Task" else WorkTaskDeepLink.UNAVAILABLE_TITLE, maxLines = 1) },
+                navigationIcon = { BackNavIcon(onBack) },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            if (isLoading) {
+                CircularProgressIndicator(modifier = Modifier.size(28.dp), color = VineColors.LeafGreen)
+                Spacer(Modifier.height(14.dp))
+                Text("Opening the linked Work Task…", fontSize = 14.sp, color = vine.textSecondary)
+            } else {
+                Icon(
+                    Icons.Filled.Assignment,
+                    contentDescription = null,
+                    tint = vine.textSecondary,
+                    modifier = Modifier.size(34.dp),
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    WorkTaskDeepLink.UNAVAILABLE_TITLE,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = vine.textPrimary,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    WorkTaskDeepLink.UNAVAILABLE_MESSAGE,
+                    fontSize = 13.sp,
+                    color = vine.textSecondary,
+                )
+                Spacer(Modifier.height(16.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (onRetry != null) {
+                        OutlinedButton(onClick = onRetry) { Text("Try again") }
+                    }
+                    Button(onClick = onBack) { Text("Back to report") }
+                }
+            }
+        }
     }
 }
 

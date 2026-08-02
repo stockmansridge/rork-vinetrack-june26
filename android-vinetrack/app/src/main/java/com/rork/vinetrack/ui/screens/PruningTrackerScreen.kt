@@ -183,6 +183,16 @@ fun PruningTrackerScreen(
     }
     val selectedPaddock = paddocks.firstOrNull { it.id == selectedPaddockId }
 
+    // Work Tasks is an unrestricted operational tool, but the deep link still
+    // resolves entitlement through the shared catalogue rather than assuming it
+    // — an unentitled caller falls back to the existing Work Tasks navigation.
+    val canOpenWorkTasks = remember(state.currentRole) {
+        val canViewCosting = state.currentRole == "owner" || state.currentRole == "manager"
+        com.rork.vinetrack.ui.main.OperationalToolCatalog
+            .authorised(canViewCosting)
+            .any { it.id == "work_tasks" }
+    }
+
     if (showActivityReport && selectedPaddock == null && vineyardId != null) {
         BackHandler { showActivityReport = false }
         PruningActivityReportScreen(
@@ -203,6 +213,18 @@ fun PruningTrackerScreen(
             onDeleteWorkTask = { vm.deleteWorkTask(it) { } },
             onOpenWorkTasks = onOpenWorkTasks,
             modifier = modifier,
+            workTaskDetail = if (canOpenWorkTasks) {
+                { taskId, onClose ->
+                    WorkTaskDeepLinkScreen(
+                        vm = vm,
+                        state = state,
+                        taskId = taskId,
+                        onBack = onClose,
+                    )
+                }
+            } else {
+                null
+            },
         )
         return
     }

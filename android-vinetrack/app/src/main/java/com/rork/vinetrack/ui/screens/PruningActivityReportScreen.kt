@@ -45,12 +45,16 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -63,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.PruningReportNavigation
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PruningActivityBlockContext
 import com.rork.vinetrack.data.model.PruningActivityColumn
@@ -115,6 +120,14 @@ fun PruningActivityReportScreen(
     onDeleteWorkTask: (String) -> Unit,
     onOpenWorkTasks: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Per-task deep link. When supplied, "Open Work Task" renders the real
+     * Work Task detail screen for the linked `work_task_id` ON TOP of this
+     * report — the report stays composed underneath, so its scroll position,
+     * season, filters and sort are still exactly there on the way back.
+     * Null (caller not entitled to Work Tasks) falls back to [onOpenWorkTasks].
+     */
+    workTaskDetail: (@Composable (taskId: String, onClose: () -> Unit) -> Unit)? = null,
 ) {
     val vine = LocalVineColors.current
 
@@ -160,18 +173,19 @@ fun PruningActivityReportScreen(
             .sortedDescending()
     }
 
-    // Sort + season survive configuration change and process restore; ad-hoc
-    // filters intentionally do not.
-    var sortColumnKey by rememberSaveable { mutableStateOf<String?>(null) }
-    var sortAscending by rememberSaveable { mutableStateOf(false) }
-    var season by rememberSaveable { mutableStateOf(LocalDate.now().year) }
-    var search by rememberSaveable { mutableStateOf("") }
+    // Season, sort, search and the open record travel together so a deep link
+    // into a Work Task can never disturb them. They survive configuration
+    // change and process restore; ad-hoc filters intentionally do not.
+    var nav by rememberSaveable(stateSaver = PruningReportNavigationSaver) {
+        mutableStateOf(PruningReportNavigation(seasonYear = LocalDate.now().year))
+    }
     var showFilters by rememberSaveable { mutableStateOf(false) }
-    var selectedRowId by rememberSaveable { mutableStateOf<String?>(null) }
     var reversalTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     var filter by remember { mutableStateOf(PruningActivityFilter()) }
 
-    val sort = PruningActivitySort(PruningActivityColumn.fromKey(sortColumnKey), sortAscending)
+    val season = nav.seasonYear
+    val search = nav.search
+    val sort = PruningActivitySort(PruningActivityColumn.fromKey(nav.sortColumnKey), nav.sortAscending)
     val appliedFilter = filter.copy(seasonYear = season.takeIf { it > 0 }, search = search)
 
     val rows = remember(allRows, appliedFilter, sort) {
@@ -182,11 +196,13 @@ fun PruningActivityReportScreen(
         PruningActivityColumn.displayOrder.filter { canViewCosting || !it.isCosting }
     }
 
-    val selectedRow = rows.firstOrNull { it.id == selectedRowId }
-        ?: allRows.firstOrNull { it.id == selectedRowId }
+    val selectedRow = rows.firstOrNull { it.id == nav.selectedRowId }
+        ?: allRows.firstOrNull { it.id == nav.selectedRowId }
+
+    Box(modifier = modifier.fillMaxSize()) {
 
     Scaffold(
-        modifier = modifier,
+        modifier = Modifier.fillMaxSize(),
         containerColor = vine.appBackground,
         topBar = {
             TopAppBar(
@@ -210,7 +226,7 @@ fun PruningActivityReportScreen(
 
             OutlinedTextField(
                 value = search,
-                onValueChange = { search = it },
+                onValueChange = { nav = nav.withSearch(it) },
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = vine.textSecondary) },
                 placeholder = { Text("Worker, block, variety, row, task, notes", fontSize = 13.sp) },
@@ -233,13 +249,12 @@ fun PruningActivityReportScreen(
                 if (appliedFilter.hasRestrictions) {
                     TextButton(onClick = {
                         filter = PruningActivityFilter()
-                        search = ""
+                        nav = nav.withSearch("")
                     }) { Text("Clear filters", fontSize = 12.sp) }
                 }
                 if (sort.column != null) {
                     TextButton(onClick = {
-                        sortColumnKey = null
-                        sortAscending = false
+                        nav = nav.withSort(null, false)
                     }) { Text("Reset sort", fontSize = 12.sp) }
                 }
             }
@@ -255,13 +270,23 @@ fun PruningActivityReportScreen(
                     sort = sort,
                     onSort = { column ->
                         val next = sort.cycled(column)
-                        sortColumnKey = next.column?.key
-                        sortAscending = next.ascending
+                        nav = nav.withSort(next.column?.key, next.ascending)
                     },
-                    onOpen = { selectedRowId = it.id },
+                    onOpen = { nav = nav.openingRow(it.id) },
                 )
             }
         }
+    }
+
+    // Linked Work Task, rendered over the still-composed report.
+    val openTaskId = nav.openWorkTaskId
+    if (openTaskId != null && workTaskDetail != null) {
+        BackHandler { nav = nav.closingWorkTask() }
+        Surface(modifier = Modifier.fillMaxSize(), color = vine.appBackground) {
+            workTaskDetail(openTaskId) { nav = nav.closingWorkTask() }
+        }
+    }
+
     }
 
     if (showFilters) {
@@ -273,7 +298,7 @@ fun PruningActivityReportScreen(
             blocks = paddocks.sortedBy { it.name.lowercase() }.map { it.id to it.name },
             varieties = allRows.mapNotNull { it.variety }.distinct().sorted(),
             matchCount = rows.size,
-            onSeasonChange = { season = it },
+            onSeasonChange = { nav = nav.withSeason(it) },
             onFilterChange = { filter = it.copy(seasonYear = null, search = "") },
             onDismiss = { showFilters = false },
         )
@@ -284,17 +309,23 @@ fun PruningActivityReportScreen(
         PruningActivityDetailSheet(
             row = selectedRow,
             canViewCosting = canViewCosting,
-            onDismiss = { selectedRowId = null },
+            canDeepLinkWorkTask = workTaskDetail != null,
+            onDismiss = { nav = nav.closingRow() },
             onEdit = {
-                selectedRowId = null
+                nav = nav.closingRow()
                 entry?.let(onEditEntry)
             },
             onOpenWorkTask = {
-                selectedRowId = null
-                onOpenWorkTasks()
+                val taskId = selectedRow.workTaskId
+                if (workTaskDetail != null && taskId != null) {
+                    nav = nav.openingWorkTask(taskId)
+                } else {
+                    nav = nav.closingRow()
+                    onOpenWorkTasks()
+                }
             },
             onReverse = {
-                selectedRowId = null
+                nav = nav.closingRow()
                 if (entry != null) {
                     if (entry.workTaskId != null) reversalTargetId = entry.id else onReverseEntry(entry)
                 }
@@ -331,6 +362,34 @@ fun PruningActivityReportScreen(
         )
     }
 }
+
+/**
+ * Saves the report's navigation state across configuration change and process
+ * death, so a rotation while a linked Work Task is open still returns to the
+ * same season, sort and search.
+ */
+private val PruningReportNavigationSaver: Saver<PruningReportNavigation, Any> = listSaver(
+    save = { nav ->
+        listOf(
+            nav.seasonYear,
+            nav.sortColumnKey ?: "",
+            nav.sortAscending,
+            nav.search,
+            nav.selectedRowId ?: "",
+            nav.openWorkTaskId ?: "",
+        )
+    },
+    restore = { saved ->
+        PruningReportNavigation(
+            seasonYear = saved[0] as Int,
+            sortColumnKey = (saved[1] as String).takeIf { it.isNotEmpty() },
+            sortAscending = saved[2] as Boolean,
+            search = saved[3] as String,
+            selectedRowId = (saved[4] as String).takeIf { it.isNotEmpty() },
+            openWorkTaskId = (saved[5] as String).takeIf { it.isNotEmpty() },
+        )
+    },
+)
 
 // MARK: - Summary strip
 
@@ -558,6 +617,7 @@ private fun EmptyReportState(hasAnyRecords: Boolean) {
 private fun PruningActivityDetailSheet(
     row: PruningActivityRow,
     canViewCosting: Boolean,
+    canDeepLinkWorkTask: Boolean,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     onOpenWorkTask: () -> Unit,
@@ -622,10 +682,22 @@ private fun PruningActivityDetailSheet(
                 }
             }
             if (row.hasWorkTask) {
-                TextButton(onClick = onOpenWorkTask, modifier = Modifier.fillMaxWidth()) {
+                val openLabel = if (canDeepLinkWorkTask) "Open Work Task" else "Open Work Tasks"
+                TextButton(
+                    onClick = onOpenWorkTask,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics {
+                            contentDescription = if (canDeepLinkWorkTask) {
+                                "Open the linked Work Task \u2014 ${row.workTaskTitle ?: "Work Task"}"
+                            } else {
+                                "Open Work Tasks"
+                            }
+                        },
+                ) {
                     Icon(Icons.Filled.Link, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Open Work Tasks")
+                    Text(openLabel)
                 }
             }
             if (!row.isReversed) {
