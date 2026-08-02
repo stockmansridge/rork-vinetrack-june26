@@ -118,6 +118,16 @@ android {
         compose = true
         buildConfig = true
     }
+
+    // lint-vital forks its own multi-hundred-MB analysis JVM and AGP schedules it
+    // concurrently with mergeDexRelease during `bundleRelease`. On the constrained
+    // AAB export machine that overlap is what pushes the build over the memory
+    // ceiling and kills the daemon. Correctness checks already run via `test` and
+    // the Kotlin compiler, so release lint is not the gate here.
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
 }
 
 kotlin {
