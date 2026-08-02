@@ -10,12 +10,20 @@
 -- reproduce the exact live shape found by the sql/162 audit: 2026-dated
 -- work stored under season rows stamped 2027, with no live 2026 row.
 --
+-- IMPORTANT: every backfill call in this suite passes p_vineyard_id, so it
+-- only ever plans or corrects the two throw-away fixture vineyards. An
+-- unfiltered call also picks up the LIVE production mismatches (8 at the
+-- time of writing, per the sql/162 audit) and every count below would drift
+-- with the real data. T0 records the production baseline and T16 proves the
+-- suite never moved it.
+--
 -- Test map
+--   T0  Production baseline recorded (never touched by this suite)
 --   T1  Tooling exists: log table, function, security definer, grants
 --   T2  Non-admins and anonymous callers are rejected
---   T3  DRY RUN changes nothing and returns the full plan
+--   T3  DRY RUN changes nothing and returns the full plan (fixture vineyard 1)
 --   T4  A vineyard-filtered run corrects only that vineyard
---   T5  APPLY corrects every remaining entry; remaining_mismatches = 0
+--   T5  APPLY corrects every remaining fixture entry; remaining = 0
 --   T6  Entries land on the canonical deterministic id for year(entry_date)
 --   T7  The block's pruning setup is copied onto the new season row
 --   T8  An entry's quarters travel with it
@@ -27,7 +35,8 @@
 --   T13 A correctly-assigned entry is left untouched
 --   T14 Reversal log and audit rows are written
 --   T15 Re-running is a no-op
---   T16 All fixtures discarded by the final ROLLBACK
+--   T16 Production mismatches unchanged by the whole suite
+--   T17 All fixtures discarded by the final ROLLBACK
 --
 -- Expected final output:
 --   NOTICE: SQL 163 pruning season backfill tests: ALL PASSED
@@ -79,7 +88,16 @@ declare
   sid      uuid;
   num      numeric;
   ok       boolean;
+  v_base   integer;
 begin
+  -- ---- T0. Production baseline (recorded before any fixture exists) ------
+  select count(*) into v_base
+  from public.pruning_entries e
+  join public.pruning_seasons s on s.id = e.pruning_season_id
+  where e.deleted_at is null
+    and s.season_year is distinct from extract(year from e.entry_date)::integer;
+  raise notice 'T0 baseline: % live production mismatch(es) — this suite never touches them', v_base;
+
   -- ---- fixtures ----------------------------------------------------------
   insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at)
   select gen_random_uuid(), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
@@ -200,19 +218,25 @@ begin
     json_build_object('sub', u_admin::text, 'role', 'authenticated')::text, true);
 
   -- ---- T3. Dry run changes nothing ---------------------------------------
-  r := public.backfill_pruning_season_assignment(true);
-  assert (r->>'dry_run')::boolean, 'T3 the default must be a dry run';
-  assert (r->>'entries_corrected')::integer = 5,
-    'T3 the plan must list all 5 live mismatches, got ' || (r->>'entries_corrected');
-  assert (r->>'remaining_mismatches')::integer = 5,
+  -- Scoped to fixture vineyard 1: e1, e2, e3 and e_bad. (e4 is already
+  -- correct, e5 is reversed, e_f belongs to vineyard 2.)
+  r := public.backfill_pruning_season_assignment(true, v1);
+  assert (r->>'dry_run')::boolean, 'T3 an explicit dry run must report dry_run';
+  assert (r->>'entries_corrected')::integer = 4,
+    'T3 the plan must list all 4 live vineyard-1 mismatches, got ' || (r->>'entries_corrected');
+  assert (r->>'remaining_mismatches')::integer = 4,
     'T3 a dry run must not fix anything, remaining ' || (r->>'remaining_mismatches');
+  assert jsonb_array_length(r->'plan') = 4, 'T3 the plan array must be returned for review';
+  -- The no-argument form must also be a dry run (read-only, whole database).
+  assert (public.backfill_pruning_season_assignment()->>'dry_run')::boolean,
+    'T3 the default must be a dry run';
   select pruning_season_id into sid from public.pruning_entries where id = e1;
   assert sid = s_cf27, 'T3 no entry may move during a dry run';
   select count(*) into n from public.pruning_seasons where id in (c_cf26, c_f26);
   assert n = 0, 'T3 no season row may be created during a dry run';
-  select count(*) into n from public.pruning_season_backfill_log;
+  select count(*) into n from public.pruning_season_backfill_log
+  where vineyard_id in (v1, v2);
   assert n = 0, 'T3 a dry run must not write to the reversal log';
-  assert jsonb_array_length(r->'plan') = 5, 'T3 the plan array must be returned for review';
   raise notice 'T3 passed: dry run is read-only and returns the full plan';
 
   -- ---- T4. Vineyard-filtered run -----------------------------------------
@@ -226,7 +250,7 @@ begin
   raise notice 'T4 passed: a vineyard-filtered run corrects only that vineyard';
 
   -- ---- T5. Apply ----------------------------------------------------------
-  r := public.backfill_pruning_season_assignment(false);
+  r := public.backfill_pruning_season_assignment(false, v1);
   assert (r->>'entries_corrected')::integer = 4,
     'T5 the remaining 4 entries must be corrected, got ' || (r->>'entries_corrected');
   assert (r->>'remaining_mismatches')::integer = 0,
@@ -331,7 +355,8 @@ begin
   raise notice 'T13 passed: correctly-assigned entries left alone';
 
   -- ---- T14. Reversal log and audit history ---------------------------------
-  select count(*) into n from public.pruning_season_backfill_log;
+  select count(*) into n from public.pruning_season_backfill_log
+  where vineyard_id in (v1, v2);
   assert n = 6, 'T14 one log row per moved entry (5 live + 1 reversed), got ' || n;
   select previous_season_id = s_cf27 and new_season_id = c_cf26
      and previous_season_year = 2027 and new_season_year = 2026
@@ -339,7 +364,8 @@ begin
   from public.pruning_season_backfill_log where pruning_entry_id = e1;
   assert ok, 'T14 the log must record the exact before/after season for a revert';
   select count(*) into n from public.pruning_entry_audit
-  where event_type = 'pruning_entry_season_corrected';
+  where event_type = 'pruning_entry_season_corrected'
+    and vineyard_id in (v1, v2);
   assert n = 5, 'T14 one audit row per corrected live entry, got ' || n;
   select detail->>'reason' = 'sql_163_reviewed_backfill'
      and (detail->>'previous_season_year')::integer = 2027
@@ -352,20 +378,36 @@ begin
   raise notice 'T14 passed: reversal log and audit history written';
 
   -- ---- T15. Re-running is a no-op -------------------------------------------
-  r := public.backfill_pruning_season_assignment(false);
+  r := public.backfill_pruning_season_assignment(false, v1);
   assert (r->>'entries_corrected')::integer = 0,
     'T15 a second run must find nothing, got ' || (r->>'entries_corrected');
   assert (r->>'remaining_mismatches')::integer = 0, 'T15 still zero mismatches';
-  select count(*) into n from public.pruning_season_backfill_log;
+  select count(*) into n from public.pruning_season_backfill_log
+  where vineyard_id in (v1, v2);
   assert n = 6, 'T15 a no-op run must not add log rows, got ' || n;
   raise notice 'T15 passed: the backfill is idempotent';
+
+  -- ---- T16. Live production data untouched ---------------------------------
+  select count(*) into n
+  from public.pruning_entries e
+  join public.pruning_seasons s on s.id = e.pruning_season_id
+  where e.deleted_at is null
+    and e.vineyard_id not in (v1, v2)
+    and s.season_year is distinct from extract(year from e.entry_date)::integer;
+  assert n = v_base,
+    'T16 production mismatches must be unchanged: baseline ' || v_base || ', now ' || n;
+  select count(*) into n from public.pruning_season_backfill_log
+  where vineyard_id not in (v1, v2);
+  assert n = 0, 'T16 no production entry may be logged by this suite, got ' || n;
+  raise notice 'T16 passed: the % production mismatch(es) are untouched by the suite', v_base;
 
   raise notice 'SQL 163 pruning season backfill tests: ALL PASSED';
 end$$;
 
 rollback;
 
--- T16. Post-rollback proof: nothing survived.
+-- T17. Post-rollback proof: nothing survived. backfill_log_rows is 0 until
+-- the real correction is run for the first time.
 select
   (select count(*) from auth.users where email like 't163-%@test.local')  as leftover_users,
   (select count(*) from public.vineyards where name like 'T163 %')        as leftover_vineyards,
