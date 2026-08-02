@@ -63,12 +63,19 @@ fun estimatedCameraPosition(
  * `newLatLngBounds` throws if the map has no measured size. If the bounds
  * update is still rejected, falls back to centring on the bounds centre so the
  * camera never stays at the world-default position.
+ *
+ * [topInsetPx] / [bottomInsetPx] describe chrome drawn OVER the map (a mode
+ * selector, a control bar, a row sheet). The fit reserves room for the larger
+ * of the two and then shifts the camera so the content sits centred in the
+ * part of the map the user can actually see.
  */
 suspend fun CameraPositionState.fitToContent(
     points: List<LatLng>,
     paddingPx: Int = 120,
     singlePointZoom: Float = 17f,
     animate: Boolean = false,
+    topInsetPx: Int = 0,
+    bottomInsetPx: Int = 0,
 ) {
     val valid = points.validMapPoints()
     if (valid.isEmpty()) return
@@ -84,8 +91,25 @@ suspend fun CameraPositionState.fitToContent(
         }
     }
 
+    val top = topInsetPx.coerceAtLeast(0)
+    val bottom = bottomInsetPx.coerceAtLeast(0)
+    val obstructionPadding = paddingPx + maxOf(top, bottom)
+
+    /**
+     * Positive `dy` moves the camera down, which moves the content UP the
+     * screen — exactly what is needed when the bottom sheet is taller than
+     * the top chrome.
+     */
+    suspend fun recentreBetweenInsets() {
+        val shift = (bottom - top) / 2
+        if (shift == 0) return
+        apply(CameraUpdateFactory.scrollBy(0f, shift.toFloat()))
+    }
+
     if (valid.size == 1) {
-        apply(CameraUpdateFactory.newLatLngZoom(valid.first(), singlePointZoom))
+        if (apply(CameraUpdateFactory.newLatLngZoom(valid.first(), singlePointZoom))) {
+            recentreBetweenInsets()
+        }
         return
     }
 
@@ -94,7 +118,9 @@ suspend fun CameraPositionState.fitToContent(
     } catch (_: Exception) {
         return
     }
-    if (!apply(CameraUpdateFactory.newLatLngBounds(bounds, paddingPx))) {
+    if (apply(CameraUpdateFactory.newLatLngBounds(bounds, obstructionPadding))) {
+        recentreBetweenInsets()
+    } else {
         // Map not measured yet — at least centre on the content.
         apply(CameraUpdateFactory.newLatLngZoom(bounds.center, singlePointZoom))
     }
