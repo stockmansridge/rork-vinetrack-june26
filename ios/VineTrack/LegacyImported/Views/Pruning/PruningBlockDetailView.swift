@@ -1241,13 +1241,24 @@ private struct PruningEntrySheet: View {
             dismiss()
             return
         }
-        // Make sure the season row exists before the entry references it —
-        // recording work on an unconfigured block auto-creates the season.
+        // CANONICAL SEASON (sql/161): an entry belongs to the season of the
+        // year the work was DONE — the date on this form, never today's date
+        // and never the highest season row the block happens to own.
+        // Recording work on an unconfigured season auto-creates that season.
         let season: PruningBlockSetup
-        if let existing = pruningStore.setup(for: paddock.id) {
+        if let existing = pruningStore.setup(for: paddock.id, on: date) {
             season = existing
         } else {
-            season = PruningBlockSetup(vineyardId: vineyardId, paddockId: paddock.id)
+            let template = pruningStore.setup(for: paddock.id)
+            season = PruningBlockSetup(
+                vineyardId: vineyardId,
+                paddockId: paddock.id,
+                seasonYear: PruningSeasonId.seasonYear(for: date),
+                method: template?.method ?? .spur,
+                crew: template?.crew ?? "",
+                workingDays: template?.workingDays ?? [1, 2, 3, 4, 5],
+                rowCountOverride: template?.rowCountOverride
+            )
             pruningStore.upsertSetup(season)
         }
         // The Work Task is created first with a client-generated id; the entry
@@ -1288,6 +1299,17 @@ private struct PruningEntrySheet: View {
     private func saveEdit(_ original: PruningEntry) {
         var updated = original
         updated.date = date
+        // A date edit that crosses a pruning year re-points the entry at that
+        // year's season — `update_pruning_entry` (sql/161) does exactly the
+        // same server-side and returns the canonical id, which we adopt.
+        if PruningSeasonId.seasonYear(for: date) != PruningSeasonId.seasonYear(for: original.date) {
+            updated.seasonId = pruningStore.setup(for: paddock.id, on: date)?.id
+                ?? PruningSeasonId.make(
+                    vineyardId: original.vineyardId,
+                    paddockId: original.paddockId,
+                    date: date
+                )
+        }
         updated.segments = segments
         updated.worker = worker.trimmingCharacters(in: .whitespaces)
         updated.startTime = includeTimes ? startTime : nil

@@ -306,7 +306,12 @@ nonisolated struct RecordPruningEntryParams: Encodable, Sendable {
         self.vineyardId = entry.vineyardId
         self.seasonId = entry.seasonId
         self.paddockId = entry.paddockId
-        self.seasonYear = PruningSeasonId.currentSeasonYear
+        // CANONICAL (sql/161): the pruning season year is the year of the WORK,
+        // taken from the entry date. It used to be the DEVICE's calendar year
+        // at SYNC time, which filed backdated entries — and every queued entry
+        // replayed after New Year — under the wrong season. The server now
+        // re-derives this; it is sent for diagnostics and older-server support.
+        self.seasonYear = PruningSeasonId.seasonYear(for: entry.date)
         self.entryDate = PruningSyncDate.ymd(from: entry.date)
         self.worker = entry.worker
         self.labourHours = entry.labourHours
@@ -320,6 +325,39 @@ nonisolated struct RecordPruningEntryParams: Encodable, Sendable {
         self.segments = entry.segments.map {
             Segment(row: $0.row, segment: $0.quarter, rowId: $0.rowId, label: "\($0.row)")
         }
+    }
+}
+
+/// Result of `record_pruning_entry` (sql/161). The server resolves the
+/// canonical season from the entry date and returns it, so the client adopts
+/// the server's row instead of keeping its own guess.
+nonisolated struct RecordPruningEntryResult: Decodable, Sendable {
+    let entryId: UUID?
+    let seasonId: UUID?
+    let seasonYear: Int?
+    let seasonYearRequested: Int?
+    /// True when the server attached the entry to a season other than the one
+    /// the client asked for — the wrong-year defect this contract closes.
+    let seasonCorrected: Bool?
+    /// True when an ALREADY-STORED entry sits under a non-canonical season.
+    /// The server never moves historical rows silently — it reports them.
+    let seasonMismatch: Bool?
+    let vintageYear: Int?
+    let requested: Int?
+    let attributed: Int?
+    let deleted: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case entryId = "entry_id"
+        case seasonId = "season_id"
+        case seasonYear = "season_year"
+        case seasonYearRequested = "season_year_requested"
+        case seasonCorrected = "season_corrected"
+        case seasonMismatch = "season_mismatch"
+        case vintageYear = "vintage_year"
+        case requested
+        case attributed
+        case deleted
     }
 }
 

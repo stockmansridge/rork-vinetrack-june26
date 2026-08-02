@@ -8,7 +8,10 @@ protocol PruningSyncRepositoryProtocol: Sendable {
     /// source of truth for progress and re-attribution must see everything.
     func fetchSegments(vineyardId: UUID) async throws -> [BackendPruningSegment]
     func upsertSeasons(_ items: [BackendPruningSeasonUpsert]) async throws
-    func recordEntry(_ params: RecordPruningEntryParams) async throws
+    /// Records (or idempotently replays) an entry through `record_pruning_entry`.
+    /// The result carries the CANONICAL season the server resolved from the
+    /// entry date (sql/161) — callers must adopt it.
+    func recordEntry(_ params: RecordPruningEntryParams) async throws -> RecordPruningEntryResult
     /// Transaction-safe edit through `update_pruning_entry` (sql/120) — the
     /// ONLY way an existing entry, its quarters and totals change.
     func updateEntry(_ params: UpdatePruningEntryParams) async throws -> UpdatePruningEntryResult
@@ -69,9 +72,12 @@ final class SupabasePruningSyncRepository: PruningSyncRepositoryProtocol {
         try await provider.client.from("pruning_seasons").upsert(items, onConflict: "id").execute()
     }
 
-    func recordEntry(_ params: RecordPruningEntryParams) async throws {
+    func recordEntry(_ params: RecordPruningEntryParams) async throws -> RecordPruningEntryResult {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        try await provider.client.rpc("record_pruning_entry", params: params).execute()
+        return try await provider.client
+            .rpc("record_pruning_entry", params: params)
+            .execute()
+            .value
     }
 
     func updateEntry(_ params: UpdatePruningEntryParams) async throws -> UpdatePruningEntryResult {

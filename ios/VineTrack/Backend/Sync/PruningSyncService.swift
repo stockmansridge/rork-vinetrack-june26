@@ -335,7 +335,10 @@ final class PruningSyncService {
                 }
                 guard entry.vineyardId == vineyardId else { continue }
                 do {
-                    try await repository.recordEntry(RecordPruningEntryParams(from: entry, clientUpdatedAt: ts))
+                    let result = try await repository.recordEntry(
+                        RecordPruningEntryParams(from: entry, clientUpdatedAt: ts)
+                    )
+                    adoptCanonicalSeason(for: entry, result: result)
                     entryMetadata.clearDirty([id])
                 } catch {
                     print("[PruningSync] record_pruning_entry failed for entry \(id): \(error)")
@@ -356,6 +359,22 @@ final class PruningSyncService {
             }
         }
         if let firstError { throw firstError }
+    }
+
+    /// Adopts the season `record_pruning_entry` resolved from the entry date
+    /// (sql/161). Server resolution is authoritative: if this device guessed a
+    /// different season row — the cross-platform 2026-vs-2027 defect — the
+    /// local cache converges silently instead of drifting further.
+    private func adoptCanonicalSeason(for entry: PruningEntry, result: RecordPruningEntryResult) {
+        guard let seasonId = result.seasonId else { return }
+        if result.seasonMismatch == true {
+            // A historical row stored under a non-canonical season. Never moved
+            // silently — reported for the reviewed data correction (sql/162).
+            print("[PruningSync] entry \(entry.id) is stored under a non-canonical season \(seasonId) — reported, not moved")
+        } else if seasonId != entry.seasonId {
+            print("[PruningSync] entry \(entry.id) adopted canonical season \(seasonId) (\(result.seasonYear.map(String.init) ?? "?"))")
+        }
+        pruningStore.adoptServerSeason(entryId: entry.id, seasonId: seasonId)
     }
 
     /// Replays queued `update_pruning_entry` pushes. The RPC is idempotent
@@ -455,7 +474,11 @@ final class PruningSyncService {
             let missing = local.filter { !remoteIds.contains($0.id) && entryMetadata.pendingUpserts[$0.id] == nil }
             let now = Date()
             for entry in missing {
-                try? await repository.recordEntry(RecordPruningEntryParams(from: entry, clientUpdatedAt: now))
+                if let result = try? await repository.recordEntry(
+                    RecordPruningEntryParams(from: entry, clientUpdatedAt: now)
+                ) {
+                    adoptCanonicalSeason(for: entry, result: result)
+                }
             }
         }
 

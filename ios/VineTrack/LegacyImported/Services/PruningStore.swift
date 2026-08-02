@@ -40,10 +40,33 @@ final class PruningStore {
 
     // MARK: Seasons (block setups)
 
+    /// The block's setup for TODAY's pruning season (sql/161 canonical rule).
+    /// Falls back to the most recent PAST season when the current year has no
+    /// row yet, and only then to a future-dated row — a stray season created
+    /// under next year (e.g. a portal row keyed by the vintage) must never
+    /// hijack the block the way `max(seasonYear)` used to.
     func setup(for paddockId: UUID) -> PruningBlockSetup? {
-        setups
-            .filter { $0.paddockId == paddockId }
-            .max { $0.seasonYear < $1.seasonYear }
+        setup(for: paddockId, seasonYear: PruningSeasonId.currentSeasonYear)
+    }
+
+    /// The block's setup for a specific pruning season year, with the same
+    /// deterministic fallback order. Shared with Android's
+    /// `PruningSeasonSelection.setupFor`.
+    func setup(for paddockId: UUID, seasonYear: Int) -> PruningBlockSetup? {
+        let blockSetups = setups.filter { $0.paddockId == paddockId }
+        if let exact = blockSetups.first(where: { $0.seasonYear == seasonYear }) { return exact }
+        if let previous = blockSetups
+            .filter({ $0.seasonYear < seasonYear })
+            .max(by: { $0.seasonYear < $1.seasonYear }) {
+            return previous
+        }
+        return blockSetups.min(by: { $0.seasonYear < $1.seasonYear })
+    }
+
+    /// The season row a record dated `date` belongs to — the ONLY selector the
+    /// record path may use.
+    func setup(for paddockId: UUID, on date: Date) -> PruningBlockSetup? {
+        setups.first { $0.paddockId == paddockId && $0.seasonYear == PruningSeasonId.seasonYear(for: date) }
     }
 
     func upsertSetup(_ setup: PruningBlockSetup) {
@@ -112,6 +135,18 @@ final class PruningStore {
     }
 
     // MARK: Remote applies (no hooks)
+
+    /// Adopts the canonical season the SERVER attached an entry to (sql/161
+    /// returns `season_id` from every `record_pruning_entry` /
+    /// `update_pruning_entry` call). Server resolution is authoritative, so a
+    /// client that guessed a different season row converges silently — no
+    /// hook fires, this is not a user edit and must not re-queue a push.
+    func adoptServerSeason(entryId: UUID, seasonId: UUID) {
+        guard let index = entries.firstIndex(where: { $0.id == entryId }),
+              entries[index].seasonId != seasonId else { return }
+        entries[index].seasonId = seasonId
+        persistEntries()
+    }
 
     func applyRemoteSeasonUpsert(_ setup: PruningBlockSetup) {
         applySeasonUpsert(setup)

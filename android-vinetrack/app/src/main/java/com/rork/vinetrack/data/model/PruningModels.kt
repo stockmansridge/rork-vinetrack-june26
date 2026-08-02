@@ -24,7 +24,62 @@ object PruningSeasonIds {
         return UUID.nameUUIDFromBytes(name.toByteArray(Charsets.UTF_8)).toString()
     }
 
+    /**
+     * CANONICAL RULE (shared with iOS and enforced by sql/161): the pruning
+     * season year is the CALENDAR YEAR IN WHICH THE WINTER PRUNING HAPPENED —
+     * the year of the entry's own date, never the vintage, and never the
+     * device clock at sync time. Work on 2 Aug 2026 → season 2026
+     * (vintage 2027).
+     */
+    fun seasonYearFor(date: LocalDate): Int = date.year
+
+    /** Same rule for an ISO `yyyy-MM-dd` entry date; falls back to today. */
+    fun seasonYearFor(isoDate: String): Int =
+        runCatching { LocalDate.parse(isoDate).year }.getOrDefault(LocalDate.now().year)
+
+    /** Deterministic id of the season that OWNS an ISO-dated record. */
+    fun makeForDate(vineyardId: String, paddockId: String, isoDate: String): String =
+        make(vineyardId, paddockId, seasonYearFor(isoDate))
+
+    /** The season year a NEW block setup defaults to — today's pruning year. */
     fun currentSeasonYear(): Int = LocalDate.now().year
+}
+
+/**
+ * Canonical season selection — the Kotlin twin of the iOS
+ * `PruningStore.setup(for:)` family. Both platforms MUST pick the same season
+ * row for the same block, otherwise entries recorded on the same day split
+ * across season years (the confirmed 2026-vs-2027 defect).
+ */
+object PruningSeasonSelection {
+
+    /**
+     * The block's setup for [seasonYear], falling back to the most recent
+     * PAST season and only then to the earliest other row. A stray next-year
+     * season (e.g. a portal row keyed by the vintage) must never hijack the
+     * block — which both `firstOrNull` (arbitrary list order, the old Android
+     * rule) and `maxByOrNull` (always the highest year) allowed.
+     */
+    fun setupFor(
+        setups: List<PruningBlockSetup>,
+        paddockId: String,
+        seasonYear: Int = PruningSeasonIds.currentSeasonYear(),
+    ): PruningBlockSetup? {
+        val blockSetups = setups.filter { it.paddockId == paddockId }
+        blockSetups.firstOrNull { it.seasonYear == seasonYear }?.let { return it }
+        blockSetups.filter { it.seasonYear < seasonYear }.maxByOrNull { it.seasonYear }?.let { return it }
+        return blockSetups.minByOrNull { it.seasonYear }
+    }
+
+    /** The season row a record dated [isoDate] belongs to — exact year only. */
+    fun setupOnDate(
+        setups: List<PruningBlockSetup>,
+        paddockId: String,
+        isoDate: String,
+    ): PruningBlockSetup? {
+        val year = PruningSeasonIds.seasonYearFor(isoDate)
+        return setups.firstOrNull { it.paddockId == paddockId && it.seasonYear == year }
+    }
 }
 
 /**

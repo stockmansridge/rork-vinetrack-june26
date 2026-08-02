@@ -10,6 +10,7 @@ import com.rork.vinetrack.data.model.PruningSegment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import android.util.Log
 import kotlinx.serialization.json.Json
 import java.time.Instant
 
@@ -143,7 +144,7 @@ class PruningSyncCoordinator(
             // canonical season server-side so the replay now lands.
             replayPass(PendingEntityType.PRUNING_ENTRY, PendingOpType.CREATE, conflictIsSuccess = false) { write ->
                 val entry = json.decodeFromString(PruningEntry.serializer(), write.payloadJson)
-                repo.recordEntry(entry)
+                adoptCanonicalSeason(entry, repo.recordEntry(entry))
             }
             // Edits replay AFTER creates — an edit of an entry whose create
             // hasn't landed yet returns entry_not_found and stays queued.
@@ -157,6 +158,27 @@ class PruningSyncCoordinator(
         } finally {
             replayLock.unlock()
         }
+    }
+
+    /**
+     * Adopts the season `record_pruning_entry` resolved from the entry date
+     * (sql/161). Server resolution is authoritative: if this device guessed a
+     * different season row — the cross-platform 2026-vs-2027 defect — the
+     * local cache converges silently. Writing through [PruningStore.updateEntry]
+     * directly (not the queueing [editEntry]) keeps this out of the outbox:
+     * adopting the server's own answer is not a user edit.
+     */
+    private fun adoptCanonicalSeason(entry: PruningEntry, result: PruningSyncRepository.RecordEntryResult) {
+        val seasonId = result.seasonId ?: return
+        if (result.seasonMismatch == true) {
+            // A historical row stored under a non-canonical season. Never moved
+            // silently — reported for the reviewed data correction (sql/162).
+            Log.i(TAG, "entry ${entry.id} is stored under a non-canonical season $seasonId — reported, not moved")
+            return
+        }
+        if (seasonId == entry.seasonId) return
+        Log.i(TAG, "entry ${entry.id} adopted canonical season $seasonId (${result.seasonYear})")
+        store.updateEntry(entry.vineyardId, entry.copy(seasonId = seasonId))
     }
 
     /**
@@ -419,5 +441,6 @@ class PruningSyncCoordinator(
 
     private companion object {
         const val MAX_ATTEMPTS = 8
+        const val TAG = "PruningSync"
     }
 }

@@ -21,8 +21,23 @@ nonisolated enum PruningSeasonId {
         ))
     }
 
+    /// CANONICAL RULE (shared with Android and enforced by sql/161):
+    /// the pruning season year is the CALENDAR YEAR IN WHICH THE WINTER
+    /// PRUNING HAPPENED — the year of the entry's own date, never the
+    /// vintage, and never the device's clock at sync time.
+    /// Work on 2 Aug 2026 → season 2026 (vintage 2027).
+    static func seasonYear(for date: Date, calendar: Calendar = .current) -> Int {
+        calendar.component(.year, from: date)
+    }
+
+    /// Deterministic season id for the season that OWNS `date`.
+    static func make(vineyardId: UUID, paddockId: UUID, date: Date, calendar: Calendar = .current) -> UUID {
+        make(vineyardId: vineyardId, paddockId: paddockId, seasonYear: seasonYear(for: date, calendar: calendar))
+    }
+
+    /// The season year a NEW block setup defaults to — today's pruning year.
     static var currentSeasonYear: Int {
-        Calendar.current.component(.year, from: Date())
+        seasonYear(for: Date())
     }
 }
 
@@ -206,7 +221,10 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
         self.id = id
         self.vineyardId = vineyardId
         self.paddockId = paddockId
-        self.seasonId = seasonId ?? PruningSeasonId.make(vineyardId: vineyardId, paddockId: paddockId, seasonYear: PruningSeasonId.currentSeasonYear)
+        // The season ALWAYS follows the entry's own date (sql/161), so a
+        // backdated record, an offline queue replayed after New Year, or a
+        // device with a skewed clock can never file work under another year.
+        self.seasonId = seasonId ?? PruningSeasonId.make(vineyardId: vineyardId, paddockId: paddockId, date: date)
         self.estimatedVines = estimatedVines
         self.date = date
         self.segments = segments

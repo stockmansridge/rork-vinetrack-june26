@@ -93,6 +93,7 @@ import com.rork.vinetrack.data.model.PruningVineyardForecast
 import com.rork.vinetrack.data.model.PruningRowRef
 import com.rork.vinetrack.data.VintageResolver
 import com.rork.vinetrack.data.model.PruningSeasonIds
+import com.rork.vinetrack.data.model.PruningSeasonSelection
 import com.rork.vinetrack.data.model.PruningSegment
 import com.rork.vinetrack.data.model.PruningStatus
 import com.rork.vinetrack.data.model.WorkTask
@@ -171,7 +172,7 @@ fun PruningTrackerScreen(
             paddocks.sortedWith(
                 compareBy(
                     { paddock ->
-                        val setup = setups.firstOrNull { it.paddockId == paddock.id }
+                        val setup = PruningSeasonSelection.setupFor(setups, paddock.id)
                         PruningCalculator.rowRefs(paddock, setup).minOfOrNull { it.number } ?: Int.MAX_VALUE
                     },
                     { it.name.lowercase() },
@@ -234,7 +235,7 @@ fun PruningTrackerScreen(
         PruningBlockDetail(
             paddock = selectedPaddock,
             vineyardId = vineyardId,
-            setup = setups.firstOrNull { it.paddockId == selectedPaddock.id },
+            setup = PruningSeasonSelection.setupFor(setups, selectedPaddock.id),
             blockEntries = entries.filter { it.paddockId == selectedPaddock.id }.sortedByDescending { it.date },
             initialEditEntryId = pendingEditEntryId,
             onBack = {
@@ -243,14 +244,22 @@ fun PruningTrackerScreen(
             },
             onUpsertSetup = { setups = vm.upsertPruningSetup(vineyardId, it) },
             onAddEntry = { entry, taskDraft ->
-                // Ensure the season row exists before the entry references it —
-                // recording work on an unconfigured block auto-creates the season.
-                var setup = setups.firstOrNull { it.paddockId == entry.paddockId }
+                // CANONICAL SEASON (sql/161): an entry belongs to the season of
+                // the year the work was DONE — the date on the record, never
+                // today's date and never an arbitrary row for the block.
+                // Recording work on an unconfigured season auto-creates it.
+                var setup = PruningSeasonSelection.setupOnDate(setups, entry.paddockId, entry.date)
                 if (setup == null) {
+                    val template = PruningSeasonSelection.setupFor(setups, entry.paddockId)
                     setup = PruningBlockSetup(
-                        id = PruningSeasonIds.make(vineyardId, entry.paddockId, PruningSeasonIds.currentSeasonYear()),
+                        id = PruningSeasonIds.makeForDate(vineyardId, entry.paddockId, entry.date),
                         vineyardId = vineyardId,
                         paddockId = entry.paddockId,
+                        seasonYear = PruningSeasonIds.seasonYearFor(entry.date),
+                        method = template?.method ?: "spur",
+                        crew = template?.crew.orEmpty(),
+                        workingDays = template?.workingDays ?: listOf(1, 2, 3, 4, 5),
+                        rowCountOverride = template?.rowCountOverride,
                     )
                     setups = vm.upsertPruningSetup(vineyardId, setup)
                 }
@@ -464,7 +473,7 @@ fun PruningTrackerScreen(
                 }
                 items(sortedPaddocks.size, key = { sortedPaddocks[it].id }) { index ->
                     val paddock = sortedPaddocks[index]
-                    val setup = setups.firstOrNull { it.paddockId == paddock.id }
+                    val setup = PruningSeasonSelection.setupFor(setups, paddock.id)
                     val blockEntries = entries.filter { it.paddockId == paddock.id }
                     val metrics = PruningCalculator.metrics(paddock, setup, blockEntries)
                     PruningBlockCardItem(

@@ -3,6 +3,7 @@ package com.rork.vinetrack.data
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningEntry
+import com.rork.vinetrack.data.model.PruningSeasonIds
 import com.rork.vinetrack.data.model.PruningSegment
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
@@ -224,6 +225,27 @@ class PruningSyncRepository(private val session: SessionStore) {
         val reason: String? = null,
     )
 
+    /**
+     * Structured response of `record_pruning_entry` (sql/161). The server
+     * resolves the CANONICAL season from the entry date and returns it, so the
+     * client adopts the server's row instead of keeping its own guess.
+     */
+    @Serializable
+    data class RecordEntryResult(
+        @SerialName("entry_id") val entryId: String? = null,
+        @SerialName("season_id") val seasonId: String? = null,
+        @SerialName("season_year") val seasonYear: Int? = null,
+        @SerialName("season_year_requested") val seasonYearRequested: Int? = null,
+        /** True when the server used a season other than the requested one. */
+        @SerialName("season_corrected") val seasonCorrected: Boolean? = null,
+        /** True when an ALREADY-STORED entry sits under a non-canonical season. */
+        @SerialName("season_mismatch") val seasonMismatch: Boolean? = null,
+        @SerialName("vintage_year") val vintageYear: Int? = null,
+        val requested: Int? = null,
+        val attributed: Int? = null,
+        val deleted: Boolean? = null,
+    )
+
     /** Structured response of `update_pruning_entry` (sql/120). */
     @Serializable
     data class UpdateEntryResult(
@@ -329,12 +351,18 @@ class PruningSyncRepository(private val session: SessionStore) {
         requireSuccess(response)
     }
 
-    /** Idempotent — safe to replay from the offline queue. */
-    suspend fun recordEntry(entry: PruningEntry) = withContext(Dispatchers.IO) {
+    /**
+     * Idempotent — safe to replay from the offline queue. Returns the
+     * canonical season the server resolved from the entry date (sql/161);
+     * a server older than 161 simply omits the fields.
+     */
+    suspend fun recordEntry(entry: PruningEntry): RecordEntryResult = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val seasonYear = runCatching { LocalDate.parse(entry.date).year }
-            .getOrDefault(LocalDate.now().year)
+        // CANONICAL (sql/161): the season year is the year of the WORK, taken
+        // from the entry date. The server re-derives it; this is sent for
+        // diagnostics and for servers older than SQL 161.
+        val seasonYear = PruningSeasonIds.seasonYearFor(entry.date)
         val args = RecordEntryArgs(
             id = entry.id,
             vineyardId = entry.vineyardId,
@@ -361,7 +389,14 @@ class PruningSyncRepository(private val session: SessionStore) {
             // Raw pre-encoded body: all 16 keys always present, nulls explicit.
             setBody(rpcJson.encodeToString(RecordEntryArgs.serializer(), args))
         }
-        requireSuccess(response)
+        when {
+            response.status.isSuccess() ->
+                runCatching {
+                    resultJson.decodeFromString(RecordEntryResult.serializer(), response.bodyAsText())
+                }.getOrDefault(RecordEntryResult(entryId = entry.id))
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
     }
 
     /**
