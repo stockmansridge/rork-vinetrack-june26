@@ -175,6 +175,57 @@ data class PruningBlockMetrics(
     val timeElapsedFraction: Double?,
 )
 
+/** Outcome of the vineyard-wide completion forecast (mirrors iOS). */
+sealed interface PruningForecastOutcome {
+    /**
+     * Not enough valid data to forecast (no entries, no configured vines,
+     * zero average). NEVER render an arbitrary date for this case.
+     */
+    data object NotEnoughData : PruningForecastOutcome
+
+    /** Pruning is finished — [date] is the LAST valid pruning activity. */
+    data class Completed(val date: LocalDate) : PruningForecastOutcome
+
+    /** today + estimated days remaining. */
+    data class Projected(val date: LocalDate) : PruningForecastOutcome
+}
+
+/**
+ * Vineyard-wide completion forecast.
+ *
+ * SHARED CONTRACT (identical on iOS, Android and any portal implementation):
+ * * elapsed days = calendar days from the FIRST valid pruning entry through
+ *   today, INCLUSIVE — days with no recorded pruning still count,
+ * * average vines/day = total exact vines pruned ÷ elapsed days,
+ * * remaining = every configured block's vines − vines pruned (blocks with
+ *   zero progress are part of the workload),
+ * * days remaining = ceil(remaining ÷ average) — rounded UP so the forecast
+ *   never understates the finish date.
+ */
+data class PruningVineyardForecast(
+    val firstEntryDate: LocalDate?,
+    val lastEntryDate: LocalDate?,
+    /** Inclusive calendar days from [firstEntryDate] through `asOf` (0 when unknown). */
+    val elapsedDays: Int,
+    val averageVinesPerElapsedDay: Double?,
+    /** Exact vines still to prune across every configured block. */
+    val vinesRemainingExact: Double,
+    val estimatedDaysRemaining: Int?,
+    val outcome: PruningForecastOutcome,
+) {
+    companion object {
+        val EMPTY = PruningVineyardForecast(
+            firstEntryDate = null,
+            lastEntryDate = null,
+            elapsedDays = 0,
+            averageVinesPerElapsedDay = null,
+            vinesRemainingExact = 0.0,
+            estimatedDaysRemaining = null,
+            outcome = PruningForecastOutcome.NotEnoughData,
+        )
+    }
+}
+
 /**
  * Vineyard-wide dashboard summary — the aggregation contract shared with iOS
  * and the SQL 115 RPC `get_pruning_vineyard_summary`. All values are exact;
@@ -195,8 +246,16 @@ data class PruningVineyardSummary(
     val labourHours: Double,
     val blocksComplete: Int,
     val blocksAtRisk: Int,
+    /**
+     * Roll-up of the per-block projections. Parity diagnostics ONLY — the
+     * dashboard shows [forecast], which is vineyard-wide and calendar based.
+     */
     val projectedFinish: LocalDate?,
+    /** The vineyard-wide completion forecast shown on the dashboard. */
+    val forecast: PruningVineyardForecast = PruningVineyardForecast.EMPTY,
 ) {
+    /** Vines pruned ÷ elapsed calendar days ("Average vines / day"). */
+    val averageVinesPerElapsedDay: Double? get() = forecast.averageVinesPerElapsedDay
     val vinesRemaining: Int get() = maxOf(vinesTotal - vinesPruned, 0)
     val displayPercent: Int get() = PruningCalculator.displayPercent(fraction)
 }
@@ -428,9 +487,14 @@ object PruningCalculator {
      * * overall % = completed ÷ total row equivalents (row-equivalent based),
      * * vines/day = mean of per-day exact totals over days-with-entries,
      * * vines/labour hr = exact vines of hour-carrying entries ÷ person-hours,
-     * * vineyard projection = the LATEST block projection.
+     * * `projectedFinish` = the LATEST block projection (kept ONLY for the
+     *   SQL 115 parity diagnostic — never displayed; the dashboard uses
+     *   `forecast`, the elapsed-calendar-day vineyard forecast).
      */
-    fun vineyardSummary(blocks: List<Pair<PruningBlockMetrics, List<PruningEntry>>>): PruningVineyardSummary {
+    fun vineyardSummary(
+        blocks: List<Pair<PruningBlockMetrics, List<PruningEntry>>>,
+        asOf: LocalDate = LocalDate.now(),
+    ): PruningVineyardSummary {
         var completedEq = 0.0
         var totalEq = 0.0
         var vinesPrunedExact = 0.0
@@ -439,6 +503,7 @@ object PruningCalculator {
         var blocksAtRisk = 0
         var projected: LocalDate? = null
         val vinesByDay = HashMap<String, Double>()
+        val validEntryDays = mutableListOf<LocalDate>()
         var vinesForHours = 0.0
         var hours = 0.0
 
@@ -455,6 +520,13 @@ object PruningCalculator {
             for (entry in blockEntries) {
                 val vines = exactVines(entry.segments, metrics.rows)
                 vinesByDay[entry.date] = (vinesByDay[entry.date] ?: 0.0) + vines
+                // A VALID entry is one whose segments actually resolve onto
+                // this block's rows — quarters pointing at deleted rows (or an
+                // entry reversed to empty) must not anchor the elapsed period.
+                val day = parseDate(entry.date)
+                if (day != null && completedSegments(listOf(entry), metrics.rows).isNotEmpty()) {
+                    validEntryDays.add(day)
+                }
                 val entryHours = entry.labourHours
                 if (entryHours != null && entryHours > 0) {
                     vinesForHours += vines
@@ -464,6 +536,15 @@ object PruningCalculator {
         }
 
         val fraction = if (totalEq > 0) min(completedEq / totalEq, 1.0) else 0.0
+        val complete = (totalEq > 0 && completedEq >= totalEq - 0.0001) ||
+            (vinesTotal > 0 && vinesTotal - vinesPrunedExact < 0.5)
+        val forecast = vineyardForecast(
+            vinesPrunedExact = vinesPrunedExact,
+            vinesTotal = vinesTotal,
+            isComplete = complete,
+            entryDates = validEntryDays,
+            asOf = asOf,
+        )
         return PruningVineyardSummary(
             blockCount = blocks.size,
             completedRowEquivalents = completedEq,
@@ -478,6 +559,68 @@ object PruningCalculator {
             blocksComplete = blocksComplete,
             blocksAtRisk = blocksAtRisk,
             projectedFinish = projected,
+            forecast = forecast,
+        )
+    }
+
+    /**
+     * THE vineyard completion forecast — the one rule iOS, Android and the
+     * portal must all apply (see [PruningVineyardForecast]).
+     *
+     * * [entryDates] — dates of every VALID pruning entry across ALL blocks.
+     * * [vinesTotal] — vines of EVERY configured block, including blocks with
+     *   zero progress (they are still remaining workload).
+     *
+     * Never derived from per-block rates or per-block projections, and never
+     * from "days that contain entries" — rain days count as elapsed time.
+     */
+    fun vineyardForecast(
+        vinesPrunedExact: Double,
+        vinesTotal: Int,
+        isComplete: Boolean,
+        entryDates: Collection<LocalDate>,
+        asOf: LocalDate = LocalDate.now(),
+    ): PruningVineyardForecast {
+        val days = entryDates.sorted()
+        val first = days.firstOrNull()
+        val last = days.lastOrNull()
+        val remaining = max(vinesTotal - vinesPrunedExact, 0.0)
+        val empty = PruningVineyardForecast(
+            firstEntryDate = first,
+            lastEntryDate = last,
+            elapsedDays = 0,
+            averageVinesPerElapsedDay = null,
+            vinesRemainingExact = remaining,
+            estimatedDaysRemaining = null,
+            outcome = PruningForecastOutcome.NotEnoughData,
+        )
+
+        // No configured vines, or no valid pruning activity at all.
+        if (vinesTotal <= 0 || first == null || last == null || vinesPrunedExact <= 0.0) return empty
+
+        // Inclusive elapsed rule: the first pruning day counts as day 1, and
+        // every calendar day since counts — including days with no entries.
+        val spanned = ChronoUnit.DAYS.between(first, asOf).toInt()
+        val elapsedDays = max(spanned + 1, 1)
+        val average = vinesPrunedExact / elapsedDays
+        if (average <= 0.0) return empty.copy(elapsedDays = elapsedDays)
+
+        // < 0.5 rounds to "0 vines remaining" on the dashboard — treat it as done.
+        if (isComplete || remaining < 0.5) {
+            return empty.copy(
+                elapsedDays = elapsedDays,
+                averageVinesPerElapsedDay = average,
+                estimatedDaysRemaining = 0,
+                outcome = PruningForecastOutcome.Completed(last),
+            )
+        }
+
+        val daysRemaining = ceil(remaining / average).toInt().coerceIn(1, 3_650)
+        return empty.copy(
+            elapsedDays = elapsedDays,
+            averageVinesPerElapsedDay = average,
+            estimatedDaysRemaining = daysRemaining,
+            outcome = PruningForecastOutcome.Projected(asOf.plusDays(daysRemaining.toLong())),
         )
     }
 
@@ -500,7 +643,7 @@ object PruningCalculator {
             val blockEntries = entries.filter { it.paddockId == paddock.id }
             metrics(paddock, setup, blockEntries, asOf) to blockEntries
         }
-        return vineyardSummary(blocks)
+        return vineyardSummary(blocks, asOf)
     }
 
     /**

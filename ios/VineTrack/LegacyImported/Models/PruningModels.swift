@@ -232,6 +232,53 @@ nonisolated enum PruningStatus: String, Sendable {
     }
 }
 
+/// Outcome of the vineyard-wide completion forecast.
+nonisolated enum PruningForecastOutcome: Sendable, Equatable {
+    /// Not enough valid data to forecast (no entries, no configured vines,
+    /// zero average). NEVER render an arbitrary date for this case.
+    case notEnoughData
+    /// Pruning is finished — the date is the LAST valid pruning activity.
+    case completed(Date)
+    /// today + estimated days remaining.
+    case projected(Date)
+}
+
+/// Vineyard-wide completion forecast.
+///
+/// SHARED CONTRACT (identical on iOS, Android and any portal implementation):
+/// * elapsed days = calendar days from the FIRST valid pruning entry through
+///   today, INCLUSIVE — days with no recorded pruning still count,
+/// * average vines/day = total exact vines pruned ÷ elapsed days,
+/// * remaining = every configured block's vines − vines pruned (blocks with
+///   zero progress are part of the workload),
+/// * days remaining = ceil(remaining ÷ average) — rounded UP so the forecast
+///   never understates the finish date.
+nonisolated struct PruningVineyardForecast: Sendable, Equatable {
+    /// Earliest valid pruning entry across the whole vineyard.
+    var firstEntryDate: Date?
+    /// Latest valid pruning entry across the whole vineyard.
+    var lastEntryDate: Date?
+    /// Inclusive calendar days from `firstEntryDate` through `asOf` (0 when unknown).
+    var elapsedDays: Int
+    /// Vines pruned ÷ elapsed calendar days.
+    var averageVinesPerElapsedDay: Double?
+    /// Exact vines still to prune across every configured block.
+    var vinesRemainingExact: Double
+    /// ceil(remaining ÷ average), nil when it cannot be computed.
+    var estimatedDaysRemaining: Int?
+    var outcome: PruningForecastOutcome
+
+    static let empty = PruningVineyardForecast(
+        firstEntryDate: nil,
+        lastEntryDate: nil,
+        elapsedDays: 0,
+        averageVinesPerElapsedDay: nil,
+        vinesRemainingExact: 0,
+        estimatedDaysRemaining: nil,
+        outcome: .notEnoughData
+    )
+}
+
 /// Aggregated progress + rate metrics for one block.
 nonisolated struct PruningBlockMetrics: Sendable {
     /// The actual rows the tracker operates on (configured rows first,
@@ -566,10 +613,13 @@ nonisolated enum PruningCalculator {
     /// * overall % = completed ÷ total row equivalents (row-equivalent based),
     /// * vines/day = mean of per-day exact totals over days-with-entries,
     /// * vines/labour hr = exact vines of hour-carrying entries ÷ person-hours,
-    /// * vineyard projection = the LATEST block projection.
+    /// * `projectedFinish` = the LATEST block projection (kept ONLY for the
+    ///   SQL 115 parity diagnostic — never displayed; the dashboard uses
+    ///   `forecast`, the elapsed-calendar-day vineyard forecast).
     static func vineyardSummary(
         blocks: [(metrics: PruningBlockMetrics, entries: [PruningEntry])],
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        asOf: Date = Date()
     ) -> PruningVineyardSummary {
         var completedEq = 0.0
         var totalEq = 0.0
@@ -579,6 +629,7 @@ nonisolated enum PruningCalculator {
         var blocksAtRisk = 0
         var projected: Date?
         var vinesByDay: [Date: Double] = [:]
+        var validEntryDays: [Date] = []
         var vinesForHours = 0.0
         var hours = 0.0
 
@@ -595,7 +646,15 @@ nonisolated enum PruningCalculator {
             }
             for entry in block.entries {
                 let vines = exactVines(for: entry.segments, rows: metrics.rows)
-                vinesByDay[calendar.startOfDay(for: entry.date), default: 0] += vines
+                let day = calendar.startOfDay(for: entry.date)
+                vinesByDay[day, default: 0] += vines
+                // A VALID entry is one whose segments actually resolve onto
+                // this block's rows — quarters pointing at deleted rows (or
+                // an entry that was reversed to empty) must not anchor the
+                // elapsed period.
+                if !completedSegments(entries: [entry], rows: metrics.rows).isEmpty {
+                    validEntryDays.append(day)
+                }
                 if let entryHours = entry.labourHours, entryHours > 0 {
                     vinesForHours += vines
                     hours += entryHours
@@ -604,6 +663,16 @@ nonisolated enum PruningCalculator {
         }
 
         let fraction = totalEq > 0 ? min(completedEq / totalEq, 1.0) : 0
+        let complete = (totalEq > 0 && completedEq >= totalEq - 0.0001)
+            || (vinesTotal > 0 && Double(vinesTotal) - vinesPrunedExact < 0.5)
+        let forecast = vineyardForecast(
+            vinesPrunedExact: vinesPrunedExact,
+            vinesTotal: vinesTotal,
+            isComplete: complete,
+            entryDates: validEntryDays,
+            asOf: asOf,
+            calendar: calendar
+        )
         return PruningVineyardSummary(
             blockCount: blocks.count,
             completedRowEquivalents: completedEq,
@@ -617,8 +686,70 @@ nonisolated enum PruningCalculator {
             labourHours: hours,
             blocksComplete: blocksComplete,
             blocksAtRisk: blocksAtRisk,
-            projectedFinish: projected
+            projectedFinish: projected,
+            forecast: forecast
         )
+    }
+
+    /// THE vineyard completion forecast — the one rule iOS, Android and the
+    /// portal must all apply (see `PruningVineyardForecast`).
+    ///
+    /// * `entryDates` — dates of every VALID pruning entry across ALL blocks.
+    /// * `vinesTotal` — vines of EVERY configured block, including blocks
+    ///   with zero progress (they are still remaining workload).
+    ///
+    /// Never derived from per-block rates or per-block projections, and never
+    /// from "days that contain entries" — rain days count as elapsed time.
+    static func vineyardForecast(
+        vinesPrunedExact: Double,
+        vinesTotal: Int,
+        isComplete: Bool,
+        entryDates: some Collection<Date>,
+        asOf: Date = Date(),
+        calendar: Calendar = .current
+    ) -> PruningVineyardForecast {
+        let days = entryDates.map { calendar.startOfDay(for: $0) }.sorted()
+        let first = days.first
+        let last = days.last
+        let remaining = max(Double(vinesTotal) - vinesPrunedExact, 0)
+
+        var forecast = PruningVineyardForecast(
+            firstEntryDate: first,
+            lastEntryDate: last,
+            elapsedDays: 0,
+            averageVinesPerElapsedDay: nil,
+            vinesRemainingExact: remaining,
+            estimatedDaysRemaining: nil,
+            outcome: .notEnoughData
+        )
+
+        // No configured vines, or no valid pruning activity at all.
+        guard vinesTotal > 0, let first, let last, vinesPrunedExact > 0 else { return forecast }
+
+        let today = calendar.startOfDay(for: asOf)
+        // Inclusive elapsed rule: the first pruning day counts as day 1, and
+        // every calendar day since counts — including days with no entries.
+        let spanned = calendar.dateComponents([.day], from: first, to: today).day ?? 0
+        let elapsedDays = max(spanned + 1, 1)
+        forecast.elapsedDays = elapsedDays
+
+        let average = vinesPrunedExact / Double(elapsedDays)
+        guard average > 0 else { return forecast }
+        forecast.averageVinesPerElapsedDay = average
+
+        // < 0.5 rounds to "0 vines remaining" on the dashboard — treat it as done.
+        if isComplete || remaining < 0.5 {
+            forecast.estimatedDaysRemaining = 0
+            forecast.outcome = .completed(last)
+            return forecast
+        }
+
+        let daysRemaining = min(max(Int(ceil(remaining / average)), 1), 3_650)
+        forecast.estimatedDaysRemaining = daysRemaining
+        if let finish = calendar.date(byAdding: .day, value: daysRemaining, to: today) {
+            forecast.outcome = .projected(finish)
+        }
+        return forecast
     }
 
     /// Convenience overload building block metrics from raw store data —
@@ -642,7 +773,7 @@ nonisolated enum PruningCalculator {
                 blockEntries
             )
         }
-        return vineyardSummary(blocks: blocks, calendar: calendar)
+        return vineyardSummary(blocks: blocks, calendar: calendar, asOf: asOf)
     }
 }
 
@@ -664,8 +795,14 @@ nonisolated struct PruningVineyardSummary: Sendable {
     var labourHours: Double
     var blocksComplete: Int
     var blocksAtRisk: Int
+    /// Roll-up of the per-block projections. Parity diagnostics ONLY — the
+    /// dashboard shows `forecast`, which is vineyard-wide and calendar based.
     var projectedFinish: Date?
+    /// The vineyard-wide completion forecast shown on the dashboard.
+    var forecast: PruningVineyardForecast = .empty
 
+    /// Vines pruned ÷ elapsed calendar days ("Average vines / day").
+    var averageVinesPerElapsedDay: Double? { forecast.averageVinesPerElapsedDay }
     var vinesRemaining: Int { max(vinesTotal - vinesPruned, 0) }
     var displayPercent: Int { PruningCalculator.displayPercent(fraction) }
 }

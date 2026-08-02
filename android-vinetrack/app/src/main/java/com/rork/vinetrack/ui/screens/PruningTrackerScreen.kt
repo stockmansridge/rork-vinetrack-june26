@@ -85,7 +85,9 @@ import com.rork.vinetrack.data.model.PruningBlockMetrics
 import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningCalculator
 import com.rork.vinetrack.data.model.PruningEntry
+import com.rork.vinetrack.data.model.PruningForecastOutcome
 import com.rork.vinetrack.data.model.PruningMethods
+import com.rork.vinetrack.data.model.PruningVineyardForecast
 import com.rork.vinetrack.data.model.PruningRowRef
 import com.rork.vinetrack.data.VintageResolver
 import com.rork.vinetrack.data.model.PruningSeasonIds
@@ -572,6 +574,21 @@ private val displayDate: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM"
 
 private fun fmtDate(date: LocalDate?): String = date?.format(displayDate) ?: "—"
 
+/** Vineyard forecast date format — identical to the iOS dashboard. */
+private val forecastDate: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy")
+
+/**
+ * Vineyard-wide completion line. Identical wording and date format to the iOS
+ * dashboard — never a block-specific projection, and never an arbitrary date
+ * when the data cannot support a forecast.
+ */
+internal fun pruningForecastLine(forecast: PruningVineyardForecast): String =
+    when (val outcome = forecast.outcome) {
+        is PruningForecastOutcome.NotEnoughData -> "Projected vineyard completion: Not enough data"
+        is PruningForecastOutcome.Completed -> "Vineyard completed: ${outcome.date.format(forecastDate)}"
+        is PruningForecastOutcome.Projected -> "Projected vineyard completion: ${outcome.date.format(forecastDate)}"
+    }
+
 // MARK: - Dashboard
 
 @Composable
@@ -599,11 +616,10 @@ private fun PruningDashboardCard(
     val summary = PruningCalculator.vineyardSummary(paddocks, setups, entries)
     val vinesPruned = summary.vinesPruned
     val fraction = summary.fraction
-    val vinesPerDay = summary.vinesPerDay
+    val averageVinesPerDay = summary.averageVinesPerElapsedDay
     val vinesPerHour = summary.vinesPerLabourHour
     val blocksComplete = summary.blocksComplete
     val blocksAtRisk = summary.blocksAtRisk
-    val projected = summary.projectedFinish
 
     PruningCard {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -623,20 +639,18 @@ private fun PruningDashboardCard(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 DashStat("${vinesPruned}", "Vines pruned", Modifier.weight(1f))
                 DashStat("${summary.vinesRemaining}", "Vines remaining", Modifier.weight(1f))
-                DashStat(vinesPerDay?.let { fmt(it, 0) } ?: "—", "Vines / day", Modifier.weight(1f))
+                DashStat(averageVinesPerDay?.let { fmt(it, 0) } ?: "—", "Average vines / day", Modifier.weight(1f))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 DashStat(vinesPerHour?.let { fmt(it, 0) } ?: "—", "Vines / labour hr", Modifier.weight(1f))
                 DashStat("$blocksComplete", "Blocks complete", Modifier.weight(1f))
                 DashStat("$blocksAtRisk", "Blocks at risk", Modifier.weight(1f))
             }
-            if (projected != null) {
-                Text(
-                    "Projected vineyard completion: ${fmtDate(projected)}",
-                    fontSize = 12.sp,
-                    color = vine.textSecondary,
-                )
-            }
+            Text(
+                pruningForecastLine(summary.forecast),
+                fontSize = 12.sp,
+                color = vine.textSecondary,
+            )
         }
     }
 }

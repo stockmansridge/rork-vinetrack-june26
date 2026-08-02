@@ -178,21 +178,22 @@ struct PruningTrackerView: View {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 dashStat(value: "\(summary.vinesPruned.formatted())", label: "Vines pruned")
                 dashStat(value: "\(summary.vinesRemaining.formatted())", label: "Vines remaining")
-                dashStat(value: summary.vinesPerDay.map { $0.formatted(.number.precision(.fractionLength(0))) } ?? "—", label: "Vines / day")
+                dashStat(
+                    value: summary.averageVinesPerElapsedDay.map { $0.formatted(.number.precision(.fractionLength(0))) } ?? "—",
+                    label: "Average vines / day"
+                )
                 dashStat(value: summary.vinesPerLabourHour.map { $0.formatted(.number.precision(.fractionLength(0))) } ?? "—", label: "Vines / labour hr")
                 dashStat(value: "\(summary.blocksComplete)", label: "Blocks complete")
                 dashStat(value: "\(summary.blocksAtRisk)", label: "Blocks at risk")
             }
 
-            if let projected = summary.projectedFinish {
-                HStack(spacing: 6) {
-                    Image(systemName: "calendar")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("Projected vineyard completion: \(projected.formatted(date: .abbreviated, time: .omitted))")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+            HStack(spacing: 6) {
+                Image(systemName: "calendar")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(Self.forecastLine(summary.forecast))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(14)
@@ -201,6 +202,26 @@ struct PruningTrackerView: View {
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(VineyardTheme.cardBorder, lineWidth: 0.5))
         .padding(.horizontal)
     }
+
+    /// Vineyard-wide completion line. Identical wording and date format to the
+    /// Android dashboard — never a block-specific projection, and never an
+    /// arbitrary date when the data cannot support a forecast.
+    static func forecastLine(_ forecast: PruningVineyardForecast) -> String {
+        switch forecast.outcome {
+        case .notEnoughData:
+            return "Projected vineyard completion: Not enough data"
+        case .completed(let date):
+            return "Vineyard completed: \(forecastDateFormatter.string(from: date))"
+        case .projected(let date):
+            return "Projected vineyard completion: \(forecastDateFormatter.string(from: date))"
+        }
+    }
+
+    private static let forecastDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d MMM yyyy"
+        return formatter
+    }()
 
     private func dashStat(value: String, label: String) -> some View {
         VStack(spacing: 2) {

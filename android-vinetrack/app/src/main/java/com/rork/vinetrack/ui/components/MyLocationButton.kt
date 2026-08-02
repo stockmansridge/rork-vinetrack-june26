@@ -47,6 +47,7 @@ fun MapMyLocationButton(
     modifier: Modifier = Modifier,
     containerColor: Color = Color(0xCC1C1C1E),
     contentColor: Color = Color.White,
+    contentDescription: String = "Go to current location",
     onPermissionGranted: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -113,7 +114,7 @@ fun MapMyLocationButton(
         } else {
             Icon(
                 Icons.Filled.MyLocation,
-                contentDescription = "Go to current location",
+                contentDescription = contentDescription,
                 tint = contentColor,
                 modifier = Modifier.size(20.dp),
             )

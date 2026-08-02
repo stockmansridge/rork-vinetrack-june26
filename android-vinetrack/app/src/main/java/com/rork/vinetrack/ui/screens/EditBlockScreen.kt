@@ -162,6 +162,9 @@ fun EditBlockScreen(
             rowAscending = rowAscending, onRowAscending = { rowAscending = it },
             onDone = { showMapEditor = false },
             modifier = modifier,
+            // Camera state is scoped to this vineyard + block, so reopening a
+            // different block never restores the previous block's position.
+            cameraKey = "${state.selectedVineyardId ?: "-"}:${existing?.id ?: "new-block"}",
         )
         return
     }
