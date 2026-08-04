@@ -63,6 +63,12 @@ final class PruningSyncService {
     private let activityEditMetadata: ManagementSyncMetadata
     private var isConfigured: Bool = false
     private var eagerPushTask: Task<Void, Never>?
+    /// Resolves whether a Work Task still has an unacknowledged local write.
+    ///
+    /// `pruning_activities.work_task_id` is a real foreign key, so an activity
+    /// linked to a task created offline must WAIT for that task to reach the
+    /// server. The link is never dropped to make the pruning upload succeed.
+    private var isWorkTaskPending: ((UUID) -> Bool)?
 
     init(repository: (any PruningSyncRepositoryProtocol)? = nil, pruningStore: PruningStore? = nil) {
         self.repository = repository ?? SupabasePruningSyncRepository()
@@ -72,6 +78,27 @@ final class PruningSyncService {
         self.editMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_edit_sync_metadata")
         self.activityMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_activity_sync_metadata")
         self.activityEditMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_activity_edit_sync_metadata")
+    }
+
+    /// Wires the Work Task dependency used to order the activity push. Injected
+    /// rather than referenced directly, so the pruning service keeps no hard
+    /// dependency on the work-task sync service.
+    func configureWorkTaskDependency(_ isPending: @escaping (UUID) -> Bool) {
+        isWorkTaskPending = isPending
+    }
+
+    /// True while this activity's linked Work Task has not been acknowledged.
+    private func isWaitingForWorkTask(_ draft: PruningActivityDraft) -> Bool {
+        guard let isWorkTaskPending else { return false }
+        return PruningWorkTaskLink.isWaitingForTask(draft.workTaskId, isTaskPending: isWorkTaskPending)
+    }
+
+    private func workTaskDependencyError() -> Error {
+        NSError(
+            domain: "PruningSync",
+            code: 3,
+            userInfo: [NSLocalizedDescriptionKey: PruningWorkTaskLink.waitingReason]
+        )
     }
 
     func configure(store: MigratedDataStore, auth: NewBackendAuthService) {
@@ -495,6 +522,14 @@ final class PruningSyncService {
                 continue
             }
             guard draft.vineyardId == vineyardId else { continue }
+            // ORDERED DEPENDENCY: the linked Work Task must exist server-side
+            // first, or this atomic write is rejected outright. The activity
+            // stays queued WITH its link and retries on the next pass.
+            if isWaitingForWorkTask(draft) {
+                print("[PruningSync] activity \(id) held: linked Work Task has not synced yet")
+                if firstError == nil { firstError = workTaskDependencyError() }
+                continue
+            }
             do {
                 let params = RecordPruningActivityParams(from: draft, clientUpdatedAt: ts)
                 let result = try await repository.recordActivity(params)
@@ -512,6 +547,11 @@ final class PruningSyncService {
                 continue
             }
             guard draft.vineyardId == vineyardId else { continue }
+            if isWaitingForWorkTask(draft) {
+                print("[PruningSync] activity edit \(id) held: linked Work Task has not synced yet")
+                if firstError == nil { firstError = workTaskDependencyError() }
+                continue
+            }
             do {
                 let params = UpdatePruningActivityParams(from: draft, clientUpdatedAt: ts)
                 let result = try await repository.updateActivity(params)

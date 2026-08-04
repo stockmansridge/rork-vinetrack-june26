@@ -136,6 +136,10 @@ struct NewMainTabView: View {
             damageRecordSync.configure(store: store, auth: auth)
             historicalYieldSync.configure(store: store, auth: auth)
             pruningSync.configure(store: store, auth: auth)
+            // Ordered dependency: a pruning activity linked to a Work Task
+            // created offline waits for that task to reach the server rather
+            // than dropping its `work_task_id`.
+            pruningSync.configureWorkTaskDependency { workTaskSync.isPendingUpsert($0) }
             fertiliserSync.configure(store: store, auth: auth)
             alertService.configure(store: store, auth: auth, accessControl: accessControl)
             appNoticeService.configure(auth: auth)

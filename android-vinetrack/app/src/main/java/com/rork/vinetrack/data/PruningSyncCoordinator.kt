@@ -79,7 +79,8 @@ class PruningSyncCoordinator(
      * (sql/161) — an empty outbox alone is not enough.
      */
     fun syncStatus(vineyardId: String): PruningSyncStatus {
-        val unresolved = pending.list().filter {
+        val all = pending.list()
+        val unresolved = all.filter {
             (it.entityType == PendingEntityType.PRUNING_ENTRY ||
                 it.entityType == PendingEntityType.PRUNING_SEASON ||
                 it.entityType == PendingEntityType.PRUNING_ACTIVITY) &&
@@ -92,14 +93,39 @@ class PruningSyncCoordinator(
             .filter { it.entityType == PendingEntityType.PRUNING_ACTIVITY }
             .flatMap { write -> allocationIdsOf(vineyardId, write.clientId) }
             .toSet()
+        // An activity whose linked Work Task has not been acknowledged is NOT
+        // synced either, even with an empty pruning queue: its `work_task_id`
+        // cannot resolve server-side yet. Never counted as 100%.
+        val taskBlocked = activitiesWaitingForWorkTask(vineyardId, all)
         return PruningSyncIntegrity.evaluate(
             entries = store.loadEntries(vineyardId),
             queuedEntryIds = unresolved
                 .filter { it.entityType == PendingEntityType.PRUNING_ENTRY }
                 .map { it.clientId }
-                .toSet() + queuedActivityAllocationIds,
-            queuedWrites = unresolved.size,
+                .toSet() + queuedActivityAllocationIds +
+                taskBlocked.flatMap { allocationIdsOf(vineyardId, it) },
+            queuedWrites = unresolved.size + taskBlocked.count { activityId ->
+                unresolved.none {
+                    it.entityType == PendingEntityType.PRUNING_ACTIVITY && it.clientId == activityId
+                }
+            },
         )
+    }
+
+    /**
+     * Activities held back by an unresolved linked Work Task create. The link is
+     * server state, so it is never stripped to let the pruning upload through —
+     * the activity simply waits.
+     */
+    private fun activitiesWaitingForWorkTask(
+        vineyardId: String,
+        writes: List<PendingWrite>,
+    ): List<String> {
+        val unresolvedTasks = PruningActivityTaskLink.unresolvedTaskCreateIds(writes)
+        if (unresolvedTasks.isEmpty()) return emptyList()
+        return store.loadActivities(vineyardId)
+            .filter { PruningActivityTaskLink.isWaitingForTask(it.workTaskId, unresolvedTasks) }
+            .map { it.id }
     }
 
     // MARK: Local-first writes
@@ -318,6 +344,7 @@ class PruningSyncCoordinator(
             it.entityType == PendingEntityType.PRUNING_ACTIVITY && it.opType == opType &&
                 (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
         }
+        val unresolvedTasks = PruningActivityTaskLink.unresolvedTaskCreateIds(pending.list())
         for (write in candidates) {
             pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
             try {
@@ -327,6 +354,16 @@ class PruningSyncCoordinator(
                     continue
                 }
                 val draft = json.decodeFromString(PruningActivityDraft.serializer(), write.payloadJson)
+                // ORDERED DEPENDENCY: `pruning_activities.work_task_id` is a real
+                // foreign key. A task created offline must reach the server
+                // first, or the whole atomic activity write is rejected. The
+                // link is NEVER dropped to make this upload succeed — the
+                // activity waits and retries on the next pass.
+                if (PruningActivityTaskLink.isWaitingForTask(draft.workTaskId, unresolvedTasks)) {
+                    Log.i(TAG, "activity ${draft.id} held: linked Work Task ${draft.workTaskId} has not synced yet")
+                    retryOrBlock(write, PruningActivityTaskLink.WAITING_REASON)
+                    continue
+                }
                 // LWW stamp = when the write was queued, never the replay time.
                 val stamp = Instant.ofEpochMilli(write.createdAt).toString()
                 val result = if (opType == PendingOpType.CREATE) {
@@ -801,7 +838,11 @@ class PruningSyncCoordinator(
         pending.list()
             .filter {
                 it.status == PendingWriteStatus.BLOCKED &&
-                    (it.entityType == PendingEntityType.PRUNING_SEASON || it.entityType == PendingEntityType.PRUNING_ENTRY)
+                    (it.entityType == PendingEntityType.PRUNING_SEASON ||
+                        it.entityType == PendingEntityType.PRUNING_ENTRY ||
+                        // An activity blocked waiting for its Work Task must get
+                        // another cycle once that task lands.
+                        it.entityType == PendingEntityType.PRUNING_ACTIVITY)
             }
             .forEach { pending.updateStatus(it.id, PendingWriteStatus.FAILED, it.lastError) }
     }

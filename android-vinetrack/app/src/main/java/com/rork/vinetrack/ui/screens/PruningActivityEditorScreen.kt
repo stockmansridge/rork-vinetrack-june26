@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -62,6 +63,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.PruningActivityTaskLink
+import com.rork.vinetrack.data.PruningWorkTaskLinkDraft
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PruningActivityDraft
 import com.rork.vinetrack.data.model.PruningActivityListing
@@ -113,6 +116,17 @@ fun PruningActivityEditorScreen(
     reconciliation: PruningActivityReconciliation? = null,
     onSave: (PruningActivityDraft) -> Unit,
     onReverse: (() -> Unit)? = null,
+    /**
+     * Creates ONE Work Task for the whole activity and returns its canonical
+     * client id, or null when the task could not be created. Offline the task
+     * is queued with that same id, and the activity push waits for it.
+     */
+    onCreateWorkTask: ((PruningActivityDraft, PruningWorkTaskLinkDraft) -> String?)? = null,
+    /**
+     * Opens the linked Work Task in place. Rendered INSIDE this screen, so the
+     * draft — every block and quarter selection — survives the round trip.
+     */
+    workTaskDetail: (@Composable (taskId: String, onClose: () -> Unit) -> Unit)? = null,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -123,6 +137,9 @@ fun PruningActivityEditorScreen(
     var showDiscardPrompt by rememberSaveable { mutableStateOf(false) }
     var showReversePrompt by rememberSaveable { mutableStateOf(false) }
     var removePrompt by remember { mutableStateOf<String?>(null) }
+    var showTaskPicker by rememberSaveable { mutableStateOf(false) }
+    var taskCreateDraft by remember { mutableStateOf<PruningWorkTaskLinkDraft?>(null) }
+    var openTaskId by rememberSaveable { mutableStateOf<String?>(null) }
 
     val isDirty = draft != initialDraft
     val leave: () -> Unit = { if (isDirty) showDiscardPrompt = true else onBack() }
@@ -148,6 +165,17 @@ fun PruningActivityEditorScreen(
         val ownIds = draft.allocations.values.map { it.allocationIdFor(draft.id) }.toSet()
         val others = entries.filter { it.paddockId == paddock.id && it.id !in ownIds && !it.isReversed }
         return PruningCalculator.completedSegments(others, rowsOf(paddock))
+    }
+
+    // The linked Work Task opens IN PLACE. `draft` is remembered above this
+    // branch, so opening the task and coming back cannot lose a single block or
+    // quarter selection.
+    val detail = workTaskDetail
+    val detailTaskId = openTaskId
+    if (detailTaskId != null && detail != null) {
+        BackHandler { openTaskId = null }
+        detail(detailTaskId) { openTaskId = null }
+        return
     }
 
     /** Re-derives THIS block's vine estimate after any selection change. */
@@ -205,10 +233,24 @@ fun PruningActivityEditorScreen(
             item(key = "activity") {
                 PruningActivityFieldsCard(
                     draft = draft,
-                    workTasks = workTasks,
                     canViewCosting = canViewCosting,
                     onDraftChange = { draft = it },
                     onPickDate = { showDatePicker = true },
+                )
+            }
+
+            // Work Task — ALSO activity level. One link on the parent, never
+            // one per block; create, link, open and unlink all live here.
+            item(key = "work-task") {
+                PruningActivityWorkTaskCard(
+                    draft = draft,
+                    workTasks = workTasks,
+                    canCreate = onCreateWorkTask != null,
+                    canOpen = workTaskDetail != null,
+                    onLinkExisting = { showTaskPicker = true },
+                    onCreate = { taskCreateDraft = PruningActivityTaskLink.createDraft(draft) },
+                    onOpen = { openTaskId = draft.workTaskId },
+                    onUnlink = { draft = PruningActivityTaskLink.unlink(draft) },
                 )
             }
 
@@ -378,6 +420,36 @@ fun PruningActivityEditorScreen(
             )
         }
 
+        if (showTaskPicker) {
+            PruningWorkTaskPickerSheet(
+                tasks = workTasks,
+                linkedId = draft.workTaskId,
+                onDismiss = { showTaskPicker = false },
+                onSelect = { task ->
+                    showTaskPicker = false
+                    // Only the parent's link changes — every allocation is carried
+                    // through untouched.
+                    draft = PruningActivityTaskLink.link(draft, task.id)
+                },
+            )
+        }
+
+        taskCreateDraft?.let { pending ->
+            PruningWorkTaskCreateDialog(
+                draft = draft,
+                task = pending,
+                onChange = { taskCreateDraft = it },
+                onDismiss = { taskCreateDraft = null },
+                onConfirm = {
+                    // The LIVE draft is passed, so the task's date, hours and
+                    // blocks match what the operator is actually recording.
+                    val created = onCreateWorkTask?.invoke(draft, pending)
+                    if (created != null) draft = PruningActivityTaskLink.link(draft, created)
+                    taskCreateDraft = null
+                },
+            )
+        }
+
         if (showDatePicker) {
             val initialMillis = runCatching {
                 LocalDate.parse(draft.date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -478,14 +550,12 @@ fun PruningActivityEditorScreen(
 @Composable
 private fun PruningActivityFieldsCard(
     draft: PruningActivityDraft,
-    workTasks: List<WorkTask>,
     canViewCosting: Boolean,
     onDraftChange: (PruningActivityDraft) -> Unit,
     onPickDate: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     var methodOpen by remember { mutableStateOf(false) }
-    var taskOpen by remember { mutableStateOf(false) }
     val dateLabel = remember(draft.date) {
         runCatching {
             LocalDate.parse(draft.date).format(DateTimeFormatter.ofPattern("d MMM yyyy"))
@@ -610,37 +680,165 @@ private fun PruningActivityFieldsCard(
                 label = { Text("Notes") },
                 modifier = Modifier.fillMaxWidth(),
             )
+        }
+    }
+}
 
-            val linked = workTasks.firstOrNull { it.id == draft.workTaskId }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Work Task", fontSize = 13.sp, color = vine.textSecondary, modifier = Modifier.width(96.dp))
-                Box(modifier = Modifier.weight(1f)) {
-                    Text(
-                        linked?.displayLabel ?: "Not linked",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (linked != null) VineColors.Primary else vine.textSecondary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(vine.cardBorder.copy(alpha = 0.4f))
-                            .clickable { taskOpen = true }
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
+// MARK: - Work Task (activity level)
+
+/**
+ * The activity's Work Task link. ONE link on the parent draft
+ * ([PruningActivityDraft.workTaskId]) — never a copy on any
+ * `BlockPruningSelection` — with the full workflow the single-block editor had:
+ * create a task for this job, link an existing one, open the linked task, or
+ * unlink it. Every action only rewrites the parent's link, so block and quarter
+ * selections survive untouched.
+ */
+@Composable
+private fun PruningActivityWorkTaskCard(
+    draft: PruningActivityDraft,
+    workTasks: List<WorkTask>,
+    canCreate: Boolean,
+    canOpen: Boolean,
+    onLinkExisting: () -> Unit,
+    onCreate: () -> Unit,
+    onOpen: () -> Unit,
+    onUnlink: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val linked = PruningActivityTaskLink.linkedTask(draft, workTasks)
+    val unresolvable = PruningActivityTaskLink.hasUnresolvableLink(draft, workTasks)
+    PruningCard {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Work Task", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                Spacer(Modifier.weight(1f))
+                if (linked != null || unresolvable) {
+                    Icon(
+                        Icons.Filled.CheckCircle,
+                        contentDescription = null,
+                        tint = if (unresolvable) VineColors.Warning else VineColors.LeafGreen,
+                        modifier = Modifier.size(16.dp),
                     )
-                    DropdownMenu(expanded = taskOpen, onDismissRequest = { taskOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Not linked") },
-                            onClick = {
-                                onDraftChange(draft.copy(workTaskId = null))
-                                taskOpen = false
-                            },
+                }
+            }
+            Text(
+                "Linked once for the whole activity — the labour record covers every block below.",
+                fontSize = 11.sp,
+                color = vine.textSecondary,
+            )
+
+            when {
+                linked != null -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(VineColors.LeafGreen.copy(alpha = 0.10f))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(
+                            linked.displayLabel,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = vine.textPrimary,
                         )
-                        workTasks.take(30).forEach { task ->
-                            DropdownMenuItem(
-                                text = { Text("${task.displayLabel} · ${task.date.orEmpty()}") },
-                                onClick = {
-                                    onDraftChange(draft.copy(workTaskId = task.id))
-                                    taskOpen = false
-                                },
+                        Text(
+                            listOfNotNull(
+                                linked.date?.takeIf { it.isNotBlank() }?.take(10),
+                                linked.paddockName?.takeIf { it.isNotBlank() },
+                                "${fmt(linked.durationHours, 1)} h",
+                                if (linked.isComplete) "Completed" else null,
+                            ).joinToString(" · "),
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (canOpen) {
+                            OutlinedButton(onClick = onOpen) {
+                                Icon(
+                                    Icons.Filled.OpenInNew,
+                                    contentDescription = null,
+                                    tint = VineColors.Primary,
+                                    modifier = Modifier.size(15.dp),
+                                )
+                                Spacer(Modifier.width(5.dp))
+                                Text(
+                                    "Open task",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = VineColors.Primary,
+                                )
+                            }
+                        }
+                        TextButton(onClick = onLinkExisting) {
+                            Text("Change", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
+                        }
+                        TextButton(onClick = onUnlink) {
+                            Text("Unlink", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Destructive)
+                        }
+                    }
+                    Text(
+                        "Unlinking leaves the Work Task and its labour lines intact — only this activity's link is removed.",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
+                }
+
+                unresolvable -> {
+                    // NEVER cleared silently: the link is real server state that
+                    // this device simply hasn't pulled yet.
+                    Text(
+                        "This activity is linked to a Work Task that hasn't reached this device yet. It stays linked — pull to refresh, or unlink deliberately.",
+                        fontSize = 12.sp,
+                        color = VineColors.Warning,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (canOpen) {
+                            OutlinedButton(onClick = onOpen) {
+                                Text(
+                                    "Open task",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = VineColors.Primary,
+                                )
+                            }
+                        }
+                        TextButton(onClick = onLinkExisting) {
+                            Text("Link another", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
+                        }
+                        TextButton(onClick = onUnlink) {
+                            Text("Unlink", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Destructive)
+                        }
+                    }
+                }
+
+                else -> {
+                    Text("Not linked", fontSize = 13.sp, color = vine.textSecondary)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (canCreate) {
+                            Button(
+                                onClick = onCreate,
+                                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
+                            ) {
+                                Icon(
+                                    Icons.Filled.Add,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(15.dp),
+                                )
+                                Spacer(Modifier.width(5.dp))
+                                Text("Create Work Task", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                            }
+                        }
+                        OutlinedButton(onClick = onLinkExisting) {
+                            Text(
+                                "Link existing",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = VineColors.Primary,
                             )
                         }
                     }
@@ -648,6 +846,147 @@ private fun PruningActivityFieldsCard(
             }
         }
     }
+}
+
+/** Searchable picker over EVERY live Work Task of the vineyard. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PruningWorkTaskPickerSheet(
+    tasks: List<WorkTask>,
+    linkedId: String?,
+    onDismiss: () -> Unit,
+    onSelect: (WorkTask) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var query by remember { mutableStateOf("") }
+    val results = remember(tasks, query) { PruningActivityTaskLink.search(tasks, query) }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("Link a Work Task", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Search by work type, block or date") },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (results.isEmpty()) {
+                Text(
+                    if (query.isBlank()) "This vineyard has no Work Tasks yet." else "No tasks match \"$query\".",
+                    fontSize = 13.sp,
+                    color = vine.textSecondary,
+                )
+            }
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().height(360.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                items(results.size, key = { results[it].id }) { index ->
+                    val task = results[index]
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(task) }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                task.displayLabel,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = vine.textPrimary,
+                            )
+                            Text(
+                                listOfNotNull(
+                                    task.date?.takeIf { it.isNotBlank() }?.take(10),
+                                    task.paddockName?.takeIf { it.isNotBlank() },
+                                    "${fmt(task.durationHours, 1)} h",
+                                ).joinToString(" · "),
+                                fontSize = 12.sp,
+                                color = vine.textSecondary,
+                            )
+                        }
+                        if (task.id == linkedId) {
+                            Icon(
+                                Icons.Filled.CheckCircle,
+                                contentDescription = "Currently linked",
+                                tint = VineColors.LeafGreen,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                    HorizontalDivider(color = vine.cardBorder)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Creates ONE completed Work Task for the whole activity. Date, duration and
+ * blocks come from the activity itself, so the shared labour is recorded once
+ * and never apportioned per block.
+ */
+@Composable
+private fun PruningWorkTaskCreateDialog(
+    draft: PruningActivityDraft,
+    task: PruningWorkTaskLinkDraft,
+    onChange: (PruningWorkTaskLinkDraft) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Create a Work Task") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "One task for this whole activity: ${draft.date} · " +
+                        "${fmt(PruningActivityTaskLink.durationHours(draft), 1)} h · " +
+                        draft.blockSummary.ifBlank { "no blocks yet" },
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
+                OutlinedTextField(
+                    value = task.taskType,
+                    onValueChange = { onChange(task.copy(taskType = it)) },
+                    label = { Text("Work type") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = task.notes,
+                    onValueChange = { onChange(task.copy(notes = it)) },
+                    label = { Text("Task notes") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Marked completed, linked to this activity, and queued offline with the same id — a retry can never create a second task.",
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = task.isValid) {
+                Text(
+                    "Create and link",
+                    color = if (task.isValid) VineColors.Primary else vine.textSecondary,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 // MARK: - Included blocks

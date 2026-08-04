@@ -22,6 +22,10 @@ struct PruningActivityEditorView: View {
     let reconciliation: PruningActivityReconciliation?
     let onSave: (PruningActivityDraft) -> Void
     let onReverse: (() -> Void)?
+    /// Creates ONE Work Task for the whole activity and returns its canonical
+    /// client id, or nil when the task could not be created. Offline the task is
+    /// queued with that same id and the activity push waits for it.
+    let onCreateWorkTask: ((PruningActivityDraft, PruningWorkTaskLinkDraft) -> UUID?)?
 
     @Environment(\.dismiss) private var dismiss
     private var pruningStore: PruningStore { .shared }
@@ -36,6 +40,9 @@ struct PruningActivityEditorView: View {
     @State private var recordsTimes: Bool = false
     @State private var rangeFrom: Int = 0
     @State private var rangeTo: Int = 0
+    @State private var showTaskPicker: Bool = false
+    @State private var taskCreateDraft: PruningWorkTaskLinkDraft?
+    @State private var openTask: WorkTask?
 
     private let original: PruningActivityDraft
 
@@ -47,7 +54,8 @@ struct PruningActivityEditorView: View {
         workTasks: [WorkTask],
         reconciliation: PruningActivityReconciliation? = nil,
         onSave: @escaping (PruningActivityDraft) -> Void,
-        onReverse: (() -> Void)? = nil
+        onReverse: (() -> Void)? = nil,
+        onCreateWorkTask: ((PruningActivityDraft, PruningWorkTaskLinkDraft) -> UUID?)? = nil
     ) {
         self.original = draft
         self._draft = State(initialValue: draft)
@@ -58,6 +66,7 @@ struct PruningActivityEditorView: View {
         self.reconciliation = reconciliation
         self.onSave = onSave
         self.onReverse = onReverse
+        self.onCreateWorkTask = onCreateWorkTask
         self._labourText = State(initialValue: draft.labourHours.map { Self.number($0) } ?? "")
         self._rateText = State(initialValue: draft.hourlyRate.map { Self.number($0) } ?? "")
         self._recordsTimes = State(initialValue: draft.startTime != nil || draft.finishTime != nil)
@@ -67,10 +76,14 @@ struct PruningActivityEditorView: View {
         Dictionary(uniqueKeysWithValues: paddocks.map { ($0.id, $0) })
     }
 
-    /// Work Tasks that can be linked to this activity — ONE link on the parent,
-    /// never one per block.
-    private var linkableTasks: [WorkTask] {
-        Array(workTasks.prefix(30))
+    /// The linked Work Task, when this device has it cached.
+    private var linkedTask: WorkTask? {
+        PruningWorkTaskLink.linkedTask(draft, tasks: workTasks)
+    }
+
+    /// A link this device cannot resolve yet — warned about, never cleared.
+    private var hasUnresolvableLink: Bool {
+        PruningWorkTaskLink.hasUnresolvableLink(draft, tasks: workTasks)
     }
 
     private func varietyName(of paddockId: UUID) -> String? {
@@ -155,6 +168,7 @@ struct PruningActivityEditorView: View {
             }
 
             activitySection
+            workTaskSection
             blocksSection
             if let focusedPaddock {
                 focusedBlockSection(focusedPaddock)
@@ -186,6 +200,33 @@ struct PruningActivityEditorView: View {
             PruningActivityBlockPicker(blocks: paddocks, draft: draft) { paddock in
                 draft = PruningAllocationEditor.focus(draft, paddockId: paddock.id, blockName: paddock.name)
             }
+        }
+        .sheet(isPresented: $showTaskPicker) {
+            PruningWorkTaskPicker(tasks: workTasks, linkedId: draft.workTaskId) { task in
+                // Only the parent's link changes — every allocation is carried
+                // through untouched.
+                draft = PruningWorkTaskLink.link(draft, taskId: task.id)
+            }
+        }
+        .sheet(item: $taskCreateDraft) { pending in
+            PruningWorkTaskCreateSheet(
+                activity: draft,
+                task: pending,
+                onCreate: { confirmed in
+                    // The LIVE draft is passed, so the task's date, hours and
+                    // blocks match what the operator is actually recording.
+                    if let created = onCreateWorkTask?(draft, confirmed) {
+                        draft = PruningWorkTaskLink.link(draft, taskId: created)
+                    }
+                    taskCreateDraft = nil
+                },
+                onCancel: { taskCreateDraft = nil }
+            )
+        }
+        // The linked task opens in a sheet, so the draft — every block and
+        // quarter selection — survives the round trip untouched.
+        .sheet(item: $openTask) { task in
+            AddEditWorkTaskView(existingTask: task)
         }
         .alert("Remove block?", isPresented: Binding(
             get: { removeCandidate != nil },
@@ -285,16 +326,84 @@ struct PruningActivityEditorView: View {
                 }
             }
             TextField("Notes", text: $draft.notes, axis: .vertical)
-            Picker("Work Task", selection: $draft.workTaskId) {
-                Text("Not linked").tag(UUID?.none)
-                ForEach(linkableTasks) { task in
-                    Text(Self.taskLabel(task)).tag(UUID?.some(task.id))
-                }
-            }
         } header: {
             Text("This activity")
         } footer: {
             Text(activityFooter)
+        }
+    }
+
+    // MARK: Work Task (activity level)
+
+    /// The activity's Work Task link. ONE link on the parent draft
+    /// (`PruningActivityDraft.workTaskId`) — never a copy on any
+    /// `BlockPruningSelection` — with the full workflow the single-block editor
+    /// had: create a task for this job, link an existing one, open the linked
+    /// task, or unlink it. Every action only rewrites the parent's link, so block
+    /// and quarter selections survive untouched.
+    @ViewBuilder
+    private var workTaskSection: some View {
+        Section {
+            if let linkedTask {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(linkedTask.taskType.isEmpty ? "Work task" : linkedTask.taskType)
+                        .font(.subheadline.weight(.semibold))
+                    Text(
+                        [
+                            linkedTask.date.formatted(date: .abbreviated, time: .omitted),
+                            linkedTask.paddockName.isEmpty ? nil : linkedTask.paddockName,
+                            Self.number(linkedTask.durationHours, digits: 1) + " h",
+                            linkedTask.isFinalized ? "Completed" : nil
+                        ]
+                        .compactMap { $0 }
+                        .joined(separator: " · ")
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                Button {
+                    openTask = linkedTask
+                } label: {
+                    Label("Open task", systemImage: "arrow.up.forward.square")
+                        .font(.subheadline.weight(.semibold))
+                }
+                Button("Change linked task") { showTaskPicker = true }
+                    .font(.subheadline)
+                Button("Unlink task", role: .destructive) {
+                    draft = PruningWorkTaskLink.unlink(draft)
+                }
+                .font(.subheadline)
+            } else if hasUnresolvableLink {
+                // NEVER cleared silently: the link is real server state this
+                // device simply hasn't pulled yet.
+                Text("This activity is linked to a Work Task that hasn't reached this device yet. It stays linked — pull to refresh, or unlink deliberately.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                Button("Link another task") { showTaskPicker = true }
+                    .font(.subheadline)
+                Button("Unlink task", role: .destructive) {
+                    draft = PruningWorkTaskLink.unlink(draft)
+                }
+                .font(.subheadline)
+            } else {
+                Text("Not linked")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                if onCreateWorkTask != nil {
+                    Button {
+                        taskCreateDraft = PruningWorkTaskLink.createDraft(draft)
+                    } label: {
+                        Label("Create Work Task", systemImage: "plus.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                }
+                Button("Link an existing task") { showTaskPicker = true }
+                    .font(.subheadline)
+            }
+        } header: {
+            Text("Work Task")
+        } footer: {
+            Text("Linked once for the whole activity — the labour record covers every block below. Unlinking leaves the Work Task and its labour lines intact.")
         }
     }
 
@@ -617,16 +726,6 @@ struct PruningActivityEditorView: View {
         }
     }
 
-    /// Human label for a linkable Work Task — its type, block and date.
-    private static func taskLabel(_ task: WorkTask) -> String {
-        var parts: [String] = []
-        let type = task.taskType.trimmingCharacters(in: .whitespacesAndNewlines)
-        parts.append(type.isEmpty ? "Work task" : type)
-        if !task.paddockName.isEmpty { parts.append(task.paddockName) }
-        parts.append(task.date.formatted(date: .abbreviated, time: .omitted))
-        return parts.joined(separator: " · ")
-    }
-
     private static func number(_ value: Double, digits: Int = 2) -> String {
         value.formatted(.number.precision(.fractionLength(0...digits)))
     }
@@ -700,6 +799,143 @@ struct PruningActivityBlockPicker: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Work Task picker
+
+/// Searchable picker over EVERY live Work Task of the vineyard. Selecting one
+/// only changes the PARENT activity's link — no allocation is touched.
+struct PruningWorkTaskPicker: View {
+    let tasks: [WorkTask]
+    let linkedId: UUID?
+    let onSelect: (WorkTask) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var search: String = ""
+
+    private var results: [WorkTask] {
+        PruningWorkTaskLink.search(tasks, query: search)
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if results.isEmpty {
+                    if search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        ContentUnavailableView(
+                            "No Work Tasks",
+                            systemImage: "checklist",
+                            description: Text("This vineyard has no Work Tasks yet. Create one from the pruning activity instead.")
+                        )
+                    } else {
+                        ContentUnavailableView.search(text: search)
+                    }
+                } else {
+                    ForEach(results) { task in
+                        Button {
+                            onSelect(task)
+                            dismiss()
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(task.taskType.isEmpty ? "Work task" : task.taskType)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                    Text(
+                                        [
+                                            task.date.formatted(date: .abbreviated, time: .omitted),
+                                            task.paddockName.isEmpty ? nil : task.paddockName,
+                                            task.durationHours
+                                                .formatted(.number.precision(.fractionLength(0...1))) + " h"
+                                        ]
+                                        .compactMap { $0 }
+                                        .joined(separator: " · ")
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if task.id == linkedId {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(VineyardTheme.leafGreen)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .searchable(text: $search, prompt: "Search work type, block or date")
+            .navigationTitle("Link a Work Task")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+/// Creates ONE completed Work Task for the whole activity. Date, duration and
+/// blocks come from the activity itself, so the shared labour is recorded once
+/// and never apportioned per block.
+struct PruningWorkTaskCreateSheet: View {
+    let activity: PruningActivityDraft
+    let onCreate: (PruningWorkTaskLinkDraft) -> Void
+    let onCancel: () -> Void
+
+    @State private var task: PruningWorkTaskLinkDraft
+
+    init(
+        activity: PruningActivityDraft,
+        task: PruningWorkTaskLinkDraft,
+        onCreate: @escaping (PruningWorkTaskLinkDraft) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.activity = activity
+        self._task = State(initialValue: task)
+        self.onCreate = onCreate
+        self.onCancel = onCancel
+    }
+
+    /// What the created task will record — all of it taken from the activity, so
+    /// the shared labour is stored once and never apportioned per block.
+    private var activitySummary: String {
+        let dateText = activity.date.formatted(date: .abbreviated, time: .omitted)
+        let hours = PruningWorkTaskLink.durationHours(activity)
+        let hoursText = hours.formatted(.number.precision(.fractionLength(0...1)))
+        let blocks: String = activity.blockSummary.isEmpty ? "no blocks yet" : activity.blockSummary
+        let head = "One task for this whole activity: \(dateText) · \(hoursText) h · \(blocks)."
+        return head + " Linked to this activity with a stable id, so an offline retry can never create a second task."
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Work type", text: $task.taskType)
+                    TextField("Task notes", text: $task.notes, axis: .vertical)
+                    Toggle("Mark completed", isOn: $task.markCompleted)
+                } header: {
+                    Text("New Work Task")
+                } footer: {
+                    Text(activitySummary)
+                }
+            }
+            .navigationTitle("Create Work Task")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Create") { onCreate(task) }
+                        .font(.body.weight(.semibold))
+                        .disabled(!task.isValid)
                 }
             }
         }

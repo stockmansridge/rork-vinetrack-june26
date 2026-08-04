@@ -50,6 +50,7 @@ struct PruningTrackerView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(PruningSyncService.self) private var pruningSync
     @Environment(BackendAccessControl.self) private var accessControl
+    @Environment(NewBackendAuthService.self) private var auth
     @AppStorage("pruningBlockSort") private var blockSortRaw: String = PruningBlockSort.alphabetical.rawValue
     private var pruningStore: PruningStore { .shared }
 
@@ -163,6 +164,55 @@ struct PruningTrackerView: View {
         }
     }
 
+    /// Creates ONE Work Task for the WHOLE activity through the existing shared
+    /// work-task store and sync, and returns its stable client id so the parent
+    /// draft can link to it.
+    ///
+    /// Activity-level by construction: one task, dated with the activity, its
+    /// duration the activity's shared labour hours, joined to EVERY block in the
+    /// activity. The id is client-generated, so an offline replay or a retry can
+    /// never create a second task — and `PruningSyncService` holds the activity
+    /// push back until this task has reached the server rather than dropping the
+    /// link.
+    private func createLinkedWorkTask(
+        for activity: PruningActivityDraft,
+        task taskDraft: PruningWorkTaskLinkDraft
+    ) -> UUID? {
+        guard let vineyardId = store.selectedVineyardId else { return nil }
+        let blockIds = Set(PruningWorkTaskLink.paddockIds(activity))
+        let blocks = paddocks.filter { blockIds.contains($0.id) }
+        let userName = auth.userName ?? ""
+        let creator = userName.isEmpty ? nil : userName
+        var task = WorkTask(
+            vineyardId: vineyardId,
+            date: activity.date,
+            taskType: taskDraft.trimmedType,
+            paddockId: blocks.first?.id,
+            paddockName: blocks.map(\.name).joined(separator: ", "),
+            durationHours: PruningWorkTaskLink.durationHours(activity),
+            notes: taskDraft.trimmedNotes,
+            createdBy: creator,
+            isFinalized: taskDraft.markCompleted,
+            finalizedAt: taskDraft.markCompleted ? Date() : nil,
+            finalizedBy: taskDraft.markCompleted ? creator : nil,
+            taskDescription: "Pruning — \(activity.blockSummary)",
+            status: taskDraft.markCompleted ? "Completed" : nil
+        )
+        let area = blocks.reduce(0.0) { $0 + $1.areaHectares }
+        if area > 0 { task.areaHa = area }
+        store.addWorkTask(task)
+        // One join row per block — the task spans every block of the activity.
+        for block in blocks {
+            store.addWorkTaskPaddock(WorkTaskPaddock(
+                workTaskId: task.id,
+                vineyardId: vineyardId,
+                paddockId: block.id,
+                areaHa: block.areaHectares > 0 ? block.areaHectares : nil
+            ))
+        }
+        return task.id
+    }
+
     /// Reverses the parent activity as ONE operation; every allocation inherits it.
     private func reverseActivity(id: UUID) {
         pruningStore.reverseActivity(id: id)
@@ -230,7 +280,10 @@ struct PruningTrackerView: View {
                 workTasks: store.workTasks.filter { $0.vineyardId == store.selectedVineyardId },
                 reconciliation: pruningSync.lastActivityReconciliation,
                 onSave: { saveActivity($0) },
-                onReverse: { reverseActivity(id: draft.id) }
+                onReverse: { reverseActivity(id: draft.id) },
+                onCreateWorkTask: { activity, taskDraft in
+                    createLinkedWorkTask(for: activity, task: taskDraft)
+                }
             )
         }
         .alert("Recording locked", isPresented: $showAccessExplanation) {

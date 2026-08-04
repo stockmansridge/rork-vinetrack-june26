@@ -82,6 +82,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.PruningActivityTaskLink
 import com.rork.vinetrack.data.PruningCreateAccess
 import com.rork.vinetrack.data.PruningStore
 import com.rork.vinetrack.data.PruningSyncStatus
@@ -314,6 +315,29 @@ fun PruningTrackerScreen(
             onReverse = {
                 activities = vm.reversePruningActivity(vineyardId, openDraft.id)
                 entries = vm.pruningEntries(vineyardId)
+            },
+            // ONE Work Task for the whole activity, through the existing shared
+            // work-task path: client-minted id, optimistic local row, offline
+            // queue. The activity push waits for that task to land rather than
+            // dropping the link (PruningSyncCoordinator).
+            onCreateWorkTask = { activityDraft, taskDraft ->
+                vm.createWorkTask(
+                    taskType = taskDraft.trimmedType,
+                    paddockIds = PruningActivityTaskLink.paddockIds(activityDraft),
+                    date = activityDraft.date,
+                    durationHours = PruningActivityTaskLink.durationHours(activityDraft),
+                    notes = taskDraft.trimmedNotes,
+                    markCompleted = taskDraft.markCompleted,
+                ) { }
+            },
+            // Opens the linked task IN PLACE, so the draft's block and quarter
+            // selections survive the round trip.
+            workTaskDetail = if (canOpenWorkTasks) {
+                { taskId, onClose ->
+                    WorkTaskDeepLinkScreen(vm = vm, state = state, taskId = taskId, onBack = onClose)
+                }
+            } else {
+                null
             },
             onBack = { editorDraft = null },
             modifier = modifier,
