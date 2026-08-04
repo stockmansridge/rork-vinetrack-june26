@@ -285,11 +285,17 @@ nonisolated enum PruningActivityReport {
     /// All related entities are passed in pre-indexed — the caller resolves
     /// blocks, Work Tasks, labour costs and account names ONCE, so building a
     /// large history never performs a per-record lookup.
+    ///
+    /// LABOUR AUTHORITY: `labourHours` / `labourCosts` come from the linked Work
+    /// Task's labour lines and win outright. The entry's own
+    /// `labourHours`/legacy rate are used ONLY when the task has no lines, so a
+    /// row never mixes the two sources and no total can count labour twice.
     static func rows(
         entries: [PruningEntry],
         blocks: [UUID: PruningActivityBlockContext],
         workTaskTitles: [UUID: String],
         labourCosts: [UUID: Double],
+        labourHours: [UUID: Double] = [:],
         accountNames: [UUID: String],
         calendar: Calendar = .current
     ) -> [PruningActivityRow] {
@@ -299,7 +305,10 @@ nonisolated enum PruningActivityReport {
             let vines: Double? = rows.isEmpty
                 ? nil
                 : PruningCalculator.exactVines(for: entry.segments, rows: rows)
-            let hours = entry.labourHours.flatMap { $0 > 0 ? $0 : nil }
+            // Work Task person-hours are authoritative; the legacy activity
+            // hours are the fallback for records with no labour lines.
+            let taskHours = entry.workTaskId.flatMap { labourHours[$0] }
+            let hours = taskHours ?? entry.labourHours.flatMap { $0 > 0 ? $0 : nil }
             let vinesPerHour: Double? = {
                 guard let vines, let hours, hours > 0 else { return nil }
                 return vines / hours

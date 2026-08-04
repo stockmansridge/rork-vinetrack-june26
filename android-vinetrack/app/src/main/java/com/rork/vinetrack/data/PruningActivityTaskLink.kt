@@ -6,6 +6,10 @@ import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import com.rork.vinetrack.data.model.PruningActivityDraft
 import com.rork.vinetrack.data.model.WorkTask
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Draft of a Work Task being created from inside the pruning activity editor.
@@ -152,15 +156,65 @@ object PruningActivityTaskLink {
         .toSet()
 
     /**
+     * Ids of Work Tasks with ANY unresolved dependency, in the mandatory order
+     * the pruning push relies on:
+     *
+     *   1. the Work Task header (`work_task_id` is a real foreign key),
+     *   2. its block associations,
+     *   3. its labour lines — the authoritative labour record,
+     *   4. only then the Pruning Activity that references the task.
+     *
+     * A pruning activity referencing any of these ids is held back with its
+     * `work_task_id` INTACT: the link is never stripped to force the upload, and
+     * the activity is never reported as fully synced while a labour line it
+     * depends on is still local (a report would otherwise read a half-written
+     * labour record).
+     *
+     * Child writes are keyed by their own row id, so the caller supplies the
+     * child -> parent-task maps ([labourLineTaskIds], [workTaskPaddockTaskIds]).
+     */
+    fun unresolvedDependencyIds(
+        writes: List<PendingWrite>,
+        labourLineTaskIds: Map<String, String> = emptyMap(),
+        workTaskPaddockTaskIds: Map<String, String> = emptyMap(),
+    ): Set<String> {
+        val ids = unresolvedTaskCreateIds(writes).toMutableSet()
+        for (write in writes) {
+            if (write.status !in PendingWriteStatus.unresolved) continue
+            val taskId = when (write.entityType) {
+                PendingEntityType.WORK_TASK_LABOUR ->
+                    labourLineTaskIds[write.clientId] ?: payloadWorkTaskId(write)
+                PendingEntityType.WORK_TASK_PADDOCK ->
+                    workTaskPaddockTaskIds[write.clientId] ?: payloadWorkTaskId(write)
+                else -> null
+            }
+            if (taskId != null) ids += taskId
+        }
+        return ids
+    }
+
+    /**
+     * Best-effort parent-task id from a queued child write's payload, so the
+     * coordinator does not need to keep its own child -> task index. Every child
+     * payload ([WorkTaskLabourSync.UpsertPayload] / `DeletePayload`, and the
+     * work-task-paddock equivalents) carries `workTaskId`.
+     */
+    private fun payloadWorkTaskId(write: PendingWrite): String? = runCatching {
+        val element = Json.parseToJsonElement(write.payloadJson)
+        element.jsonObject["workTaskId"]?.jsonPrimitive?.contentOrNull
+    }.getOrNull()
+
+    /**
      * Whether an activity write must wait. The pruning activity is held back —
-     * with its `work_task_id` intact — until the linked task lands.
+     * with its `work_task_id` intact — until the linked task, its block links and
+     * its labour lines have all landed.
      */
     fun isWaitingForTask(workTaskId: String?, unresolvedTaskCreateIds: Set<String>): Boolean =
         workTaskId != null && workTaskId in unresolvedTaskCreateIds
 
     /** Operator-facing reason shown on the held write. */
     const val WAITING_REASON: String =
-        "Waiting for the linked Work Task to reach the server — the pruning activity will sync straight after."
+        "Waiting for the linked Work Task and its labour lines to reach the server — the pruning activity will sync straight after."
 
     private fun trim(value: Double): String =
         if (value % 1.0 == 0.0) value.toInt().toString() else String.format("%.2f", value).trimEnd('0').trimEnd('.')

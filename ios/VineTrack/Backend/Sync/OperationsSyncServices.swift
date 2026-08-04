@@ -338,6 +338,27 @@ final class WorkTaskLabourLineSyncService {
     private var isConfigured: Bool = false
     private var eagerPushTask: Task<Void, Never>?
 
+    func isPendingUpsert(_ id: UUID) -> Bool { metadata.pendingUpserts[id] != nil }
+
+    /// True while ANY labour line of `workTaskId` still has an unacknowledged
+    /// local write.
+    ///
+    /// This is the third link in the pruning push's dependency chain — Work Task
+    /// header, then its block associations, then its labour lines, and only then
+    /// the Pruning Activity that references the task. A pruning activity is held
+    /// back (with its `work_task_id` intact) while a labour line it depends on is
+    /// still local, so reports can never read a half-written labour record.
+    func isPendingUpsert(forWorkTask workTaskId: UUID) -> Bool {
+        guard let store else { return false }
+        let lineIds = Set(
+            store.workTaskLabourLines
+                .filter { $0.workTaskId == workTaskId }
+                .map(\.id)
+        )
+        guard !lineIds.isEmpty else { return false }
+        return metadata.pendingUpserts.keys.contains { lineIds.contains($0) }
+    }
+
     private func scheduleEagerPush() {
         eagerPushTask?.cancel()
         eagerPushTask = Task { [weak self] in
@@ -695,6 +716,20 @@ final class WorkTaskPaddockSyncService {
     private let metadata: OperationsSyncMetadata
     private var isConfigured: Bool = false
     private var eagerPushTask: Task<Void, Never>?
+
+    /// True while ANY block association of `workTaskId` still has an
+    /// unacknowledged local write — the second link in the pruning push's
+    /// dependency chain (task → block associations → labour lines → activity).
+    func isPendingUpsert(forWorkTask workTaskId: UUID) -> Bool {
+        guard let store else { return false }
+        let joinIds = Set(
+            store.workTaskPaddocks
+                .filter { $0.workTaskId == workTaskId }
+                .map(\.id)
+        )
+        guard !joinIds.isEmpty else { return false }
+        return metadata.pendingUpserts.keys.contains { joinIds.contains($0) }
+    }
 
     private func scheduleEagerPush() {
         eagerPushTask?.cancel()

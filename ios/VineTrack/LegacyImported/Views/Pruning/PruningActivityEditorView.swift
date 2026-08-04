@@ -6,10 +6,15 @@ import SwiftUI
 /// MANY blocks. The strict split the whole feature rests on:
 ///
 /// * ACTIVITY level, shown ONCE at the top: date, worker/crew, method, start,
-///   finish, labour hours, hourly rate (where authorised), notes, linked Work
-///   Task. Switching the focused block never resets or duplicates these.
+///   finish, operational duration, notes, linked Work Task. Switching the
+///   focused block never resets or duplicates these.
 /// * ALLOCATION level, per block: the rows and quarters pruned in THAT block,
 ///   its row equivalents and its vine estimate.
+/// * WORK TASK level, in the linked task: labour type, hourly rate, number of
+///   people, hours per person, person-hours and labour cost. The activity NO
+///   LONGER offers a standalone editable hourly rate — `WorkTaskLabourCosting`
+///   resolves cost from the linked task's labour lines, falling back to a
+///   historical activity rate only for legacy records.
 ///
 /// Every allocation mutation goes through `PruningAllocationEditor`, so a
 /// selection in one block can never be lost by focusing another.
@@ -28,6 +33,7 @@ struct PruningActivityEditorView: View {
     let onCreateWorkTask: ((PruningActivityDraft, PruningWorkTaskLinkDraft) -> UUID?)?
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(MigratedDataStore.self) private var store
     private var pruningStore: PruningStore { .shared }
 
     @State private var draft: PruningActivityDraft
@@ -36,7 +42,6 @@ struct PruningActivityEditorView: View {
     @State private var showDiscardPrompt: Bool = false
     @State private var removeCandidate: UUID?
     @State private var labourText: String = ""
-    @State private var rateText: String = ""
     @State private var recordsTimes: Bool = false
     @State private var rangeFrom: Int = 0
     @State private var rangeTo: Int = 0
@@ -68,7 +73,6 @@ struct PruningActivityEditorView: View {
         self.onReverse = onReverse
         self.onCreateWorkTask = onCreateWorkTask
         self._labourText = State(initialValue: draft.labourHours.map { Self.number($0) } ?? "")
-        self._rateText = State(initialValue: draft.hourlyRate.map { Self.number($0) } ?? "")
         self._recordsTimes = State(initialValue: draft.startTime != nil || draft.finishTime != nil)
     }
 
@@ -94,19 +98,36 @@ struct PruningActivityEditorView: View {
     }
 
     /// One line describing the PARENT activity: its canonical season, resolved
-    /// vintage, elapsed span and the labour cost of the whole job.
+    /// vintage and elapsed span. Labour COST is deliberately absent — it belongs
+    /// to the linked Work Task's labour lines.
     private var activityFooter: String {
         var parts: [String] = ["Recorded once for the whole job — season " + String(draft.seasonYear)]
         if let vintage = draft.vintageYear {
             parts.append("Vintage " + String(vintage))
         }
         if let elapsed = draft.durationHours {
-            parts.append("elapsed " + Self.number(elapsed, digits: 1) + " h")
+            parts.append("elapsed " + Self.number(elapsed, digits: 1) + " h between start and finish")
         }
-        if canViewCosting, let cost = draft.labourCost {
-            parts.append("labour cost " + Self.number(cost) + " (whole activity)")
-        }
+        parts.append("labour type, rate, people and hours per person live on the linked Work Task")
         return parts.joined(separator: " · ")
+    }
+
+    /// Live labour lines of the LINKED Work Task — the authoritative source of
+    /// this activity's person-hours and labour cost.
+    private var linkedLabourLines: [WorkTaskLabourLine] {
+        guard let taskId = draft.workTaskId else { return [] }
+        return WorkTaskLabourCosting.lines(store.workTaskLabourLines, for: taskId)
+    }
+
+    /// Labour resolved for this activity: the task's lines when they exist, the
+    /// historical activity values ONLY for legacy records. Never both.
+    private var resolvedLabour: WorkTaskLabourCosting.ResolvedLabour {
+        WorkTaskLabourCosting.resolveLabour(
+            lines: linkedLabourLines,
+            legacyHours: draft.labourHours,
+            legacyRate: draft.hourlyRate,
+            includeCost: canViewCosting
+        )
     }
 
     private var focusedPaddock: Paddock? {
@@ -261,9 +282,14 @@ struct PruningActivityEditorView: View {
 
     // MARK: Activity-level fields
 
-    /// The parent activity's own fields. Rendered ONCE: labour, timing, rate,
-    /// notes and the Work Task link belong to the whole job and are never
-    /// apportioned or duplicated across blocks.
+    /// The parent activity's own OPERATIONAL fields. Rendered ONCE: date, crew,
+    /// method, start/finish, operational duration and notes belong to the whole
+    /// job and are never apportioned or duplicated across blocks.
+    ///
+    /// There is deliberately NO editable hourly rate here. Rate, people, hours
+    /// per person and cost live on the linked Work Task's labour lines, so there
+    /// is only ever one authoritative rate. A historical activity rate is still
+    /// shown read-only, clearly labelled as legacy.
     private var activitySection: some View {
         Section {
             DatePicker("Date", selection: $draft.date, displayedComponents: .date)
@@ -302,9 +328,9 @@ struct PruningActivityEditorView: View {
                 )
             }
             HStack {
-                Text("Labour hours")
+                Text("Operational hours")
                 Spacer()
-                TextField("0", text: $labourText)
+                TextField("Optional", text: $labourText)
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
                     .frame(width: 90)
@@ -312,17 +338,13 @@ struct PruningActivityEditorView: View {
                         draft.labourHours = Double(value.replacingOccurrences(of: ",", with: "."))
                     }
             }
-            if canViewCosting {
-                HStack {
-                    Text("Hourly rate")
-                    Spacer()
-                    TextField("0", text: $rateText)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 90)
-                        .onChange(of: rateText) { _, value in
-                            draft.hourlyRate = Double(value.replacingOccurrences(of: ",", with: "."))
-                        }
+            // LEGACY ONLY, read-only: activities recorded before Work Task labour
+            // lines existed carry their own rate. It is never editable and never
+            // combined with labour-line totals.
+            if canViewCosting, let legacyRate = draft.hourlyRate {
+                LabeledContent("Legacy activity rate") {
+                    Text(Self.number(legacyRate) + "/h")
+                        .foregroundStyle(.orange)
                 }
             }
             TextField("Notes", text: $draft.notes, axis: .vertical)
@@ -335,12 +357,16 @@ struct PruningActivityEditorView: View {
 
     // MARK: Work Task (activity level)
 
-    /// The activity's Work Task link. ONE link on the parent draft
+    /// The activity's Work Task link AND its labour. ONE link on the parent draft
     /// (`PruningActivityDraft.workTaskId`) — never a copy on any
     /// `BlockPruningSelection` — with the full workflow the single-block editor
     /// had: create a task for this job, link an existing one, open the linked
     /// task, or unlink it. Every action only rewrites the parent's link, so block
     /// and quarter selections survive untouched.
+    ///
+    /// The linked task's labour lines are the AUTHORITATIVE labour record: task
+    /// title, status, total person-hours, total labour cost (subject to costing
+    /// permission), and THE standard labour editor rendered in place.
     @ViewBuilder
     private var workTaskSection: some View {
         Section {
@@ -352,14 +378,16 @@ struct PruningActivityEditorView: View {
                         [
                             linkedTask.date.formatted(date: .abbreviated, time: .omitted),
                             linkedTask.paddockName.isEmpty ? nil : linkedTask.paddockName,
-                            Self.number(linkedTask.durationHours, digits: 1) + " h",
-                            linkedTask.isFinalized ? "Completed" : nil
+                            linkedTask.isFinalized ? "Completed" : "To do"
                         ]
                         .compactMap { $0 }
                         .joined(separator: " · ")
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    Text(taskLabourSummary)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(linkedLabourLines.isEmpty ? .orange : .secondary)
                 }
                 Button {
                     openTask = linkedTask
@@ -373,6 +401,14 @@ struct PruningActivityEditorView: View {
                     draft = PruningWorkTaskLink.unlink(draft)
                 }
                 .font(.subheadline)
+                // THE standard labour editor, in place. Linking an existing task
+                // shows ITS lines and never seeds, overwrites or duplicates them,
+                // and no pruning allocation is touched.
+                WorkTaskLabourLinesSection(
+                    workTaskId: linkedTask.id,
+                    vineyardId: draft.vineyardId,
+                    defaultWorkDate: draft.date
+                )
             } else if hasUnresolvableLink {
                 // NEVER cleared silently: the link is real server state this
                 // device simply hasn't pulled yet.
@@ -403,8 +439,22 @@ struct PruningActivityEditorView: View {
         } header: {
             Text("Work Task")
         } footer: {
-            Text("Linked once for the whole activity — the labour record covers every block below. Unlinking leaves the Work Task and its labour lines intact.")
+            Text("Linked once for the whole activity. Labour type, rate, people and hours per person live on the Work Task — never per block. Unlinking leaves the Work Task and its labour lines intact.")
         }
+    }
+
+    /// The linked task's authoritative labour totals.
+    private var taskLabourSummary: String {
+        let totals = WorkTaskLabourCosting.totals(linkedLabourLines)
+        guard !totals.isEmpty else {
+            return "No labour lines yet — add labour type, people and hours per person below."
+        }
+        var parts: [String] = [Self.number(totals.personHours, digits: 1) + " total person-hours"]
+        if canViewCosting, let cost = totals.cost {
+            parts.append("labour cost " + Self.number(cost))
+        }
+        parts.append("\(totals.lineCount) labour line\(totals.lineCount == 1 ? "" : "s")")
+        return parts.joined(separator: " · ")
     }
 
     // MARK: Included blocks
@@ -649,8 +699,8 @@ struct PruningActivityEditorView: View {
     // MARK: Summary + save
 
     /// Everything the activity will save, per block AND combined. Labour appears
-    /// in the combined line only — never repeated per block, so no total can
-    /// count it twice.
+    /// in the combined footer only, resolved from ONE source — never repeated per
+    /// block, so no total can count it twice.
     private var summarySection: some View {
         Section {
             if draft.activeAllocations.isEmpty {
@@ -697,16 +747,45 @@ struct PruningActivityEditorView: View {
         } header: {
             Text("Activity summary")
         } footer: {
-            Text(
-                [
-                    "\(draft.blockCount) block(s)",
-                    "\(draft.totalQuarters) quarters",
-                    "\(draft.totalEstimatedVines) vines",
-                    draft.labourHours.map { "\(Self.number($0, digits: 1)) labour h recorded once for the whole activity" }
-                ]
-                .compactMap { $0 }
-                .joined(separator: " · ")
-            )
+            VStack(alignment: .leading, spacing: 4) {
+                Text(
+                    [
+                        "\(draft.blockCount) block(s)",
+                        "\(draft.totalQuarters) quarters",
+                        "\(draft.totalEstimatedVines) vines"
+                    ]
+                    .joined(separator: " · ")
+                )
+                Text(labourSummaryLine)
+                    .foregroundStyle(resolvedLabour.isLegacy ? .orange : .secondary)
+            }
+        }
+    }
+
+    /// The activity's labour line in the summary, from EXACTLY one source.
+    private var labourSummaryLine: String {
+        let labour = resolvedLabour
+        switch labour.source {
+        case .workTaskLines:
+            var parts: [String] = []
+            if let hours = labour.hours {
+                parts.append("\(Self.number(hours, digits: 1)) person-hours from the Work Task")
+            }
+            if let cost = labour.cost {
+                parts.append("labour cost \(Self.number(cost))")
+            }
+            return parts.isEmpty ? "Labour recorded on the linked Work Task." : parts.joined(separator: " · ")
+        case .legacyActivity:
+            var parts: [String] = []
+            if let hours = labour.hours {
+                parts.append("\(Self.number(hours, digits: 1)) legacy activity hours")
+            }
+            if let cost = labour.cost {
+                parts.append("legacy cost \(Self.number(cost))")
+            }
+            return parts.joined(separator: " · ") + " — add Work Task labour lines to replace it."
+        case .none:
+            return "No labour recorded — link a Work Task and add labour lines to cost this job."
         }
     }
 

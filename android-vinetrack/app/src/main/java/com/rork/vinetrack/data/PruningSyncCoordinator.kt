@@ -113,15 +113,17 @@ class PruningSyncCoordinator(
     }
 
     /**
-     * Activities held back by an unresolved linked Work Task create. The link is
-     * server state, so it is never stripped to let the pruning upload through —
-     * the activity simply waits.
+     * Activities held back by an unresolved Work Task dependency — the task
+     * header, its block associations, or its LABOUR LINES. The link is server
+     * state, so it is never stripped to let the pruning upload through; the
+     * activity simply waits, and is never counted as fully synced while a labour
+     * line it depends on is still local.
      */
     private fun activitiesWaitingForWorkTask(
         vineyardId: String,
         writes: List<PendingWrite>,
     ): List<String> {
-        val unresolvedTasks = PruningActivityTaskLink.unresolvedTaskCreateIds(writes)
+        val unresolvedTasks = PruningActivityTaskLink.unresolvedDependencyIds(writes)
         if (unresolvedTasks.isEmpty()) return emptyList()
         return store.loadActivities(vineyardId)
             .filter { PruningActivityTaskLink.isWaitingForTask(it.workTaskId, unresolvedTasks) }
@@ -344,7 +346,9 @@ class PruningSyncCoordinator(
             it.entityType == PendingEntityType.PRUNING_ACTIVITY && it.opType == opType &&
                 (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
         }
-        val unresolvedTasks = PruningActivityTaskLink.unresolvedTaskCreateIds(pending.list())
+        // ORDERED DEPENDENCY CHAIN: Work Task header -> its block associations ->
+        // its labour lines -> this activity.
+        val unresolvedTasks = PruningActivityTaskLink.unresolvedDependencyIds(pending.list())
         for (write in candidates) {
             pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
             try {
@@ -355,12 +359,12 @@ class PruningSyncCoordinator(
                 }
                 val draft = json.decodeFromString(PruningActivityDraft.serializer(), write.payloadJson)
                 // ORDERED DEPENDENCY: `pruning_activities.work_task_id` is a real
-                // foreign key. A task created offline must reach the server
-                // first, or the whole atomic activity write is rejected. The
-                // link is NEVER dropped to make this upload succeed — the
-                // activity waits and retries on the next pass.
+                // foreign key, and its labour lines are the authoritative labour
+                // record. The task, its block links and its labour lines must all
+                // reach the server first. The link is NEVER dropped to make this
+                // upload succeed — the activity waits and retries on the next pass.
                 if (PruningActivityTaskLink.isWaitingForTask(draft.workTaskId, unresolvedTasks)) {
-                    Log.i(TAG, "activity ${draft.id} held: linked Work Task ${draft.workTaskId} has not synced yet")
+                    Log.i(TAG, "activity ${draft.id} held: Work Task ${draft.workTaskId} or its labour lines have not synced yet")
                     retryOrBlock(write, PruningActivityTaskLink.WAITING_REASON)
                     continue
                 }

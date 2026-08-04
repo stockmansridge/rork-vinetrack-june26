@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.PruningActivityTaskLink
 import com.rork.vinetrack.data.PruningWorkTaskLinkDraft
+import com.rork.vinetrack.data.WorkTaskLabourCosting
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PruningActivityDraft
 import com.rork.vinetrack.data.model.PruningActivityListing
@@ -78,7 +79,10 @@ import com.rork.vinetrack.data.model.PruningRowRef
 import com.rork.vinetrack.data.model.PruningSeasonSelection
 import com.rork.vinetrack.data.model.PruningSegment
 import com.rork.vinetrack.data.model.WorkTask
+import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.components.formatLabourCurrency
+import com.rork.vinetrack.ui.components.formatLabourHours
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.time.Instant
@@ -93,10 +97,15 @@ import java.time.format.DateTimeFormatter
  * MANY blocks. The strict split the whole feature rests on:
  *
  *  * ACTIVITY level, shown ONCE at the top: date, worker/crew, method, start,
- *    finish, labour hours, hourly rate (where authorised), notes, linked Work
- *    Task. Switching the focused block never resets or duplicates these.
+ *    finish, operational duration, notes, linked Work Task. Switching the
+ *    focused block never resets or duplicates these.
  *  * ALLOCATION level, per block: the rows and quarters pruned in THAT block,
  *    its row equivalents and its vine estimate.
+ *  * WORK TASK level, in the linked task: labour type, hourly rate, number of
+ *    people, hours per person, person-hours and labour cost. The activity NO
+ *    LONGER offers a standalone editable hourly rate — [WorkTaskLabourCosting]
+ *    resolves cost from the linked task's labour lines, falling back to a
+ *    historical activity rate only for legacy records.
  *
  * Every allocation mutation goes through [PruningAllocationEditor], so
  * selections in one block can never be lost by focusing another.
@@ -109,6 +118,11 @@ fun PruningActivityEditorScreen(
     /** Active entries of the vineyard — the quarters already completed. */
     entries: List<PruningEntry>,
     workTasks: List<WorkTask>,
+    /**
+     * Live labour lines of the LINKED Work Task — the authoritative source of
+     * person-hours and labour cost for this activity.
+     */
+    labourLines: List<WorkTaskLabourLine>,
     canViewCosting: Boolean,
     initialDraft: PruningActivityDraft,
     isEditing: Boolean,
@@ -127,6 +141,12 @@ fun PruningActivityEditorScreen(
      * draft — every block and quarter selection — survives the round trip.
      */
     workTaskDetail: (@Composable (taskId: String, onClose: () -> Unit) -> Unit)? = null,
+    /**
+     * THE standard Work Task labour editor, injected by the caller. Rendered
+     * inside the Work Task card so labour is edited with the same component the
+     * Work Task screen uses — never a pruning-specific reimplementation.
+     */
+    labourSection: (@Composable (taskId: String) -> Unit)? = null,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -245,12 +265,15 @@ fun PruningActivityEditorScreen(
                 PruningActivityWorkTaskCard(
                     draft = draft,
                     workTasks = workTasks,
+                    labourLines = labourLines,
+                    canViewCosting = canViewCosting,
                     canCreate = onCreateWorkTask != null,
                     canOpen = workTaskDetail != null,
                     onLinkExisting = { showTaskPicker = true },
                     onCreate = { taskCreateDraft = PruningActivityTaskLink.createDraft(draft) },
                     onOpen = { openTaskId = draft.workTaskId },
                     onUnlink = { draft = PruningActivityTaskLink.unlink(draft) },
+                    labourSection = labourSection,
                 )
             }
 
@@ -379,6 +402,7 @@ fun PruningActivityEditorScreen(
                     draft = draft,
                     blockNameOf = { blocksById[it]?.name ?: "Block" },
                     varietyOf = { blocksById[it]?.primaryVarietyName },
+                    labourLines = labourLines,
                     canViewCosting = canViewCosting,
                 )
             }
@@ -543,9 +567,14 @@ fun PruningActivityEditorScreen(
 // MARK: - Activity-level fields
 
 /**
- * The parent activity's own fields. Rendered ONCE: labour, timing, rate, notes
- * and the Work Task link belong to the whole job and are never apportioned or
- * duplicated across blocks.
+ * The parent activity's own OPERATIONAL fields. Rendered ONCE: date, crew,
+ * method, start/finish, operational duration and notes belong to the whole job
+ * and are never apportioned or duplicated across blocks.
+ *
+ * There is deliberately NO editable hourly rate here. Rate, people, hours per
+ * person and cost live on the linked Work Task's labour lines, so there is only
+ * ever one authoritative rate. A historical activity rate is still shown
+ * read-only, clearly labelled as legacy.
  */
 @Composable
 private fun PruningActivityFieldsCard(
@@ -641,36 +670,33 @@ private fun PruningActivityFieldsCard(
                 )
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = draft.labourHours?.let { fmt(it, 2) }.orEmpty(),
-                    onValueChange = {
-                        onDraftChange(draft.copy(labourHours = it.replace(',', '.').toDoubleOrNull()))
-                    },
-                    label = { Text("Labour hours") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                )
-                if (canViewCosting) {
-                    OutlinedTextField(
-                        value = draft.hourlyRate?.let { fmt(it, 2) }.orEmpty(),
-                        onValueChange = {
-                            onDraftChange(draft.copy(hourlyRate = it.replace(',', '.').toDoubleOrNull()))
-                        },
-                        label = { Text("Hourly rate") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-            }
+            OutlinedTextField(
+                value = draft.labourHours?.let { fmt(it, 2) }.orEmpty(),
+                onValueChange = {
+                    onDraftChange(draft.copy(labourHours = it.replace(',', '.').toDoubleOrNull()))
+                },
+                label = { Text("Operational hours (optional)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
             draft.durationHours?.let { hours ->
                 Text(
-                    "Elapsed ${fmt(hours, 1)} h" +
-                        (draft.labourCost?.let { " · labour cost ${fmt(it, 2)} (whole activity)" } ?: ""),
+                    "Elapsed ${fmt(hours, 1)} h between start and finish — not multiplied by the crew size.",
                     fontSize = 11.sp,
                     color = vine.textSecondary,
+                )
+            }
+            // LEGACY ONLY, read-only: activities recorded before Work Task
+            // labour lines existed carry their own rate. It is never editable
+            // and never combined with labour-line totals.
+            if (canViewCosting && draft.hourlyRate != null) {
+                Text(
+                    "Legacy activity rate ${fmt(draft.hourlyRate, 2)}/h" +
+                        (draft.labourCost?.let { " · ${fmt(it, 2)} recorded" } ?: "") +
+                        " — kept for history. New labour costs come from the linked Work Task.",
+                    fontSize = 11.sp,
+                    color = VineColors.Warning,
                 )
             }
 
@@ -687,27 +713,39 @@ private fun PruningActivityFieldsCard(
 // MARK: - Work Task (activity level)
 
 /**
- * The activity's Work Task link. ONE link on the parent draft
+ * The activity's Work Task link AND its labour. ONE link on the parent draft
  * ([PruningActivityDraft.workTaskId]) — never a copy on any
  * `BlockPruningSelection` — with the full workflow the single-block editor had:
  * create a task for this job, link an existing one, open the linked task, or
  * unlink it. Every action only rewrites the parent's link, so block and quarter
  * selections survive untouched.
+ *
+ * The linked task's labour lines are the AUTHORITATIVE labour record: task
+ * title, status, total person-hours, total labour cost (subject to costing
+ * permission), plus the standard labour editor injected via [labourSection].
  */
 @Composable
 private fun PruningActivityWorkTaskCard(
     draft: PruningActivityDraft,
     workTasks: List<WorkTask>,
+    labourLines: List<WorkTaskLabourLine>,
+    canViewCosting: Boolean,
     canCreate: Boolean,
     canOpen: Boolean,
     onLinkExisting: () -> Unit,
     onCreate: () -> Unit,
     onOpen: () -> Unit,
     onUnlink: () -> Unit,
+    labourSection: (@Composable (taskId: String) -> Unit)?,
 ) {
     val vine = LocalVineColors.current
     val linked = PruningActivityTaskLink.linkedTask(draft, workTasks)
     val unresolvable = PruningActivityTaskLink.hasUnresolvableLink(draft, workTasks)
+    val taskLines = remember(labourLines, draft.workTaskId) {
+        draft.workTaskId?.let { id -> labourLines.filter { it.workTaskId == id && it.deletedAt == null } }
+            .orEmpty()
+    }
+    val totals = remember(taskLines) { WorkTaskLabourCosting.totals(taskLines) }
     PruningCard {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -723,7 +761,7 @@ private fun PruningActivityWorkTaskCard(
                 }
             }
             Text(
-                "Linked once for the whole activity — the labour record covers every block below.",
+                "Linked once for the whole activity. Labour type, rate, people and hours per person live on the Work Task — never per block.",
                 fontSize = 11.sp,
                 color = vine.textSecondary,
             )
@@ -748,12 +786,31 @@ private fun PruningActivityWorkTaskCard(
                             listOfNotNull(
                                 linked.date?.takeIf { it.isNotBlank() }?.take(10),
                                 linked.paddockName?.takeIf { it.isNotBlank() },
-                                "${fmt(linked.durationHours, 1)} h",
-                                if (linked.isComplete) "Completed" else null,
+                                if (linked.isComplete) "Completed" else "To do",
                             ).joinToString(" · "),
                             fontSize = 12.sp,
                             color = vine.textSecondary,
                         )
+                        // Task labour totals — the authoritative figures.
+                        Text(
+                            listOfNotNull(
+                                "${formatLabourHours(totals.personHours)} total person-hours",
+                                totals.cost
+                                    ?.takeIf { canViewCosting }
+                                    ?.let { "labour cost ${formatLabourCurrency(it)}" },
+                                "${totals.lineCount} labour line${if (totals.lineCount == 1) "" else "s"}",
+                            ).joinToString(" · "),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (totals.isEmpty) VineColors.Warning else vine.textPrimary,
+                        )
+                        if (totals.isEmpty) {
+                            Text(
+                                "No labour lines yet — add labour type, people and hours per person below.",
+                                fontSize = 11.sp,
+                                color = VineColors.Warning,
+                            )
+                        }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (canOpen) {
@@ -785,6 +842,15 @@ private fun PruningActivityWorkTaskCard(
                         fontSize = 11.sp,
                         color = vine.textSecondary,
                     )
+                    // THE standard labour editor, in place: linking an existing
+                    // task shows ITS lines and never overwrites or duplicates
+                    // them, and every pruning allocation is untouched.
+                    val section = labourSection
+                    val linkedId = draft.workTaskId
+                    if (section != null && linkedId != null) {
+                        HorizontalDivider(color = vine.cardBorder)
+                        section(linkedId)
+                    }
                 }
 
                 unresolvable -> {
@@ -1341,9 +1407,24 @@ private fun PruningActivitySummaryCard(
     draft: PruningActivityDraft,
     blockNameOf: (String) -> String,
     varietyOf: (String) -> String?,
+    labourLines: List<WorkTaskLabourLine>,
     canViewCosting: Boolean,
 ) {
     val vine = LocalVineColors.current
+    // Labour is resolved from the linked Work Task's lines, with the historical
+    // activity value used ONLY for legacy records that have no lines. The two
+    // are mutually exclusive, so nothing can be counted twice.
+    val labour = remember(labourLines, draft.workTaskId, draft.labourHours, draft.hourlyRate, canViewCosting) {
+        val taskLines = draft.workTaskId
+            ?.let { id -> labourLines.filter { it.workTaskId == id && it.deletedAt == null } }
+            .orEmpty()
+        WorkTaskLabourCosting.resolveLabour(
+            lines = taskLines,
+            legacyHours = draft.labourHours,
+            legacyRate = draft.hourlyRate,
+            includeCost = canViewCosting,
+        )
+    }
     PruningCard {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Activity summary", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
@@ -1404,11 +1485,27 @@ private fun PruningActivitySummaryCard(
                     "${draft.blockCount} block(s)",
                     "${draft.totalQuarters} quarters",
                     "${draft.totalEstimatedVines} vines",
-                    draft.labourHours?.let { "${fmt(it, 1)} labour h (whole activity)" },
-                    draft.labourCost?.takeIf { canViewCosting }?.let { "cost ${fmt(it, 2)}" },
                 ).joinToString(" · "),
                 fontSize = 11.sp,
                 color = vine.textSecondary,
+            )
+            Text(
+                when (labour.source) {
+                    WorkTaskLabourCosting.LabourSource.WORK_TASK_LINES -> listOfNotNull(
+                        labour.hours?.let { "${formatLabourHours(it)} person-hours from the Work Task" },
+                        labour.cost?.let { "labour cost ${formatLabourCurrency(it)}" },
+                    ).joinToString(" · ").ifEmpty { "Labour recorded on the linked Work Task." }
+
+                    WorkTaskLabourCosting.LabourSource.LEGACY_ACTIVITY -> listOfNotNull(
+                        labour.hours?.let { "${formatLabourHours(it)} legacy activity hours" },
+                        labour.cost?.let { "legacy cost ${formatLabourCurrency(it)}" },
+                    ).joinToString(" · ") + " — add Work Task labour lines to replace it."
+
+                    WorkTaskLabourCosting.LabourSource.NONE ->
+                        "No labour recorded — link a Work Task and add labour lines to cost this job."
+                },
+                fontSize = 11.sp,
+                color = if (labour.isLegacy) VineColors.Warning else vine.textSecondary,
             )
         }
     }

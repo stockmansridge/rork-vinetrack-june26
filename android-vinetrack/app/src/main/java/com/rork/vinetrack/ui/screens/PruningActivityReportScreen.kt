@@ -68,6 +68,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.PruningReportNavigation
+import com.rork.vinetrack.data.WorkTaskLabourCosting
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PruningActivityBlockContext
 import com.rork.vinetrack.data.model.PruningActivityColumn
@@ -144,25 +145,27 @@ fun PruningActivityReportScreen(
         }
     }
     val workTaskTitles = remember(workTasks) { workTasks.associate { it.id to it.displayLabel } }
-    // One pass over the labour lines — never one lookup per record.
+    // ONE pass over the labour lines — never one lookup per record.
+    //
+    // Work Task labour lines are the AUTHORITATIVE source of labour hours and
+    // cost. Only tasks with lines appear in these maps, so a record without them
+    // falls back to its own legacy activity value inside
+    // [PruningActivityReport.rows] — never both, so no total double-counts.
     val labourCosts = remember(labourLines, canViewCosting) {
-        if (!canViewCosting) {
-            emptyMap()
-        } else {
-            labourLines
-                .filter { it.hourlyRate != null && it.deletedAt == null }
-                .groupBy { it.workTaskId }
-                .mapValues { (_, lines) -> lines.sumOf { it.resolvedCost } }
-        }
+        WorkTaskLabourCosting.costsByWorkTask(labourLines, includeCost = canViewCosting)
+    }
+    val labourHours = remember(labourLines) {
+        WorkTaskLabourCosting.hoursByWorkTask(labourLines)
     }
     val accountNames = remember(members) { members.associate { it.userId to it.name } }
 
-    val allRows = remember(auditEntries, blockContexts, workTaskTitles, labourCosts, accountNames) {
+    val allRows = remember(auditEntries, blockContexts, workTaskTitles, labourCosts, labourHours, accountNames) {
         PruningActivityReport.rows(
             entries = auditEntries,
             blocks = blockContexts,
             workTaskTitles = workTaskTitles,
             labourCosts = labourCosts,
+            labourHours = labourHours,
             accountNames = accountNames,
         )
     }

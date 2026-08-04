@@ -255,18 +255,26 @@ object PruningActivityReport {
      * All related entities are passed in pre-indexed — the caller resolves
      * blocks, Work Tasks, labour costs and account names ONCE, so building a
      * large history never performs a per-record lookup.
+     *
+     * LABOUR AUTHORITY: [labourHours] / [labourCosts] come from the linked Work
+     * Task's labour lines and win outright. The entry's own `labourHours` /
+     * legacy rate are used ONLY when the task has no lines, so a row never mixes
+     * the two sources and no total can count labour twice.
      */
     fun rows(
         entries: List<PruningEntry>,
         blocks: Map<String, PruningActivityBlockContext>,
         workTaskTitles: Map<String, String> = emptyMap(),
         labourCosts: Map<String, Double> = emptyMap(),
+        labourHours: Map<String, Double> = emptyMap(),
         accountNames: Map<String, String> = emptyMap(),
     ): List<PruningActivityRow> = entries.map { entry ->
         val context = blocks[entry.paddockId]
         val rowRefs = context?.rows.orEmpty()
         val vines = if (rowRefs.isEmpty()) null else PruningCalculator.exactVines(entry.segments, rowRefs)
-        val hours = entry.labourHours?.takeIf { it > 0 }
+        // Work Task person-hours are authoritative; the legacy activity hours are
+        // the fallback for records with no labour lines.
+        val hours = entry.workTaskId?.let { labourHours[it] } ?: entry.labourHours?.takeIf { it > 0 }
         val date = PruningCalculator.parseDate(entry.date)
         val worker = entry.worker.trim()
         val notes = entry.notes.trim()

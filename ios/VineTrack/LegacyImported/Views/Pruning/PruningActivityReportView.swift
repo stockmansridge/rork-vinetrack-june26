@@ -58,13 +58,20 @@ struct PruningActivityReportView: View {
     }
 
     /// One pass over the labour lines — never one lookup per record.
+    ///
+    /// Work Task labour lines are the AUTHORITATIVE source of labour cost
+    /// (`WorkTaskLabourCosting`). Only tasks with at least one costed line appear
+    /// here, so a record with no labour lines falls back to its own legacy
+    /// activity value in `PruningActivityReport.rows(...)` — never both, so a
+    /// total can't count the same labour twice.
     private var labourCosts: [UUID: Double] {
-        guard canViewCosting else { return [:] }
-        var costs: [UUID: Double] = [:]
-        for line in store.workTaskLabourLines where line.hourlyRate != nil {
-            costs[line.workTaskId, default: 0] += line.totalCost
-        }
-        return costs
+        WorkTaskLabourCosting.costsByWorkTask(store.workTaskLabourLines, includeCost: canViewCosting)
+    }
+
+    /// Per-task person-hours — the authoritative labour hours for report rows
+    /// whose linked task carries labour lines.
+    private var labourHours: [UUID: Double] {
+        WorkTaskLabourCosting.hoursByWorkTask(store.workTaskLabourLines)
     }
 
     private var workTaskTitles: [UUID: String] {
@@ -84,6 +91,7 @@ struct PruningActivityReportView: View {
             blocks: blockContexts,
             workTaskTitles: workTaskTitles,
             labourCosts: labourCosts,
+            labourHours: labourHours,
             accountNames: accountNames
         )
     }

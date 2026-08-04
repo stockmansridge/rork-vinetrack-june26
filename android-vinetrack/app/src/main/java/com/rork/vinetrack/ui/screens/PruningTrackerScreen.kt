@@ -111,6 +111,8 @@ import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.PendingSyncItem
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.components.WorkTaskLabourLineSheet
+import com.rork.vinetrack.ui.components.WorkTaskLabourLinesSection
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.time.Instant
@@ -298,11 +300,22 @@ fun PruningTrackerScreen(
     // block allocation, saved through the activity RPCs in a single atomic write.
     val openDraft = editorDraft
     if (openDraft != null && vineyardId != null) {
+        // Every labour line this device knows about, so the editor can resolve
+        // the linked task's totals even when the link changes mid-edit. The
+        // per-task list (freshly loaded by the labour section) wins over the
+        // vineyard-wide snapshot for the same id.
+        val editorLabourLines = remember(state.taskLabourLines, state.vineyardLabourLines) {
+            val byId = LinkedHashMap<String, WorkTaskLabourLine>()
+            state.vineyardLabourLines.orEmpty().forEach { byId[it.id] = it }
+            state.taskLabourLines.forEach { byId[it.id] = it }
+            byId.values.toList()
+        }
         PruningActivityEditorScreen(
             paddocks = paddocks,
             setups = setups,
             entries = entries,
             workTasks = state.workTasks,
+            labourLines = editorLabourLines,
             canViewCosting = canViewCosting,
             initialDraft = openDraft,
             isEditing = activities.any { it.id == openDraft.id } || openDraft.serverAcknowledged,
@@ -338,6 +351,17 @@ fun PruningTrackerScreen(
                 }
             } else {
                 null
+            },
+            // THE standard Work Task labour editor — the same composable the
+            // Work Task screen renders, so labour is never edited through a
+            // pruning-specific implementation.
+            labourSection = { taskId ->
+                PruningLinkedTaskLabourSection(
+                    vm = vm,
+                    state = state,
+                    taskId = taskId,
+                    canViewCosting = canViewCosting,
+                )
             },
             onBack = { editorDraft = null },
             modifier = modifier,
@@ -3204,5 +3228,83 @@ private fun SetupDateRow(label: String, value: LocalDate?, onPick: () -> Unit, o
                 Text("Clear", fontSize = 12.sp, color = VineColors.Destructive)
             }
         }
+    }
+}
+
+/**
+ * THE standard Work Task labour editor, rendered inside the Pruning Activity
+ * editor's Work Task card.
+ *
+ * It is deliberately a thin adapter over the shared
+ * [WorkTaskLabourLinesSection] / [WorkTaskLabourLineSheet] pair used by the Work
+ * Task screen, so iOS and Android — and the two Android surfaces — always share
+ * one labour implementation, one set of calculations and one validation contract.
+ *
+ * Linking an EXISTING task shows that task's own lines and never seeds, rewrites
+ * or duplicates them from the pruning draft. Nothing here can touch a pruning
+ * allocation: it only ever calls the work-task labour paths.
+ */
+@Composable
+private fun PruningLinkedTaskLabourSection(
+    vm: AppViewModel,
+    state: AppUiState,
+    taskId: String,
+    canViewCosting: Boolean,
+) {
+    var addingLabour by remember(taskId) { mutableStateOf(false) }
+    var editLabour by remember(taskId) { mutableStateOf<WorkTaskLabourLine?>(null) }
+
+    // Pull the linked task's canonical lines (never the pruning draft's).
+    LaunchedEffect(taskId) { vm.loadTaskLines(taskId) }
+
+    val lines = remember(state.taskLabourLines, state.vineyardLabourLines, taskId) {
+        val fromTask = state.taskLabourLines.filter { it.workTaskId == taskId && it.deletedAt == null }
+        if (fromTask.isNotEmpty() || state.taskLinesTaskId == taskId) {
+            fromTask.sortedBy { it.workDate.orEmpty() }
+        } else {
+            state.vineyardLabourLines.orEmpty()
+                .filter { it.workTaskId == taskId && it.deletedAt == null }
+                .sortedBy { it.workDate.orEmpty() }
+        }
+    }
+    val taskWorkDate = remember(state.workTasks, taskId) {
+        state.workTasks.firstOrNull { it.id == taskId }?.date ?: LocalDate.now().toString()
+    }
+
+    WorkTaskLabourLinesSection(
+        lines = lines,
+        operatorCategories = state.operatorCategories,
+        canEdit = true,
+        canViewCosting = canViewCosting,
+        isLoading = state.taskLinesLoading && state.taskLinesTaskId == taskId,
+        onAdd = { addingLabour = true },
+        onEdit = { editLabour = it },
+    )
+
+    if (addingLabour || editLabour != null) {
+        val editing = editLabour
+        WorkTaskLabourLineSheet(
+            operatorCategories = state.operatorCategories,
+            existing = editing,
+            canViewCosting = canViewCosting,
+            isBusy = state.taskLineBusy,
+            onSave = { lineId, categoryId, workerType, workerCount, hoursPerWorker, hourlyRate, notes ->
+                vm.saveLabourLine(
+                    lineId = lineId,
+                    taskId = taskId,
+                    workDate = editing?.workDate ?: taskWorkDate,
+                    operatorCategoryId = categoryId,
+                    workerType = workerType,
+                    workerCount = workerCount,
+                    hoursPerWorker = hoursPerWorker,
+                    hourlyRate = hourlyRate,
+                    notes = notes,
+                ) { ok -> if (ok) { addingLabour = false; editLabour = null } }
+            },
+            onDelete = { lineId ->
+                vm.deleteLabourLine(lineId) { ok -> if (ok) { addingLabour = false; editLabour = null } }
+            },
+            onDismiss = { addingLabour = false; editLabour = null },
+        )
     }
 }

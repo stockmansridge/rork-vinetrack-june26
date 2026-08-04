@@ -141,29 +141,34 @@ struct AddEditWorkTaskView: View {
             .sorted { $0.workDate > $1.workDate }
     }
 
-    /// Total hours across labour lines (worker count × hours per worker).
+    /// Total person-hours across labour lines (people × hours each).
     private var labourLineHours: Double {
-        labourLines.reduce(0.0) { $0 + $1.totalHours }
+        WorkTaskLabourCosting.totalPersonHours(labourLines)
     }
 
     /// Total cost across labour lines using each line's stored rate snapshot.
     private var labourLineCost: Double {
-        labourLines.reduce(0.0) { $0 + $1.totalCost }
+        WorkTaskLabourCosting.totalCost(labourLines) ?? 0
     }
 
     /// Total workers across canonical labour lines.
     private var labourLinePeople: Int {
-        labourLines.reduce(0) { $0 + $1.workerCount }
+        WorkTaskLabourCosting.totalWorkers(labourLines)
     }
 
-    /// People shown in the summary: legacy quick-entry resources plus
-    /// canonical labour lines (portal/Android entries).
-    private var displayTotalPeople: Int { totalPeople + labourLinePeople }
+    /// People shown in the summary. Labour lines are AUTHORITATIVE — the legacy
+    /// per-type resource counts are used only when no labour line exists, so the
+    /// two sources are never summed together.
+    private var displayTotalPeople: Int {
+        labourLines.isEmpty ? totalPeople : labourLinePeople
+    }
 
-    /// Labour cost shown in the summary: legacy resource costing plus
-    /// canonical labour-line costs (stored rate snapshots — never
-    /// recalculated from a worker type's current rate).
-    private var displayLabourCost: Double { totalCost + labourLineCost }
+    /// Labour cost shown in the summary. Labour-line costs are AUTHORITATIVE;
+    /// the legacy resource costing is a fallback for tasks with no lines. Never
+    /// both, so nothing is double-counted.
+    private var displayLabourCost: Double {
+        labourLines.isEmpty ? totalCost : labourLineCost
+    }
 
     private var displayCostPerPerson: Double {
         guard displayTotalPeople > 0 else { return 0 }
@@ -216,12 +221,12 @@ struct AddEditWorkTaskView: View {
             .reduce(0.0) { $0 + ($1.totalCost ?? 0) }
     }
 
-    /// Combined total across manual labour, labour costing lines, manual
-    /// machine charge + fuel, and linked GPS trip cost. Manual entries, labour
-    /// lines, and trips are distinct sources, so they sum without
-    /// double-counting.
+    /// Combined total across labour, machine charge + fuel, and linked GPS trip
+    /// cost. Labour contributes ONCE via [displayLabourCost] — labour lines when
+    /// they exist, the legacy resource costing otherwise — so a task can never
+    /// have its labour counted twice.
     private var combinedTotalCost: Double {
-        totalCost + labourLineCost + manualMachineCharge + manualMachineFuel + linkedTripCost
+        displayLabourCost + manualMachineCharge + manualMachineFuel + linkedTripCost
     }
 
     /// Successful GPS trips grouped under this task, newest first. Reads the
@@ -371,48 +376,30 @@ struct AddEditWorkTaskView: View {
                     }
                 }
 
+                // CANONICAL labour: work_task_labour_lines are the authoritative
+                // source of labour type, rate, people, hours per person,
+                // person-hours and cost. Rendered through THE standard shared
+                // section, which the Pruning Activity editor also uses.
                 Section {
-                    // Canonical labour lines (work_task_labour_lines) — the
-                    // portal/Android entries — are the primary labour source and
-                    // are shown here with their stored rate snapshots.
-                    if !labourLines.isEmpty {
-                        ForEach(labourLines) { line in
-                            labourLineRow(line)
-                        }
-                    }
-                    if resources.isEmpty {
-                        if labourLines.isEmpty {
-                            Text("No workers added")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                    if let taskId = existingTask?.id, let vineyardId = store.selectedVineyardId {
+                        WorkTaskLabourLinesSection(
+                            workTaskId: taskId,
+                            vineyardId: vineyardId,
+                            defaultWorkDate: date
+                        )
                     } else {
-                        ForEach($resources) { $res in
-                            resourceRow($res)
-                        }
-                        .onDelete { idx in
-                            resources.remove(atOffsets: idx)
-                        }
-                    }
-                    Button {
-                        addResource()
-                    } label: {
-                        Label("Add Worker Type", systemImage: "plus.circle.fill")
-                    }
-                    .disabled(store.operatorCategories.isEmpty)
-                    if store.operatorCategories.isEmpty {
-                        Text("Add worker types in Settings → Worker Types first.")
+                        Text("Save this task first to add labour lines.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 } header: {
                     HStack {
-                        Text("Resources")
+                        Text("Labour")
                         Spacer()
                         Button {
                             showWorkerTypes = true
                         } label: {
-                            Label("Edit", systemImage: "square.and.pencil")
+                            Label("Edit types", systemImage: "square.and.pencil")
                                 .labelStyle(.titleAndIcon)
                                 .font(.caption.weight(.semibold))
                                 .textCase(nil)
@@ -420,9 +407,30 @@ struct AddEditWorkTaskView: View {
                         .buttonStyle(.borderless)
                     }
                 } footer: {
-                    Text(labourLines.isEmpty
-                         ? "Set the number of workers of each type used on this task."
-                         : "Includes labour recorded against this task from the portal or other devices. Costs use the rate stored on each entry.")
+                    Text("Person-hours = people × hours each. Labour cost uses the rate on each line — the authoritative source for reporting.")
+                }
+
+                // Legacy per-type worker counts, kept editable for tasks that
+                // still carry them. New costing belongs on labour lines above.
+                if !resources.isEmpty {
+                    Section {
+                        ForEach($resources) { $res in
+                            resourceRow($res)
+                        }
+                        .onDelete { idx in
+                            resources.remove(atOffsets: idx)
+                        }
+                        Button {
+                            addResource()
+                        } label: {
+                            Label("Add Worker Type", systemImage: "plus.circle.fill")
+                        }
+                        .disabled(store.operatorCategories.isEmpty)
+                    } header: {
+                        Text("Legacy resources")
+                    } footer: {
+                        Text("Recorded before labour lines existed. Kept for history — add labour lines above for new costing.")
+                    }
                 }
 
                 if accessControl?.canViewFinancials ?? false {
@@ -599,11 +607,14 @@ struct AddEditWorkTaskView: View {
             }
 
             if accessControl?.canViewFinancials ?? false {
-                LabeledContent("Manual Labour Cost") {
-                    Text(fmt.formatCurrency(totalCost))
-                        .foregroundStyle(.secondary)
-                }
-                if !labourLines.isEmpty {
+                // Labour appears ONCE: the authoritative labour-line total when
+                // lines exist, the legacy resource costing otherwise.
+                if labourLines.isEmpty {
+                    LabeledContent("Legacy Labour Cost") {
+                        Text(fmt.formatCurrency(totalCost))
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
                     LabeledContent("Labour Line Cost") {
                         Text(fmt.formatCurrency(labourLineCost))
                             .foregroundStyle(.secondary)
@@ -729,49 +740,6 @@ struct AddEditWorkTaskView: View {
 
     private func unlink(_ trip: Trip) {
         Task { await tripSync.setWorkTaskLink(tripId: trip.id, workTaskId: nil) }
-    }
-
-    @ViewBuilder
-    private func labourLineRow(_ line: WorkTaskLabourLine) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(labourLineName(line))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Spacer()
-                Text(fmt.formatDate(line.workDate))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            HStack(spacing: 8) {
-                Label("\(line.workerCount) × \(String(format: "%.1fh", line.hoursPerWorker))", systemImage: "person.2")
-                Text(String(format: "%.1fh total", line.totalHours))
-                if canViewFinancials {
-                    if let rate = line.hourlyRate {
-                        Text("\(fmt.formatCurrency(rate))/hr")
-                        Text(fmt.formatCurrency(line.totalCost))
-                            .fontWeight(.medium)
-                    } else {
-                        Text("Rate: Not specified")
-                    }
-                }
-            }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 2)
-    }
-
-    /// Display name for a labour line: prefer the linked worker type, then the
-    /// stored free-text snapshot, then a neutral fallback.
-    private func labourLineName(_ line: WorkTaskLabourLine) -> String {
-        if let id = line.operatorCategoryId,
-           let cat = store.operatorCategories.first(where: { $0.id == id }) {
-            return cat.name
-        }
-        let t = line.workerType.trimmingCharacters(in: .whitespaces)
-        return t.isEmpty ? "Labour" : t
     }
 
     @ViewBuilder

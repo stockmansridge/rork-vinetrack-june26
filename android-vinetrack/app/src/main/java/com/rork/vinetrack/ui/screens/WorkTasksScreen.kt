@@ -110,6 +110,9 @@ import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.components.WorkTaskLabourLineRow
+import com.rork.vinetrack.ui.components.WorkTaskLabourLineSheet
+import com.rork.vinetrack.data.WorkTaskLabourCosting
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.text.SimpleDateFormat
@@ -894,7 +897,10 @@ private fun WorkTaskDetailView(
     val machineLines = remember(state.taskMachineLines, taskId) {
         state.taskMachineLines.filter { it.workTaskId == taskId }.sortedBy { it.workDate }
     }
-    val labourTotal = remember(labourLines) { labourLines.sumOf { it.resolvedCost } }
+    // Canonical labour totals — the same shared contract iOS uses, so the two
+    // platforms can never disagree about person-hours or cost.
+    val labourTotals = remember(labourLines) { WorkTaskLabourCosting.totals(labourLines) }
+    val labourTotal = labourTotals.cost ?: 0.0
     val machineTotal = remember(machineLines) { machineLines.sumOf { it.resolvedCost } }
     val overallTotal = labourTotal + machineTotal
     val areaHa = remember(state.paddocks, task.paddockId) {
@@ -989,10 +995,20 @@ private fun WorkTaskDetailView(
                     } else {
                         labourLines.forEachIndexed { i, line ->
                             if (i > 0) DividerWT(vine.cardBorder)
-                            LabourLineRow(
+                            WorkTaskLabourLineRow(
                                 line = line,
                                 categoryName = state.operatorCategories.firstOrNull { it.id == line.operatorCategoryId }?.displayName,
+                                canViewCosting = true,
                                 onClick = { editLabour = line },
+                            )
+                        }
+                        if (labourTotals.lineCount > 0) {
+                            DividerWT(vine.cardBorder)
+                            CostRow(
+                                "Total person-hours",
+                                formatHours(labourTotals.personHours),
+                                vine.textSecondary,
+                                vine.textPrimary,
                             )
                         }
                     }
@@ -1131,12 +1147,30 @@ private fun WorkTaskDetailView(
     }
 
     if (addingLabour || editLabour != null) {
-        LabourLineSheet(
-            vm = vm,
-            state = state,
-            taskId = taskId,
-            defaultDate = taskWorkDate,
-            existing = editLabour,
+        // THE standard labour-line form — the same composable the Pruning
+        // Activity editor presents, so there is exactly one labour editor.
+        val editing = editLabour
+        WorkTaskLabourLineSheet(
+            operatorCategories = state.operatorCategories,
+            existing = editing,
+            canViewCosting = true,
+            isBusy = state.taskLineBusy,
+            onSave = { lineId, categoryId, workerType, workerCount, hoursPerWorker, hourlyRate, notes ->
+                vm.saveLabourLine(
+                    lineId = lineId,
+                    taskId = taskId,
+                    workDate = editing?.workDate ?: taskWorkDate,
+                    operatorCategoryId = categoryId,
+                    workerType = workerType,
+                    workerCount = workerCount,
+                    hoursPerWorker = hoursPerWorker,
+                    hourlyRate = hourlyRate,
+                    notes = notes,
+                ) { ok -> if (ok) { addingLabour = false; editLabour = null } }
+            },
+            onDelete = { lineId ->
+                vm.deleteLabourLine(lineId) { ok -> if (ok) { addingLabour = false; editLabour = null } }
+            },
             onDismiss = { addingLabour = false; editLabour = null },
         )
     }
@@ -1421,36 +1455,6 @@ private fun formatCurrency(value: Double): String {
 }
 
 @Composable
-private fun LabourLineRow(line: WorkTaskLabourLine, categoryName: String?, onClick: () -> Unit) {
-    val vine = LocalVineColors.current
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Box(
-            modifier = Modifier.size(28.dp).clip(CircleShape).background(VineColors.Indigo.copy(alpha = 0.15f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(Icons.Filled.Groups, contentDescription = null, tint = VineColors.Indigo, modifier = Modifier.size(16.dp))
-        }
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            val title = categoryName ?: line.workerType.takeIf { it.isNotBlank() } ?: "Labour"
-            Text(title, color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-            val sub = buildString {
-                append("${line.workerCount}× · ${formatHours(line.hoursPerWorker)}")
-                append(" · ${formatHours(line.resolvedHours)} total")
-            }
-            Text(sub, color = vine.textSecondary, fontSize = 12.sp, maxLines = 1)
-        }
-        // Never render a stored-nothing as $0.00 — absent rate means the cost
-        // was not specified on the allocation line.
-        val labourCostText = if (line.hourlyRate == null && line.totalCost == null) "Not specified" else formatCurrency(line.resolvedCost)
-        Text(labourCostText, color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-    }
-}
-
-@Composable
 private fun MachineLineRow(line: WorkTaskMachineLine, equipmentName: String, onClick: () -> Unit) {
     val vine = LocalVineColors.current
     Row(
@@ -1488,157 +1492,6 @@ private fun CostRow(label: String, value: String, labelColor: Color, valueColor:
     ) {
         Text(label, color = labelColor, fontSize = if (emphasise) 15.sp else 14.sp, fontWeight = if (emphasise) FontWeight.SemiBold else FontWeight.Normal, modifier = Modifier.weight(1f))
         Text(value, color = valueColor, fontSize = if (emphasise) 16.sp else 14.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun LabourLineSheet(
-    vm: AppViewModel,
-    state: AppUiState,
-    taskId: String,
-    defaultDate: String,
-    existing: WorkTaskLabourLine?,
-    onDismiss: () -> Unit,
-) {
-    val vine = LocalVineColors.current
-    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
-
-    var categoryId by remember { mutableStateOf(existing?.operatorCategoryId) }
-    var workerType by remember { mutableStateOf(existing?.workerType ?: "") }
-    var countText by remember { mutableStateOf((existing?.workerCount ?: 1).toString()) }
-    var hoursText by remember { mutableStateOf(existing?.hoursPerWorker?.takeIf { it > 0 }?.let { trimHours(it) } ?: "") }
-    var rateText by remember {
-        mutableStateOf(
-            existing?.hourlyRate?.let { trimHours(it) }
-                ?: state.operatorCategories.firstOrNull { it.id == existing?.operatorCategoryId }?.costPerHour?.let { trimHours(it) }
-                ?: "",
-        )
-    }
-    var notes by remember { mutableStateOf(existing?.notes ?: "") }
-    var categoryMenu by remember { mutableStateOf(false) }
-    var saving by remember { mutableStateOf(false) }
-    var confirmDelete by remember { mutableStateOf(false) }
-
-    fun save() {
-        if (saving) return
-        saving = true
-        vm.saveLabourLine(
-            lineId = existing?.id,
-            taskId = taskId,
-            workDate = existing?.workDate ?: defaultDate,
-            operatorCategoryId = categoryId,
-            workerType = workerType.trim(),
-            workerCount = countText.toIntOrNull() ?: 1,
-            hoursPerWorker = hoursText.replace(',', '.').toDoubleOrNull() ?: 0.0,
-            hourlyRate = rateText.replace(',', '.').toDoubleOrNull(),
-            notes = notes.trim().ifBlank { null },
-        ) { ok -> saving = false; if (ok) onDismiss() }
-    }
-
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text(if (existing == null) "Add labour" else "Edit labour", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
-
-            // Worker type (also seeds the hourly rate and the display snapshot).
-            ExposedDropdownMenuBox(expanded = categoryMenu, onExpandedChange = { categoryMenu = it }) {
-                OutlinedTextField(
-                    value = state.operatorCategories.firstOrNull { it.id == categoryId }?.displayName
-                        ?: workerType.takeIf { it.isNotBlank() }
-                        ?: "No worker type",
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("Worker type") },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryMenu) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
-                )
-                ExposedDropdownMenu(expanded = categoryMenu, onDismissRequest = { categoryMenu = false }) {
-                    DropdownMenuItem(text = { Text("No worker type") }, onClick = {
-                        categoryId = null
-                        workerType = ""
-                        categoryMenu = false
-                    })
-                    state.operatorCategories.forEach { c ->
-                        DropdownMenuItem(text = { Text(c.displayName) }, onClick = {
-                            categoryId = c.id
-                            workerType = c.displayName
-                            if (rateText.isBlank()) c.costPerHour?.let { rateText = trimHours(it) }
-                            categoryMenu = false
-                        })
-                    }
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = countText,
-                    onValueChange = { countText = it.filter { c -> c.isDigit() } },
-                    label = { Text("Workers") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f),
-                )
-                OutlinedTextField(
-                    value = hoursText,
-                    onValueChange = { hoursText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                    label = { Text("Hrs / worker") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.weight(1f),
-                )
-            }
-
-            OutlinedTextField(
-                value = rateText,
-                onValueChange = { rateText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                label = { Text("Hourly rate (optional)") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            OutlinedTextField(
-                value = notes,
-                onValueChange = { notes = it },
-                label = { Text("Notes (optional)") },
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Button(
-                onClick = { save() },
-                enabled = !saving,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
-            ) {
-                if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
-                else Text(if (existing == null) "Add labour" else "Save changes")
-            }
-
-            if (existing != null) {
-                TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive)
-                    Text("  Remove labour line", color = VineColors.Destructive)
-                }
-            }
-        }
-    }
-
-    if (confirmDelete && existing != null) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Remove labour line?") },
-            text = { Text("This removes the line for your whole team.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    vm.deleteLabourLine(existing.id) { ok -> if (ok) onDismiss() }
-                }) { Text("Remove", color = VineColors.Destructive) }
-            },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
-        )
     }
 }
 
