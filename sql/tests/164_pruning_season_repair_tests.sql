@@ -85,6 +85,7 @@ declare
   ok       boolean;
   txt      text;
   ts_created timestamptz;
+  ts_updated timestamptz;
   v_base   integer;
 begin
   -- ---- T0. Production baseline -------------------------------------------
@@ -135,18 +136,25 @@ begin
     (s_f27,   v2, b_f,   2027);
 
   -- Vintage 2027 is CORRECT for winter 2026 and must survive the repair.
+  --
+  -- created_at / updated_at are BACKDATED deliberately. `now()` is fixed for the
+  -- whole transaction, so a fixture left on the column default would carry the
+  -- exact timestamp the repair writes, and "the updated_at stamp moved" would be
+  -- untestable (T5 previously failed on `updated_at > created_at` for that
+  -- reason, not because the migration was wrong).
   insert into public.pruning_entries (
     id, vineyard_id, pruning_season_id, paddock_id, entry_date, worker_or_crew,
     labour_hours, pruning_method, notes, row_equivalents_completed,
-    estimated_vines_completed, vintage_year, created_by, deleted_at
+    estimated_vines_completed, vintage_year, created_by, deleted_at,
+    created_at, updated_at
   ) values
-    (e1,     v1, s_cf27,  b_cf,  date '2026-08-02', 'T164 crew A', 8,   'cane', 'rows 42-44', 0.75, 120, 2027, u_mgr, null),
-    (e2,     v1, s_sb27,  b_sb,  date '2026-08-02', 'T164 crew B', 6.5, 'spur', 'rows 66-67', 0.50,  60, 2027, u_mgr, null),
-    (e_ok,   v1, s_ok26,  b_ok,  date '2026-07-10', 'T164 crew A', 4,   'spur', '',           0.25,  20, 2027, u_mgr, null),
-    (e_rev,  v1, s_cf27,  b_cf,  date '2026-07-20', 'T164 crew A', 2,   'spur', 'reversed',   0,      0, 2027, u_mgr, now()),
-    (e_good, v1, s_con26, b_con, date '2026-07-11', 'T164 crew C', 3,   'spur', '',           0.25,  10, 2027, u_mgr, null),
-    (e_con,  v1, s_con27, b_con, date '2026-07-11', 'T164 crew C', 5,   'spur', '',           0.50,  40, 2027, u_mgr, null),
-    (e_f,    v2, s_f27,   b_f,   date '2026-07-05', 'T164 crew D', 4,   'spur', '',           0.25,  15, 2027, u_mgr, null);
+    (e1,     v1, s_cf27,  b_cf,  date '2026-08-02', 'T164 crew A', 8,   'cane', 'rows 42-44', 0.75, 120, 2027, u_mgr, null,  now() - interval '3 days', now() - interval '3 days'),
+    (e2,     v1, s_sb27,  b_sb,  date '2026-08-02', 'T164 crew B', 6.5, 'spur', 'rows 66-67', 0.50,  60, 2027, u_mgr, null,  now() - interval '3 days', now() - interval '3 days'),
+    (e_ok,   v1, s_ok26,  b_ok,  date '2026-07-10', 'T164 crew A', 4,   'spur', '',           0.25,  20, 2027, u_mgr, null,  now() - interval '3 days', now() - interval '3 days'),
+    (e_rev,  v1, s_cf27,  b_cf,  date '2026-07-20', 'T164 crew A', 2,   'spur', 'reversed',   0,      0, 2027, u_mgr, now(), now() - interval '3 days', now() - interval '3 days'),
+    (e_good, v1, s_con26, b_con, date '2026-07-11', 'T164 crew C', 3,   'spur', '',           0.25,  10, 2027, u_mgr, null,  now() - interval '3 days', now() - interval '3 days'),
+    (e_con,  v1, s_con27, b_con, date '2026-07-11', 'T164 crew C', 5,   'spur', '',           0.50,  40, 2027, u_mgr, null,  now() - interval '3 days', now() - interval '3 days'),
+    (e_f,    v2, s_f27,   b_f,   date '2026-07-05', 'T164 crew D', 4,   'spur', '',           0.25,  15, 2027, u_mgr, null,  now() - interval '3 days', now() - interval '3 days');
 
   insert into public.pruning_row_segments (
     vineyard_id, pruning_season_id, paddock_id, row_number, segment_number,
@@ -280,10 +288,15 @@ begin
   assert n = 2, 'T4 both quarters must follow the entry, still completed, got ' || n;
   select vintage_year into y from public.pruning_entries where id = e2;
   assert y = 2027, 'T4 vintage 2027 must be preserved, got ' || y;
+  select updated_at > created_at into ok from public.pruning_entries where id = e2;
+  assert ok, 'T4 the repaired entry''s update stamp must move';
+  select updated_at = created_at into ok from public.pruning_entries where id = e1;
+  assert ok, 'T4 an unlisted entry must keep its original update stamp';
   raise notice 'T4 passed: an entry-id scoped repair touches only those entries';
 
   -- ---- T5. Apply + preservation --------------------------------------------
-  select created_at into ts_created from public.pruning_entries where id = e1;
+  select created_at, updated_at into ts_created, ts_updated
+  from public.pruning_entries where id = e1;
   drop table if exists t164_out;
   create temp table t164_out as select * from public.repair_pruning_entry_seasons(false, v1);
 
@@ -315,7 +328,11 @@ begin
   from public.pruning_entries where id = e1;
   assert ok, 'T5 only the season link may change — vintage, totals, worker, creator, times preserved';
 
-  select updated_at > ts_created into ok from public.pruning_entries where id = e1;
+  -- The ONLY timestamp allowed to move. `now()` is the transaction timestamp,
+  -- and the fixture was backdated three days, so this is deterministic.
+  select updated_at > ts_updated and updated_at > ts_created and updated_at = now()
+    into ok
+  from public.pruning_entries where id = e1;
   assert ok, 'T5 the normal update timestamp must move';
 
   select count(*) into n from public.pruning_row_segments
