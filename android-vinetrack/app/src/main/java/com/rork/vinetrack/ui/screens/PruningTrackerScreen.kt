@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.TableChart
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.filled.SyncProblem
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
@@ -80,6 +82,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.PruningCreateAccess
 import com.rork.vinetrack.data.PruningStore
 import com.rork.vinetrack.data.PruningSyncStatus
 import com.rork.vinetrack.data.model.OperatorCategory
@@ -154,6 +157,10 @@ fun PruningTrackerScreen(
     var selectedPaddockId by rememberSaveable { mutableStateOf<String?>(null) }
     var blockSort by rememberSaveable { mutableStateOf("alphabetical") }
     var showActivityReport by rememberSaveable { mutableStateOf(false) }
+    /** Block chooser for the "New Pruning Activity" action. */
+    var showBlockPicker by rememberSaveable { mutableStateOf(false) }
+    /** Set when a locked create control is tapped — surfaces the reason. */
+    var showAccessNotice by rememberSaveable { mutableStateOf(false) }
     /** Deep link from the Activity Report: open the block with this entry in edit mode. */
     var pendingEditEntryId by rememberSaveable { mutableStateOf<String?>(null) }
     // Active AND reversed entries — the audit history the report needs. Every
@@ -190,6 +197,26 @@ fun PruningTrackerScreen(
         }
     }
     val selectedPaddock = paddocks.firstOrNull { it.id == selectedPaddockId }
+
+    // ONE shared answer for every create affordance on this screen, so the top
+    // app bar `+`, the labelled button and the empty state can never disagree.
+    // A role that is still loading (or cannot be resolved) renders a DISABLED
+    // control with a visible reason — the action is never removed, so it cannot
+    // vanish because of app-bar width, Operational Tools customisation, or
+    // access-state churn while membership loads.
+    val createAccess: PruningCreateAccess = remember(state.currentRole, state.members) {
+        PruningCreateAccess.resolve(role = state.currentRole, membersLoaded = state.members.isNotEmpty())
+    }
+    val beginNewActivity: () -> Unit = {
+        if (!createAccess.isAllowed) {
+            showAccessNotice = true
+        } else if (paddocks.size == 1) {
+            // One block — skip the chooser and go straight to the row grid.
+            selectedPaddockId = paddocks.first().id
+        } else {
+            showBlockPicker = true
+        }
+    }
 
     // Work Tasks is an unrestricted operational tool, but the deep link still
     // resolves entitlement through the shared catalogue rather than assuming it
@@ -429,6 +456,26 @@ fun PruningTrackerScreen(
                 title = { Text("Pruning Tracker") },
                 navigationIcon = { BackNavIcon(onBack) },
                 actions = {
+                    // Always rendered. Disabled + spinner while membership loads;
+                    // never conditionally removed.
+                    IconButton(
+                        onClick = beginNewActivity,
+                        enabled = createAccess !is PruningCreateAccess.Loading && paddocks.isNotEmpty(),
+                    ) {
+                        if (createAccess is PruningCreateAccess.Loading) {
+                            CircularProgressIndicator(
+                                strokeWidth = 2.dp,
+                                color = vine.textSecondary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        } else {
+                            Icon(
+                                Icons.Filled.Add,
+                                contentDescription = "New pruning activity",
+                                tint = vine.textPrimary,
+                            )
+                        }
+                    }
                     IconButton(onClick = { showActivityReport = true }) {
                         Icon(
                             Icons.Filled.TableChart,
@@ -470,6 +517,21 @@ fun PruningTrackerScreen(
                     )
                 }
             }
+            createAccess.explanation?.let { explanation ->
+                item(key = "access-notice") {
+                    PruningAccessNoticeRow(
+                        message = explanation,
+                        isLoading = createAccess is PruningCreateAccess.Loading,
+                    )
+                }
+            }
+            item(key = "new-activity") {
+                PruningNewActivityButton(
+                    access = createAccess,
+                    hasBlocks = paddocks.isNotEmpty(),
+                    onClick = beginNewActivity,
+                )
+            }
             item(key = "activity-report") {
                 PruningActivityReportEntryCard(onOpen = { showActivityReport = true })
             }
@@ -494,6 +556,11 @@ fun PruningTrackerScreen(
                     }
                 }
             } else {
+                if (entries.isEmpty()) {
+                    item(key = "no-activity") {
+                        PruningNoActivityEmptyState(access = createAccess, onRecord = beginNewActivity)
+                    }
+                }
                 item(key = "block-sort") {
                     BlockSortHeader(sort = blockSort, onSortChange = { blockSort = it })
                 }
@@ -511,6 +578,263 @@ fun PruningTrackerScreen(
                 }
             }
             item(key = "bottom-space") { Spacer(Modifier.height(24.dp)) }
+        }
+
+        if (showBlockPicker) {
+            PruningBlockPickerSheet(
+                blocks = sortedPaddocks,
+                onDismiss = { showBlockPicker = false },
+                onSelect = { paddock ->
+                    showBlockPicker = false
+                    selectedPaddockId = paddock.id
+                },
+            )
+        }
+
+        if (showAccessNotice) {
+            AlertDialog(
+                onDismissRequest = { showAccessNotice = false },
+                title = { Text("Recording locked") },
+                text = { Text(createAccess.explanation.orEmpty()) },
+                confirmButton = {
+                    TextButton(onClick = { showAccessNotice = false }) { Text("OK") }
+                },
+            )
+        }
+    }
+}
+
+/**
+ * Visible, labelled create action — the primary way into recording, so the entry
+ * point cannot be lost to a truncated top app bar.
+ */
+@Composable
+private fun PruningNewActivityButton(
+    access: PruningCreateAccess,
+    hasBlocks: Boolean,
+    onClick: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val isLoading = access is PruningCreateAccess.Loading
+    val isLive = access.isAllowed && hasBlocks
+    Button(
+        onClick = onClick,
+        enabled = !isLoading && hasBlocks,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (isLive) VineColors.Primary else vine.cardBackground,
+            contentColor = if (isLive) Color.White else vine.textSecondary,
+            disabledContainerColor = vine.cardBackground,
+            disabledContentColor = vine.textSecondary,
+        ),
+        shape = RoundedCornerShape(14.dp),
+        contentPadding = PaddingValues(14.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        if (isLoading) {
+            CircularProgressIndicator(
+                strokeWidth = 2.dp,
+                color = vine.textSecondary,
+                modifier = Modifier.size(18.dp),
+            )
+        } else {
+            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text("New Pruning Activity", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                if (!hasBlocks) {
+                    "Add a block in Vineyard Setup first"
+                } else {
+                    "Choose a block, select the rows or quarters pruned, then record crew and hours."
+                },
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+/**
+ * Authorised users are told WHY recording is unavailable rather than being handed
+ * a screen with no create action and no explanation.
+ */
+@Composable
+private fun PruningAccessNoticeRow(message: String, isLoading: Boolean) {
+    val vine = LocalVineColors.current
+    Row(
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(vine.cardBackground)
+            .padding(12.dp),
+    ) {
+        if (isLoading) {
+            CircularProgressIndicator(
+                strokeWidth = 2.dp,
+                color = vine.textSecondary,
+                modifier = Modifier.size(14.dp),
+            )
+        } else {
+            Icon(
+                Icons.Filled.SyncProblem,
+                contentDescription = null,
+                tint = vine.textSecondary,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        Text(message, fontSize = 12.sp, color = vine.textSecondary)
+    }
+}
+
+/**
+ * Shown until the vineyard has its first pruning record — carries its own
+ * labelled create action so a brand-new vineyard is never a dead end.
+ */
+@Composable
+private fun PruningNoActivityEmptyState(access: PruningCreateAccess, onRecord: () -> Unit) {
+    val vine = LocalVineColors.current
+    PruningCard {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth().padding(20.dp),
+        ) {
+            Icon(
+                Icons.Filled.ContentCut,
+                contentDescription = null,
+                tint = VineColors.Primary,
+                modifier = Modifier.size(32.dp),
+            )
+            Text(
+                "No pruning recorded yet",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textPrimary,
+            )
+            Text(
+                "Record your first activity to start tracking vineyard progress, rates and projected completion.",
+                fontSize = 13.sp,
+                color = vine.textSecondary,
+                textAlign = TextAlign.Center,
+            )
+            Button(
+                onClick = onRecord,
+                enabled = access !is PruningCreateAccess.Loading,
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Record Pruning Activity", fontWeight = FontWeight.SemiBold)
+            }
+            access.explanation?.let {
+                Text(it, fontSize = 11.sp, color = vine.textSecondary, textAlign = TextAlign.Center)
+            }
+        }
+    }
+}
+
+/**
+ * Searchable chooser listing EVERY active block in the vineyard, used by the
+ * "New Pruning Activity" action. Selecting a block hands off to the row-quarter
+ * grid where the activity is recorded.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PruningBlockPickerSheet(
+    blocks: List<Paddock>,
+    onDismiss: () -> Unit,
+    onSelect: (Paddock) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var query by remember { mutableStateOf("") }
+    val results = remember(blocks, query) {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) {
+            blocks
+        } else {
+            blocks.filter { paddock ->
+                paddock.name.contains(trimmed, ignoreCase = true) ||
+                    paddock.primaryVarietyName?.contains(trimmed, ignoreCase = true) == true
+            }
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = vine.cardBackground,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            Text(
+                "Choose a block",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textPrimary,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Then select the rows or quarters pruned and record crew and hours.",
+                fontSize = 12.sp,
+                color = vine.textSecondary,
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                leadingIcon = {
+                    Icon(Icons.Filled.Search, contentDescription = null, tint = vine.textSecondary)
+                },
+                placeholder = { Text("Search blocks", color = vine.textSecondary) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            if (results.isEmpty()) {
+                Text(
+                    "No blocks match that search.",
+                    fontSize = 13.sp,
+                    color = vine.textSecondary,
+                    modifier = Modifier.padding(vertical = 24.dp),
+                )
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth().height(360.dp)) {
+                    items(results.size, key = { results[it].id }) { index ->
+                        val paddock = results[index]
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelect(paddock) }
+                                .padding(vertical = 12.dp),
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    paddock.name,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = vine.textPrimary,
+                                )
+                                paddock.primaryVarietyName
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?.let { Text(it, fontSize = 12.sp, color = vine.textSecondary) }
+                            }
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = vine.textSecondary,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                        HorizontalDivider(color = vine.cardBorder)
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+            Spacer(Modifier.navigationBarsPadding())
         }
     }
 }

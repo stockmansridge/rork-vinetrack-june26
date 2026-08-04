@@ -15,13 +15,50 @@ enum PruningBlockSort: String, CaseIterable, Identifiable {
     }
 }
 
+/// Resolved state of the "can this account create pruning records?" question.
+///
+/// The create action is NEVER silently removed. An unknown or still-loading
+/// role renders a disabled control with an explanation, because a missing
+/// permission answer is a configuration problem the user must be able to see —
+/// not a reason to present a blank interface.
+enum PruningCreateAccess: Equatable {
+    case loading
+    case allowed
+    case denied
+    case unresolved(String)
+
+    var isAllowed: Bool { self == .allowed }
+
+    /// Explanation shown to the user whenever the action is not usable.
+    var explanation: String? {
+        switch self {
+        case .allowed:
+            return nil
+        case .loading:
+            return "Checking your vineyard permissions…"
+        case .denied:
+            return "Your role on this vineyard can view pruning progress but not record it. Ask an owner or manager for record-creation access."
+        case .unresolved(let reason):
+            return "Pruning permissions couldn't be confirmed, so recording is locked. \(reason)"
+        }
+    }
+}
+
 /// Pruning Tracker hub — vineyard dashboard plus a visual block list.
 /// Reachable from Operational Tools.
 struct PruningTrackerView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(PruningSyncService.self) private var pruningSync
+    @Environment(BackendAccessControl.self) private var accessControl
     @AppStorage("pruningBlockSort") private var blockSortRaw: String = PruningBlockSort.alphabetical.rawValue
     private var pruningStore: PruningStore { .shared }
+
+    /// Block chooser for the "New Pruning Activity" action.
+    @State private var showBlockPicker: Bool = false
+    /// Block the create flow is heading into.
+    @State private var creationTarget: Paddock?
+    /// Set when the user taps a locked create control — surfaces the reason.
+    @State private var showAccessExplanation: Bool = false
 
     private var blockSort: PruningBlockSort {
         PruningBlockSort(rawValue: blockSortRaw) ?? .alphabetical
@@ -62,13 +99,50 @@ struct PruningTrackerView: View {
         }
     }
 
+    // MARK: Create access
+
+    /// One shared answer for every create affordance on this screen, so the
+    /// toolbar `+`, the labelled button and the empty state can never disagree.
+    var createAccess: PruningCreateAccess {
+        if accessControl.currentRole == nil {
+            if accessControl.isLoading { return .loading }
+            if let error = accessControl.errorMessage, !error.isEmpty {
+                return .unresolved(error)
+            }
+            return .unresolved("Your membership role for this vineyard hasn't loaded yet. Pull to refresh, or reopen the vineyard.")
+        }
+        return accessControl.canCreateOperationalRecords ? .allowed : .denied
+    }
+
+    /// Total pruning records for the selected vineyard — drives the empty state.
+    private var recordedEntryCount: Int {
+        paddocks.reduce(0) { $0 + pruningStore.entries(for: $1.id).count }
+    }
+
+    private func beginNewActivity() {
+        guard createAccess.isAllowed else {
+            showAccessExplanation = true
+            return
+        }
+        // One block? Skip the chooser and go straight to the row grid.
+        if paddocks.count == 1, let only = paddocks.first {
+            creationTarget = only
+        } else {
+            showBlockPicker = true
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 if pendingPruningChanges > 0 || pruningSync.errorMessage != nil {
                     pendingSyncBanner
                 }
+                if !createAccess.isAllowed, let explanation = createAccess.explanation {
+                    accessNotice(explanation)
+                }
                 dashboardCard
+                newActivityButton
                 activityReportLink
                 blockList
                 Spacer(minLength: 24)
@@ -79,7 +153,23 @@ struct PruningTrackerView: View {
         .navigationTitle("Pruning Tracker")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                // Always present. Never conditional on toolbar width, tool
+                // customisation or a still-loading permission answer — a
+                // locked state renders disabled, it does not vanish.
+                Button {
+                    beginNewActivity()
+                } label: {
+                    if createAccess == .loading {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "plus")
+                    }
+                }
+                .disabled(createAccess == .loading || paddocks.isEmpty)
+                .accessibilityLabel("New pruning activity")
+
                 NavigationLink {
                     PruningActivityReportView(pruningStore: pruningStore)
                 } label: {
@@ -88,12 +178,89 @@ struct PruningTrackerView: View {
                 .accessibilityLabel("Activity Report")
             }
         }
+        .sheet(isPresented: $showBlockPicker) {
+            PruningBlockPickerSheet(blocks: paddocks) { chosen in
+                creationTarget = chosen
+            }
+        }
+        .navigationDestination(item: $creationTarget) { paddock in
+            PruningBlockDetailView(paddock: paddock, pruningStore: pruningStore)
+        }
+        .alert("Recording locked", isPresented: $showAccessExplanation) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(createAccess.explanation ?? "")
+        }
         .refreshable {
             await pruningSync.syncForSelectedVineyard()
         }
         .task {
             await pruningSync.syncForSelectedVineyard()
         }
+    }
+
+    /// Visible, labelled create action — the primary way into recording, so it
+    /// cannot be lost to a truncated toolbar.
+    @ViewBuilder
+    private var newActivityButton: some View {
+        Button {
+            beginNewActivity()
+        } label: {
+            HStack(spacing: 12) {
+                if createAccess == .loading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 20)
+                } else {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title3)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("New Pruning Activity")
+                        .font(.subheadline.weight(.semibold))
+                    Text(paddocks.isEmpty
+                         ? "Add a block in Vineyard Setup first"
+                         : "Choose a block, select the rows or quarters pruned, then record crew and hours.")
+                        .font(.caption)
+                        .opacity(0.85)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer()
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .foregroundStyle(createAccess.isAllowed && !paddocks.isEmpty ? .white : Color.secondary)
+            .background(
+                createAccess.isAllowed && !paddocks.isEmpty
+                    ? AnyShapeStyle(VineyardTheme.leafGreen)
+                    : AnyShapeStyle(VineyardTheme.cardBackground),
+                in: .rect(cornerRadius: 14)
+            )
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(VineyardTheme.cardBorder, lineWidth: 0.5))
+            .padding(.horizontal)
+        }
+        .buttonStyle(.plain)
+        .disabled(createAccess == .loading || paddocks.isEmpty)
+        .accessibilityLabel("New pruning activity")
+    }
+
+    /// Authorised users are told WHY recording is unavailable rather than being
+    /// handed a screen with no create action and no explanation.
+    private func accessNotice(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: createAccess == .loading ? "clock.arrow.circlepath" : "lock.fill")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.1), in: .rect(cornerRadius: 12))
+        .padding(.horizontal)
     }
 
     // MARK: Pending-sync warning
@@ -303,6 +470,9 @@ struct PruningTrackerView: View {
             .padding(.horizontal)
         } else {
             VStack(spacing: 12) {
+                if recordedEntryCount == 0 {
+                    noActivityEmptyState
+                }
                 blockListHeader
                 ForEach(blockMetrics, id: \.paddock.id) { item in
                     NavigationLink {
@@ -315,6 +485,41 @@ struct PruningTrackerView: View {
             }
             .padding(.horizontal)
         }
+    }
+
+    /// Shown until the vineyard has its first pruning record — carries its own
+    /// labelled create action so a brand-new vineyard is never a dead end.
+    private var noActivityEmptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "scissors")
+                .font(.title2)
+                .foregroundStyle(VineyardTheme.leafGreen)
+            Text("No pruning recorded yet")
+                .font(.headline)
+            Text("Record your first activity to start tracking vineyard progress, rates and projected completion.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button {
+                beginNewActivity()
+            } label: {
+                Label("Record Pruning Activity", systemImage: "plus")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(VineyardTheme.leafGreen)
+            .disabled(createAccess == .loading)
+            if let explanation = createAccess.explanation {
+                Text(explanation)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity)
+        .background(VineyardTheme.cardBackground, in: .rect(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(VineyardTheme.cardBorder, lineWidth: 0.5))
     }
 
     /// Compact "Blocks" header with the sort menu — small, no extra chrome.
@@ -335,6 +540,71 @@ struct PruningTrackerView: View {
                         .font(.caption2)
                     Text(blockSort.label)
                         .font(.caption.weight(.semibold))
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Block picker
+
+/// Searchable chooser listing EVERY active block in the vineyard, used by the
+/// "New Pruning Activity" action. Selecting a block hands off to the row-quarter
+/// grid where the activity is recorded.
+struct PruningBlockPickerSheet: View {
+    let blocks: [Paddock]
+    let onSelect: (Paddock) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var search: String = ""
+
+    private var results: [Paddock] {
+        let trimmed = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return blocks }
+        return blocks.filter { paddock in
+            if paddock.name.localizedStandardContains(trimmed) { return true }
+            return paddock.varietyAllocations.contains { ($0.name ?? "").localizedStandardContains(trimmed) }
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if results.isEmpty {
+                    ContentUnavailableView.search(text: search)
+                } else {
+                    ForEach(results) { paddock in
+                        Button {
+                            onSelect(paddock)
+                            dismiss()
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(paddock.name)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                    if let variety = paddock.varietyAllocations.max(by: { $0.percent < $1.percent })?.name,
+                                       !variety.isEmpty {
+                                        Text(variety)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            .searchable(text: $search, prompt: "Search blocks")
+            .navigationTitle("Choose a block")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }
                 }
             }
         }
