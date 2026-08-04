@@ -225,6 +225,36 @@ final class PruningStore {
         persistEntries()
     }
 
+    /// Adopts a canonical activity PULLED from the server (`get_pruning_activity`
+    /// / `list_pruning_activities`), inserting it when this device has never seen
+    /// it. No hook fires — a pull is not a user edit and must never re-queue a
+    /// push. Returns the adopted draft.
+    @discardableResult
+    func applyRemoteActivity(_ canonical: BackendPruningActivityCanonical) -> PruningActivityDraft? {
+        guard let activity = canonical.activity, let id = activity.id, let vineyardId = activity.vineyardId else {
+            return nil
+        }
+        let base = self.activity(id: id) ?? PruningActivityDraft(
+            id: id,
+            vineyardId: vineyardId,
+            date: PruningSyncDate.date(fromYmd: activity.entryDate) ?? Date(),
+            createdAt: activity.createdAt ?? Date(),
+            enteredBy: activity.createdBy
+        )
+        let adopted = PruningAllocationEditor.adoptCanonical(base, canonical: canonical)
+        let kept = Set(adopted.activeAllocations.map { $0.allocationId(for: adopted.id) })
+        let stale = Set(base.activeAllocations.map { $0.allocationId(for: base.id) }).subtracting(kept)
+        if let index = activities.firstIndex(where: { $0.id == id }) {
+            activities[index] = adopted
+        } else {
+            activities.append(adopted)
+        }
+        mergeActivityEntries(PruningAllocationEditor.toLegacyEntries(adopted), staleAllocationIds: stale)
+        persistActivities()
+        persistEntries()
+        return adopted
+    }
+
     private func mergeActivityEntries(_ incoming: [PruningEntry], staleAllocationIds: Set<UUID>) {
         let now = Date()
         for entry in incoming {

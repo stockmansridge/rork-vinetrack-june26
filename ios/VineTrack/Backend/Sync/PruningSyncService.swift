@@ -23,6 +23,15 @@ final class PruningSyncService {
     /// description). Nil while offline / unavailable — the check never blocks
     /// the field workflow.
     private(set) var lastParityReport: String?
+    /// Reconciliation of the last multi-block activity the SERVER answered
+    /// (sql/166): how many quarters actually landed and how many were already
+    /// recorded elsewhere. A save with refused quarters is never presented as
+    /// fully successful.
+    private(set) var lastActivityReconciliation: PruningActivityReconciliation?
+
+    func clearActivityReconciliation() {
+        lastActivityReconciliation = nil
+    }
 
     var pendingUpsertCount: Int {
         seasonMetadata.pendingUpserts.count + entryMetadata.pendingUpserts.count
@@ -532,7 +541,8 @@ final class PruningSyncService {
 
         for (id, _) in activityMetadata.pendingDeletes {
             do {
-                _ = try await repository.reverseActivity(id: id, reason: nil)
+                let result = try await repository.reverseActivity(id: id, reason: nil)
+                publishReconciliation(id: id, result: result, isReversal: true)
                 activityMetadata.clearDeleted([id])
             } catch {
                 if isPruningMissingRowError(error) {
@@ -546,10 +556,45 @@ final class PruningSyncService {
         if let firstError { throw firstError }
     }
 
+    /// Canonical read-back of ONE activity through `get_pruning_activity` — the
+    /// edit path, so reopening an activity restores the real server state (every
+    /// block, every quarter, the shared labour and both resolved years) instead
+    /// of reconstructing it from legacy per-block rows. Falls back to the local
+    /// draft when the read is unavailable.
+    func loadActivity(id: UUID) async -> PruningActivityDraft? {
+        let local = pruningStore.activity(id: id)
+        guard let auth, auth.isSignedIn else { return local }
+        guard let canonical = try? await repository.fetchActivity(id: id), canonical.activity != nil else {
+            return local
+        }
+        return pruningStore.applyRemoteActivity(canonical) ?? local
+    }
+
+    /// Pulls every activity of the vineyard through `list_pruning_activities` and
+    /// adopts the canonical parents + allocations. Activities with an unresolved
+    /// queued write keep their optimistic local state — a pull must never
+    /// overwrite work that hasn't been pushed yet.
+    @discardableResult
+    func refreshActivities(vineyardId: UUID) async -> [PruningActivityDraft] {
+        guard let auth, auth.isSignedIn else { return pruningStore.activities(forVineyard: vineyardId) }
+        guard let remote = try? await repository.fetchActivities(vineyardId: vineyardId) else {
+            return pruningStore.activities(forVineyard: vineyardId)
+        }
+        let queued = Set(activityMetadata.pendingUpserts.keys)
+            .union(activityEditMetadata.pendingUpserts.keys)
+            .union(activityMetadata.pendingDeletes.keys)
+        for canonical in remote {
+            guard let id = canonical.activity?.id, !queued.contains(id) else { continue }
+            pruningStore.applyRemoteActivity(canonical)
+        }
+        return pruningStore.activities(forVineyard: vineyardId)
+    }
+
     /// Adopts the canonical activity the server returned. The shared labour stays
     /// on the parent, and every allocation takes the season the server resolved
     /// from the ACTIVITY date (sql/161 applied per allocation).
     private func adoptCanonicalActivity(id: UUID, result: PruningActivityResult) {
+        publishReconciliation(id: id, result: result)
         guard let canonical = result.canonical else { return }
         if let conflicts = result.conflicts, !conflicts.isEmpty {
             let detail = conflicts
@@ -563,6 +608,23 @@ final class PruningSyncService {
             print("[PruningSync] activity \(id) is filed under season \(season) for \(PruningSyncDate.ymd(from: date)) — reported, not moved")
         }
         pruningStore.adoptCanonicalActivity(id: id, canonical: canonical)
+    }
+
+    /// Surfaces the server's answer to the UI, including the quarters it refused
+    /// because another record already owns them (never stolen).
+    private func publishReconciliation(id: UUID, result: PruningActivityResult, isReversal: Bool = false) {
+        let draft = pruningStore.activity(id: id)
+        var names: [UUID: String] = [:]
+        for allocation in draft?.allocations.values ?? [:].values {
+            names[allocation.paddockId] = allocation.blockName
+        }
+        lastActivityReconciliation = PruningActivityReconciliation.from(
+            result,
+            blockNames: names,
+            blockSummary: draft?.blockSummary ?? "",
+            activityId: id,
+            isReversal: isReversal
+        )
     }
 
     // MARK: Pull

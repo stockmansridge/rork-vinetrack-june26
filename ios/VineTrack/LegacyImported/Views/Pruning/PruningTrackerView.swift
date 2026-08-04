@@ -53,12 +53,16 @@ struct PruningTrackerView: View {
     @AppStorage("pruningBlockSort") private var blockSortRaw: String = PruningBlockSort.alphabetical.rawValue
     private var pruningStore: PruningStore { .shared }
 
-    /// Block chooser for the "New Pruning Activity" action.
-    @State private var showBlockPicker: Bool = false
-    /// Block the create flow is heading into.
-    @State private var creationTarget: Paddock?
     /// Set when the user taps a locked create control — surfaces the reason.
     @State private var showAccessExplanation: Bool = false
+    /// The activity open in the multi-block editor — the ONE place an activity is
+    /// created or changed (sql/166).
+    @State private var editorDraft: PruningActivityDraft?
+    /// Multi-block activities of this vineyard, pulled through
+    /// `list_pruning_activities` — one entry per PARENT record.
+    @State private var activities: [PruningActivityDraft] = []
+    /// The activity whose per-block allocation breakdown is expanded.
+    @State private var expandedActivityId: UUID?
 
     private var blockSort: PruningBlockSort {
         PruningBlockSort(rawValue: blockSortRaw) ?? .alphabetical
@@ -119,16 +123,51 @@ struct PruningTrackerView: View {
         paddocks.reduce(0) { $0 + pruningStore.entries(for: $1.id).count }
     }
 
+    /// The create action opens the MULTI-BLOCK editor directly — one activity,
+    /// one crew, one set of hours, across as many blocks as the job covered.
+    /// A single-block vineyard has that block focused for it.
     private func beginNewActivity() {
         guard createAccess.isAllowed else {
             showAccessExplanation = true
             return
         }
-        // One block? Skip the chooser and go straight to the row grid.
+        guard let vineyardId = store.selectedVineyardId else { return }
+        pruningSync.clearActivityReconciliation()
+        let fresh = PruningActivityDraft(vineyardId: vineyardId)
         if paddocks.count == 1, let only = paddocks.first {
-            creationTarget = only
+            editorDraft = PruningAllocationEditor.focus(fresh, paddockId: only.id, blockName: only.name)
         } else {
-            showBlockPicker = true
+            editorDraft = fresh
+        }
+    }
+
+    /// Opens an existing activity for editing. The canonical server state is
+    /// loaded through `get_pruning_activity`, so every block and quarter is
+    /// restored rather than reconstructed from legacy per-block rows.
+    private func openActivity(id: UUID, legacy: PruningEntry? = nil) {
+        pruningSync.clearActivityReconciliation()
+        Task {
+            if let loaded = await pruningSync.loadActivity(id: id) {
+                editorDraft = loaded
+            } else if let legacy {
+                let name = paddocks.first { $0.id == legacy.paddockId }?.name ?? ""
+                editorDraft = PruningActivityDraft.fromLegacyEntry(legacy, blockName: name)
+            }
+        }
+    }
+
+    private func saveActivity(_ draft: PruningActivityDraft) {
+        pruningStore.saveActivity(draft)
+        if let vineyardId = store.selectedVineyardId {
+            activities = pruningStore.activities(forVineyard: vineyardId)
+        }
+    }
+
+    /// Reverses the parent activity as ONE operation; every allocation inherits it.
+    private func reverseActivity(id: UUID) {
+        pruningStore.reverseActivity(id: id)
+        if let vineyardId = store.selectedVineyardId {
+            activities = pruningStore.activities(forVineyard: vineyardId)
         }
     }
 
@@ -141,9 +180,13 @@ struct PruningTrackerView: View {
                 if !createAccess.isAllowed, let explanation = createAccess.explanation {
                     accessNotice(explanation)
                 }
+                if let reconciliation = pruningSync.lastActivityReconciliation {
+                    reconciliationBanner(reconciliation)
+                }
                 dashboardCard
                 newActivityButton
                 activityReportLink
+                activityHistoryCard
                 blockList
                 Spacer(minLength: 24)
             }
@@ -178,13 +221,17 @@ struct PruningTrackerView: View {
                 .accessibilityLabel("Activity Report")
             }
         }
-        .sheet(isPresented: $showBlockPicker) {
-            PruningBlockPickerSheet(blocks: paddocks) { chosen in
-                creationTarget = chosen
-            }
-        }
-        .navigationDestination(item: $creationTarget) { paddock in
-            PruningBlockDetailView(paddock: paddock, pruningStore: pruningStore)
+        .navigationDestination(item: $editorDraft) { draft in
+            PruningActivityEditorView(
+                draft: draft,
+                paddocks: paddocks,
+                isEditing: draft.serverAcknowledged || activities.contains { $0.id == draft.id },
+                canViewCosting: accessControl.canViewCosting,
+                workTasks: store.workTasks.filter { $0.vineyardId == store.selectedVineyardId },
+                reconciliation: pruningSync.lastActivityReconciliation,
+                onSave: { saveActivity($0) },
+                onReverse: { reverseActivity(id: draft.id) }
+            )
         }
         .alert("Recording locked", isPresented: $showAccessExplanation) {
             Button("OK", role: .cancel) {}
@@ -193,9 +240,18 @@ struct PruningTrackerView: View {
         }
         .refreshable {
             await pruningSync.syncForSelectedVineyard()
+            if let vineyardId = store.selectedVineyardId {
+                activities = await pruningSync.refreshActivities(vineyardId: vineyardId)
+            }
         }
         .task {
+            if let vineyardId = store.selectedVineyardId {
+                activities = pruningStore.activities(forVineyard: vineyardId)
+            }
             await pruningSync.syncForSelectedVineyard()
+            if let vineyardId = store.selectedVineyardId {
+                activities = await pruningSync.refreshActivities(vineyardId: vineyardId)
+            }
         }
     }
 
@@ -446,6 +502,155 @@ struct PruningTrackerView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Open the pruning Activity Report")
+    }
+
+    // MARK: Reconciliation
+
+    /// The server's answer to the last activity write. A save with refused
+    /// quarters is never presented as fully successful.
+    private func reconciliationBanner(_ reconciliation: PruningActivityReconciliation) -> some View {
+        PruningReconciliationRow(
+            reconciliation: reconciliation,
+            blockName: { id in paddocks.first { $0.id == id }?.name ?? "Block" },
+            onOpenBlock: { paddockId in
+                pruningSync.clearActivityReconciliation()
+                Task {
+                    guard let loaded = await pruningSync.loadActivity(id: reconciliation.activityId) else { return }
+                    let name = paddocks.first { $0.id == paddockId }?.name ?? ""
+                    editorDraft = PruningAllocationEditor.focus(loaded, paddockId: paddockId, blockName: name)
+                }
+            },
+            onDismiss: { pruningSync.clearActivityReconciliation() }
+        )
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            (reconciliation.hasConflicts ? Color.orange : VineyardTheme.leafGreen).opacity(0.12),
+            in: .rect(cornerRadius: 14)
+        )
+        .padding(.horizontal)
+    }
+
+    // MARK: Activity history
+
+    private func hoursLabel(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...1)))
+    }
+
+    private func rowsLabel(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...2)))
+    }
+
+    private func blockName(_ paddockId: UUID) -> String {
+        paddocks.first { $0.id == paddockId }?.name ?? "Block"
+    }
+
+    /// "Cab Franc + Sauv Blanc +1 more" — one label for the PARENT activity.
+    private func activityBlockLabel(_ activity: PruningActivityDraft) -> String {
+        let names: [String] = activity.activeAllocations.map { allocation in
+            allocation.blockName.isEmpty ? blockName(allocation.paddockId) : allocation.blockName
+        }
+        return PruningActivityListing.blockLabel(names)
+    }
+
+    private func activitySubtitle(_ activity: PruningActivityDraft) -> String {
+        var parts: [String] = [activity.date.formatted(date: .abbreviated, time: .omitted)]
+        if !activity.worker.isEmpty { parts.append(activity.worker) }
+        parts.append("\(activity.totalQuarters) quarters")
+        if let hours = activity.labourHours { parts.append(hoursLabel(hours) + " h") }
+        if activity.isReversed { parts.append("Reversed") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Shared labour is stated ONCE, never per block.
+    private func activityLabourFootnote(_ activity: PruningActivityDraft) -> String {
+        guard let hours = activity.labourHours else {
+            return "Labour is recorded once for the whole activity."
+        }
+        return "Labour is recorded once for the whole activity (" + hoursLabel(hours) + " h)."
+    }
+
+    private func allocationDetail(_ allocation: BlockPruningSelection) -> String {
+        let rows = PruningActivityListing.rowRangeLabel(allocation.rows)
+        return "Rows \(rows) · \(allocation.quarters) q · \(allocation.estimatedVines) vines"
+    }
+
+    /// Recent pruning ACTIVITIES — one row per parent record, never one row per
+    /// block. Two blocks show both names, three or more show the first two plus
+    /// "+N more". Tapping a row exposes the per-block allocation breakdown.
+    @ViewBuilder
+    private var activityHistoryCard: some View {
+        if !activities.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Recent activities")
+                        .font(.headline)
+                    Spacer()
+                    Button("Record pruning activity") { beginNewActivity() }
+                        .font(.caption.weight(.semibold))
+                        .disabled(createAccess == .loading)
+                }
+                ForEach(activities.prefix(8)) { activity in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Button {
+                            expandedActivityId = expandedActivityId == activity.id ? nil : activity.id
+                        } label: {
+                            HStack(alignment: .firstTextBaseline) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(activityBlockLabel(activity))
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(activity.isReversed ? .secondary : .primary)
+                                    Text(activitySubtitle(activity))
+                                        .font(.caption)
+                                        .foregroundStyle(activity.isReversed ? .red : .secondary)
+                                }
+                                Spacer()
+                                Text(rowsLabel(activity.totalRowEquivalents) + " rows")
+                                    .font(.caption.weight(.bold))
+                                    .monospacedDigit()
+                                Button {
+                                    openActivity(id: activity.id)
+                                } label: {
+                                    Image(systemName: "square.and.pencil")
+                                        .font(.footnote)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Open this pruning activity")
+                            }
+                        }
+                        .buttonStyle(.plain)
+
+                        if expandedActivityId == activity.id {
+                            ForEach(activity.activeAllocations) { allocation in
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text(allocation.blockName.isEmpty
+                                         ? blockName(allocation.paddockId)
+                                         : allocation.blockName)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text(allocationDetail(allocation))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.leading, 8)
+                            }
+                            Text(activityLabourFootnote(activity))
+                                .font(.caption2)
+                                .italic()
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 8)
+                        }
+                        Divider()
+                    }
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(VineyardTheme.cardBackground, in: .rect(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(VineyardTheme.cardBorder, lineWidth: 0.5))
+            .padding(.horizontal)
+        }
     }
 
     // MARK: Block list

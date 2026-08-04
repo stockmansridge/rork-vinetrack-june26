@@ -66,6 +66,7 @@ import com.rork.vinetrack.data.PruningSyncCoordinator
 import com.rork.vinetrack.data.PruningSyncRepository
 import com.rork.vinetrack.data.PruningSyncStatus
 import com.rork.vinetrack.data.model.FertiliserRecord
+import com.rork.vinetrack.data.model.PruningActivityDraft
 import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningSeasonIds
 import com.rork.vinetrack.data.model.PruningCalculator
@@ -568,6 +569,13 @@ data class AppUiState(
      * list itself updates reactively as rows resolve.
      */
     val isRetryingSync: Boolean = false,
+    /**
+     * Reconciliation of the last multi-block pruning activity the SERVER
+     * answered (sql/166). Carries how many quarters actually landed and how
+     * many were already recorded elsewhere, so a save with refused quarters is
+     * never presented as fully successful.
+     */
+    val pruningActivityReconciliation: com.rork.vinetrack.data.model.PruningActivityReconciliation? = null,
     /**
      * Read-cache status for launch-critical data (Stage 6A). Informational only:
      * reflects what the local [DomainCacheRepository] has written through on
@@ -1494,6 +1502,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         observeConnectivity()
         observePendingWrites()
         observePendingPhotos()
+        // Every server answer to an activity write reaches the UI, including the
+        // quarters the server refused because another record already owns them.
+        pruningSyncCoordinator.onActivityReconciled = { reconciliation ->
+            _ui.update { it.copy(pruningActivityReconciliation = reconciliation) }
+        }
         _ui.update {
             it.copy(
                 dismissedNoticeIds = homePrefs.dismissedNoticeIds(),
@@ -3256,6 +3269,51 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun editPruningEntry(vineyardId: String, entry: PruningEntry): List<PruningEntry> =
         pruningSyncCoordinator.editEntry(vineyardId, entry)
+
+    // MARK: - Multi-block pruning activities (sql/166)
+
+    /** Every activity held for the vineyard, newest first. */
+    fun pruningActivities(vineyardId: String): List<PruningActivityDraft> =
+        pruningSyncCoordinator.activities(vineyardId)
+            .sortedWith(compareByDescending<PruningActivityDraft> { it.date }.thenByDescending { it.createdAtMs })
+
+    fun pruningActivity(vineyardId: String, activityId: String): PruningActivityDraft? =
+        pruningSyncCoordinator.activity(vineyardId, activityId)
+
+    /**
+     * Local-first save of a WHOLE activity: the parent fields once, every block
+     * allocation, in ONE atomic outbox item that replays through
+     * `record_pruning_activity` / `update_pruning_activity` — never fanned out
+     * to `record_pruning_entry` per block.
+     */
+    fun savePruningActivity(vineyardId: String, draft: PruningActivityDraft): PruningActivityDraft {
+        _ui.update { it.copy(pruningActivityReconciliation = null) }
+        return pruningSyncCoordinator.saveActivity(vineyardId, draft)
+    }
+
+    /** Reverses the parent activity as ONE operation; every allocation inherits it. */
+    fun reversePruningActivity(vineyardId: String, activityId: String): List<PruningActivityDraft> =
+        pruningSyncCoordinator.reverseActivity(vineyardId, activityId)
+
+    /**
+     * Canonical read-back of one activity through `get_pruning_activity` — the
+     * edit path, so reopening an activity restores every block and quarter from
+     * the server rather than reconstructing it from legacy per-block rows.
+     */
+    suspend fun loadPruningActivity(vineyardId: String, activityId: String): PruningActivityDraft? =
+        pruningSyncCoordinator.loadActivity(vineyardId, activityId)
+
+    /** Pulls the vineyard's activities through `list_pruning_activities`. */
+    suspend fun refreshPruningActivities(vineyardId: String): List<PruningActivityDraft> =
+        pruningSyncCoordinator.refreshActivities(vineyardId)
+            .sortedWith(compareByDescending<PruningActivityDraft> { it.date }.thenByDescending { it.createdAtMs })
+
+    fun pruningActivityReconciliation(activityId: String) =
+        pruningSyncCoordinator.reconciliation(activityId)
+
+    fun clearPruningActivityReconciliation() {
+        _ui.update { it.copy(pruningActivityReconciliation = null) }
+    }
 
     suspend fun refreshPruning(vineyardId: String): Pair<List<PruningBlockSetup>, List<PruningEntry>> {
         logPruningEnvironment(vineyardId)

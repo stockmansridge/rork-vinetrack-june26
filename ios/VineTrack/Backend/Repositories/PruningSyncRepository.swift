@@ -28,6 +28,10 @@ protocol PruningSyncRepositoryProtocol: Sendable {
     func reverseActivity(id: UUID, reason: String?) async throws -> PruningActivityResult
     /// Canonical read-back of one activity with all its allocations.
     func fetchActivity(id: UUID) async throws -> BackendPruningActivityCanonical
+    /// Every activity of the vineyard with all its allocations
+    /// (`list_pruning_activities`) — one element per PARENT record, which is
+    /// what the Tracker history and the mobile Activity Report render.
+    func fetchActivities(vineyardId: UUID) async throws -> [BackendPruningActivityCanonical]
     func softDeleteSeason(id: UUID) async throws
     /// Fetches the authoritative SQL 115 vineyard summary for the online
     /// parity check. Offline callers must treat failures as "no check".
@@ -133,6 +137,14 @@ final class SupabasePruningSyncRepository: PruningSyncRepositoryProtocol {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         return try await provider.client
             .rpc("get_pruning_activity", params: PruningActivityIdParams(activityId: id))
+            .execute()
+            .value
+    }
+
+    func fetchActivities(vineyardId: UUID) async throws -> [BackendPruningActivityCanonical] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        return try await provider.client
+            .rpc("list_pruning_activities", params: ListPruningActivitiesParams(vineyardId: vineyardId))
             .execute()
             .value
     }

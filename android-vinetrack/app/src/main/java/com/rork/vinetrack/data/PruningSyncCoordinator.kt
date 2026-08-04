@@ -4,7 +4,9 @@ import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
+import com.rork.vinetrack.data.model.PruningActivityCanonical
 import com.rork.vinetrack.data.model.PruningActivityDraft
+import com.rork.vinetrack.data.model.PruningActivityReconciliation
 import com.rork.vinetrack.data.model.PruningAllocationEditor
 import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningEntry
@@ -16,6 +18,7 @@ import kotlinx.coroutines.sync.Mutex
 import android.util.Log
 import kotlinx.serialization.json.Json
 import java.time.Instant
+import java.time.LocalDate
 
 /**
  * Offline-first coordinator for the Pruning Tracker. Local-first semantics
@@ -41,6 +44,18 @@ class PruningSyncCoordinator(
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val replayLock = Mutex()
+
+    /**
+     * Reconciliation of the last server answer for each activity (sql/166).
+     * Set on every acknowledged write and consumed by the UI, so a save with
+     * refused quarters is never presented as fully successful.
+     */
+    private val reconciliations = LinkedHashMap<String, PruningActivityReconciliation>()
+
+    /** Fired whenever the server answers an activity write. */
+    var onActivityReconciled: ((PruningActivityReconciliation) -> Unit)? = null
+
+    fun reconciliation(activityId: String): PruningActivityReconciliation? = reconciliations[activityId]
 
     // MARK: Cached reads
 
@@ -167,6 +182,62 @@ class PruningSyncCoordinator(
     fun activity(vineyardId: String, activityId: String): PruningActivityDraft? =
         store.activity(vineyardId, activityId)
 
+    /**
+     * Canonical read-back of ONE activity through `get_pruning_activity`, so
+     * opening an activity from the Activity Report restores the real server
+     * state — every block, every quarter selection, the shared labour and both
+     * resolved years — instead of reconstructing it from legacy per-block rows.
+     * Falls back to the offline draft when the read is unavailable.
+     */
+    suspend fun loadActivity(vineyardId: String, activityId: String): PruningActivityDraft? {
+        val local = store.activity(vineyardId, activityId)
+        if (!canSync()) return local
+        val canonical = runCatching { repo.fetchActivity(activityId) }.getOrNull() ?: return local
+        if (canonical.activity == null) return local
+        val base = local ?: PruningActivityDraft(
+            id = activityId,
+            vineyardId = vineyardId,
+            date = canonical.activity.entryDate?.take(10) ?: LocalDate.now().toString(),
+        )
+        val adopted = PruningAllocationEditor.adoptCanonical(base, canonical)
+        store.upsertActivity(vineyardId, adopted)
+        store.mergeActivityEntries(vineyardId, PruningAllocationEditor.toLegacyEntries(adopted))
+        return adopted
+    }
+
+    /**
+     * Pulls every activity of the vineyard through `list_pruning_activities`
+     * and adopts the canonical parents + allocations into the cache. Offline
+     * this is a no-op and the local drafts stand.
+     *
+     * Activities with an unresolved queued write keep their optimistic local
+     * state — a pull must never overwrite work that hasn't been pushed yet.
+     */
+    suspend fun refreshActivities(vineyardId: String): List<PruningActivityDraft> {
+        if (!canSync()) return store.loadActivities(vineyardId)
+        val remote = runCatching { repo.fetchActivities(vineyardId) }.getOrNull()
+            ?: return store.loadActivities(vineyardId)
+        val queued = pending.list()
+            .filter {
+                it.entityType == PendingEntityType.PRUNING_ACTIVITY &&
+                    it.status in PendingWriteStatus.unresolved
+            }
+            .map { it.clientId }
+            .toSet()
+        for (canonical in remote) {
+            val id = canonical.activity?.id ?: continue
+            if (id in queued) continue
+            val base = store.activity(vineyardId, id) ?: PruningActivityDraft(
+                id = id,
+                vineyardId = vineyardId,
+                date = canonical.activity.entryDate?.take(10) ?: LocalDate.now().toString(),
+            )
+            val adopted = PruningAllocationEditor.adoptCanonical(base, canonical)
+            store.upsertActivity(vineyardId, adopted)
+        }
+        return store.loadActivities(vineyardId)
+    }
+
     private fun allocationIdsOf(vineyardId: String, activityId: String): List<String> =
         store.activity(vineyardId, activityId)
             ?.activeAllocations
@@ -269,6 +340,7 @@ class PruningSyncCoordinator(
                     result.error == "activity_reversed" -> pending.remove(write.id)
                     else -> {
                         if (result.stale != true) adoptCanonicalActivity(draft, result)
+                        publishReconciliation(draft, result)
                         pending.remove(write.id)
                     }
                 }
@@ -313,6 +385,32 @@ class PruningSyncCoordinator(
             entries = PruningAllocationEditor.toLegacyEntries(adopted),
             staleAllocationIds = staleIds,
         )
+    }
+
+    /**
+     * Surfaces the server's answer to the UI. Quarters the server refused
+     * (already completed by another record) are reported explicitly — the save
+     * is never presented as fully successful while conflicts exist.
+     */
+    private fun publishReconciliation(
+        draft: PruningActivityDraft,
+        result: PruningSyncRepository.ActivityResult,
+    ) {
+        val reconciliation = PruningActivityReconciliations.from(
+            result = result,
+            blockNames = draft.allocations.mapValues { it.value.blockName },
+            blockSummary = draft.blockSummary,
+            activityId = draft.id,
+        )
+        reconciliations[draft.id] = reconciliation
+        if (reconciliation.hasConflicts) {
+            Log.i(
+                TAG,
+                "activity ${draft.id}: ${reconciliation.quartersConflicted} quarter(s) already " +
+                    "recorded elsewhere — reported, never stolen",
+            )
+        }
+        onActivityReconciled?.invoke(reconciliation)
     }
 
     // MARK: Replay

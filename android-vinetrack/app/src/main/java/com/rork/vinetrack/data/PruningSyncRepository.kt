@@ -22,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.time.Instant
 import java.time.LocalDate
@@ -343,6 +344,13 @@ class PruningSyncRepository(private val session: SessionStore) {
     @Serializable
     private data class ActivityIdArgs(@SerialName("p_activity_id") val activityId: String)
 
+    @Serializable
+    private data class ListActivitiesArgs(
+        @SerialName("p_vineyard_id") val vineyardId: String,
+        @SerialName("p_include_reversed") val includeReversed: Boolean = true,
+        @SerialName("p_limit") val limit: Int = 500,
+    )
+
     /** One quarter an activity write could not attribute, with its block. */
     @Serializable
     data class ActivityConflict(
@@ -661,6 +669,35 @@ class PruningSyncRepository(private val session: SessionStore) {
                 else -> throw BackendError.Server(response.status.value, response.bodyAsText())
             }
         }
+
+    /**
+     * Every activity of the vineyard with all its allocations
+     * (`list_pruning_activities`). One parent record per element — the list the
+     * Tracker history and the mobile Activity Report render.
+     */
+    suspend fun fetchActivities(
+        vineyardId: String,
+        includeReversed: Boolean = true,
+        limit: Int = 500,
+    ): List<PruningActivityCanonical> = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("list_pruning_activities")) {
+            authHeaders(token)
+            contentType(ContentType.Application.Json)
+            setBody(ListActivitiesArgs(vineyardId, includeReversed, limit))
+        }
+        when {
+            response.status.isSuccess() -> runCatching {
+                resultJson.decodeFromString(
+                    ListSerializer(PruningActivityCanonical.serializer()),
+                    response.bodyAsText(),
+                )
+            }.getOrDefault(emptyList())
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
 
     /** The ONLY way completed quarters revert (explicit authorised action). */
     suspend fun deleteEntry(entryId: String) = withContext(Dispatchers.IO) {

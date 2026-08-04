@@ -348,6 +348,20 @@ nonisolated struct PruningActivityIdParams: Encodable, Sendable {
     }
 }
 
+/// Parameters for `list_pruning_activities` — one element per PARENT activity,
+/// reversed records included so the report keeps its audit trail.
+nonisolated struct ListPruningActivitiesParams: Encodable, Sendable {
+    let vineyardId: UUID
+    var includeReversed: Bool = true
+    var limit: Int = 500
+
+    enum CodingKeys: String, CodingKey {
+        case vineyardId = "p_vineyard_id"
+        case includeReversed = "p_include_reversed"
+        case limit = "p_limit"
+    }
+}
+
 // MARK: - RPC result
 
 /// Structured response of every activity RPC (sql/166). `canonical` is the

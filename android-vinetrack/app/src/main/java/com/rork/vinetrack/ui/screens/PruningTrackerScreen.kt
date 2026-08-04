@@ -87,6 +87,9 @@ import com.rork.vinetrack.data.PruningStore
 import com.rork.vinetrack.data.PruningSyncStatus
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.PruningActivityDraft
+import com.rork.vinetrack.data.model.PruningActivityListing
+import com.rork.vinetrack.data.model.PruningAllocationEditor
 import com.rork.vinetrack.data.model.PruningBlockMetrics
 import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningCalculator
@@ -157,8 +160,19 @@ fun PruningTrackerScreen(
     var selectedPaddockId by rememberSaveable { mutableStateOf<String?>(null) }
     var blockSort by rememberSaveable { mutableStateOf("alphabetical") }
     var showActivityReport by rememberSaveable { mutableStateOf(false) }
-    /** Block chooser for the "New Pruning Activity" action. */
-    var showBlockPicker by rememberSaveable { mutableStateOf(false) }
+    /**
+     * Multi-block activities of this vineyard (sql/166) — one parent record per
+     * item, pulled through `list_pruning_activities`.
+     */
+    var activities by remember(vineyardId) {
+        mutableStateOf(vineyardId?.let { vm.pruningActivities(it) } ?: emptyList())
+    }
+    /**
+     * The activity currently open in the multi-block editor. Non-null replaces
+     * the whole screen with the editor — the ONE place an activity is created
+     * or changed.
+     */
+    var editorDraft by remember { mutableStateOf<PruningActivityDraft?>(null) }
     /** Set when a locked create control is tapped — surfaces the reason. */
     var showAccessNotice by rememberSaveable { mutableStateOf(false) }
     /** Deep link from the Activity Report: open the block with this entry in edit mode. */
@@ -176,6 +190,7 @@ fun PruningTrackerScreen(
         val (mergedSetups, mergedEntries) = vm.refreshPruning(id)
         setups = mergedSetups
         entries = mergedEntries
+        activities = vm.refreshPruningActivities(id)
     }
 
     val paddocks = remember(state.paddocks) { state.paddocks.sortedBy { it.name.lowercase() } }
@@ -207,14 +222,64 @@ fun PruningTrackerScreen(
     val createAccess: PruningCreateAccess = remember(state.currentRole, state.members) {
         PruningCreateAccess.resolve(role = state.currentRole, membersLoaded = state.members.isNotEmpty())
     }
+    val canViewCosting = state.currentRole == "owner" || state.currentRole == "manager"
+
+    /**
+     * The create action opens the MULTI-BLOCK editor directly — one activity,
+     * one crew, one set of hours, across as many blocks as the job covered.
+     * A single-block vineyard has that block focused for it.
+     */
     val beginNewActivity: () -> Unit = {
         if (!createAccess.isAllowed) {
             showAccessNotice = true
-        } else if (paddocks.size == 1) {
-            // One block — skip the chooser and go straight to the row grid.
-            selectedPaddockId = paddocks.first().id
-        } else {
-            showBlockPicker = true
+        } else if (vineyardId != null) {
+            vm.clearPruningActivityReconciliation()
+            val fresh = PruningActivityDraft.new(vineyardId = vineyardId)
+            editorDraft = paddocks.singleOrNull()
+                ?.let { PruningAllocationEditor.focus(fresh, it.id, it.name) }
+                ?: fresh
+        }
+    }
+
+    /**
+     * Opens an existing activity for editing. The canonical server state is
+     * loaded through `get_pruning_activity` so every block and quarter is
+     * restored; a legacy single-block entry with no parent yet opens as an
+     * activity with exactly one allocation.
+     */
+    val openActivity: (String, PruningEntry?) -> Unit = { activityId, legacy ->
+        val id = vineyardId
+        if (id != null) {
+            vm.clearPruningActivityReconciliation()
+            scope.launch {
+                editorDraft = vm.loadPruningActivity(id, activityId)
+                    ?: legacy?.let {
+                        PruningActivityDraft.fromLegacyEntry(
+                            it,
+                            paddocks.firstOrNull { p -> p.id == it.paddockId }?.name.orEmpty(),
+                        )
+                    }
+            }
+        }
+    }
+
+    /**
+     * Reverses a record as ONE operation. An allocation of a multi-block
+     * activity reverses the whole parent (`reverse_pruning_activity`); a legacy
+     * standalone entry keeps the single-entry path.
+     */
+    val reverseRecord: (PruningEntry) -> Unit = { entry ->
+        val id = vineyardId
+        if (id != null) {
+            val parent = activities.firstOrNull { activity ->
+                activity.activeAllocations.any { it.allocationIdFor(activity.id) == entry.id }
+            }
+            if (parent != null) {
+                activities = vm.reversePruningActivity(id, parent.id)
+                entries = vm.pruningEntries(id)
+            } else {
+                entries = vm.deletePruningEntry(id, entry.id)
+            }
         }
     }
 
@@ -226,6 +291,34 @@ fun PruningTrackerScreen(
         com.rork.vinetrack.ui.main.OperationalToolCatalog
             .authorised(canViewCosting)
             .any { it.id == "work_tasks" }
+    }
+
+    // THE ONE editing surface for a pruning activity: parent fields once, every
+    // block allocation, saved through the activity RPCs in a single atomic write.
+    val openDraft = editorDraft
+    if (openDraft != null && vineyardId != null) {
+        PruningActivityEditorScreen(
+            paddocks = paddocks,
+            setups = setups,
+            entries = entries,
+            workTasks = state.workTasks,
+            canViewCosting = canViewCosting,
+            initialDraft = openDraft,
+            isEditing = activities.any { it.id == openDraft.id } || openDraft.serverAcknowledged,
+            reconciliation = state.pruningActivityReconciliation,
+            onSave = { saved ->
+                vm.savePruningActivity(vineyardId, saved)
+                entries = vm.pruningEntries(vineyardId)
+                activities = vm.pruningActivities(vineyardId)
+            },
+            onReverse = {
+                activities = vm.reversePruningActivity(vineyardId, openDraft.id)
+                entries = vm.pruningEntries(vineyardId)
+            },
+            onBack = { editorDraft = null },
+            modifier = modifier,
+        )
+        return
     }
 
     if (showActivityReport && selectedPaddock == null && vineyardId != null) {
@@ -240,11 +333,16 @@ fun PruningTrackerScreen(
             canViewCosting = state.currentRole == "owner" || state.currentRole == "manager",
             onBack = { showActivityReport = false },
             onEditEntry = { entry ->
-                pendingEditEntryId = entry.id
-                selectedPaddockId = entry.paddockId
+                // Load the PARENT activity through `get_pruning_activity` — every
+                // block, every quarter — rather than reconstructing the record
+                // from the legacy per-block row. `allocation id == entry id`, so
+                // the entry id resolves the activity for both new and back-filled
+                // records; a pre-166 standalone entry falls back to a
+                // one-allocation activity.
                 showActivityReport = false
+                openActivity(entry.id, entry)
             },
-            onReverseEntry = { entry -> entries = vm.deletePruningEntry(vineyardId, entry.id) },
+            onReverseEntry = { entry -> reverseRecord(entry) },
             onDeleteWorkTask = { vm.deleteWorkTask(it) { } },
             onOpenWorkTasks = onOpenWorkTasks,
             modifier = modifier,
@@ -525,6 +623,28 @@ fun PruningTrackerScreen(
                     )
                 }
             }
+            state.pruningActivityReconciliation?.let { reconciliation ->
+                item(key = "activity-reconciliation") {
+                    PruningReconciliationCard(
+                        reconciliation = reconciliation,
+                        blockNameOf = { id -> paddocks.firstOrNull { it.id == id }?.name ?: "Block" },
+                        onOpenBlock = { paddockId ->
+                            val id = vineyardId ?: return@PruningReconciliationCard
+                            scope.launch {
+                                val loaded = vm.loadPruningActivity(id, reconciliation.activityId)
+                                editorDraft = loaded?.let {
+                                    PruningAllocationEditor.focus(
+                                        it,
+                                        paddockId,
+                                        paddocks.firstOrNull { p -> p.id == paddockId }?.name.orEmpty(),
+                                    )
+                                }
+                            }
+                        },
+                        onDismiss = { vm.clearPruningActivityReconciliation() },
+                    )
+                }
+            }
             item(key = "new-activity") {
                 PruningNewActivityButton(
                     access = createAccess,
@@ -561,6 +681,16 @@ fun PruningTrackerScreen(
                         PruningNoActivityEmptyState(access = createAccess, onRecord = beginNewActivity)
                     }
                 }
+                if (activities.isNotEmpty()) {
+                    item(key = "activity-history") {
+                        PruningActivityHistoryCard(
+                            activities = activities.take(8),
+                            blockNameOf = { id -> paddocks.firstOrNull { it.id == id }?.name ?: "Block" },
+                            onOpen = { activity -> openActivity(activity.id, null) },
+                            onRecord = beginNewActivity,
+                        )
+                    }
+                }
                 item(key = "block-sort") {
                     BlockSortHeader(sort = blockSort, onSortChange = { blockSort = it })
                 }
@@ -578,17 +708,6 @@ fun PruningTrackerScreen(
                 }
             }
             item(key = "bottom-space") { Spacer(Modifier.height(24.dp)) }
-        }
-
-        if (showBlockPicker) {
-            PruningBlockPickerSheet(
-                blocks = sortedPaddocks,
-                onDismiss = { showBlockPicker = false },
-                onSelect = { paddock ->
-                    showBlockPicker = false
-                    selectedPaddockId = paddock.id
-                },
-            )
         }
 
         if (showAccessNotice) {
@@ -735,106 +854,122 @@ private fun PruningNoActivityEmptyState(access: PruningCreateAccess, onRecord: (
     }
 }
 
+
 /**
- * Searchable chooser listing EVERY active block in the vineyard, used by the
- * "New Pruning Activity" action. Selecting a block hands off to the row-quarter
- * grid where the activity is recorded.
+ * Recent pruning ACTIVITIES — one row per parent record (sql/166), never one row
+ * per block. Two blocks show both names, three or more show the first two plus
+ * "+N more". Tapping a row exposes the per-block allocation breakdown and opens
+ * the multi-block editor.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PruningBlockPickerSheet(
-    blocks: List<Paddock>,
-    onDismiss: () -> Unit,
-    onSelect: (Paddock) -> Unit,
+private fun PruningActivityHistoryCard(
+    activities: List<PruningActivityDraft>,
+    blockNameOf: (String) -> String,
+    onOpen: (PruningActivityDraft) -> Unit,
+    onRecord: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var query by remember { mutableStateOf("") }
-    val results = remember(blocks, query) {
-        val trimmed = query.trim()
-        if (trimmed.isEmpty()) {
-            blocks
-        } else {
-            blocks.filter { paddock ->
-                paddock.name.contains(trimmed, ignoreCase = true) ||
-                    paddock.primaryVarietyName?.contains(trimmed, ignoreCase = true) == true
-            }
-        }
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = vine.cardBackground,
-    ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-            Text(
-                "Choose a block",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = vine.textPrimary,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Then select the rows or quarters pruned and record crew and hours.",
-                fontSize = 12.sp,
-                color = vine.textSecondary,
-            )
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                singleLine = true,
-                leadingIcon = {
-                    Icon(Icons.Filled.Search, contentDescription = null, tint = vine.textSecondary)
-                },
-                placeholder = { Text("Search blocks", color = vine.textSecondary) },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(8.dp))
-            if (results.isEmpty()) {
+    var expandedId by remember { mutableStateOf<String?>(null) }
+    PruningCard {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "No blocks match that search.",
-                    fontSize = 13.sp,
-                    color = vine.textSecondary,
-                    modifier = Modifier.padding(vertical = 24.dp),
+                    "Recent activities",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = vine.textPrimary,
                 )
-            } else {
-                LazyColumn(modifier = Modifier.fillMaxWidth().height(360.dp)) {
-                    items(results.size, key = { results[it].id }) { index ->
-                        val paddock = results[index]
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onSelect(paddock) }
-                                .padding(vertical = 12.dp),
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    paddock.name,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = vine.textPrimary,
-                                )
-                                paddock.primaryVarietyName
-                                    ?.takeIf { it.isNotBlank() }
-                                    ?.let { Text(it, fontSize = 12.sp, color = vine.textSecondary) }
-                            }
-                            Icon(
-                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = null,
-                                tint = vine.textSecondary,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                        HorizontalDivider(color = vine.cardBorder)
-                    }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onRecord) {
+                    Text(
+                        "Record pruning activity",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = VineColors.Primary,
+                    )
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
-            Spacer(Modifier.navigationBarsPadding())
+            activities.forEachIndexed { index, activity ->
+                val isExpanded = expandedId == activity.id
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { expandedId = if (isExpanded) null else activity.id },
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                PruningActivityListing.blockLabel(
+                                    activity.activeAllocations.map {
+                                        it.blockName.ifBlank { blockNameOf(it.paddockId) }
+                                    }
+                                ),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (activity.isReversed) vine.textSecondary else vine.textPrimary,
+                            )
+                            Text(
+                                listOfNotNull(
+                                    fmtDate(PruningCalculator.parseDate(activity.date)),
+                                    activity.worker.takeIf { it.isNotBlank() },
+                                    "${activity.totalQuarters} quarters",
+                                    activity.labourHours?.takeIf { it > 0 }?.let { "${fmt(it, 1)} h" },
+                                    if (activity.isReversed) "Reversed" else null,
+                                ).joinToString(" · "),
+                                fontSize = 11.sp,
+                                color = if (activity.isReversed) VineColors.Destructive else vine.textSecondary,
+                            )
+                        }
+                        Text(
+                            "${fmt(activity.totalRowEquivalents)} rows",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = vine.textPrimary,
+                        )
+                        IconButton(onClick = { onOpen(activity) }, modifier = Modifier.size(30.dp)) {
+                            Icon(
+                                Icons.Filled.Edit,
+                                contentDescription = "Open this pruning activity",
+                                tint = VineColors.Primary,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
+                    if (isExpanded) {
+                        activity.activeAllocations.forEach { allocation ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(start = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    allocation.blockName.ifBlank { blockNameOf(allocation.paddockId) },
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = vine.textSecondary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(
+                                    "Rows ${PruningActivityListing.rowRangeLabel(allocation.rows)} · " +
+                                        "${allocation.quarters} q · ${fmt(allocation.rowEquivalents)} rows · " +
+                                        "${allocation.estimatedVines} vines",
+                                    fontSize = 11.sp,
+                                    color = vine.textSecondary,
+                                )
+                            }
+                        }
+                        Text(
+                            "Labour is recorded once for the whole activity" +
+                                (activity.labourHours?.let { " (${fmt(it, 1)} h)" } ?: "") + ".",
+                            fontSize = 10.sp,
+                            color = vine.textSecondary,
+                            fontStyle = FontStyle.Italic,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
+                }
+                if (index < activities.lastIndex) HorizontalDivider(color = vine.cardBorder)
+            }
         }
     }
 }
@@ -1032,7 +1167,7 @@ private fun PruningPendingSyncCard(
 }
 
 @Composable
-private fun PruningCard(content: @Composable ColumnScope.() -> Unit) {
+internal fun PruningCard(content: @Composable ColumnScope.() -> Unit) {
     val vine = LocalVineColors.current
     Column(
         modifier = Modifier
@@ -1100,7 +1235,7 @@ private fun PruningProgressBarView(fraction: Double, elapsedFraction: Double?, t
     }
 }
 
-private fun fmt(value: Double, decimals: Int = 2): String {
+internal fun fmt(value: Double, decimals: Int = 2): String {
     if (value % 1.0 == 0.0 && decimals <= 2) return value.toInt().toString()
     return "%.${decimals}f".format(value).trimEnd('0').trimEnd('.')
 }
