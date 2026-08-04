@@ -276,6 +276,17 @@ object PendingEntityType {
      */
     const val PRUNING_ENTRY = "pruning_entry"
     /**
+     * A multi-block pruning ACTIVITY queued offline (sql/166). Backs
+     * `record_pruning_activity` (CREATE), `update_pruning_activity` (UPDATE)
+     * and `reverse_pruning_activity` (DELETE), keyed by the stable
+     * client-generated activity id so a retry can never create a second
+     * parent or duplicate an allocation. The payload carries the parent AND
+     * EVERY block allocation, so an offline draft is never partially saved.
+     * Deliberately distinct from [PRUNING_ENTRY] so the legacy single-block
+     * queue and the activity queue never pick up each other's writes.
+     */
+    const val PRUNING_ACTIVITY = "pruning_activity"
+    /**
      * A fertiliser calculation/application record upsert queued offline.
      * Backs `fertiliser_records` + `fertiliser_record_allocations` — UPDATE
      * (record upsert followed by its per-block allocation upserts, coalesced

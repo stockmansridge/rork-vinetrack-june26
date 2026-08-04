@@ -19,6 +19,11 @@ final class PruningStore {
 
     private(set) var setups: [PruningBlockSetup] = []
     private(set) var entries: [PruningEntry] = []
+    /// Offline drafts of multi-block pruning ACTIVITIES (sql/166). The COMPLETE
+    /// activity is persisted — parent fields plus EVERY block allocation — so an
+    /// offline draft is never partially saved and reopening it restores every
+    /// block, not only the one that happened to be on screen.
+    private(set) var activities: [PruningActivityDraft] = []
 
     /// Sync hooks — fired for local user edits only, never for remote applies.
     var onSeasonChanged: ((UUID) -> Void)?
@@ -26,9 +31,15 @@ final class PruningStore {
     var onEntryRecorded: ((UUID) -> Void)?
     var onEntryEdited: ((UUID) -> Void)?
     var onEntryDeleted: ((UUID) -> Void)?
+    /// Fired when a multi-block activity is created or edited locally.
+    /// `isNew` routes the push to `record_pruning_activity` vs
+    /// `update_pruning_activity`.
+    var onActivitySaved: ((UUID, Bool) -> Void)?
+    var onActivityReversed: ((UUID) -> Void)?
 
     private static let setupsKey = "vinetrack_pruning_seasons_v2"
     private static let entriesKey = "vinetrack_pruning_entries_v2"
+    private static let activitiesKey = "vinetrack_pruning_activities_v1"
 
     private let persistence: PersistenceStore
 
@@ -36,6 +47,7 @@ final class PruningStore {
         self.persistence = persistence
         setups = persistence.load(key: Self.setupsKey) ?? []
         entries = persistence.load(key: Self.entriesKey) ?? []
+        activities = persistence.load(key: Self.activitiesKey) ?? []
     }
 
     // MARK: Seasons (block setups)
@@ -132,6 +144,100 @@ final class PruningStore {
         }
         persistEntries()
         onEntryDeleted?(id)
+    }
+
+    // MARK: Multi-block activities (sql/166)
+
+    func activities(forVineyard vineyardId: UUID) -> [PruningActivityDraft] {
+        activities
+            .filter { $0.vineyardId == vineyardId }
+            .sorted { $0.date == $1.date ? $0.createdAt > $1.createdAt : $0.date > $1.date }
+    }
+
+    func activity(id: UUID) -> PruningActivityDraft? {
+        activities.first { $0.id == id }
+    }
+
+    /// Local-first save of a multi-block activity. The whole draft is persisted
+    /// AND projected onto the legacy per-block entries, so every existing
+    /// progress, rate, forecast and report screen keeps working. Labour rides on
+    /// the primary allocation only, so no total double-counts it.
+    ///
+    /// Allocations the edit dropped are flagged reversed rather than deleted —
+    /// the Activity Report keeps the audit trail while every calculation path
+    /// already excludes them.
+    @discardableResult
+    func saveActivity(_ draft: PruningActivityDraft) -> PruningActivityDraft {
+        let previous = activity(id: draft.id)
+        let cleaned = PruningAllocationEditor.pruneEmptyBlocks(draft)
+        let kept = Set(cleaned.activeAllocations.map { $0.allocationId(for: cleaned.id) })
+        let stale = Set((previous?.activeAllocations ?? []).map { $0.allocationId(for: cleaned.id) })
+            .subtracting(kept)
+
+        if let index = activities.firstIndex(where: { $0.id == cleaned.id }) {
+            activities[index] = cleaned
+        } else {
+            activities.append(cleaned)
+        }
+        mergeActivityEntries(PruningAllocationEditor.toLegacyEntries(cleaned), staleAllocationIds: stale)
+        persistActivities()
+        persistEntries()
+        // A create that has not been acknowledged yet keeps replaying through
+        // the record RPC: its payload carries the FULL desired state.
+        onActivitySaved?(cleaned.id, previous == nil || !(previous?.serverAcknowledged ?? false))
+        return cleaned
+    }
+
+    /// Reverses the whole activity — one operation, every allocation inherits it.
+    func reverseActivity(id: UUID) {
+        guard let index = activities.firstIndex(where: { $0.id == id }) else {
+            onActivityReversed?(id)
+            return
+        }
+        if activities[index].reversedAt == nil {
+            activities[index].reversedAt = Date()
+        }
+        let now = Date()
+        for allocation in activities[index].activeAllocations {
+            let allocationId = allocation.allocationId(for: id)
+            if let entryIndex = entries.firstIndex(where: { $0.id == allocationId }),
+               entries[entryIndex].reversedAt == nil {
+                entries[entryIndex].reversedAt = now
+            }
+        }
+        persistActivities()
+        persistEntries()
+        onActivityReversed?(id)
+    }
+
+    /// Replaces the local activity and ALL its allocations with the canonical
+    /// server state (sql/166). No hook fires — adopting the server's own answer
+    /// is not a user edit and must never re-queue a push.
+    func adoptCanonicalActivity(id: UUID, canonical: BackendPruningActivityCanonical) {
+        guard let index = activities.firstIndex(where: { $0.id == id }) else { return }
+        let before = activities[index]
+        let adopted = PruningAllocationEditor.adoptCanonical(before, canonical: canonical)
+        let kept = Set(adopted.activeAllocations.map { $0.allocationId(for: adopted.id) })
+        let stale = Set(before.activeAllocations.map { $0.allocationId(for: before.id) }).subtracting(kept)
+        activities[index] = adopted
+        mergeActivityEntries(PruningAllocationEditor.toLegacyEntries(adopted), staleAllocationIds: stale)
+        persistActivities()
+        persistEntries()
+    }
+
+    private func mergeActivityEntries(_ incoming: [PruningEntry], staleAllocationIds: Set<UUID>) {
+        let now = Date()
+        for entry in incoming {
+            if let index = entries.firstIndex(where: { $0.id == entry.id }) {
+                entries[index] = entry
+            } else {
+                entries.append(entry)
+            }
+        }
+        for id in staleAllocationIds {
+            guard let index = entries.firstIndex(where: { $0.id == id }) else { continue }
+            if entries[index].reversedAt == nil { entries[index].reversedAt = now }
+        }
     }
 
     // MARK: Remote applies (no hooks)
@@ -264,5 +370,9 @@ final class PruningStore {
 
     private func persistEntries() {
         persistence.save(entries, key: Self.entriesKey)
+    }
+
+    private func persistActivities() {
+        persistence.save(activities, key: Self.activitiesKey)
     }
 }

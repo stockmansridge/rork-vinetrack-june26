@@ -1,6 +1,8 @@
 package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.data.model.PruningActivityCanonical
+import com.rork.vinetrack.data.model.PruningActivityDraft
 import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningEntry
 import com.rork.vinetrack.data.model.PruningSeasonIds
@@ -178,8 +180,9 @@ class PruningSyncRepository(private val session: SessionStore) {
         @SerialName("pruning_entry_id") val pruningEntryId: String? = null,
     )
 
+    /** One quarter as the RPCs expect it: {row, segment, row_id, label}. */
     @Serializable
-    private data class SegmentArg(
+    data class SegmentArg(
         val row: Int,
         val segment: Int,
         /** Stable paddock row id — the real identity for configured rows. */
@@ -278,6 +281,122 @@ class PruningSyncRepository(private val session: SessionStore) {
         val error: String? = null,
         /** True when a newer edit already applied — this edit is obsolete. */
         val stale: Boolean? = null,
+    )
+
+    // MARK: Multi-block activities (sql/166)
+
+    /**
+     * ACTIVITY-level payload. Labour, timing, rate, notes and the Work Task
+     * link appear here EXACTLY ONCE and are never repeated per block.
+     *
+     * Encoded with explicit nulls: `update_pruning_activity` distinguishes an
+     * absent key ("leave unchanged") from an explicit null ("clear it"), so a
+     * full-desired-state edit must always send every key.
+     */
+    @Serializable
+    data class ActivityPayload(
+        @SerialName("entry_date") val entryDate: String,
+        @SerialName("worker_or_crew") val workerOrCrew: String,
+        val method: String,
+        @SerialName("start_time") val startTime: String? = null,
+        @SerialName("finish_time") val finishTime: String? = null,
+        @SerialName("labour_hours") val labourHours: Double? = null,
+        @SerialName("hourly_rate") val hourlyRate: Double? = null,
+        val notes: String = "",
+        @SerialName("work_task_id") val workTaskId: String? = null,
+        @SerialName("clear_work_task") val clearWorkTask: Boolean = false,
+    )
+
+    /** ALLOCATION-level payload — one block, its own rows/quarters and vines. */
+    @Serializable
+    data class AllocationPayload(
+        val id: String,
+        @SerialName("paddock_id") val paddockId: String,
+        val segments: List<SegmentArg>,
+        val quarters: Int,
+        @SerialName("estimated_vines") val estimatedVines: Int,
+    )
+
+    @Serializable
+    private data class RecordActivityArgs(
+        @SerialName("p_activity_id") val activityId: String,
+        @SerialName("p_vineyard_id") val vineyardId: String,
+        @SerialName("p_activity") val activity: ActivityPayload,
+        @SerialName("p_allocations") val allocations: List<AllocationPayload>,
+        @SerialName("p_client_updated_at") val clientUpdatedAt: String,
+    )
+
+    @Serializable
+    private data class UpdateActivityArgs(
+        @SerialName("p_activity_id") val activityId: String,
+        @SerialName("p_activity") val activity: ActivityPayload,
+        @SerialName("p_allocations") val allocations: List<AllocationPayload>,
+        @SerialName("p_client_updated_at") val clientUpdatedAt: String,
+    )
+
+    @Serializable
+    private data class ReverseActivityArgs(
+        @SerialName("p_activity_id") val activityId: String,
+        @SerialName("p_reason") val reason: String? = null,
+    )
+
+    @Serializable
+    private data class ActivityIdArgs(@SerialName("p_activity_id") val activityId: String)
+
+    /** One quarter an activity write could not attribute, with its block. */
+    @Serializable
+    data class ActivityConflict(
+        @SerialName("paddock_id") val paddockId: String? = null,
+        val row: Int? = null,
+        val segment: Int? = null,
+        val reason: String? = null,
+    )
+
+    @Serializable
+    data class AllocationResult(
+        @SerialName("allocation_id") val allocationId: String? = null,
+        @SerialName("paddock_id") val paddockId: String? = null,
+        @SerialName("allocation_index") val allocationIndex: Int? = null,
+        @SerialName("pruning_season_id") val pruningSeasonId: String? = null,
+        @SerialName("season_year") val seasonYear: Int? = null,
+        @SerialName("vintage_year") val vintageYear: Int? = null,
+        @SerialName("season_changed") val seasonChanged: Boolean? = null,
+        val requested: Int? = null,
+        val attributed: Int? = null,
+        val removed: Int? = null,
+        @SerialName("duplicates_removed") val duplicatesRemoved: Int? = null,
+        val conflicts: List<ActivityConflict> = emptyList(),
+    )
+
+    @Serializable
+    data class RemovedAllocation(
+        @SerialName("allocation_id") val allocationId: String? = null,
+        @SerialName("paddock_id") val paddockId: String? = null,
+    )
+
+    /**
+     * Structured response of every activity RPC (sql/166). [canonical] is the
+     * COMPLETE server state — activity, every allocation, each allocation's
+     * canonical season and vintage, and the activity totals — which the client
+     * adopts wholesale instead of merging field by field.
+     */
+    @Serializable
+    data class ActivityResult(
+        @SerialName("activity_id") val activityId: String? = null,
+        val created: Boolean? = null,
+        val reversed: Boolean? = null,
+        @SerialName("already_reversed") val alreadyReversed: Boolean? = null,
+        @SerialName("allocations_reversed") val allocationsReversed: Int? = null,
+        @SerialName("quarters_released") val quartersReleased: Int? = null,
+        @SerialName("allocation_results") val allocationResults: List<AllocationResult> = emptyList(),
+        @SerialName("removed_allocations") val removedAllocations: List<RemovedAllocation> = emptyList(),
+        val conflicts: List<ActivityConflict> = emptyList(),
+        @SerialName("work_task_conflict") val workTaskConflict: Boolean? = null,
+        /** "activity_not_found" (create hasn't landed — retry) or "activity_reversed". */
+        val error: String? = null,
+        /** True when a newer edit already applied — this edit is obsolete. */
+        val stale: Boolean? = null,
+        val canonical: PruningActivityCanonical? = null,
     )
 
     @Serializable
@@ -462,6 +581,87 @@ class PruningSyncRepository(private val session: SessionStore) {
         }
     }
 
+    /**
+     * Creates a multi-block pruning activity through `record_pruning_activity`
+     * (sql/166). Idempotent on the stable client activity id: replaying the
+     * same draft can never create a second parent or duplicate an allocation,
+     * and a failed allocation rolls the WHOLE activity back server-side.
+     */
+    suspend fun recordActivity(
+        draft: PruningActivityDraft,
+        clientUpdatedAt: String = Instant.now().toString(),
+    ): ActivityResult = withContext(Dispatchers.IO) {
+        postActivity(
+            "record_pruning_activity",
+            rpcJson.encodeToString(
+                RecordActivityArgs.serializer(),
+                RecordActivityArgs(
+                    activityId = draft.id,
+                    vineyardId = draft.vineyardId,
+                    activity = activityPayload(draft),
+                    allocations = allocationPayloads(draft),
+                    clientUpdatedAt = clientUpdatedAt,
+                ),
+            ),
+        )
+    }
+
+    /**
+     * Full desired state of an existing activity through
+     * `update_pruning_activity` (sql/166): adds a block, removes a block,
+     * changes rows/quarters, changes the date (re-resolving EVERY allocation's
+     * season) or changes labour without touching allocations. LWW on
+     * [clientUpdatedAt] — pass the timestamp of the EDIT, never the replay time.
+     */
+    suspend fun updateActivity(
+        draft: PruningActivityDraft,
+        clientUpdatedAt: String = Instant.now().toString(),
+    ): ActivityResult = withContext(Dispatchers.IO) {
+        postActivity(
+            "update_pruning_activity",
+            rpcJson.encodeToString(
+                UpdateActivityArgs.serializer(),
+                UpdateActivityArgs(
+                    activityId = draft.id,
+                    activity = activityPayload(draft),
+                    allocations = allocationPayloads(draft),
+                    clientUpdatedAt = clientUpdatedAt,
+                ),
+            ),
+        )
+    }
+
+    /** Reverses the parent activity as ONE operation; every allocation inherits it. */
+    suspend fun reverseActivity(activityId: String, reason: String? = null): ActivityResult =
+        withContext(Dispatchers.IO) {
+            postActivity(
+                "reverse_pruning_activity",
+                rpcJson.encodeToString(
+                    ReverseActivityArgs.serializer(),
+                    ReverseActivityArgs(activityId = activityId, reason = reason),
+                ),
+            )
+        }
+
+    /** Canonical read-back of one activity (`get_pruning_activity`). */
+    suspend fun fetchActivity(activityId: String): PruningActivityCanonical? =
+        withContext(Dispatchers.IO) {
+            requireConfig()
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("get_pruning_activity")) {
+                authHeaders(token)
+                contentType(ContentType.Application.Json)
+                setBody(ActivityIdArgs(activityId))
+            }
+            when {
+                response.status.isSuccess() -> runCatching {
+                    resultJson.decodeFromString(PruningActivityCanonical.serializer(), response.bodyAsText())
+                }.getOrNull()
+                response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+                else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            }
+        }
+
     /** The ONLY way completed quarters revert (explicit authorised action). */
     suspend fun deleteEntry(entryId: String) = withContext(Dispatchers.IO) {
         requireConfig()
@@ -486,6 +686,22 @@ class PruningSyncRepository(private val session: SessionStore) {
     }
 
     // MARK: Plumbing
+
+    private suspend fun postActivity(function: String, body: String): ActivityResult {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl(function)) {
+            authHeaders(token)
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+        return when {
+            response.status.isSuccess() ->
+                resultJson.decodeFromString(ActivityResult.serializer(), response.bodyAsText())
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
 
     private suspend inline fun <reified T> getList(pathAndQuery: String): List<T> =
         withContext(Dispatchers.IO) {
@@ -521,6 +737,47 @@ class PruningSyncRepository(private val session: SessionStore) {
     }
 
     companion object {
+        /**
+         * The activity payload — labour, timing, rate, notes and the task link
+         * exactly once. Never derived per block.
+         */
+        fun activityPayload(draft: PruningActivityDraft): ActivityPayload = ActivityPayload(
+            entryDate = draft.date,
+            workerOrCrew = draft.worker,
+            method = draft.method,
+            startTime = toInstantString(draft.date, draft.startTime),
+            finishTime = toInstantString(draft.date, draft.finishTime),
+            labourHours = draft.labourHours,
+            hourlyRate = draft.hourlyRate,
+            notes = draft.notes,
+            workTaskId = draft.workTaskId,
+            // A null link on a full-state edit means the link was removed.
+            clearWorkTask = draft.workTaskId == null,
+        )
+
+        /**
+         * Every block allocation, each carrying its OWN paddock id, quarters
+         * and vine estimate. Allocation ids are the deterministic
+         * (activity, block) ids so an offline retry recreates the same rows.
+         */
+        fun allocationPayloads(draft: PruningActivityDraft): List<AllocationPayload> =
+            draft.activeAllocations.map { alloc ->
+                AllocationPayload(
+                    id = alloc.allocationIdFor(draft.id),
+                    paddockId = alloc.paddockId,
+                    segments = alloc.segments.map {
+                        SegmentArg(
+                            row = it.row,
+                            segment = it.quarter,
+                            rowId = it.rowId,
+                            label = it.row.toString(),
+                        )
+                    },
+                    quarters = alloc.quarters,
+                    estimatedVines = alloc.estimatedVines,
+                )
+            }
+
         private fun toInstantString(date: String, hhmm: String?): String? {
             if (hhmm.isNullOrBlank()) return null
             return runCatching {

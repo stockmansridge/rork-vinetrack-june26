@@ -16,6 +16,18 @@ protocol PruningSyncRepositoryProtocol: Sendable {
     /// ONLY way an existing entry, its quarters and totals change.
     func updateEntry(_ params: UpdatePruningEntryParams) async throws -> UpdatePruningEntryResult
     func deleteEntry(id: UUID) async throws
+    /// Creates a multi-block pruning ACTIVITY through `record_pruning_activity`
+    /// (sql/166). Idempotent on the client activity id; a failed allocation
+    /// rolls the whole activity back server-side.
+    func recordActivity(_ params: RecordPruningActivityParams) async throws -> PruningActivityResult
+    /// Full desired state of an existing activity — adds a block, removes a
+    /// block, changes rows/quarters, changes the date (re-resolving EVERY
+    /// allocation's season) or changes labour without touching allocations.
+    func updateActivity(_ params: UpdatePruningActivityParams) async throws -> PruningActivityResult
+    /// Reverses the parent activity as ONE operation; every allocation inherits it.
+    func reverseActivity(id: UUID, reason: String?) async throws -> PruningActivityResult
+    /// Canonical read-back of one activity with all its allocations.
+    func fetchActivity(id: UUID) async throws -> BackendPruningActivityCanonical
     func softDeleteSeason(id: UUID) async throws
     /// Fetches the authoritative SQL 115 vineyard summary for the online
     /// parity check. Offline callers must treat failures as "no check".
@@ -91,6 +103,38 @@ final class SupabasePruningSyncRepository: PruningSyncRepositoryProtocol {
     func deleteEntry(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         try await provider.client.rpc("delete_pruning_entry", params: PruningIdRequest(id: id)).execute()
+    }
+
+    func recordActivity(_ params: RecordPruningActivityParams) async throws -> PruningActivityResult {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        return try await provider.client
+            .rpc("record_pruning_activity", params: params)
+            .execute()
+            .value
+    }
+
+    func updateActivity(_ params: UpdatePruningActivityParams) async throws -> PruningActivityResult {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        return try await provider.client
+            .rpc("update_pruning_activity", params: params)
+            .execute()
+            .value
+    }
+
+    func reverseActivity(id: UUID, reason: String? = nil) async throws -> PruningActivityResult {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        return try await provider.client
+            .rpc("reverse_pruning_activity", params: ReversePruningActivityParams(activityId: id, reason: reason))
+            .execute()
+            .value
+    }
+
+    func fetchActivity(id: UUID) async throws -> BackendPruningActivityCanonical {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        return try await provider.client
+            .rpc("get_pruning_activity", params: PruningActivityIdParams(activityId: id))
+            .execute()
+            .value
     }
 
     func softDeleteSeason(id: UUID) async throws {

@@ -2,6 +2,7 @@ package com.rork.vinetrack.data
 
 import android.content.Context
 import androidx.core.content.edit
+import com.rork.vinetrack.data.model.PruningActivityDraft
 import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningEntry
 import kotlinx.serialization.json.Json
@@ -61,6 +62,74 @@ class PruningStore(context: Context) {
 
     fun updateEntry(vineyardId: String, entry: PruningEntry): List<PruningEntry> {
         val updated = loadEntries(vineyardId).map { if (it.id == entry.id) entry else it }
+        saveEntries(vineyardId, updated)
+        return updated
+    }
+
+    // MARK: Multi-block activities (sql/166)
+
+    /**
+     * Offline drafts of multi-block pruning activities. The COMPLETE activity
+     * is persisted — parent fields plus EVERY block allocation — so an offline
+     * draft is never partially saved and reopening it restores every block, not
+     * only the one that happened to be on screen.
+     */
+    fun loadActivities(vineyardId: String): List<PruningActivityDraft> {
+        val raw = prefs.getString("activities_v1_$vineyardId", null) ?: return emptyList()
+        return runCatching { json.decodeFromString<List<PruningActivityDraft>>(raw) }
+            .getOrDefault(emptyList())
+    }
+
+    fun saveActivities(vineyardId: String, activities: List<PruningActivityDraft>) {
+        prefs.edit { putString("activities_v1_$vineyardId", json.encodeToString(activities)) }
+    }
+
+    fun activity(vineyardId: String, activityId: String): PruningActivityDraft? =
+        loadActivities(vineyardId).firstOrNull { it.id == activityId }
+
+    fun upsertActivity(vineyardId: String, draft: PruningActivityDraft): List<PruningActivityDraft> {
+        val current = loadActivities(vineyardId)
+        val updated = if (current.any { it.id == draft.id }) {
+            current.map { if (it.id == draft.id) draft else it }
+        } else {
+            current + draft
+        }
+        saveActivities(vineyardId, updated)
+        return updated
+    }
+
+    /** Flags the whole activity reversed; every allocation inherits it. */
+    fun reverseActivity(vineyardId: String, activityId: String): List<PruningActivityDraft> {
+        val now = System.currentTimeMillis()
+        val updated = loadActivities(vineyardId).map {
+            if (it.id == activityId && !it.isReversed) it.copy(reversedAtMs = now) else it
+        }
+        saveActivities(vineyardId, updated)
+        return updated
+    }
+
+    /**
+     * Merges one activity's legacy per-block projection into the entries cache.
+     * [staleAllocationIds] are allocations the edit dropped: they are flagged
+     * reversed rather than deleted, so the Activity Report keeps the audit
+     * trail while every progress calculation excludes them.
+     */
+    fun mergeActivityEntries(
+        vineyardId: String,
+        entries: List<PruningEntry>,
+        staleAllocationIds: Set<String> = emptySet(),
+    ): List<PruningEntry> {
+        val now = System.currentTimeMillis()
+        val incoming = entries.associateBy { it.id }
+        val existing = loadEntries(vineyardId).map { row ->
+            when {
+                incoming.containsKey(row.id) -> incoming.getValue(row.id)
+                row.id in staleAllocationIds && !row.isReversed -> row.copy(reversedAtMs = now)
+                else -> row
+            }
+        }
+        val known = existing.map { it.id }.toSet()
+        val updated = existing + entries.filterNot { it.id in known }
         saveEntries(vineyardId, updated)
         return updated
     }

@@ -25,10 +25,13 @@ final class PruningSyncService {
     private(set) var lastParityReport: String?
 
     var pendingUpsertCount: Int {
-        seasonMetadata.pendingUpserts.count + entryMetadata.pendingUpserts.count + editMetadata.pendingUpserts.count
+        seasonMetadata.pendingUpserts.count + entryMetadata.pendingUpserts.count
+            + editMetadata.pendingUpserts.count + activityMetadata.pendingUpserts.count
+            + activityEditMetadata.pendingUpserts.count
     }
     var pendingDeleteCount: Int {
         seasonMetadata.pendingDeletes.count + entryMetadata.pendingDeletes.count
+            + activityMetadata.pendingDeletes.count
     }
 
     private weak var store: MigratedDataStore?
@@ -41,6 +44,14 @@ final class PruningSyncService {
     /// so an edit of an already-synced entry replays through the edit RPC
     /// (which can RELEASE removed quarters; the record RPC never can).
     private let editMetadata: ManagementSyncMetadata
+    /// Queued `record_pruning_activity` pushes — multi-block activities
+    /// (sql/166), keyed by the stable client activity id so a replay can never
+    /// create a second parent or duplicate an allocation.
+    private let activityMetadata: ManagementSyncMetadata
+    /// Queued `update_pruning_activity` pushes — the FULL desired state of an
+    /// already-acknowledged activity (adds/removes a block, changes quarters,
+    /// changes the date, or changes labour without touching allocations).
+    private let activityEditMetadata: ManagementSyncMetadata
     private var isConfigured: Bool = false
     private var eagerPushTask: Task<Void, Never>?
 
@@ -50,6 +61,8 @@ final class PruningSyncService {
         self.seasonMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_season_sync_metadata")
         self.entryMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_entry_sync_metadata")
         self.editMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_edit_sync_metadata")
+        self.activityMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_activity_sync_metadata")
+        self.activityEditMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_activity_edit_sync_metadata")
     }
 
     func configure(store: MigratedDataStore, auth: NewBackendAuthService) {
@@ -84,6 +97,24 @@ final class PruningSyncService {
         pruningStore.onEntryDeleted = { [weak self] id in
             self?.entryMetadata.markDeleted(id, at: Date())
             self?.editMetadata.clearDirty([id])
+            self?.scheduleEagerPush()
+        }
+        pruningStore.onActivitySaved = { [weak self] id, isNew in
+            guard let self else { return }
+            if isNew || self.activityMetadata.pendingUpserts[id] != nil {
+                // The create hasn't been acknowledged yet — fold the edit into
+                // the queued record push, whose payload already carries the FULL
+                // desired state (parent + every allocation).
+                self.activityMetadata.markDirty(id, at: Date())
+            } else {
+                self.activityEditMetadata.markDirty(id, at: Date())
+            }
+            self.scheduleEagerPush()
+        }
+        pruningStore.onActivityReversed = { [weak self] id in
+            self?.activityMetadata.markDeleted(id, at: Date())
+            self?.activityMetadata.clearDirty([id])
+            self?.activityEditMetadata.clearDirty([id])
             self?.scheduleEagerPush()
         }
     }
@@ -163,6 +194,16 @@ final class PruningSyncService {
         } catch {
             if pushError == nil { pushError = error }
             print("[PruningSync] entry edit push failed: \(error)")
+        }
+
+        // Activities push after the single-block queue: both write the same
+        // segment table, and the activity RPCs are the only path that can add a
+        // block to an existing parent.
+        do {
+            try await pushActivities(vineyardId: vineyardId)
+        } catch {
+            if pushError == nil { pushError = error }
+            print("[PruningSync] activity push failed: \(error)")
         }
 
         do {
@@ -429,6 +470,101 @@ final class PruningSyncService {
         if let firstError { throw firstError }
     }
 
+    // MARK: Push — multi-block activities (sql/166)
+
+    /// Replays queued activity writes. Every RPC is atomic and idempotent on the
+    /// stable client activity id, so a retry can never create a second parent or
+    /// duplicate an allocation, and a failed allocation rolls the whole activity
+    /// back server-side. The response replaces the local activity AND all its
+    /// allocations wholesale.
+    private func pushActivities(vineyardId: UUID) async throws {
+        var firstError: Error?
+
+        for (id, ts) in activityMetadata.pendingUpserts {
+            guard let draft = pruningStore.activity(id: id) else {
+                activityMetadata.clearDirty([id])
+                continue
+            }
+            guard draft.vineyardId == vineyardId else { continue }
+            do {
+                let params = RecordPruningActivityParams(from: draft, clientUpdatedAt: ts)
+                let result = try await repository.recordActivity(params)
+                adoptCanonicalActivity(id: id, result: result)
+                activityMetadata.clearDirty([id])
+            } catch {
+                print("[PruningSync] record_pruning_activity failed for \(id): \(error)")
+                if firstError == nil { firstError = error }
+            }
+        }
+
+        for (id, ts) in activityEditMetadata.pendingUpserts {
+            guard let draft = pruningStore.activity(id: id) else {
+                activityEditMetadata.clearDirty([id])
+                continue
+            }
+            guard draft.vineyardId == vineyardId else { continue }
+            do {
+                let params = UpdatePruningActivityParams(from: draft, clientUpdatedAt: ts)
+                let result = try await repository.updateActivity(params)
+                if result.error == "activity_not_found" {
+                    // Ordered dependency: the create hasn't landed yet.
+                    print("[PruningSync] activity edit \(id) is waiting for the create to land — kept queued")
+                    if firstError == nil {
+                        firstError = NSError(
+                            domain: "PruningSync",
+                            code: 2,
+                            userInfo: [NSLocalizedDescriptionKey: "Pruning activity edit is waiting for the activity to reach the server — it will retry automatically."]
+                        )
+                    }
+                    continue
+                }
+                if result.error == "activity_reversed" {
+                    activityEditMetadata.clearDirty([id])
+                    continue
+                }
+                if result.stale != true { adoptCanonicalActivity(id: id, result: result) }
+                activityEditMetadata.clearDirty([id])
+            } catch {
+                print("[PruningSync] update_pruning_activity failed for \(id): \(error)")
+                if firstError == nil { firstError = error }
+            }
+        }
+
+        for (id, _) in activityMetadata.pendingDeletes {
+            do {
+                _ = try await repository.reverseActivity(id: id, reason: nil)
+                activityMetadata.clearDeleted([id])
+            } catch {
+                if isPruningMissingRowError(error) {
+                    activityMetadata.clearDeleted([id])
+                } else if firstError == nil {
+                    firstError = error
+                }
+            }
+        }
+
+        if let firstError { throw firstError }
+    }
+
+    /// Adopts the canonical activity the server returned. The shared labour stays
+    /// on the parent, and every allocation takes the season the server resolved
+    /// from the ACTIVITY date (sql/161 applied per allocation).
+    private func adoptCanonicalActivity(id: UUID, result: PruningActivityResult) {
+        guard let canonical = result.canonical else { return }
+        if let conflicts = result.conflicts, !conflicts.isEmpty {
+            let detail = conflicts
+                .map { "row \($0.row.map(String.init) ?? "?") q\($0.segment.map(String.init) ?? "?")" }
+                .joined(separator: ", ")
+            print("[PruningSync] activity \(id): \(conflicts.count) quarter(s) already completed by another record — \(detail)")
+        }
+        if let season = canonical.activity?.seasonYear,
+           let date = PruningSyncDate.date(fromYmd: canonical.activity?.entryDate),
+           season != PruningSeasonId.seasonYear(for: date) {
+            print("[PruningSync] activity \(id) is filed under season \(season) for \(PruningSyncDate.ymd(from: date)) — reported, not moved")
+        }
+        pruningStore.adoptCanonicalActivity(id: id, canonical: canonical)
+    }
+
     // MARK: Pull
 
     private func pullSeasons(vineyardId: UUID) async throws {
@@ -483,9 +619,19 @@ final class PruningSyncService {
         }
 
         // Entries with a queued create OR a queued edit keep their optimistic
-        // local state until the push lands.
+        // local state until the push lands. A queued ACTIVITY protects every one
+        // of its allocations the same way.
+        let queuedActivityIds = Set(activityMetadata.pendingUpserts.keys)
+            .union(activityEditMetadata.pendingUpserts.keys)
+        let protectedAllocations = Set(
+            queuedActivityIds.flatMap { activityId -> [UUID] in
+                (pruningStore.activity(id: activityId)?.activeAllocations ?? [])
+                    .map { $0.allocationId(for: activityId) }
+            }
+        )
         let protected = Set(entryMetadata.pendingUpserts.keys)
             .union(editMetadata.pendingUpserts.keys)
+            .union(protectedAllocations)
 
         for item in remote {
             if item.deletedAt != nil {

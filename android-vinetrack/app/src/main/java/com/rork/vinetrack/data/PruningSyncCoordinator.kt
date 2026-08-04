@@ -4,6 +4,8 @@ import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
+import com.rork.vinetrack.data.model.PruningActivityDraft
+import com.rork.vinetrack.data.model.PruningAllocationEditor
 import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningEntry
 import com.rork.vinetrack.data.model.PruningSeasonSelection
@@ -64,15 +66,23 @@ class PruningSyncCoordinator(
     fun syncStatus(vineyardId: String): PruningSyncStatus {
         val unresolved = pending.list().filter {
             (it.entityType == PendingEntityType.PRUNING_ENTRY ||
-                it.entityType == PendingEntityType.PRUNING_SEASON) &&
+                it.entityType == PendingEntityType.PRUNING_SEASON ||
+                it.entityType == PendingEntityType.PRUNING_ACTIVITY) &&
                 it.status in PendingWriteStatus.unresolved
         }
+        // A queued ACTIVITY holds every one of its allocations back from
+        // "synced": 100% must mean the server acknowledged the parent and this
+        // device adopted the canonical allocations it returned.
+        val queuedActivityAllocationIds = unresolved
+            .filter { it.entityType == PendingEntityType.PRUNING_ACTIVITY }
+            .flatMap { write -> allocationIdsOf(vineyardId, write.clientId) }
+            .toSet()
         return PruningSyncIntegrity.evaluate(
             entries = store.loadEntries(vineyardId),
             queuedEntryIds = unresolved
                 .filter { it.entityType == PendingEntityType.PRUNING_ENTRY }
                 .map { it.clientId }
-                .toSet(),
+                .toSet() + queuedActivityAllocationIds,
             queuedWrites = unresolved.size,
         )
     }
@@ -149,6 +159,162 @@ class PruningSyncCoordinator(
         return updated
     }
 
+    // MARK: Multi-block activities (sql/166)
+
+    /** Offline drafts of every multi-block activity held for the vineyard. */
+    fun activities(vineyardId: String): List<PruningActivityDraft> = store.loadActivities(vineyardId)
+
+    fun activity(vineyardId: String, activityId: String): PruningActivityDraft? =
+        store.activity(vineyardId, activityId)
+
+    private fun allocationIdsOf(vineyardId: String, activityId: String): List<String> =
+        store.activity(vineyardId, activityId)
+            ?.activeAllocations
+            ?.map { it.allocationIdFor(activityId) }
+            .orEmpty()
+
+    /**
+     * Local-first save of a multi-block activity. The COMPLETE draft (parent
+     * plus EVERY allocation) lands in the cache and in ONE coalesced outbox
+     * write, so an offline retry replays the whole activity atomically and can
+     * never leave a partially saved set of blocks.
+     *
+     * The draft is also projected onto the legacy per-block entries so every
+     * existing progress, rate, forecast and report screen keeps working. Labour
+     * rides on the primary allocation only, so no total double-counts it.
+     */
+    fun saveActivity(vineyardId: String, draft: PruningActivityDraft): PruningActivityDraft {
+        val previous = store.activity(vineyardId, draft.id)
+        val cleaned = PruningAllocationEditor.pruneEmptyBlocks(draft)
+        val keptIds = cleaned.activeAllocations.map { it.allocationIdFor(cleaned.id) }.toSet()
+        val staleIds = previous?.activeAllocations
+            ?.map { it.allocationIdFor(cleaned.id) }
+            ?.filterNot { it in keptIds }
+            ?.toSet()
+            .orEmpty()
+
+        store.upsertActivity(vineyardId, cleaned)
+        store.mergeActivityEntries(
+            vineyardId = vineyardId,
+            entries = PruningAllocationEditor.toLegacyEntries(cleaned),
+            staleAllocationIds = staleIds,
+        )
+
+        // A create that has not reached the server yet absorbs the edit: the
+        // create payload carries the FULL desired state, so there is nothing
+        // server-side to reconcile and no separate UPDATE is needed.
+        val hasQueuedCreate = pending.list().any {
+            it.entityType == PendingEntityType.PRUNING_ACTIVITY &&
+                it.opType == PendingOpType.CREATE &&
+                it.clientId == cleaned.id && it.status in PendingWriteStatus.unresolved
+        }
+        val isNew = previous == null || !previous.serverAcknowledged
+        enqueueCoalesced(
+            entityType = PendingEntityType.PRUNING_ACTIVITY,
+            opType = if (hasQueuedCreate || isNew) PendingOpType.CREATE else PendingOpType.UPDATE,
+            payloadJson = json.encodeToString(PruningActivityDraft.serializer(), cleaned),
+            clientId = cleaned.id,
+        )
+        scope.launch { replayAll() }
+        return cleaned
+    }
+
+    /** Reverses the whole activity — one operation, every allocation inherits it. */
+    fun reverseActivity(vineyardId: String, activityId: String): List<PruningActivityDraft> {
+        val allocationIds = allocationIdsOf(vineyardId, activityId)
+        val updated = store.reverseActivity(vineyardId, activityId)
+        allocationIds.forEach { store.deleteEntry(vineyardId, it) }
+        removeUnresolved(PendingEntityType.PRUNING_ACTIVITY, PendingOpType.CREATE, activityId)
+        removeUnresolved(PendingEntityType.PRUNING_ACTIVITY, PendingOpType.UPDATE, activityId)
+        enqueueCoalesced(
+            entityType = PendingEntityType.PRUNING_ACTIVITY,
+            opType = PendingOpType.DELETE,
+            payloadJson = activityId,
+            clientId = activityId,
+        )
+        scope.launch { replayAll() }
+        return updated
+    }
+
+    /**
+     * Replays queued activity writes. Every RPC is idempotent on the stable
+     * client activity id, so a retry can never create a second parent or
+     * duplicate an allocation, and the response replaces the local activity and
+     * allocations wholesale.
+     */
+    private suspend fun replayActivityPass(opType: String) {
+        val candidates = pending.list().filter {
+            it.entityType == PendingEntityType.PRUNING_ACTIVITY && it.opType == opType &&
+                (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
+        }
+        for (write in candidates) {
+            pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            try {
+                if (opType == PendingOpType.DELETE) {
+                    repo.reverseActivity(write.clientId)
+                    pending.remove(write.id)
+                    continue
+                }
+                val draft = json.decodeFromString(PruningActivityDraft.serializer(), write.payloadJson)
+                // LWW stamp = when the write was queued, never the replay time.
+                val stamp = Instant.ofEpochMilli(write.createdAt).toString()
+                val result = if (opType == PendingOpType.CREATE) {
+                    repo.recordActivity(draft, stamp)
+                } else {
+                    repo.updateActivity(draft, stamp)
+                }
+                when {
+                    result.error == "activity_not_found" ->
+                        retryOrBlock(write, "Waiting for the pruning activity to reach the server.")
+                    result.error == "activity_reversed" -> pending.remove(write.id)
+                    else -> {
+                        if (result.stale != true) adoptCanonicalActivity(draft, result)
+                        pending.remove(write.id)
+                    }
+                }
+            } catch (_: BackendError.Unauthorized) {
+                retryOrBlock(write, "Sign-in needed to sync pruning work.")
+            } catch (e: BackendError.Server) {
+                when {
+                    e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
+                    else -> pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Rejected (${e.code}).")
+                }
+            } catch (e: Exception) {
+                retryOrBlock(write, e.message ?: "No connection.")
+            }
+        }
+    }
+
+    /**
+     * Replaces the local activity and ALL its allocations with the canonical
+     * server state — canonical activity fields, every allocation, each
+     * allocation's canonical season and vintage, and the activity totals. Never
+     * a field-by-field merge: once the server has acknowledged, it is
+     * authoritative.
+     */
+    private fun adoptCanonicalActivity(
+        draft: PruningActivityDraft,
+        result: PruningSyncRepository.ActivityResult,
+    ) {
+        val canonical = result.canonical ?: return
+        val adopted = PruningAllocationEditor.adoptCanonical(draft, canonical)
+        val keptIds = adopted.activeAllocations.map { it.allocationIdFor(adopted.id) }.toSet()
+        val staleIds = draft.activeAllocations
+            .map { it.allocationIdFor(draft.id) }
+            .filterNot { it in keptIds }
+            .toSet() + result.removedAllocations.mapNotNull { it.allocationId }
+        val serverSeason = adopted.serverSeasonYear
+        if (serverSeason != null && serverSeason != adopted.seasonYear) {
+            Log.i(TAG, "activity ${adopted.id} is filed under season $serverSeason for ${adopted.date} — reported, not moved")
+        }
+        store.upsertActivity(draft.vineyardId, adopted)
+        store.mergeActivityEntries(
+            vineyardId = draft.vineyardId,
+            entries = PruningAllocationEditor.toLegacyEntries(adopted),
+            staleAllocationIds = staleIds,
+        )
+    }
+
     // MARK: Replay
 
     /** Replays queued season upserts, entry creates, then entry deletes. */
@@ -176,6 +342,12 @@ class PruningSyncCoordinator(
             replayPass(PendingEntityType.PRUNING_ENTRY, PendingOpType.DELETE) { write ->
                 repo.deleteEntry(write.clientId)
             }
+            // Activities replay after the single-block queue: both write the
+            // same segment table, and the activity RPCs are the only path that
+            // can add a block to an existing parent.
+            replayActivityPass(PendingOpType.CREATE)
+            replayActivityPass(PendingOpType.UPDATE)
+            replayActivityPass(PendingOpType.DELETE)
             replayPass(PendingEntityType.PRUNING_SEASON, PendingOpType.DELETE) { write ->
                 repo.softDeleteSeason(write.clientId)
             }
