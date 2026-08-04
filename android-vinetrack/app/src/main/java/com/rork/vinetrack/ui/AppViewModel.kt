@@ -64,6 +64,7 @@ import com.rork.vinetrack.data.PendingWriteRepository
 import com.rork.vinetrack.data.PruningStore
 import com.rork.vinetrack.data.PruningSyncCoordinator
 import com.rork.vinetrack.data.PruningSyncRepository
+import com.rork.vinetrack.data.PruningSyncStatus
 import com.rork.vinetrack.data.model.FertiliserRecord
 import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningSeasonIds
@@ -3226,6 +3227,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun pruningAuditEntries(vineyardId: String): List<PruningEntry> =
         pruningSyncCoordinator.auditEntries(vineyardId)
+
+    /**
+     * Pruning sync integrity. "Fully synced" means the SERVER acknowledged
+     * every record and this device adopted the canonical season the server
+     * resolved from the activity date (sql/161) — an empty outbox alone is not
+     * enough, so a record still filed under the wrong pruning season keeps the
+     * tracker honest instead of showing 100%.
+     */
+    fun pruningSyncStatus(vineyardId: String): PruningSyncStatus =
+        pruningSyncCoordinator.syncStatus(vineyardId)
 
     fun upsertPruningSetup(vineyardId: String, setup: PruningBlockSetup): List<PruningBlockSetup> =
         pruningSyncCoordinator.upsertSetup(vineyardId, setup)

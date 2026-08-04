@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningEntry
+import com.rork.vinetrack.data.model.PruningSeasonSelection
 import com.rork.vinetrack.data.model.PruningSegment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -53,6 +54,28 @@ class PruningSyncCoordinator(
 
     /** Audit view for the Pruning Activity Report — active AND reversed. */
     fun auditEntries(vineyardId: String): List<PruningEntry> = store.loadEntries(vineyardId)
+
+    /**
+     * Sync integrity for the Pruning Tracker. "Fully synced" requires the
+     * SERVER to have acknowledged every record AND this device to have adopted
+     * the canonical season the server resolved from the activity date
+     * (sql/161) — an empty outbox alone is not enough.
+     */
+    fun syncStatus(vineyardId: String): PruningSyncStatus {
+        val unresolved = pending.list().filter {
+            (it.entityType == PendingEntityType.PRUNING_ENTRY ||
+                it.entityType == PendingEntityType.PRUNING_SEASON) &&
+                it.status in PendingWriteStatus.unresolved
+        }
+        return PruningSyncIntegrity.evaluate(
+            entries = store.loadEntries(vineyardId),
+            queuedEntryIds = unresolved
+                .filter { it.entityType == PendingEntityType.PRUNING_ENTRY }
+                .map { it.clientId }
+                .toSet(),
+            queuedWrites = unresolved.size,
+        )
+    }
 
     // MARK: Local-first writes
 
@@ -143,7 +166,8 @@ class PruningSyncCoordinator(
             // silently lost the entry. Retry instead; SQL 116 resolves the
             // canonical season server-side so the replay now lands.
             replayPass(PendingEntityType.PRUNING_ENTRY, PendingOpType.CREATE, conflictIsSuccess = false) { write ->
-                val entry = json.decodeFromString(PruningEntry.serializer(), write.payloadJson)
+                val queued = json.decodeFromString(PruningEntry.serializer(), write.payloadJson)
+                val entry = repointToActivityDate(queued)
                 adoptCanonicalSeason(entry, repo.recordEntry(entry))
             }
             // Edits replay AFTER creates — an edit of an entry whose create
@@ -161,6 +185,30 @@ class PruningSyncCoordinator(
     }
 
     /**
+     * Re-derives the season from the ACTIVITY DATE immediately before upload.
+     *
+     * The queued payload may have been written by an older build (or before a
+     * date edit), so its `seasonId` is never trusted on replay: the season is
+     * taken from the cached row for `year(entry.date)`, falling back to the
+     * deterministic id the server derives for that same year. Never the device
+     * clock at sync time, never the selected setup season, never the first or
+     * highest season row, never the vintage.
+     */
+    private fun repointToActivityDate(entry: PruningEntry): PruningEntry {
+        val canonical = PruningSeasonSelection.canonicalSeasonId(
+            setups = store.loadSetups(entry.vineyardId),
+            vineyardId = entry.vineyardId,
+            paddockId = entry.paddockId,
+            isoDate = entry.date,
+        )
+        if (canonical == entry.seasonId) return entry
+        Log.i(TAG, "entry ${entry.id} re-pointed to the season of its activity date ${entry.date} before upload")
+        val repointed = entry.copy(seasonId = canonical)
+        store.updateEntry(entry.vineyardId, repointed)
+        return repointed
+    }
+
+    /**
      * Adopts the season `record_pruning_entry` resolved from the entry date
      * (sql/161). Server resolution is authoritative: if this device guessed a
      * different season row — the cross-platform 2026-vs-2027 defect — the
@@ -169,16 +217,59 @@ class PruningSyncCoordinator(
      * adopting the server's own answer is not a user edit.
      */
     private fun adoptCanonicalSeason(entry: PruningEntry, result: PruningSyncRepository.RecordEntryResult) {
-        val seasonId = result.seasonId ?: return
-        if (result.seasonMismatch == true) {
+        applyServerSeason(
+            entry = entry,
+            seasonId = result.seasonId,
+            seasonYear = result.seasonYear,
+            storedUnderNonCanonicalSeason = result.seasonMismatch == true,
+        )
+    }
+
+    /**
+     * Same adoption for `update_pruning_entry` (sql/161 §4): an edit that moves
+     * the date across a pruning year is re-pointed SERVER-side, and the client
+     * takes the canonical season back from the response.
+     */
+    private fun adoptCanonicalSeason(entry: PruningEntry, result: PruningSyncRepository.UpdateEntryResult) {
+        applyServerSeason(
+            entry = entry,
+            seasonId = result.seasonId,
+            seasonYear = result.seasonYear,
+            storedUnderNonCanonicalSeason = false,
+        )
+    }
+
+    /**
+     * Records the server's answer as the acknowledgement that makes a record
+     * count as synced. Both values are required: a server older than sql/161
+     * omits them, and a record with no canonical answer must stay "awaiting
+     * confirmation" rather than be counted as done.
+     */
+    private fun applyServerSeason(
+        entry: PruningEntry,
+        seasonId: String?,
+        seasonYear: Int?,
+        storedUnderNonCanonicalSeason: Boolean,
+    ) {
+        if (seasonId == null || seasonYear == null) return
+        if (storedUnderNonCanonicalSeason) {
             // A historical row stored under a non-canonical season. Never moved
-            // silently — reported for the reviewed data correction (sql/162).
+            // silently — reported for the reviewed data correction (sql/164),
+            // and deliberately left OUT of the synced count so it stays visible.
             Log.i(TAG, "entry ${entry.id} is stored under a non-canonical season $seasonId — reported, not moved")
+            store.updateEntry(
+                entry.vineyardId,
+                entry.copy(serverSeasonId = seasonId, serverSeasonYear = seasonYear),
+            )
             return
         }
-        if (seasonId == entry.seasonId) return
-        Log.i(TAG, "entry ${entry.id} adopted canonical season $seasonId (${result.seasonYear})")
-        store.updateEntry(entry.vineyardId, entry.copy(seasonId = seasonId))
+        if (seasonId != entry.seasonId) {
+            Log.i(TAG, "entry ${entry.id} adopted canonical season $seasonId ($seasonYear)")
+        }
+        store.updateEntry(
+            entry.vineyardId,
+            entry.copy(seasonId = seasonId, serverSeasonId = seasonId, serverSeasonYear = seasonYear),
+        )
     }
 
     /**
@@ -206,7 +297,11 @@ class PruningSyncCoordinator(
         for (write in candidates) {
             pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
             try {
-                val entry = json.decodeFromString(PruningEntry.serializer(), write.payloadJson)
+                val queued = json.decodeFromString(PruningEntry.serializer(), write.payloadJson)
+                // An edited DATE can move the record into another pruning year;
+                // re-derive the season from that date before the push so the
+                // local cache never lags the server's re-pointing.
+                val entry = repointToActivityDate(queued)
                 // LWW timestamp = when the edit was (re-)queued, NOT the replay
                 // time — a delayed retry must never beat a newer edit.
                 val result = repo.updateEntry(entry, Instant.ofEpochMilli(write.createdAt).toString())
@@ -214,7 +309,10 @@ class PruningSyncCoordinator(
                     result.error == "entry_not_found" ->
                         retryOrBlock(write, "Waiting for the pruning entry to reach the server — will retry.")
                     result.error == "entry_reversed" -> pending.remove(write.id)
-                    else -> pending.remove(write.id)
+                    else -> {
+                        if (result.stale != true) adoptCanonicalSeason(entry, result)
+                        pending.remove(write.id)
+                    }
                 }
             } catch (_: BackendError.Unauthorized) {
                 retryOrBlock(write, "Sign-in needed to sync pruning work.")
@@ -265,6 +363,9 @@ class PruningSyncCoordinator(
             val remoteSeasons = repo.fetchSeasons(vineyardId)
             val remoteEntries = repo.fetchEntries(vineyardId)
             val remoteSegments = repo.fetchSegments(vineyardId)
+            // The season year the SERVER has for each season row — the pulled
+            // entry's own canonical-season confirmation (sql/161).
+            val serverSeasonYears = remoteSeasons.associate { it.id to it.seasonYear }
 
             val localSetups = store.loadSetups(vineyardId)
             val remoteSeasonIds = remoteSeasons.map { it.id }.toSet()
@@ -331,7 +432,10 @@ class PruningSyncCoordinator(
                         it.id !in pendingEntryCreateIds && it.id !in pendingEntryEditIds
                 }
                 .map { row ->
-                    val model = row.toModel(segmentsByEntry[row.id].orEmpty())
+                    val model = row.toModel(
+                        segments = segmentsByEntry[row.id].orEmpty(),
+                        serverSeasonYear = serverSeasonYears[row.pruningSeasonId],
+                    )
                     if (model.isReversed && model.segments.isEmpty()) {
                         // The server no longer attributes quarters to a reversed
                         // entry; keep the recorded ones for the audit trail.

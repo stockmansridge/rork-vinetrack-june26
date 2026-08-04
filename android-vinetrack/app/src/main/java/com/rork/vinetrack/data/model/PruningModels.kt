@@ -80,6 +80,24 @@ object PruningSeasonSelection {
         val year = PruningSeasonIds.seasonYearFor(isoDate)
         return setups.firstOrNull { it.paddockId == paddockId && it.seasonYear == year }
     }
+
+    /**
+     * The season id a record dated [isoDate] MUST be sent under — the cached
+     * row for `year(isoDate)` if this device knows one, otherwise the
+     * deterministic id the server derives for that same year (sql/161 §1).
+     *
+     * Used before every upload, including replays of payloads written by an
+     * older build: the season is always re-derived from the ACTIVITY DATE,
+     * never from the device clock, the selected setup season, the first or
+     * highest season row, or the vintage.
+     */
+    fun canonicalSeasonId(
+        setups: List<PruningBlockSetup>,
+        vineyardId: String,
+        paddockId: String,
+        isoDate: String,
+    ): String = setupOnDate(setups, paddockId, isoDate)?.id
+        ?: PruningSeasonIds.makeForDate(vineyardId, paddockId, isoDate)
 }
 
 /**
@@ -188,6 +206,19 @@ data class PruningEntry(
      * every progress/rate/forecast calculation.
      */
     val reversedAtMs: Long = 0L,
+    /**
+     * The season the SERVER has this entry filed under — `null` until the
+     * record has actually been acknowledged (by `record_pruning_entry` /
+     * `update_pruning_entry`, or by a pull that found the stored row).
+     *
+     * This is what makes "fully synced" mean something: an empty outbox only
+     * proves the device stopped trying. A record counts as synced when the
+     * server has confirmed it AND this device has adopted the canonical
+     * season the server resolved (sql/161).
+     */
+    val serverSeasonId: String? = null,
+    /** `pruning_seasons.season_year` of [serverSeasonId] as the server sees it. */
+    val serverSeasonYear: Int? = null,
 ) {
     /** A full row = 1.0; each quarter = 0.25. */
     val rowEquivalents: Double get() = segments.size / 4.0

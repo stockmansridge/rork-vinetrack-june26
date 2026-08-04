@@ -81,6 +81,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.PruningStore
+import com.rork.vinetrack.data.PruningSyncStatus
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PruningBlockMetrics
@@ -143,6 +144,12 @@ fun PruningTrackerScreen(
     }
     var entries by remember(vineyardId) {
         mutableStateOf(vineyardId?.let { vm.pruningEntries(it) } ?: emptyList())
+    }
+    // "100% synced" now requires the SERVER to have acknowledged every record
+    // AND this device to have adopted the canonical season the server resolved
+    // from the activity date (sql/161). An empty outbox alone is not enough.
+    val pruningSyncStatus: PruningSyncStatus = remember(vineyardId, state.pendingSyncItems, entries) {
+        vineyardId?.let { vm.pruningSyncStatus(it) } ?: PruningSyncStatus()
     }
     var selectedPaddockId by rememberSaveable { mutableStateOf<String?>(null) }
     var blockSort by rememberSaveable { mutableStateOf("alphabetical") }
@@ -232,6 +239,30 @@ fun PruningTrackerScreen(
 
     if (selectedPaddock != null && vineyardId != null) {
         BackHandler { selectedPaddockId = null }
+
+        // CANONICAL SEASON (sql/161), used by BOTH the record and the edit
+        // paths: a record belongs to the season of the calendar year in which
+        // the work was DONE — the date on the record itself. Never today's
+        // date, never the block's currently selected setup season, never the
+        // highest season row, never the vintage. Recording (or re-dating)
+        // work into a year with no season row auto-creates that row.
+        fun resolveSeasonForDate(paddockId: String, isoDate: String): PruningBlockSetup {
+            PruningSeasonSelection.setupOnDate(setups, paddockId, isoDate)?.let { return it }
+            val template = PruningSeasonSelection.setupFor(setups, paddockId)
+            val created = PruningBlockSetup(
+                id = PruningSeasonIds.makeForDate(vineyardId, paddockId, isoDate),
+                vineyardId = vineyardId,
+                paddockId = paddockId,
+                seasonYear = PruningSeasonIds.seasonYearFor(isoDate),
+                method = template?.method ?: "spur",
+                crew = template?.crew.orEmpty(),
+                workingDays = template?.workingDays ?: listOf(1, 2, 3, 4, 5),
+                rowCountOverride = template?.rowCountOverride,
+            )
+            setups = vm.upsertPruningSetup(vineyardId, created)
+            return created
+        }
+
         PruningBlockDetail(
             paddock = selectedPaddock,
             vineyardId = vineyardId,
@@ -244,25 +275,7 @@ fun PruningTrackerScreen(
             },
             onUpsertSetup = { setups = vm.upsertPruningSetup(vineyardId, it) },
             onAddEntry = { entry, taskDraft ->
-                // CANONICAL SEASON (sql/161): an entry belongs to the season of
-                // the year the work was DONE — the date on the record, never
-                // today's date and never an arbitrary row for the block.
-                // Recording work on an unconfigured season auto-creates it.
-                var setup = PruningSeasonSelection.setupOnDate(setups, entry.paddockId, entry.date)
-                if (setup == null) {
-                    val template = PruningSeasonSelection.setupFor(setups, entry.paddockId)
-                    setup = PruningBlockSetup(
-                        id = PruningSeasonIds.makeForDate(vineyardId, entry.paddockId, entry.date),
-                        vineyardId = vineyardId,
-                        paddockId = entry.paddockId,
-                        seasonYear = PruningSeasonIds.seasonYearFor(entry.date),
-                        method = template?.method ?: "spur",
-                        crew = template?.crew.orEmpty(),
-                        workingDays = template?.workingDays ?: listOf(1, 2, 3, 4, 5),
-                        rowCountOverride = template?.rowCountOverride,
-                    )
-                    setups = vm.upsertPruningSetup(vineyardId, setup)
-                }
+                val setup = resolveSeasonForDate(entry.paddockId, entry.date)
                 val metrics = PruningCalculator.metrics(
                     paddock = selectedPaddock,
                     setup = setup,
@@ -385,6 +398,13 @@ fun PruningTrackerScreen(
                     }
                     PruningEditTaskAction.None -> Unit
                 }
+                // A date edit can move the record into another pruning year —
+                // re-file it locally at once (the server re-points it too,
+                // sql/161 §4, and the client adopts that answer on sync).
+                val season = resolveSeasonForDate(updated.paddockId, updated.date)
+                if (season.id != updated.seasonId) {
+                    updated = updated.copy(seasonId = season.id)
+                }
                 entries = vm.editPruningEntry(vineyardId, updated)
             },
             onDeleteEntry = { entries = vm.deletePruningEntry(vineyardId, it) },
@@ -426,10 +446,16 @@ fun PruningTrackerScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (pruningPendingItems.isNotEmpty()) {
+            if (pruningSyncStatus.isFullySynced && pruningSyncStatus.recordCount > 0) {
+                item(key = "sync-confirmed") {
+                    PruningSyncConfirmedRow(status = pruningSyncStatus)
+                }
+            }
+            if (pruningPendingItems.isNotEmpty() || pruningSyncStatus.needsAttention) {
                 item(key = "pending-sync-warning") {
                     PruningPendingSyncCard(
                         items = pruningPendingItems,
+                        status = pruningSyncStatus,
                         canRetry = state.isOnline,
                         isRetrying = state.isRetryingSync,
                         onRetry = {
@@ -532,14 +558,54 @@ private fun PruningActivityReportEntryCard(onOpen: () -> Unit) {
 // MARK: - Shared pieces
 
 /**
- * Visible warning while pruning writes remain in the outbox — pending count,
- * needs-attention count, the last error, and a retry that routes through the
- * ordered replay pipeline plus a pruning refresh. Never hides failed pruning
- * writes behind a synced-looking dashboard.
+ * The positive counterpart of [PruningPendingSyncCard]: shown ONLY when every
+ * record is server-confirmed on the canonical season for the year of its own
+ * work — the real meaning of 100% synced.
+ */
+@Composable
+private fun PruningSyncConfirmedRow(status: PruningSyncStatus) {
+    val vine = LocalVineColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(VineColors.Success.copy(alpha = 0.10f))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Icon(
+            Icons.Filled.CheckCircle,
+            contentDescription = null,
+            tint = VineColors.Success,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            "100% synced — " +
+                (if (status.recordCount == 1) "1 record" else "${status.recordCount} records") +
+                " confirmed by the server in the right pruning season",
+            fontSize = 12.sp,
+            color = vine.textSecondary,
+        )
+    }
+}
+
+/**
+ * Visible warning while pruning work is not fully synced. That means EITHER
+ * writes still sitting in the outbox, OR records the server has never
+ * acknowledged, OR records the server has acknowledged under a season that
+ * isn't the year of their own work (the 2026-work-under-season-2027 defect,
+ * which only a reviewed server-side correction may fix — sql/164).
+ *
+ * Shows the pending count, the needs-attention count, the last error, and a
+ * retry that routes through the ordered replay pipeline plus a pruning
+ * refresh. Never hides unfinished pruning sync behind a synced-looking
+ * dashboard.
  */
 @Composable
 private fun PruningPendingSyncCard(
     items: List<PendingSyncItem>,
+    status: PruningSyncStatus,
     canRetry: Boolean,
     isRetrying: Boolean,
     onRetry: () -> Unit,
@@ -567,18 +633,47 @@ private fun PruningPendingSyncCard(
                 modifier = Modifier.size(20.dp),
             )
             Text(
-                "Pruning changes pending sync",
+                if (items.isEmpty()) "Pruning records not fully confirmed" else "Pruning changes pending sync",
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 15.sp,
                 color = vine.textPrimary,
             )
         }
-        Text(
-            (if (items.size == 1) "1 recorded change hasn't" else "${items.size} recorded changes haven't") +
-                " reached the server yet. The progress below includes this device's unsynced work.",
-            fontSize = 12.sp,
-            color = vine.textSecondary,
-        )
+        if (status.recordCount > 0) {
+            Text(
+                "${status.percentSynced}% synced — ${status.confirmed} of ${status.recordCount} " +
+                    "record(s) confirmed by the server in the right pruning season.",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textPrimary,
+            )
+        }
+        if (items.isNotEmpty()) {
+            Text(
+                (if (items.size == 1) "1 recorded change hasn't" else "${items.size} recorded changes haven't") +
+                    " reached the server yet. The progress below includes this device's unsynced work.",
+                fontSize = 12.sp,
+                color = vine.textSecondary,
+            )
+        }
+        if (status.awaitingAck > 0) {
+            Text(
+                (if (status.awaitingAck == 1) "1 record is" else "${status.awaitingAck} records are") +
+                    " waiting for the server to confirm the pruning season.",
+                fontSize = 12.sp,
+                color = vine.textSecondary,
+            )
+        }
+        if (status.seasonMismatched > 0) {
+            Text(
+                (if (status.seasonMismatched == 1) "1 record is" else "${status.seasonMismatched} records are") +
+                    " filed under a pruning season that isn't the year the work was done. " +
+                    "This needs a data correction — the app never changes history on its own.",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = VineColors.Warning,
+            )
+        }
         if (attention > 0) {
             Text(
                 if (attention == 1) "1 item needs attention" else "$attention items need attention",

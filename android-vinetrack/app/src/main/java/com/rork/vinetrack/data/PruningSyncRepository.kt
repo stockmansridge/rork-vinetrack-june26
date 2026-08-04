@@ -133,8 +133,15 @@ class PruningSyncRepository(private val session: SessionStore) {
         @SerialName("updated_at") val updatedAt: String? = null,
         @SerialName("deleted_at") val deletedAt: String? = null,
     ) {
-        /** Segments are attributed separately from `pruning_row_segments`. */
-        fun toModel(segments: List<PruningSegment>): PruningEntry = PruningEntry(
+        /**
+         * Segments are attributed separately from `pruning_row_segments`.
+         *
+         * [serverSeasonYear] is `pruning_seasons.season_year` of this row's own
+         * season as the SERVER has it — the pulled row IS the server's
+         * acknowledgement, so it doubles as the canonical-season confirmation
+         * used by [PruningSyncIntegrity].
+         */
+        fun toModel(segments: List<PruningSegment>, serverSeasonYear: Int? = null): PruningEntry = PruningEntry(
             id = id,
             vineyardId = vineyardId,
             paddockId = paddockId,
@@ -153,6 +160,8 @@ class PruningSyncRepository(private val session: SessionStore) {
             updatedAtMs = parseInstantMs(updatedAt),
             enteredBy = createdBy,
             reversedAtMs = parseInstantMs(deletedAt),
+            serverSeasonId = pruningSeasonId,
+            serverSeasonYear = serverSeasonYear,
         )
     }
 
@@ -246,11 +255,18 @@ class PruningSyncRepository(private val session: SessionStore) {
         val deleted: Boolean? = null,
     )
 
-    /** Structured response of `update_pruning_entry` (sql/120). */
+    /**
+     * Structured response of `update_pruning_entry` (sql/120 + sql/161). A date
+     * edit that crosses a pruning year re-points the entry server-side and
+     * reports the canonical season it now belongs to, which the client adopts.
+     */
     @Serializable
     data class UpdateEntryResult(
         @SerialName("entry_id") val entryId: String? = null,
         @SerialName("season_id") val seasonId: String? = null,
+        @SerialName("season_year") val seasonYear: Int? = null,
+        /** True when the edited date moved the entry to another season. */
+        @SerialName("season_changed") val seasonChanged: Boolean? = null,
         @SerialName("vintage_year") val vintageYear: Int? = null,
         val requested: Int? = null,
         val attributed: Int? = null,
