@@ -55,6 +55,10 @@ struct PruningActivityExportTests {
     private static let activityDId = UUID(uuidString: "00000000-0000-0000-0000-0000000ae0d0")!
     private static let activityEId = UUID(uuidString: "00000000-0000-0000-0000-0000000ae0e0")!
     private static let activityRId = UUID(uuidString: "00000000-0000-0000-0000-0000000ae0f0")!
+    private static let activityXId = UUID(uuidString: "00000000-0000-0000-0000-0000000ae0f1")!
+    /// A deliberately "real looking" id, for the identifier tests.
+    private static let activityUId = UUID(uuidString: "3f2a1b7c-9d4e-4c11-8f0a-1b2c3d4e5f60")!
+    private static let allocationUId = UUID(uuidString: "8c7b6a59-4d3e-4210-9f8e-7d6c5b4a3921")!
 
     /// 100 vines per row → one quarter = 25 vines, one full row = 100.
     private static func rowRefs(_ numbers: [Int]) -> [PruningRowRef] {
@@ -216,6 +220,33 @@ struct PruningActivityExportTests {
             id: UUID(uuidString: "00000000-0000-0000-0000-0000000ae0e2")!,
             activityId: activityEId, allocationIndex: 1, paddock: blockPrim,
             day: 7, segments: wholeRow(20) + wholeRow(21)
+        )
+    ]
+
+    /// X — a CORRUPTED activity. Its two allocations disagree about the worker,
+    /// the Work Task, the labour and the timing. This cannot happen through the
+    /// app; it happens through a half-applied sync or a stale legacy mirror.
+    private static let activityX: [PruningEntry] = [
+        allocation(
+            id: UUID(uuidString: "00000000-0000-0000-0000-0000000ae0f2")!,
+            activityId: activityXId, allocationIndex: 0, paddock: blockPinot,
+            day: 3, rowNumber: 93, worker: "Dan", operationalHours: 6,
+            start: date(3, 7, 0), finish: date(3, 13, 0), workTaskId: taskA
+        ),
+        allocation(
+            id: UUID(uuidString: "00000000-0000-0000-0000-0000000ae0f3")!,
+            activityId: activityXId, allocationIndex: 1, paddock: blockCab,
+            day: 3, rowNumber: 4, worker: "Sam", operationalHours: 9,
+            start: date(3, 8, 30), finish: date(3, 17, 0), workTaskId: taskC
+        )
+    ]
+
+    /// U — one allocation with UUID-shaped ids, for the identifier tests.
+    private static let activityU: [PruningEntry] = [
+        allocation(
+            id: allocationUId,
+            activityId: activityUId, allocationIndex: 0, paddock: blockPinot,
+            day: 3, rowNumber: 94, operationalHours: 3, workTaskId: taskA
         )
     ]
 
@@ -876,7 +907,207 @@ struct PruningActivityExportTests {
         #expect(e.allocations.map { $0.allocatedPersonHours ?? 0 } == [2.60, 10.40])
     }
 
-    // MARK: 21. Cross-platform parity fixture — Android must produce this exactly
+    // MARK: 21. The PDF names the activity and never prints a full UUID
+
+    @Test("The PDF uses the activity name and a short reference, never a full id")
+    func pdfUsesShortReference() throws {
+        let group = try #require(
+            PruningActivityExport.groups(Self.sorted(Self.activityU), includeCost: true, calendar: Self.calendar).first
+        )
+
+        // The label is the human-readable Work Task title.
+        #expect(group.activityLabel == "Winter pruning")
+
+        // The short reference is the first eight characters — and a PREFIX of
+        // the full id, so matching the PDF to the CSV is a "starts with".
+        #expect(group.shortReference == "3f2a1b7c")
+        #expect(group.shortReference.count == 8)
+        #expect(group.activityId.hasPrefix(group.shortReference))
+        #expect(PruningActivityExport.referenceLine(group, includeShortReferences: true) == "Ref 3f2a1b7c")
+        #expect(PruningActivityExport.referenceLine(group, includeShortReferences: false) == nil)
+
+        // Nothing a reader sees in the body carries the full UUID.
+        let fullActivityId = Self.activityUId.uuidString.lowercased()
+        let fullAllocationId = Self.allocationUId.uuidString.lowercased()
+        var body = [
+            group.activityLabel,
+            group.dateDisplay,
+            group.blockSummary,
+            PruningActivityExport.referenceLine(group, includeShortReferences: true) ?? ""
+        ]
+        body.append(contentsOf: group.allocations.map { "\($0.allocationLabel) \($0.blockName)" })
+        for line in body {
+            #expect(!line.localizedCaseInsensitiveContains(fullActivityId))
+            #expect(!line.localizedCaseInsensitiveContains(fullAllocationId))
+        }
+    }
+
+    @Test("Full ids stay in the CSV and in the optional technical references")
+    func fullIdsStayInCsvAndAppendix() throws {
+        let reportRows = Self.sorted(Self.activityU)
+        let fullActivityId = Self.activityUId.uuidString.lowercased()
+        let fullAllocationId = Self.allocationUId.uuidString.lowercased()
+
+        // The CSV keeps them — it is the reconciliation artefact.
+        let csv = PruningActivityExport.csv(reportRows, includeCost: true, calendar: Self.calendar)
+        #expect(csv.contains(fullActivityId))
+        #expect(csv.contains(fullAllocationId))
+
+        // The PDF keeps them only in the opt-in appendix.
+        let group = try #require(
+            PruningActivityExport.groups(reportRows, includeCost: true, calendar: Self.calendar).first
+        )
+        let technical = PruningActivityExport.technicalReferenceLines(group)
+        #expect(technical.first == "Winter pruning — \(group.dateDisplay)")
+        #expect(technical.contains("Activity ID: \(fullActivityId)"))
+        #expect(technical.contains("Allocation 1 (Pinot Noir): \(fullAllocationId)"))
+        #expect(PruningActivityExport.technicalReferencesHeading == "Technical references")
+    }
+
+    @Test("A short reference tolerates short and empty ids")
+    func shortReferenceEdgeCases() {
+        #expect(PruningActivityExport.shortReference("act-e") == "act-e")
+        #expect(PruningActivityExport.shortReference("   ") == "")
+        #expect(PruningActivityExport.shortReference(Self.activityUId.uuidString.lowercased()) == "3f2a1b7c")
+    }
+
+    // MARK: 22. Conflicting parent values are FLAGGED, never silently chosen
+
+    @Test("Allocations that disagree about their parent raise a context conflict")
+    func conflictingAllocationsAreFlagged() throws {
+        let canonical = Self.sorted(Self.activityX)
+        let model = PruningActivityAllocationModel.build(canonical, includeCost: true)
+
+        #expect(model.hasConflicts)
+        #expect(model.conflictedActivityIds == [Self.activityXId])
+
+        let fields = Set(model.conflicts(Self.activityXId).map(\.field))
+        // Worker, Work Task, labour and timing — the four the brief names.
+        #expect(fields.contains(.worker))
+        #expect(fields.contains(.workTask))
+        #expect(fields.contains(.personHours))
+        #expect(fields.contains(.labourCost))
+        #expect(fields.contains(.startTime))
+        #expect(fields.contains(.operationalHours))
+
+        // BOTH competing values are reported, not just the winner.
+        let worker = try #require(model.conflicts(Self.activityXId).first { $0.field == .worker })
+        #expect(worker.values == ["Dan", "Sam"])
+        #expect(worker.resolvedValue == "Dan")
+        // With no canonical parent the choice is an unverified guess, and says so.
+        #expect(worker.resolution == .firstAllocation)
+        #expect(worker.description.contains(Self.activityXId.uuidString))
+        #expect(worker.description.contains("Dan vs Sam"))
+        #expect(worker.description.contains("unverified"))
+
+        let hours = try #require(model.conflicts(Self.activityXId).first { $0.field == .personHours })
+        #expect(hours.values == ["18.0000", "12.0000"])
+
+        // The parent still renders — a blank report would be worse — but it is
+        // marked, and the export still balances against whatever it chose.
+        let parent = try #require(model.parent(Self.activityXId))
+        #expect(parent.hasContextConflict)
+        #expect(!parent.resolvedFromCanonicalParent)
+        #expect(parent.worker == "Dan")
+        #expect(Self.close(parent.personHours, 18.0))
+
+        let exported = Self.rows(canonical)
+        #expect(Self.close(PruningActivityExport.columnTotal(exported) { $0.allocatedPersonHours }, 18.0))
+
+        // And the reader is told, in the PDF, before they act on the number.
+        #expect(
+            PruningActivityExport.conflictNotice(conflictedActivities: 1)
+                == "1 activity has conflicting source records — verify against the portal"
+        )
+        #expect(
+            PruningActivityExport.conflictNotice(conflictedActivities: 2)
+                == "2 activities have conflicting source records — verify against the portal"
+        )
+        #expect(PruningActivityExport.conflictNotice(conflictedActivities: 0) == nil)
+    }
+
+    // MARK: 23. The canonical parent outranks the allocation mirror
+
+    @Test("The canonical activity parent wins whenever it is available")
+    func canonicalParentWins() throws {
+        let canonical = Self.sorted(Self.activityX)
+        let parents: [UUID: PruningActivityParentSource] = [
+            Self.activityXId: PruningActivityParentSource(
+                activityId: Self.activityXId,
+                worker: "Site Crew",
+                startTime: Self.date(3, 5, 45),
+                personHours: 20,
+                labourCost: 500
+            )
+        ]
+        let model = PruningActivityAllocationModel.build(
+            canonical,
+            includeCost: true,
+            canonicalParents: parents
+        )
+        let parent = try #require(model.parent(Self.activityXId))
+
+        // The canonical record decides — not the first allocation.
+        #expect(parent.resolvedFromCanonicalParent)
+        #expect(parent.worker == "Site Crew")
+        #expect(Self.close(parent.personHours, 20.0))
+        #expect(Self.close(parent.labourCost, 500.0))
+        #expect(parent.startTime == Self.date(3, 5, 45))
+
+        // The disagreement is still REPORTED — preferring the parent fixes the
+        // reading, not the underlying data.
+        #expect(parent.hasContextConflict)
+        let worker = try #require(model.conflicts(Self.activityXId).first { $0.field == .worker })
+        #expect(worker.resolution == .canonicalParent)
+        #expect(worker.values == ["Site Crew", "Dan", "Sam"])
+        #expect(worker.resolvedValue == "Site Crew")
+        #expect(worker.description.contains("canonical activity record"))
+
+        // And the allocated shares divide the CANONICAL labour, not the mirror's.
+        let exported = PruningActivityExport.rows(
+            canonical,
+            includeCost: true,
+            canonicalRows: canonical,
+            canonicalParents: parents,
+            calendar: Self.calendar
+        )
+        #expect(exported.map { $0.allocatedPersonHours ?? 0 } == [10.0, 10.0])
+        #expect(exported.map { $0.allocatedLabourCost ?? 0 } == [250.0, 250.0])
+        #expect(Self.close(exported.first?.activityPersonHours, 20.0))
+        #expect(exported.first?.startTime == "05:45")
+    }
+
+    // MARK: 24. A legacy mirror is NOT a conflict
+
+    @Test("Legacy projected rows with a single populated allocation raise no conflict")
+    func legacyMirrorIsNotAConflict() throws {
+        // The whole fixture is legacy-shaped: allocation 0 carries the activity
+        // values, the rest carry none. That is expected, not corrupt.
+        let model = PruningActivityAllocationModel.build(Self.sorted(), includeCost: true)
+        #expect(!model.hasConflicts)
+        #expect(model.conflicts.isEmpty)
+        for activityId in [Self.activityAId, Self.activityBId, Self.activityCId, Self.activityDId, Self.activityEId] {
+            #expect(model.parent(activityId)?.hasContextConflict == false)
+        }
+
+        // A canonical parent that AGREES with the mirror is not a conflict either.
+        let agreeing = PruningActivityAllocationModel.build(
+            Self.canonicalE(),
+            includeCost: true,
+            canonicalParents: [
+                Self.activityEId: PruningActivityParentSource(
+                    activityId: Self.activityEId,
+                    worker: "Pruning Crew",
+                    personHours: 13,
+                    labourCost: 455
+                )
+            ]
+        )
+        #expect(!agreeing.hasConflicts)
+        #expect(agreeing.parent(Self.activityEId)?.resolvedFromCanonicalParent == true)
+    }
+
+    // MARK: 25. Cross-platform parity fixture — Android must produce this exactly
 
     @Test("The parity fixture matches the Android export byte for byte")
     func crossPlatformParityFixture() {

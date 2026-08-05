@@ -30,6 +30,10 @@ struct PruningActivityReportView: View {
     @State private var accountNames: [UUID: String] = [:]
     @State private var didRestoreSeason: Bool = false
     @State private var exportError: String?
+    /// Off by default: the PDF is a document people read, so it shows the
+    /// activity's name and a short reference. Full ids are for reconciliation
+    /// and only appear when someone deliberately asks for them.
+    @State private var includeTechnicalReferences: Bool = false
 
     private var canViewCosting: Bool { accessControl?.canViewCosting ?? false }
     private var canDeleteLinkedTask: Bool { accessControl?.canDelete ?? false }
@@ -174,6 +178,10 @@ struct PruningActivityReportView: View {
             } label: {
                 Label("Export PDF (grouped by activity)", systemImage: "doc.richtext")
             }
+            Divider()
+            Toggle(isOn: $includeTechnicalReferences) {
+                Label("Include technical references", systemImage: "number")
+            }
         } label: {
             Image(systemName: "square.and.arrow.up")
         }
@@ -211,7 +219,8 @@ struct PruningActivityReportView: View {
                     vineyardName: exportVineyardName,
                     seasonLabel: seasonLabel,
                     includeCost: canViewCosting,
-                    canonicalRows: allRows
+                    canonicalRows: allRows,
+                    includeTechnicalReferences: includeTechnicalReferences
                 )
             }
             present(url)

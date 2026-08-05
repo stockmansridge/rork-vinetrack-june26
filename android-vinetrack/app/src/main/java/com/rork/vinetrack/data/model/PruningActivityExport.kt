@@ -45,6 +45,18 @@ import java.util.Locale
  * totals still describe the WHOLE activity and are labelled as such; the
  * filtered block's proportional figures are the ALLOCATED columns. Confusing
  * the two is exactly the error this file exists to prevent.
+ *
+ * ## Identifiers
+ *
+ * The CSV is a reconciliation artefact, so it carries the FULL activity and
+ * allocation ids in their own columns — that is what lets a reader de-duplicate
+ * whole-activity totals or match a row back to the portal.
+ *
+ * The PDF is a document people read. It never prints a full UUID in the body:
+ * the activity's human-readable name is the label, and an eight-character SHORT
+ * REFERENCE ([shortReference]) sits beside it in small type for anyone who needs
+ * to quote a record. Full ids appear in the PDF only in its metadata, or in the
+ * optional "Include technical references" appendix.
  */
 object PruningActivityExport {
 
@@ -166,6 +178,13 @@ object PruningActivityExport {
                 "Partial activity — $includedAllocationCount of $fullAllocationCount blocks shown"
             }
 
+        /**
+         * The eight-character reference printed in the PDF instead of the full
+         * UUID — enough to quote a record over the phone, short enough not to
+         * dominate the line.
+         */
+        val shortReference: String get() = shortReference(activityId)
+
         /** "Pinot Noir + Cabernet Franc" — the INCLUDED blocks. */
         val blockSummary: String
             get() = allocations.map { it.blockName }.distinct().joinToString(" + ")
@@ -209,13 +228,16 @@ object PruningActivityExport {
      * @param canonicalRows every allocation of every activity BEFORE filtering.
      *   This supplies the parent context and the allocation-share denominator.
      *   Defaults to [reportRows] for an unfiltered export.
+     * @param canonicalParents the `pruning_activities` records, when the caller
+     *   has them. They outrank the allocation mirror for every field they fill.
      */
     fun groups(
         reportRows: List<PruningActivityRow>,
         includeCost: Boolean,
         canonicalRows: List<PruningActivityRow> = reportRows,
+        canonicalParents: Map<String, PruningActivityParentSource> = emptyMap(),
     ): List<Group> {
-        val model = PruningActivityAllocationModel.build(canonicalRows, includeCost)
+        val model = PruningActivityAllocationModel.build(canonicalRows, includeCost, canonicalParents)
         return groups(reportRows, includeCost, model)
     }
 
@@ -319,7 +341,62 @@ object PruningActivityExport {
         reportRows: List<PruningActivityRow>,
         includeCost: Boolean,
         canonicalRows: List<PruningActivityRow> = reportRows,
-    ): List<Row> = groups(reportRows, includeCost, canonicalRows).flatMap { it.allocations }
+        canonicalParents: Map<String, PruningActivityParentSource> = emptyMap(),
+    ): List<Row> = groups(reportRows, includeCost, canonicalRows, canonicalParents)
+        .flatMap { it.allocations }
+
+    // ------------------------------------------------------------------
+    // Identifiers
+    // ------------------------------------------------------------------
+
+    /**
+     * The first eight characters of an id — the first hex group of a UUID.
+     *
+     * Long enough to disambiguate a season's activities in practice, short
+     * enough to read aloud, and a PREFIX of the full id in the CSV, so matching
+     * the two is a simple "starts with" rather than a lookup table.
+     */
+    fun shortReference(id: String): String {
+        val cleaned = id.trim()
+        if (cleaned.isEmpty()) return ""
+        return if (cleaned.length <= 8) cleaned else cleaned.substring(0, 8)
+    }
+
+    /**
+     * The PDF's small-type reference line, or null when short references are
+     * switched off. Never the full UUID.
+     */
+    fun referenceLine(group: Group, includeShortReferences: Boolean): String? {
+        if (!includeShortReferences) return null
+        val reference = shortReference(group.activityId)
+        return if (reference.isEmpty()) null else "Ref $reference"
+    }
+
+    /**
+     * The full ids for ONE activity — rendered only in the optional "Include
+     * technical references" appendix, never in the body of the report.
+     */
+    fun technicalReferenceLines(group: Group): List<String> = buildList {
+        add("${group.activityLabel} — ${group.dateDisplay}")
+        add("Activity ID: ${group.activityId}")
+        for (allocation in group.allocations) {
+            add("Allocation ${allocation.allocationNumber} (${allocation.blockName}): ${allocation.allocationId}")
+        }
+    }
+
+    /** The appendix heading, kept identical on both platforms. */
+    const val TECHNICAL_REFERENCES_HEADING: String = "Technical references"
+
+    /**
+     * The PDF's data-quality notice. Printed when the allocation model found
+     * activities whose source records disagree, so a reader is told before they
+     * act on a figure that one of its sources is wrong.
+     */
+    fun conflictNotice(conflictedActivities: Int): String? {
+        if (conflictedActivities <= 0) return null
+        val activities = if (conflictedActivities == 1) "activity has" else "activities have"
+        return "$conflictedActivities $activities conflicting source records — verify against the portal"
+    }
 
     /**
      * "block 1 of 2"; a single-allocation activity says "whole activity". A
@@ -421,8 +498,9 @@ object PruningActivityExport {
         reportRows: List<PruningActivityRow>,
         includeCost: Boolean,
         canonicalRows: List<PruningActivityRow> = reportRows,
+        canonicalParents: Map<String, PruningActivityParentSource> = emptyMap(),
     ): String {
-        val exported = rows(reportRows, includeCost, canonicalRows)
+        val exported = rows(reportRows, includeCost, canonicalRows, canonicalParents)
         val builder = StringBuilder()
         builder.append(headers(includeCost).joinToString(",") { escape(it) })
         builder.append("\r\n")

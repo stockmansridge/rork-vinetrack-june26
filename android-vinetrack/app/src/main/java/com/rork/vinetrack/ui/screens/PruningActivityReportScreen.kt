@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
@@ -203,6 +204,10 @@ fun PruningActivityReportScreen(
     }
     var showFilters by rememberSaveable { mutableStateOf(false) }
     var showExportMenu by remember { mutableStateOf(false) }
+    // Off by default: the PDF is a document people read, so it shows the
+    // activity's name and a short reference. Full ids are for reconciliation and
+    // only appear when someone deliberately asks for them.
+    var includeTechnicalReferences by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     var reversalTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     var filter by remember { mutableStateOf(PruningActivityFilter()) }
@@ -281,7 +286,22 @@ fun PruningActivityReportScreen(
                                         seasonLabel = season.takeIf { it > 0 }?.toString().orEmpty(),
                                         includeCost = canViewCosting,
                                         canonicalRows = allRows,
+                                        includeTechnicalReferences = includeTechnicalReferences,
                                     )
+                                },
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Include technical references") },
+                                onClick = { includeTechnicalReferences = !includeTechnicalReferences },
+                                trailingIcon = {
+                                    if (includeTechnicalReferences) {
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = "Technical references included",
+                                            tint = VineColors.Primary,
+                                        )
+                                    }
                                 },
                             )
                         }

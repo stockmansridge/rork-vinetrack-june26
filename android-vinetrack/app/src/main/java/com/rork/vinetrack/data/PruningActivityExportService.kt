@@ -8,7 +8,9 @@ import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import androidx.core.content.FileProvider
+import com.rork.vinetrack.data.model.PruningActivityAllocationModel
 import com.rork.vinetrack.data.model.PruningActivityExport
+import com.rork.vinetrack.data.model.PruningActivityParentSource
 import com.rork.vinetrack.data.model.PruningActivityRow
 import java.io.File
 import java.text.SimpleDateFormat
@@ -35,6 +37,13 @@ import java.util.Locale
  * and the allocated cost columns from the CSV and the cost lines from the PDF
  * entirely; hours stay visible.
  *
+ * ## Identifiers
+ *
+ * The CSV keeps the full activity and allocation ids — it exists to be
+ * reconciled. The PDF does not print them: it shows the activity's name and an
+ * eight-character short reference, and carries the full ids only in the
+ * optional technical-references appendix.
+ *
  * Files are written to the app cache (`cache/exports`) and shared through
  * [FileProvider]. Nothing is uploaded.
  */
@@ -54,7 +63,10 @@ object PruningActivityExportService {
         seasonLabel: String,
         includeCost: Boolean,
         canonicalRows: List<PruningActivityRow> = rows,
+        canonicalParents: Map<String, PruningActivityParentSource> = emptyMap(),
     ): Boolean = try {
+        val model = PruningActivityAllocationModel.build(canonicalRows, includeCost, canonicalParents)
+        logConflicts(model)
         val csv = PruningActivityExport.csv(rows, includeCost, canonicalRows)
         val file = write(context, fileName(vineyardName, seasonLabel, "csv"), csv)
         share(context, file, "text/csv", "Export pruning activity report")
@@ -64,6 +76,11 @@ object PruningActivityExportService {
         false
     }
 
+    /**
+     * @param includeTechnicalReferences appends a "Technical references"
+     *   section listing the full activity and allocation ids. Off by default:
+     *   the body of the report is for people, and a UUID in it is noise.
+     */
     fun exportPdfAndShare(
         context: Context,
         rows: List<PruningActivityRow>,
@@ -71,11 +88,22 @@ object PruningActivityExportService {
         seasonLabel: String,
         includeCost: Boolean,
         canonicalRows: List<PruningActivityRow> = rows,
+        canonicalParents: Map<String, PruningActivityParentSource> = emptyMap(),
+        includeTechnicalReferences: Boolean = false,
     ): Boolean = try {
         val file = File(File(context.cacheDir, "exports").apply { mkdirs() }, fileName(vineyardName, seasonLabel, "pdf"))
         val document = PdfDocument()
         try {
-            renderPdf(document, rows, vineyardName, seasonLabel, includeCost, canonicalRows)
+            renderPdf(
+                doc = document,
+                rows = rows,
+                vineyardName = vineyardName,
+                seasonLabel = seasonLabel,
+                includeCost = includeCost,
+                canonicalRows = canonicalRows,
+                canonicalParents = canonicalParents,
+                includeTechnicalReferences = includeTechnicalReferences,
+            )
             file.outputStream().use { document.writeTo(it) }
         } finally {
             document.close()
@@ -85,6 +113,23 @@ object PruningActivityExportService {
     } catch (e: Exception) {
         android.util.Log.e("PruningActivityExport", "PDF export failed", e)
         false
+    }
+
+    /**
+     * Parent-context conflicts go to the log with the activity id and the
+     * competing values — never with worker names or notes beyond what the
+     * conflicting field itself is, and never silently swallowed.
+     */
+    private fun logConflicts(model: PruningActivityAllocationModel) {
+        if (!model.hasConflicts) return
+        android.util.Log.w(
+            "PruningActivityExport",
+            "${model.conflicts.size} parent-context conflict(s) across " +
+                "${model.conflictedActivityIds.size} activity(ies)",
+        )
+        for (conflict in model.conflicts) {
+            android.util.Log.w("PruningActivityExport", conflict.description)
+        }
     }
 
     // ------------------------------------------------------------------
@@ -129,8 +174,12 @@ object PruningActivityExportService {
         seasonLabel: String,
         includeCost: Boolean,
         canonicalRows: List<PruningActivityRow>,
+        canonicalParents: Map<String, PruningActivityParentSource>,
+        includeTechnicalReferences: Boolean,
     ) {
-        val groups = PruningActivityExport.groups(rows, includeCost, canonicalRows)
+        val model = PruningActivityAllocationModel.build(canonicalRows, includeCost, canonicalParents)
+        logConflicts(model)
+        val groups = PruningActivityExport.groups(rows, includeCost, model)
         val state = PageState(doc)
 
         val title = paint(19f, bold = true)
@@ -138,8 +187,10 @@ object PruningActivityExportService {
         val heading = paint(12.5f, bold = true, colour = accent)
         val detail = paint(10.5f)
         val detailMuted = paint(10.5f, colour = Color.DKGRAY)
+        val reference = paint(8f, colour = Color.rgb(140, 140, 140))
         val badge = paint(9.5f, bold = true, colour = Color.rgb(150, 40, 40))
         val partialBadge = paint(9.5f, bold = true, colour = Color.rgb(176, 108, 20))
+        val conflictBadge = paint(9.5f, bold = true, colour = Color.rgb(150, 40, 40))
         val rule = Paint().apply { color = Color.rgb(220, 220, 220) }
 
         state.canvas.drawText("Pruning Activity Report", MARGIN, state.y + 16f, title)
@@ -164,7 +215,15 @@ object PruningActivityExportService {
             state.y,
             subtitle,
         )
-        state.y += 18f
+        state.y += 14f
+
+        // Data-quality warning, before any figure it might affect.
+        val conflicted = groups.count { model.conflicts(it.activityId).isNotEmpty() }
+        PruningActivityExport.conflictNotice(conflicted)?.let { notice ->
+            state.canvas.drawText(notice, MARGIN, state.y, conflictBadge)
+            state.y += 14f
+        }
+        state.y += 4f
 
         for (group in groups) {
             // Header + labour block + the allocation list must not be split
@@ -178,12 +237,32 @@ object PruningActivityExportService {
             state.canvas.drawLine(MARGIN, state.y, PAGE_WIDTH - MARGIN, state.y, rule)
             state.y += 15f
 
-            state.canvas.drawText("${group.activityLabel} — ${group.dateDisplay}", MARGIN, state.y, heading)
+            // The activity's NAME is the label. The eight-character reference
+            // sits after it in small grey type; the full UUID never appears in
+            // the body of the document.
+            val headingText = "${group.activityLabel} — ${group.dateDisplay}"
+            state.canvas.drawText(headingText, MARGIN, state.y, heading)
+            var trailing = MARGIN + heading.measureText(headingText) + 8f
+            PruningActivityExport.referenceLine(group, includeShortReferences = true)?.let { ref ->
+                state.canvas.drawText(ref, trailing, state.y, reference)
+                trailing += reference.measureText(ref) + 8f
+            }
             if (group.isReversed) {
-                val width = heading.measureText("${group.activityLabel} — ${group.dateDisplay}")
-                state.canvas.drawText("REVERSED", MARGIN + width + 8f, state.y, badge)
+                state.canvas.drawText("REVERSED", trailing, state.y, badge)
             }
             state.y += 15f
+
+            if (model.conflicts(group.activityId).isNotEmpty()) {
+                state.ensure(13f)
+                state.canvas.drawText(
+                    "Conflicting source records — " +
+                        model.conflicts(group.activityId).joinToString(", ") { it.field.label.lowercase() },
+                    MARGIN + 6f,
+                    state.y,
+                    conflictBadge,
+                )
+                state.y += 13f
+            }
 
             // A partial activity says so BEFORE its totals, so the whole-activity
             // figures below can never be mistaken for the filtered block's.
@@ -251,6 +330,29 @@ object PruningActivityExportService {
             }
 
             state.y += 10f
+        }
+
+        // Full ids live here and nowhere else in the PDF, and only when the
+        // reader asked for them.
+        if (includeTechnicalReferences && groups.isNotEmpty()) {
+            state.ensure(40f)
+            state.canvas.drawLine(MARGIN, state.y, PAGE_WIDTH - MARGIN, state.y, rule)
+            state.y += 15f
+            state.canvas.drawText(PruningActivityExport.TECHNICAL_REFERENCES_HEADING, MARGIN, state.y, heading)
+            state.y += 15f
+            for (group in groups) {
+                for ((index, line) in PruningActivityExport.technicalReferenceLines(group).withIndex()) {
+                    state.ensure(12f)
+                    state.canvas.drawText(
+                        line,
+                        MARGIN + if (index == 0) 0f else 10f,
+                        state.y,
+                        if (index == 0) paint(9.5f, bold = true) else paint(8.5f, colour = Color.DKGRAY),
+                    )
+                    state.y += 12f
+                }
+                state.y += 4f
+            }
         }
 
         state.finish()

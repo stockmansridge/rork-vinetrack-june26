@@ -4,7 +4,10 @@ import com.rork.vinetrack.data.model.PruningActivityAllocationModel
 import com.rork.vinetrack.data.model.PruningActivityBlockContext
 import com.rork.vinetrack.data.model.PruningActivityColumn
 import com.rork.vinetrack.data.model.PruningActivityExport
+import com.rork.vinetrack.data.model.PruningActivityConflictResolution
 import com.rork.vinetrack.data.model.PruningActivityFilter
+import com.rork.vinetrack.data.model.PruningActivityParentField
+import com.rork.vinetrack.data.model.PruningActivityParentSource
 import com.rork.vinetrack.data.model.PruningActivityReport
 import com.rork.vinetrack.data.model.PruningActivityRow
 import com.rork.vinetrack.data.model.PruningActivitySort
@@ -178,6 +181,35 @@ class PruningActivityExportTest {
         allocation(
             id = "e2", activityId = "act-e", allocationIndex = 1, paddockId = blockPrim,
             day = 7, segments = wholeRow(20) + wholeRow(21),
+        ),
+    )
+
+    /**
+     * X — a CORRUPTED activity. Its two allocations disagree about the worker,
+     * the Work Task, the labour and the timing. This cannot happen through the
+     * app; it happens through a half-applied sync or a stale legacy mirror.
+     */
+    private val activityX = listOf(
+        allocation(
+            id = "x1", activityId = "act-x", allocationIndex = 0, paddockId = blockPinot,
+            day = 3, rowNumber = 93, worker = "Dan", operationalHours = 6.0,
+            start = "07:00", finish = "13:00", workTaskId = taskA,
+        ),
+        allocation(
+            id = "x2", activityId = "act-x", allocationIndex = 1, paddockId = blockCab,
+            day = 3, rowNumber = 4, worker = "Sam", operationalHours = 9.0,
+            start = "08:30", finish = "17:00", workTaskId = taskC,
+        ),
+    )
+
+    /** A UUID-shaped record, for the identifier tests. */
+    private val uuidActivityId = "3f2a1b7c-9d4e-4c11-8f0a-1b2c3d4e5f60"
+    private val uuidAllocationId = "8c7b6a59-4d3e-4210-9f8e-7d6c5b4a3921"
+    private val activityU = listOf(
+        allocation(
+            id = uuidAllocationId, activityId = uuidActivityId, allocationIndex = 0,
+            paddockId = blockPinot, day = 3, rowNumber = 94, operationalHours = 3.0,
+            workTaskId = taskA,
         ),
     )
 
@@ -850,7 +882,200 @@ class PruningActivityExportTest {
     }
 
     // ------------------------------------------------------------------
-    // 21. Cross-platform parity fixture — iOS must produce this exactly
+    // 21. The PDF names the activity and never prints a full UUID
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `the pdf uses the activity name and a short reference never a full id`() {
+        val group = PruningActivityExport.groups(sorted(activityU), includeCost = true).single()
+
+        // The label is the human-readable Work Task title.
+        assertEquals("Winter pruning", group.activityLabel)
+
+        // The short reference is the first eight characters — and a PREFIX of
+        // the full id, so matching the PDF to the CSV is a "starts with".
+        assertEquals("3f2a1b7c", group.shortReference)
+        assertEquals(8, group.shortReference.length)
+        assertTrue(uuidActivityId.startsWith(group.shortReference))
+        assertEquals("Ref 3f2a1b7c", PruningActivityExport.referenceLine(group, includeShortReferences = true))
+        assertNull(PruningActivityExport.referenceLine(group, includeShortReferences = false))
+
+        // Nothing a reader sees in the body carries the full UUID.
+        val body = listOf(
+            group.activityLabel,
+            group.dateDisplay,
+            group.blockSummary,
+            PruningActivityExport.referenceLine(group, includeShortReferences = true).orEmpty(),
+        ) + group.allocations.map { "${it.allocationLabel} ${it.blockName}" }
+        for (line in body) {
+            assertFalse("a full activity id leaked into the PDF body", line.contains(uuidActivityId))
+            assertFalse("a full allocation id leaked into the PDF body", line.contains(uuidAllocationId))
+        }
+    }
+
+    @Test
+    fun `full ids stay in the csv and in the optional technical references`() {
+        val rows = sorted(activityU)
+
+        // The CSV keeps them — it is the reconciliation artefact.
+        val csv = PruningActivityExport.csv(rows, includeCost = true)
+        assertTrue(csv.contains(uuidActivityId))
+        assertTrue(csv.contains(uuidAllocationId))
+
+        // The PDF keeps them only in the opt-in appendix.
+        val group = PruningActivityExport.groups(rows, includeCost = true).single()
+        val technical = PruningActivityExport.technicalReferenceLines(group)
+        assertEquals("Winter pruning — ${group.dateDisplay}", technical.first())
+        assertTrue(technical.contains("Activity ID: $uuidActivityId"))
+        assertTrue(technical.contains("Allocation 1 (Pinot Noir): $uuidAllocationId"))
+        assertEquals("Technical references", PruningActivityExport.TECHNICAL_REFERENCES_HEADING)
+    }
+
+    @Test
+    fun `a short reference tolerates short and empty ids`() {
+        assertEquals("act-e", PruningActivityExport.shortReference("act-e"))
+        assertEquals("", PruningActivityExport.shortReference("   "))
+        assertEquals("3f2a1b7c", PruningActivityExport.shortReference(uuidActivityId))
+    }
+
+    // ------------------------------------------------------------------
+    // 22. Conflicting parent values are FLAGGED, never silently chosen
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `allocations that disagree about their parent raise a context conflict`() {
+        val canonical = sorted(activityX)
+        val model = PruningActivityAllocationModel.build(canonical, includeCost = true)
+
+        assertTrue("a corrupted mirror must not resolve silently", model.hasConflicts)
+        assertEquals(setOf("act-x"), model.conflictedActivityIds)
+
+        val fields = model.conflicts("act-x").map { it.field }.toSet()
+        // Worker, Work Task, labour and timing — the four the brief names.
+        assertTrue(fields.contains(PruningActivityParentField.WORKER))
+        assertTrue(fields.contains(PruningActivityParentField.WORK_TASK))
+        assertTrue(fields.contains(PruningActivityParentField.PERSON_HOURS))
+        assertTrue(fields.contains(PruningActivityParentField.LABOUR_COST))
+        assertTrue(fields.contains(PruningActivityParentField.START_TIME))
+        assertTrue(fields.contains(PruningActivityParentField.OPERATIONAL_HOURS))
+
+        // BOTH competing values are reported, not just the winner.
+        val worker = model.conflicts("act-x").first { it.field == PruningActivityParentField.WORKER }
+        assertEquals(listOf("Dan", "Sam"), worker.values)
+        assertEquals("Dan", worker.resolvedValue)
+        // With no canonical parent the choice is an unverified guess, and says so.
+        assertEquals(PruningActivityConflictResolution.FIRST_ALLOCATION, worker.resolution)
+        assertTrue(worker.description.contains("act-x"))
+        assertTrue(worker.description.contains("Dan vs Sam"))
+        assertTrue(worker.description.contains("unverified"))
+
+        val hours = model.conflicts("act-x").first { it.field == PruningActivityParentField.PERSON_HOURS }
+        assertEquals(listOf("18.0000", "12.0000"), hours.values)
+
+        // The parent still renders — a blank report would be worse — but it is
+        // marked, and the export still balances against whatever it chose.
+        val parent = model.parent("act-x")!!
+        assertTrue(parent.hasContextConflict)
+        assertFalse(parent.resolvedFromCanonicalParent)
+        assertEquals("Dan", parent.worker)
+        assertEquals(18.0, parent.personHours!!, 0.0001)
+
+        val exported = PruningActivityExport.rows(canonical, includeCost = true)
+        assertEquals(18.0, PruningActivityExport.columnTotal(exported) { it.allocatedPersonHours }, 0.0001)
+
+        // And the reader is told, in the PDF, before they act on the number.
+        assertEquals(
+            "1 activity has conflicting source records — verify against the portal",
+            PruningActivityExport.conflictNotice(1),
+        )
+        assertEquals(
+            "2 activities have conflicting source records — verify against the portal",
+            PruningActivityExport.conflictNotice(2),
+        )
+        assertNull(PruningActivityExport.conflictNotice(0))
+    }
+
+    // ------------------------------------------------------------------
+    // 23. The canonical parent outranks the allocation mirror
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `the canonical activity parent wins whenever it is available`() {
+        val canonical = sorted(activityX)
+        val parents = mapOf(
+            "act-x" to PruningActivityParentSource(
+                activityId = "act-x",
+                worker = "Site Crew",
+                personHours = 20.0,
+                labourCost = 500.0,
+                startTime = "05:45",
+            ),
+        )
+        val model = PruningActivityAllocationModel.build(canonical, includeCost = true, canonicalParents = parents)
+        val parent = model.parent("act-x")!!
+
+        // The canonical record decides — not the first allocation.
+        assertTrue(parent.resolvedFromCanonicalParent)
+        assertEquals("Site Crew", parent.worker)
+        assertEquals(20.0, parent.personHours!!, 0.0001)
+        assertEquals(500.0, parent.labourCost!!, 0.0001)
+        assertEquals("05:45", parent.startTime)
+
+        // The disagreement is still REPORTED — preferring the parent fixes the
+        // reading, not the underlying data.
+        assertTrue(parent.hasContextConflict)
+        val worker = model.conflicts("act-x").first { it.field == PruningActivityParentField.WORKER }
+        assertEquals(PruningActivityConflictResolution.CANONICAL_PARENT, worker.resolution)
+        assertEquals(listOf("Site Crew", "Dan", "Sam"), worker.values)
+        assertEquals("Site Crew", worker.resolvedValue)
+        assertTrue(worker.description.contains("canonical activity record"))
+
+        // And the allocated shares divide the CANONICAL labour, not the mirror's.
+        val exported = PruningActivityExport.rows(
+            canonical,
+            includeCost = true,
+            canonicalRows = canonical,
+            canonicalParents = parents,
+        )
+        assertEquals(listOf(10.0, 10.0), exported.map { it.allocatedPersonHours })
+        assertEquals(listOf(250.0, 250.0), exported.map { it.allocatedLabourCost })
+        assertEquals(20.0, exported.first().activityPersonHours!!, 0.0001)
+    }
+
+    // ------------------------------------------------------------------
+    // 24. A legacy mirror is NOT a conflict
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `legacy projected rows with a single populated allocation raise no conflict`() {
+        // The whole fixture is legacy-shaped: allocation 0 carries the activity
+        // values, the rest carry none. That is expected, not corrupt.
+        val model = PruningActivityAllocationModel.build(sorted(), includeCost = true)
+        assertFalse(model.hasConflicts)
+        assertTrue(model.conflicts.isEmpty())
+        for (activityId in listOf("act-a", "act-b", "act-c", "act-d", "act-e")) {
+            assertFalse(model.parent(activityId)!!.hasContextConflict)
+        }
+
+        // A canonical parent that AGREES with the mirror is not a conflict either.
+        val agreeing = PruningActivityAllocationModel.build(
+            canonicalE(),
+            includeCost = true,
+            canonicalParents = mapOf(
+                "act-e" to PruningActivityParentSource(
+                    activityId = "act-e",
+                    worker = "Pruning Crew",
+                    personHours = 13.0,
+                    labourCost = 455.0,
+                ),
+            ),
+        )
+        assertFalse(agreeing.hasConflicts)
+        assertTrue(agreeing.parent("act-e")!!.resolvedFromCanonicalParent)
+    }
+
+    // ------------------------------------------------------------------
+    // 25. Cross-platform parity fixture — iOS must produce this exactly
     // ------------------------------------------------------------------
 
     @Test

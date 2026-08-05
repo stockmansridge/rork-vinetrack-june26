@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import UIKit
 
 /// Writes and shares the Pruning Activity Report as CSV or PDF, mirroring the
@@ -20,6 +21,13 @@ import UIKit
 /// and the allocated cost columns from the CSV and the cost lines from the PDF
 /// entirely; hours stay visible.
 ///
+/// ## Identifiers
+///
+/// The CSV keeps the full activity and allocation ids — it exists to be
+/// reconciled. The PDF does not print them in its body: it shows the activity's
+/// name and an eight-character short reference, and retains the full ids in the
+/// document metadata plus, on request, a technical-references appendix.
+///
 /// Files are written to the app's temporary directory and shared with the system
 /// share sheet. Nothing is uploaded.
 nonisolated enum PruningActivityExportService {
@@ -30,6 +38,21 @@ nonisolated enum PruningActivityExportService {
     private static let margin: CGFloat = 36
 
     private static let accent = UIColor(red: 85 / 255, green: 107 / 255, blue: 47 / 255, alpha: 1)
+    private static let warning = UIColor(red: 0.6, green: 0.15, blue: 0.15, alpha: 1)
+
+    private static let log = Logger(subsystem: "com.vinetrack.app", category: "PruningActivityExport")
+
+    /// Parent-context conflicts go to the log with the activity id and the
+    /// competing values — never silently swallowed.
+    private static func logConflicts(_ model: PruningActivityAllocationModel) {
+        guard model.hasConflicts else { return }
+        log.warning(
+            "\(model.conflicts.count) parent-context conflict(s) across \(model.conflictedActivityIds.count) activity(ies)"
+        )
+        for conflict in model.conflicts {
+            log.warning("\(conflict.description, privacy: .public)")
+        }
+    }
 
     /// Writes the CSV and returns its file URL for sharing.
     static func csvURL(
@@ -38,8 +61,16 @@ nonisolated enum PruningActivityExportService {
         seasonLabel: String,
         includeCost: Bool,
         canonicalRows: [PruningActivityRow]? = nil,
+        canonicalParents: [UUID: PruningActivityParentSource] = [:],
         calendar: Calendar = .current
     ) throws -> URL {
+        logConflicts(
+            PruningActivityAllocationModel.build(
+                canonicalRows ?? rows,
+                includeCost: includeCost,
+                canonicalParents: canonicalParents
+            )
+        )
         let csv = PruningActivityExport.csv(
             rows,
             includeCost: includeCost,
@@ -53,24 +84,47 @@ nonisolated enum PruningActivityExportService {
     }
 
     /// Renders the grouped PDF and returns its file URL for sharing.
+    ///
+    /// - Parameter includeTechnicalReferences: appends a "Technical references"
+    ///   section listing the full activity and allocation ids. Off by default:
+    ///   the body of the report is for people, and a UUID in it is noise. The
+    ///   full ids are in the document metadata either way.
     static func pdfURL(
         rows: [PruningActivityRow],
         vineyardName: String,
         seasonLabel: String,
         includeCost: Bool,
         canonicalRows: [PruningActivityRow]? = nil,
+        canonicalParents: [UUID: PruningActivityParentSource] = [:],
+        includeTechnicalReferences: Bool = false,
         calendar: Calendar = .current
     ) throws -> URL {
+        let model = PruningActivityAllocationModel.build(
+            canonicalRows ?? rows,
+            includeCost: includeCost,
+            canonicalParents: canonicalParents
+        )
+        logConflicts(model)
         let groups = PruningActivityExport.groups(
             rows,
             includeCost: includeCost,
-            canonicalRows: canonicalRows,
+            model: model,
             calendar: calendar
         )
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(fileName(vineyardName: vineyardName, seasonLabel: seasonLabel, extension: "pdf"))
         let bounds = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
-        let renderer = UIGraphicsPDFRenderer(bounds: bounds)
+        let format = UIGraphicsPDFRendererFormat()
+        // Full ids are RETAINED here rather than printed: searchable metadata
+        // for whoever needs to reconcile, invisible to whoever is just reading.
+        format.documentInfo = [
+            kCGPDFContextTitle as String: "Pruning Activity Report",
+            kCGPDFContextSubject as String: [vineyardName, seasonLabel]
+                .filter { !$0.isEmpty }
+                .joined(separator: " — "),
+            kCGPDFContextKeywords as String: groups.map(\.activityId).joined(separator: " ")
+        ]
+        let renderer = UIGraphicsPDFRenderer(bounds: bounds, format: format)
 
         try renderer.writePDF(to: url) { context in
             var cursor = margin
@@ -107,7 +161,14 @@ nonisolated enum PruningActivityExportService {
             let partialCount = groups.filter(\.isPartialActivity).count
             var counts = "\(groups.count) \(groups.count == 1 ? "activity" : "activities"), \(allocationCount) allocations"
             if partialCount > 0 { counts += "  •  \(partialCount) partially shown" }
-            cursor += draw(counts, x: margin, font: .systemFont(ofSize: 10), colour: .darkGray) + 12
+            cursor += draw(counts, x: margin, font: .systemFont(ofSize: 10), colour: .darkGray) + 2
+
+            // Data-quality warning, before any figure it might affect.
+            let conflicted = groups.filter { !model.conflicts($0.id).isEmpty }.count
+            if let notice = PruningActivityExport.conflictNotice(conflictedActivities: conflicted) {
+                cursor += draw(notice, x: margin, font: .boldSystemFont(ofSize: 10), colour: warning) + 2
+            }
+            cursor += 10
 
             for group in groups {
                 // Header + labour block + the allocation list must not be split
@@ -125,14 +186,37 @@ nonisolated enum PruningActivityExportService {
                 context.cgContext.strokePath()
                 cursor += 8
 
+                // The activity's NAME is the label. The eight-character
+                // reference follows it in small grey type; the full UUID never
+                // appears in the body of the document.
                 let heading = "\(group.activityLabel) — \(group.dateDisplay)"
                     + (group.isReversed ? "   REVERSED" : "")
                 cursor += draw(
                     heading,
                     x: margin,
                     font: .boldSystemFont(ofSize: 12.5),
-                    colour: group.isReversed ? UIColor(red: 0.6, green: 0.15, blue: 0.15, alpha: 1) : accent
-                ) + 4
+                    colour: group.isReversed ? warning : accent
+                ) + 1
+                if let reference = PruningActivityExport.referenceLine(group, includeShortReferences: true) {
+                    cursor += draw(
+                        reference,
+                        x: margin,
+                        font: .systemFont(ofSize: 8),
+                        colour: UIColor(white: 0.55, alpha: 1)
+                    ) + 3
+                }
+
+                let groupConflicts = model.conflicts(group.id)
+                if !groupConflicts.isEmpty {
+                    ensure(14)
+                    let fields = groupConflicts.map { $0.field.label.lowercased() }.joined(separator: ", ")
+                    cursor += draw(
+                        "Conflicting source records — \(fields)",
+                        x: margin + 6,
+                        font: .boldSystemFont(ofSize: 10),
+                        colour: warning
+                    ) + 2
+                }
 
                 // A partial activity says so BEFORE its totals, so the
                 // whole-activity figures below can never be mistaken for the
@@ -197,6 +281,30 @@ nonisolated enum PruningActivityExportService {
                 }
 
                 cursor += 10
+            }
+
+            // Full ids live here and nowhere else in the visible document, and
+            // only when the reader asked for them.
+            if includeTechnicalReferences, !groups.isEmpty {
+                ensure(40)
+                cursor += draw(
+                    PruningActivityExport.technicalReferencesHeading,
+                    x: margin,
+                    font: .boldSystemFont(ofSize: 12.5),
+                    colour: accent
+                ) + 4
+                for group in groups {
+                    for (index, line) in PruningActivityExport.technicalReferenceLines(group).enumerated() {
+                        ensure(13)
+                        cursor += draw(
+                            line,
+                            x: margin + (index == 0 ? 0 : 10),
+                            font: index == 0 ? .boldSystemFont(ofSize: 9.5) : .systemFont(ofSize: 8.5),
+                            colour: index == 0 ? .black : .darkGray
+                        ) + 1
+                    }
+                    cursor += 4
+                }
             }
         }
 

@@ -47,6 +47,21 @@ import Foundation
 /// outright and the legacy activity value is the fallback used only when the
 /// task has no lines. This model divides whichever value won; it never combines
 /// the two and never re-derives labour from elapsed duration.
+///
+/// ## Parent authority and conflicts
+///
+/// Resolution order for every parent field is:
+///
+///  1. the CANONICAL `pruning_activities` parent, when one was supplied;
+///  2. otherwise the first allocation, in canonical order, that recorded a value.
+///
+/// Step 2 exists for legacy projected rows, where only the mirror carries the
+/// value. It is a fallback, never a merge: if two allocations of one activity
+/// disagree on the worker, the Work Task, the labour or the timing, that is
+/// corrupt data — an incompletely reconciled sync or a stale mirror — and one of
+/// the two values is wrong. The model still has to return something, but it
+/// records a `PruningActivityParentConflict` so the disagreement is visible in
+/// diagnostics instead of being silently resolved by sort order.
 
 /// The authoritative values of ONE pruning activity, resolved from all of its
 /// allocations rather than from the legacy primary-allocation mirror.
@@ -76,6 +91,131 @@ nonisolated struct PruningActivityParent: Sendable, Equatable {
     let allocationCount: Int
     /// The FULL activity's row equivalents — the allocation-share denominator.
     let rowEquivalents: Double
+    /// True when a canonical `pruning_activities` parent supplied these values.
+    /// False means they were reconstructed from the allocation mirror.
+    var resolvedFromCanonicalParent: Bool = false
+    /// True when the allocations (or the canonical parent and its mirror)
+    /// disagreed on at least one parent field. The chosen value is still
+    /// returned, but it must not be trusted without checking the portal.
+    var hasContextConflict: Bool = false
+}
+
+/// A canonical `pruning_activities` parent record.
+///
+/// When the caller can supply this — the activity row itself rather than its
+/// allocation mirror — it OUTRANKS every allocation for the fields it fills.
+/// Fields left nil fall back to the allocations as before, so a partially
+/// populated canonical parent is still useful.
+nonisolated struct PruningActivityParentSource: Sendable, Equatable {
+    let activityId: UUID
+    var worker: String?
+    var method: String?
+    var workTaskId: UUID?
+    var workTaskTitle: String?
+    var workTaskStatus: String?
+    var startTime: Date?
+    var finishTime: Date?
+    var operationalHours: Double?
+    var durationHours: Double?
+    var personHours: Double?
+    var labourCost: Double?
+    var notes: String?
+
+    init(
+        activityId: UUID,
+        worker: String? = nil,
+        method: String? = nil,
+        workTaskId: UUID? = nil,
+        workTaskTitle: String? = nil,
+        workTaskStatus: String? = nil,
+        startTime: Date? = nil,
+        finishTime: Date? = nil,
+        operationalHours: Double? = nil,
+        durationHours: Double? = nil,
+        personHours: Double? = nil,
+        labourCost: Double? = nil,
+        notes: String? = nil
+    ) {
+        self.activityId = activityId
+        self.worker = worker
+        self.method = method
+        self.workTaskId = workTaskId
+        self.workTaskTitle = workTaskTitle
+        self.workTaskStatus = workTaskStatus
+        self.startTime = startTime
+        self.finishTime = finishTime
+        self.operationalHours = operationalHours
+        self.durationHours = durationHours
+        self.personHours = personHours
+        self.labourCost = labourCost
+        self.notes = notes
+    }
+}
+
+/// The parent fields whose disagreement is worth reporting.
+nonisolated enum PruningActivityParentField: String, Sendable, CaseIterable {
+    case worker
+    case method
+    case workTask
+    case workTaskTitle
+    case workTaskStatus
+    case startTime
+    case finishTime
+    case operationalHours
+    case durationHours
+    case personHours
+    case labourCost
+
+    var label: String {
+        switch self {
+        case .worker: return "Worker"
+        case .method: return "Method"
+        case .workTask: return "Work Task"
+        case .workTaskTitle: return "Work Task title"
+        case .workTaskStatus: return "Work Task status"
+        case .startTime: return "Start time"
+        case .finishTime: return "Finish time"
+        case .operationalHours: return "Operational hours"
+        case .durationHours: return "Duration"
+        case .personHours: return "Person-hours"
+        case .labourCost: return "Labour cost"
+        }
+    }
+}
+
+/// Where the value that WON came from.
+nonisolated enum PruningActivityConflictResolution: String, Sendable {
+    /// The canonical `pruning_activities` parent decided it.
+    case canonicalParent
+    /// No canonical parent was available, so the first allocation carrying a
+    /// value decided it. This is a guess and is reported as such.
+    case firstAllocation
+}
+
+/// One parent field on which the sources disagreed.
+///
+/// A conflict is DIAGNOSTIC. It never changes the exported figures — the report
+/// still has to render something — but it says plainly that the underlying
+/// records are inconsistent, which is the difference between a stale mirror
+/// quietly winning and a data problem someone can go and fix.
+nonisolated struct PruningActivityParentConflict: Sendable, Equatable {
+    let activityId: UUID
+    let field: PruningActivityParentField
+    /// Every distinct value seen, canonical parent first when it had one.
+    let values: [String]
+    let resolution: PruningActivityConflictResolution
+    /// The value the model actually used.
+    let resolvedValue: String?
+
+    /// Log-ready one-liner.
+    var description: String {
+        let source = resolution == .canonicalParent
+            ? " (canonical activity record)"
+            : " (first allocation — unverified)"
+        return "\(field.label) conflict on activity \(activityId.uuidString): "
+            + values.joined(separator: " vs ")
+            + " — using \(resolvedValue ?? "none")\(source)"
+    }
 }
 
 /// One allocation's proportional slice of its parent activity.
@@ -104,6 +244,11 @@ nonisolated struct PruningActivityAllocationModel: Sendable {
     private let parentsById: [UUID: PruningActivityParent]
     private let sharesById: [UUID: PruningActivityAllocationShare]
 
+    /// Every parent-context disagreement found while building the model, in
+    /// activity order. Surfaced in diagnostics — logs, the PDF's data-quality
+    /// notice — never used to alter a figure.
+    let conflicts: [PruningActivityParentConflict]
+
     func parent(_ activityId: UUID) -> PruningActivityParent? { parentsById[activityId] }
 
     func parent(of row: PruningActivityRow) -> PruningActivityParent? { parentsById[row.activityKey] }
@@ -112,14 +257,28 @@ nonisolated struct PruningActivityAllocationModel: Sendable {
 
     func share(of row: PruningActivityRow) -> PruningActivityAllocationShare? { sharesById[row.id] }
 
+    var hasConflicts: Bool { !conflicts.isEmpty }
+
+    func conflicts(_ activityId: UUID) -> [PruningActivityParentConflict] {
+        conflicts.filter { $0.activityId == activityId }
+    }
+
+    /// Activity ids with at least one conflicting parent field.
+    var conflictedActivityIds: Set<UUID> { Set(conflicts.map(\.activityId)) }
+
     /// - Parameters:
     ///   - canonicalRows: every allocation of every activity in scope, BEFORE
     ///     the report's filters are applied.
     ///   - includeCost: false for roles without costing visibility; cost is then
     ///     absent from the model itself, not merely hidden when rendered.
+    ///   - canonicalParents: the `pruning_activities` records keyed by activity
+    ///     id, when the caller has them. These OUTRANK the allocation mirror.
+    ///     Supplying them is what turns "first allocation wins" from a
+    ///     resolution rule into a fallback.
     static func build(
         _ canonicalRows: [PruningActivityRow],
-        includeCost: Bool
+        includeCost: Bool,
+        canonicalParents: [UUID: PruningActivityParentSource] = [:]
     ) -> PruningActivityAllocationModel {
         var order: [UUID] = []
         var buckets: [UUID: [PruningActivityRow]] = [:]
@@ -133,12 +292,19 @@ nonisolated struct PruningActivityAllocationModel: Sendable {
 
         var parents: [UUID: PruningActivityParent] = [:]
         var shares: [UUID: PruningActivityAllocationShare] = [:]
+        var conflicts: [PruningActivityParentConflict] = []
 
         for activityId in order {
             guard let rows = buckets[activityId], !rows.isEmpty else { continue }
             let ordered = canonicalOrder(rows)
-            let parent = resolveParent(activityId, ordered, includeCost: includeCost)
+            let resolution = ParentResolution(
+                activityId: activityId,
+                ordered: ordered,
+                canonical: canonicalParents[activityId]
+            )
+            let parent = resolveParent(activityId, ordered, includeCost: includeCost, resolution: resolution)
             parents[activityId] = parent
+            conflicts.append(contentsOf: resolution.conflicts)
 
             // Row equivalents are the natural measure of how much of the
             // activity each block represents. When none were recorded the
@@ -163,7 +329,11 @@ nonisolated struct PruningActivityAllocationModel: Sendable {
             }
         }
 
-        return PruningActivityAllocationModel(parentsById: parents, sharesById: shares)
+        return PruningActivityAllocationModel(
+            parentsById: parents,
+            sharesById: shares,
+            conflicts: conflicts
+        )
     }
 
     /// The stable allocation order: the server's `allocation_index` first, so
@@ -181,62 +351,164 @@ nonisolated struct PruningActivityAllocationModel: Sendable {
         }
     }
 
-    /// Resolves the parent from ALL allocations: the first allocation that
-    /// actually recorded a value wins.
+    /// Resolves the parent: the canonical `pruning_activities` record when the
+    /// caller supplied one, otherwise the first allocation, in canonical order,
+    /// that actually recorded a value.
     ///
-    /// This is the correction to the legacy rule. The primary allocation is only
-    /// a mirror, so a report must not go blank just because the primary was
-    /// filtered out — the value belongs to the activity, and any allocation that
-    /// carries it can supply it.
+    /// The allocation fallback is the correction to the legacy rule. The primary
+    /// allocation is only a mirror, so a report must not go blank just because
+    /// the primary was filtered out — the value belongs to the activity, and any
+    /// allocation that carries it can supply it.
+    ///
+    /// Where the sources DISAGREE, `resolution` records a conflict. The export
+    /// still renders the chosen value, because a blank cell would be a worse
+    /// answer than a flagged one, but nothing about the disagreement is hidden.
     private static func resolveParent(
         _ activityId: UUID,
         _ ordered: [PruningActivityRow],
-        includeCost: Bool
+        includeCost: Bool,
+        resolution: ParentResolution
     ) -> PruningActivityParent {
         let head = ordered[0]
+        let canonical = resolution.canonical
 
-        func first<T>(_ selector: (PruningActivityRow) -> T?) -> T? {
-            for row in ordered {
-                if let value = selector(row) { return value }
-            }
-            return nil
-        }
-
-        func firstText(_ selector: (PruningActivityRow) -> String?) -> String? {
-            first { row in
-                guard let value = selector(row)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !value.isEmpty else { return nil }
-                return value
-            }
-        }
-
-        let workTaskTitle = firstText { $0.workTaskTitle }
-        let method = firstText { $0.method } ?? head.method
+        let workTaskTitle = resolution.text(.workTaskTitle, canonical?.workTaskTitle) { $0.workTaskTitle }
+        let method = resolution.text(.method, canonical?.method) { $0.method } ?? head.method
 
         return PruningActivityParent(
             activityId: activityId,
             label: label(workTaskTitle: workTaskTitle, method: method),
             date: head.date,
             method: method,
-            worker: firstText { $0.worker },
-            workTaskId: first { $0.workTaskId },
+            worker: resolution.text(.worker, canonical?.worker) { $0.worker },
+            workTaskId: resolution.value(
+                .workTask,
+                canonical?.workTaskId,
+                selector: { $0.workTaskId },
+                format: { $0.uuidString }
+            ),
             workTaskTitle: workTaskTitle,
-            workTaskStatus: firstText { $0.workTaskStatus },
-            startTime: first { $0.startTime },
-            finishTime: first { $0.finishTime },
-            operationalHours: first { $0.operationalHours },
-            durationHours: first { $0.durationHours },
+            workTaskStatus: resolution.text(.workTaskStatus, canonical?.workTaskStatus) { $0.workTaskStatus },
+            startTime: resolution.date(.startTime, canonical?.startTime) { $0.startTime },
+            finishTime: resolution.date(.finishTime, canonical?.finishTime) { $0.finishTime },
+            operationalHours: resolution.number(.operationalHours, canonical?.operationalHours) {
+                $0.operationalHours
+            },
+            durationHours: resolution.number(.durationHours, canonical?.durationHours) { $0.durationHours },
             // Every allocation row carries the SAME task-derived person-hours,
             // so the parent total is one of them — never their sum.
-            personHours: first { $0.labourHours },
-            labourCost: includeCost ? first { $0.labourCost } : nil,
-            notes: firstText { $0.notes },
+            personHours: resolution.number(.personHours, canonical?.personHours) { $0.labourHours },
+            labourCost: includeCost
+                ? resolution.number(.labourCost, canonical?.labourCost) { $0.labourCost }
+                : nil,
+            // Notes are free text and legitimately differ per allocation, so
+            // they are resolved without conflict reporting.
+            notes: PruningActivityAllocationModel.cleaned(canonical?.notes)
+                ?? ordered.compactMap { PruningActivityAllocationModel.cleaned($0.notes) }.first,
             isReversed: ordered.allSatisfy(\.isReversed),
             allocationCount: ordered.count,
             rowEquivalents: ordered.reduce(0) { total, row in
                 total + (row.rowEquivalents.isFinite && row.rowEquivalents > 0 ? row.rowEquivalents : 0)
-            }
+            },
+            resolvedFromCanonicalParent: canonical != nil,
+            hasContextConflict: !resolution.conflicts.isEmpty
         )
+    }
+
+    static func cleaned(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
+    /// Picks one value per parent field and records every disagreement.
+    ///
+    /// Two allocations of the same activity should never carry different
+    /// non-nil worker, Work Task, labour or timing values. When they do, the
+    /// data is wrong — a corrupted legacy mirror or a half-applied sync — and
+    /// choosing quietly by sort order would bury it.
+    private final class ParentResolution {
+        let activityId: UUID
+        let ordered: [PruningActivityRow]
+        let canonical: PruningActivityParentSource?
+        private(set) var conflicts: [PruningActivityParentConflict] = []
+
+        init(activityId: UUID, ordered: [PruningActivityRow], canonical: PruningActivityParentSource?) {
+            self.activityId = activityId
+            self.ordered = ordered
+            self.canonical = canonical
+        }
+
+        func text(
+            _ field: PruningActivityParentField,
+            _ canonicalValue: String?,
+            _ selector: @escaping (PruningActivityRow) -> String?
+        ) -> String? {
+            value(
+                field,
+                PruningActivityAllocationModel.cleaned(canonicalValue),
+                selector: { PruningActivityAllocationModel.cleaned(selector($0)) },
+                format: { $0 }
+            )
+        }
+
+        func number(
+            _ field: PruningActivityParentField,
+            _ canonicalValue: Double?,
+            _ selector: @escaping (PruningActivityRow) -> Double?
+        ) -> Double? {
+            value(
+                field,
+                canonicalValue.flatMap { $0.isFinite ? $0 : nil },
+                selector: { selector($0).flatMap { value in value.isFinite ? value : nil } },
+                // Compared at four decimals so float noise is not a "conflict".
+                format: { String(format: "%.4f", $0) }
+            )
+        }
+
+        func date(
+            _ field: PruningActivityParentField,
+            _ canonicalValue: Date?,
+            _ selector: @escaping (PruningActivityRow) -> Date?
+        ) -> Date? {
+            value(
+                field,
+                canonicalValue,
+                selector: selector,
+                format: { String(format: "%.0f", $0.timeIntervalSince1970) }
+            )
+        }
+
+        func value<T>(
+            _ field: PruningActivityParentField,
+            _ canonicalValue: T?,
+            selector: (PruningActivityRow) -> T?,
+            format: (T) -> String
+        ) -> T? {
+            let recorded = ordered.compactMap(selector)
+            let chosen = canonicalValue ?? recorded.first
+            var distinct: [String] = []
+            if let canonicalValue {
+                distinct.append(format(canonicalValue))
+            }
+            for value in recorded {
+                let text = format(value)
+                if !distinct.contains(text) { distinct.append(text) }
+            }
+            if distinct.count > 1 {
+                conflicts.append(
+                    PruningActivityParentConflict(
+                        activityId: activityId,
+                        field: field,
+                        values: distinct,
+                        resolution: canonicalValue != nil ? .canonicalParent : .firstAllocation,
+                        resolvedValue: chosen.map(format)
+                    )
+                )
+            }
+            return chosen
+        }
     }
 
     /// Activity name. There is no free-text activity title in the schema, so the

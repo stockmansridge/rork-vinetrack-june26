@@ -40,6 +40,18 @@ import Foundation
 /// totals still describe the WHOLE activity and are labelled as such; the
 /// filtered block's proportional figures are the ALLOCATED columns. Confusing
 /// the two is exactly the error this file exists to prevent.
+///
+/// ## Identifiers
+///
+/// The CSV is a reconciliation artefact, so it carries the FULL activity and
+/// allocation ids in their own columns — that is what lets a reader de-duplicate
+/// whole-activity totals or match a row back to the portal.
+///
+/// The PDF is a document people read. It never prints a full UUID in the body:
+/// the activity's human-readable name is the label, and an eight-character SHORT
+/// REFERENCE (`shortReference`) sits beside it in small type for anyone who needs
+/// to quote a record. Full ids appear in the PDF only in its metadata, or in the
+/// optional "Include technical references" appendix.
 nonisolated enum PruningActivityExport {
 
     /// One CSV row — one ALLOCATION of one activity.
@@ -136,6 +148,15 @@ nonisolated enum PruningActivityExport {
         let fullAllocationCount: Int
         let allocations: [Row]
 
+        /// The parent activity's id, as exported in the CSV. Lower-cased to
+        /// match both the server's own ids and the Android export exactly.
+        var activityId: String { id.uuidString.lowercased() }
+
+        /// The eight-character reference printed in the PDF instead of the full
+        /// UUID — enough to quote a record over the phone, short enough not to
+        /// dominate the line.
+        var shortReference: String { PruningActivityExport.shortReference(activityId) }
+
         var includedAllocationCount: Int { allocations.count }
         var isPartialActivity: Bool { includedAllocationCount < fullAllocationCount }
         var isMultiBlock: Bool { fullAllocationCount > 1 }
@@ -192,13 +213,21 @@ nonisolated enum PruningActivityExport {
     ///   - canonicalRows: every allocation of every activity BEFORE filtering.
     ///     This supplies the parent context and the allocation-share
     ///     denominator. Defaults to `reportRows` for an unfiltered export.
+    ///   - canonicalParents: the `pruning_activities` records, when the caller
+    ///     has them. They outrank the allocation mirror for every field they
+    ///     fill.
     static func groups(
         _ reportRows: [PruningActivityRow],
         includeCost: Bool,
         canonicalRows: [PruningActivityRow]? = nil,
+        canonicalParents: [UUID: PruningActivityParentSource] = [:],
         calendar: Calendar = .current
     ) -> [Group] {
-        let model = PruningActivityAllocationModel.build(canonicalRows ?? reportRows, includeCost: includeCost)
+        let model = PruningActivityAllocationModel.build(
+            canonicalRows ?? reportRows,
+            includeCost: includeCost,
+            canonicalParents: canonicalParents
+        )
         return groups(reportRows, includeCost: includeCost, model: model, calendar: calendar)
     }
 
@@ -246,8 +275,8 @@ nonisolated enum PruningActivityExport {
                     dateDisplay: auDate(row.date, calendar: calendar),
                     weekday: weekday(row.date, calendar: calendar),
                     activityLabel: label,
-                    activityId: activityId.uuidString,
-                    allocationId: row.id.uuidString,
+                    activityId: activityId.uuidString.lowercased(),
+                    allocationId: row.id.uuidString.lowercased(),
                     allocationNumber: number,
                     fullAllocationCount: fullCount,
                     includedAllocationCount: includedCount,
@@ -314,14 +343,64 @@ nonisolated enum PruningActivityExport {
         _ reportRows: [PruningActivityRow],
         includeCost: Bool,
         canonicalRows: [PruningActivityRow]? = nil,
+        canonicalParents: [UUID: PruningActivityParentSource] = [:],
         calendar: Calendar = .current
     ) -> [Row] {
         groups(
             reportRows,
             includeCost: includeCost,
             canonicalRows: canonicalRows,
+            canonicalParents: canonicalParents,
             calendar: calendar
         ).flatMap(\.allocations)
+    }
+
+    // MARK: - Identifiers
+
+    /// The first eight characters of an id — the first hex group of a UUID.
+    ///
+    /// Long enough to disambiguate a season's activities in practice, short
+    /// enough to read aloud, and a PREFIX of the full id in the CSV, so matching
+    /// the two is a simple "starts with" rather than a lookup table.
+    static func shortReference(_ id: String) -> String {
+        let cleaned = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return "" }
+        return cleaned.count <= 8 ? cleaned : String(cleaned.prefix(8))
+    }
+
+    /// The PDF's small-type reference line, or nil when short references are
+    /// switched off. Never the full UUID.
+    static func referenceLine(_ group: Group, includeShortReferences: Bool) -> String? {
+        guard includeShortReferences else { return nil }
+        let reference = shortReference(group.activityId)
+        return reference.isEmpty ? nil : "Ref \(reference)"
+    }
+
+    /// The full ids for ONE activity — rendered only in the optional "Include
+    /// technical references" appendix, never in the body of the report.
+    static func technicalReferenceLines(_ group: Group) -> [String] {
+        var lines = [
+            "\(group.activityLabel) — \(group.dateDisplay)",
+            "Activity ID: \(group.activityId)"
+        ]
+        for allocation in group.allocations {
+            lines.append(
+                "Allocation \(allocation.allocationNumber) (\(allocation.blockName)): \(allocation.allocationId)"
+            )
+        }
+        return lines
+    }
+
+    /// The appendix heading, kept identical on both platforms.
+    static let technicalReferencesHeading = "Technical references"
+
+    /// The PDF's data-quality notice. Printed when the allocation model found
+    /// activities whose source records disagree, so a reader is told before they
+    /// act on a figure that one of its sources is wrong.
+    static func conflictNotice(conflictedActivities: Int) -> String? {
+        guard conflictedActivities > 0 else { return nil }
+        let activities = conflictedActivities == 1 ? "activity has" : "activities have"
+        return "\(conflictedActivities) \(activities) conflicting source records — verify against the portal"
     }
 
     /// "block 1 of 2"; a single-allocation activity says "whole activity". A
@@ -430,12 +509,14 @@ nonisolated enum PruningActivityExport {
         _ reportRows: [PruningActivityRow],
         includeCost: Bool,
         canonicalRows: [PruningActivityRow]? = nil,
+        canonicalParents: [UUID: PruningActivityParentSource] = [:],
         calendar: Calendar = .current
     ) -> String {
         let exported = rows(
             reportRows,
             includeCost: includeCost,
             canonicalRows: canonicalRows,
+            canonicalParents: canonicalParents,
             calendar: calendar
         )
         var lines: [String] = [headers(includeCost: includeCost).map(escape).joined(separator: ",")]
