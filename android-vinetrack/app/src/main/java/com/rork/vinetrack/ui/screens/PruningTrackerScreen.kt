@@ -379,6 +379,7 @@ fun PruningTrackerScreen(
             labourLines = state.vineyardLabourLines.orEmpty(),
             members = state.members,
             canViewCosting = state.currentRole == "owner" || state.currentRole == "manager",
+            vineyardName = state.vineyards.firstOrNull { it.id == vineyardId }?.name.orEmpty(),
             onBack = { showActivityReport = false },
             onEditEntry = { entry ->
                 // Load the PARENT activity through `get_pruning_activity` — every

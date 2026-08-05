@@ -131,6 +131,9 @@ class PruningSyncRepository(private val session: SessionStore) {
         @SerialName("row_equivalents_completed") val rowEquivalentsCompleted: Double? = null,
         @SerialName("estimated_vines_completed") val estimatedVinesCompleted: Int? = null,
         @SerialName("work_task_id") val workTaskId: String? = null,
+        /** Parent activity (sql/166); the server back-fills legacy rows with their own id. */
+        @SerialName("pruning_activity_id") val pruningActivityId: String? = null,
+        @SerialName("allocation_index") val allocationIndex: Int? = null,
         @SerialName("created_at") val createdAt: String? = null,
         @SerialName("created_by") val createdBy: String? = null,
         @SerialName("updated_at") val updatedAt: String? = null,
@@ -159,6 +162,8 @@ class PruningSyncRepository(private val session: SessionStore) {
             notes = notes.orEmpty(),
             estimatedVines = estimatedVinesCompleted ?: 0,
             workTaskId = workTaskId,
+            pruningActivityId = pruningActivityId,
+            allocationIndex = allocationIndex ?: 0,
             createdAtMs = parseInstantMs(createdAt),
             updatedAtMs = parseInstantMs(updatedAt),
             enteredBy = createdBy,

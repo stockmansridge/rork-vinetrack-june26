@@ -73,6 +73,12 @@ nonisolated struct PruningActivityRow: Identifiable, Sendable, Equatable {
     let id: UUID
     let paddockId: UUID
     let workTaskId: UUID?
+    /// The PARENT activity this row is one allocation of (sql/166). A legacy
+    /// single-block record is its own activity, so this is never nil and
+    /// grouping by it is safe for every record ever written.
+    let activityKey: UUID
+    /// 0 for the PRIMARY allocation — the one carrying the activity's labour.
+    let allocationIndex: Int
     /// Pruning season (calendar year of the entry date).
     let seasonYear: Int
     let date: Date
@@ -86,7 +92,16 @@ nonisolated struct PruningActivityRow: Identifiable, Sendable, Equatable {
     let rowEquivalents: Double
     /// Exact vines completed — nil when the block's rows can't be resolved.
     let vines: Double?
+    /// This allocation's own client vine estimate, as recorded.
+    let estimatedVines: Int
+    /// The RESOLVED authoritative labour hours: summed Work Task labour lines
+    /// when the linked task has any, otherwise the legacy activity value. Never
+    /// both — see `PruningActivityReport.rows`.
     let labourHours: Double?
+    /// The activity's OWN recorded operational hours, independent of the Work
+    /// Task's person-hours. Elapsed operational time is not person-hours and is
+    /// never multiplied by the crew size.
+    let operationalHours: Double?
     let startTime: Date?
     let finishTime: Date?
     /// Finish − start, in hours.
@@ -96,6 +111,7 @@ nonisolated struct PruningActivityRow: Identifiable, Sendable, Equatable {
     /// costing is not visible to this user.
     let labourCost: Double?
     let workTaskTitle: String?
+    let workTaskStatus: String?
     let notes: String?
     let enteredBy: String?
     let createdAt: Date?
@@ -105,6 +121,11 @@ nonisolated struct PruningActivityRow: Identifiable, Sendable, Equatable {
 
     var isReversed: Bool { status == .reversed }
     var hasWorkTask: Bool { workTaskId != nil }
+
+    /// True when this row carries the activity's own labour/timing/task link —
+    /// the PRIMARY allocation. Activity-level values are written to exactly one
+    /// allocation, which is why an export can never double-count them.
+    var isPrimaryAllocation: Bool { allocationIndex == 0 }
 
     /// Lowest row number — the natural sort key ("Row 2" before "Row 10").
     var rowSortKey: Int? { rowNumbers.min() }
@@ -294,6 +315,7 @@ nonisolated enum PruningActivityReport {
         entries: [PruningEntry],
         blocks: [UUID: PruningActivityBlockContext],
         workTaskTitles: [UUID: String],
+        workTaskStatuses: [UUID: String] = [:],
         labourCosts: [UUID: Double],
         labourHours: [UUID: Double] = [:],
         accountNames: [UUID: String],
@@ -321,6 +343,8 @@ nonisolated enum PruningActivityReport {
                 id: entry.id,
                 paddockId: entry.paddockId,
                 workTaskId: entry.workTaskId,
+                activityKey: entry.activityKey,
+                allocationIndex: entry.allocationOrder,
                 seasonYear: calendar.component(.year, from: entry.date),
                 date: entry.date,
                 worker: worker.isEmpty ? nil : worker,
@@ -330,13 +354,16 @@ nonisolated enum PruningActivityReport {
                 quarters: entry.segments.count,
                 rowEquivalents: entry.rowEquivalents,
                 vines: vines,
+                estimatedVines: entry.estimatedVines,
                 labourHours: hours,
+                operationalHours: entry.labourHours.flatMap { $0 > 0 ? $0 : nil },
                 startTime: entry.startTime,
                 finishTime: entry.finishTime,
                 durationHours: entry.durationHours,
                 vinesPerHour: vinesPerHour,
                 labourCost: entry.workTaskId.flatMap { labourCosts[$0] },
                 workTaskTitle: entry.workTaskId.flatMap { workTaskTitles[$0] },
+                workTaskStatus: entry.workTaskId.flatMap { workTaskStatuses[$0] },
                 notes: notes.isEmpty ? nil : notes,
                 enteredBy: entry.enteredBy.flatMap { accountNames[$0] },
                 createdAt: entry.createdAt,

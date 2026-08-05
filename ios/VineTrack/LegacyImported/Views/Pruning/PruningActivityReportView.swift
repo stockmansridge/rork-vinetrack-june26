@@ -29,6 +29,7 @@ struct PruningActivityReportView: View {
     @State private var reversalTarget: PruningActivityRow?
     @State private var accountNames: [UUID: String] = [:]
     @State private var didRestoreSeason: Bool = false
+    @State private var exportError: String?
 
     private var canViewCosting: Bool { accessControl?.canViewCosting ?? false }
     private var canDeleteLinkedTask: Bool { accessControl?.canDelete ?? false }
@@ -84,12 +85,30 @@ struct PruningActivityReportView: View {
         return titles
     }
 
+    /// Presentable Work Task status for the report's exports ("in_progress" →
+    /// "In progress"). Unknown values pass through rather than being blanked, so
+    /// a new server status never silently disappears from an export.
+    private var workTaskStatuses: [UUID: String] {
+        var statuses: [UUID: String] = [:]
+        for task in store.workTasks {
+            guard let raw = task.status?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty else { continue }
+            let cleaned = raw
+                .replacingOccurrences(of: "_", with: " ")
+                .replacingOccurrences(of: "-", with: " ")
+                .lowercased()
+            statuses[task.id] = cleaned.prefix(1).uppercased() + cleaned.dropFirst()
+        }
+        return statuses
+    }
+
     private var allRows: [PruningActivityRow] {
         guard let vineyardId else { return [] }
         return PruningActivityReport.rows(
             entries: pruningStore.auditEntries(forVineyard: vineyardId),
             blocks: blockContexts,
             workTaskTitles: workTaskTitles,
+            workTaskStatuses: workTaskStatuses,
             labourCosts: labourCosts,
             labourHours: labourHours,
             accountNames: accountNames
@@ -129,6 +148,84 @@ struct PruningActivityReportView: View {
         return years.sorted(by: >)
     }
 
+    // MARK: Export
+
+    private enum ExportFormat {
+        case csv
+        case pdf
+    }
+
+    /// Exports carry the CURRENT result set — same filters, same search, same
+    /// sort — so the file always matches what is on screen.
+    private var exportMenu: some View {
+        Menu {
+            Button {
+                share(.csv)
+            } label: {
+                Label("Export CSV (one row per allocation)", systemImage: "tablecells")
+            }
+            Button {
+                share(.pdf)
+            } label: {
+                Label("Export PDF (grouped by activity)", systemImage: "doc.richtext")
+            }
+        } label: {
+            Image(systemName: "square.and.arrow.up")
+        }
+        .disabled(rows.isEmpty)
+        .accessibilityLabel("Export the pruning activity report")
+    }
+
+    private var exportVineyardName: String {
+        guard let vineyardId else { return "" }
+        return store.vineyards.first { $0.id == vineyardId }?.name ?? ""
+    }
+
+    /// Writes the export to a temporary file and hands it to the system share
+    /// sheet. `canViewCosting` gates the labour cost out of the DATA, not just
+    /// the rendering, so a supervisor's file never contains money.
+    private func share(_ format: ExportFormat) {
+        let exported = rows
+        guard !exported.isEmpty else { return }
+        let seasonLabel = filter.seasonYear.map(String.init) ?? ""
+
+        do {
+            let url: URL
+            switch format {
+            case .csv:
+                url = try PruningActivityExportService.csvURL(
+                    rows: exported,
+                    vineyardName: exportVineyardName,
+                    seasonLabel: seasonLabel,
+                    includeCost: canViewCosting
+                )
+            case .pdf:
+                url = try PruningActivityExportService.pdfURL(
+                    rows: exported,
+                    vineyardName: exportVineyardName,
+                    seasonLabel: seasonLabel,
+                    includeCost: canViewCosting
+                )
+            }
+            present(url)
+        } catch {
+            exportError = "The report could not be written to a file. Please try again."
+        }
+    }
+
+    private func present(_ url: URL) {
+        let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let root = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController
+                ?? scene.windows.first?.rootViewController else { return }
+        var presenter = root
+        while let presented = presenter.presentedViewController {
+            presenter = presented
+        }
+        controller.popoverPresentationController?.sourceView = presenter.view
+        presenter.present(controller, animated: true)
+    }
+
     // MARK: Body
 
     var body: some View {
@@ -148,6 +245,9 @@ struct PruningActivityReportView: View {
         .searchable(text: $search, prompt: "Worker, block, variety, row, task, notes")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                exportMenu
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showFilters = true
                 } label: {
@@ -157,6 +257,11 @@ struct PruningActivityReportView: View {
                 }
                 .accessibilityLabel("Filter the pruning activity report")
             }
+        }
+        .alert("Export failed", isPresented: .constant(exportError != nil)) {
+            Button("OK") { exportError = nil }
+        } message: {
+            Text(exportError ?? "")
         }
         .task {
             restoreSeasonIfNeeded()

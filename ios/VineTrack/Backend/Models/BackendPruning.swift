@@ -150,6 +150,9 @@ nonisolated struct BackendPruningEntry: Codable, Sendable, Identifiable {
     let rowEquivalentsCompleted: Double?
     let estimatedVinesCompleted: Int?
     let workTaskId: UUID?
+    /// Parent activity (sql/166); the server back-fills legacy rows with their own id.
+    let pruningActivityId: UUID?
+    let allocationIndex: Int?
     let createdAt: Date?
     let createdBy: UUID?
     let updatedAt: Date?
@@ -171,6 +174,8 @@ nonisolated struct BackendPruningEntry: Codable, Sendable, Identifiable {
         case rowEquivalentsCompleted = "row_equivalents_completed"
         case estimatedVinesCompleted = "estimated_vines_completed"
         case workTaskId = "work_task_id"
+        case pruningActivityId = "pruning_activity_id"
+        case allocationIndex = "allocation_index"
         case createdAt = "created_at"
         case createdBy = "created_by"
         case updatedAt = "updated_at"
@@ -198,7 +203,9 @@ nonisolated struct BackendPruningEntry: Codable, Sendable, Identifiable {
             createdAt: createdAt ?? Date(),
             updatedAt: updatedAt,
             enteredBy: createdBy,
-            reversedAt: deletedAt
+            reversedAt: deletedAt,
+            pruningActivityId: pruningActivityId,
+            allocationIndex: allocationIndex
         )
     }
 }

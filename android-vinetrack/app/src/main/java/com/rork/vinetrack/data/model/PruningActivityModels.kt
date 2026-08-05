@@ -367,7 +367,7 @@ object PruningAllocationEditor {
     fun toLegacyEntries(draft: PruningActivityDraft): List<PruningEntry> {
         val active = draft.activeAllocations
         val primary = active.firstOrNull()?.paddockId
-        return active.map { alloc ->
+        return active.mapIndexed { index, alloc ->
             val isPrimary = alloc.paddockId == primary
             PruningEntry(
                 id = alloc.allocationIdFor(draft.id),
@@ -385,6 +385,8 @@ object PruningAllocationEditor {
                 notes = draft.notes,
                 estimatedVines = alloc.estimatedVines,
                 workTaskId = if (isPrimary) draft.workTaskId else null,
+                pruningActivityId = draft.id,
+                allocationIndex = index,
                 createdAtMs = draft.createdAtMs,
                 updatedAtMs = draft.updatedAtMs,
                 enteredBy = draft.enteredBy,

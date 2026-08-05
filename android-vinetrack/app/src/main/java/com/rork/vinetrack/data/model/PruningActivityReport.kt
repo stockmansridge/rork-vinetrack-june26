@@ -67,6 +67,14 @@ data class PruningActivityRow(
     val id: String,
     val paddockId: String,
     val workTaskId: String?,
+    /**
+     * The PARENT activity this row is one allocation of (sql/166). A legacy
+     * single-block record is its own activity, so this is never blank and
+     * grouping by it is safe for every record ever written.
+     */
+    val activityKey: String = id,
+    /** 0 for the PRIMARY allocation — the one carrying the activity's labour. */
+    val allocationIndex: Int = 0,
     /** Pruning season (calendar year of the entry date). */
     val seasonYear: Int,
     val date: LocalDate?,
@@ -82,7 +90,20 @@ data class PruningActivityRow(
     val rowEquivalents: Double,
     /** Exact vines completed — null when the block's rows can't be resolved. */
     val vines: Double?,
+    /** This allocation's own client vine estimate, as recorded. */
+    val estimatedVines: Int = 0,
+    /**
+     * The RESOLVED authoritative labour hours: summed Work Task labour lines
+     * when the linked task has any, otherwise the legacy activity value. Never
+     * both — see [PruningActivityReport.rows].
+     */
     val labourHours: Double?,
+    /**
+     * The activity's OWN recorded operational hours, independent of the Work
+     * Task's person-hours. Elapsed operational time is not person-hours and is
+     * never multiplied by the crew size.
+     */
+    val operationalHours: Double? = null,
     /** HH:mm, as recorded. */
     val startTime: String?,
     val finishTime: String?,
@@ -94,6 +115,7 @@ data class PruningActivityRow(
      */
     val labourCost: Double?,
     val workTaskTitle: String?,
+    val workTaskStatus: String? = null,
     val notes: String?,
     val enteredBy: String?,
     val createdAtMs: Long?,
@@ -103,6 +125,13 @@ data class PruningActivityRow(
 ) {
     val isReversed: Boolean get() = status == PruningActivityStatus.Reversed
     val hasWorkTask: Boolean get() = workTaskId != null
+
+    /**
+     * True when this row carries the activity's own labour/timing/task link —
+     * the PRIMARY allocation. Activity-level values are written to exactly one
+     * allocation, which is why an export can never double-count them.
+     */
+    val isPrimaryAllocation: Boolean get() = allocationIndex == 0
 
     /** Lowest row number — the natural sort key ("Row 2" before "Row 10"). */
     val rowSortKey: Int? get() = rowNumbers.minOrNull()
@@ -265,6 +294,7 @@ object PruningActivityReport {
         entries: List<PruningEntry>,
         blocks: Map<String, PruningActivityBlockContext>,
         workTaskTitles: Map<String, String> = emptyMap(),
+        workTaskStatuses: Map<String, String> = emptyMap(),
         labourCosts: Map<String, Double> = emptyMap(),
         labourHours: Map<String, Double> = emptyMap(),
         accountNames: Map<String, String> = emptyMap(),
@@ -283,6 +313,8 @@ object PruningActivityReport {
             id = entry.id,
             paddockId = entry.paddockId,
             workTaskId = entry.workTaskId,
+            activityKey = entry.activityKey,
+            allocationIndex = entry.allocationIndex,
             seasonYear = date?.year ?: 0,
             date = date,
             dateIso = entry.date,
@@ -293,13 +325,16 @@ object PruningActivityReport {
             quarters = entry.segments.size,
             rowEquivalents = entry.rowEquivalents,
             vines = vines,
+            estimatedVines = entry.estimatedVines,
             labourHours = hours,
+            operationalHours = entry.labourHours?.takeIf { it > 0 },
             startTime = entry.startTime?.takeIf { it.isNotBlank() },
             finishTime = entry.finishTime?.takeIf { it.isNotBlank() },
             durationHours = entry.durationHours,
             vinesPerHour = if (vines != null && hours != null && hours > 0) vines / hours else null,
             labourCost = entry.workTaskId?.let { labourCosts[it] },
             workTaskTitle = entry.workTaskId?.let { workTaskTitles[it] },
+            workTaskStatus = entry.workTaskId?.let { workTaskStatuses[it] },
             notes = notes.takeIf { it.isNotEmpty() },
             enteredBy = entry.enteredBy?.let { accountNames[it] },
             createdAtMs = entry.createdAtMs.takeIf { it > 0 },

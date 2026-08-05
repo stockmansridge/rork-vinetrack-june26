@@ -197,6 +197,16 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
     /// locally for the Activity Report's audit history and are excluded from
     /// every progress/rate/forecast calculation (see `PruningStore.entries`).
     var reversedAt: Date?
+    /// `pruning_entries.pruning_activity_id` (sql/166) — the PARENT activity
+    /// this row is one ALLOCATION of. Nil for records that predate the activity
+    /// model; the server back-fills those with `pruning_activity_id = id`, which
+    /// is exactly what `activityKey` falls back to.
+    ///
+    /// Optional so an already-cached entry decoded from disk keeps working.
+    var pruningActivityId: UUID?
+    /// `pruning_entries.allocation_index` — 0 for the PRIMARY allocation, the
+    /// only one carrying the activity's labour, timing and Work Task link.
+    var allocationIndex: Int?
 
     init(
         id: UUID = UUID(),
@@ -216,7 +226,9 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
         createdAt: Date = Date(),
         updatedAt: Date? = nil,
         enteredBy: UUID? = nil,
-        reversedAt: Date? = nil
+        reversedAt: Date? = nil,
+        pruningActivityId: UUID? = nil,
+        allocationIndex: Int? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -239,10 +251,20 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
         self.updatedAt = updatedAt
         self.enteredBy = enteredBy
         self.reversedAt = reversedAt
+        self.pruningActivityId = pruningActivityId
+        self.allocationIndex = allocationIndex
     }
 
     /// A full row = 1.0; each quarter = 0.25.
     var rowEquivalents: Double { Double(segments.count) / 4.0 }
+
+    /// The parent activity this allocation belongs to. A legacy single-block
+    /// record is its own activity, matching the server's back-fill, so grouping
+    /// by this key is safe for every record ever written.
+    var activityKey: UUID { pruningActivityId ?? id }
+
+    /// Allocation position within the parent activity; 0 = PRIMARY.
+    var allocationOrder: Int { allocationIndex ?? 0 }
 
     /// Reversed entries are audit history only — never progress, never rates.
     var isReversed: Bool { reversedAt != nil }

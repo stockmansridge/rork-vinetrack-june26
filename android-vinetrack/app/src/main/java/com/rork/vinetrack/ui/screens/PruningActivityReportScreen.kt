@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Search
@@ -59,6 +60,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
@@ -67,6 +69,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.PruningActivityExportService
 import com.rork.vinetrack.data.PruningReportNavigation
 import com.rork.vinetrack.data.WorkTaskLabourCosting
 import com.rork.vinetrack.data.model.Paddock
@@ -115,6 +118,8 @@ fun PruningActivityReportScreen(
     labourLines: List<WorkTaskLabourLine>,
     members: List<VineyardMember>,
     canViewCosting: Boolean,
+    /** Used only to name the exported file. */
+    vineyardName: String = "",
     onBack: () -> Unit,
     onEditEntry: (PruningEntry) -> Unit,
     onReverseEntry: (PruningEntry) -> Unit,
@@ -145,6 +150,11 @@ fun PruningActivityReportScreen(
         }
     }
     val workTaskTitles = remember(workTasks) { workTasks.associate { it.id to it.displayLabel } }
+    val workTaskStatuses = remember(workTasks) {
+        workTasks.mapNotNull { task ->
+            task.status?.trim()?.takeIf { it.isNotEmpty() }?.let { task.id to workTaskStatusLabel(it) }
+        }.toMap()
+    }
     // ONE pass over the labour lines — never one lookup per record.
     //
     // Work Task labour lines are the AUTHORITATIVE source of labour hours and
@@ -159,11 +169,20 @@ fun PruningActivityReportScreen(
     }
     val accountNames = remember(members) { members.associate { it.userId to it.name } }
 
-    val allRows = remember(auditEntries, blockContexts, workTaskTitles, labourCosts, labourHours, accountNames) {
+    val allRows = remember(
+        auditEntries,
+        blockContexts,
+        workTaskTitles,
+        workTaskStatuses,
+        labourCosts,
+        labourHours,
+        accountNames,
+    ) {
         PruningActivityReport.rows(
             entries = auditEntries,
             blocks = blockContexts,
             workTaskTitles = workTaskTitles,
+            workTaskStatuses = workTaskStatuses,
             labourCosts = labourCosts,
             labourHours = labourHours,
             accountNames = accountNames,
@@ -183,6 +202,8 @@ fun PruningActivityReportScreen(
         mutableStateOf(PruningReportNavigation(seasonYear = LocalDate.now().year))
     }
     var showFilters by rememberSaveable { mutableStateOf(false) }
+    var showExportMenu by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     var reversalTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     var filter by remember { mutableStateOf(PruningActivityFilter()) }
 
@@ -212,6 +233,51 @@ fun PruningActivityReportScreen(
                 title = { Text("Activity Report") },
                 navigationIcon = { BackNavIcon(onBack) },
                 actions = {
+                    // Exports carry the CURRENT result set — same filters, same
+                    // search, same sort — so the file always matches the screen.
+                    Box {
+                        IconButton(
+                            onClick = { showExportMenu = true },
+                            enabled = rows.isNotEmpty(),
+                        ) {
+                            Icon(
+                                Icons.Filled.FileDownload,
+                                contentDescription = "Export the pruning activity report",
+                                tint = if (rows.isEmpty()) vine.textSecondary else vine.textPrimary,
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showExportMenu,
+                            onDismissRequest = { showExportMenu = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Export CSV (one row per allocation)") },
+                                onClick = {
+                                    showExportMenu = false
+                                    PruningActivityExportService.exportCsvAndShare(
+                                        context = context,
+                                        rows = rows,
+                                        vineyardName = vineyardName,
+                                        seasonLabel = season.takeIf { it > 0 }?.toString().orEmpty(),
+                                        includeCost = canViewCosting,
+                                    )
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Export PDF (grouped by activity)") },
+                                onClick = {
+                                    showExportMenu = false
+                                    PruningActivityExportService.exportPdfAndShare(
+                                        context = context,
+                                        rows = rows,
+                                        vineyardName = vineyardName,
+                                        seasonLabel = season.takeIf { it > 0 }?.toString().orEmpty(),
+                                        includeCost = canViewCosting,
+                                    )
+                                },
+                            )
+                        }
+                    }
                     IconButton(onClick = { showFilters = true }) {
                         Icon(
                             Icons.Filled.FilterList,
@@ -981,4 +1047,15 @@ private fun rowAccessibilityLabel(row: PruningActivityRow): String {
     row.vines?.let { parts.add("${fmtWhole(it)} vines") }
     parts.add(row.status.label)
     return parts.joinToString(", ")
+}
+
+/**
+ * Presentable Work Task status for the report and its exports ("in_progress" →
+ * "In progress"). Unknown values are passed through rather than blanked, so a
+ * new server status never silently disappears from an export.
+ */
+private fun workTaskStatusLabel(raw: String): String {
+    val cleaned = raw.trim().replace('_', ' ').replace('-', ' ')
+    if (cleaned.isEmpty()) return raw
+    return cleaned.lowercase().replaceFirstChar { it.uppercase() }
 }

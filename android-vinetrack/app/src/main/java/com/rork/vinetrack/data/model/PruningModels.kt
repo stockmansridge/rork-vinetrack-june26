@@ -191,6 +191,18 @@ data class PruningEntry(
     val estimatedVines: Int = 0,
     /** The Work Task created from this recording (at most one per entry). */
     val workTaskId: String? = null,
+    /**
+     * `pruning_entries.pruning_activity_id` (sql/166) — the PARENT activity this
+     * row is one ALLOCATION of. Null for records that predate the activity
+     * model; the server back-fills those with `pruning_activity_id = id`, which
+     * is exactly what [activityKey] falls back to.
+     */
+    val pruningActivityId: String? = null,
+    /**
+     * `pruning_entries.allocation_index` — 0 for the PRIMARY allocation, the
+     * only one carrying the activity's labour, timing and Work Task link.
+     */
+    val allocationIndex: Int = 0,
     val createdAtMs: Long = 0L,
     /**
      * Server `updated_at` — the ONLY signal that distinguishes an edited
@@ -222,6 +234,13 @@ data class PruningEntry(
 ) {
     /** A full row = 1.0; each quarter = 0.25. */
     val rowEquivalents: Double get() = segments.size / 4.0
+
+    /**
+     * The parent activity this allocation belongs to. A legacy single-block
+     * record is its own activity, matching the server's back-fill, so grouping
+     * by this key is safe for every record ever written.
+     */
+    val activityKey: String get() = pruningActivityId ?: id
 
     /** Reversed entries are audit history only — never progress, never rates. */
     val isReversed: Boolean get() = reversedAtMs > 0L

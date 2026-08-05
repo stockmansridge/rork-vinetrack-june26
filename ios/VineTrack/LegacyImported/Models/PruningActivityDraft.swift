@@ -425,7 +425,7 @@ nonisolated enum PruningAllocationEditor {
     static func toLegacyEntries(_ draft: PruningActivityDraft) -> [PruningEntry] {
         let active = draft.activeAllocations
         let primary = active.first?.paddockId
-        return active.map { allocation in
+        return active.enumerated().map { index, allocation in
             let isPrimary = allocation.paddockId == primary
             return PruningEntry(
                 id: allocation.allocationId(for: draft.id),
@@ -449,7 +449,9 @@ nonisolated enum PruningAllocationEditor {
                 createdAt: draft.createdAt,
                 updatedAt: draft.updatedAt,
                 enteredBy: draft.enteredBy,
-                reversedAt: draft.reversedAt
+                reversedAt: draft.reversedAt,
+                pruningActivityId: draft.id,
+                allocationIndex: index
             )
         }
     }
