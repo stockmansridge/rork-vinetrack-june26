@@ -261,16 +261,42 @@ data class PruningActivityFilter(
 /**
  * Totals for the CURRENT filtered result. Reversed rows never contribute to
  * vines, hours, productivity or cost — they are counted separately.
+ *
+ * There are TWO labour figures and they answer different questions:
+ *
+ *  * [labourHours] / [labourCost] are ALLOCATED — the proportional share of
+ *    each included allocation. These are the totals that match the rows on
+ *    screen, and they stay correct when a multi-block activity is filtered to
+ *    one of its blocks.
+ *  * [wholeActivityLabourHours] / [wholeActivityLabourCost] are the totals of
+ *    the FULL parent activities that the result touches, de-duplicated by
+ *    activity id. When [partialActivities] is greater than zero these describe
+ *    work that reaches beyond the filtered blocks.
+ *
+ * They are equal only when every activity in the result is complete.
  */
 data class PruningActivitySummary(
     val jobs: Int = 0,
     val activeRecords: Int = 0,
     val reversedRecords: Int = 0,
     val vines: Double = 0.0,
+    /** ALLOCATED person-hours for the included allocations. */
     val labourHours: Double = 0.0,
     val averageVinesPerHour: Double? = null,
+    /** ALLOCATED labour cost for the included allocations. */
     val labourCost: Double? = null,
+    /** Distinct parent activities represented in the result. */
+    val activities: Int = 0,
+    /** Whole-activity person-hours, de-duplicated by activity id. */
+    val wholeActivityLabourHours: Double = 0.0,
+    /** Whole-activity labour cost, de-duplicated by activity id. */
+    val wholeActivityLabourCost: Double? = null,
+    /** Activities represented by only SOME of their allocations. */
+    val partialActivities: Int = 0,
 ) {
+    /** True when the result shows part of at least one multi-block activity. */
+    val hasPartialActivities: Boolean get() = partialActivities > 0
+
     companion object {
         val EMPTY = PruningActivitySummary()
     }
@@ -498,8 +524,23 @@ object PruningActivityReport {
     /**
      * Totals for the filtered result. Reversed rows are counted but never
      * contribute vines, hours, productivity or cost.
+     *
+     * Labour is ALLOCATED per allocation, so a multi-block activity contributes
+     * its person-hours ONCE across its blocks instead of once per block. The
+     * whole-activity figures are reported separately, de-duplicated by activity
+     * id, so a partly-filtered activity can still be reconciled to its parent.
+     *
+     * @param canonicalRows every allocation of every activity BEFORE filtering,
+     *   supplying the parent totals and the allocation-share denominator.
+     *   Defaults to [rows] for an unfiltered summary.
      */
-    fun summary(rows: List<PruningActivityRow>, includeCost: Boolean): PruningActivitySummary {
+    fun summary(
+        rows: List<PruningActivityRow>,
+        includeCost: Boolean,
+        canonicalRows: List<PruningActivityRow> = rows,
+    ): PruningActivitySummary {
+        val model = PruningActivityAllocationModel.build(canonicalRows, includeCost)
+
         var active = 0
         var reversed = 0
         var vines = 0.0
@@ -508,6 +549,7 @@ object PruningActivityReport {
         var hoursWithVines = 0.0
         var cost = 0.0
         var sawCost = false
+        val includedPerActivity = LinkedHashMap<String, Int>()
 
         for (row in rows) {
             if (!row.status.countsTowardsTotals) {
@@ -516,7 +558,10 @@ object PruningActivityReport {
             }
             active += 1
             vines += row.vines ?: 0.0
-            val rowHours = row.labourHours
+            includedPerActivity[row.activityKey] = (includedPerActivity[row.activityKey] ?: 0) + 1
+
+            val share = model.shareOf(row)
+            val rowHours = share?.personHours
             if (rowHours != null && rowHours > 0) {
                 hours += rowHours
                 val rowVines = row.vines
@@ -525,11 +570,28 @@ object PruningActivityReport {
                     hoursWithVines += rowHours
                 }
             }
-            val rowCost = row.labourCost
+            val rowCost = share?.labourCost
             if (includeCost && rowCost != null) {
                 cost += rowCost
                 sawCost = true
             }
+        }
+
+        // Whole-activity totals count each parent ONCE, however many of its
+        // allocations the filter admitted.
+        var wholeHours = 0.0
+        var wholeCost = 0.0
+        var sawWholeCost = false
+        var partial = 0
+        for ((activityId, includedCount) in includedPerActivity) {
+            val parent = model.parent(activityId) ?: continue
+            wholeHours += parent.personHours ?: 0.0
+            val parentCost = parent.labourCost
+            if (includeCost && parentCost != null) {
+                wholeCost += parentCost
+                sawWholeCost = true
+            }
+            if (includedCount < parent.allocationCount) partial += 1
         }
 
         return PruningActivitySummary(
@@ -540,6 +602,10 @@ object PruningActivityReport {
             labourHours = hours,
             averageVinesPerHour = if (hoursWithVines > 0) vinesWithHours / hoursWithVines else null,
             labourCost = if (sawCost) cost else null,
+            activities = includedPerActivity.size,
+            wholeActivityLabourHours = wholeHours,
+            wholeActivityLabourCost = if (sawWholeCost) wholeCost else null,
+            partialActivities = partial,
         )
     }
 }

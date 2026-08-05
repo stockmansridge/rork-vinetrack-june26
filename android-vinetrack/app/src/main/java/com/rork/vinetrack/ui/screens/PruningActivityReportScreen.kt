@@ -215,7 +215,13 @@ fun PruningActivityReportScreen(
     val rows = remember(allRows, appliedFilter, sort) {
         PruningActivityReport.sorted(PruningActivityReport.filtered(allRows, appliedFilter), sort)
     }
-    val summary = remember(rows, canViewCosting) { PruningActivityReport.summary(rows, canViewCosting) }
+    // `allRows` is the CANONICAL set — every allocation of every activity, before
+    // any filter. It supplies the parent activity context and the allocation-share
+    // denominator, so filtering to one block of a multi-block activity never
+    // hands that block the whole activity's labour.
+    val summary = remember(rows, allRows, canViewCosting) {
+        PruningActivityReport.summary(rows, canViewCosting, allRows)
+    }
     val columns = remember(canViewCosting) {
         PruningActivityColumn.displayOrder.filter { canViewCosting || !it.isCosting }
     }
@@ -260,6 +266,7 @@ fun PruningActivityReportScreen(
                                         vineyardName = vineyardName,
                                         seasonLabel = season.takeIf { it > 0 }?.toString().orEmpty(),
                                         includeCost = canViewCosting,
+                                        canonicalRows = allRows,
                                     )
                                 },
                             )
@@ -273,6 +280,7 @@ fun PruningActivityReportScreen(
                                         vineyardName = vineyardName,
                                         seasonLabel = season.takeIf { it > 0 }?.toString().orEmpty(),
                                         includeCost = canViewCosting,
+                                        canonicalRows = allRows,
                                     )
                                 },
                             )

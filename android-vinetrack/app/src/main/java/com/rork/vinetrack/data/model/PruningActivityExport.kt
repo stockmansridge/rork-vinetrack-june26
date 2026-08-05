@@ -11,47 +11,49 @@ import java.util.Locale
  * regression fixtures in `PruningActivityExportTest.kt` and
  * `PruningActivityExportTests.swift` are byte-for-byte the same.
  *
- * ## Why this exists
+ * ## The model
  *
- * A pruning activity is ONE piece of work that may cover MANY blocks (sql/166).
- * `pruning_entries` is the allocation table, so a two-block activity is two
- * rows in the report — and naively exporting both rows with the activity's
- * labour on each would make every spreadsheet `SUM()` count that labour twice.
+ * A pruning activity is ONE piece of work that may cover MANY blocks, and
+ * `pruning_entries` is the allocation table. Every exported row is one
+ * ALLOCATION, and it carries three kinds of value:
  *
- * The rule this file enforces:
+ *  * ALLOCATION quantities — block, variety, rows, quarters, row equivalents,
+ *    vines, allocation share, ALLOCATED person-hours, ALLOCATED cost. Present
+ *    on EVERY row. These are proportional slices, so they sum correctly across
+ *    any filtered subset.
+ *  * PARENT CONTEXT — activity id, worker/crew, method, Work Task, start,
+ *    finish, allocation counts, partial marker. Present on EVERY row, resolved
+ *    from the PARENT ACTIVITY via [PruningActivityAllocationModel].
+ *  * PARENT TOTALS — whole-activity operational hours, person-hours, labour
+ *    cost and duration. Present on the DESIGNATED TOTALS ROW only, so a
+ *    spreadsheet `SUM()` cannot count one activity's labour once per block.
  *
- *  * ALLOCATION-level quantities (block, variety, rows, quarters, row
- *    equivalents, vines) appear on EVERY allocation row.
- *  * ACTIVITY-level values (operational hours, Work Task person-hours, labour
- *    cost, worker/crew, start, finish, duration, notes) appear on the FIRST
- *    allocation row only.
- *  * Suppressed values are BLANK, never `0` — a zero claims a real recorded
- *    measurement of nothing.
+ * Suppressed values are BLANK, never `0` — a zero claims a real recorded
+ * measurement of nothing.
  *
- * This is not a presentation trick: the activity's labour and timing are stored
- * on exactly one allocation (`allocation_index = 0`, the PRIMARY), so the first
- * allocation row is the only row that ever holds them. The export makes that
- * storage invariant visible instead of fighting it.
+ * ## Parent context is never blanked by a filter
  *
- * ## Labour authority
+ * The `allocation_index = 0` row is a legacy MIRROR of some parent values, not
+ * the authority. Filtering to a block that the activity touched second must
+ * still show that activity's worker, Work Task and labour. The totals row is
+ * therefore the first INCLUDED allocation, not necessarily the primary.
  *
- * Unchanged from [WorkTaskLabourCosting]: summed Work Task labour lines win
- * outright, and the legacy activity-level value is used ONLY when the linked
- * task has no lines. The two sources are never combined, so the exported
- * person-hours and labour-cost columns sum to the report summary exactly.
+ * ## Partial activities
+ *
+ * When the filter admits fewer allocations than the activity really has, the
+ * rows are marked `Partial activity = Yes` and carry both counts. The parent
+ * totals still describe the WHOLE activity and are labelled as such; the
+ * filtered block's proportional figures are the ALLOCATED columns. Confusing
+ * the two is exactly the error this file exists to prevent.
  */
 object PruningActivityExport {
-
-    /** Australian display format. The raw ISO date is exported alongside it. */
-    private const val AU_DATE = "dd/MM/yyyy"
 
     /**
      * One CSV row — one ALLOCATION of one activity.
      *
-     * Every activity-level field is nullable and is populated ONLY when
-     * [isActivityTotalsRow] is true. No field carries a UUID: internal ids are
-     * used for grouping and then dropped, so an exported file never leaks a
-     * database identifier.
+     * Whole-activity totals are nullable and populated ONLY when
+     * [isActivityTotalsRow] is true. Allocated values and parent context are
+     * populated on every row.
      */
     data class Row(
         /** Raw chronological `yyyy-MM-dd`, retained for sorting and pivots. */
@@ -62,9 +64,23 @@ object PruningActivityExport {
         val weekday: String,
         /** The activity's name — the linked Work Task title, else "Spur pruning". */
         val activityLabel: String,
+        /**
+         * The PARENT activity's id, exported so a filtered extract can be
+         * reconciled against the portal and so whole-activity totals can be
+         * de-duplicated by the reader.
+         */
+        val activityId: String,
+        /** This allocation's own id — the row's stable key. */
+        val allocationId: String,
+        /** 1-based position within the FULL activity, not within the extract. */
         val allocationNumber: Int,
-        val allocationCount: Int,
-        /** "block 1 of 2". */
+        /** How many allocations the activity really has. */
+        val fullAllocationCount: Int,
+        /** How many of them survived the filter. */
+        val includedAllocationCount: Int,
+        /** True when [includedAllocationCount] < [fullAllocationCount]. */
+        val isPartialActivity: Boolean,
+        /** "block 1 of 2", or "block 2 of 2 (1 shown)" when partial. */
         val allocationLabel: String,
         val blockName: String,
         val variety: String?,
@@ -74,70 +90,102 @@ object PruningActivityExport {
         val rowEquivalents: Double,
         /** Exact vines when the block's rows resolve, else this allocation's estimate. */
         val estimatedVines: Double?,
+        // --- allocation slice: present on EVERY row ---------------------------
+        /** 0..1 of the FULL activity's row equivalents. */
+        val allocationShare: Double?,
+        /** parent person-hours × share. */
+        val allocatedPersonHours: Double?,
+        /** parent labour cost × share; null when costing is not permitted. */
+        val allocatedLabourCost: Double?,
+        // --- parent context: present on EVERY row -----------------------------
         val method: String,
-        // --- activity level: first allocation row only -----------------------
         val worker: String?,
-        /** The activity's own recorded operational hours. */
-        val operationalHours: Double?,
-        /** RESOLVED authoritative person-hours (task labour lines, else legacy). */
-        val personHours: Double?,
-        /** Null when costing is not visible to this role, or none was recorded. */
-        val labourCost: Double?,
         val workTaskTitle: String?,
         val workTaskStatus: String?,
         val startTime: String?,
         val finishTime: String?,
-        val durationHours: Double?,
+        // --- whole-activity totals: totals row ONLY ---------------------------
+        /** The activity's own recorded operational hours. */
+        val activityOperationalHours: Double?,
+        /** RESOLVED authoritative person-hours for the WHOLE activity. */
+        val activityPersonHours: Double?,
+        /** Whole-activity labour cost; null when costing is not permitted. */
+        val activityLabourCost: Double?,
+        /** Elapsed start→finish duration for the whole activity. */
+        val activityDurationHours: Double?,
         val notes: String?,
-        // --------------------------------------------------------------------
+        // ---------------------------------------------------------------------
         val isReversed: Boolean,
         /**
-         * True on the first allocation row of each activity — the one carrying
-         * the activity-level totals. Exported as a `Yes`/`No` column so pivot
-         * tables can aggregate activity values without any de-duplication.
+         * True on the first INCLUDED allocation row of each activity — the one
+         * carrying the whole-activity totals. Exported as a `Yes`/`No` column so
+         * a pivot can aggregate parent values without de-duplicating.
          */
         val isActivityTotalsRow: Boolean,
     )
 
     /**
-     * One activity and all of its exported allocations — the PDF's grouped
-     * layout. The activity's labour and timing are stated ONCE in the header,
-     * so the allocation list underneath is pure block detail.
+     * One activity and its INCLUDED allocations — the PDF's grouped layout. The
+     * whole-activity labour is stated ONCE in the header; the allocation list
+     * underneath carries each block's proportional slice.
      */
     data class Group(
-        /**
-         * The parent activity's id. Used for grouping and ordering ONLY — no
-         * renderer ever prints it, so no identifier reaches an exported file.
-         */
-        val activityKey: String,
+        val activityId: String,
         val activityLabel: String,
         val dateIso: String,
         /** "Monday 3 August 2026". */
         val dateDisplay: String,
         val method: String,
         val worker: String?,
-        val operationalHours: Double?,
-        val personHours: Double?,
-        val labourCost: Double?,
+        val activityOperationalHours: Double?,
+        val activityPersonHours: Double?,
+        val activityLabourCost: Double?,
+        val activityDurationHours: Double?,
         val workTaskTitle: String?,
         val workTaskStatus: String?,
         val startTime: String?,
         val finishTime: String?,
-        val durationHours: Double?,
         val notes: String?,
         val isReversed: Boolean,
+        val fullAllocationCount: Int,
         val allocations: List<Row>,
     ) {
-        val allocationCount: Int get() = allocations.size
-        val isMultiBlock: Boolean get() = allocations.size > 1
+        val includedAllocationCount: Int get() = allocations.size
+        val isPartialActivity: Boolean get() = includedAllocationCount < fullAllocationCount
+        val isMultiBlock: Boolean get() = fullAllocationCount > 1
 
-        /** "Pinot Noir + Cabernet Franc". */
+        /**
+         * "Partial activity — 1 of 2 blocks shown", or null for a complete one.
+         * The PDF prints this above the whole-activity totals so nobody reads
+         * those totals as belonging to the filtered block.
+         */
+        val partialLabel: String?
+            get() = if (!isPartialActivity) {
+                null
+            } else {
+                "Partial activity — $includedAllocationCount of $fullAllocationCount blocks shown"
+            }
+
+        /** "Pinot Noir + Cabernet Franc" — the INCLUDED blocks. */
         val blockSummary: String
             get() = allocations.map { it.blockName }.distinct().joinToString(" + ")
 
         val totalQuarters: Int get() = allocations.sumOf { it.quarters }
         val totalRowEquivalents: Double get() = allocations.sumOf { it.rowEquivalents }
         val totalVines: Double get() = allocations.sumOf { it.estimatedVines ?: 0.0 }
+
+        /** Person-hours attributable to the SHOWN blocks only. */
+        val allocatedPersonHours: Double?
+            get() = sumOrNull(allocations.map { it.allocatedPersonHours })
+
+        /** Labour cost attributable to the SHOWN blocks only. */
+        val allocatedLabourCost: Double?
+            get() = sumOrNull(allocations.map { it.allocatedLabourCost })
+
+        private fun sumOrNull(values: List<Double?>): Double? {
+            val present = values.filterNotNull()
+            return if (present.isEmpty()) null else present.sum()
+        }
     }
 
     // ------------------------------------------------------------------
@@ -151,135 +199,158 @@ object PruningActivityExport {
      * Group order follows the report's own visible order: an activity ranks by
      * the position of its first-appearing row, so changing the report's sort
      * reorders the groups without ever scattering one activity's allocations
-     * through the file.
+     * through the file. Allocation order inside a group is the canonical
+     * `allocation_index` order.
      *
-     * Allocation order inside a group is the server's `allocation_index`, which
-     * puts the PRIMARY allocation — the one holding the activity's labour and
-     * timing — first. That is what makes "totals on row 1" true rather than
-     * hopeful.
-     *
-     * @param rows the report's filtered + sorted rows, in visible order.
-     * @param includeCost false for roles without costing visibility; the labour
-     *   cost is then dropped from the data, not merely hidden in the renderer.
+     * @param reportRows the report's filtered + sorted rows, in visible order.
+     * @param includeCost false for roles without costing visibility; BOTH the
+     *   whole-activity cost and the allocated cost are then dropped from the
+     *   data, not merely hidden in the renderer.
+     * @param canonicalRows every allocation of every activity BEFORE filtering.
+     *   This supplies the parent context and the allocation-share denominator.
+     *   Defaults to [reportRows] for an unfiltered export.
      */
     fun groups(
         reportRows: List<PruningActivityRow>,
         includeCost: Boolean,
+        canonicalRows: List<PruningActivityRow> = reportRows,
     ): List<Group> {
-        val order = LinkedHashMap<String, MutableList<PruningActivityRow>>()
+        val model = PruningActivityAllocationModel.build(canonicalRows, includeCost)
+        return groups(reportRows, includeCost, model)
+    }
+
+    /** Overload for callers that already built the model (the summary path). */
+    fun groups(
+        reportRows: List<PruningActivityRow>,
+        includeCost: Boolean,
+        model: PruningActivityAllocationModel,
+    ): List<Group> {
+        val buckets = LinkedHashMap<String, MutableList<PruningActivityRow>>()
         for (row in reportRows) {
-            order.getOrPut(row.activityKey) { mutableListOf() }.add(row)
+            buckets.getOrPut(row.activityKey) { mutableListOf() }.add(row)
         }
 
-        return order.values.map { activityRows ->
-            val allocations = activityRows.sortedWith(
-                compareBy<PruningActivityRow> { it.allocationIndex }
-                    .thenBy { it.blockName.lowercase() }
-                    .thenBy { it.id },
-            )
-            // The activity's own values live on the PRIMARY allocation. When a
-            // filter has excluded that allocation the values are genuinely not
-            // in this result, and every activity-level field stays blank rather
-            // than being invented from a sibling row.
-            val head = allocations.first()
-            val count = allocations.size
-            val label = activityLabel(head)
+        return buckets.map { (activityId, included) ->
+            val ordered = PruningActivityAllocationModel.canonicalOrder(included)
+            val head = ordered.first()
+            val parent = model.parent(activityId)
+            val fullCount = parent?.allocationCount ?: ordered.size
+            val includedCount = ordered.size
+            val partial = includedCount < fullCount
+            val label = parent?.label
+                ?: PruningActivityAllocationModel.label(head.workTaskTitle, head.method)
 
-            val exported = allocations.mapIndexed { index, row ->
+            val exported = ordered.mapIndexed { index, row ->
+                val share = model.shareOf(row)
+                // The totals row is the first INCLUDED allocation. When a filter
+                // has excluded the legacy primary, the parent's values move to
+                // whichever allocation survived — they are never dropped.
                 val isTotals = index == 0
                 Row(
                     dateIso = row.dateIso,
                     dateDisplay = auDate(row.date, row.dateIso),
                     weekday = weekday(row.date),
                     activityLabel = label,
-                    allocationNumber = index + 1,
-                    allocationCount = count,
-                    allocationLabel = allocationLabel(index + 1, count),
+                    activityId = activityId,
+                    allocationId = row.id,
+                    allocationNumber = share?.allocationNumber ?: (index + 1),
+                    fullAllocationCount = fullCount,
+                    includedAllocationCount = includedCount,
+                    isPartialActivity = partial,
+                    allocationLabel = allocationLabel(
+                        number = share?.allocationNumber ?: (index + 1),
+                        fullCount = fullCount,
+                        includedCount = includedCount,
+                    ),
                     blockName = row.blockName,
                     variety = row.variety,
                     rowRange = row.rowRangeLabel,
                     quarters = row.quarters,
                     rowEquivalents = row.rowEquivalents,
                     estimatedVines = row.vines ?: row.estimatedVines.takeIf { it > 0 }?.toDouble(),
-                    method = row.method,
-                    // Work Task title and status repeat on every allocation:
-                    // they are text, they cannot be summed, and repeating them
-                    // keeps a wide spreadsheet readable when scrolled.
-                    workTaskTitle = row.workTaskTitle ?: head.workTaskTitle,
-                    workTaskStatus = row.workTaskStatus ?: head.workTaskStatus,
-                    // Everything below is numeric or activity-level narrative
-                    // and appears exactly once per activity.
-                    worker = head.worker.takeIf { isTotals },
-                    operationalHours = head.operationalHours.takeIf { isTotals },
-                    personHours = head.labourHours.takeIf { isTotals },
-                    labourCost = if (isTotals && includeCost) head.labourCost else null,
-                    startTime = head.startTime.takeIf { isTotals },
-                    finishTime = head.finishTime.takeIf { isTotals },
-                    durationHours = head.durationHours.takeIf { isTotals },
-                    notes = head.notes.takeIf { isTotals },
+                    // Proportional slices — on every row, because they are this
+                    // block's own share and can be summed safely.
+                    allocationShare = share?.share,
+                    allocatedPersonHours = share?.personHours,
+                    allocatedLabourCost = if (includeCost) share?.labourCost else null,
+                    // Parent context — on every row, sourced from the ACTIVITY.
+                    method = parent?.method ?: row.method,
+                    worker = parent?.worker,
+                    workTaskTitle = parent?.workTaskTitle,
+                    workTaskStatus = parent?.workTaskStatus,
+                    startTime = parent?.startTime,
+                    finishTime = parent?.finishTime,
+                    // Whole-activity totals — once, on the totals row.
+                    activityOperationalHours = parent?.operationalHours.takeIf { isTotals },
+                    activityPersonHours = parent?.personHours.takeIf { isTotals },
+                    activityLabourCost = if (isTotals && includeCost) parent?.labourCost else null,
+                    activityDurationHours = parent?.durationHours.takeIf { isTotals },
+                    notes = parent?.notes.takeIf { isTotals },
                     isReversed = row.isReversed,
                     isActivityTotalsRow = isTotals,
                 )
             }
 
             Group(
-                activityKey = head.activityKey,
+                activityId = activityId,
                 activityLabel = label,
                 dateIso = head.dateIso,
                 dateDisplay = longDate(head.date, head.dateIso),
-                method = head.method,
-                worker = head.worker,
-                operationalHours = head.operationalHours,
-                personHours = head.labourHours,
-                labourCost = if (includeCost) head.labourCost else null,
-                workTaskTitle = head.workTaskTitle,
-                workTaskStatus = head.workTaskStatus,
-                startTime = head.startTime,
-                finishTime = head.finishTime,
-                durationHours = head.durationHours,
-                notes = head.notes,
-                isReversed = head.isReversed,
+                method = parent?.method ?: head.method,
+                worker = parent?.worker,
+                activityOperationalHours = parent?.operationalHours,
+                activityPersonHours = parent?.personHours,
+                activityLabourCost = if (includeCost) parent?.labourCost else null,
+                activityDurationHours = parent?.durationHours,
+                workTaskTitle = parent?.workTaskTitle,
+                workTaskStatus = parent?.workTaskStatus,
+                startTime = parent?.startTime,
+                finishTime = parent?.finishTime,
+                notes = parent?.notes,
+                isReversed = ordered.all { it.isReversed },
+                fullAllocationCount = fullCount,
                 allocations = exported,
             )
         }
     }
 
     /** The flat CSV row set — every allocation, activities kept contiguous. */
-    fun rows(reportRows: List<PruningActivityRow>, includeCost: Boolean): List<Row> =
-        groups(reportRows, includeCost).flatMap { it.allocations }
+    fun rows(
+        reportRows: List<PruningActivityRow>,
+        includeCost: Boolean,
+        canonicalRows: List<PruningActivityRow> = reportRows,
+    ): List<Row> = groups(reportRows, includeCost, canonicalRows).flatMap { it.allocations }
 
     /**
-     * Activity name. There is no free-text activity title in the schema, so the
-     * linked Work Task's title is used when there is one and a method-derived
-     * label otherwise — never a UUID, never "Activity 3f2a…".
+     * "block 1 of 2"; a single-allocation activity says "whole activity". A
+     * partial extract appends the included count so the row is self-describing
+     * even when read on its own.
      */
-    private fun activityLabel(head: PruningActivityRow): String {
-        val title = head.workTaskTitle?.trim()?.takeIf { it.isNotEmpty() }
-        if (title != null) return title
-        val method = head.method.trim().takeIf { it.isNotEmpty() } ?: return "Pruning"
-        return if (method.contains("prun", ignoreCase = true)) method else "$method pruning"
+    fun allocationLabel(number: Int, fullCount: Int, includedCount: Int): String {
+        val base = if (fullCount <= 1) "whole activity" else "block $number of $fullCount"
+        return if (includedCount < fullCount) "$base ($includedCount shown)" else base
     }
-
-    /** "block 1 of 2"; a single-allocation activity says "whole activity". */
-    fun allocationLabel(number: Int, count: Int): String =
-        if (count <= 1) "whole activity" else "block $number of $count"
 
     // ------------------------------------------------------------------
     // CSV
     // ------------------------------------------------------------------
 
     /**
-     * Column headings, in export order. The labour cost column is absent
-     * entirely when [includeCost] is false, so a supervisor's export has no
-     * empty cost column hinting at withheld data.
+     * Column headings, in export order. BOTH cost columns are absent entirely
+     * when [includeCost] is false, so a supervisor's export has no empty cost
+     * column hinting at withheld data.
      */
     fun headers(includeCost: Boolean): List<String> = buildList {
         add("Date (ISO)")
         add("Activity Date")
         add("Weekday")
         add("Activity")
+        add("Activity ID")
+        add("Allocation ID")
         add("Allocation Number")
-        add("Allocation Count")
+        add("Full Allocation Count")
+        add("Included Allocation Count")
+        add("Partial Activity")
         add("Allocation Label")
         add("Block")
         add("Variety")
@@ -287,16 +358,19 @@ object PruningActivityExport {
         add("Quarters")
         add("Row Equivalents")
         add("Estimated Vines")
+        add("Allocation Share (%)")
+        add("Allocated Person-Hours")
+        if (includeCost) add("Allocated Labour Cost")
         add("Pruning Method")
         add("Worker or Crew")
-        add("Operational Hours")
-        add("Work Task Person-Hours")
-        if (includeCost) add("Labour Cost")
         add("Work Task")
         add("Work Task Status")
         add("Start Time")
         add("Finish Time")
-        add("Duration (h)")
+        add("Activity Operational Hours")
+        add("Activity Person-Hours")
+        if (includeCost) add("Activity Total Labour Cost")
+        add("Activity Duration (h)")
         add("Notes")
         add("Reversed")
         add("Activity Totals Row")
@@ -308,8 +382,12 @@ object PruningActivityExport {
         add(row.dateDisplay)
         add(row.weekday)
         add(row.activityLabel)
+        add(row.activityId)
+        add(row.allocationId)
         add(row.allocationNumber.toString())
-        add(row.allocationCount.toString())
+        add(row.fullAllocationCount.toString())
+        add(row.includedAllocationCount.toString())
+        add(if (row.isPartialActivity) "Yes" else "No")
         add(row.allocationLabel)
         add(row.blockName)
         add(row.variety.orEmpty())
@@ -317,16 +395,19 @@ object PruningActivityExport {
         add(if (row.quarters > 0) row.quarters.toString() else "")
         add(number(row.rowEquivalents.takeIf { it > 0 }, 2))
         add(number(row.estimatedVines, 0))
+        add(number(row.allocationShare?.let { it * 100.0 }, 2))
+        add(number(row.allocatedPersonHours, 2))
+        if (includeCost) add(number(row.allocatedLabourCost, 2))
         add(row.method)
         add(row.worker.orEmpty())
-        add(number(row.operationalHours, 2))
-        add(number(row.personHours, 2))
-        if (includeCost) add(number(row.labourCost, 2))
         add(row.workTaskTitle.orEmpty())
         add(row.workTaskStatus.orEmpty())
         add(row.startTime.orEmpty())
         add(row.finishTime.orEmpty())
-        add(number(row.durationHours, 2))
+        add(number(row.activityOperationalHours, 2))
+        add(number(row.activityPersonHours, 2))
+        if (includeCost) add(number(row.activityLabourCost, 2))
+        add(number(row.activityDurationHours, 2))
         add(row.notes.orEmpty())
         add(if (row.isReversed) "Yes" else "No")
         add(if (row.isActivityTotalsRow) "Yes" else "No")
@@ -336,8 +417,12 @@ object PruningActivityExport {
      * The complete CSV. Values are quoted only when they need it, so hours and
      * costs stay NUMERIC for a spreadsheet rather than arriving as text.
      */
-    fun csv(reportRows: List<PruningActivityRow>, includeCost: Boolean): String {
-        val exported = rows(reportRows, includeCost)
+    fun csv(
+        reportRows: List<PruningActivityRow>,
+        includeCost: Boolean,
+        canonicalRows: List<PruningActivityRow> = reportRows,
+    ): String {
+        val exported = rows(reportRows, includeCost, canonicalRows)
         val builder = StringBuilder()
         builder.append(headers(includeCost).joinToString(",") { escape(it) })
         builder.append("\r\n")
@@ -403,4 +488,20 @@ object PruningActivityExport {
      */
     fun columnTotal(rows: List<Row>, selector: (Row) -> Double?): Double =
         rows.filterNot { it.isReversed }.sumOf { selector(it) ?: 0.0 }
+
+    /**
+     * Sums a WHOLE-ACTIVITY column, de-duplicating by activity id the way a
+     * reader must. Only the totals rows carry these values, so this is really a
+     * guard that no second row ever starts carrying them too.
+     */
+    fun activityTotal(rows: List<Row>, selector: (Row) -> Double?): Double {
+        val seen = HashSet<String>()
+        var total = 0.0
+        for (row in rows) {
+            if (row.isReversed) continue
+            if (!seen.add(row.activityId)) continue
+            total += selector(row) ?: 0.0
+        }
+        return total
+    }
 }

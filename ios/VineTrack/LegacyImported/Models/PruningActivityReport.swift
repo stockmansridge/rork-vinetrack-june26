@@ -285,14 +285,40 @@ nonisolated struct PruningActivityFilter: Sendable, Equatable {
 
 /// Totals for the CURRENT filtered result. Reversed rows never contribute to
 /// vines, hours, productivity or cost — they are counted separately.
+///
+/// There are TWO labour figures and they answer different questions:
+///
+///  * `labourHours` / `labourCost` are ALLOCATED — the proportional share of
+///    each included allocation. These are the totals that match the rows on
+///    screen, and they stay correct when a multi-block activity is filtered to
+///    one of its blocks.
+///  * `wholeActivityLabourHours` / `wholeActivityLabourCost` are the totals of
+///    the FULL parent activities that the result touches, de-duplicated by
+///    activity id. When `partialActivities` is greater than zero these describe
+///    work that reaches beyond the filtered blocks.
+///
+/// They are equal only when every activity in the result is complete.
 nonisolated struct PruningActivitySummary: Sendable, Equatable {
     var jobs: Int = 0
     var activeRecords: Int = 0
     var reversedRecords: Int = 0
     var vines: Double = 0
+    /// ALLOCATED person-hours for the included allocations.
     var labourHours: Double = 0
     var averageVinesPerHour: Double?
+    /// ALLOCATED labour cost for the included allocations.
     var labourCost: Double?
+    /// Distinct parent activities represented in the result.
+    var activities: Int = 0
+    /// Whole-activity person-hours, de-duplicated by activity id.
+    var wholeActivityLabourHours: Double = 0
+    /// Whole-activity labour cost, de-duplicated by activity id.
+    var wholeActivityLabourCost: Double?
+    /// Activities represented by only SOME of their allocations.
+    var partialActivities: Int = 0
+
+    /// True when the result shows part of at least one multi-block activity.
+    var hasPartialActivities: Bool { partialActivities > 0 }
 
     static let empty = PruningActivitySummary()
 }
@@ -536,13 +562,30 @@ nonisolated enum PruningActivityReport {
 
     /// Totals for the filtered result. Reversed rows are counted but never
     /// contribute vines, hours, productivity or cost.
-    static func summary(_ rows: [PruningActivityRow], includeCost: Bool) -> PruningActivitySummary {
+    ///
+    /// Labour is ALLOCATED per allocation, so a multi-block activity contributes
+    /// its person-hours ONCE across its blocks instead of once per block. The
+    /// whole-activity figures are reported separately, de-duplicated by activity
+    /// id, so a partly-filtered activity can still be reconciled to its parent.
+    ///
+    /// - Parameter canonicalRows: every allocation of every activity BEFORE
+    ///   filtering, supplying the parent totals and the allocation-share
+    ///   denominator. Defaults to `rows` for an unfiltered summary.
+    static func summary(
+        _ rows: [PruningActivityRow],
+        includeCost: Bool,
+        canonicalRows: [PruningActivityRow]? = nil
+    ) -> PruningActivitySummary {
+        let model = PruningActivityAllocationModel.build(canonicalRows ?? rows, includeCost: includeCost)
+
         var summary = PruningActivitySummary()
         summary.jobs = rows.count
         var vinesWithHours = 0.0
         var hoursWithVines = 0.0
         var cost = 0.0
         var sawCost = false
+        var includedPerActivity: [UUID: Int] = [:]
+        var activityOrder: [UUID] = []
 
         for row in rows {
             guard row.status.countsTowardsTotals else {
@@ -551,21 +594,45 @@ nonisolated enum PruningActivityReport {
             }
             summary.activeRecords += 1
             summary.vines += row.vines ?? 0
-            if let hours = row.labourHours, hours > 0 {
+            if includedPerActivity[row.activityKey] == nil { activityOrder.append(row.activityKey) }
+            includedPerActivity[row.activityKey, default: 0] += 1
+
+            let share = model.share(of: row)
+            if let hours = share?.personHours, hours > 0 {
                 summary.labourHours += hours
                 if let vines = row.vines {
                     vinesWithHours += vines
                     hoursWithVines += hours
                 }
             }
-            if includeCost, let rowCost = row.labourCost {
+            if includeCost, let rowCost = share?.labourCost {
                 cost += rowCost
                 sawCost = true
             }
         }
 
+        // Whole-activity totals count each parent ONCE, however many of its
+        // allocations the filter admitted.
+        var wholeHours = 0.0
+        var wholeCost = 0.0
+        var sawWholeCost = false
+        var partial = 0
+        for activityId in activityOrder {
+            guard let parent = model.parent(activityId) else { continue }
+            wholeHours += parent.personHours ?? 0
+            if includeCost, let parentCost = parent.labourCost {
+                wholeCost += parentCost
+                sawWholeCost = true
+            }
+            if (includedPerActivity[activityId] ?? 0) < parent.allocationCount { partial += 1 }
+        }
+
         summary.averageVinesPerHour = hoursWithVines > 0 ? vinesWithHours / hoursWithVines : nil
         summary.labourCost = sawCost ? cost : nil
+        summary.activities = activityOrder.count
+        summary.wholeActivityLabourHours = wholeHours
+        summary.wholeActivityLabourCost = sawWholeCost ? wholeCost : nil
+        summary.partialActivities = partial
         return summary
     }
 }

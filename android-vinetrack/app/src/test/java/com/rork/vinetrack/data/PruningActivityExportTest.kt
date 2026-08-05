@@ -1,5 +1,6 @@
 package com.rork.vinetrack.data
 
+import com.rork.vinetrack.data.model.PruningActivityAllocationModel
 import com.rork.vinetrack.data.model.PruningActivityBlockContext
 import com.rork.vinetrack.data.model.PruningActivityColumn
 import com.rork.vinetrack.data.model.PruningActivityExport
@@ -12,6 +13,7 @@ import com.rork.vinetrack.data.model.PruningRowRef
 import com.rork.vinetrack.data.model.PruningSegment
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -19,25 +21,31 @@ import org.junit.Test
 /**
  * SHARED EXPORT FIXTURE — the same cases and the same numbers exist as
  * `PruningActivityExportTests.swift` in the iOS test target. Both platforms must
- * produce identical allocation breakdowns, identical first-row-only totals and
- * identical column sums from this fixture.
+ * produce identical allocation shares, identical allocated labour and identical
+ * partial-activity markers from this fixture.
  *
- * The fixture deliberately covers every shape that could double-count labour:
+ * The fixture covers every shape that could mis-attribute labour:
  *
- *  * A — two blocks, Work Task labour lines (18 person-hours, $630)
+ *  * A — two blocks, equal size, Work Task labour lines (18 person-hours, $630)
  *  * B — one block, NO labour lines (legacy activity hours only, 4.0)
- *  * C — three blocks, Work Task labour lines (12 person-hours, $300)
+ *  * C — three blocks, equal size, Work Task labour lines (12 person-hours, $300)
  *  * D — two blocks, REVERSED (10 person-hours, $200 — must never be totalled)
+ *  * E — two blocks, UNEQUAL (0.50 + 2.00 row equivalents), 13 person-hours,
+ *        $455. This is the worked example from the brief: filtering to the
+ *        0.50-row-equivalent block must yield a 20% share, 2.60 person-hours
+ *        and $91.00 — never the whole $455.
  */
 class PruningActivityExportTest {
 
     private val blockPinot = "block-pinot"
     private val blockCab = "block-cab"
     private val blockChard = "block-chard"
+    private val blockPrim = "block-prim"
 
     private val taskA = "task-a"
     private val taskC = "task-c"
     private val taskD = "task-d"
+    private val taskE = "task-e"
 
     /** 100 vines per row → one quarter = 25 vines, one full row = 100. */
     private fun rowRefs(numbers: List<Int>): List<PruningRowRef> = numbers.map { number ->
@@ -55,11 +63,16 @@ class PruningActivityExportTest {
         blockPinot to PruningActivityBlockContext("Pinot Noir", "Pinot Noir", rowRefs((90..108).toList())),
         blockCab to PruningActivityBlockContext("Cabernet Franc", "Cabernet Franc", rowRefs((1..12).toList())),
         blockChard to PruningActivityBlockContext("Chardonnay", "Chardonnay", rowRefs((1..4).toList())),
+        blockPrim to PruningActivityBlockContext("Primitivo", "Primitivo", rowRefs((20..24).toList())),
     )
 
-    /** One whole row = four quarters. */
+    /** One whole row = four quarters = 1.00 row equivalents. */
     private fun wholeRow(number: Int): List<PruningSegment> =
         (1..4).map { PruningSegment(number, it) }
+
+    /** A part row — two quarters = 0.50 row equivalents. */
+    private fun halfRow(number: Int): List<PruningSegment> =
+        (1..2).map { PruningSegment(number, it) }
 
     private fun allocation(
         id: String,
@@ -67,9 +80,14 @@ class PruningActivityExportTest {
         allocationIndex: Int,
         paddockId: String,
         day: Int,
-        rowNumber: Int,
+        rowNumber: Int = 0,
+        segments: List<PruningSegment>? = null,
         worker: String = "Pruning Crew",
-        /** Activity-level values exist on the PRIMARY allocation only. */
+        /**
+         * The legacy MIRROR of the activity's own values, stored on the primary
+         * allocation. The report must never depend on this row surviving a
+         * filter to know the activity has labour.
+         */
         operationalHours: Double? = null,
         start: String? = null,
         finish: String? = null,
@@ -81,7 +99,7 @@ class PruningActivityExportTest {
         vineyardId = "vineyard-1",
         paddockId = paddockId,
         date = "2026-08-%02d".format(day),
-        segments = wholeRow(rowNumber),
+        segments = segments ?: wholeRow(rowNumber),
         worker = worker,
         labourHours = operationalHours,
         startTime = start,
@@ -95,7 +113,7 @@ class PruningActivityExportTest {
         reversedAtMs = reversedAtMs,
     )
 
-    /** A — two blocks, Work Task labour lines. The example from the brief. */
+    /** A — two equal blocks, Work Task labour lines. */
     private val activityA = listOf(
         allocation(
             id = "a1", activityId = "act-a", allocationIndex = 0, paddockId = blockPinot,
@@ -117,7 +135,7 @@ class PruningActivityExportTest {
         ),
     )
 
-    /** C — three blocks, Work Task labour lines. */
+    /** C — three equal blocks, Work Task labour lines. */
     private val activityC = listOf(
         allocation(
             id = "c1", activityId = "act-c", allocationIndex = 0, paddockId = blockPinot,
@@ -146,21 +164,40 @@ class PruningActivityExportTest {
         ),
     )
 
+    /**
+     * E — the worked example. Cabernet Franc 0.50 row equivalents (PRIMARY),
+     * Primitivo 2.00 (SECONDARY), 2.50 total, 13 person-hours, $455.
+     */
+    private val activityE = listOf(
+        allocation(
+            id = "e1", activityId = "act-e", allocationIndex = 0, paddockId = blockCab,
+            day = 7, segments = halfRow(5), operationalHours = 7.0,
+            start = "06:30", finish = "13:30", notes = "Two block sweep",
+            workTaskId = taskE,
+        ),
+        allocation(
+            id = "e2", activityId = "act-e", allocationIndex = 1, paddockId = blockPrim,
+            day = 7, segments = wholeRow(20) + wholeRow(21),
+        ),
+    )
+
     private val titles = mapOf(
         taskA to "Winter pruning",
         taskC to "Spur pruning block sweep",
         taskD to "Reversed pruning",
+        taskE to "Vineyard block pruning",
     )
 
     private val statuses = mapOf(
         taskA to "Completed",
         taskC to "In progress",
         taskD to "Completed",
+        taskE to "Completed",
     )
 
     /** Summed Work Task labour lines — the AUTHORITATIVE labour source. */
-    private val taskHours = mapOf(taskA to 18.0, taskC to 12.0, taskD to 10.0)
-    private val taskCosts = mapOf(taskA to 630.0, taskC to 300.0, taskD to 200.0)
+    private val taskHours = mapOf(taskA to 18.0, taskC to 12.0, taskD to 10.0, taskE to 13.0)
+    private val taskCosts = mapOf(taskA to 630.0, taskC to 300.0, taskD to 200.0, taskE to 455.0)
 
     private fun build(entries: List<PruningEntry>): List<PruningActivityRow> =
         PruningActivityReport.rows(
@@ -172,76 +209,390 @@ class PruningActivityExportTest {
             labourHours = taskHours,
         )
 
-    private val allEntries = activityA + activityB + activityC + activityD
+    private val allEntries = activityA + activityB + activityC + activityD + activityE
 
     private fun sorted(entries: List<PruningEntry> = allEntries): List<PruningActivityRow> =
         PruningActivityReport.sorted(build(entries), PruningActivitySort.DEFAULT)
 
+    /** The canonical (unfiltered) rows for one activity. */
+    private fun canonicalE(): List<PruningActivityRow> = sorted(activityE)
+
+    /** Filters a canonical set down to one block, as the report's filter does. */
+    private fun onlyBlock(
+        canonical: List<PruningActivityRow>,
+        paddockId: String,
+    ): List<PruningActivityRow> = PruningActivityReport.sorted(
+        PruningActivityReport.filtered(canonical, PruningActivityFilter(blocks = setOf(paddockId))),
+        PruningActivitySort.DEFAULT,
+    )
+
     // ------------------------------------------------------------------
-    // 1. A two-block activity produces two allocation rows
+    // 1. Two-block activity filtered to the PRIMARY block
     // ------------------------------------------------------------------
 
     @Test
-    fun `a two block activity exports two allocation rows`() {
-        val exported = PruningActivityExport.rows(sorted(activityA), includeCost = true)
+    fun `a two block activity filtered to the primary block reports a partial activity`() {
+        val canonical = canonicalE()
+        val filtered = onlyBlock(canonical, blockCab)
+        val exported = PruningActivityExport.rows(filtered, includeCost = true, canonicalRows = canonical)
 
-        assertEquals(2, exported.size)
-        assertEquals(listOf(1, 2), exported.map { it.allocationNumber })
-        assertEquals(listOf(2, 2), exported.map { it.allocationCount })
-        assertEquals(listOf("Pinot Noir", "Cabernet Franc"), exported.map { it.blockName })
-        assertEquals(listOf("block 1 of 2", "block 2 of 2"), exported.map { it.allocationLabel })
-        // The activity label is the linked Work Task title, never an id.
-        assertTrue(exported.all { it.activityLabel == "Winter pruning" })
+        val row = exported.single()
+        assertEquals("Cabernet Franc", row.blockName)
+        assertEquals(1, row.allocationNumber)
+        assertEquals(2, row.fullAllocationCount)
+        assertEquals(1, row.includedAllocationCount)
+        assertTrue(row.isPartialActivity)
+        assertEquals("block 1 of 2 (1 shown)", row.allocationLabel)
+
+        // The brief's worked example, exactly.
+        assertEquals(0.20, row.allocationShare!!, 0.000001)
+        assertEquals(2.60, row.allocatedPersonHours!!, 0.0001)
+        assertEquals(91.00, row.allocatedLabourCost!!, 0.0001)
+
+        // The WHOLE activity's totals are still stated, and still whole.
+        assertTrue(row.isActivityTotalsRow)
+        assertEquals(13.0, row.activityPersonHours!!, 0.0001)
+        assertEquals(455.0, row.activityLabourCost!!, 0.0001)
     }
 
     // ------------------------------------------------------------------
-    // 2. Person-hours and labour cost appear only on the first row
+    // 2. Two-block activity filtered to the SECONDARY block
     // ------------------------------------------------------------------
 
     @Test
-    fun `activity totals appear on the first allocation row only`() {
-        val exported = PruningActivityExport.rows(sorted(activityA), includeCost = true)
-        val first = exported[0]
-        val second = exported[1]
+    fun `a two block activity filtered to the secondary block keeps its parent context`() {
+        val canonical = canonicalE()
+        val filtered = onlyBlock(canonical, blockPrim)
+        val exported = PruningActivityExport.rows(filtered, includeCost = true, canonicalRows = canonical)
 
-        assertTrue(first.isActivityTotalsRow)
-        assertFalse(second.isActivityTotalsRow)
+        val row = exported.single()
+        assertEquals("Primitivo", row.blockName)
+        // The allocation keeps its TRUE position in the parent — it is still the
+        // second allocation, even though it is the only one shown.
+        assertEquals(2, row.allocationNumber)
+        assertEquals(2, row.fullAllocationCount)
+        assertEquals(1, row.includedAllocationCount)
+        assertTrue(row.isPartialActivity)
+        assertEquals("block 2 of 2 (1 shown)", row.allocationLabel)
 
-        assertEquals(6.0, first.operationalHours!!, 0.0001)
-        assertEquals(18.0, first.personHours!!, 0.0001)
-        assertEquals(630.0, first.labourCost!!, 0.0001)
-        assertEquals("Pruning Crew", first.worker)
-        assertEquals("07:00", first.startTime)
-        assertEquals("13:00", first.finishTime)
-        assertEquals(6.0, first.durationHours!!, 0.0001)
-        assertEquals("Cold start frost delay", first.notes)
+        assertEquals(0.80, row.allocationShare!!, 0.000001)
+        assertEquals(10.40, row.allocatedPersonHours!!, 0.0001)
+        assertEquals(364.00, row.allocatedLabourCost!!, 0.0001)
 
-        // BLANK, not zero — a zero would claim a real recorded measurement.
-        assertNull(second.operationalHours)
-        assertNull(second.personHours)
-        assertNull(second.labourCost)
-        assertNull(second.worker)
-        assertNull(second.startTime)
-        assertNull(second.finishTime)
-        assertNull(second.durationHours)
-        assertNull(second.notes)
+        // The legacy primary allocation was filtered out, and the whole-activity
+        // totals are STILL present. This is the regression that matters most:
+        // the parent owns these values, not the primary allocation row.
+        assertTrue(row.isActivityTotalsRow)
+        assertEquals(13.0, row.activityPersonHours!!, 0.0001)
+        assertEquals(455.0, row.activityLabourCost!!, 0.0001)
+        assertEquals(7.0, row.activityOperationalHours!!, 0.0001)
+        assertEquals(7.0, row.activityDurationHours!!, 0.0001)
+        assertEquals("Two block sweep", row.notes)
+    }
 
-        // And the CSV cells for those columns are empty strings, not "0.00".
+    // ------------------------------------------------------------------
+    // 3. A secondary-only result still carries allocated hours and cost
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `a secondary only result still reports allocated hours and cost`() {
+        val canonical = canonicalE()
+        val filtered = onlyBlock(canonical, blockPrim)
+        val exported = PruningActivityExport.rows(filtered, includeCost = true, canonicalRows = canonical)
+        val row = exported.single()
+
+        assertNotNull(row.allocatedPersonHours)
+        assertNotNull(row.allocatedLabourCost)
+
+        // And they reach the CSV as real numbers, not blanks.
         val headers = PruningActivityExport.headers(includeCost = true)
-        val cells = PruningActivityExport.cells(second, includeCost = true)
-        for (column in listOf("Operational Hours", "Work Task Person-Hours", "Labour Cost", "Duration (h)")) {
-            assertEquals("", cells[headers.indexOf(column)])
+        val cells = PruningActivityExport.cells(row, includeCost = true)
+        assertEquals("10.40", cells[headers.indexOf("Allocated Person-Hours")])
+        assertEquals("364.00", cells[headers.indexOf("Allocated Labour Cost")])
+        assertEquals("80.00", cells[headers.indexOf("Allocation Share (%)")])
+    }
+
+    // ------------------------------------------------------------------
+    // 4. Parent Work Task and worker survive the filter
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `the parent work task and worker remain available on a secondary allocation`() {
+        val canonical = canonicalE()
+        val filtered = onlyBlock(canonical, blockPrim)
+        val exported = PruningActivityExport.rows(filtered, includeCost = true, canonicalRows = canonical)
+        val row = exported.single()
+
+        assertEquals("Vineyard block pruning", row.workTaskTitle)
+        assertEquals("Completed", row.workTaskStatus)
+        assertEquals("Vineyard block pruning", row.activityLabel)
+        assertEquals("Pruning Crew", row.worker)
+        assertEquals("06:30", row.startTime)
+        assertEquals("13:30", row.finishTime)
+        assertTrue(row.method.isNotBlank())
+
+        // The same is true in the grouped PDF layout.
+        val group = PruningActivityExport.groups(filtered, includeCost = true, canonicalRows = canonical).single()
+        assertEquals("Vineyard block pruning", group.workTaskTitle)
+        assertEquals("Pruning Crew", group.worker)
+        assertEquals("Partial activity — 1 of 2 blocks shown", group.partialLabel)
+    }
+
+    // ------------------------------------------------------------------
+    // 5. The allocation share uses the FULL activity denominator
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `the allocation share uses the full activity denominator not the filtered subset`() {
+        val canonical = canonicalE()
+
+        // Filtered to the 2.00-row-equivalent block. Its OWN row equivalents are
+        // the only ones in the result, so a subset denominator would give 100%.
+        val filtered = onlyBlock(canonical, blockPrim)
+        val row = PruningActivityExport
+            .rows(filtered, includeCost = true, canonicalRows = canonical)
+            .single()
+
+        assertEquals(2.0, row.rowEquivalents, 0.0001)
+        assertEquals(0.80, row.allocationShare!!, 0.000001)
+
+        // The denominator is the parent's 2.50, not the surviving 2.00.
+        val parent = PruningActivityAllocationModel.build(canonical, includeCost = true).parent("act-e")!!
+        assertEquals(2.5, parent.rowEquivalents, 0.0001)
+        assertEquals(row.rowEquivalents / parent.rowEquivalents, row.allocationShare!!, 0.000001)
+    }
+
+    // ------------------------------------------------------------------
+    // 6. The partial marker is present, and absent when complete
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `the partial activity marker is present only when allocations are missing`() {
+        val canonical = canonicalE()
+        val headers = PruningActivityExport.headers(includeCost = true)
+
+        val partial = PruningActivityExport
+            .rows(onlyBlock(canonical, blockPrim), includeCost = true, canonicalRows = canonical)
+            .single()
+        assertTrue(partial.isPartialActivity)
+        assertEquals("Yes", PruningActivityExport.cells(partial, includeCost = true)[headers.indexOf("Partial Activity")])
+
+        val complete = PruningActivityExport.rows(canonical, includeCost = true, canonicalRows = canonical)
+        assertEquals(2, complete.size)
+        assertTrue(complete.none { it.isPartialActivity })
+        for (row in complete) {
+            assertEquals("No", PruningActivityExport.cells(row, includeCost = true)[headers.indexOf("Partial Activity")])
+            assertEquals(2, row.includedAllocationCount)
         }
     }
 
     // ------------------------------------------------------------------
-    // 3. Allocation-specific quantities stay on every row
+    // 7. An included allocation's cost never inflates to 100%
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `an included allocation cost never inflates to the whole activity`() {
+        val canonical = canonicalE()
+
+        for ((paddockId, expectedCost) in listOf(blockCab to 91.00, blockPrim to 364.00)) {
+            val row = PruningActivityExport
+                .rows(onlyBlock(canonical, paddockId), includeCost = true, canonicalRows = canonical)
+                .single()
+            assertEquals(expectedCost, row.allocatedLabourCost!!, 0.0001)
+            assertTrue(
+                "an allocated cost must never equal the whole activity's",
+                row.allocatedLabourCost!! < 455.0,
+            )
+        }
+
+        // The two filtered slices add back up to the parent exactly.
+        assertEquals(455.0, 91.00 + 364.00, 0.0001)
+    }
+
+    // ------------------------------------------------------------------
+    // 8. Parent totals appear exactly once
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `whole activity totals appear on exactly one row per activity`() {
+        val rows = sorted()
+        val exported = PruningActivityExport.rows(rows, includeCost = true)
+
+        // One totals row per activity, and only totals rows carry parent values.
+        val totalsRows = exported.filter { it.isActivityTotalsRow }
+        assertEquals(exported.map { it.activityId }.distinct().size, totalsRows.size)
+        assertEquals(totalsRows.map { it.activityId }, totalsRows.map { it.activityId }.distinct())
+
+        for (row in exported.filterNot { it.isActivityTotalsRow }) {
+            assertNull(row.activityPersonHours)
+            assertNull(row.activityLabourCost)
+            assertNull(row.activityOperationalHours)
+            assertNull(row.activityDurationHours)
+            assertNull(row.notes)
+        }
+
+        // De-duplicating by activity id gives the true whole-activity total;
+        // 18 + 4 + 12 + 13, with the reversed activity excluded.
+        assertEquals(47.0, PruningActivityExport.activityTotal(exported) { it.activityPersonHours }, 0.0001)
+        assertEquals(1385.0, PruningActivityExport.activityTotal(exported) { it.activityLabourCost }, 0.0001)
+    }
+
+    // ------------------------------------------------------------------
+    // 9. Allocated totals equal the filtered summary
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `allocated column totals equal the filtered summary`() {
+        val canonical = sorted()
+
+        // Cabernet Franc appears in A (1.00 of 2.00), C (1.00 of 3.00),
+        // D (reversed) and E (0.50 of 2.50).
+        val filtered = onlyBlock(canonical, blockCab)
+        val summary = PruningActivityReport.summary(filtered, includeCost = true, canonicalRows = canonical)
+        val exported = PruningActivityExport.rows(filtered, includeCost = true, canonicalRows = canonical)
+
+        val hours = PruningActivityExport.columnTotal(exported) { it.allocatedPersonHours }
+        val cost = PruningActivityExport.columnTotal(exported) { it.allocatedLabourCost }
+
+        // 9.00 (A) + 4.00 (C) + 2.60 (E); D is reversed and excluded.
+        assertEquals(15.60, summary.labourHours, 0.0001)
+        assertEquals(summary.labourHours, hours, 0.0001)
+        // 315.00 (A) + 100.00 (C) + 91.00 (E).
+        assertEquals(506.00, summary.labourCost!!, 0.0001)
+        assertEquals(summary.labourCost!!, cost, 0.0001)
+
+        // The whole-activity figures are larger, and de-duplicated by activity.
+        assertEquals(43.0, summary.wholeActivityLabourHours, 0.0001)
+        assertEquals(1385.0, summary.wholeActivityLabourCost!!, 0.0001)
+        assertEquals(3, summary.activities)
+        assertEquals(3, summary.partialActivities)
+        assertTrue(summary.hasPartialActivities)
+    }
+
+    // ------------------------------------------------------------------
+    // 10. Unfiltered allocated totals reconcile exactly to the parents
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `unfiltered allocated totals reconcile exactly to the parent totals`() {
+        val rows = sorted()
+        val exported = PruningActivityExport.rows(rows, includeCost = true)
+        val summary = PruningActivityReport.summary(rows, includeCost = true)
+
+        val allocatedHours = PruningActivityExport.columnTotal(exported) { it.allocatedPersonHours }
+        val allocatedCost = PruningActivityExport.columnTotal(exported) { it.allocatedLabourCost }
+        val parentHours = PruningActivityExport.activityTotal(exported) { it.activityPersonHours }
+        val parentCost = PruningActivityExport.activityTotal(exported) { it.activityLabourCost }
+
+        assertEquals(parentHours, allocatedHours, 0.0001)
+        assertEquals(parentCost, allocatedCost, 0.0001)
+        assertEquals(47.0, allocatedHours, 0.0001)
+        assertEquals(1385.0, allocatedCost, 0.0001)
+
+        // With nothing filtered out, the two summary figures agree and nothing
+        // is marked partial.
+        assertEquals(summary.wholeActivityLabourHours, summary.labourHours, 0.0001)
+        assertEquals(summary.wholeActivityLabourCost!!, summary.labourCost!!, 0.0001)
+        assertEquals(0, summary.partialActivities)
+
+        // Per activity, too — never just in aggregate.
+        for (group in PruningActivityExport.groups(rows, includeCost = true)) {
+            group.activityPersonHours?.let { parent ->
+                assertEquals(parent, group.allocatedPersonHours!!, 0.0001)
+            }
+            group.activityLabourCost?.let { parent ->
+                assertEquals(parent, group.allocatedLabourCost!!, 0.0001)
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 11. The rounding remainder is assigned deterministically
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `the rounding remainder is assigned deterministically and always reconciles`() {
+        // Three equal blocks sharing 10 person-hours and $100 — neither divides
+        // evenly into cents, so a naive split would lose or gain a cent.
+        val entries = (0..2).map { index ->
+            allocation(
+                id = "r$index", activityId = "act-r", allocationIndex = index,
+                paddockId = listOf(blockPinot, blockCab, blockChard)[index],
+                day = 8, rowNumber = index + 1,
+                operationalHours = if (index == 0) 3.0 else null,
+                workTaskId = "task-r",
+            )
+        }
+        val rows = PruningActivityReport.sorted(
+            PruningActivityReport.rows(
+                entries = entries,
+                blocks = contexts,
+                workTaskTitles = mapOf("task-r" to "Rounding sweep"),
+                labourCosts = mapOf("task-r" to 100.0),
+                labourHours = mapOf("task-r" to 10.0),
+            ),
+            PruningActivitySort.DEFAULT,
+        )
+        val exported = PruningActivityExport.rows(rows, includeCost = true)
+
+        // The remainder lands on the SAME allocation every run, on both
+        // platforms: cumulative rounding puts it on the middle share here.
+        assertEquals(
+            listOf(3.33, 3.34, 3.33),
+            exported.map { PruningActivityAllocationModel.roundTo(it.allocatedPersonHours!!, 2) },
+        )
+        assertEquals(
+            listOf(33.33, 33.34, 33.33),
+            exported.map { PruningActivityAllocationModel.roundTo(it.allocatedLabourCost!!, 2) },
+        )
+
+        // And the parts reconcile to the parent to the cent.
+        assertEquals(10.0, PruningActivityExport.columnTotal(exported) { it.allocatedPersonHours }, 0.0000001)
+        assertEquals(100.0, PruningActivityExport.columnTotal(exported) { it.allocatedLabourCost }, 0.0000001)
+    }
+
+    // ------------------------------------------------------------------
+    // 12. Removing costing permission strips BOTH cost fields
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `removing costing permission strips both the parent and the allocated cost`() {
+        val rows = sorted()
+
+        val headers = PruningActivityExport.headers(includeCost = false)
+        assertFalse(headers.contains("Allocated Labour Cost"))
+        assertFalse(headers.contains("Activity Total Labour Cost"))
+        // Hours survive — only money is withheld.
+        assertTrue(headers.contains("Allocated Person-Hours"))
+        assertTrue(headers.contains("Activity Person-Hours"))
+
+        val exported = PruningActivityExport.rows(rows, includeCost = false)
+        assertTrue(exported.all { it.allocatedLabourCost == null })
+        assertTrue(exported.all { it.activityLabourCost == null })
+        assertTrue(exported.any { it.allocatedPersonHours != null })
+
+        // The values are absent from the FILE, not merely hidden in a renderer.
+        val csv = PruningActivityExport.csv(rows, includeCost = false)
+        for (amount in listOf("455.00", "364.00", "630.00", "315.00", "91.00")) {
+            assertFalse("cost $amount leaked into a cost-blind export", csv.contains(amount))
+        }
+
+        val groups = PruningActivityExport.groups(rows, includeCost = false)
+        assertTrue(groups.all { it.activityLabourCost == null && it.allocatedLabourCost == null })
+        // The report's own summary withholds it too.
+        assertNull(PruningActivityReport.summary(rows, includeCost = false).labourCost)
+        assertNull(PruningActivityReport.summary(rows, includeCost = false).wholeActivityLabourCost)
+    }
+
+    // ------------------------------------------------------------------
+    // 13. Allocation quantities stay on every row
     // ------------------------------------------------------------------
 
     @Test
     fun `allocation quantities are present on every allocation row`() {
         val exported = PruningActivityExport.rows(sorted(activityA), includeCost = true)
 
+        assertEquals(2, exported.size)
         for (row in exported) {
             assertEquals(4, row.quarters)
             assertEquals(1.0, row.rowEquivalents, 0.0001)
@@ -249,376 +600,293 @@ class PruningActivityExportTest {
             assertTrue(row.blockName.isNotBlank())
             assertTrue(row.variety!!.isNotBlank())
             assertTrue(row.rowRange!!.isNotBlank())
-            // Work Task title/status repeat: they are text and cannot be summed.
+            // Parent context repeats: it is text, it cannot be summed, and
+            // repeating it keeps a wide spreadsheet readable when scrolled.
             assertEquals("Winter pruning", row.workTaskTitle)
             assertEquals("Completed", row.workTaskStatus)
+            assertEquals("Pruning Crew", row.worker)
+            assertEquals("07:00", row.startTime)
+            // Equal blocks, so an even split of the activity's labour.
+            assertEquals(0.5, row.allocationShare!!, 0.000001)
+            assertEquals(9.0, row.allocatedPersonHours!!, 0.0001)
+            assertEquals(315.0, row.allocatedLabourCost!!, 0.0001)
         }
         assertEquals("90", exported[0].rowRange)
         assertEquals("1", exported[1].rowRange)
     }
 
     // ------------------------------------------------------------------
-    // 4 + 5. Exported column sums equal the report summary
+    // 14. The labour authority order is unchanged
     // ------------------------------------------------------------------
 
     @Test
-    fun `summing the exported labour cost column equals the report summary total`() {
-        val rows = sorted()
-        val summary = PruningActivityReport.summary(rows, includeCost = true)
-        val exported = PruningActivityExport.rows(rows, includeCost = true)
+    fun `work task labour lines win and the legacy value is only a fallback`() {
+        // A has BOTH 6.0 legacy operational hours and 18.0 task person-hours.
+        // The task wins for person-hours; the legacy value stays visible as the
+        // separate operational figure and is never added to it.
+        val a = PruningActivityExport.rows(sorted(activityA), includeCost = true).first()
+        assertEquals(18.0, a.activityPersonHours!!, 0.0001)
+        assertEquals(6.0, a.activityOperationalHours!!, 0.0001)
+        // Never 24.0 — the two sources are reported side by side, never summed.
+        assertEquals(9.0, a.allocatedPersonHours!!, 0.0001)
 
-        val exportedCost = PruningActivityExport.columnTotal(exported) { it.labourCost }
-        assertEquals(930.0, summary.labourCost!!, 0.0001)
-        assertEquals(summary.labourCost!!, exportedCost, 0.0001)
-    }
-
-    @Test
-    fun `summing the exported person hours column equals the report summary total`() {
-        val rows = sorted()
-        val summary = PruningActivityReport.summary(rows, includeCost = true)
-        val exported = PruningActivityExport.rows(rows, includeCost = true)
-
-        val exportedHours = PruningActivityExport.columnTotal(exported) { it.personHours }
-        // 18 (task lines) + 4 (legacy fallback) + 12 (task lines); reversed excluded.
-        assertEquals(34.0, summary.labourHours, 0.0001)
-        assertEquals(summary.labourHours, exportedHours, 0.0001)
+        // B has no task at all, so the legacy activity value IS the labour.
+        val b = PruningActivityExport.rows(sorted(activityB), includeCost = true).single()
+        assertEquals(4.0, b.activityPersonHours!!, 0.0001)
+        assertEquals(4.0, b.allocatedPersonHours!!, 0.0001)
+        assertNull(b.activityLabourCost)
+        assertNull(b.allocatedLabourCost)
+        assertEquals("whole activity", b.allocationLabel)
     }
 
     // ------------------------------------------------------------------
-    // 6. Single-allocation activities retain all activity totals
+    // 15. Reversed activities are visible but never totalled
     // ------------------------------------------------------------------
 
     @Test
-    fun `a single allocation activity keeps every activity total`() {
-        val exported = PruningActivityExport.rows(sorted(activityB), includeCost = true)
-
-        assertEquals(1, exported.size)
-        val only = exported.single()
-        assertTrue(only.isActivityTotalsRow)
-        assertEquals(1, only.allocationNumber)
-        assertEquals(1, only.allocationCount)
-        assertEquals("whole activity", only.allocationLabel)
-        assertEquals(4.0, only.operationalHours!!, 0.0001)
-        assertEquals(4.0, only.personHours!!, 0.0001)
-        assertEquals("Dave", only.worker)
-    }
-
-    // ------------------------------------------------------------------
-    // 7. Three or more allocations still output totals once
-    // ------------------------------------------------------------------
-
-    @Test
-    fun `a three allocation activity outputs totals exactly once`() {
-        val exported = PruningActivityExport.rows(sorted(activityC), includeCost = true)
-
-        assertEquals(3, exported.size)
-        assertEquals(1, exported.count { it.isActivityTotalsRow })
-        assertEquals(1, exported.count { it.personHours != null })
-        assertEquals(1, exported.count { it.labourCost != null })
-        assertEquals(1, exported.count { it.operationalHours != null })
-        assertEquals(listOf("block 1 of 3", "block 2 of 3", "block 3 of 3"), exported.map { it.allocationLabel })
-        assertEquals(12.0, exported[0].personHours!!, 0.0001)
-        assertEquals(300.0, exported[0].labourCost!!, 0.0001)
-
-        // Every allocation still carries its own block quantities.
-        assertEquals(3.0, exported.sumOf { it.rowEquivalents }, 0.0001)
-    }
-
-    // ------------------------------------------------------------------
-    // 8 + 9. Labour authority: task lines win; legacy only without lines
-    // ------------------------------------------------------------------
-
-    @Test
-    fun `work task labour values take precedence over legacy activity values`() {
-        val exported = PruningActivityExport.rows(sorted(activityA), includeCost = true).first()
-
-        // The activity recorded 6 operational hours; the Work Task's labour
-        // lines total 18 person-hours. Both are exported, in their OWN columns,
-        // and the authoritative person-hours figure is the task's.
-        assertEquals(6.0, exported.operationalHours!!, 0.0001)
-        assertEquals(18.0, exported.personHours!!, 0.0001)
-        assertEquals(630.0, exported.labourCost!!, 0.0001)
-    }
-
-    @Test
-    fun `legacy activity values are used only when the task has no labour lines`() {
-        val exported = PruningActivityExport.rows(sorted(activityB), includeCost = true).single()
-
-        // No linked task, so the activity's own hours ARE the resolved value —
-        // and there is no cost, because a legacy rate was never recorded.
-        assertEquals(4.0, exported.operationalHours!!, 0.0001)
-        assertEquals(4.0, exported.personHours!!, 0.0001)
-        assertNull(exported.labourCost)
-        assertNull(exported.workTaskTitle)
-    }
-
-    @Test
-    fun `no allocation row ever combines both labour sources`() {
-        val exported = PruningActivityExport.rows(sorted(), includeCost = true)
-
-        // Exactly one totals row per activity, and the person-hours column has
-        // one value per activity — never one per block.
-        assertEquals(4, exported.count { it.isActivityTotalsRow })
-        assertEquals(4, exported.count { it.personHours != null })
-        // 2 + 1 + 3 + 2 allocations across the four activities.
-        assertEquals(8, exported.size)
-    }
-
-    // ------------------------------------------------------------------
-    // 10. Reversed activities stay visible but never inflate totals
-    // ------------------------------------------------------------------
-
-    @Test
-    fun `reversed activities are exported marked and excluded from totals`() {
+    fun `reversed activities are exported but excluded from every total`() {
         val rows = sorted()
         val exported = PruningActivityExport.rows(rows, includeCost = true)
         val reversed = exported.filter { it.isReversed }
 
-        // Both allocations of the reversed activity are still exported.
         assertEquals(2, reversed.size)
-        assertEquals(listOf("Pinot Noir", "Cabernet Franc"), reversed.map { it.blockName })
-        assertTrue(reversed.all { it.isReversed })
-        // Its historical values are retained on the detail row, matching the
-        // on-screen report...
-        assertEquals(10.0, reversed[0].personHours!!, 0.0001)
-        // ...but they never reach a total.
-        val summary = PruningActivityReport.summary(rows, includeCost = true)
-        assertEquals(2, summary.reversedRecords)
-        assertEquals(930.0, summary.labourCost!!, 0.0001)
-        assertEquals(
-            summary.labourCost!!,
-            PruningActivityExport.columnTotal(exported) { it.labourCost },
-            0.0001,
-        )
-        // The Reversed column is what makes that filterable in a spreadsheet.
+        assertTrue(reversed.all { it.activityLabel == "Reversed pruning" })
+        // Their allocated values still exist on the row — the audit trail is
+        // complete — they are simply never summed.
+        assertTrue(reversed.all { it.allocatedPersonHours != null })
+        assertEquals(47.0, PruningActivityExport.columnTotal(exported) { it.allocatedPersonHours }, 0.0001)
+        assertEquals(1385.0, PruningActivityExport.columnTotal(exported) { it.allocatedLabourCost }, 0.0001)
+
         val headers = PruningActivityExport.headers(includeCost = true)
         val cells = PruningActivityExport.cells(reversed[0], includeCost = true)
         assertEquals("Yes", cells[headers.indexOf("Reversed")])
     }
 
     // ------------------------------------------------------------------
-    // 11. No internal identifier is ever exported
+    // 16. Identifiers are exported, but never as the human-readable name
     // ------------------------------------------------------------------
 
     @Test
-    fun `no work task allocation or activity identifier is exported`() {
-        val csv = PruningActivityExport.csv(sorted(), includeCost = true)
+    fun `identifiers are exported for reconciliation but never as the activity name`() {
+        val exported = PruningActivityExport.rows(sorted(), includeCost = true)
 
-        for (id in listOf("act-a", "act-b", "act-c", "act-d", "a1", "a2", "b1", "c1", "c2", "c3", "d1", "d2")) {
-            assertFalse("CSV leaked the internal id $id", csv.contains(id))
+        for (row in exported) {
+            assertTrue(row.activityId.isNotBlank())
+            assertTrue(row.allocationId.isNotBlank())
+            // The readable label is a Work Task title or a method — never an id.
+            assertFalse(row.activityLabel.contains(row.activityId))
+            assertFalse(row.activityLabel.contains(row.allocationId))
         }
-        for (id in listOf(taskA, taskC, taskD, blockPinot, blockCab, blockChard, "vineyard-1")) {
-            assertFalse("CSV leaked the internal id $id", csv.contains(id))
-        }
-        // And no UUID-shaped value of any kind.
-        val uuid = Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
-        assertFalse(uuid.containsMatchIn(csv))
+
+        // Every allocation of one activity shares its activity id, and each
+        // allocation id is unique across the file.
+        val a = exported.filter { it.activityLabel == "Winter pruning" }
+        assertEquals(1, a.map { it.activityId }.distinct().size)
+        assertEquals(exported.size, exported.map { it.allocationId }.distinct().size)
     }
 
     // ------------------------------------------------------------------
-    // 12. Costing permission
-    // ------------------------------------------------------------------
-
-    @Test
-    fun `labour cost is absent for roles without costing visibility`() {
-        val rows = sorted()
-        val headers = PruningActivityExport.headers(includeCost = false)
-        assertFalse(headers.contains("Labour Cost"))
-        // Hours stay visible — only money is withheld.
-        assertTrue(headers.contains("Operational Hours"))
-        assertTrue(headers.contains("Work Task Person-Hours"))
-
-        val exported = PruningActivityExport.rows(rows, includeCost = false)
-        assertTrue(exported.all { it.labourCost == null })
-        assertTrue(exported.any { it.personHours != null })
-
-        val csv = PruningActivityExport.csv(rows, includeCost = false)
-        assertFalse(csv.contains("Labour Cost"))
-        assertFalse(csv.contains("630"))
-        // Every data line has exactly the same number of cells as the header.
-        val lines = csv.trim().lines()
-        assertEquals(rows.size + 1, lines.size)
-        assertTrue(lines.all { it.split(",").size >= headers.size - 1 })
-    }
-
-    // ------------------------------------------------------------------
-    // 13. Filters and sorting are preserved; groups stay contiguous
+    // 17. The export respects the active filter and sort
     // ------------------------------------------------------------------
 
     @Test
     fun `the export respects the active filter`() {
-        val filter = PruningActivityFilter(blocks = setOf(blockChard))
-        val filtered = PruningActivityReport.sorted(
-            PruningActivityReport.filtered(build(allEntries), filter),
-            PruningActivitySort.DEFAULT,
-        )
-        val exported = PruningActivityExport.rows(filtered, includeCost = true)
+        val canonical = sorted()
+        val filtered = onlyBlock(canonical, blockChard)
+        val exported = PruningActivityExport.rows(filtered, includeCost = true, canonicalRows = canonical)
 
+        // Chardonnay appears in B (whole activity) and C (one of three).
         assertEquals(2, exported.size)
         assertTrue(exported.all { it.blockName == "Chardonnay" })
-        // Activity C's Chardonnay allocation is NOT the primary, so the activity
-        // values — and even the linked Work Task's title — are genuinely absent
-        // from this result. They stay blank rather than being borrowed from an
-        // excluded sibling row.
-        val cRow = exported.first { it.dateIso == "2026-08-05" }
-        assertEquals(1, cRow.allocationNumber)
-        assertEquals(1, cRow.allocationCount)
-        assertNull(cRow.personHours)
-        assertNull(cRow.labourCost)
-        assertNull(cRow.workTaskTitle)
-        // Activity B's only allocation IS the primary, so its totals survive.
-        val bRow = exported.first { it.dateIso == "2026-08-04" }
-        assertEquals(4.0, bRow.personHours!!, 0.0001)
-        assertEquals("Dave", bRow.worker)
+
+        val b = exported.first { it.dateIso == "2026-08-04" }
+        assertFalse(b.isPartialActivity)
+        assertEquals(4.0, b.activityPersonHours!!, 0.0001)
+
+        val c = exported.first { it.dateIso == "2026-08-05" }
+        assertTrue(c.isPartialActivity)
+        assertEquals(3, c.allocationNumber)
+        assertEquals(3, c.fullAllocationCount)
+        assertEquals(1, c.includedAllocationCount)
+        // Parent context survives even though C's primary was filtered out.
+        assertEquals("Spur pruning block sweep", c.workTaskTitle)
+        assertEquals(12.0, c.activityPersonHours!!, 0.0001)
+        // But only a third of the labour is attributed to this block.
+        assertEquals(4.0, c.allocatedPersonHours!!, 0.0001)
+        assertEquals(100.0, c.allocatedLabourCost!!, 0.0001)
     }
 
     @Test
-    fun `allocations of one activity are never scattered through the export`() {
-        // Sorting by Block would interleave allocations from different
-        // activities in the table; the export keeps each activity contiguous.
-        val byBlock = PruningActivityReport.sorted(
-            build(allEntries),
-            PruningActivitySort(PruningActivityColumn.Block, ascending = true),
-        )
-        val exported = PruningActivityExport.rows(byBlock, includeCost = true)
-
-        val groups = PruningActivityExport.groups(byBlock, includeCost = true)
-
-        // Group ORDER follows the report's own visible order: each activity
-        // ranks by where its first row appears in the sorted table.
-        assertEquals(byBlock.map { it.activityKey }.distinct(), groups.map { it.activityKey })
-
-        // Every activity is ONE contiguous run of rows — never scattered.
-        val runs = exported.fold(mutableListOf<String>()) { acc, row ->
-            val key = "${row.activityLabel}|${row.dateIso}"
-            if (acc.lastOrNull() != key) acc.add(key)
-            acc
-        }
-        assertEquals(runs.size, runs.distinct().size)
-        assertEquals(groups.size, runs.size)
-
-        // Within a group the PRIMARY allocation is always first, so the totals
-        // row is row 1 regardless of the table's sort.
-        for (group in groups) {
-            assertEquals(1, group.allocations.first().allocationNumber)
-            assertTrue(group.allocations.first().isActivityTotalsRow)
-            assertEquals(1, group.allocations.count { it.isActivityTotalsRow })
-        }
-    }
-
-    @Test
-    fun `the export honours the sort direction of the table`() {
+    fun `the export follows the report sort direction`() {
+        val rows = build(allEntries)
         val ascending = PruningActivityReport.sorted(
-            build(allEntries),
+            rows,
             PruningActivitySort(PruningActivityColumn.Date, ascending = true),
         )
         val descending = PruningActivityReport.sorted(
-            build(allEntries),
+            rows,
             PruningActivitySort(PruningActivityColumn.Date, ascending = false),
         )
 
         val first = PruningActivityExport.rows(ascending, includeCost = true).first()
         val last = PruningActivityExport.rows(descending, includeCost = true).first()
         assertEquals("2026-08-03", first.dateIso)
-        assertEquals("2026-08-06", last.dateIso)
+        assertEquals("2026-08-07", last.dateIso)
     }
 
     // ------------------------------------------------------------------
-    // 14. CSV shape
+    // 18. Allocations of one activity stay contiguous under any sort
     // ------------------------------------------------------------------
 
     @Test
-    fun `csv keeps a raw iso date an australian display date and a totals flag`() {
+    fun `allocations of one activity stay contiguous whatever the sort`() {
+        val byBlock = PruningActivityReport.sorted(
+            build(allEntries),
+            PruningActivitySort(PruningActivityColumn.Block, ascending = true),
+        )
+        val exported = PruningActivityExport.rows(byBlock, includeCost = true)
+        val groups = PruningActivityExport.groups(byBlock, includeCost = true)
+
+        // Group ORDER follows the report's own visible order.
+        assertEquals(byBlock.map { it.activityKey }.distinct(), groups.map { it.activityId })
+
+        // Every activity is ONE contiguous run of rows — never scattered.
+        val runs = exported.fold(mutableListOf<String>()) { acc, row ->
+            if (acc.lastOrNull() != row.activityId) acc.add(row.activityId)
+            acc
+        }
+        assertEquals(runs.size, runs.distinct().size)
+        assertEquals(groups.size, runs.size)
+
+        // Within a group the canonical order holds, so the totals row is row 1.
+        for (group in groups) {
+            assertEquals(
+                group.allocations.map { it.allocationNumber }.sorted(),
+                group.allocations.map { it.allocationNumber },
+            )
+            assertTrue(group.allocations.first().isActivityTotalsRow)
+            assertTrue(group.allocations.drop(1).none { it.isActivityTotalsRow })
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 19. CSV shape, quoting and numeric formatting
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `the csv has one header row and one row per allocation`() {
+        val csv = PruningActivityExport.csv(sorted(), includeCost = true)
+        val lines = csv.trimEnd('\r', '\n').split("\r\n")
+
+        assertEquals(10 + 1, lines.size)
+        assertTrue(csv.endsWith("\r\n"))
+        assertEquals(
+            PruningActivityExport.headers(includeCost = true).size,
+            lines[0].split(",").size,
+        )
+    }
+
+    @Test
+    fun `csv values are quoted only when they contain a delimiter`() {
+        val withComma = listOf(
+            allocation(
+                id = "q1", activityId = "act-q", allocationIndex = 0, paddockId = blockPinot,
+                day = 3, rowNumber = 90, operationalHours = 2.0,
+                notes = "Rain, then hail",
+            ),
+        )
+        val csv = PruningActivityExport.csv(sorted(withComma), includeCost = true)
+
+        assertTrue(csv.contains("\"Rain, then hail\""))
+        // Numbers are never quoted, so a spreadsheet reads them as numbers.
+        assertTrue(csv.contains(",2.00,"))
+        assertFalse(csv.contains("\"2.00\""))
+    }
+
+    @Test
+    fun `the csv keeps a raw iso date an australian display date and a totals flag`() {
         val csv = PruningActivityExport.csv(sorted(activityA), includeCost = true)
-        val lines = csv.trim().lines()
-        val headers = lines.first().split(",")
+        val lines = csv.trimEnd('\r', '\n').split("\r\n")
+        val headers = lines[0].split(",")
         val first = lines[1].split(",")
         val second = lines[2].split(",")
 
-        assertEquals("Date (ISO)", headers[0])
-        assertEquals("2026-08-03", first[0])
+        assertEquals("2026-08-03", first[headers.indexOf("Date (ISO)")])
         assertEquals("03/08/2026", first[headers.indexOf("Activity Date")])
         assertEquals("Monday", first[headers.indexOf("Weekday")])
         assertEquals("Yes", first[headers.indexOf("Activity Totals Row")])
         assertEquals("No", second[headers.indexOf("Activity Totals Row")])
-        // Hours and costs are NUMERIC, not quoted text.
-        assertEquals("18.00", first[headers.indexOf("Work Task Person-Hours")])
-        assertEquals("630.00", first[headers.indexOf("Labour Cost")])
-    }
-
-    @Test
-    fun `csv quotes only values that need it`() {
-        val withComma = activityA.map { entry ->
-            if (entry.allocationIndex == 0) entry.copy(notes = "Frost delay, restarted 09:00") else entry
-        }
-        val csv = PruningActivityExport.csv(sorted(withComma), includeCost = true)
-
-        assertTrue(csv.contains("\"Frost delay, restarted 09:00\""))
-        // The plain values around it stay unquoted.
-        assertTrue(csv.contains(",Pinot Noir,"))
+        // The parent totals column is blank on the second row, not "0.00".
+        assertEquals("", second[headers.indexOf("Activity Person-Hours")])
+        // But its allocated share is populated.
+        assertEquals("9.00", second[headers.indexOf("Allocated Person-Hours")])
     }
 
     // ------------------------------------------------------------------
-    // 15. PDF grouped layout
+    // 20. The PDF grouping states the labour once
     // ------------------------------------------------------------------
 
     @Test
-    fun `pdf groups state activity labour once and list every allocation`() {
+    fun `the pdf groups allocations under one activity heading`() {
         val groups = PruningActivityExport.groups(sorted(), includeCost = true)
 
-        assertEquals(4, groups.size)
-        val a = groups.first { it.activityLabel == "Winter pruning" }
-        assertEquals("Monday 3 August 2026", a.dateDisplay)
-        assertEquals(2, a.allocationCount)
-        assertTrue(a.isMultiBlock)
-        assertEquals("Pinot Noir + Cabernet Franc", a.blockSummary)
-        assertEquals(18.0, a.personHours!!, 0.0001)
-        assertEquals(6.0, a.operationalHours!!, 0.0001)
-        assertEquals(630.0, a.labourCost!!, 0.0001)
-        assertEquals(2.0, a.totalRowEquivalents, 0.0001)
-        assertEquals(200.0, a.totalVines, 0.0001)
+        assertEquals(5, groups.size)
+        assertEquals(10, groups.sumOf { it.includedAllocationCount })
 
-        // Costing-blind roles get the same document with no money in it.
-        val blind = PruningActivityExport.groups(sorted(), includeCost = false)
-        assertTrue(blind.all { it.labourCost == null })
-        assertTrue(blind.any { it.personHours != null })
+        val a = groups.first { it.activityLabel == "Winter pruning" }
+        assertEquals(2, a.includedAllocationCount)
+        assertFalse(a.isPartialActivity)
+        assertNull(a.partialLabel)
+        assertEquals("Pinot Noir + Cabernet Franc", a.blockSummary)
+        assertEquals(2.0, a.totalRowEquivalents, 0.0001)
+        // Stated ONCE for the whole activity, whatever the allocation count.
+        assertEquals(18.0, a.activityPersonHours!!, 0.0001)
+        assertEquals(630.0, a.activityLabourCost!!, 0.0001)
+        assertEquals(18.0, a.allocatedPersonHours!!, 0.0001)
+
+        val e = groups.first { it.activityLabel == "Vineyard block pruning" }
+        assertEquals("Cabernet Franc + Primitivo", e.blockSummary)
+        assertEquals(listOf(2.60, 10.40), e.allocations.map { it.allocatedPersonHours })
     }
 
     // ------------------------------------------------------------------
-    // 16. Cross-platform parity fixture
+    // 21. Cross-platform parity fixture — iOS must produce this exactly
     // ------------------------------------------------------------------
 
     @Test
-    fun `parity fixture produces the exact rows ios must also produce`() {
-        val exported = PruningActivityExport.rows(sorted(activityA), includeCost = true)
+    fun `the parity fixture matches the ios export byte for byte`() {
+        val canonical = canonicalE()
+        val exported = PruningActivityExport.rows(canonical, includeCost = true)
 
-        // These five tuples are asserted verbatim in the iOS twin.
-        assertEquals(
+        val rendered = exported.joinToString("\n") { row ->
             listOf(
-                "2026-08-03|03/08/2026|Monday|Winter pruning|1|2|block 1 of 2|Pinot Noir|90|4|1.00|100|6.00|18.00|630.00|Yes|No",
-                "2026-08-03|03/08/2026|Monday|Winter pruning|2|2|block 2 of 2|Cabernet Franc|1|4|1.00|100||||No|No",
-            ),
-            exported.map { row ->
-                listOf(
-                    row.dateIso,
-                    row.dateDisplay,
-                    row.weekday,
-                    row.activityLabel,
-                    row.allocationNumber.toString(),
-                    row.allocationCount.toString(),
-                    row.allocationLabel,
-                    row.blockName,
-                    row.rowRange.orEmpty(),
-                    row.quarters.toString(),
-                    PruningActivityExport.number(row.rowEquivalents, 2),
-                    PruningActivityExport.number(row.estimatedVines, 0),
-                    PruningActivityExport.number(row.operationalHours, 2),
-                    PruningActivityExport.number(row.personHours, 2),
-                    PruningActivityExport.number(row.labourCost, 2),
-                    if (row.isActivityTotalsRow) "Yes" else "No",
-                    if (row.isReversed) "Yes" else "No",
-                ).joinToString("|")
-            },
+                row.dateIso,
+                row.dateDisplay,
+                row.weekday,
+                row.activityLabel,
+                row.allocationNumber.toString(),
+                row.fullAllocationCount.toString(),
+                row.includedAllocationCount.toString(),
+                if (row.isPartialActivity) "partial" else "complete",
+                row.allocationLabel,
+                row.blockName,
+                row.variety.orEmpty(),
+                PruningActivityExport.number(row.rowEquivalents, 2),
+                PruningActivityExport.number(row.allocationShare?.let { it * 100.0 }, 2),
+                PruningActivityExport.number(row.allocatedPersonHours, 2),
+                PruningActivityExport.number(row.allocatedLabourCost, 2),
+                PruningActivityExport.number(row.activityPersonHours, 2),
+                PruningActivityExport.number(row.activityLabourCost, 2),
+                if (row.isActivityTotalsRow) "Yes" else "No",
+            ).joinToString("|")
+        }
+
+        assertEquals(
+            "2026-08-07|07/08/2026|Friday|Vineyard block pruning|1|2|2|complete|block 1 of 2|" +
+                "Cabernet Franc|Cabernet Franc|0.50|20.00|2.60|91.00|13.00|455.00|Yes\n" +
+                "2026-08-07|07/08/2026|Friday|Vineyard block pruning|2|2|2|complete|block 2 of 2|" +
+                "Primitivo|Primitivo|2.00|80.00|10.40|364.00|||No",
+            rendered,
         )
     }
 }

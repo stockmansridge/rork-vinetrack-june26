@@ -20,16 +20,20 @@ import java.util.Locale
  * iOS `PruningActivityExportService`.
  *
  * Both formats are built from [PruningActivityExport], so the allocation
- * breakdown, the "activity totals on the first allocation row only" rule and the
+ * breakdown, the allocated-share maths, the partial-activity marker and the
  * labour authority order are identical on the two platforms and identical
  * between the two formats.
  *
  * The caller passes the report's ALREADY filtered and sorted rows, so an export
  * always reflects exactly what is on screen — same date range, season, block,
  * worker, method, linked/unlinked and reversed options, same search, same sort.
+ * It ALSO passes the canonical (unfiltered) rows, which supply the parent
+ * activity context and the allocation-share denominator so a filtered extract
+ * never hands one block 100% of a multi-block activity's cost.
  *
- * `includeCost = false` (supervisor/operator) removes the labour cost column
- * from the CSV and the cost line from the PDF entirely; hours stay visible.
+ * `includeCost = false` (supervisor/operator) removes BOTH the whole-activity
+ * and the allocated cost columns from the CSV and the cost lines from the PDF
+ * entirely; hours stay visible.
  *
  * Files are written to the app cache (`cache/exports`) and shared through
  * [FileProvider]. Nothing is uploaded.
@@ -49,8 +53,9 @@ object PruningActivityExportService {
         vineyardName: String,
         seasonLabel: String,
         includeCost: Boolean,
+        canonicalRows: List<PruningActivityRow> = rows,
     ): Boolean = try {
-        val csv = PruningActivityExport.csv(rows, includeCost)
+        val csv = PruningActivityExport.csv(rows, includeCost, canonicalRows)
         val file = write(context, fileName(vineyardName, seasonLabel, "csv"), csv)
         share(context, file, "text/csv", "Export pruning activity report")
         true
@@ -65,11 +70,12 @@ object PruningActivityExportService {
         vineyardName: String,
         seasonLabel: String,
         includeCost: Boolean,
+        canonicalRows: List<PruningActivityRow> = rows,
     ): Boolean = try {
         val file = File(File(context.cacheDir, "exports").apply { mkdirs() }, fileName(vineyardName, seasonLabel, "pdf"))
         val document = PdfDocument()
         try {
-            renderPdf(document, rows, vineyardName, seasonLabel, includeCost)
+            renderPdf(document, rows, vineyardName, seasonLabel, includeCost, canonicalRows)
             file.outputStream().use { document.writeTo(it) }
         } finally {
             document.close()
@@ -122,8 +128,9 @@ object PruningActivityExportService {
         vineyardName: String,
         seasonLabel: String,
         includeCost: Boolean,
+        canonicalRows: List<PruningActivityRow>,
     ) {
-        val groups = PruningActivityExport.groups(rows, includeCost)
+        val groups = PruningActivityExport.groups(rows, includeCost, canonicalRows)
         val state = PageState(doc)
 
         val title = paint(19f, bold = true)
@@ -132,6 +139,7 @@ object PruningActivityExportService {
         val detail = paint(10.5f)
         val detailMuted = paint(10.5f, colour = Color.DKGRAY)
         val badge = paint(9.5f, bold = true, colour = Color.rgb(150, 40, 40))
+        val partialBadge = paint(9.5f, bold = true, colour = Color.rgb(176, 108, 20))
         val rule = Paint().apply { color = Color.rgb(220, 220, 220) }
 
         state.canvas.drawText("Pruning Activity Report", MARGIN, state.y + 16f, title)
@@ -145,9 +153,13 @@ object PruningActivityExportService {
             subtitle,
         )
         state.y += 14f
+        val partialCount = groups.count { it.isPartialActivity }
         state.canvas.drawText(
-            "${groups.size} ${if (groups.size == 1) "activity" else "activities"}, " +
-                "${groups.sumOf { it.allocationCount }} allocations",
+            buildString {
+                append("${groups.size} ${if (groups.size == 1) "activity" else "activities"}, ")
+                append("${groups.sumOf { it.includedAllocationCount }} allocations")
+                if (partialCount > 0) append("  •  $partialCount partially shown")
+            },
             MARGIN,
             state.y,
             subtitle,
@@ -159,6 +171,7 @@ object PruningActivityExportService {
             // across a page break: the allocations are meaningless without the
             // activity totals they belong to.
             val needed = 46f + (group.allocations.size * 13f) +
+                (if (group.isPartialActivity) 13f else 0f) +
                 (if (group.notes != null) 26f else 0f)
             state.ensure(needed.coerceAtMost(PAGE_HEIGHT - 2 * MARGIN))
 
@@ -172,7 +185,15 @@ object PruningActivityExportService {
             }
             state.y += 15f
 
-            // Activity-level values, stated exactly once.
+            // A partial activity says so BEFORE its totals, so the whole-activity
+            // figures below can never be mistaken for the filtered block's.
+            group.partialLabel?.let { label ->
+                state.ensure(13f)
+                state.canvas.drawText(label, MARGIN + 6f, state.y, partialBadge)
+                state.y += 13f
+            }
+
+            // Whole-activity values, stated exactly once.
             for (line in activityLines(group, includeCost)) {
                 state.ensure(13f)
                 state.canvas.drawText(line, MARGIN + 6f, state.y, detail)
@@ -182,7 +203,12 @@ object PruningActivityExportService {
             state.y += 4f
             state.ensure(13f)
             state.canvas.drawText(
-                if (group.isMultiBlock) "Allocations (${group.allocationCount})" else "Allocation",
+                when {
+                    group.isPartialActivity ->
+                        "Allocations shown (${group.includedAllocationCount} of ${group.fullAllocationCount})"
+                    group.isMultiBlock -> "Allocations (${group.includedAllocationCount})"
+                    else -> "Allocation"
+                },
                 MARGIN + 6f,
                 state.y,
                 paint(10.5f, bold = true),
@@ -198,6 +224,21 @@ object PruningActivityExportService {
                     detail,
                 )
                 state.y += 13f
+                // This block's proportional slice, on its own indented line so it
+                // is never confused with the whole-activity totals above.
+                allocatedLine(allocation, includeCost)?.let { line ->
+                    state.ensure(12f)
+                    state.canvas.drawText(line, MARGIN + 26f, state.y, detailMuted)
+                    state.y += 12f
+                }
+            }
+
+            if (group.isPartialActivity) {
+                allocatedSubtotal(group, includeCost)?.let { line ->
+                    state.ensure(13f)
+                    state.canvas.drawText(line, MARGIN + 14f, state.y, paint(10f, bold = true))
+                    state.y += 13f
+                }
             }
 
             group.notes?.let { notes ->
@@ -216,16 +257,28 @@ object PruningActivityExportService {
     }
 
     /**
-     * The activity's own values — worker, hours, cost, task, timing. Blank
+     * The WHOLE activity's values — worker, hours, cost, task, timing. Blank
      * values are omitted rather than printed as zero.
+     *
+     * On a partial activity these are explicitly labelled "whole activity", so
+     * a reader can never take them for the filtered block's cost.
      */
     private fun activityLines(group: PruningActivityExport.Group, includeCost: Boolean): List<String> {
+        val scope = if (group.isPartialActivity) "Whole activity " else ""
         val lines = mutableListOf<String>()
         group.worker?.let { lines.add("Worker: $it") }
         lines.add("Method: ${group.method}")
-        group.operationalHours?.let { lines.add("Operational hours: ${trim(it)}") }
-        group.personHours?.let { lines.add("Person-hours: ${trim(it)}") }
-        if (includeCost) group.labourCost?.let { lines.add("Labour cost: ${'$'}${PruningActivityExport.number(it, 2)}") }
+        group.activityOperationalHours?.let {
+            lines.add("${scope.ifEmpty { "" }}Operational hours: ${trim(it)}".replaceFirstChar(Char::uppercase))
+        }
+        group.activityPersonHours?.let {
+            lines.add("${scope}person-hours: ${trim(it)}".replaceFirstChar(Char::uppercase))
+        }
+        if (includeCost) {
+            group.activityLabourCost?.let {
+                lines.add("${scope}labour cost: ${'$'}${PruningActivityExport.number(it, 2)}".replaceFirstChar(Char::uppercase))
+            }
+        }
         group.workTaskTitle?.let { title ->
             val status = group.workTaskStatus?.let { " ($it)" }.orEmpty()
             lines.add("Work Task: $title$status")
@@ -234,10 +287,31 @@ object PruningActivityExportService {
         val finish = group.finishTime
         if (start != null || finish != null) {
             val span = listOfNotNull(start, finish).joinToString(" – ")
-            val duration = group.durationHours?.let { " (${trim(it)} h)" }.orEmpty()
+            val duration = group.activityDurationHours?.let { " (${trim(it)} h)" }.orEmpty()
             lines.add("Times: $span$duration")
         }
         return lines
+    }
+
+    /** "20.0% of the activity · 2.60 person-hours · $91.00". */
+    private fun allocatedLine(row: PruningActivityExport.Row, includeCost: Boolean): String? {
+        val parts = mutableListOf<String>()
+        row.allocationShare?.let { parts.add("${PruningActivityExport.number(it * 100.0, 1)}% of the activity") }
+        row.allocatedPersonHours?.let { parts.add("${trim(it)} person-hours") }
+        if (includeCost) {
+            row.allocatedLabourCost?.let { parts.add("${'$'}${PruningActivityExport.number(it, 2)}") }
+        }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+    }
+
+    /** The shown blocks' combined slice, printed only when blocks are missing. */
+    private fun allocatedSubtotal(group: PruningActivityExport.Group, includeCost: Boolean): String? {
+        val parts = mutableListOf<String>()
+        group.allocatedPersonHours?.let { parts.add("${trim(it)} person-hours") }
+        if (includeCost) {
+            group.allocatedLabourCost?.let { parts.add("${'$'}${PruningActivityExport.number(it, 2)}") }
+        }
+        return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")?.let { "Allocated to shown blocks: $it" }
     }
 
     /** "Pinot Noir — rows 90–108 · 4 quarters · 1.0 row eq · 210 vines". */

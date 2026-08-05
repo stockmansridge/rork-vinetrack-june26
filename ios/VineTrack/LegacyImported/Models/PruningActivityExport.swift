@@ -6,42 +6,47 @@ import Foundation
 /// regression fixtures in `PruningActivityExportTests.swift` and
 /// `PruningActivityExportTest.kt` are byte-for-byte the same.
 ///
-/// ## Why this exists
+/// ## The model
 ///
-/// A pruning activity is ONE piece of work that may cover MANY blocks (sql/166).
-/// `pruning_entries` is the allocation table, so a two-block activity is two
-/// rows in the report — and naively exporting both rows with the activity's
-/// labour on each would make every spreadsheet `SUM()` count that labour twice.
+/// A pruning activity is ONE piece of work that may cover MANY blocks, and
+/// `pruning_entries` is the allocation table. Every exported row is one
+/// ALLOCATION, and it carries three kinds of value:
 ///
-/// The rule this file enforces:
+///  * ALLOCATION quantities — block, variety, rows, quarters, row equivalents,
+///    vines, allocation share, ALLOCATED person-hours, ALLOCATED cost. Present
+///    on EVERY row. These are proportional slices, so they sum correctly across
+///    any filtered subset.
+///  * PARENT CONTEXT — activity id, worker/crew, method, Work Task, start,
+///    finish, allocation counts, partial marker. Present on EVERY row, resolved
+///    from the PARENT ACTIVITY via `PruningActivityAllocationModel`.
+///  * PARENT TOTALS — whole-activity operational hours, person-hours, labour
+///    cost and duration. Present on the DESIGNATED TOTALS ROW only, so a
+///    spreadsheet `SUM()` cannot count one activity's labour once per block.
 ///
-///  * ALLOCATION-level quantities (block, variety, rows, quarters, row
-///    equivalents, vines) appear on EVERY allocation row.
-///  * ACTIVITY-level values (operational hours, Work Task person-hours, labour
-///    cost, worker/crew, start, finish, duration, notes) appear on the FIRST
-///    allocation row only.
-///  * Suppressed values are BLANK, never `0` — a zero claims a real recorded
-///    measurement of nothing.
+/// Suppressed values are BLANK, never `0` — a zero claims a real recorded
+/// measurement of nothing.
 ///
-/// This is not a presentation trick: the activity's labour and timing are stored
-/// on exactly one allocation (`allocation_index = 0`, the PRIMARY), so the first
-/// allocation row is the only row that ever holds them. The export makes that
-/// storage invariant visible instead of fighting it.
+/// ## Parent context is never blanked by a filter
 ///
-/// ## Labour authority
+/// The `allocation_index = 0` row is a legacy MIRROR of some parent values, not
+/// the authority. Filtering to a block that the activity touched second must
+/// still show that activity's worker, Work Task and labour. The totals row is
+/// therefore the first INCLUDED allocation, not necessarily the primary.
 ///
-/// Unchanged from `WorkTaskLabourCosting`: summed Work Task labour lines win
-/// outright, and the legacy activity-level value is used ONLY when the linked
-/// task has no lines. The two sources are never combined, so the exported
-/// person-hours and labour-cost columns sum to the report summary exactly.
+/// ## Partial activities
+///
+/// When the filter admits fewer allocations than the activity really has, the
+/// rows are marked `Partial activity = Yes` and carry both counts. The parent
+/// totals still describe the WHOLE activity and are labelled as such; the
+/// filtered block's proportional figures are the ALLOCATED columns. Confusing
+/// the two is exactly the error this file exists to prevent.
 nonisolated enum PruningActivityExport {
 
     /// One CSV row — one ALLOCATION of one activity.
     ///
-    /// Every activity-level field is optional and populated ONLY when
-    /// `isActivityTotalsRow` is true. No field carries a UUID: internal ids are
-    /// used for grouping and then dropped, so an exported file never leaks a
-    /// database identifier.
+    /// Whole-activity totals are optional and populated ONLY when
+    /// `isActivityTotalsRow` is true. Allocated values and parent context are
+    /// populated on every row.
     nonisolated struct Row: Sendable, Equatable {
         /// Raw chronological `yyyy-MM-dd`, retained for sorting and pivots.
         let dateIso: String
@@ -51,9 +56,21 @@ nonisolated enum PruningActivityExport {
         let weekday: String
         /// The activity's name — the linked Work Task title, else "Spur pruning".
         let activityLabel: String
+        /// The PARENT activity's id, exported so a filtered extract can be
+        /// reconciled against the portal and so whole-activity totals can be
+        /// de-duplicated by the reader.
+        let activityId: String
+        /// This allocation's own id — the row's stable key.
+        let allocationId: String
+        /// 1-based position within the FULL activity, not within the extract.
         let allocationNumber: Int
-        let allocationCount: Int
-        /// "block 1 of 2".
+        /// How many allocations the activity really has.
+        let fullAllocationCount: Int
+        /// How many of them survived the filter.
+        let includedAllocationCount: Int
+        /// True when `includedAllocationCount` < `fullAllocationCount`.
+        let isPartialActivity: Bool
+        /// "block 1 of 2", or "block 2 of 2 (1 shown)" when partial.
         let allocationLabel: String
         let blockName: String
         let variety: String?
@@ -63,32 +80,41 @@ nonisolated enum PruningActivityExport {
         let rowEquivalents: Double
         /// Exact vines when the block's rows resolve, else this allocation's estimate.
         let estimatedVines: Double?
+        // --- allocation slice: present on EVERY row -------------------------
+        /// 0..1 of the FULL activity's row equivalents.
+        let allocationShare: Double?
+        /// parent person-hours × share.
+        let allocatedPersonHours: Double?
+        /// parent labour cost × share; nil when costing is not permitted.
+        let allocatedLabourCost: Double?
+        // --- parent context: present on EVERY row ---------------------------
         let method: String
-        // --- activity level: first allocation row only ---------------------
         let worker: String?
-        /// The activity's own recorded operational hours.
-        let operationalHours: Double?
-        /// RESOLVED authoritative person-hours (task labour lines, else legacy).
-        let personHours: Double?
-        /// Nil when costing is not visible to this role, or none was recorded.
-        let labourCost: Double?
         let workTaskTitle: String?
         let workTaskStatus: String?
         let startTime: String?
         let finishTime: String?
-        let durationHours: Double?
+        // --- whole-activity totals: totals row ONLY -------------------------
+        /// The activity's own recorded operational hours.
+        let activityOperationalHours: Double?
+        /// RESOLVED authoritative person-hours for the WHOLE activity.
+        let activityPersonHours: Double?
+        /// Whole-activity labour cost; nil when costing is not permitted.
+        let activityLabourCost: Double?
+        /// Elapsed start→finish duration for the whole activity.
+        let activityDurationHours: Double?
         let notes: String?
-        // ------------------------------------------------------------------
+        // --------------------------------------------------------------------
         let isReversed: Bool
-        /// True on the first allocation row of each activity — the one carrying
-        /// the activity-level totals. Exported as a `Yes`/`No` column so pivot
-        /// tables can aggregate activity values with no de-duplication.
+        /// True on the first INCLUDED allocation row of each activity — the one
+        /// carrying the whole-activity totals. Exported as a `Yes`/`No` column
+        /// so a pivot can aggregate parent values without de-duplicating.
         let isActivityTotalsRow: Bool
     }
 
-    /// One activity and all of its exported allocations — the PDF's grouped
-    /// layout. The activity's labour and timing are stated ONCE in the header,
-    /// so the allocation list underneath is pure block detail.
+    /// One activity and its INCLUDED allocations — the PDF's grouped layout. The
+    /// whole-activity labour is stated ONCE in the header; the allocation list
+    /// underneath carries each block's proportional slice.
     nonisolated struct Group: Sendable, Identifiable {
         let id: UUID
         let activityLabel: String
@@ -97,22 +123,32 @@ nonisolated enum PruningActivityExport {
         let dateDisplay: String
         let method: String
         let worker: String?
-        let operationalHours: Double?
-        let personHours: Double?
-        let labourCost: Double?
+        let activityOperationalHours: Double?
+        let activityPersonHours: Double?
+        let activityLabourCost: Double?
+        let activityDurationHours: Double?
         let workTaskTitle: String?
         let workTaskStatus: String?
         let startTime: String?
         let finishTime: String?
-        let durationHours: Double?
         let notes: String?
         let isReversed: Bool
+        let fullAllocationCount: Int
         let allocations: [Row]
 
-        var allocationCount: Int { allocations.count }
-        var isMultiBlock: Bool { allocations.count > 1 }
+        var includedAllocationCount: Int { allocations.count }
+        var isPartialActivity: Bool { includedAllocationCount < fullAllocationCount }
+        var isMultiBlock: Bool { fullAllocationCount > 1 }
 
-        /// "Pinot Noir + Cabernet Franc".
+        /// "Partial activity — 1 of 2 blocks shown", or nil for a complete one.
+        /// The PDF prints this above the whole-activity totals so nobody reads
+        /// those totals as belonging to the filtered block.
+        var partialLabel: String? {
+            guard isPartialActivity else { return nil }
+            return "Partial activity — \(includedAllocationCount) of \(fullAllocationCount) blocks shown"
+        }
+
+        /// "Pinot Noir + Cabernet Franc" — the INCLUDED blocks.
         var blockSummary: String {
             var seen = Set<String>()
             return allocations
@@ -124,6 +160,17 @@ nonisolated enum PruningActivityExport {
         var totalQuarters: Int { allocations.reduce(0) { $0 + $1.quarters } }
         var totalRowEquivalents: Double { allocations.reduce(0) { $0 + $1.rowEquivalents } }
         var totalVines: Double { allocations.reduce(0) { $0 + ($1.estimatedVines ?? 0) } }
+
+        /// Person-hours attributable to the SHOWN blocks only.
+        var allocatedPersonHours: Double? { Group.sumOrNil(allocations.map(\.allocatedPersonHours)) }
+
+        /// Labour cost attributable to the SHOWN blocks only.
+        var allocatedLabourCost: Double? { Group.sumOrNil(allocations.map(\.allocatedLabourCost)) }
+
+        private static func sumOrNil(_ values: [Double?]) -> Double? {
+            let present = values.compactMap { $0 }
+            return present.isEmpty ? nil : present.reduce(0, +)
+        }
     }
 
     // MARK: - Grouping
@@ -134,20 +181,32 @@ nonisolated enum PruningActivityExport {
     /// Group order follows the report's own visible order: an activity ranks by
     /// the position of its first-appearing row, so changing the report's sort
     /// reorders the groups without ever scattering one activity's allocations
-    /// through the file.
-    ///
-    /// Allocation order inside a group is the server's `allocation_index`, which
-    /// puts the PRIMARY allocation — the one holding the activity's labour and
-    /// timing — first. That is what makes "totals on row 1" true rather than
-    /// hopeful.
+    /// through the file. Allocation order inside a group is the canonical
+    /// `allocation_index` order.
     ///
     /// - Parameters:
     ///   - reportRows: the report's filtered + sorted rows, in visible order.
-    ///   - includeCost: false for roles without costing visibility; the labour
-    ///     cost is then dropped from the data, not merely hidden in the renderer.
+    ///   - includeCost: false for roles without costing visibility; BOTH the
+    ///     whole-activity cost and the allocated cost are then dropped from the
+    ///     data, not merely hidden in the renderer.
+    ///   - canonicalRows: every allocation of every activity BEFORE filtering.
+    ///     This supplies the parent context and the allocation-share
+    ///     denominator. Defaults to `reportRows` for an unfiltered export.
     static func groups(
         _ reportRows: [PruningActivityRow],
         includeCost: Bool,
+        canonicalRows: [PruningActivityRow]? = nil,
+        calendar: Calendar = .current
+    ) -> [Group] {
+        let model = PruningActivityAllocationModel.build(canonicalRows ?? reportRows, includeCost: includeCost)
+        return groups(reportRows, includeCost: includeCost, model: model, calendar: calendar)
+    }
+
+    /// Overload for callers that already built the model (the summary path).
+    static func groups(
+        _ reportRows: [PruningActivityRow],
+        includeCost: Bool,
+        model: PruningActivityAllocationModel,
         calendar: Calendar = .current
     ) -> [Group] {
         var order: [UUID] = []
@@ -160,78 +219,91 @@ nonisolated enum PruningActivityExport {
             buckets[row.activityKey]?.append(row)
         }
 
-        return order.compactMap { key -> Group? in
-            guard let activityRows = buckets[key], !activityRows.isEmpty else { return nil }
-            let allocations = activityRows.sorted { lhs, rhs in
-                if lhs.allocationIndex != rhs.allocationIndex {
-                    return lhs.allocationIndex < rhs.allocationIndex
-                }
-                let byBlock = lhs.blockName.localizedStandardCompare(rhs.blockName)
-                if byBlock != .orderedSame { return byBlock == .orderedAscending }
-                return lhs.id.uuidString < rhs.id.uuidString
-            }
-            // The activity's own values live on the PRIMARY allocation. When a
-            // filter has excluded that allocation the values are genuinely not
-            // in this result, and every activity-level field stays blank rather
-            // than being invented from a sibling row.
-            let head = allocations[0]
-            let count = allocations.count
-            let label = activityLabel(head)
+        return order.compactMap { activityId -> Group? in
+            guard let included = buckets[activityId], !included.isEmpty else { return nil }
+            let ordered = PruningActivityAllocationModel.canonicalOrder(included)
+            let head = ordered[0]
+            let parent = model.parent(activityId)
+            let fullCount = parent?.allocationCount ?? ordered.count
+            let includedCount = ordered.count
+            let partial = includedCount < fullCount
+            let label = parent?.label ?? PruningActivityAllocationModel.label(
+                workTaskTitle: head.workTaskTitle,
+                method: head.method
+            )
+            let start = time(parent?.startTime, calendar: calendar)
+            let finish = time(parent?.finishTime, calendar: calendar)
 
-            let exported: [Row] = allocations.enumerated().map { index, row in
+            let exported: [Row] = ordered.enumerated().map { index, row in
+                let share = model.share(of: row)
+                // The totals row is the first INCLUDED allocation. When a filter
+                // has excluded the legacy primary, the parent's values move to
+                // whichever allocation survived — they are never dropped.
                 let isTotals = index == 0
+                let number = share?.allocationNumber ?? (index + 1)
                 return Row(
                     dateIso: isoDate(row.date, calendar: calendar),
                     dateDisplay: auDate(row.date, calendar: calendar),
                     weekday: weekday(row.date, calendar: calendar),
                     activityLabel: label,
-                    allocationNumber: index + 1,
-                    allocationCount: count,
-                    allocationLabel: allocationLabel(number: index + 1, count: count),
+                    activityId: activityId.uuidString,
+                    allocationId: row.id.uuidString,
+                    allocationNumber: number,
+                    fullAllocationCount: fullCount,
+                    includedAllocationCount: includedCount,
+                    isPartialActivity: partial,
+                    allocationLabel: allocationLabel(
+                        number: number,
+                        fullCount: fullCount,
+                        includedCount: includedCount
+                    ),
                     blockName: row.blockName,
                     variety: row.variety,
                     rowRange: row.rowRangeLabel,
                     quarters: row.quarters,
                     rowEquivalents: row.rowEquivalents,
                     estimatedVines: row.vines ?? (row.estimatedVines > 0 ? Double(row.estimatedVines) : nil),
-                    method: row.method,
-                    // Everything below is numeric or activity-level narrative
-                    // and appears exactly once per activity.
-                    worker: isTotals ? head.worker : nil,
-                    operationalHours: isTotals ? head.operationalHours : nil,
-                    personHours: isTotals ? head.labourHours : nil,
-                    labourCost: (isTotals && includeCost) ? head.labourCost : nil,
-                    // Work Task title and status repeat on every allocation:
-                    // they are text, they cannot be summed, and repeating them
-                    // keeps a wide spreadsheet readable when scrolled.
-                    workTaskTitle: row.workTaskTitle ?? head.workTaskTitle,
-                    workTaskStatus: row.workTaskStatus ?? head.workTaskStatus,
-                    startTime: isTotals ? time(head.startTime, calendar: calendar) : nil,
-                    finishTime: isTotals ? time(head.finishTime, calendar: calendar) : nil,
-                    durationHours: isTotals ? head.durationHours : nil,
-                    notes: isTotals ? head.notes : nil,
+                    // Proportional slices — on every row, because they are this
+                    // block's own share and can be summed safely.
+                    allocationShare: share?.share,
+                    allocatedPersonHours: share?.personHours,
+                    allocatedLabourCost: includeCost ? share?.labourCost : nil,
+                    // Parent context — on every row, sourced from the ACTIVITY.
+                    method: parent?.method ?? row.method,
+                    worker: parent?.worker,
+                    workTaskTitle: parent?.workTaskTitle,
+                    workTaskStatus: parent?.workTaskStatus,
+                    startTime: start,
+                    finishTime: finish,
+                    // Whole-activity totals — once, on the totals row.
+                    activityOperationalHours: isTotals ? parent?.operationalHours : nil,
+                    activityPersonHours: isTotals ? parent?.personHours : nil,
+                    activityLabourCost: (isTotals && includeCost) ? parent?.labourCost : nil,
+                    activityDurationHours: isTotals ? parent?.durationHours : nil,
+                    notes: isTotals ? parent?.notes : nil,
                     isReversed: row.isReversed,
                     isActivityTotalsRow: isTotals
                 )
             }
 
             return Group(
-                id: key,
+                id: activityId,
                 activityLabel: label,
                 dateIso: isoDate(head.date, calendar: calendar),
                 dateDisplay: longDate(head.date, calendar: calendar),
-                method: head.method,
-                worker: head.worker,
-                operationalHours: head.operationalHours,
-                personHours: head.labourHours,
-                labourCost: includeCost ? head.labourCost : nil,
-                workTaskTitle: head.workTaskTitle,
-                workTaskStatus: head.workTaskStatus,
-                startTime: time(head.startTime, calendar: calendar),
-                finishTime: time(head.finishTime, calendar: calendar),
-                durationHours: head.durationHours,
-                notes: head.notes,
-                isReversed: head.isReversed,
+                method: parent?.method ?? head.method,
+                worker: parent?.worker,
+                activityOperationalHours: parent?.operationalHours,
+                activityPersonHours: parent?.personHours,
+                activityLabourCost: includeCost ? parent?.labourCost : nil,
+                activityDurationHours: parent?.durationHours,
+                workTaskTitle: parent?.workTaskTitle,
+                workTaskStatus: parent?.workTaskStatus,
+                startTime: start,
+                finishTime: finish,
+                notes: parent?.notes,
+                isReversed: ordered.allSatisfy(\.isReversed),
+                fullAllocationCount: fullCount,
                 allocations: exported
             )
         }
@@ -241,42 +313,42 @@ nonisolated enum PruningActivityExport {
     static func rows(
         _ reportRows: [PruningActivityRow],
         includeCost: Bool,
+        canonicalRows: [PruningActivityRow]? = nil,
         calendar: Calendar = .current
     ) -> [Row] {
-        groups(reportRows, includeCost: includeCost, calendar: calendar).flatMap(\.allocations)
+        groups(
+            reportRows,
+            includeCost: includeCost,
+            canonicalRows: canonicalRows,
+            calendar: calendar
+        ).flatMap(\.allocations)
     }
 
-    /// Activity name. There is no free-text activity title in the schema, so the
-    /// linked Work Task's title is used when there is one and a method-derived
-    /// label otherwise — never a UUID, never "Activity 3f2a…".
-    private static func activityLabel(_ head: PruningActivityRow) -> String {
-        if let title = head.workTaskTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !title.isEmpty {
-            return title
-        }
-        let method = head.method.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !method.isEmpty else { return "Pruning" }
-        return method.lowercased().contains("prun") ? method : "\(method) pruning"
-    }
-
-    /// "block 1 of 2"; a single-allocation activity says "whole activity".
-    static func allocationLabel(number: Int, count: Int) -> String {
-        count <= 1 ? "whole activity" : "block \(number) of \(count)"
+    /// "block 1 of 2"; a single-allocation activity says "whole activity". A
+    /// partial extract appends the included count so the row is self-describing
+    /// even when read on its own.
+    static func allocationLabel(number: Int, fullCount: Int, includedCount: Int) -> String {
+        let base = fullCount <= 1 ? "whole activity" : "block \(number) of \(fullCount)"
+        return includedCount < fullCount ? "\(base) (\(includedCount) shown)" : base
     }
 
     // MARK: - CSV
 
-    /// Column headings, in export order. The labour cost column is absent
-    /// entirely when `includeCost` is false, so a supervisor's export has no
-    /// empty cost column hinting at withheld data.
+    /// Column headings, in export order. BOTH cost columns are absent entirely
+    /// when `includeCost` is false, so a supervisor's export has no empty cost
+    /// column hinting at withheld data.
     static func headers(includeCost: Bool) -> [String] {
         var headers: [String] = [
             "Date (ISO)",
             "Activity Date",
             "Weekday",
             "Activity",
+            "Activity ID",
+            "Allocation ID",
             "Allocation Number",
-            "Allocation Count",
+            "Full Allocation Count",
+            "Included Allocation Count",
+            "Partial Activity",
             "Allocation Label",
             "Block",
             "Variety",
@@ -284,18 +356,23 @@ nonisolated enum PruningActivityExport {
             "Quarters",
             "Row Equivalents",
             "Estimated Vines",
+            "Allocation Share (%)",
+            "Allocated Person-Hours"
+        ]
+        if includeCost { headers.append("Allocated Labour Cost") }
+        headers.append(contentsOf: [
             "Pruning Method",
             "Worker or Crew",
-            "Operational Hours",
-            "Work Task Person-Hours"
-        ]
-        if includeCost { headers.append("Labour Cost") }
-        headers.append(contentsOf: [
             "Work Task",
             "Work Task Status",
             "Start Time",
             "Finish Time",
-            "Duration (h)",
+            "Activity Operational Hours",
+            "Activity Person-Hours"
+        ])
+        if includeCost { headers.append("Activity Total Labour Cost") }
+        headers.append(contentsOf: [
+            "Activity Duration (h)",
             "Notes",
             "Reversed",
             "Activity Totals Row"
@@ -310,8 +387,12 @@ nonisolated enum PruningActivityExport {
             row.dateDisplay,
             row.weekday,
             row.activityLabel,
+            row.activityId,
+            row.allocationId,
             String(row.allocationNumber),
-            String(row.allocationCount),
+            String(row.fullAllocationCount),
+            String(row.includedAllocationCount),
+            row.isPartialActivity ? "Yes" : "No",
             row.allocationLabel,
             row.blockName,
             row.variety ?? "",
@@ -319,18 +400,23 @@ nonisolated enum PruningActivityExport {
             row.quarters > 0 ? String(row.quarters) : "",
             number(row.rowEquivalents > 0 ? row.rowEquivalents : nil, decimals: 2),
             number(row.estimatedVines, decimals: 0),
+            number(row.allocationShare.map { $0 * 100 }, decimals: 2),
+            number(row.allocatedPersonHours, decimals: 2)
+        ]
+        if includeCost { cells.append(number(row.allocatedLabourCost, decimals: 2)) }
+        cells.append(contentsOf: [
             row.method,
             row.worker ?? "",
-            number(row.operationalHours, decimals: 2),
-            number(row.personHours, decimals: 2)
-        ]
-        if includeCost { cells.append(number(row.labourCost, decimals: 2)) }
-        cells.append(contentsOf: [
             row.workTaskTitle ?? "",
             row.workTaskStatus ?? "",
             row.startTime ?? "",
             row.finishTime ?? "",
-            number(row.durationHours, decimals: 2),
+            number(row.activityOperationalHours, decimals: 2),
+            number(row.activityPersonHours, decimals: 2)
+        ])
+        if includeCost { cells.append(number(row.activityLabourCost, decimals: 2)) }
+        cells.append(contentsOf: [
+            number(row.activityDurationHours, decimals: 2),
             row.notes ?? "",
             row.isReversed ? "Yes" : "No",
             row.isActivityTotalsRow ? "Yes" : "No"
@@ -343,9 +429,15 @@ nonisolated enum PruningActivityExport {
     static func csv(
         _ reportRows: [PruningActivityRow],
         includeCost: Bool,
+        canonicalRows: [PruningActivityRow]? = nil,
         calendar: Calendar = .current
     ) -> String {
-        let exported = rows(reportRows, includeCost: includeCost, calendar: calendar)
+        let exported = rows(
+            reportRows,
+            includeCost: includeCost,
+            canonicalRows: canonicalRows,
+            calendar: calendar
+        )
         var lines: [String] = [headers(includeCost: includeCost).map(escape).joined(separator: ",")]
         for row in exported {
             lines.append(cells(row, includeCost: includeCost).map(escape).joined(separator: ","))
@@ -422,6 +514,19 @@ nonisolated enum PruningActivityExport {
     /// regression tests to prove the export and the on-screen summary agree.
     static func columnTotal(_ rows: [Row], _ selector: (Row) -> Double?) -> Double {
         rows.filter { !$0.isReversed }.reduce(0) { $0 + (selector($1) ?? 0) }
+    }
+
+    /// Sums a WHOLE-ACTIVITY column, de-duplicating by activity id the way a
+    /// reader must. Only the totals rows carry these values, so this is really a
+    /// guard that no second row ever starts carrying them too.
+    static func activityTotal(_ rows: [Row], _ selector: (Row) -> Double?) -> Double {
+        var seen = Set<String>()
+        var total = 0.0
+        for row in rows where !row.isReversed {
+            guard seen.insert(row.activityId).inserted else { continue }
+            total += selector(row) ?? 0
+        }
+        return total
     }
 }
 

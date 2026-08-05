@@ -129,7 +129,12 @@ struct PruningActivityReportView: View {
     }
 
     private var summary: PruningActivitySummary {
-        PruningActivityReport.summary(rows, includeCost: canViewCosting)
+        // `allRows` is the CANONICAL set — every allocation of every activity,
+        // before any filter. It supplies the parent activity context and the
+        // allocation-share denominator, so filtering to one block of a
+        // multi-block activity never hands that block the whole activity's
+        // labour.
+        PruningActivityReport.summary(rows, includeCost: canViewCosting, canonicalRows: allRows)
     }
 
     private var columns: [PruningActivityColumn] {
@@ -197,14 +202,16 @@ struct PruningActivityReportView: View {
                     rows: exported,
                     vineyardName: exportVineyardName,
                     seasonLabel: seasonLabel,
-                    includeCost: canViewCosting
+                    includeCost: canViewCosting,
+                    canonicalRows: allRows
                 )
             case .pdf:
                 url = try PruningActivityExportService.pdfURL(
                     rows: exported,
                     vineyardName: exportVineyardName,
                     seasonLabel: seasonLabel,
-                    includeCost: canViewCosting
+                    includeCost: canViewCosting,
+                    canonicalRows: allRows
                 )
             }
             present(url)

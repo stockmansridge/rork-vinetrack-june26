@@ -4,15 +4,19 @@ import Testing
 
 /// SHARED EXPORT FIXTURE — the same cases and the same numbers exist as
 /// `PruningActivityExportTest.kt` in the Android unit-test source set. Both
-/// platforms must produce identical allocation breakdowns, identical
-/// first-row-only totals and identical column sums from this fixture.
+/// platforms must produce identical allocation shares, identical allocated
+/// labour and identical partial-activity markers from this fixture.
 ///
-/// The fixture deliberately covers every shape that could double-count labour:
+/// The fixture covers every shape that could mis-attribute labour:
 ///
-///  * A — two blocks, Work Task labour lines (18 person-hours, $630)
+///  * A — two blocks, equal size, Work Task labour lines (18 person-hours, $630)
 ///  * B — one block, NO labour lines (legacy activity hours only, 4.0)
-///  * C — three blocks, Work Task labour lines (12 person-hours, $300)
+///  * C — three blocks, equal size, Work Task labour lines (12 person-hours, $300)
 ///  * D — two blocks, REVERSED (10 person-hours, $200 — must never be totalled)
+///  * E — two blocks, UNEQUAL (0.50 + 2.00 row equivalents), 13 person-hours,
+///        $455. This is the worked example from the brief: filtering to the
+///        0.50-row-equivalent block must yield a 20% share, 2.60 person-hours
+///        and $91.00 — never the whole $455.
 struct PruningActivityExportTests {
 
     // MARK: Fixture
@@ -27,19 +31,30 @@ struct PruningActivityExportTests {
         calendar.date(from: DateComponents(year: 2026, month: 8, day: day, hour: hour, minute: minute)) ?? Date()
     }
 
+    /// Tolerant comparison — the maths is exact to the cent, not to the bit.
+    private static func close(_ value: Double?, _ expected: Double, _ tolerance: Double = 0.0001) -> Bool {
+        guard let value else { return false }
+        return abs(value - expected) <= tolerance
+    }
+
     private static let vineyardId = UUID(uuidString: "00000000-0000-0000-0000-0000000ae000")!
     private static let blockPinot = UUID(uuidString: "00000000-0000-0000-0000-0000000ae001")!
     private static let blockCab = UUID(uuidString: "00000000-0000-0000-0000-0000000ae002")!
     private static let blockChard = UUID(uuidString: "00000000-0000-0000-0000-0000000ae003")!
+    private static let blockPrim = UUID(uuidString: "00000000-0000-0000-0000-0000000ae004")!
 
     private static let taskA = UUID(uuidString: "00000000-0000-0000-0000-0000000ae011")!
     private static let taskC = UUID(uuidString: "00000000-0000-0000-0000-0000000ae012")!
     private static let taskD = UUID(uuidString: "00000000-0000-0000-0000-0000000ae013")!
+    private static let taskE = UUID(uuidString: "00000000-0000-0000-0000-0000000ae014")!
+    private static let taskR = UUID(uuidString: "00000000-0000-0000-0000-0000000ae015")!
 
     private static let activityAId = UUID(uuidString: "00000000-0000-0000-0000-0000000ae0a0")!
     private static let activityBId = UUID(uuidString: "00000000-0000-0000-0000-0000000ae0b0")!
     private static let activityCId = UUID(uuidString: "00000000-0000-0000-0000-0000000ae0c0")!
     private static let activityDId = UUID(uuidString: "00000000-0000-0000-0000-0000000ae0d0")!
+    private static let activityEId = UUID(uuidString: "00000000-0000-0000-0000-0000000ae0e0")!
+    private static let activityRId = UUID(uuidString: "00000000-0000-0000-0000-0000000ae0f0")!
 
     /// 100 vines per row → one quarter = 25 vines, one full row = 100.
     private static func rowRefs(_ numbers: [Int]) -> [PruningRowRef] {
@@ -70,12 +85,22 @@ struct PruningActivityExportTests {
             name: "Chardonnay",
             variety: "Chardonnay",
             rows: rowRefs(Array(1...4))
+        ),
+        blockPrim: PruningActivityBlockContext(
+            name: "Primitivo",
+            variety: "Primitivo",
+            rows: rowRefs(Array(20...24))
         )
     ]
 
-    /// One whole row = four quarters.
+    /// One whole row = four quarters = 1.00 row equivalents.
     private static func wholeRow(_ number: Int) -> [PruningSegment] {
         (1...4).map { PruningSegment(row: number, quarter: $0) }
+    }
+
+    /// A part row — two quarters = 0.50 row equivalents.
+    private static func halfRow(_ number: Int) -> [PruningSegment] {
+        (1...2).map { PruningSegment(row: number, quarter: $0) }
     }
 
     private static func allocation(
@@ -84,9 +109,12 @@ struct PruningActivityExportTests {
         allocationIndex: Int,
         paddock: UUID,
         day: Int,
-        rowNumber: Int,
+        rowNumber: Int = 0,
+        segments: [PruningSegment]? = nil,
         worker: String = "Pruning Crew",
-        /// Activity-level values exist on the PRIMARY allocation only.
+        /// The legacy MIRROR of the activity's own values, stored on the primary
+        /// allocation. The report must never depend on this row surviving a
+        /// filter to know the activity has labour.
         operationalHours: Double? = nil,
         start: Date? = nil,
         finish: Date? = nil,
@@ -100,7 +128,7 @@ struct PruningActivityExportTests {
             vineyardId: vineyardId,
             paddockId: paddock,
             date: entryDate,
-            segments: wholeRow(rowNumber),
+            segments: segments ?? wholeRow(rowNumber),
             worker: worker,
             labourHours: operationalHours,
             startTime: start,
@@ -115,14 +143,14 @@ struct PruningActivityExportTests {
         )
     }
 
-    /// A — two blocks, Work Task labour lines. The example from the brief.
+    /// A — two equal blocks, Work Task labour lines.
     private static let activityA: [PruningEntry] = [
         allocation(
             id: UUID(uuidString: "00000000-0000-0000-0000-0000000ae0a1")!,
             activityId: activityAId, allocationIndex: 0, paddock: blockPinot,
             day: 3, rowNumber: 90, operationalHours: 6,
             start: date(3, 7, 0), finish: date(3, 13, 0),
-            notes: "Cold start, frost delay", workTaskId: taskA
+            notes: "Cold start frost delay", workTaskId: taskA
         ),
         allocation(
             id: UUID(uuidString: "00000000-0000-0000-0000-0000000ae0a2")!,
@@ -140,7 +168,7 @@ struct PruningActivityExportTests {
         )
     ]
 
-    /// C — three blocks, Work Task labour lines.
+    /// C — three equal blocks, Work Task labour lines.
     private static let activityC: [PruningEntry] = [
         allocation(
             id: UUID(uuidString: "00000000-0000-0000-0000-0000000ae0c1")!,
@@ -174,23 +202,44 @@ struct PruningActivityExportTests {
         )
     ]
 
+    /// E — the worked example. Cabernet Franc 0.50 row equivalents (PRIMARY),
+    /// Primitivo 2.00 (SECONDARY), 2.50 total, 13 person-hours, $455.
+    private static let activityE: [PruningEntry] = [
+        allocation(
+            id: UUID(uuidString: "00000000-0000-0000-0000-0000000ae0e1")!,
+            activityId: activityEId, allocationIndex: 0, paddock: blockCab,
+            day: 7, segments: halfRow(5), operationalHours: 7,
+            start: date(7, 6, 30), finish: date(7, 13, 30),
+            notes: "Two block sweep", workTaskId: taskE
+        ),
+        allocation(
+            id: UUID(uuidString: "00000000-0000-0000-0000-0000000ae0e2")!,
+            activityId: activityEId, allocationIndex: 1, paddock: blockPrim,
+            day: 7, segments: wholeRow(20) + wholeRow(21)
+        )
+    ]
+
     private static let titles: [UUID: String] = [
         taskA: "Winter pruning",
         taskC: "Spur pruning block sweep",
-        taskD: "Reversed pruning"
+        taskD: "Reversed pruning",
+        taskE: "Vineyard block pruning"
     ]
 
     private static let statuses: [UUID: String] = [
         taskA: "Completed",
         taskC: "In progress",
-        taskD: "Completed"
+        taskD: "Completed",
+        taskE: "Completed"
     ]
 
     /// Summed Work Task labour lines — the AUTHORITATIVE labour source.
-    private static let taskHours: [UUID: Double] = [taskA: 18, taskC: 12, taskD: 10]
-    private static let taskCosts: [UUID: Double] = [taskA: 630, taskC: 300, taskD: 200]
+    private static let taskHours: [UUID: Double] = [taskA: 18, taskC: 12, taskD: 10, taskE: 13]
+    private static let taskCosts: [UUID: Double] = [taskA: 630, taskC: 300, taskD: 200, taskE: 455]
 
-    private static var allEntries: [PruningEntry] { activityA + activityB + activityC + activityD }
+    private static var allEntries: [PruningEntry] {
+        activityA + activityB + activityC + activityD + activityE
+    }
 
     private static func build(_ entries: [PruningEntry]) -> [PruningActivityRow] {
         PruningActivityReport.rows(
@@ -209,411 +258,658 @@ struct PruningActivityExportTests {
         PruningActivityReport.sorted(build(entries ?? allEntries), by: .default)
     }
 
+    /// The canonical (unfiltered) rows for one activity.
+    private static func canonicalE() -> [PruningActivityRow] { sorted(activityE) }
+
+    /// Filters a canonical set down to one block, as the report's filter does.
+    private static func onlyBlock(_ canonical: [PruningActivityRow], _ paddock: UUID) -> [PruningActivityRow] {
+        var filter = PruningActivityFilter()
+        filter.blocks = [paddock]
+        return PruningActivityReport.sorted(
+            PruningActivityReport.filtered(canonical, with: filter),
+            by: .default
+        )
+    }
+
+    private static func rows(
+        _ reportRows: [PruningActivityRow],
+        includeCost: Bool = true,
+        canonical: [PruningActivityRow]? = nil
+    ) -> [PruningActivityExport.Row] {
+        PruningActivityExport.rows(
+            reportRows,
+            includeCost: includeCost,
+            canonicalRows: canonical,
+            calendar: calendar
+        )
+    }
+
     private static func exported(
         _ entries: [PruningEntry]? = nil,
         includeCost: Bool = true
     ) -> [PruningActivityExport.Row] {
-        PruningActivityExport.rows(sorted(entries), includeCost: includeCost, calendar: calendar)
+        rows(sorted(entries), includeCost: includeCost)
     }
 
-    // MARK: 1. A two-block activity produces two allocation rows
+    // MARK: 1. Two-block activity filtered to the PRIMARY block
 
-    @Test("A two-block activity exports two allocation rows")
-    func twoBlockActivityExportsTwoRows() {
-        let rows = Self.exported(Self.activityA)
+    @Test("A two-block activity filtered to the primary block reports a partial activity")
+    func filteredToPrimaryBlock() throws {
+        let canonical = Self.canonicalE()
+        let exported = Self.rows(Self.onlyBlock(canonical, Self.blockCab), canonical: canonical)
 
-        #expect(rows.count == 2)
-        #expect(rows.map(\.allocationNumber) == [1, 2])
-        #expect(rows.map(\.allocationCount) == [2, 2])
-        #expect(rows.map(\.blockName) == ["Pinot Noir", "Cabernet Franc"])
-        #expect(rows.map(\.allocationLabel) == ["block 1 of 2", "block 2 of 2"])
-        // The activity label is the linked Work Task title, never an id.
-        #expect(rows.allSatisfy { $0.activityLabel == "Winter pruning" })
+        let row = try #require(exported.first)
+        #expect(exported.count == 1)
+        #expect(row.blockName == "Cabernet Franc")
+        #expect(row.allocationNumber == 1)
+        #expect(row.fullAllocationCount == 2)
+        #expect(row.includedAllocationCount == 1)
+        #expect(row.isPartialActivity)
+        #expect(row.allocationLabel == "block 1 of 2 (1 shown)")
+
+        // The brief's worked example, exactly.
+        #expect(Self.close(row.allocationShare, 0.20, 0.000001))
+        #expect(Self.close(row.allocatedPersonHours, 2.60))
+        #expect(Self.close(row.allocatedLabourCost, 91.00))
+
+        // The WHOLE activity's totals are still stated, and still whole.
+        #expect(row.isActivityTotalsRow)
+        #expect(Self.close(row.activityPersonHours, 13.0))
+        #expect(Self.close(row.activityLabourCost, 455.0))
     }
 
-    // MARK: 2. Person-hours and labour cost appear only on the first row
+    // MARK: 2. Two-block activity filtered to the SECONDARY block
 
-    @Test("Activity totals appear on the first allocation row only, blank elsewhere")
-    func activityTotalsOnFirstRowOnly() {
-        let rows = Self.exported(Self.activityA)
-        let first = rows[0]
-        let second = rows[1]
+    @Test("A two-block activity filtered to the secondary block keeps its parent context")
+    func filteredToSecondaryBlock() throws {
+        let canonical = Self.canonicalE()
+        let exported = Self.rows(Self.onlyBlock(canonical, Self.blockPrim), canonical: canonical)
 
-        #expect(first.isActivityTotalsRow)
-        #expect(!second.isActivityTotalsRow)
+        let row = try #require(exported.first)
+        #expect(exported.count == 1)
+        #expect(row.blockName == "Primitivo")
+        // The allocation keeps its TRUE position in the parent — it is still the
+        // second allocation, even though it is the only one shown.
+        #expect(row.allocationNumber == 2)
+        #expect(row.fullAllocationCount == 2)
+        #expect(row.includedAllocationCount == 1)
+        #expect(row.isPartialActivity)
+        #expect(row.allocationLabel == "block 2 of 2 (1 shown)")
 
-        #expect(first.operationalHours == 6)
-        #expect(first.personHours == 18)
-        #expect(first.labourCost == 630)
-        #expect(first.worker == "Pruning Crew")
-        #expect(first.startTime == "07:00")
-        #expect(first.finishTime == "13:00")
-        #expect(first.durationHours == 6)
-        #expect(first.notes == "Cold start, frost delay")
+        #expect(Self.close(row.allocationShare, 0.80, 0.000001))
+        #expect(Self.close(row.allocatedPersonHours, 10.40))
+        #expect(Self.close(row.allocatedLabourCost, 364.00))
 
-        // BLANK, not zero — a zero would claim a real recorded measurement.
-        #expect(second.operationalHours == nil)
-        #expect(second.personHours == nil)
-        #expect(second.labourCost == nil)
-        #expect(second.worker == nil)
-        #expect(second.startTime == nil)
-        #expect(second.finishTime == nil)
-        #expect(second.durationHours == nil)
-        #expect(second.notes == nil)
+        // The legacy primary allocation was filtered out, and the whole-activity
+        // totals are STILL present. This is the regression that matters most:
+        // the parent owns these values, not the primary allocation row.
+        #expect(row.isActivityTotalsRow)
+        #expect(Self.close(row.activityPersonHours, 13.0))
+        #expect(Self.close(row.activityLabourCost, 455.0))
+        #expect(Self.close(row.activityOperationalHours, 7.0))
+        #expect(Self.close(row.activityDurationHours, 7.0))
+        #expect(row.notes == "Two block sweep")
+    }
 
-        // And the CSV cells for those columns are empty strings, not "0.00".
+    // MARK: 3. A secondary-only result still carries allocated hours and cost
+
+    @Test("A secondary-only result still reports allocated hours and cost")
+    func secondaryOnlyKeepsAllocatedValues() throws {
+        let canonical = Self.canonicalE()
+        let exported = Self.rows(Self.onlyBlock(canonical, Self.blockPrim), canonical: canonical)
+        let row = try #require(exported.first)
+
+        #expect(row.allocatedPersonHours != nil)
+        #expect(row.allocatedLabourCost != nil)
+
+        // And they reach the CSV as real numbers, not blanks.
         let headers = PruningActivityExport.headers(includeCost: true)
-        let cells = PruningActivityExport.cells(second, includeCost: true)
-        for column in ["Operational Hours", "Work Task Person-Hours", "Labour Cost", "Duration (h)"] {
-            let index = headers.firstIndex(of: column)
-            #expect(index != nil)
-            #expect(cells[index ?? 0] == "")
+        let cells = PruningActivityExport.cells(row, includeCost: true)
+        #expect(cells[try #require(headers.firstIndex(of: "Allocated Person-Hours"))] == "10.40")
+        #expect(cells[try #require(headers.firstIndex(of: "Allocated Labour Cost"))] == "364.00")
+        #expect(cells[try #require(headers.firstIndex(of: "Allocation Share (%)"))] == "80.00")
+    }
+
+    // MARK: 4. Parent Work Task and worker survive the filter
+
+    @Test("The parent Work Task and worker remain available on a secondary allocation")
+    func parentContextSurvivesFilter() throws {
+        let canonical = Self.canonicalE()
+        let filtered = Self.onlyBlock(canonical, Self.blockPrim)
+        let row = try #require(Self.rows(filtered, canonical: canonical).first)
+
+        #expect(row.workTaskTitle == "Vineyard block pruning")
+        #expect(row.workTaskStatus == "Completed")
+        #expect(row.activityLabel == "Vineyard block pruning")
+        #expect(row.worker == "Pruning Crew")
+        #expect(row.startTime == "06:30")
+        #expect(row.finishTime == "13:30")
+        #expect(!row.method.isEmpty)
+
+        // The same is true in the grouped PDF layout.
+        let group = try #require(
+            PruningActivityExport.groups(
+                filtered,
+                includeCost: true,
+                canonicalRows: canonical,
+                calendar: Self.calendar
+            ).first
+        )
+        #expect(group.workTaskTitle == "Vineyard block pruning")
+        #expect(group.worker == "Pruning Crew")
+        #expect(group.partialLabel == "Partial activity — 1 of 2 blocks shown")
+    }
+
+    // MARK: 5. The allocation share uses the FULL activity denominator
+
+    @Test("The allocation share uses the full activity denominator, not the filtered subset")
+    func shareUsesFullDenominator() throws {
+        let canonical = Self.canonicalE()
+
+        // Filtered to the 2.00-row-equivalent block. Its OWN row equivalents are
+        // the only ones in the result, so a subset denominator would give 100%.
+        let row = try #require(Self.rows(Self.onlyBlock(canonical, Self.blockPrim), canonical: canonical).first)
+        #expect(Self.close(row.rowEquivalents, 2.0))
+        #expect(Self.close(row.allocationShare, 0.80, 0.000001))
+
+        // The denominator is the parent's 2.50, not the surviving 2.00.
+        let model = PruningActivityAllocationModel.build(canonical, includeCost: true)
+        let parent = try #require(model.parent(Self.activityEId))
+        #expect(Self.close(parent.rowEquivalents, 2.5))
+        #expect(Self.close(row.allocationShare, row.rowEquivalents / parent.rowEquivalents, 0.000001))
+    }
+
+    // MARK: 6. The partial marker is present, and absent when complete
+
+    @Test("The partial activity marker is present only when allocations are missing")
+    func partialMarker() throws {
+        let canonical = Self.canonicalE()
+        let headers = PruningActivityExport.headers(includeCost: true)
+        let partialIndex = try #require(headers.firstIndex(of: "Partial Activity"))
+
+        let partial = try #require(Self.rows(Self.onlyBlock(canonical, Self.blockPrim), canonical: canonical).first)
+        #expect(partial.isPartialActivity)
+        #expect(PruningActivityExport.cells(partial, includeCost: true)[partialIndex] == "Yes")
+
+        let complete = Self.rows(canonical, canonical: canonical)
+        #expect(complete.count == 2)
+        #expect(complete.allSatisfy { !$0.isPartialActivity })
+        for row in complete {
+            #expect(PruningActivityExport.cells(row, includeCost: true)[partialIndex] == "No")
+            #expect(row.includedAllocationCount == 2)
         }
     }
 
-    // MARK: 3. Allocation-specific quantities stay on every row
+    // MARK: 7. An included allocation's cost never inflates to 100%
+
+    @Test("An included allocation cost never inflates to the whole activity")
+    func allocatedCostNeverInflates() throws {
+        let canonical = Self.canonicalE()
+
+        for (paddock, expected) in [(Self.blockCab, 91.00), (Self.blockPrim, 364.00)] {
+            let row = try #require(Self.rows(Self.onlyBlock(canonical, paddock), canonical: canonical).first)
+            #expect(Self.close(row.allocatedLabourCost, expected))
+            // An allocated cost must never equal the whole activity's.
+            #expect(try #require(row.allocatedLabourCost) < 455.0)
+        }
+
+        // The two filtered slices add back up to the parent exactly.
+        #expect(Self.close(91.00 + 364.00, 455.0))
+    }
+
+    // MARK: 8. Parent totals appear exactly once
+
+    @Test("Whole-activity totals appear on exactly one row per activity")
+    func parentTotalsAppearOnce() {
+        let exported = Self.exported()
+
+        // One totals row per activity, and only totals rows carry parent values.
+        let totalsRows = exported.filter(\.isActivityTotalsRow)
+        var distinctActivities = Set<String>()
+        for row in exported { distinctActivities.insert(row.activityId) }
+        #expect(totalsRows.count == distinctActivities.count)
+        #expect(Set(totalsRows.map(\.activityId)).count == totalsRows.count)
+
+        for row in exported where !row.isActivityTotalsRow {
+            #expect(row.activityPersonHours == nil)
+            #expect(row.activityLabourCost == nil)
+            #expect(row.activityOperationalHours == nil)
+            #expect(row.activityDurationHours == nil)
+            #expect(row.notes == nil)
+        }
+
+        // De-duplicating by activity id gives the true whole-activity total;
+        // 18 + 4 + 12 + 13, with the reversed activity excluded.
+        #expect(Self.close(PruningActivityExport.activityTotal(exported) { $0.activityPersonHours }, 47.0))
+        #expect(Self.close(PruningActivityExport.activityTotal(exported) { $0.activityLabourCost }, 1385.0))
+    }
+
+    // MARK: 9. Allocated totals equal the filtered summary
+
+    @Test("Allocated column totals equal the filtered summary")
+    func allocatedTotalsMatchFilteredSummary() throws {
+        let canonical = Self.sorted()
+
+        // Cabernet Franc appears in A (1.00 of 2.00), C (1.00 of 3.00),
+        // D (reversed) and E (0.50 of 2.50).
+        let filtered = Self.onlyBlock(canonical, Self.blockCab)
+        let summary = PruningActivityReport.summary(filtered, includeCost: true, canonicalRows: canonical)
+        let exported = Self.rows(filtered, canonical: canonical)
+
+        let hours = PruningActivityExport.columnTotal(exported) { $0.allocatedPersonHours }
+        let cost = PruningActivityExport.columnTotal(exported) { $0.allocatedLabourCost }
+
+        // 9.00 (A) + 4.00 (C) + 2.60 (E); D is reversed and excluded.
+        #expect(Self.close(summary.labourHours, 15.60))
+        #expect(Self.close(hours, summary.labourHours))
+        // 315.00 (A) + 100.00 (C) + 91.00 (E).
+        #expect(Self.close(summary.labourCost, 506.00))
+        #expect(Self.close(cost, try #require(summary.labourCost)))
+
+        // The whole-activity figures are larger, and de-duplicated by activity.
+        #expect(Self.close(summary.wholeActivityLabourHours, 43.0))
+        #expect(Self.close(summary.wholeActivityLabourCost, 1385.0))
+        #expect(summary.activities == 3)
+        #expect(summary.partialActivities == 3)
+        #expect(summary.hasPartialActivities)
+    }
+
+    // MARK: 10. Unfiltered allocated totals reconcile exactly to the parents
+
+    @Test("Unfiltered allocated totals reconcile exactly to the parent totals")
+    func unfilteredTotalsReconcile() throws {
+        let reportRows = Self.sorted()
+        let exported = Self.rows(reportRows)
+        let summary = PruningActivityReport.summary(reportRows, includeCost: true)
+
+        let allocatedHours = PruningActivityExport.columnTotal(exported) { $0.allocatedPersonHours }
+        let allocatedCost = PruningActivityExport.columnTotal(exported) { $0.allocatedLabourCost }
+        let parentHours = PruningActivityExport.activityTotal(exported) { $0.activityPersonHours }
+        let parentCost = PruningActivityExport.activityTotal(exported) { $0.activityLabourCost }
+
+        #expect(Self.close(allocatedHours, parentHours))
+        #expect(Self.close(allocatedCost, parentCost))
+        #expect(Self.close(allocatedHours, 47.0))
+        #expect(Self.close(allocatedCost, 1385.0))
+
+        // With nothing filtered out, the two summary figures agree and nothing
+        // is marked partial.
+        #expect(Self.close(summary.labourHours, summary.wholeActivityLabourHours))
+        #expect(Self.close(summary.labourCost, try #require(summary.wholeActivityLabourCost)))
+        #expect(summary.partialActivities == 0)
+
+        // Per activity, too — never just in aggregate.
+        for group in PruningActivityExport.groups(reportRows, includeCost: true, calendar: Self.calendar) {
+            if let parent = group.activityPersonHours {
+                #expect(Self.close(group.allocatedPersonHours, parent))
+            }
+            if let parent = group.activityLabourCost {
+                #expect(Self.close(group.allocatedLabourCost, parent))
+            }
+        }
+    }
+
+    // MARK: 11. The rounding remainder is assigned deterministically
+
+    @Test("The rounding remainder is assigned deterministically and always reconciles")
+    func roundingRemainderIsDeterministic() {
+        // Three equal blocks sharing 10 person-hours and $100 — neither divides
+        // evenly into cents, so a naive split would lose or gain a cent.
+        let paddocks = [Self.blockPinot, Self.blockCab, Self.blockChard]
+        let entries: [PruningEntry] = (0..<3).map { index in
+            Self.allocation(
+                id: UUID(uuidString: "00000000-0000-0000-0000-0000000af00\(index)")!,
+                activityId: Self.activityRId,
+                allocationIndex: index,
+                paddock: paddocks[index],
+                day: 8,
+                rowNumber: index + 1,
+                operationalHours: index == 0 ? 3 : nil,
+                workTaskId: Self.taskR
+            )
+        }
+        let reportRows = PruningActivityReport.sorted(
+            PruningActivityReport.rows(
+                entries: entries,
+                blocks: Self.contexts,
+                workTaskTitles: [Self.taskR: "Rounding sweep"],
+                labourCosts: [Self.taskR: 100],
+                labourHours: [Self.taskR: 10],
+                accountNames: [:],
+                calendar: Self.calendar
+            ),
+            by: .default
+        )
+        let exported = Self.rows(reportRows)
+
+        // The remainder lands on the SAME allocation every run, on both
+        // platforms: cumulative rounding puts it on the middle share here.
+        #expect(
+            exported.map { PruningActivityAllocationModel.roundTo($0.allocatedPersonHours ?? 0, decimals: 2) }
+                == [3.33, 3.34, 3.33]
+        )
+        #expect(
+            exported.map { PruningActivityAllocationModel.roundTo($0.allocatedLabourCost ?? 0, decimals: 2) }
+                == [33.33, 33.34, 33.33]
+        )
+
+        // And the parts reconcile to the parent to the cent.
+        #expect(Self.close(PruningActivityExport.columnTotal(exported) { $0.allocatedPersonHours }, 10.0, 0.0000001))
+        #expect(Self.close(PruningActivityExport.columnTotal(exported) { $0.allocatedLabourCost }, 100.0, 0.0000001))
+    }
+
+    // MARK: 12. Removing costing permission strips BOTH cost fields
+
+    @Test("Removing costing permission strips both the parent and the allocated cost")
+    func costPermissionStripsBothCosts() {
+        let reportRows = Self.sorted()
+
+        let headers = PruningActivityExport.headers(includeCost: false)
+        #expect(!headers.contains("Allocated Labour Cost"))
+        #expect(!headers.contains("Activity Total Labour Cost"))
+        // Hours survive — only money is withheld.
+        #expect(headers.contains("Allocated Person-Hours"))
+        #expect(headers.contains("Activity Person-Hours"))
+
+        let exported = Self.rows(reportRows, includeCost: false)
+        #expect(exported.allSatisfy { $0.allocatedLabourCost == nil })
+        #expect(exported.allSatisfy { $0.activityLabourCost == nil })
+        #expect(exported.contains { $0.allocatedPersonHours != nil })
+
+        // The values are absent from the FILE, not merely hidden in a renderer.
+        let csv = PruningActivityExport.csv(reportRows, includeCost: false, calendar: Self.calendar)
+        for amount in ["455.00", "364.00", "630.00", "315.00", "91.00"] {
+            #expect(!csv.contains(amount), "cost \(amount) leaked into a cost-blind export")
+        }
+
+        let groups = PruningActivityExport.groups(reportRows, includeCost: false, calendar: Self.calendar)
+        #expect(groups.allSatisfy { $0.activityLabourCost == nil && $0.allocatedLabourCost == nil })
+        // The report's own summary withholds it too.
+        let summary = PruningActivityReport.summary(reportRows, includeCost: false)
+        #expect(summary.labourCost == nil)
+        #expect(summary.wholeActivityLabourCost == nil)
+    }
+
+    // MARK: 13. Allocation quantities stay on every row
 
     @Test("Allocation quantities are present on every allocation row")
     func allocationQuantitiesOnEveryRow() {
-        let rows = Self.exported(Self.activityA)
+        let exported = Self.exported(Self.activityA)
 
-        for row in rows {
+        #expect(exported.count == 2)
+        for row in exported {
             #expect(row.quarters == 4)
-            #expect(row.rowEquivalents == 1)
-            #expect(row.estimatedVines == 100)
+            #expect(Self.close(row.rowEquivalents, 1.0))
+            #expect(Self.close(row.estimatedVines, 100.0))
             #expect(!row.blockName.isEmpty)
-            #expect(row.variety?.isEmpty == false)
-            #expect(row.rowRange?.isEmpty == false)
-            // Work Task title/status repeat: they are text and cannot be summed.
+            #expect(!(row.variety ?? "").isEmpty)
+            #expect(!(row.rowRange ?? "").isEmpty)
+            // Parent context repeats: it is text, it cannot be summed, and
+            // repeating it keeps a wide spreadsheet readable when scrolled.
             #expect(row.workTaskTitle == "Winter pruning")
             #expect(row.workTaskStatus == "Completed")
+            #expect(row.worker == "Pruning Crew")
+            #expect(row.startTime == "07:00")
+            // Equal blocks, so an even split of the activity's labour.
+            #expect(Self.close(row.allocationShare, 0.5, 0.000001))
+            #expect(Self.close(row.allocatedPersonHours, 9.0))
+            #expect(Self.close(row.allocatedLabourCost, 315.0))
         }
-        #expect(rows[0].rowRange == "90")
-        #expect(rows[1].rowRange == "1")
+        #expect(exported[0].rowRange == "90")
+        #expect(exported[1].rowRange == "1")
     }
 
-    // MARK: 4 + 5. Exported column sums equal the report summary
+    // MARK: 14. The labour authority order is unchanged
 
-    @Test("Summing the exported labour-cost column equals the report summary total")
-    func labourCostColumnMatchesSummary() {
-        let rows = Self.sorted()
-        let summary = PruningActivityReport.summary(rows, includeCost: true)
-        let exportRows = PruningActivityExport.rows(rows, includeCost: true, calendar: Self.calendar)
+    @Test("Work Task labour lines win and the legacy value is only a fallback")
+    func labourAuthorityUnchanged() throws {
+        // A has BOTH 6.0 legacy operational hours and 18.0 task person-hours.
+        // The task wins for person-hours; the legacy value stays visible as the
+        // separate operational figure and is never added to it.
+        let a = try #require(Self.exported(Self.activityA).first)
+        #expect(Self.close(a.activityPersonHours, 18.0))
+        #expect(Self.close(a.activityOperationalHours, 6.0))
 
-        let total = PruningActivityExport.columnTotal(exportRows) { $0.labourCost }
-        #expect(summary.labourCost == 930)
-        #expect(abs((summary.labourCost ?? 0) - total) < 0.0001)
+        // B has no task at all, so the legacy activity value IS the labour.
+        let b = try #require(Self.exported(Self.activityB).first)
+        #expect(Self.close(b.activityPersonHours, 4.0))
+        #expect(Self.close(b.allocatedPersonHours, 4.0))
+        #expect(b.activityLabourCost == nil)
+        #expect(b.allocatedLabourCost == nil)
+        #expect(b.allocationLabel == "whole activity")
     }
 
-    @Test("Summing the exported person-hours column equals the report summary total")
-    func personHoursColumnMatchesSummary() {
-        let rows = Self.sorted()
-        let summary = PruningActivityReport.summary(rows, includeCost: true)
-        let exportRows = PruningActivityExport.rows(rows, includeCost: true, calendar: Self.calendar)
+    // MARK: 15. Reversed activities are visible but never totalled
 
-        let total = PruningActivityExport.columnTotal(exportRows) { $0.personHours }
-        // 18 (task lines) + 4 (legacy fallback) + 12 (task lines); reversed excluded.
-        #expect(summary.labourHours == 34)
-        #expect(abs(summary.labourHours - total) < 0.0001)
-    }
+    @Test("Reversed activities are exported but excluded from every total")
+    func reversedExcludedFromTotals() throws {
+        let exported = Self.exported()
+        let reversed = exported.filter(\.isReversed)
 
-    // MARK: 6. Single-allocation activities retain all activity totals
-
-    @Test("A single-allocation activity keeps every activity total")
-    func singleAllocationKeepsTotals() {
-        let rows = Self.exported(Self.activityB)
-
-        #expect(rows.count == 1)
-        let only = rows[0]
-        #expect(only.isActivityTotalsRow)
-        #expect(only.allocationNumber == 1)
-        #expect(only.allocationCount == 1)
-        #expect(only.allocationLabel == "whole activity")
-        #expect(only.operationalHours == 4)
-        #expect(only.personHours == 4)
-        #expect(only.worker == "Dave")
-    }
-
-    // MARK: 7. Three or more allocations still output totals once
-
-    @Test("A three-allocation activity outputs totals exactly once")
-    func threeAllocationsOutputTotalsOnce() {
-        let rows = Self.exported(Self.activityC)
-
-        #expect(rows.count == 3)
-        #expect(rows.filter(\.isActivityTotalsRow).count == 1)
-        #expect(rows.filter { $0.personHours != nil }.count == 1)
-        #expect(rows.filter { $0.labourCost != nil }.count == 1)
-        #expect(rows.filter { $0.operationalHours != nil }.count == 1)
-        #expect(rows.map(\.allocationLabel) == ["block 1 of 3", "block 2 of 3", "block 3 of 3"])
-        #expect(rows[0].personHours == 12)
-        #expect(rows[0].labourCost == 300)
-
-        // Every allocation still carries its own block quantities.
-        #expect(rows.reduce(0) { $0 + $1.rowEquivalents } == 3)
-    }
-
-    // MARK: 8 + 9. Labour authority
-
-    @Test("Work Task labour values take precedence over legacy activity values")
-    func taskLabourWinsOverLegacy() {
-        let row = Self.exported(Self.activityA)[0]
-
-        // The activity recorded 6 operational hours; the Work Task's labour
-        // lines total 18 person-hours. Both are exported, in their OWN columns,
-        // and the authoritative person-hours figure is the task's.
-        #expect(row.operationalHours == 6)
-        #expect(row.personHours == 18)
-        #expect(row.labourCost == 630)
-    }
-
-    @Test("Legacy activity values are used only when the task has no labour lines")
-    func legacyUsedOnlyWithoutLines() {
-        let row = Self.exported(Self.activityB)[0]
-
-        // No linked task, so the activity's own hours ARE the resolved value —
-        // and there is no cost, because a legacy rate was never recorded.
-        #expect(row.operationalHours == 4)
-        #expect(row.personHours == 4)
-        #expect(row.labourCost == nil)
-        #expect(row.workTaskTitle == nil)
-    }
-
-    @Test("No allocation row ever combines both labour sources")
-    func neverCombinesBothSources() {
-        let rows = Self.exported()
-
-        // Exactly one totals row per activity, and the person-hours column has
-        // one value per activity — never one per block.
-        #expect(rows.filter(\.isActivityTotalsRow).count == 4)
-        #expect(rows.filter { $0.personHours != nil }.count == 4)
-        #expect(rows.count == 9)
-    }
-
-    // MARK: 10. Reversed activities stay visible but never inflate totals
-
-    @Test("Reversed activities are exported, marked, and excluded from totals")
-    func reversedActivitiesExcludedFromTotals() {
-        let rows = Self.sorted()
-        let exportRows = PruningActivityExport.rows(rows, includeCost: true, calendar: Self.calendar)
-        let reversed = exportRows.filter(\.isReversed)
-
-        // Both allocations of the reversed activity are still exported.
         #expect(reversed.count == 2)
-        #expect(reversed.map(\.blockName) == ["Pinot Noir", "Cabernet Franc"])
-        // Its historical values are retained on the detail row, matching the
-        // on-screen report...
-        #expect(reversed[0].personHours == 10)
-        // ...but they never reach a total.
-        let summary = PruningActivityReport.summary(rows, includeCost: true)
-        #expect(summary.reversedRecords == 2)
-        #expect(summary.labourCost == 930)
-        let total = PruningActivityExport.columnTotal(exportRows) { $0.labourCost }
-        #expect(abs((summary.labourCost ?? 0) - total) < 0.0001)
-        // The Reversed column is what makes that filterable in a spreadsheet.
+        #expect(reversed.allSatisfy { $0.activityLabel == "Reversed pruning" })
+        // Their allocated values still exist on the row — the audit trail is
+        // complete — they are simply never summed.
+        #expect(reversed.allSatisfy { $0.allocatedPersonHours != nil })
+        #expect(Self.close(PruningActivityExport.columnTotal(exported) { $0.allocatedPersonHours }, 47.0))
+        #expect(Self.close(PruningActivityExport.columnTotal(exported) { $0.allocatedLabourCost }, 1385.0))
+
         let headers = PruningActivityExport.headers(includeCost: true)
         let cells = PruningActivityExport.cells(reversed[0], includeCost: true)
-        #expect(cells[headers.firstIndex(of: "Reversed") ?? 0] == "Yes")
+        #expect(cells[try #require(headers.firstIndex(of: "Reversed"))] == "Yes")
     }
 
-    // MARK: 11. No internal identifier is ever exported
+    // MARK: 16. Identifiers are exported, but never as the human-readable name
 
-    @Test("No Work Task, allocation or activity identifier is exported")
-    func noIdentifiersExported() {
-        let csv = PruningActivityExport.csv(Self.sorted(), includeCost: true, calendar: Self.calendar)
+    @Test("Identifiers are exported for reconciliation but never as the activity name")
+    func identifiersExportedButNotAsName() {
+        let exported = Self.exported()
 
-        for id in [
-            Self.activityAId, Self.activityBId, Self.activityCId, Self.activityDId,
-            Self.taskA, Self.taskC, Self.taskD,
-            Self.blockPinot, Self.blockCab, Self.blockChard, Self.vineyardId
-        ] {
-            #expect(!csv.localizedCaseInsensitiveContains(id.uuidString))
+        for row in exported {
+            #expect(!row.activityId.isEmpty)
+            #expect(!row.allocationId.isEmpty)
+            // The readable label is a Work Task title or a method — never an id.
+            #expect(!row.activityLabel.contains(row.activityId))
+            #expect(!row.activityLabel.contains(row.allocationId))
         }
-        // And no UUID-shaped value of any kind.
-        let pattern = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
-        #expect(csv.range(of: pattern, options: .regularExpression) == nil)
+
+        // Every allocation of one activity shares its activity id, and each
+        // allocation id is unique across the file.
+        let a = exported.filter { $0.activityLabel == "Winter pruning" }
+        #expect(Set(a.map(\.activityId)).count == 1)
+        #expect(Set(exported.map(\.allocationId)).count == exported.count)
     }
 
-    // MARK: 12. Costing permission
-
-    @Test("Labour cost is absent for roles without costing visibility")
-    func costingPermissionEnforced() {
-        let rows = Self.sorted()
-        let headers = PruningActivityExport.headers(includeCost: false)
-        #expect(!headers.contains("Labour Cost"))
-        // Hours stay visible — only money is withheld.
-        #expect(headers.contains("Operational Hours"))
-        #expect(headers.contains("Work Task Person-Hours"))
-
-        let exportRows = PruningActivityExport.rows(rows, includeCost: false, calendar: Self.calendar)
-        #expect(exportRows.allSatisfy { $0.labourCost == nil })
-        #expect(exportRows.contains { $0.personHours != nil })
-
-        let csv = PruningActivityExport.csv(rows, includeCost: false, calendar: Self.calendar)
-        #expect(!csv.contains("Labour Cost"))
-        #expect(!csv.contains("630"))
-    }
-
-    // MARK: 13. Filters and sorting are preserved; groups stay contiguous
+    // MARK: 17. The export respects the active filter and sort
 
     @Test("The export respects the active filter")
-    func exportRespectsFilter() {
-        var filter = PruningActivityFilter()
-        filter.blocks = [Self.blockChard]
-        let filtered = PruningActivityReport.sorted(
-            PruningActivityReport.filtered(Self.build(Self.allEntries), with: filter, calendar: Self.calendar),
-            by: .default
-        )
-        let rows = PruningActivityExport.rows(filtered, includeCost: true, calendar: Self.calendar)
+    func exportRespectsFilter() throws {
+        let canonical = Self.sorted()
+        let exported = Self.rows(Self.onlyBlock(canonical, Self.blockChard), canonical: canonical)
 
-        #expect(rows.allSatisfy { $0.blockName == "Chardonnay" })
-        // Activity C's Chardonnay allocation is NOT the primary, so the activity
-        // values are genuinely absent from this result — blank, never borrowed
-        // from an excluded sibling row.
-        let cRow = rows.first { $0.activityLabel == "Spur pruning block sweep" }
-        #expect(cRow?.allocationNumber == 1)
-        #expect(cRow?.allocationCount == 1)
-        #expect(cRow?.personHours == nil)
-        #expect(cRow?.labourCost == nil)
-        // Activity B's only allocation IS the primary, so its totals survive.
-        let bRow = rows.first { $0.activityLabel != "Spur pruning block sweep" }
-        #expect(bRow?.personHours == 4)
+        // Chardonnay appears in B (whole activity) and C (one of three).
+        #expect(exported.count == 2)
+        #expect(exported.allSatisfy { $0.blockName == "Chardonnay" })
+
+        let b = try #require(exported.first { $0.dateIso == "2026-08-04" })
+        #expect(!b.isPartialActivity)
+        #expect(Self.close(b.activityPersonHours, 4.0))
+
+        let c = try #require(exported.first { $0.dateIso == "2026-08-05" })
+        #expect(c.isPartialActivity)
+        #expect(c.allocationNumber == 3)
+        #expect(c.fullAllocationCount == 3)
+        #expect(c.includedAllocationCount == 1)
+        // Parent context survives even though C's primary was filtered out.
+        #expect(c.workTaskTitle == "Spur pruning block sweep")
+        #expect(Self.close(c.activityPersonHours, 12.0))
+        // But only a third of the labour is attributed to this block.
+        #expect(Self.close(c.allocatedPersonHours, 4.0))
+        #expect(Self.close(c.allocatedLabourCost, 100.0))
     }
 
-    @Test("Allocations of one activity are never scattered through the export")
+    @Test("The export follows the report sort direction")
+    func exportFollowsSortDirection() {
+        let base = Self.build(Self.allEntries)
+        let ascending = PruningActivityReport.sorted(
+            base,
+            by: PruningActivitySort(column: .date, ascending: true)
+        )
+        let descending = PruningActivityReport.sorted(
+            base,
+            by: PruningActivitySort(column: .date, ascending: false)
+        )
+
+        #expect(Self.rows(ascending).first?.dateIso == "2026-08-03")
+        #expect(Self.rows(descending).first?.dateIso == "2026-08-07")
+    }
+
+    // MARK: 18. Allocations of one activity stay contiguous under any sort
+
+    @Test("Allocations of one activity stay contiguous whatever the sort")
     func allocationsStayContiguous() {
-        // Sorting by Block would interleave allocations from different
-        // activities in the table; the export keeps each activity contiguous.
         let byBlock = PruningActivityReport.sorted(
             Self.build(Self.allEntries),
             by: PruningActivitySort(column: .block, ascending: true)
         )
-        let rows = PruningActivityExport.rows(byBlock, includeCost: true, calendar: Self.calendar)
+        let exported = Self.rows(byBlock)
+        let groups = PruningActivityExport.groups(byBlock, includeCost: true, calendar: Self.calendar)
 
+        // Group ORDER follows the report's own visible order.
+        var visibleOrder: [UUID] = []
+        for row in byBlock where !visibleOrder.contains(row.activityKey) {
+            visibleOrder.append(row.activityKey)
+        }
+        #expect(groups.map(\.id) == visibleOrder)
+
+        // Every activity is ONE contiguous run of rows — never scattered.
         var runs: [String] = []
-        for label in rows.map(\.activityLabel) where runs.last != label {
-            runs.append(label)
+        for row in exported where runs.last != row.activityId {
+            runs.append(row.activityId)
         }
-        #expect(runs.count == Set(runs).count)
+        #expect(Set(runs).count == runs.count)
+        #expect(runs.count == groups.count)
 
-        // Group order follows the report's own visible order.
-        #expect(byBlock.first?.blockName == "Cabernet Franc")
-        #expect(rows.first?.blockName == byBlock.first?.blockName)
-
-        // Within a group the PRIMARY allocation is always first, so the totals
-        // row is row 1 regardless of the table's sort.
-        for group in PruningActivityExport.groups(byBlock, includeCost: true, calendar: Self.calendar) {
-            #expect(group.allocations.first?.allocationNumber == 1)
+        // Within a group the canonical order holds, so the totals row is row 1.
+        for group in groups {
+            #expect(group.allocations.map(\.allocationNumber) == group.allocations.map(\.allocationNumber).sorted())
             #expect(group.allocations.first?.isActivityTotalsRow == true)
-            #expect(group.allocations.filter(\.isActivityTotalsRow).count == 1)
+            #expect(group.allocations.dropFirst().allSatisfy { !$0.isActivityTotalsRow })
         }
     }
 
-    @Test("The export honours the sort direction of the table")
-    func exportHonoursSortDirection() {
-        let ascending = PruningActivityReport.sorted(
-            Self.build(Self.allEntries),
-            by: PruningActivitySort(column: .date, ascending: true)
-        )
-        let descending = PruningActivityReport.sorted(
-            Self.build(Self.allEntries),
-            by: PruningActivitySort(column: .date, ascending: false)
-        )
+    // MARK: 19. CSV shape, quoting and numeric formatting
 
-        let first = PruningActivityExport.rows(ascending, includeCost: true, calendar: Self.calendar).first
-        let last = PruningActivityExport.rows(descending, includeCost: true, calendar: Self.calendar).first
-        #expect(first?.dateIso == "2026-08-03")
-        #expect(last?.dateIso == "2026-08-06")
-    }
-
-    // MARK: 14. CSV shape
-
-    @Test("CSV keeps a raw ISO date, an Australian display date, and a totals flag")
+    @Test("The CSV has one header row and one row per allocation")
     func csvShape() {
-        let csv = PruningActivityExport.csv(Self.sorted(Self.activityA), includeCost: true, calendar: Self.calendar)
-        let lines = csv.split(separator: "\r\n", omittingEmptySubsequences: true).map(String.init)
-        let headers = lines[0].split(separator: ",", omittingEmptySubsequences: false).map(String.init)
-        let first = lines[1].split(separator: ",", omittingEmptySubsequences: false).map(String.init)
-        let second = lines[2].split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+        let csv = PruningActivityExport.csv(Self.sorted(), includeCost: true, calendar: Self.calendar)
+        let lines = csv.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n"))
+            .components(separatedBy: "\r\n")
 
-        #expect(headers[0] == "Date (ISO)")
-        #expect(first[0] == "2026-08-03")
-        #expect(first[headers.firstIndex(of: "Activity Date") ?? 0] == "03/08/2026")
-        #expect(first[headers.firstIndex(of: "Weekday") ?? 0] == "Monday")
-        #expect(first[headers.firstIndex(of: "Activity Totals Row") ?? 0] == "Yes")
-        #expect(second[headers.firstIndex(of: "Activity Totals Row") ?? 0] == "No")
-        // Hours and costs are NUMERIC, not quoted text.
-        #expect(first[headers.firstIndex(of: "Work Task Person-Hours") ?? 0] == "18.00")
-        #expect(first[headers.firstIndex(of: "Labour Cost") ?? 0] == "630.00")
+        #expect(lines.count == 10 + 1)
+        #expect(csv.hasSuffix("\r\n"))
+        #expect(lines[0].components(separatedBy: ",").count
+            == PruningActivityExport.headers(includeCost: true).count)
     }
 
-    @Test("CSV quotes only values that need it")
-    func csvQuotingIsMinimal() {
-        var withComma = Self.activityA
-        withComma[0].notes = "Frost delay, restarted 09:00"
+    @Test("CSV values are quoted only when they contain a delimiter")
+    func csvQuoting() {
+        let withComma = [
+            Self.allocation(
+                id: UUID(uuidString: "00000000-0000-0000-0000-0000000ae0aa")!,
+                activityId: UUID(uuidString: "00000000-0000-0000-0000-0000000ae0ab")!,
+                allocationIndex: 0, paddock: Self.blockPinot,
+                day: 3, rowNumber: 90, operationalHours: 2,
+                notes: "Rain, then hail"
+            )
+        ]
         let csv = PruningActivityExport.csv(Self.sorted(withComma), includeCost: true, calendar: Self.calendar)
 
-        #expect(csv.contains("\"Frost delay, restarted 09:00\""))
-        // The plain values around it stay unquoted.
-        #expect(csv.contains(",Pinot Noir,"))
+        #expect(csv.contains("\"Rain, then hail\""))
+        // Numbers are never quoted, so a spreadsheet reads them as numbers.
+        #expect(csv.contains(",2.00,"))
+        #expect(!csv.contains("\"2.00\""))
     }
 
-    // MARK: 15. PDF grouped layout
+    @Test("The CSV keeps a raw ISO date, an Australian display date and a totals flag")
+    func csvDatesAndTotalsFlag() throws {
+        let csv = PruningActivityExport.csv(Self.sorted(Self.activityA), includeCost: true, calendar: Self.calendar)
+        let lines = csv.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n"))
+            .components(separatedBy: "\r\n")
+        let headers = lines[0].components(separatedBy: ",")
+        let first = lines[1].components(separatedBy: ",")
+        let second = lines[2].components(separatedBy: ",")
 
-    @Test("PDF groups state activity labour once and list every allocation")
-    func pdfGroupedLayout() {
+        #expect(first[try #require(headers.firstIndex(of: "Date (ISO)"))] == "2026-08-03")
+        #expect(first[try #require(headers.firstIndex(of: "Activity Date"))] == "03/08/2026")
+        #expect(first[try #require(headers.firstIndex(of: "Weekday"))] == "Monday")
+        #expect(first[try #require(headers.firstIndex(of: "Activity Totals Row"))] == "Yes")
+        #expect(second[try #require(headers.firstIndex(of: "Activity Totals Row"))] == "No")
+        // The parent totals column is blank on the second row, not "0.00".
+        #expect(second[try #require(headers.firstIndex(of: "Activity Person-Hours"))] == "")
+        // But its allocated share is populated.
+        #expect(second[try #require(headers.firstIndex(of: "Allocated Person-Hours"))] == "9.00")
+    }
+
+    // MARK: 20. The PDF grouping states the labour once
+
+    @Test("The PDF groups allocations under one activity heading")
+    func pdfGrouping() throws {
         let groups = PruningActivityExport.groups(Self.sorted(), includeCost: true, calendar: Self.calendar)
 
-        #expect(groups.count == 4)
-        let a = groups.first { $0.activityLabel == "Winter pruning" }
-        #expect(a?.dateDisplay == "Monday 3 August 2026")
-        #expect(a?.allocationCount == 2)
-        #expect(a?.isMultiBlock == true)
-        #expect(a?.blockSummary == "Pinot Noir + Cabernet Franc")
-        #expect(a?.personHours == 18)
-        #expect(a?.operationalHours == 6)
-        #expect(a?.labourCost == 630)
-        #expect(a?.totalRowEquivalents == 2)
-        #expect(a?.totalVines == 200)
+        #expect(groups.count == 5)
+        #expect(groups.reduce(0) { $0 + $1.includedAllocationCount } == 10)
 
-        // Costing-blind roles get the same document with no money in it.
-        let blind = PruningActivityExport.groups(Self.sorted(), includeCost: false, calendar: Self.calendar)
-        #expect(blind.allSatisfy { $0.labourCost == nil })
-        #expect(blind.contains { $0.personHours != nil })
+        let a = try #require(groups.first { $0.activityLabel == "Winter pruning" })
+        #expect(a.includedAllocationCount == 2)
+        #expect(!a.isPartialActivity)
+        #expect(a.partialLabel == nil)
+        #expect(a.blockSummary == "Pinot Noir + Cabernet Franc")
+        #expect(Self.close(a.totalRowEquivalents, 2.0))
+        // Stated ONCE for the whole activity, whatever the allocation count.
+        #expect(Self.close(a.activityPersonHours, 18.0))
+        #expect(Self.close(a.activityLabourCost, 630.0))
+        #expect(Self.close(a.allocatedPersonHours, 18.0))
+
+        let e = try #require(groups.first { $0.activityLabel == "Vineyard block pruning" })
+        #expect(e.blockSummary == "Cabernet Franc + Primitivo")
+        #expect(e.allocations.map { $0.allocatedPersonHours ?? 0 } == [2.60, 10.40])
     }
 
-    // MARK: 16. Cross-platform parity fixture
+    // MARK: 21. Cross-platform parity fixture — Android must produce this exactly
 
-    @Test("Parity fixture produces the exact rows Android must also produce")
-    func parityFixture() {
-        let rows = Self.exported(Self.activityA)
+    @Test("The parity fixture matches the Android export byte for byte")
+    func crossPlatformParityFixture() {
+        let exported = Self.rows(Self.canonicalE())
 
-        let encoded = rows.map { row in
+        let rendered = exported.map { row in
             [
                 row.dateIso,
                 row.dateDisplay,
                 row.weekday,
                 row.activityLabel,
                 String(row.allocationNumber),
-                String(row.allocationCount),
+                String(row.fullAllocationCount),
+                String(row.includedAllocationCount),
+                row.isPartialActivity ? "partial" : "complete",
                 row.allocationLabel,
                 row.blockName,
-                row.rowRange ?? "",
-                String(row.quarters),
+                row.variety ?? "",
                 PruningActivityExport.number(row.rowEquivalents, decimals: 2),
-                PruningActivityExport.number(row.estimatedVines, decimals: 0),
-                PruningActivityExport.number(row.operationalHours, decimals: 2),
-                PruningActivityExport.number(row.personHours, decimals: 2),
-                PruningActivityExport.number(row.labourCost, decimals: 2),
-                row.isActivityTotalsRow ? "Yes" : "No",
-                row.isReversed ? "Yes" : "No"
+                PruningActivityExport.number(row.allocationShare.map { $0 * 100 }, decimals: 2),
+                PruningActivityExport.number(row.allocatedPersonHours, decimals: 2),
+                PruningActivityExport.number(row.allocatedLabourCost, decimals: 2),
+                PruningActivityExport.number(row.activityPersonHours, decimals: 2),
+                PruningActivityExport.number(row.activityLabourCost, decimals: 2),
+                row.isActivityTotalsRow ? "Yes" : "No"
             ].joined(separator: "|")
-        }
+        }.joined(separator: "\n")
 
-        // These two lines are asserted verbatim in the Android twin.
-        #expect(encoded == [
-            "2026-08-03|03/08/2026|Monday|Winter pruning|1|2|block 1 of 2|Pinot Noir|90|4|1.00|100|6.00|18.00|630.00|Yes|No",
-            "2026-08-03|03/08/2026|Monday|Winter pruning|2|2|block 2 of 2|Cabernet Franc|1|4|1.00|100||||No|No"
-        ])
+        #expect(rendered == """
+        2026-08-07|07/08/2026|Friday|Vineyard block pruning|1|2|2|complete|block 1 of 2|\
+        Cabernet Franc|Cabernet Franc|0.50|20.00|2.60|91.00|13.00|455.00|Yes
+        2026-08-07|07/08/2026|Friday|Vineyard block pruning|2|2|2|complete|block 2 of 2|\
+        Primitivo|Primitivo|2.00|80.00|10.40|364.00|||No
+        """)
     }
 }
