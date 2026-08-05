@@ -28,6 +28,9 @@ final class PruningSyncService {
     /// recorded elsewhere. A save with refused quarters is never presented as
     /// fully successful.
     private(set) var lastActivityReconciliation: PruningActivityReconciliation?
+    /// Consistency snapshot of the pruning activity cache from the last refresh,
+    /// surfaced in the admin Backend Diagnostics screen.
+    private(set) var lastCacheAudit: PruningActivityCacheAudit?
 
     func clearActivityReconciliation() {
         lastActivityReconciliation = nil
@@ -614,6 +617,12 @@ final class PruningSyncService {
     /// adopts the canonical parents + allocations. Activities with an unresolved
     /// queued write keep their optimistic local state — a pull must never
     /// overwrite work that hasn't been pushed yet.
+    ///
+    /// SUMMARY SCOPE. `list_pruning_activities` withholds the per-quarter detail,
+    /// so this refresh updates parent metadata and the allocation set but never
+    /// rewrites completed quarters. Whatever it cannot account for is then
+    /// repaired from `get_pruning_activity`, which IS authoritative — so a pull
+    /// converges on the full record instead of leaving a hollow one behind.
     @discardableResult
     func refreshActivities(vineyardId: UUID) async -> [PruningActivityDraft] {
         guard let auth, auth.isSignedIn else { return pruningStore.activities(forVineyard: vineyardId) }
@@ -623,11 +632,69 @@ final class PruningSyncService {
         let queued = Set(activityMetadata.pendingUpserts.keys)
             .union(activityEditMetadata.pendingUpserts.keys)
             .union(activityMetadata.pendingDeletes.keys)
+        var summaryOnly = 0
         for canonical in remote {
             guard let id = canonical.activity?.id, !queued.contains(id) else { continue }
+            if canonical.isSummaryOnly { summaryOnly += 1 }
             pruningStore.applyRemoteActivity(canonical)
         }
+        if summaryOnly > 0 {
+            print("[PruningSync] \(summaryOnly) activity summary(ies) carried no quarter detail — quarters preserved, detail repaired on demand")
+        }
+        await repairActivityProjections(vineyardId: vineyardId)
+        logCacheAudit(vineyardId: vineyardId)
         return pruningStore.activities(forVineyard: vineyardId)
+    }
+
+    /// Repairs activities whose local copy is HOLLOW — the parent exists but its
+    /// allocations or their quarters are missing, which the server's own roll-up
+    /// contradicts.
+    ///
+    /// Runs after every activity refresh (so on pull-to-refresh and on app
+    /// launch), fetches the authoritative detailed record through
+    /// `get_pruning_activity`, rebuilds the legacy projection and therefore the
+    /// block and vineyard progress. The user never has to re-enter the activity.
+    ///
+    /// Bounded per pass: a large backlog repairs over several refreshes rather
+    /// than firing hundreds of RPCs at once.
+    @discardableResult
+    func repairActivityProjections(vineyardId: UUID, limit: Int = 25) async -> Int {
+        guard let auth, auth.isSignedIn else { return 0 }
+        let queued = Set(activityMetadata.pendingUpserts.keys)
+            .union(activityEditMetadata.pendingUpserts.keys)
+            .union(activityMetadata.pendingDeletes.keys)
+        let candidates = pruningStore.activitiesNeedingCanonicalDetail(vineyardId: vineyardId)
+            .filter { !queued.contains($0.id) }
+            .prefix(limit)
+        guard !candidates.isEmpty else { return 0 }
+
+        var repaired = 0
+        for draft in candidates {
+            guard let canonical = try? await repository.fetchActivity(id: draft.id),
+                  canonical.activity != nil else { continue }
+            guard canonical.hasSegmentDetail else {
+                // The detailed RPC answered without detail — adopting it would
+                // be no better than the summary. Leave the local record alone.
+                print("[PruningSync] activity \(draft.id) detail fetch returned no quarters — local record kept")
+                continue
+            }
+            pruningStore.applyRemoteActivity(canonical)
+            repaired += 1
+        }
+        if repaired > 0 {
+            print("[PruningSync] repaired \(repaired) hollow activity projection(s) from get_pruning_activity")
+        }
+        return repaired
+    }
+
+    /// Diagnostic snapshot of the activity cache, logged after each refresh.
+    /// Silent when the cache is consistent.
+    private func logCacheAudit(vineyardId: UUID) {
+        let audit = pruningStore.auditActivityCache(vineyardId: vineyardId)
+        lastCacheAudit = audit
+        if !audit.isHealthy {
+            print("[PruningCache] \(audit.summary)")
+        }
     }
 
     /// Adopts the canonical activity the server returned. The shared labour stays

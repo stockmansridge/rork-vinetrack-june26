@@ -127,6 +127,13 @@ nonisolated struct PruningActivityDraft: Codable, Identifiable, Sendable, Hashab
     var serverAcknowledged: Bool
     var serverSeasonYear: Int?
     var vintageYear: Int?
+    /// Server roll-up of the activity's completed quarters, taken from the
+    /// canonical `totals` block of ANY response — summary or detailed. Held so
+    /// the cache can tell "this activity really has no quarters" apart from
+    /// "this device has not been given the quarter detail yet".
+    var serverQuarters: Int?
+    /// Server roll-up of the activity's allocation count, same purpose.
+    var serverAllocationCount: Int?
 
     init(
         id: UUID = UUID(),
@@ -148,7 +155,9 @@ nonisolated struct PruningActivityDraft: Codable, Identifiable, Sendable, Hashab
         reversedAt: Date? = nil,
         serverAcknowledged: Bool = false,
         serverSeasonYear: Int? = nil,
-        vintageYear: Int? = nil
+        vintageYear: Int? = nil,
+        serverQuarters: Int? = nil,
+        serverAllocationCount: Int? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -170,9 +179,25 @@ nonisolated struct PruningActivityDraft: Codable, Identifiable, Sendable, Hashab
         self.serverAcknowledged = serverAcknowledged
         self.serverSeasonYear = serverSeasonYear
         self.vintageYear = vintageYear
+        self.serverQuarters = serverQuarters
+        self.serverAllocationCount = serverAllocationCount
     }
 
     var isReversed: Bool { reversedAt != nil }
+
+    /// True when the server's own roll-up says this activity holds more blocks
+    /// or more completed quarters than this device can account for — i.e. the
+    /// local copy is HOLLOW and must be repaired from `get_pruning_activity`
+    /// before it is trusted for progress or shown as a breakdown.
+    ///
+    /// Reversed activities are excluded: the server releases their quarters and
+    /// drops their allocations, so a roll-up above the local count is expected.
+    var needsCanonicalDetail: Bool {
+        guard !isReversed else { return false }
+        if let count = serverAllocationCount, count > blockCount { return true }
+        if let quarters = serverQuarters, quarters > totalQuarters { return true }
+        return false
+    }
 
     /// Allocations that actually contribute work, in stable block order.
     var activeAllocations: [BlockPruningSelection] {
@@ -258,6 +283,29 @@ nonisolated struct PruningActivityDraft: Codable, Identifiable, Sendable, Hashab
             serverSeasonYear: entry.updatedAt == nil ? nil : PruningSeasonId.seasonYear(for: entry.date)
         )
     }
+}
+
+/// How much of a canonical response may be adopted.
+///
+/// `pruning_activity_json` serves the same envelope in two fidelities, and the
+/// cache MUST treat them differently: a summary feed is allowed to refresh
+/// parent metadata and the allocation set, but only a detailed record may
+/// rewrite completed quarters. Anything else lets a lightweight list refresh
+/// silently erase the progress a detailed record established.
+nonisolated enum PruningCanonicalScope: Sendable, Equatable {
+    /// `get_pruning_activity`, or a create / update / reverse response — every
+    /// allocation carried its quarters, so this is authoritative for progress.
+    case detailed
+    /// `list_pruning_activities` — quarters withheld. Parent metadata and the
+    /// allocation set only.
+    case summary
+
+    init(_ canonical: BackendPruningActivityCanonical) {
+        self = canonical.hasSegmentDetail ? .detailed : .summary
+    }
+
+    /// Only a detailed record may replace an allocation's or an entry's quarters.
+    var replacesSegments: Bool { self == .detailed }
 }
 
 /// The multi-block editor engine — pure, testable, and the ONLY place the
@@ -364,13 +412,33 @@ nonisolated enum PruningAllocationEditor {
         return copy
     }
 
-    /// Adopts the CANONICAL server state (sql/166 response) wholesale: the
-    /// activity fields, every allocation, each allocation's canonical season and
-    /// the vintage. The local draft is replaced, never merged — once the server
-    /// has acknowledged, it is authoritative.
+    /// Adopts the CANONICAL server state (sql/166 response): the activity
+    /// fields, the allocation SET, each allocation's canonical season and the
+    /// vintage.
+    ///
+    /// The allocation SET is always authoritative — `pruning_activity_json`
+    /// lists every live allocation whether or not it includes their quarters, so
+    /// a block genuinely removed server-side disappears here.
+    ///
+    /// The per-quarter SEGMENTS are only replaced when the response actually
+    /// supplied them (`get_pruning_activity`, create, update). When a summary
+    /// feed withholds them (`list_pruning_activities`), the existing quarters
+    /// are PRESERVED in this priority order:
+    ///
+    ///   1. the canonical segments, when supplied,
+    ///   2. the segments already on this local allocation,
+    ///   3. `knownSegments` — the legacy projected entry for the same allocation
+    ///      id, which carries the server's own `pruning_row_segments`
+    ///      attribution and lets a reinstalled device rehydrate without a
+    ///      network round trip.
+    ///
+    /// Treating a withheld `segments` array as an empty one is what emptied the
+    /// allocation set, hollowed out the legacy projection and collapsed block
+    /// and vineyard progress on every pull.
     static func adoptCanonical(
         _ draft: PruningActivityDraft,
-        canonical: BackendPruningActivityCanonical
+        canonical: BackendPruningActivityCanonical,
+        knownSegments: [UUID: [PruningSegment]] = [:]
     ) -> PruningActivityDraft {
         guard let activity = canonical.activity else { return draft }
         var copy = draft
@@ -378,15 +446,22 @@ nonisolated enum PruningAllocationEditor {
 
         var adopted: [UUID: BlockPruningSelection] = [:]
         for allocation in canonical.allocations {
+            let segments: [PruningSegment]
+            if let supplied = allocation.segments {
+                segments = supplied.map {
+                    PruningSegment(rowId: $0.rowId, row: $0.row, quarter: $0.segment)
+                }
+            } else {
+                let local = draft.allocations[allocation.paddockId]?.segments ?? []
+                segments = local.isEmpty ? (knownSegments[allocation.id] ?? []) : local
+            }
             adopted[allocation.paddockId] = BlockPruningSelection(
                 paddockId: allocation.paddockId,
                 allocationId: allocation.id,
                 blockName: allocation.blockName.isEmpty
                     ? (knownNames[allocation.paddockId] ?? "")
                     : allocation.blockName,
-                segments: allocation.segments.map {
-                    PruningSegment(rowId: $0.rowId, row: $0.row, quarter: $0.segment)
-                },
+                segments: segments,
                 estimatedVines: allocation.estimatedVines,
                 serverSeasonId: allocation.pruningSeasonId,
                 serverSeasonYear: allocation.seasonYear
@@ -405,6 +480,10 @@ nonisolated enum PruningAllocationEditor {
         copy.serverAcknowledged = true
         copy.serverSeasonYear = activity.seasonYear
         copy.vintageYear = activity.vintageYear
+        // Server roll-ups ride along on BOTH shapes, so a summary refresh still
+        // teaches the cache how much detail it is missing.
+        copy.serverQuarters = canonical.totals?.quarters ?? copy.serverQuarters
+        copy.serverAllocationCount = canonical.totals?.allocationCount ?? copy.serverAllocationCount
         if let focus = copy.focusedPaddockId, adopted[focus] != nil {
             return copy
         }

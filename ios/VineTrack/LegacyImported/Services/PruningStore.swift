@@ -1,6 +1,43 @@
 import Foundation
 import Observation
 
+/// Admin diagnostic over the pruning activity cache. Every count should be
+/// zero; each non-zero count names a specific way the parent-activity cache and
+/// the legacy projected entries have fallen out of step.
+nonisolated struct PruningActivityCacheAudit: Sendable, Equatable {
+    /// Parent activities that exist locally but hold no allocation at all.
+    var parentsWithoutAllocations: Int
+    /// Allocations with no completed quarters locally, on activities whose
+    /// server roll-up says quarters exist — detail was never adopted.
+    var allocationsMissingSegmentDetail: Int
+    /// Projected entries whose parent activity is no longer in the cache.
+    var orphanedProjectedEntries: Int
+    /// Blocks where the projected entries and the parent drafts disagree about
+    /// how many quarters are complete.
+    var blockProgressMismatches: Int
+    /// Activities queued for a `get_pruning_activity` repair.
+    var activityIdsNeedingDetail: [UUID]
+
+    var isHealthy: Bool {
+        parentsWithoutAllocations == 0
+            && allocationsMissingSegmentDetail == 0
+            && orphanedProjectedEntries == 0
+            && blockProgressMismatches == 0
+    }
+
+    /// One-line summary for the diagnostic screen and the sync log.
+    var summary: String {
+        isHealthy
+            ? "Pruning activity cache is consistent"
+            : """
+            \(parentsWithoutAllocations) parent(s) with no allocations · \
+            \(allocationsMissingSegmentDetail) allocation(s) missing quarter detail · \
+            \(orphanedProjectedEntries) orphaned projected row(s) · \
+            \(blockProgressMismatches) block progress mismatch(es)
+            """
+    }
+}
+
 /// Offline-first store for the Pruning Tracker (System Admin only while in
 /// development). Acts as the local cache for the shared `pruning_seasons` /
 /// `pruning_entries` / `pruning_row_segments` Supabase tables:
@@ -216,11 +253,18 @@ final class PruningStore {
     func adoptCanonicalActivity(id: UUID, canonical: BackendPruningActivityCanonical) {
         guard let index = activities.firstIndex(where: { $0.id == id }) else { return }
         let before = activities[index]
-        let adopted = PruningAllocationEditor.adoptCanonical(before, canonical: canonical)
-        let kept = Set(adopted.activeAllocations.map { $0.allocationId(for: adopted.id) })
-        let stale = Set(before.activeAllocations.map { $0.allocationId(for: before.id) }).subtracting(kept)
+        let scope = PruningCanonicalScope(canonical)
+        let adopted = PruningAllocationEditor.adoptCanonical(
+            before,
+            canonical: canonical,
+            knownSegments: projectedSegments(for: canonical)
+        )
         activities[index] = adopted
-        mergeActivityEntries(PruningAllocationEditor.toLegacyEntries(adopted), staleAllocationIds: stale)
+        mergeActivityEntries(
+            PruningAllocationEditor.toLegacyEntries(adopted),
+            staleAllocationIds: staleAllocationIds(previous: before, canonical: canonical),
+            replaceSegments: scope.replacesSegments
+        )
         persistActivities()
         persistEntries()
     }
@@ -241,25 +285,86 @@ final class PruningStore {
             createdAt: activity.createdAt ?? Date(),
             enteredBy: activity.createdBy
         )
-        let adopted = PruningAllocationEditor.adoptCanonical(base, canonical: canonical)
-        let kept = Set(adopted.activeAllocations.map { $0.allocationId(for: adopted.id) })
-        let stale = Set(base.activeAllocations.map { $0.allocationId(for: base.id) }).subtracting(kept)
+        let scope = PruningCanonicalScope(canonical)
+        let adopted = PruningAllocationEditor.adoptCanonical(
+            base,
+            canonical: canonical,
+            knownSegments: projectedSegments(for: canonical)
+        )
         if let index = activities.firstIndex(where: { $0.id == id }) {
             activities[index] = adopted
         } else {
             activities.append(adopted)
         }
-        mergeActivityEntries(PruningAllocationEditor.toLegacyEntries(adopted), staleAllocationIds: stale)
+        mergeActivityEntries(
+            PruningAllocationEditor.toLegacyEntries(adopted),
+            staleAllocationIds: staleAllocationIds(previous: base, canonical: canonical),
+            replaceSegments: scope.replacesSegments
+        )
         persistActivities()
         persistEntries()
         return adopted
     }
 
-    private func mergeActivityEntries(_ incoming: [PruningEntry], staleAllocationIds: Set<UUID>) {
+    /// Quarters already held by the LEGACY projected entry of each allocation
+    /// whose detail this response withheld.
+    ///
+    /// Those entries carry the server's own `pruning_row_segments` attribution
+    /// (pulled independently of the activity feed), so they let a summary
+    /// refresh — or a reinstalled device seeing an activity for the first time —
+    /// rehydrate real quarters instead of adopting an empty set.
+    private func projectedSegments(
+        for canonical: BackendPruningActivityCanonical
+    ) -> [UUID: [PruningSegment]] {
+        var known: [UUID: [PruningSegment]] = [:]
+        for allocation in canonical.allocations where !allocation.hasSegmentDetail {
+            guard let entry = entries.first(where: { $0.id == allocation.id }),
+                  !entry.segments.isEmpty else { continue }
+            known[allocation.id] = entry.segments
+        }
+        return known
+    }
+
+    /// The allocations the SERVER no longer lists — the ONLY ones a pull may
+    /// reverse.
+    ///
+    /// Absence from the canonical allocation set is authoritative and is stated
+    /// in both response fidelities, so it is safe to act on. A locally HOLLOW
+    /// allocation — one the server still lists but whose quarters this response
+    /// withheld — is emphatically not stale. Deriving staleness from "has no
+    /// segments" instead is what reversed every projected entry of a
+    /// perfectly healthy activity on each list refresh, erasing its progress.
+    private func staleAllocationIds(
+        previous: PruningActivityDraft,
+        canonical: BackendPruningActivityCanonical
+    ) -> Set<UUID> {
+        let live = Set(canonical.allocations.map(\.paddockId))
+        return Set(
+            previous.activeAllocations
+                .filter { !live.contains($0.paddockId) }
+                .map { $0.allocationId(for: previous.id) }
+        )
+    }
+
+    /// Merges a projection into the legacy entry cache.
+    ///
+    /// `replaceSegments` is false for a summary-scoped adopt: parent metadata is
+    /// refreshed, but the entry's completed quarters — the single source of
+    /// truth for progress — are left exactly as they are. Only a detailed
+    /// canonical record may rewrite them.
+    private func mergeActivityEntries(
+        _ incoming: [PruningEntry],
+        staleAllocationIds: Set<UUID>,
+        replaceSegments: Bool = true
+    ) {
         let now = Date()
         for entry in incoming {
             if let index = entries.firstIndex(where: { $0.id == entry.id }) {
-                entries[index] = entry
+                var merged = entry
+                if !replaceSegments {
+                    merged.segments = entries[index].segments
+                }
+                entries[index] = merged
             } else {
                 entries.append(entry)
             }
@@ -268,6 +373,68 @@ final class PruningStore {
             guard let index = entries.firstIndex(where: { $0.id == id }) else { continue }
             if entries[index].reversedAt == nil { entries[index].reversedAt = now }
         }
+    }
+
+    /// Local activities whose server roll-up exceeds what this device holds —
+    /// the repair queue for `get_pruning_activity`, newest first.
+    func activitiesNeedingCanonicalDetail(vineyardId: UUID) -> [PruningActivityDraft] {
+        activities(forVineyard: vineyardId).filter(\.needsCanonicalDetail)
+    }
+
+    /// Admin diagnostic: counts every way the two local representations of an
+    /// activity — the parent draft with its allocations, and the legacy
+    /// projected entries progress is calculated from — can disagree.
+    ///
+    /// All four counts should be zero. A non-zero count is a cache defect, not a
+    /// data-entry problem, and names which repair is needed.
+    func auditActivityCache(vineyardId: UUID) -> PruningActivityCacheAudit {
+        let drafts = activities(forVineyard: vineyardId)
+        let live = drafts.filter { !$0.isReversed }
+        let draftIds = Set(drafts.map(\.id))
+
+        let parentsWithoutAllocations = live.filter { $0.activeAllocations.isEmpty }.count
+
+        // Allocations the server says hold quarters but which are locally empty.
+        let hollowAllocations = live.reduce(into: 0) { total, draft in
+            guard (draft.serverQuarters ?? 0) > 0 else { return }
+            total += draft.allocations.values.filter(\.isEmpty).count
+        }
+
+        // Projected rows whose parent activity is no longer in the cache. A
+        // legacy single-block entry is its OWN activity, so an entry whose
+        // activity id equals its own id is not an orphan.
+        let orphanedProjectedEntries = entries.filter { entry in
+            guard entry.vineyardId == vineyardId,
+                  let activityId = entry.pruningActivityId,
+                  activityId != entry.id else { return false }
+            return !draftIds.contains(activityId)
+        }.count
+
+        // Per block: quarters the projected entries carry vs quarters the parent
+        // drafts claim. Progress reads the former, the breakdown shows the
+        // latter, so any difference is visible to the user as a contradiction.
+        var fromEntries: [UUID: Int] = [:]
+        for entry in entries where entry.vineyardId == vineyardId && !entry.isReversed {
+            guard let activityId = entry.pruningActivityId, draftIds.contains(activityId) else { continue }
+            fromEntries[entry.paddockId, default: 0] += entry.segments.count
+        }
+        var fromDrafts: [UUID: Int] = [:]
+        for draft in live {
+            for allocation in draft.activeAllocations {
+                fromDrafts[allocation.paddockId, default: 0] += allocation.quarters
+            }
+        }
+        let blockProgressMismatches = Set(fromEntries.keys).union(fromDrafts.keys)
+            .filter { (fromEntries[$0] ?? 0) != (fromDrafts[$0] ?? 0) }
+            .count
+
+        return PruningActivityCacheAudit(
+            parentsWithoutAllocations: parentsWithoutAllocations,
+            allocationsMissingSegmentDetail: hollowAllocations,
+            orphanedProjectedEntries: orphanedProjectedEntries,
+            blockProgressMismatches: blockProgressMismatches,
+            activityIdsNeedingDetail: live.filter(\.needsCanonicalDetail).map(\.id)
+        )
     }
 
     // MARK: Remote applies (no hooks)

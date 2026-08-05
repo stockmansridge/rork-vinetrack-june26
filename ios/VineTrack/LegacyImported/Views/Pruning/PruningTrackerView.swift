@@ -61,9 +61,13 @@ struct PruningTrackerView: View {
     @State private var editorDraft: PruningActivityDraft?
     /// Multi-block activities of this vineyard, pulled through
     /// `list_pruning_activities` — one entry per PARENT record.
+    ///
+    /// The Tracker no longer renders this feed: the Activity Report (toolbar
+    /// action and card below) is the one place activities are listed. The feed is
+    /// still loaded here because it is the cache the Activity Report, the editor,
+    /// the exports and the sync diagnostics all read, and because refreshing it
+    /// is what repairs hollow projections and keeps block progress correct.
     @State private var activities: [PruningActivityDraft] = []
-    /// The activity whose per-block allocation breakdown is expanded.
-    @State private var expandedActivityId: UUID?
 
     private var blockSort: PruningBlockSort {
         PruningBlockSort(rawValue: blockSortRaw) ?? .alphabetical
@@ -236,7 +240,6 @@ struct PruningTrackerView: View {
                 dashboardCard
                 newActivityButton
                 activityReportLink
-                activityHistoryCard
                 blockList
                 Spacer(minLength: 24)
             }
@@ -582,128 +585,6 @@ struct PruningTrackerView: View {
             in: .rect(cornerRadius: 14)
         )
         .padding(.horizontal)
-    }
-
-    // MARK: Activity history
-
-    private func hoursLabel(_ value: Double) -> String {
-        value.formatted(.number.precision(.fractionLength(0...1)))
-    }
-
-    private func rowsLabel(_ value: Double) -> String {
-        value.formatted(.number.precision(.fractionLength(0...2)))
-    }
-
-    private func blockName(_ paddockId: UUID) -> String {
-        paddocks.first { $0.id == paddockId }?.name ?? "Block"
-    }
-
-    /// "Cab Franc + Sauv Blanc +1 more" — one label for the PARENT activity.
-    private func activityBlockLabel(_ activity: PruningActivityDraft) -> String {
-        let names: [String] = activity.activeAllocations.map { allocation in
-            allocation.blockName.isEmpty ? blockName(allocation.paddockId) : allocation.blockName
-        }
-        return PruningActivityListing.blockLabel(names)
-    }
-
-    private func activitySubtitle(_ activity: PruningActivityDraft) -> String {
-        var parts: [String] = [activity.date.formatted(date: .abbreviated, time: .omitted)]
-        if !activity.worker.isEmpty { parts.append(activity.worker) }
-        parts.append("\(activity.totalQuarters) quarters")
-        if let hours = activity.labourHours { parts.append(hoursLabel(hours) + " h") }
-        if activity.isReversed { parts.append("Reversed") }
-        return parts.joined(separator: " · ")
-    }
-
-    /// Shared labour is stated ONCE, never per block.
-    private func activityLabourFootnote(_ activity: PruningActivityDraft) -> String {
-        guard let hours = activity.labourHours else {
-            return "Labour is recorded once for the whole activity."
-        }
-        return "Labour is recorded once for the whole activity (" + hoursLabel(hours) + " h)."
-    }
-
-    private func allocationDetail(_ allocation: BlockPruningSelection) -> String {
-        let rows = PruningActivityListing.rowRangeLabel(allocation.rows)
-        return "Rows \(rows) · \(allocation.quarters) q · \(allocation.estimatedVines) vines"
-    }
-
-    /// Recent pruning ACTIVITIES — one row per parent record, never one row per
-    /// block. Two blocks show both names, three or more show the first two plus
-    /// "+N more". Tapping a row exposes the per-block allocation breakdown.
-    @ViewBuilder
-    private var activityHistoryCard: some View {
-        if !activities.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Recent activities")
-                        .font(.headline)
-                    Spacer()
-                    Button("Record pruning activity") { beginNewActivity() }
-                        .font(.caption.weight(.semibold))
-                        .disabled(createAccess == .loading)
-                }
-                ForEach(activities.prefix(8)) { activity in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Button {
-                            expandedActivityId = expandedActivityId == activity.id ? nil : activity.id
-                        } label: {
-                            HStack(alignment: .firstTextBaseline) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(activityBlockLabel(activity))
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(activity.isReversed ? .secondary : .primary)
-                                    Text(activitySubtitle(activity))
-                                        .font(.caption)
-                                        .foregroundStyle(activity.isReversed ? .red : .secondary)
-                                }
-                                Spacer()
-                                Text(rowsLabel(activity.totalRowEquivalents) + " rows")
-                                    .font(.caption.weight(.bold))
-                                    .monospacedDigit()
-                                Button {
-                                    openActivity(id: activity.id)
-                                } label: {
-                                    Image(systemName: "square.and.pencil")
-                                        .font(.footnote)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("Open this pruning activity")
-                            }
-                        }
-                        .buttonStyle(.plain)
-
-                        if expandedActivityId == activity.id {
-                            ForEach(activity.activeAllocations) { allocation in
-                                HStack(alignment: .firstTextBaseline) {
-                                    Text(allocation.blockName.isEmpty
-                                         ? blockName(allocation.paddockId)
-                                         : allocation.blockName)
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                    Text(allocationDetail(allocation))
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.leading, 8)
-                            }
-                            Text(activityLabourFootnote(activity))
-                                .font(.caption2)
-                                .italic()
-                                .foregroundStyle(.secondary)
-                                .padding(.leading, 8)
-                        }
-                        Divider()
-                    }
-                }
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(VineyardTheme.cardBackground, in: .rect(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(VineyardTheme.cardBorder, lineWidth: 0.5))
-            .padding(.horizontal)
-        }
     }
 
     // MARK: Block list

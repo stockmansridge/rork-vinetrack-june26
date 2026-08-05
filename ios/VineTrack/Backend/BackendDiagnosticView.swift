@@ -15,6 +15,7 @@ struct BackendDiagnosticView: View {
     @Environment(MigratedDataStore.self) private var migratedStore
     @Environment(OperatorCategorySyncService.self) private var operatorCategorySync
     @Environment(SubscriptionService.self) private var subscription
+    @Environment(PruningSyncService.self) private var pruningSync
 
     @State private var name: String = ""
     @State private var email: String = ""
@@ -64,6 +65,7 @@ struct BackendDiagnosticView: View {
             auditSection
             pinSyncDiagnosticsSection
             operatorCategoryDiagnosticsSection
+            pruningCacheDiagnosticsSection
             outputSection
         }
         .navigationTitle("Backend Diagnostic")
@@ -530,6 +532,72 @@ struct BackendDiagnosticView: View {
         await perform("Force Re-push Worker Types") {
             let result = await operatorCategorySync.forceRepushLocalForSelectedVineyard()
             return result
+        }
+    }
+
+    // MARK: Pruning activity cache
+
+    /// Consistency of the two local representations of a pruning activity: the
+    /// parent draft with its allocations, and the legacy projected entries that
+    /// block and vineyard progress are actually calculated from.
+    ///
+    /// Every count should be zero. A non-zero count means a pull left the cache
+    /// hollow — progress will read low until the detail is repaired — so each
+    /// one is named rather than folded into a single "healthy" flag.
+    private var pruningCacheDiagnosticsSection: some View {
+        Section("Pruning Activity Cache") {
+            let audit = pruningCacheAudit
+            LabeledContent("Selected Vineyard ID", value: migratedStore.selectedVineyardId?.uuidString ?? "none")
+            if let audit {
+                LabeledContent("Status", value: audit.isHealthy ? "consistent" : "inconsistent")
+                    .foregroundStyle(audit.isHealthy ? Color.green : Color.orange)
+                LabeledContent("Parents with 0 allocations", value: "\(audit.parentsWithoutAllocations)")
+                LabeledContent("Allocations missing quarters", value: "\(audit.allocationsMissingSegmentDetail)")
+                LabeledContent("Orphaned projected rows", value: "\(audit.orphanedProjectedEntries)")
+                LabeledContent("Block progress mismatches", value: "\(audit.blockProgressMismatches)")
+                LabeledContent("Queued for detail repair", value: "\(audit.activityIdsNeedingDetail.count)")
+                if !audit.activityIdsNeedingDetail.isEmpty {
+                    DisclosureGroup("Activities needing canonical detail") {
+                        ForEach(audit.activityIdsNeedingDetail, id: \.self) { id in
+                            Text(id.uuidString.lowercased())
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            } else {
+                Text("Select a vineyard to audit the pruning activity cache.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Button("Repair Hollow Activities Now", systemImage: "bandage") {
+                Task { await repairPruningActivityCache() }
+            }
+            .disabled(migratedStore.selectedVineyardId == nil)
+        }
+        .disabled(isRunning)
+    }
+
+    private var pruningCacheAudit: PruningActivityCacheAudit? {
+        guard let vineyardId = migratedStore.selectedVineyardId else { return nil }
+        return PruningStore.shared.auditActivityCache(vineyardId: vineyardId)
+    }
+
+    /// Re-fetches the authoritative detailed record for every hollow activity and
+    /// rebuilds its projection, so progress recovers without the user having to
+    /// re-enter anything.
+    private func repairPruningActivityCache() async {
+        guard let vineyardId = migratedStore.selectedVineyardId else { return }
+        await perform("Repair Pruning Activity Cache") {
+            let before = PruningStore.shared.auditActivityCache(vineyardId: vineyardId)
+            let repaired = await pruningSync.repairActivityProjections(vineyardId: vineyardId)
+            let after = PruningStore.shared.auditActivityCache(vineyardId: vineyardId)
+            return """
+            repaired=\(repaired) activity(ies)
+            before: \(before.summary)
+            after:  \(after.summary)
+            """
         }
     }
 

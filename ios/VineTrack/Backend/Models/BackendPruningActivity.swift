@@ -4,8 +4,22 @@ import Foundation
 
 /// The COMPLETE server state of a pruning activity: the parent, every block
 /// allocation with its own canonical season and vintage, and the activity
-/// totals. Both apps replace their local activity and allocations with this
-/// after sync rather than merging field by field.
+/// totals.
+///
+/// DETAIL vs SUMMARY. `pruning_activity_json(id, p_include_segments)` serves two
+/// shapes from the same contract:
+///
+/// * DETAIL — `get_pruning_activity` and every create/update/reverse response
+///   pass `true`, so each allocation carries its full `segments` array. This is
+///   the authoritative record for quarters, progress and the legacy projection.
+/// * SUMMARY — `list_pruning_activities` passes `false`, so `segments` comes
+///   back as JSON **null**. The allocation SET, block names, row numbers,
+///   quarter COUNTS, row equivalents and vines are all still present; only the
+///   per-quarter detail is withheld.
+///
+/// A null `segments` therefore means NOT SUPPLIED — never "this allocation has
+/// no completed quarters". Collapsing the two is what silently zeroed the iOS
+/// block and vineyard progress on every pull.
 nonisolated struct BackendPruningActivityCanonical: Decodable, Sendable {
     nonisolated struct Activity: Decodable, Sendable {
         let id: UUID?
@@ -80,7 +94,14 @@ nonisolated struct BackendPruningActivityCanonical: Decodable, Sendable {
         let rowEquivalents: Double
         let estimatedVines: Int
         let isReversed: Bool
-        let segments: [Segment]
+        /// Nil when the response OMITTED the per-quarter detail (a summary
+        /// feed); an empty array when the server positively stated this
+        /// allocation owns no quarters. The two must never be conflated.
+        let segments: [Segment]?
+
+        /// True only when this allocation's per-quarter detail was supplied and
+        /// may be adopted as authoritative.
+        var hasSegmentDetail: Bool { segments != nil }
 
         enum CodingKeys: String, CodingKey {
             case id
@@ -112,7 +133,10 @@ nonisolated struct BackendPruningActivityCanonical: Decodable, Sendable {
             rowEquivalents = try c.decodeIfPresent(Double.self, forKey: .rowEquivalents) ?? 0
             estimatedVines = try c.decodeIfPresent(Int.self, forKey: .estimatedVines) ?? 0
             isReversed = try c.decodeIfPresent(Bool.self, forKey: .isReversed) ?? false
-            segments = try c.decodeIfPresent([Segment].self, forKey: .segments) ?? []
+            // decodeIfPresent maps BOTH an absent key and an explicit null to
+            // nil, which is exactly the "not supplied" signal required here.
+            // It must never be defaulted to [].
+            segments = try c.decodeIfPresent([Segment].self, forKey: .segments)
         }
     }
 
@@ -155,6 +179,18 @@ nonisolated struct BackendPruningActivityCanonical: Decodable, Sendable {
     let activity: Activity?
     let allocations: [Allocation]
     let totals: Totals?
+
+    /// True when EVERY allocation carried its per-quarter detail — a
+    /// `get_pruning_activity` / create / update response, safe to adopt as the
+    /// authoritative detailed record.
+    ///
+    /// A parent with no allocations counts as detailed: there is no withheld
+    /// detail to wait for.
+    var hasSegmentDetail: Bool { allocations.allSatisfy(\.hasSegmentDetail) }
+
+    /// True when at least one allocation's detail was withheld. Such a response
+    /// may refresh parent metadata but must NEVER replace segments.
+    var isSummaryOnly: Bool { !hasSegmentDetail }
 
     enum CodingKeys: String, CodingKey {
         case activity
