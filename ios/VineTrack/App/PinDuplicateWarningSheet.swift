@@ -84,7 +84,7 @@ struct PinDuplicateWarningSheet: View {
                     Section("Existing Pin") {
                         HStack(spacing: 12) {
                             Circle()
-                                .fill(Color.fromString(existingPin.buttonColor).gradient)
+                                .fill(Color.fromString(existingPin.displayColorToken).gradient)
                                 .frame(width: 32, height: 32)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(existingPin.buttonName)

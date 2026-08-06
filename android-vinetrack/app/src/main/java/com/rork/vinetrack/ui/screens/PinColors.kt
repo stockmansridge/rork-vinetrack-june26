@@ -1,19 +1,24 @@
 package com.rork.vinetrack.ui.screens
 
 import androidx.compose.ui.graphics.Color
+import com.rork.vinetrack.data.PinCategoryCatalog
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.theme.VineColors
 
 /**
- * Shared pin colour resolution used across the Pins map, list and stats views so
- * a pin always shows in its *actual* configured colour (iOS `nameColorMap` /
- * `Color.fromString(pin.buttonColor)` parity), not a generic mode accent.
+ * Shared pin colour resolution used across the Pins map, list and stats views.
  *
- * The Android `Pin` model doesn't persist a colour, so — like iOS — the colour is
- * resolved by matching the pin's button name against the vineyard's launcher
- * button configuration. When no configured button matches, we fall back to the
- * mode accent so a colour is always available.
+ * Repairs pins follow the canonical category colour contract
+ * ([PinCategoryCatalog], mirrored 1:1 by iOS `PinCategoryCatalog.swift`): the
+ * colour is derived deterministically from the pin's stable category id, so
+ * two "Vine Issue" pins can never render in different colours across devices
+ * or platforms. Unknown / missing categories (including historical records)
+ * render as the neutral unassigned gray — never another category's colour.
+ *
+ * Growth observations keep their observation accents (stored colour → button
+ * configuration → leaf green) and manual issues keep the amber accent, since
+ * those record types are not part of the repairs category catalogue.
  */
 
 /** Colour tokens shared by the editor and resolver — must all be handled by [launcherColor]. */
@@ -74,15 +79,33 @@ internal fun pinColorMap(state: AppUiState): Map<String, String> {
 }
 
 /**
- * Resolve a pin's display colour. The stored `button_color` token (written at
- * drop time by both apps — iOS `Color.fromString(pin.buttonColor)` parity)
- * always wins; only when no colour was stored do we fall back to matching the
- * pin's button name against the vineyard's launcher configuration, then the
- * mode accent.
+ * Resolve a pin's display colour.
+ *
+ * Repairs pins: canonical category contract — colour derived from the stable
+ * category id ([PinCategoryCatalog.canonicalId] over `category`, then
+ * `button_name`, then `title`). Never from the editable button configuration
+ * or an arbitrary stored colour token, so every device renders the same
+ * category identically. Unknown/missing → unassigned gray, never a crash.
+ *
+ * Growth pins: stored colour → launcher configuration → leaf green accent.
+ * Manual issues: fixed amber accent.
  */
 internal fun pinColor(pin: Pin, colorMap: Map<String, String>): Color {
-    pin.buttonColor?.trim()?.takeIf { it.isNotBlank() }?.let { return launcherColor(it) }
-    val token = pin.buttonName?.takeIf { it.isNotBlank() }?.let { colorMap[it] }
-        ?: colorMap[pin.displayTitle]
-    return if (!token.isNullOrBlank()) launcherColor(token) else pinModeColor(pin.mode)
+    val mode = pin.mode
+    return when {
+        mode?.contains("manual", ignoreCase = true) == true -> ManualIssueColor
+        mode?.contains("growth", ignoreCase = true) == true -> {
+            pin.buttonColor?.trim()?.takeIf { it.isNotBlank() }?.let { return launcherColor(it) }
+            val token = pin.buttonName?.takeIf { it.isNotBlank() }?.let { colorMap[it] }
+                ?: colorMap[pin.displayTitle]
+            if (!token.isNullOrBlank()) launcherColor(token) else GrowthColor
+        }
+        else -> launcherColor(
+            PinCategoryCatalog.colorTokenForRaw(
+                pin.category?.takeIf { it.isNotBlank() }
+                    ?: pin.buttonName?.takeIf { it.isNotBlank() }
+                    ?: pin.title,
+            ),
+        )
+    }
 }

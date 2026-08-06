@@ -88,6 +88,7 @@ import com.rork.vinetrack.data.PinDeleteSync
 import com.rork.vinetrack.data.PinEditSync
 import com.rork.vinetrack.data.PinPhotoSync
 import com.rork.vinetrack.data.model.PendingPhotoStatus
+import com.rork.vinetrack.data.PinPlacementResult
 import com.rork.vinetrack.data.PinRepository
 import com.rork.vinetrack.data.ProfileRepository
 import com.rork.vinetrack.data.RegionFormatter
@@ -4771,9 +4772,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         /** Device bearing at drop time (degrees 0–360), when the fix had one. */
         heading: Double? = null,
         photoUri: Uri? = null,
-        // True only for launcher pins dropped at a real GPS fix: snap the pin to
-        // the nearest mapped vine row and persist the row-attachment columns.
-        attachToRow: Boolean = false,
+        // Immutable placement resolved exactly once at commit time by the
+        // caller (PinPlacement.resolve). Used verbatim for the block, the
+        // row-attachment columns and the snapped point — never recomputed
+        // here, so the payload can't drift from what the user was shown.
+        placement: PinPlacementResult? = null,
         // Quick-pin parity: fires with the created (or queued optimistic) pin so the
         // launcher's success card and auto-photo prompt have the concrete row to
         // work with. Independent of [onResult], which still reports save success.
@@ -4781,20 +4784,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
-        // Resolve row attachment from block geometry when a GPS fix is available.
-        val attachment = if (attachToRow) {
-            RowAttachment.resolve(
-                paddock = _ui.value.paddocks.firstOrNull { it.id == paddockId },
-                latitude = latitude,
-                longitude = longitude,
-                side = side?.ifBlank { null },
-            )
-        } else {
-            null
-        }
+        // Block: the explicit selection wins, else the placement's containment
+        // resolution — so a launcher pin dropped inside a mapped block is never
+        // saved blockless just because no block was hand-picked.
+        val resolvedPaddockId = paddockId?.ifBlank { null } ?: placement?.paddockId
         // Backfill the legacy row_number from the snapped row when the user left
         // it blank, so the existing row column stays consistent with the snap.
-        val resolvedRowNumber = rowNumber ?: attachment?.pinRowNumber?.toInt()
+        val resolvedRowNumber = rowNumber ?: placement?.pinRowNumber?.toInt()
         // Mint the client id up front so the same UUID flows through the
         // optimistic pin, the network insert, and (if queued) the outbox
         // payload — keeping replay idempotent.
@@ -4804,7 +4800,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Link the pin to the in-progress trip (iOS parity) so it shows up
             // in that trip's detail view and PDF export.
             tripId = _ui.value.activeTrip?.id,
-            paddockId = paddockId,
+            paddockId = resolvedPaddockId,
             title = title.ifBlank { null },
             category = category?.ifBlank { null },
             buttonName = (buttonName ?: title).ifBlank { null },
@@ -4814,9 +4810,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             side = side?.ifBlank { null },
             heading = heading,
             rowNumber = resolvedRowNumber,
-            pinRowNumber = attachment?.pinRowNumber,
-            pinSide = attachment?.pinSide,
-            alongRowDistanceM = attachment?.alongRowDistanceM,
+            pinRowNumber = placement?.pinRowNumber,
+            pinSide = placement?.pinSide,
+            alongRowDistanceM = placement?.alongRowDistanceM,
+            snappedLatitude = placement?.snappedLatitude,
+            snappedLongitude = placement?.snappedLongitude,
+            snappedToRow = placement?.snappedToRow ?: false,
             isCompleted = isCompleted,
             latitude = latitude,
             longitude = longitude,
@@ -4909,6 +4908,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             pinRowNumber = input.pinRowNumber,
             pinSide = input.pinSide,
             alongRowDistanceM = input.alongRowDistanceM,
+            snappedLatitude = input.snappedLatitude,
+            snappedLongitude = input.snappedLongitude,
+            snappedToRow = input.snappedToRow,
         )
         _ui.update { st ->
             st.copy(

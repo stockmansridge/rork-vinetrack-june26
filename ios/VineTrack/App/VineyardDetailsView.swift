@@ -329,7 +329,7 @@ private struct VineyardBlocksMiniMap: View {
                 OfflineVineyardMapView.Pin(
                     id: $0.id,
                     coordinate: $0.coordinate,
-                    color: Color.fromString($0.buttonColor),
+                    color: Color.fromString($0.displayColorToken),
                     isCompleted: $0.isCompleted,
                     name: $0.buttonName
                 )

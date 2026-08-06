@@ -1305,7 +1305,7 @@ struct ActiveTripView: View {
                 OfflineVineyardMapView.Pin(
                     id: $0.id,
                     coordinate: $0.coordinate,
-                    color: Color.fromString($0.buttonColor),
+                    color: Color.fromString($0.displayColorToken),
                     name: $0.buttonName
                 )
             },
@@ -1339,7 +1339,7 @@ struct ActiveTripView: View {
             ForEach(visibleMapPins) { pin in
                 Annotation(pin.buttonName, coordinate: pin.coordinate) {
                     Circle()
-                        .fill(Color.fromString(pin.buttonColor))
+                        .fill(Color.fromString(pin.displayColorToken))
                         .frame(width: 14, height: 14)
                         .overlay(Circle().stroke(.white, lineWidth: 2))
                         .shadow(radius: 1)

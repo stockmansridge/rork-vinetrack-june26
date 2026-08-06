@@ -364,16 +364,32 @@ struct PinDropView: View {
         }
 
         let rowNumber = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
+        // Resolve the immutable placement exactly once at commit time: the
+        // explicit block selection wins, else polygon containment; then snap
+        // to the nearest mapped vine row (Android PinPlacement parity).
+        let resolved = PinContextResolver.resolve(
+            coordinate: location.coordinate,
+            store: store,
+            tracking: nil
+        )
+        let paddockId = selectedPaddockId ?? resolved.paddockId
+        let paddock = paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id }) }
+        let attachment = PinAttachmentResolver.resolveManual(
+            coordinate: location.coordinate,
+            operatorSide: side,
+            paddock: paddock
+        )
         store.createPinFromButton(
             button: button,
             coordinate: location.coordinate,
             heading: locationService.heading?.trueHeading,
             side: side,
-            paddockId: selectedPaddockId,
-            rowNumber: rowNumber,
+            paddockId: paddockId,
+            rowNumber: rowNumber ?? attachment.pinRowNumber ?? resolved.rowNumber,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
-            notes: nil
+            notes: nil,
+            attachment: attachment
         )
         showFeedback("Pin: \(button.name) (\(side == .left ? "L" : "R"))", kind: .success)
     }
@@ -385,17 +401,31 @@ struct PinDropView: View {
         }
         lastGrowthStage = stage
         let rowNumber = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
+        // Same one-shot placement resolution as repair pins (Android parity).
+        let resolved = PinContextResolver.resolve(
+            coordinate: location.coordinate,
+            store: store,
+            tracking: nil
+        )
+        let paddockId = selectedPaddockId ?? resolved.paddockId
+        let paddock = paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id }) }
+        let attachment = PinAttachmentResolver.resolveManual(
+            coordinate: location.coordinate,
+            operatorSide: pendingSide,
+            paddock: paddock
+        )
         store.createGrowthStagePin(
             stageCode: stage.code,
             stageDescription: stage.description,
             coordinate: location.coordinate,
             heading: locationService.heading?.trueHeading,
             side: pendingSide,
-            paddockId: selectedPaddockId,
-            rowNumber: rowNumber,
+            paddockId: paddockId,
+            rowNumber: rowNumber ?? attachment.pinRowNumber ?? resolved.rowNumber,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
-            notes: nil
+            notes: nil,
+            attachment: attachment
         )
         showFeedback("Growth pin: EL \(stage.code)", kind: .success)
     }

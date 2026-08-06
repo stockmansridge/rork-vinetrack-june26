@@ -107,6 +107,60 @@ nonisolated enum PinAttachmentResolver {
         )
     }
 
+    /// Full placement for a launcher/manual pin dropped at a real GPS fix
+    /// without a live trip lock — the iOS mirror of Android's
+    /// `RowAttachment.resolve`/`PinPlacement`. Resolved exactly once at
+    /// commit time; the immutable result flows verbatim into the saved pin.
+    ///
+    /// Finds the nearest mapped vine row in `paddock`, projects the fix onto
+    /// its centreline and reports the along-row distance. Like the manual
+    /// resolver it never speculates a driving path. `snappedToRow` is true
+    /// only when the snap geometry fully resolved; when the block has no
+    /// explicit row lines (synthetic-only geometry) the nearest row number is
+    /// still recorded but the snap state stays honestly false.
+    static func resolveManual(
+        coordinate: CLLocationCoordinate2D,
+        operatorSide: PinSide,
+        paddock: Paddock?
+    ) -> Attachment {
+        let sideOnly = Attachment(
+            drivingRowNumber: nil,
+            pinRowNumber: nil,
+            pinSide: operatorSide,
+            snappedCoordinate: nil,
+            alongRowDistanceM: nil,
+            snappedToRow: false
+        )
+        guard let paddock,
+              let nearest = RowGuidance.nearestRow(for: coordinate, in: paddock)
+        else { return sideOnly }
+
+        let rowNumber = Int(nearest.rowNumber.rounded())
+        guard let snap = RowGuidance.snapToRow(
+            coordinate: coordinate,
+            rowNumber: rowNumber,
+            in: paddock
+        ) else {
+            // Synthetic-only geometry: keep the resolved row, stay unsnapped.
+            return Attachment(
+                drivingRowNumber: nil,
+                pinRowNumber: rowNumber,
+                pinSide: operatorSide,
+                snappedCoordinate: nil,
+                alongRowDistanceM: nil,
+                snappedToRow: false
+            )
+        }
+        return Attachment(
+            drivingRowNumber: nil,
+            pinRowNumber: rowNumber,
+            pinSide: operatorSide,
+            snappedCoordinate: snap.snapped,
+            alongRowDistanceM: snap.distanceAlongMetres,
+            snappedToRow: true
+        )
+    }
+
     // MARK: - Geometry
 
     /// Decide which adjacent vine row (floor or ceil of the driving path)

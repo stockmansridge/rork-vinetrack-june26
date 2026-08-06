@@ -108,6 +108,7 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.rork.vinetrack.data.PinDuplicateChecker
 import com.rork.vinetrack.data.PinExporter
+import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.RowAttachment
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.LauncherButton
@@ -932,21 +933,21 @@ private fun PinEditSheetHost(
             } else {
                 defaultLocation(fields.paddockId, state)
             }
-            // Resolve the snapped row attachment up front so both the
-            // duplicate check and the post-save confirmation can reuse it.
-            // Only snap when we have a real GPS fix; a centroid fallback
-            // would produce a meaningless along-row distance.
-            val paddock = state.paddocks.firstOrNull { it.id == fields.paddockId }
-            val attachment = if (hasGps) {
-                RowAttachment.resolve(
-                    paddock = paddock,
-                    latitude = target.latitude,
-                    longitude = target.longitude,
-                    side = fields.side?.ifBlank { null },
-                )
-            } else {
-                null
-            }
+            // Resolve the immutable placement exactly once at commit time.
+            // The same value feeds the duplicate check, the confirmation
+            // message, and the save payload (online or queued offline), so
+            // none of them can disagree. Only a real GPS fix is snapped; the
+            // centroid fallback resolves to an explicit NO_LOCATION placement
+            // so a meaningless along-row distance is never persisted.
+            val placement = PinPlacement.resolve(
+                paddocks = state.paddocks,
+                selectedPaddockId = fields.paddockId,
+                latitude = if (hasGps) target.latitude else null,
+                longitude = if (hasGps) target.longitude else null,
+                side = fields.side,
+            )
+            val paddock = state.paddocks.firstOrNull { it.id == (fields.paddockId ?: placement.paddockId) }
+            val attachment = placement.toAttachment()
             // Customer-friendly confirmation echoing the attached row/side
             // when the pin snapped to a mapped row. Null when not attached,
             // so an un-snapped pin never shows a misleading row line.
@@ -975,7 +976,7 @@ private fun PinEditSheetHost(
                     category = fields.category,
                     notes = fields.notes,
                     side = fields.side,
-                    paddockId = fields.paddockId,
+                    paddockId = fields.paddockId ?: placement.paddockId,
                     rowNumber = fields.rowNumber,
                     isCompleted = fields.isCompleted,
                     latitude = loc?.first,
@@ -990,7 +991,7 @@ private fun PinEditSheetHost(
                         val hLng = loc?.second
                         if (hLat != null && hLng != null) compassTrueHeading(b, hLat, hLng) else b
                     },
-                    attachToRow = hasGps,
+                    placement = placement,
                     photoUri = photoUri,
                 ) { ok ->
                     onDone(ok)
@@ -1415,9 +1416,19 @@ fun PinCategoryLauncherScreen(
     fun quickCreate(category: String, side: String, loc: CoordinatePoint) {
         val lat = loc.latitude
         val lng = loc.longitude
-        val paddock = state.paddocks.firstOrNull { RowAttachment.containsPoint(it, lat, lng) }
-        val paddockId = paddock?.id
-        val attachment = RowAttachment.resolve(paddock, lat, lng, side)
+        // One-shot immutable placement: block by polygon containment, nearest
+        // row snap, side carried verbatim. Reused by the duplicate check, the
+        // success toast and the save payload so they always agree.
+        val placement = PinPlacement.resolve(
+            paddocks = state.paddocks,
+            selectedPaddockId = null,
+            latitude = lat,
+            longitude = lng,
+            side = side,
+        )
+        val paddock = state.paddocks.firstOrNull { it.id == placement.paddockId }
+        val paddockId = placement.paddockId
+        val attachment = placement.toAttachment()
         val offline = !state.isOnline
         val autoPhotoEnabled = AppPreferencesStore(context).load().autoPhotoPrompt
         // iOS-parity identity: store the tapped button's name and colour token
@@ -1442,7 +1453,7 @@ fun PinCategoryLauncherScreen(
                 // Compass-first (converted to true north at the drop location);
                 // fall back to the GPS course when the device has no compass.
                 heading = compassHeadingDegrees?.let { compassTrueHeading(it, lat, lng) } ?: loc.bearing,
-                attachToRow = true,
+                placement = placement,
                 photoUri = null,
                 onCreatedPin = { pin ->
                     successToast = QuickPinToast(

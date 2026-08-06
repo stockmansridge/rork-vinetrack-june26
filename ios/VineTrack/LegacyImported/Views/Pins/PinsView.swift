@@ -346,7 +346,7 @@ struct PinsSummaryView: View {
         var buckets: [String: (name: String, color: String, total: Int, active: Int, completed: Int)] = [:]
         for pin in pins {
             let key = pin.buttonName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            var entry = buckets[key] ?? (name: pin.buttonName, color: pin.buttonColor, total: 0, active: 0, completed: 0)
+            var entry = buckets[key] ?? (name: pin.displayNameOrUnassigned, color: pin.displayColorToken, total: 0, active: 0, completed: 0)
             entry.total += 1
             if pin.isCompleted { entry.completed += 1 } else { entry.active += 1 }
             buckets[key] = entry
@@ -576,7 +576,7 @@ struct PinsMapView: View {
                 OfflineVineyardMapView.Pin(
                     id: $0.id,
                     coordinate: $0.coordinate,
-                    color: Color.fromString($0.buttonColor),
+                    color: Color.fromString($0.displayColorToken),
                     isCompleted: $0.isCompleted,
                     name: $0.buttonName
                 )
@@ -613,7 +613,7 @@ struct PinsMapView: View {
                     } label: {
                         ZStack {
                             Circle()
-                                .fill(Color.fromString(pin.buttonColor).gradient)
+                                .fill(Color.fromString(pin.displayColorToken).gradient)
                                 .frame(width: 30, height: 30)
 
                             if pin.isCompleted {
@@ -903,7 +903,7 @@ struct PinRowView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.fromString(pin.buttonColor).gradient)
+                    .background(Color.fromString(pin.displayColorToken).gradient)
                     .clipShape(.rect(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
@@ -1125,7 +1125,7 @@ struct PinLocationMapSheet: View {
                 Annotation(pin.buttonName, coordinate: pin.coordinate) {
                     ZStack {
                         Circle()
-                            .fill(Color.fromString(pin.buttonColor).gradient)
+                            .fill(Color.fromString(pin.displayColorToken).gradient)
                             .frame(width: 36, height: 36)
                         Image(systemName: "mappin")
                             .font(.caption.bold())
@@ -1175,7 +1175,7 @@ struct PinDirectionsSheet: View {
                     Annotation(pin.buttonName, coordinate: pin.coordinate) {
                         ZStack {
                             Circle()
-                                .fill(Color.fromString(pin.buttonColor).gradient)
+                                .fill(Color.fromString(pin.displayColorToken).gradient)
                                 .frame(width: 36, height: 36)
                             Image(systemName: "mappin")
                                 .font(.caption.bold())
@@ -1291,7 +1291,7 @@ struct PinDetailSheet: View {
                 Section {
                     HStack {
                         Circle()
-                            .fill(Color.fromString(pin.buttonColor).gradient)
+                            .fill(Color.fromString(pin.displayColorToken).gradient)
                             .frame(width: 44, height: 44)
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {

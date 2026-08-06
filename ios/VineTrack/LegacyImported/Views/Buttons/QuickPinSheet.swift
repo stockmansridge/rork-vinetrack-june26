@@ -247,35 +247,62 @@ struct QuickPinSheet: View {
 
     private func createGrowthPin(stage: GrowthStage, location: CLLocation) {
         let rowNumber = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
+        let placement = resolvePlacement(coordinate: location.coordinate, side: side)
         store.createGrowthStagePin(
             stageCode: stage.code,
             stageDescription: stage.description,
             coordinate: location.coordinate,
             heading: locationService.heading?.trueHeading,
             side: side,
-            paddockId: selectedPaddockId,
-            rowNumber: rowNumber,
+            paddockId: placement.paddockId,
+            rowNumber: rowNumber ?? placement.attachment.pinRowNumber ?? placement.fallbackRowNumber,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
-            notes: notes.isEmpty ? nil : notes
+            notes: notes.isEmpty ? nil : notes,
+            attachment: placement.attachment
         )
         dismiss()
     }
 
     private func createPin(button: ButtonConfig, location: CLLocation) {
         let rowNumber = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
+        let placement = resolvePlacement(coordinate: location.coordinate, side: side)
         store.createPinFromButton(
             button: button,
             coordinate: location.coordinate,
             heading: locationService.heading?.trueHeading,
             side: side,
-            paddockId: selectedPaddockId,
-            rowNumber: rowNumber,
+            paddockId: placement.paddockId,
+            rowNumber: rowNumber ?? placement.attachment.pinRowNumber ?? placement.fallbackRowNumber,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
-            notes: notes.isEmpty ? nil : notes
+            notes: notes.isEmpty ? nil : notes,
+            attachment: placement.attachment
         )
         dismiss()
+    }
+
+    /// One-shot immutable placement resolution at commit time (Android
+    /// `PinPlacement` parity): explicit block selection wins, else polygon
+    /// containment; then snap to the nearest mapped vine row. The result is
+    /// used verbatim by the save so payload and UI can never disagree.
+    private func resolvePlacement(
+        coordinate: CLLocationCoordinate2D,
+        side: PinSide
+    ) -> (paddockId: UUID?, attachment: PinAttachmentResolver.Attachment, fallbackRowNumber: Int?) {
+        let resolved = PinContextResolver.resolve(
+            coordinate: coordinate,
+            store: store,
+            tracking: tracking
+        )
+        let paddockId = selectedPaddockId ?? resolved.paddockId
+        let paddock = paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id }) }
+        let attachment = PinAttachmentResolver.resolveManual(
+            coordinate: coordinate,
+            operatorSide: side,
+            paddock: paddock
+        )
+        return (paddockId, attachment, resolved.rowNumber)
     }
 
     private func staleOrLowAccuracyWarning(for quality: LocationService.LocationQuality) -> String? {

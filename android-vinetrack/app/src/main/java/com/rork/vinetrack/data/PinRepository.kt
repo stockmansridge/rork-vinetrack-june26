@@ -62,6 +62,12 @@ class PinRepository(private val session: SessionStore) {
         @SerialName("pin_row_number") val pinRowNumber: Double? = null,
         @SerialName("pin_side") val pinSide: String? = null,
         @SerialName("along_row_distance_m") val alongRowDistanceM: Double? = null,
+        // Canonical snapped point + explicit snap flag (sql/041, iOS parity).
+        // Persisted verbatim from the immutable PinPlacementResult so a snapped
+        // pin's geometry survives online saves AND offline outbox replays.
+        @SerialName("snapped_latitude") val snappedLatitude: Double? = null,
+        @SerialName("snapped_longitude") val snappedLongitude: Double? = null,
+        @SerialName("snapped_to_row") val snappedToRow: Boolean = false,
         @SerialName("is_completed") val isCompleted: Boolean = false,
         val latitude: Double? = null,
         val longitude: Double? = null,
