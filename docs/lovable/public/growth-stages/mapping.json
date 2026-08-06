@@ -1,0 +1,32 @@
+{
+  "$comment": "Canonical E-L growth stage reference images for the Lovable portal. Copy this whole folder into the portal's public/growth-stages/. Files are the exact same source images bundled in both mobile apps (iOS Assets.xcassets EL*.imageset PNGs and Android drawable-nodpi el*.webp). All 1024x1024. Created in Canva under the project owner's account (XMP CreatorTool: 'Canva (Renderer)') — project-owned, no third-party licensing restriction. Resolution order must match mobile: a vineyard's custom uploaded image (growth_stage_images table / storage) wins; these bundled files are the fallback. Stages listed in 'stagesWithoutImage' have no reference photo on any platform — show a placeholder, never another stage's image.",
+  "format": "webp",
+  "dimensions": { "width": 1024, "height": 1024 },
+  "highestResolutionMasters": "ios/VineTrack/Assets.xcassets/EL<code>.imageset/EL<code>.png (1024x1024 lossless PNG)",
+  "images": [
+    { "code": "EL1",  "file": "el1.webp",  "description": "Winter bud" },
+    { "code": "EL2",  "file": "el2.webp",  "description": "Bud scales opening" },
+    { "code": "EL3",  "file": "el3.webp",  "description": "Wooly Bud ± green showing" },
+    { "code": "EL4",  "file": "el4.webp",  "description": "Budburst; leaf tips visible", "isBudburst": true },
+    { "code": "EL7",  "file": "el7.webp",  "description": "First leaf separated from shoot tip" },
+    { "code": "EL9",  "file": "el9.webp",  "description": "2 to 3 leaves separated; shoots 2-4 cm long" },
+    { "code": "EL11", "file": "el11.webp", "description": "4 leaves separated" },
+    { "code": "EL12", "file": "el12.webp", "description": "5 leaves separated; shoots about 10 cm long; inflorescence clear" },
+    { "code": "EL17", "file": "el17.webp", "description": "12 leaves separated; inflorescence well developed, single flowers separated" },
+    { "code": "EL19", "file": "el19.webp", "description": "About 16 leaves separated; beginning of flowering (first flower caps loosening)" },
+    { "code": "EL21", "file": "el21.webp", "description": "30% caps off" },
+    { "code": "EL23", "file": "el23.webp", "description": "17-20 leaves separated; 50% caps off (= flowering)" },
+    { "code": "EL25", "file": "el25.webp", "description": "80% caps off" },
+    { "code": "EL27", "file": "el27.webp", "description": "Setting; young berries enlarging (>2 mm diam.), bunch at right angles to stem" },
+    { "code": "EL29", "file": "el29.webp", "description": "Berries pepper-corn size (4 mm diam.); bunches tending downwards" },
+    { "code": "EL31", "file": "el31.webp", "description": "Berries pea-size (7 mm diam.) (if bunches are tight)" },
+    { "code": "EL33", "file": "el33.webp", "description": "Berries still hard and green" },
+    { "code": "EL35", "file": "el35.webp", "description": "Berries begin to colour and enlarge" },
+    { "code": "EL38", "file": "el38.webp", "description": "Berries harvest-ripe" },
+    { "code": "EL41", "file": "el41.webp", "description": "After harvest; cane maturation complete" },
+    { "code": "EL47", "file": "el47.webp", "description": "End of leaf fall" }
+  ],
+  "stagesWithoutImage": [
+    "EL13", "EL14", "EL15", "EL16", "EL18", "EL20", "EL26", "EL32", "EL34", "EL36", "EL37", "EL39", "EL43"
+  ]
+}
