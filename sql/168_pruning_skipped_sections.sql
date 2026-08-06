@@ -466,7 +466,16 @@ revoke all on function public.pruning_activity_json(uuid, boolean) from public, 
 --     are structurally null. `status` gains a third value so a CSV reader can
 --     separate the three states without inferring anything.
 -- ---------------------------------------------------------------------------
-create or replace view public.pruning_activity_allocation_export as
+-- `create or replace view` cannot add columns mid-list: Postgres matches the
+-- old and new column lists BY POSITION and rejects the change as a rename
+-- ("cannot change name of view column"). The three new split columns sit next
+-- to the figure they split, not bolted on the end, so the view is dropped and
+-- rebuilt. Nothing depends on it — it is a leaf read by exports only — so the
+-- drop is not cascaded: if a dependant is ever added, this fails loudly here
+-- rather than silently deleting someone's report.
+drop view if exists public.pruning_activity_allocation_export;
+
+create view public.pruning_activity_allocation_export as
 select
   a.id                                as activity_id,
   a.vineyard_id,
