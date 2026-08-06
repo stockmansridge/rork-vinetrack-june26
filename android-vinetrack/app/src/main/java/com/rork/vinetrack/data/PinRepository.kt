@@ -72,6 +72,9 @@ class PinRepository(private val session: SessionStore) {
         // "point" / "row" / "block". Null for pins created outside it, so
         // legacy queued payloads keep decoding unchanged.
         @SerialName("location_scope") val locationScope: String? = null,
+        // The exact E-L stage identifier for growth-stage pins — the same
+        // column iOS growth-stage pins store. Null for every other pin.
+        @SerialName("growth_stage_code") val growthStageCode: String? = null,
         @SerialName("is_completed") val isCompleted: Boolean = false,
         val latitude: Double? = null,
         val longitude: Double? = null,

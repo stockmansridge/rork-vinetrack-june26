@@ -4821,6 +4821,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Structured ROW selection persisted via set_pin_row_segments after
         // the insert (queued when offline). Only used with locationScope=row.
         segments: List<com.rork.vinetrack.data.model.ManualIssueSegment>? = null,
+        // Exact E-L identifier for growth-stage pins (iOS parity column
+        // growth_stage_code). Null for every other pin.
+        growthStageCode: String? = null,
         // Quick-pin parity: fires with the created (or queued optimistic) pin so the
         // launcher's success card and auto-photo prompt have the concrete row to
         // work with. Independent of [onResult], which still reports save success.
@@ -4861,6 +4864,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             snappedLongitude = placement?.snappedLongitude,
             snappedToRow = placement?.snappedToRow ?: false,
             locationScope = locationScope?.ifBlank { null },
+            growthStageCode = growthStageCode?.ifBlank { null },
             isCompleted = isCompleted,
             latitude = latitude,
             longitude = longitude,

@@ -1604,7 +1604,7 @@ private fun ElCodeBadge(code: String) {
  * tapping them opens the high-res confirmation step (mirrors iOS).
  */
 @Composable
-private fun GrowthStagePickList(
+internal fun GrowthStagePickList(
     vm: AppViewModel,
     imagesByCode: Map<String, com.rork.vinetrack.data.model.GrowthStageImage>,
     searchText: String,
@@ -1717,7 +1717,7 @@ private fun GrowthStagePickRow(
  * E-L code and description, then Confirm to advance or Back to the list.
  */
 @Composable
-private fun GrowthStageConfirm(
+internal fun GrowthStageConfirm(
     vm: AppViewModel,
     stage: GrowthStage,
     image: com.rork.vinetrack.data.model.GrowthStageImage?,

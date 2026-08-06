@@ -2,8 +2,8 @@ import SwiftUI
 import MapKit
 import CoreLocation
 
-/// Unified "Add Pin / Action" composer (sql/170) — an extension of the
-/// existing pin workflow, not a separate issue system.
+/// Unified "Manual Pin / Repair / Observation" composer (sql/170); an
+/// extension of the existing pin workflow, not a separate issue system.
 ///
 /// Location-first flow:
 ///  1. Choose how to add the pin: drop a pin manually / select a row /
@@ -31,6 +31,9 @@ struct UnifiedPinComposerView: View {
 
     @State private var step: Step = .method
     @State private var method: String = UnifiedPinContract.scopePoint
+    // True once the user has explicitly picked a method — drives the
+    // location-choice cards' selected state when stepping back.
+    @State private var methodChosen = false
 
     // Location state.
     @State private var tappedCoordinate: CLLocationCoordinate2D?
@@ -40,6 +43,9 @@ struct UnifiedPinComposerView: View {
     // Type selection.
     @State private var selectedStandard: ButtonConfig?
     @State private var selectedCustom: CustomPinTypeRecord?
+    // The Growth Stage launcher's exact E-L stage from the EXISTING picker.
+    @State private var selectedGrowthStage: GrowthStage?
+    @State private var showGrowthPicker = false
     @State private var showAddCustom = false
     @State private var newCustomName = ""
 
@@ -51,7 +57,7 @@ struct UnifiedPinComposerView: View {
     }
 
     private var hasSelectedType: Bool {
-        selectedStandard != nil || selectedCustom != nil
+        selectedStandard != nil || selectedCustom != nil || selectedGrowthStage != nil
     }
 
     var body: some View {
@@ -63,12 +69,23 @@ struct UnifiedPinComposerView: View {
             }
         }
         .background(VineyardTheme.appBackground)
-        .navigationTitle("Add Pin / Action")
+        .navigationTitle(UnifiedPinContract.quickActionTitle)
         .navigationBarTitleDisplayMode(.inline)
         .task {
             customPinService.store = store
             if let vineyardId = store.selectedVineyardId {
                 await customPinService.refresh(vineyardId: vineyardId)
+            }
+        }
+        .sheet(isPresented: $showGrowthPicker) {
+            // The EXISTING E-L growth-stage picker — same images, labels,
+            // order and identifiers as the standard Growth pin workflow.
+            // Cancelling changes nothing; no pin exists until Save Pin.
+            GrowthStagePickerSheet { stage in
+                selectedGrowthStage = stage
+                selectedStandard = nil
+                selectedCustom = nil
+                validationMessage = nil
             }
         }
         .alert("Add custom item", isPresented: $showAddCustom) {
@@ -90,24 +107,24 @@ struct UnifiedPinComposerView: View {
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)
                 methodCard(
-                    title: "Drop a pin manually",
-                    subtitle: "Tap a point on the map — no block selection needed",
+                    title: UnifiedPinContract.methodTitles[0],
+                    subtitle: UnifiedPinContract.methodSubtitles[0],
                     icon: "mappin.and.ellipse",
                     color: VineyardTheme.primary,
                     scope: UnifiedPinContract.scopePoint
                 )
                 methodCard(
-                    title: "Select a row",
-                    subtitle: "Pick a block, then one or more rows or row sections",
+                    title: UnifiedPinContract.methodTitles[1],
+                    subtitle: UnifiedPinContract.methodSubtitles[1],
                     icon: "rectangle.split.3x1",
                     color: VineyardTheme.leafGreen,
                     scope: UnifiedPinContract.scopeRow
                 )
                 methodCard(
-                    title: "Select a block",
-                    subtitle: "Flag a whole block",
+                    title: UnifiedPinContract.methodTitles[2],
+                    subtitle: UnifiedPinContract.methodSubtitles[2],
                     icon: "square.dashed",
-                    color: Color(red: 0.55, green: 0.4, blue: 0.24),
+                    color: VineyardTheme.earthBrown,
                     scope: UnifiedPinContract.scopeBlock
                 )
             }
@@ -115,9 +132,13 @@ struct UnifiedPinComposerView: View {
         }
     }
 
+    /// One enlarged location-choice control — full-width, min height
+    /// `UnifiedPinContract.methodButtonMinHeight` (≈ double the original card),
+    /// with a clear burgundy selected state. Identical sizing on Android.
     private func methodCard(title: String, subtitle: String, icon: String, color: Color, scope: String) -> some View {
-        Button {
-            if method != scope {
+        let isSelected = methodChosen && method == scope
+        return Button {
+            if methodChosen && method != scope {
                 // Changing the method clears location state so no stale
                 // snapping/segments survive.
                 tappedCoordinate = nil
@@ -125,30 +146,44 @@ struct UnifiedPinComposerView: View {
                 selectedSegments = []
             }
             method = scope
+            methodChosen = true
             validationMessage = nil
             step = .location
         } label: {
-            HStack(spacing: 12) {
+            HStack(spacing: 14) {
                 Image(systemName: icon)
-                    .font(.title3.weight(.semibold))
+                    .font(.title2.weight(.semibold))
                     .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(color, in: .rect(cornerRadius: 10))
-                VStack(alignment: .leading, spacing: 2) {
+                    .frame(width: 48, height: 48)
+                    .background(color, in: .rect(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 3) {
                     Text(title)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.headline.weight(.semibold))
                         .foregroundStyle(.primary)
                     Text(subtitle)
-                        .font(.caption)
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
                 }
                 Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(VineyardTheme.burgundy)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
             }
-            .padding(14)
-            .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 14))
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            .frame(maxWidth: .infinity, minHeight: UnifiedPinContract.methodButtonMinHeight, alignment: .leading)
+            .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(isSelected ? VineyardTheme.burgundy : Color.clear, lineWidth: 2)
+            )
         }
         .buttonStyle(.plain)
     }
@@ -160,7 +195,6 @@ struct UnifiedPinComposerView: View {
             VStack(alignment: .leading, spacing: 10) {
                 switch method {
                 case UnifiedPinContract.scopeRow:
-                    blockPicker
                     rowGrid
                 case UnifiedPinContract.scopeBlock:
                     blockPicker
@@ -206,15 +240,15 @@ struct UnifiedPinComposerView: View {
         let error: String? = {
             switch method {
             case UnifiedPinContract.scopePoint:
-                return tappedCoordinate == nil ? "Tap the map to place the pin." : nil
+                return tappedCoordinate == nil ? UnifiedPinContract.errorTapMap : nil
             case UnifiedPinContract.scopeRow:
-                if selectedPaddockId == nil { return "Select the block that owns the rows." }
                 if ManualIssueContract.canonicalSegments(Array(selectedSegments)).isEmpty {
-                    return "Select at least one row."
+                    return UnifiedPinContract.errorSelectRow
                 }
+                if selectedPaddockId == nil { return UnifiedPinContract.errorRowBlock }
                 return nil
             default:
-                return selectedPaddockId == nil ? "Select a block." : nil
+                return selectedPaddockId == nil ? UnifiedPinContract.errorSelectBlock : nil
             }
         }()
         if let error {
@@ -304,52 +338,98 @@ struct UnifiedPinComposerView: View {
         }
     }
 
+    /// One block with its mapped rows in the row-first selector.
+    private struct RowBlockEntry: Identifiable {
+        let paddock: Paddock
+        let rows: [PaddockRow]
+        var id: UUID { paddock.id }
+    }
+
+    /// Blocks that have mapped row geometry, sorted by name — the row-first
+    /// selector lists every one of them under its block header so "Row 41"
+    /// is never ambiguous across blocks.
+    private var rowBlocks: [RowBlockEntry] {
+        var entries: [RowBlockEntry] = []
+        for paddock in store.paddocks {
+            let rows = paddock.rows.sorted { $0.number < $1.number }
+            if !rows.isEmpty {
+                entries.append(RowBlockEntry(paddock: paddock, rows: rows))
+            }
+        }
+        entries.sort { $0.paddock.name.lowercased() < $1.paddock.name.lowercased() }
+        return entries
+    }
+
+    /// Row-first tap: the block is DERIVED from the tapped row's geometry;
+    /// switching blocks starts a fresh selection.
+    private func handleRowTap(blockId: UUID, tapped: Set<ManualIssueSegment>) {
+        let result = UnifiedPinContract.applyRowTap(
+            currentBlockId: selectedPaddockId,
+            tappedBlockId: blockId,
+            currentSegments: selectedSegments,
+            tappedSegments: tapped
+        )
+        selectedPaddockId = result.blockId
+        selectedSegments = result.segments
+        validationMessage = nil
+    }
+
     @ViewBuilder
     private var rowGrid: some View {
-        if let paddock = selectedPaddock {
-            let rows = paddock.rows.sorted { $0.number < $1.number }
-            if rows.isEmpty {
-                Label("This block has no mapped rows — flag the whole block instead", systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
+        let blocks = rowBlocks
+        if blocks.isEmpty {
+            Label("No mapped rows in this vineyard — use Select a block instead.", systemImage: "exclamationmark.triangle")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        } else {
+            if !selectedSegments.isEmpty, let selectedPaddock {
+                Text(ManualIssueContract.rowSelectionSummary(Array(selectedSegments)))
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(VineyardTheme.leafGreen)
+                Text("Block: \(selectedPaddock.name) — detected from the selected row")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-            } else {
-                if !selectedSegments.isEmpty {
-                    Text(ManualIssueContract.rowSelectionSummary(Array(selectedSegments)))
-                        .font(.footnote.weight(.medium))
-                        .foregroundStyle(VineyardTheme.leafGreen)
-                }
-                ForEach(rows) { row in
-                    rowLine(row)
-                }
+            }
+            ForEach(blocks) { entry in
+                blockRowSection(entry)
             }
         }
     }
 
-    private func rowLine(_ row: PaddockRow) -> some View {
+    @ViewBuilder
+    private func blockRowSection(_ entry: RowBlockEntry) -> some View {
+        let inBlock = entry.paddock.id == selectedPaddockId
+        Text(entry.paddock.name)
+            .font(.footnote.weight(.bold))
+            .foregroundStyle(inBlock && !selectedSegments.isEmpty ? VineyardTheme.leafGreen : Color.primary)
+            .padding(.top, 6)
+        ForEach(entry.rows) { row in
+            rowLine(row, blockId: entry.paddock.id, inBlock: inBlock)
+        }
+    }
+
+    private func rowLine(_ row: PaddockRow, blockId: UUID, inBlock: Bool) -> some View {
         HStack(spacing: 6) {
+            let all = Set((1...4).map { ManualIssueSegment(row: row.number, segment: $0) })
+            let wholeSelected = inBlock && all.isSubset(of: selectedSegments)
             Button {
-                let all = (1...4).map { ManualIssueSegment(row: row.number, segment: $0) }
-                if all.allSatisfy({ selectedSegments.contains($0) }) {
-                    all.forEach { selectedSegments.remove($0) }
-                } else {
-                    all.forEach { selectedSegments.insert($0) }
-                }
+                handleRowTap(blockId: blockId, tapped: all)
             } label: {
                 Text("\(row.number)")
                     .font(.caption.weight(.semibold))
+                    .foregroundStyle(wholeSelected ? Color.white : Color.primary)
                     .frame(width: 34, height: 26)
-                    .background(Color(.tertiarySystemBackground), in: .rect(cornerRadius: 6))
+                    .background(
+                        wholeSelected ? VineyardTheme.leafGreen : Color(.tertiarySystemBackground),
+                        in: .rect(cornerRadius: 6)
+                    )
             }
             .buttonStyle(.plain)
             ForEach(1...4, id: \.self) { quarter in
                 let segment = ManualIssueSegment(row: row.number, segment: quarter)
-                let isSelected = selectedSegments.contains(segment)
+                let isSelected = inBlock && selectedSegments.contains(segment)
                 Button {
-                    if isSelected {
-                        selectedSegments.remove(segment)
-                    } else {
-                        selectedSegments.insert(segment)
-                    }
+                    handleRowTap(blockId: blockId, tapped: [segment])
                 } label: {
                     RoundedRectangle(cornerRadius: 5)
                         .fill(isSelected ? VineyardTheme.leafGreen : Color(.tertiarySystemBackground))
@@ -442,25 +522,77 @@ struct UnifiedPinComposerView: View {
     }
 
     /// The EXISTING vineyard button catalogue — same stored identifiers,
-    /// labels and colours as the Repairs/Growth launcher. Growth Stage
-    /// buttons are excluded (they have their own authoring flow).
+    /// labels and colours as the Repairs/Growth launcher. Growth Stage never
+    /// appears here (dedupe by flag AND by name) — it has its own dedicated
+    /// tile that opens the existing stage picker. Left/right launcher
+    /// duplicates collapse to one tile each.
     private func composerButtons(mode: PinMode) -> [ButtonConfig] {
         let source = mode == .growth ? store.growthButtons : store.repairButtons
         var seen = Set<String>()
         return source
-            .filter { !$0.isGrowthStageButton }
+            .filter {
+                !$0.isGrowthStageButton &&
+                    $0.name.trimmingCharacters(in: .whitespaces)
+                        .caseInsensitiveCompare(UnifiedPinContract.growthStageButton) != .orderedSame
+            }
             .sorted { $0.index < $1.index }
-            .filter { seen.insert("\($0.name)|\($0.color)").inserted }
+            .filter { seen.insert(UnifiedPinContract.catalogueKey(name: $0.name, color: $0.color)).inserted }
+    }
+
+    /// The Growth tab's Growth Stage launcher — rendered exactly once, first,
+    /// at the same tile size as the other Growth buttons. Opens the EXISTING
+    /// E-L stage picker; the chosen stage saves as a normal Growth pin.
+    private var growthStageTile: some View {
+        Button {
+            showGrowthPicker = true
+        } label: {
+            VStack(spacing: 6) {
+                if selectedGrowthStage != nil {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3)
+                }
+                Text(UnifiedPinContract.growthStageButton)
+                    .font(.headline.weight(.heavy))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .minimumScaleFactor(0.7)
+                Text(selectedGrowthStage.map { "EL \($0.code)" } ?? "Pick the E-L stage")
+                    .font(.caption2)
+                    .opacity(0.9)
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: 74)
+            .background(
+                LinearGradient(
+                    colors: [
+                        Color.fromString(UnifiedPinContract.growthStagePinColor),
+                        Color.fromString(UnifiedPinContract.growthStagePinColor).opacity(0.82)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                in: .rect(cornerRadius: 14)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(selectedGrowthStage != nil ? Color.white : Color.black.opacity(0.10), lineWidth: selectedGrowthStage != nil ? 2 : 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func standardButtonsPage(mode: PinMode) -> some View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                if mode == .growth {
+                    growthStageTile
+                }
                 ForEach(composerButtons(mode: mode)) { button in
                     let isSelected = selectedStandard?.id == button.id
                     Button {
                         selectedStandard = button
                         selectedCustom = nil
+                        selectedGrowthStage = nil
                         validationMessage = nil
                     } label: {
                         VStack(spacing: 6) {
@@ -511,6 +643,7 @@ struct UnifiedPinComposerView: View {
                     Button {
                         selectedCustom = type
                         selectedStandard = nil
+                        selectedGrowthStage = nil
                         validationMessage = nil
                     } label: {
                         HStack {
@@ -557,6 +690,7 @@ struct UnifiedPinComposerView: View {
             if let type = await customPinService.addType(name: name, vineyardId: vineyardId) {
                 selectedCustom = type
                 selectedStandard = nil
+                selectedGrowthStage = nil
                 validationMessage = nil
             } else if let message = customPinService.errorMessage {
                 validationMessage = message
@@ -648,7 +782,30 @@ struct UnifiedPinComposerView: View {
             : selectedPaddockId
         let rowSegments = method == UnifiedPinContract.scopeRow ? canonical : nil
 
-        if let button = selectedStandard {
+        if let stage = selectedGrowthStage {
+            // Growth Stage: a normal Growth pin through the EXISTING
+            // growth-stage create path, carrying the exact E-L identifier.
+            guard let pin = store.createGrowthStagePin(
+                stageCode: stage.code,
+                stageDescription: stage.description,
+                coordinate: coordinate,
+                heading: nil,
+                side: nil, // no Left/Right in the unified composer
+                paddockId: containmentBlock,
+                rowNumber: nil,
+                createdBy: auth.userName,
+                createdByUserId: auth.userId,
+                attachment: attachment,
+                locationScope: method
+            ) else {
+                validationMessage = "Could not create pin — no vineyard selected."
+                return
+            }
+            if let rowSegments {
+                await customPinService.queueRowSegments(pinId: pin.id, segments: rowSegments)
+            }
+            finishSave()
+        } else if let button = selectedStandard {
             // Repair / Growth: the EXISTING pin create path stays
             // authoritative — never routed through a Manual Issue RPC.
             guard let pin = store.createPinFromButton(

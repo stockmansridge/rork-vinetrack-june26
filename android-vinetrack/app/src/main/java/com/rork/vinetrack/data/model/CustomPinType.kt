@@ -81,6 +81,91 @@ object UnifiedPinContract {
     const val SCOPE_ROW = ManualIssueScopes.ROW
     const val SCOPE_BLOCK = ManualIssueScopes.BLOCK
 
+    /** Customer-facing Quick Action label — EXACT wording on iOS/Android/portal. */
+    const val QUICK_ACTION_TITLE = "Manual Pin / Repair / Observation"
+
+    /** Quick Action supporting text — identical on every platform. */
+    const val QUICK_ACTION_SUBTITLE = "Drop a pin, select a row or select a block"
+
+    /**
+     * Shared semantic burgundy for the Quick Action card. iOS `VineyardTheme.burgundy`
+     * and Android `VineColors.Burgundy` are both defined from this exact value so the
+     * platforms cannot drift. Saved Repair/Growth/Custom pin colours are unaffected.
+     */
+    const val QUICK_ACTION_COLOR_HEX = "#800020"
+
+    /** Darker companion used only as the card gradient's second stop. */
+    const val QUICK_ACTION_COLOR_DARK_HEX = "#5C0017"
+
+    /**
+     * Minimum height (dp on Android, pt on iOS) of each of the three
+     * location-choice controls — approximately double the original ~64 card.
+     */
+    const val METHOD_BUTTON_MIN_HEIGHT = 128
+
+    /** Location-choice titles in canonical order — identical on both platforms. */
+    val METHOD_TITLES: List<String> = listOf("Drop a pin manually", "Select a row", "Select a block")
+
+    /** Location-choice subtitles, index-aligned with [METHOD_TITLES]. */
+    val METHOD_SUBTITLES: List<String> = listOf(
+        "Tap a point on the map — no block selection needed",
+        "Tap rows or row sections — the block is detected automatically",
+        "Flag a whole block",
+    )
+
+    /** The Growth tab's Growth Stage launcher — rendered exactly once, first. */
+    const val GROWTH_STAGE_BUTTON = "Growth Stage"
+
+    /** Colour token stored on growth-stage pins (matches the existing iOS pins). */
+    const val GROWTH_STAGE_PIN_COLOR = "darkgreen"
+
+    /** Shared validation wording — asserted verbatim by tests on both platforms. */
+    const val ERROR_SELECT_TYPE = "Select a pin type."
+    const val ERROR_LOCATION_REQUIRED = "A map location is required."
+    const val ERROR_TAP_MAP = "Tap the map to place the pin."
+    const val ERROR_SELECT_ROW = "Select at least one row."
+    const val ERROR_SELECT_BLOCK = "Select a block."
+
+    /** Safe message when selected row geometry can't be associated with a block. */
+    const val ERROR_ROW_BLOCK = "Couldn't match the selected row to a block."
+
+    /**
+     * Title/button name stored on a growth-stage pin — the SAME identifier the
+     * existing iOS growth-stage pin workflow stores (`Growth Stage {E-L code}`).
+     */
+    fun growthStagePinTitle(stageCode: String): String = "$GROWTH_STAGE_BUTTON $stageCode"
+
+    /** Dedupe key for Repair/Growth catalogue tiles (left/right duplicates collapse). */
+    fun catalogueKey(name: String, color: String?): String = name + "|" + (color ?: "")
+
+    /**
+     * The Growth tab's ordered items: Growth Stage exactly once (first), then the
+     * existing catalogue names deduplicated — never a second stage list.
+     */
+    fun growthTabItems(existingNames: List<String>): List<String> =
+        listOf(GROWTH_STAGE_BUTTON) +
+            existingNames
+                .filterNot { it.trim().equals(GROWTH_STAGE_BUTTON, ignoreCase = true) }
+                .distinct()
+
+    /**
+     * Row-first selection: the user taps rows directly and the block is DERIVED
+     * from the tapped row's geometry — never chosen through a block dropdown.
+     * Tapping a row in a different block switches the derived block and starts a
+     * fresh selection (a pin belongs to exactly one block); tapping within the
+     * current block toggles the tapped segments.
+     */
+    fun applyRowTap(
+        currentBlockId: String?,
+        tappedBlockId: String,
+        currentSegments: Set<ManualIssueSegment>,
+        tappedSegments: Set<ManualIssueSegment>,
+    ): Pair<String, Set<ManualIssueSegment>> {
+        if (currentBlockId != tappedBlockId) return tappedBlockId to tappedSegments
+        val allSelected = tappedSegments.isNotEmpty() && currentSegments.containsAll(tappedSegments)
+        return tappedBlockId to if (allSelected) currentSegments - tappedSegments else currentSegments + tappedSegments
+    }
+
     /**
      * Validation shared by all three tabs. Point never requires a block; row
      * requires a block plus at least one segment; block requires a block.
@@ -94,17 +179,17 @@ object UnifiedPinContract {
         paddockId: String?,
         segments: List<ManualIssueSegment>,
     ): String? {
-        if (!hasSelectedType) return "Select a pin type."
-        if (latitude == null || longitude == null) return "A map location is required."
+        if (!hasSelectedType) return ERROR_SELECT_TYPE
+        if (latitude == null || longitude == null) return ERROR_LOCATION_REQUIRED
         return when (scope) {
             SCOPE_POINT -> null
             SCOPE_ROW -> when {
-                paddockId == null -> "Select the block that owns the rows."
-                ManualIssueContract.canonicalSegments(segments).isEmpty() -> "Select at least one row."
+                ManualIssueContract.canonicalSegments(segments).isEmpty() -> ERROR_SELECT_ROW
+                paddockId == null -> ERROR_ROW_BLOCK
                 else -> null
             }
-            SCOPE_BLOCK -> if (paddockId == null) "Select a block." else null
-            else -> "A map location is required."
+            SCOPE_BLOCK -> if (paddockId == null) ERROR_SELECT_BLOCK else null
+            else -> ERROR_LOCATION_REQUIRED
         }
     }
 

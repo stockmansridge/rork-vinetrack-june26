@@ -1,7 +1,7 @@
 import Foundation
 
-/// Pure contract for the unified "Add Pin / Action" composer, shared by the
-/// composer UI, sync layer and tests. Mirrors `UnifiedPinContract` in
+/// Pure contract for the unified "Manual Pin / Repair / Observation"
+/// composer, shared by the composer UI, sync layer and tests. Mirrors `UnifiedPinContract` in
 /// `CustomPinType.kt` on Android exactly — parity tests on both platforms
 /// assert the same values.
 ///
@@ -18,6 +18,87 @@ nonisolated enum UnifiedPinContract {
     static let scopeRow = ManualIssueLocationScope.row.rawValue
     static let scopeBlock = ManualIssueLocationScope.block.rawValue
 
+    /// Customer-facing Quick Action label — EXACT wording on iOS/Android/portal.
+    static let quickActionTitle = "Manual Pin / Repair / Observation"
+
+    /// Quick Action supporting text — identical on every platform.
+    static let quickActionSubtitle = "Drop a pin, select a row or select a block"
+
+    /// Shared semantic burgundy for the Quick Action card. `VineyardTheme.burgundy`
+    /// (iOS) and `VineColors.Burgundy` (Android) are both defined from this exact
+    /// value so the platforms cannot drift. Saved pin colours are unaffected.
+    static let quickActionColorHex = "#800020"
+
+    /// Darker companion used only as the card gradient's second stop.
+    static let quickActionColorDarkHex = "#5C0017"
+
+    /// Minimum height (pt on iOS, dp on Android) of each of the three
+    /// location-choice controls — approximately double the original ~64 card.
+    static let methodButtonMinHeight: CGFloat = 128
+
+    /// Location-choice titles in canonical order — identical on both platforms.
+    static let methodTitles: [String] = ["Drop a pin manually", "Select a row", "Select a block"]
+
+    /// Location-choice subtitles, index-aligned with `methodTitles`.
+    static let methodSubtitles: [String] = [
+        "Tap a point on the map — no block selection needed",
+        "Tap rows or row sections — the block is detected automatically",
+        "Flag a whole block",
+    ]
+
+    /// The Growth tab's Growth Stage launcher — rendered exactly once, first.
+    static let growthStageButton = "Growth Stage"
+
+    /// Colour token stored on growth-stage pins (matches the existing pins).
+    static let growthStagePinColor = "darkgreen"
+
+    /// Shared validation wording — asserted verbatim by tests on both platforms.
+    static let errorSelectType = "Select a pin type."
+    static let errorLocationRequired = "A map location is required."
+    static let errorTapMap = "Tap the map to place the pin."
+    static let errorSelectRow = "Select at least one row."
+    static let errorSelectBlock = "Select a block."
+
+    /// Safe message when selected row geometry can't be associated with a block.
+    static let errorRowBlock = "Couldn't match the selected row to a block."
+
+    /// Title/button name stored on a growth-stage pin — the SAME identifier the
+    /// existing growth-stage pin workflow stores (`Growth Stage {E-L code}`).
+    static func growthStagePinTitle(stageCode: String) -> String {
+        "\(growthStageButton) \(stageCode)"
+    }
+
+    /// Dedupe key for Repair/Growth catalogue tiles (left/right duplicates collapse).
+    static func catalogueKey(name: String, color: String?) -> String {
+        name + "|" + (color ?? "")
+    }
+
+    /// The Growth tab's ordered items: Growth Stage exactly once (first), then
+    /// the existing catalogue names deduplicated — never a second stage list.
+    static func growthTabItems(existingNames: [String]) -> [String] {
+        var seen = Set<String>()
+        let rest = existingNames
+            .filter { $0.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(growthStageButton) != .orderedSame }
+            .filter { seen.insert($0).inserted }
+        return [growthStageButton] + rest
+    }
+
+    /// Row-first selection: the user taps rows directly and the block is DERIVED
+    /// from the tapped row's geometry — never chosen through a block dropdown.
+    /// Tapping a row in a different block switches the derived block and starts a
+    /// fresh selection (a pin belongs to exactly one block); tapping within the
+    /// current block toggles the tapped segments.
+    static func applyRowTap(
+        currentBlockId: UUID?,
+        tappedBlockId: UUID,
+        currentSegments: Set<ManualIssueSegment>,
+        tappedSegments: Set<ManualIssueSegment>
+    ) -> (blockId: UUID, segments: Set<ManualIssueSegment>) {
+        if currentBlockId != tappedBlockId { return (tappedBlockId, tappedSegments) }
+        let allSelected = !tappedSegments.isEmpty && tappedSegments.isSubset(of: currentSegments)
+        return (tappedBlockId, allSelected ? currentSegments.subtracting(tappedSegments) : currentSegments.union(tappedSegments))
+    }
+
     /// Validation shared by all three tabs. Point never requires a block; row
     /// requires a block plus at least one segment; block requires a block.
     /// Identical rules across iOS, Android and the portal contract.
@@ -29,19 +110,19 @@ nonisolated enum UnifiedPinContract {
         paddockId: UUID?,
         segments: [ManualIssueSegment]
     ) -> String? {
-        if !hasSelectedType { return "Select a pin type." }
-        guard latitude != nil, longitude != nil else { return "A map location is required." }
+        if !hasSelectedType { return errorSelectType }
+        guard latitude != nil, longitude != nil else { return errorLocationRequired }
         switch scope {
         case scopePoint:
             return nil
         case scopeRow:
-            if paddockId == nil { return "Select the block that owns the rows." }
-            if ManualIssueContract.canonicalSegments(segments).isEmpty { return "Select at least one row." }
+            if ManualIssueContract.canonicalSegments(segments).isEmpty { return errorSelectRow }
+            if paddockId == nil { return errorRowBlock }
             return nil
         case scopeBlock:
-            return paddockId == nil ? "Select a block." : nil
+            return paddockId == nil ? errorSelectBlock : nil
         default:
-            return "A map location is required."
+            return errorLocationRequired
         }
     }
 

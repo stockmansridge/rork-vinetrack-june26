@@ -993,10 +993,11 @@ private struct NewHomeTabView: View {
             }
             .padding(.horizontal)
 
-            // Full-width unified pin Quick Action (sql/170) — opens the
-            // location-first Add Pin / Action composer. After a save the
-            // composer returns to the existing Pins tab; there is no
-            // separate Manual Issues destination.
+            // Full-width unified pin Quick Action (sql/170): opens the
+            // location-first "Manual Pin / Repair / Observation" composer.
+            // Burgundy identity from the shared contract
+            // (UnifiedPinContract.quickActionColorHex); after a save the
+            // composer returns to the existing Pins tab.
             NavigationLink {
                 UnifiedPinComposerView(onSaved: { selectedTab = 1 })
             } label: {
@@ -1005,10 +1006,12 @@ private struct NewHomeTabView: View {
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(.white)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Add Pin / Action")
+                        Text(UnifiedPinContract.quickActionTitle)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.white)
-                        Text("Drop a pin, select a row or select a block")
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        Text(UnifiedPinContract.quickActionSubtitle)
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.85))
                             .lineLimit(1)
@@ -1023,13 +1026,13 @@ private struct NewHomeTabView: View {
                 .padding(.vertical, 4)
                 .background(
                     LinearGradient(
-                        colors: [Color(red: 0.95, green: 0.62, blue: 0.11), Color(red: 0.85, green: 0.47, blue: 0.02)],
+                        colors: [VineyardTheme.burgundy, VineyardTheme.burgundyDark],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
                     in: .rect(cornerRadius: 14)
                 )
-                .shadow(color: Color(red: 0.95, green: 0.62, blue: 0.11).opacity(0.25), radius: 4, y: 2)
+                .shadow(color: VineyardTheme.burgundy.opacity(0.25), radius: 4, y: 2)
             }
             .buttonStyle(.plain)
             .padding(.horizontal)

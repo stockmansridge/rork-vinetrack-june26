@@ -14,6 +14,10 @@ object VineColors {
     val EarthBrown = Color(0xFF735238)     // 0.45, 0.32, 0.22
     val Olive = Color(0xFF7A8450)          // muted olive (iOS VineyardTheme.olive)
     val VineRed = Color(0xFF8C2E38)        // 0.55, 0.18, 0.22
+    // Shared semantic burgundy (UnifiedPinContract.QUICK_ACTION_COLOR_HEX #800020)
+    // — the unified composer Quick Action identity, identical on iOS.
+    val Burgundy = Color(0xFF800020)
+    val BurgundyDark = Color(0xFF5C0017)   // gradient second stop (#5C0017)
     val Cream = Color(0xFFF7F2E0)          // 0.97, 0.95, 0.88
     val Stone = Color(0xFFC7BCA8)          // 0.78, 0.74, 0.66
 

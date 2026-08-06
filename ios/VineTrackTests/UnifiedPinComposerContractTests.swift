@@ -38,7 +38,9 @@ struct UnifiedPinComposerContractTests {
         #expect(error == nil)
     }
 
-    @Test func rowSelectionRequiresABlockAndAtLeastOneSegment() {
+    @Test func rowSelectionRequiresASegmentAndADerivableBlock() {
+        // Rows are selected FIRST; a missing block is a derivation failure,
+        // reported with a safe message — never a prompt to open a dropdown.
         let noBlock = UnifiedPinContract.validationError(
             scope: UnifiedPinContract.scopeRow,
             hasSelectedType: true,
@@ -47,7 +49,8 @@ struct UnifiedPinComposerContractTests {
             paddockId: nil,
             segments: [ManualIssueSegment(row: 3, segment: 1)]
         )
-        #expect(noBlock == "Select the block that owns the rows.")
+        #expect(noBlock == UnifiedPinContract.errorRowBlock)
+        #expect(noBlock == "Couldn't match the selected row to a block.")
 
         let noSegments = UnifiedPinContract.validationError(
             scope: UnifiedPinContract.scopeRow,
@@ -57,7 +60,7 @@ struct UnifiedPinComposerContractTests {
             paddockId: UUID(),
             segments: []
         )
-        #expect(noSegments == "Select at least one row.")
+        #expect(noSegments == UnifiedPinContract.errorSelectRow)
 
         let valid = UnifiedPinContract.validationError(
             scope: UnifiedPinContract.scopeRow,
@@ -68,6 +71,100 @@ struct UnifiedPinComposerContractTests {
             segments: [ManualIssueSegment(row: 3, segment: 1)]
         )
         #expect(valid == nil)
+    }
+
+    @Test func quickActionLabelIsExactlyManualPinRepairObservation() {
+        #expect(UnifiedPinContract.quickActionTitle == "Manual Pin / Repair / Observation")
+        #expect(UnifiedPinContract.quickActionSubtitle == "Drop a pin, select a row or select a block")
+    }
+
+    @Test func quickActionUsesTheSharedBurgundySemanticColour() {
+        #expect(UnifiedPinContract.quickActionColorHex == "#800020")
+        #expect(UnifiedPinContract.quickActionColorDarkHex == "#5C0017")
+    }
+
+    @Test func locationControlsUseTheEnlargedLayoutInCanonicalOrder() {
+        #expect(UnifiedPinContract.methodButtonMinHeight == 128)
+        #expect(UnifiedPinContract.methodTitles == ["Drop a pin manually", "Select a row", "Select a block"])
+        #expect(UnifiedPinContract.methodSubtitles.count == 3)
+        // Row selection is row-first: the subtitle never asks for a block.
+        #expect(UnifiedPinContract.methodSubtitles[1] == "Tap rows or row sections — the block is detected automatically")
+    }
+
+    @Test func growthTabIncludesGrowthStageExactlyOnceAndFirst() {
+        let items = UnifiedPinContract.growthTabItems(
+            existingNames: ["Powdery", "Downy", "Blackberries", "Powdery", "growth stage"]
+        )
+        #expect(items == ["Growth Stage", "Powdery", "Downy", "Blackberries"])
+    }
+
+    @Test func growthStagePinStoresTheExistingStageIdentifierAndColour() {
+        #expect(UnifiedPinContract.growthStagePinTitle(stageCode: "12") == "Growth Stage 12")
+        #expect(UnifiedPinContract.growthStagePinColor == "darkgreen")
+    }
+
+    @Test func repairAndGrowthCataloguesStayDeduplicatedByNameAndColour() {
+        let entries: [(String, String?)] = [
+            ("Irrigation", "blue"),
+            ("Broken Post", "brown"),
+            ("Irrigation", "blue"), // left/right launcher duplicate
+            ("Broken Post", "brown"),
+        ]
+        var seen = Set<String>()
+        let deduped = entries.filter { seen.insert(UnifiedPinContract.catalogueKey(name: $0.0, color: $0.1)).inserted }
+        #expect(deduped.map(\.0) == ["Irrigation", "Broken Post"])
+    }
+
+    @Test func tappingARowDerivesItsBlockAutomatically() {
+        let blockA = UUID()
+        let tapped: Set<ManualIssueSegment> = [ManualIssueSegment(row: 41, segment: 1)]
+        let result = UnifiedPinContract.applyRowTap(
+            currentBlockId: nil,
+            tappedBlockId: blockA,
+            currentSegments: [],
+            tappedSegments: tapped
+        )
+        #expect(result.blockId == blockA)
+        #expect(result.segments == tapped)
+    }
+
+    @Test func tappingARowInAnotherBlockSwitchesBlockAndStartsFresh() {
+        // "Row 41" exists in two blocks — the tapped block's geometry wins and
+        // the previous block's selection is discarded (a pin has one block).
+        let blockA = UUID()
+        let blockB = UUID()
+        let result = UnifiedPinContract.applyRowTap(
+            currentBlockId: blockA,
+            tappedBlockId: blockB,
+            currentSegments: [ManualIssueSegment(row: 41, segment: 1), ManualIssueSegment(row: 41, segment: 2)],
+            tappedSegments: [ManualIssueSegment(row: 41, segment: 3)]
+        )
+        #expect(result.blockId == blockB)
+        #expect(result.segments == [ManualIssueSegment(row: 41, segment: 3)])
+    }
+
+    @Test func tappingWithinTheCurrentBlockTogglesSegments() {
+        let block = UUID()
+        let current: Set<ManualIssueSegment> = [ManualIssueSegment(row: 3, segment: 1), ManualIssueSegment(row: 3, segment: 2)]
+        // Add a new quarter.
+        let added = UnifiedPinContract.applyRowTap(
+            currentBlockId: block, tappedBlockId: block,
+            currentSegments: current, tappedSegments: [ManualIssueSegment(row: 3, segment: 3)]
+        )
+        #expect(added.segments == current.union([ManualIssueSegment(row: 3, segment: 3)]))
+        // Re-tapping a selected quarter removes it.
+        let removed = UnifiedPinContract.applyRowTap(
+            currentBlockId: block, tappedBlockId: block,
+            currentSegments: current, tappedSegments: [ManualIssueSegment(row: 3, segment: 1)]
+        )
+        #expect(removed.segments == [ManualIssueSegment(row: 3, segment: 2)])
+        // Whole-row tap on a fully selected row clears the row.
+        let fullRow = Set((1...4).map { ManualIssueSegment(row: 3, segment: $0) })
+        let cleared = UnifiedPinContract.applyRowTap(
+            currentBlockId: block, tappedBlockId: block,
+            currentSegments: fullRow, tappedSegments: fullRow
+        )
+        #expect(cleared.segments.isEmpty)
     }
 
     @Test func blockSelectionRequiresABlock() {

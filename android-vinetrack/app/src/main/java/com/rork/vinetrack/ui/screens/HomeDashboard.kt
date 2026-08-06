@@ -104,6 +104,7 @@ import com.rork.vinetrack.data.model.AlertType
 import com.rork.vinetrack.data.model.AlertWithStatus
 import com.rork.vinetrack.data.model.AppNotice
 import com.rork.vinetrack.data.model.AppNoticeType
+import com.rork.vinetrack.data.model.UnifiedPinContract
 import com.rork.vinetrack.data.model.Vineyard
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -857,7 +858,8 @@ private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onA
             )
         }
         // Full-width unified pin Quick Action (sql/170) — opens the
-        // location-first Add Pin / Action composer (iOS parity).
+        // location-first composer (iOS parity). Burgundy identity from the
+        // shared contract (UnifiedPinContract.QUICK_ACTION_COLOR_HEX).
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -865,7 +867,7 @@ private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onA
                 .clip(RoundedCornerShape(14.dp))
                 .background(
                     Brush.linearGradient(
-                        listOf(Color(0xFFF29E1C), Color(0xFFD97805)),
+                        listOf(VineColors.Burgundy, VineColors.BurgundyDark),
                     ),
                 )
                 .clickable { onAddPinAction() }
@@ -875,9 +877,9 @@ private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onA
         ) {
             Icon(Icons.Filled.AddLocationAlt, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("Add Pin / Action", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                Text(UnifiedPinContract.QUICK_ACTION_TITLE, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                 Text(
-                    "Drop a pin, select a row or select a block",
+                    UnifiedPinContract.QUICK_ACTION_SUBTITLE,
                     fontSize = 12.sp,
                     color = Color.White.copy(alpha = 0.85f),
                     maxLines = 1,

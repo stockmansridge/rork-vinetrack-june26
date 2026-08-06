@@ -8,6 +8,10 @@ enum VineyardTheme {
     static let darkGreen = Color(red: 0.20, green: 0.40, blue: 0.18)
     static let earthBrown = Color(red: 0.45, green: 0.32, blue: 0.22)
     static let vineRed = Color(red: 0.55, green: 0.18, blue: 0.22)
+    // Shared semantic burgundy (UnifiedPinContract.quickActionColorHex #800020)
+    // — the unified composer Quick Action identity, identical on Android.
+    static let burgundy = Color(red: 128.0 / 255.0, green: 0, blue: 32.0 / 255.0)
+    static let burgundyDark = Color(red: 92.0 / 255.0, green: 0, blue: 23.0 / 255.0) // #5C0017
     static let cream = Color(red: 0.97, green: 0.95, blue: 0.88)
     static let stone = Color(red: 0.78, green: 0.74, blue: 0.66)
 

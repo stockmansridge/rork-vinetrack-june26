@@ -43,7 +43,9 @@ class UnifiedPinContractTest {
     }
 
     @Test
-    fun `row selection requires a block and at least one segment`() {
+    fun `row selection requires at least one segment and a derivable block`() {
+        // Rows are selected FIRST; a missing block is a derivation failure,
+        // reported with a safe message — never a prompt to open a dropdown.
         val noBlock = UnifiedPinContract.validationError(
             scope = UnifiedPinContract.SCOPE_ROW,
             hasSelectedType = true,
@@ -52,7 +54,8 @@ class UnifiedPinContractTest {
             paddockId = null,
             segments = listOf(ManualIssueSegment(3, 1)),
         )
-        assertEquals("Select the block that owns the rows.", noBlock)
+        assertEquals(UnifiedPinContract.ERROR_ROW_BLOCK, noBlock)
+        assertEquals("Couldn't match the selected row to a block.", noBlock)
 
         val noSegments = UnifiedPinContract.validationError(
             scope = UnifiedPinContract.SCOPE_ROW,
@@ -62,7 +65,7 @@ class UnifiedPinContractTest {
             paddockId = "block-1",
             segments = emptyList(),
         )
-        assertEquals("Select at least one row.", noSegments)
+        assertEquals(UnifiedPinContract.ERROR_SELECT_ROW, noSegments)
 
         val valid = UnifiedPinContract.validationError(
             scope = UnifiedPinContract.SCOPE_ROW,
@@ -122,6 +125,100 @@ class UnifiedPinContractTest {
                 segments = emptyList(),
             ),
         )
+    }
+
+    @Test
+    fun `quick action label is exactly Manual Pin Repair Observation`() {
+        assertEquals("Manual Pin / Repair / Observation", UnifiedPinContract.QUICK_ACTION_TITLE)
+        assertEquals("Drop a pin, select a row or select a block", UnifiedPinContract.QUICK_ACTION_SUBTITLE)
+    }
+
+    @Test
+    fun `quick action uses the shared burgundy semantic colour`() {
+        assertEquals("#800020", UnifiedPinContract.QUICK_ACTION_COLOR_HEX)
+        assertEquals("#5C0017", UnifiedPinContract.QUICK_ACTION_COLOR_DARK_HEX)
+    }
+
+    @Test
+    fun `location controls use the enlarged layout in canonical order`() {
+        assertEquals(128, UnifiedPinContract.METHOD_BUTTON_MIN_HEIGHT)
+        assertEquals(
+            listOf("Drop a pin manually", "Select a row", "Select a block"),
+            UnifiedPinContract.METHOD_TITLES,
+        )
+        assertEquals(3, UnifiedPinContract.METHOD_SUBTITLES.size)
+        // Row selection is row-first: the subtitle never asks for a block.
+        assertEquals(
+            "Tap rows or row sections — the block is detected automatically",
+            UnifiedPinContract.METHOD_SUBTITLES[1],
+        )
+    }
+
+    @Test
+    fun `growth tab includes Growth Stage exactly once and first`() {
+        val items = UnifiedPinContract.growthTabItems(
+            listOf("Powdery", "Downy", "Blackberries", "Powdery", "growth stage"),
+        )
+        assertEquals(listOf("Growth Stage", "Powdery", "Downy", "Blackberries"), items)
+    }
+
+    @Test
+    fun `growth stage pin stores the existing stage identifier and colour`() {
+        assertEquals("Growth Stage 12", UnifiedPinContract.growthStagePinTitle("12"))
+        assertEquals("darkgreen", UnifiedPinContract.GROWTH_STAGE_PIN_COLOR)
+    }
+
+    @Test
+    fun `repair and growth catalogues stay deduplicated by name and colour`() {
+        val entries = listOf(
+            "Irrigation" to "blue",
+            "Broken Post" to "brown",
+            "Irrigation" to "blue", // left/right launcher duplicate
+            "Broken Post" to "brown",
+        )
+        val deduped = entries.distinctBy { UnifiedPinContract.catalogueKey(it.first, it.second) }
+        assertEquals(listOf("Irrigation" to "blue", "Broken Post" to "brown"), deduped)
+    }
+
+    @Test
+    fun `tapping a row derives its block automatically`() {
+        val tapped = setOf(ManualIssueSegment(41, 1))
+        val (block, segments) = UnifiedPinContract.applyRowTap(
+            currentBlockId = null,
+            tappedBlockId = "block-a",
+            currentSegments = emptySet(),
+            tappedSegments = tapped,
+        )
+        assertEquals("block-a", block)
+        assertEquals(tapped, segments)
+    }
+
+    @Test
+    fun `tapping a row in another block switches block and starts fresh`() {
+        // "Row 41" exists in two blocks — the tapped block's geometry wins and
+        // the previous block's selection is discarded (a pin has one block).
+        val (block, segments) = UnifiedPinContract.applyRowTap(
+            currentBlockId = "block-a",
+            tappedBlockId = "block-b",
+            currentSegments = setOf(ManualIssueSegment(41, 1), ManualIssueSegment(41, 2)),
+            tappedSegments = setOf(ManualIssueSegment(41, 3)),
+        )
+        assertEquals("block-b", block)
+        assertEquals(setOf(ManualIssueSegment(41, 3)), segments)
+    }
+
+    @Test
+    fun `tapping within the current block toggles segments`() {
+        val current = setOf(ManualIssueSegment(3, 1), ManualIssueSegment(3, 2))
+        // Add a new quarter.
+        val added = UnifiedPinContract.applyRowTap("block-a", "block-a", current, setOf(ManualIssueSegment(3, 3)))
+        assertEquals(current + ManualIssueSegment(3, 3), added.second)
+        // Re-tapping a selected quarter removes it.
+        val removed = UnifiedPinContract.applyRowTap("block-a", "block-a", current, setOf(ManualIssueSegment(3, 1)))
+        assertEquals(setOf(ManualIssueSegment(3, 2)), removed.second)
+        // Whole-row tap on a fully selected row clears the row.
+        val cleared = UnifiedPinContract.applyRowTap("block-a", "block-a", current + ManualIssueSegment(3, 3) + ManualIssueSegment(3, 4), (1..4).map { ManualIssueSegment(3, it) }.toSet())
+        assertEquals(emptySet<ManualIssueSegment>(), cleared.second)
     }
 
     @Test

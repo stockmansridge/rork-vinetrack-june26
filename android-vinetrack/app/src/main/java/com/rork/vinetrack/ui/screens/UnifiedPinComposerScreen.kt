@@ -2,6 +2,7 @@ package com.rork.vinetrack.ui.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddLocationAlt
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.TableRows
@@ -37,6 +39,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -73,6 +76,7 @@ import com.google.maps.android.compose.rememberCameraPositionState
 import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.model.CustomPinCreateParams
 import com.rork.vinetrack.data.model.CustomPinType
+import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.ManualIssueContract
 import com.rork.vinetrack.data.model.ManualIssueLatLng
 import com.rork.vinetrack.data.model.ManualIssueSegment
@@ -121,6 +125,9 @@ fun UnifiedPinComposerScreen(
     // Step state: 0 = location method, 1 = location, 2 = type + save.
     var step by remember { mutableStateOf(0) }
     var method by remember { mutableStateOf(UnifiedPinContract.SCOPE_POINT) }
+    // True once the user has explicitly picked a method — drives the
+    // location-choice cards' selected state when stepping back.
+    var methodChosen by remember { mutableStateOf(false) }
 
     // Location state.
     var tapped by remember { mutableStateOf<LatLng?>(null) }
@@ -132,6 +139,15 @@ fun UnifiedPinComposerScreen(
     var showAddCustom by remember { mutableStateOf(false) }
     var validationMessage by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+
+    // Growth Stage picker — the EXISTING E-L stage list + image confirmation
+    // (shared with the Growth screen), reused here without a second stage list.
+    var showStagePicker by remember { mutableStateOf(false) }
+    var stageSearch by remember { mutableStateOf("") }
+    var stageToConfirm by remember { mutableStateOf<GrowthStage?>(null) }
+    val stageImagesByCode = remember(state.growthStageImages) {
+        state.growthStageImages.associateBy { it.stageCode }
+    }
 
     val selectedPaddock = state.paddocks.firstOrNull { it.id == paddockId }
 
@@ -213,6 +229,37 @@ fun UnifiedPinComposerScreen(
         val rowSegments = if (method == UnifiedPinContract.SCOPE_ROW) canonical else null
 
         when (chosen) {
+            is ComposerTypeSelection.GrowthStageSel -> {
+                // A normal Growth pin carrying the EXACT stage identifier the
+                // existing growth-stage workflow stores — never a second list.
+                val title = UnifiedPinContract.growthStagePinTitle(chosen.stage.code)
+                vm.createPin(
+                    title = title,
+                    mode = "Growth",
+                    category = null,
+                    notes = chosen.stage.description,
+                    side = null,
+                    paddockId = resolvedBlock,
+                    rowNumber = null,
+                    isCompleted = false,
+                    latitude = marker.latitude,
+                    longitude = marker.longitude,
+                    buttonName = title,
+                    buttonColor = UnifiedPinContract.GROWTH_STAGE_PIN_COLOR,
+                    heading = null,
+                    placement = placement,
+                    locationScope = method,
+                    segments = rowSegments,
+                    growthStageCode = chosen.stage.code,
+                ) { ok ->
+                    saving = false
+                    if (ok) {
+                        onSaved()
+                    } else {
+                        scope.launch { snackbarHostState.showSnackbar("Couldn't save the pin. Please try again.") }
+                    }
+                }
+            }
             is ComposerTypeSelection.Standard -> {
                 vm.createPin(
                     title = chosen.name,
@@ -283,12 +330,12 @@ fun UnifiedPinComposerScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Add Pin / Action", fontWeight = FontWeight.Bold)
+                        Text(UnifiedPinContract.QUICK_ACTION_TITLE, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1)
                         Text(
                             when (step) {
                                 0 -> "How do you want to add the pin?"
                                 1 -> when (method) {
-                                    UnifiedPinContract.SCOPE_ROW -> "Select a block and rows"
+                                    UnifiedPinContract.SCOPE_ROW -> "Select rows — the block is detected automatically"
                                     UnifiedPinContract.SCOPE_BLOCK -> "Select a block"
                                     else -> "Tap the map to place the pin"
                                 }
@@ -312,8 +359,9 @@ fun UnifiedPinComposerScreen(
         ) {
             when (step) {
                 0 -> MethodStep(
+                    selectedMethod = if (methodChosen) method else null,
                     onSelect = { selected ->
-                        if (method != selected) {
+                        if (methodChosen && method != selected) {
                             // Changing the method clears location state so no
                             // stale snapping/segments survive.
                             tapped = null
@@ -321,6 +369,7 @@ fun UnifiedPinComposerScreen(
                             segments = emptySet()
                         }
                         method = selected
+                        methodChosen = true
                         validationMessage = null
                         step = 1
                     },
@@ -333,21 +382,28 @@ fun UnifiedPinComposerScreen(
                     paddockId = paddockId,
                     onPaddock = { paddockId = it; segments = emptySet(); validationMessage = null },
                     segments = segments,
-                    onSegments = { segments = it; validationMessage = null },
+                    // Row-first: tapping a row DERIVES its block from the tapped
+                    // geometry; switching blocks starts a fresh selection.
+                    onRowTap = { blockId, tappedSegments ->
+                        val result = UnifiedPinContract.applyRowTap(paddockId, blockId, segments, tappedSegments)
+                        paddockId = result.first
+                        segments = result.second
+                        validationMessage = null
+                    },
                     validationMessage = validationMessage,
                     onContinue = {
                         val marker = markerCoordinate()
                         val error = when (method) {
                             UnifiedPinContract.SCOPE_POINT ->
-                                if (tapped == null) "Tap the map to place the pin." else null
+                                if (tapped == null) UnifiedPinContract.ERROR_TAP_MAP else null
                             UnifiedPinContract.SCOPE_ROW -> when {
-                                paddockId == null -> "Select the block that owns the rows."
                                 ManualIssueContract.canonicalSegments(segments.toList()).isEmpty() ->
-                                    "Select at least one row."
+                                    UnifiedPinContract.ERROR_SELECT_ROW
+                                paddockId == null -> UnifiedPinContract.ERROR_ROW_BLOCK
                                 else -> null
                             }
-                            else -> if (paddockId == null) "Select a block." else null
-                        } ?: if (marker == null) "A map location is required." else null
+                            else -> if (paddockId == null) UnifiedPinContract.ERROR_SELECT_BLOCK else null
+                        } ?: if (marker == null) UnifiedPinContract.ERROR_LOCATION_REQUIRED else null
                         if (error != null) {
                             validationMessage = error
                         } else {
@@ -361,9 +417,59 @@ fun UnifiedPinComposerScreen(
                     selection = selection,
                     onSelect = { selection = it; validationMessage = null },
                     onAddCustom = { showAddCustom = true },
+                    onGrowthStage = { showStagePicker = true },
                     validationMessage = validationMessage,
                     saving = saving,
                     onSave = { save() },
+                )
+            }
+        }
+    }
+
+    // The EXISTING E-L growth-stage picker (same list, images, order and
+    // identifiers as the Growth screen). Cancelling changes nothing — no pin
+    // is created until Save Pin is tapped with a confirmed selection.
+    if (showStagePicker) {
+        ModalBottomSheet(
+            onDismissRequest = {
+                showStagePicker = false
+                stageToConfirm = null
+                stageSearch = ""
+            },
+        ) {
+            val confirm = stageToConfirm
+            if (confirm == null) {
+                GrowthStagePickList(
+                    vm = vm,
+                    imagesByCode = stageImagesByCode,
+                    searchText = stageSearch,
+                    onSearchChange = { stageSearch = it },
+                    onPick = { picked ->
+                        val hasImage = stageImagesByCode[picked.code] != null ||
+                            GrowthStageBundledImages.hasBundled(picked.code)
+                        if (hasImage) {
+                            stageToConfirm = picked
+                        } else {
+                            selection = ComposerTypeSelection.GrowthStageSel(picked)
+                            validationMessage = null
+                            showStagePicker = false
+                            stageSearch = ""
+                        }
+                    },
+                )
+            } else {
+                GrowthStageConfirm(
+                    vm = vm,
+                    stage = confirm,
+                    image = stageImagesByCode[confirm.code],
+                    onConfirm = {
+                        selection = ComposerTypeSelection.GrowthStageSel(confirm)
+                        validationMessage = null
+                        showStagePicker = false
+                        stageToConfirm = null
+                        stageSearch = ""
+                    },
+                    onBack = { stageToConfirm = null },
                 )
             }
         }
@@ -392,6 +498,9 @@ private sealed interface ComposerTypeSelection {
     /** An existing Repair or Growth launcher button (same ids/labels/colours). */
     data class Standard(val name: String, val colorToken: String?, val mode: String) : ComposerTypeSelection
 
+    /** The Growth Stage launcher: an exact E-L stage from the existing picker. */
+    data class GrowthStageSel(val stage: GrowthStage) : ComposerTypeSelection
+
     /** A vineyard-shared custom item (mode stays ManualIssue internally). */
     data class Custom(val type: CustomPinType) : ComposerTypeSelection
 }
@@ -399,58 +508,78 @@ private sealed interface ComposerTypeSelection {
 // MARK: - Step 1: location method
 
 @Composable
-private fun MethodStep(onSelect: (String) -> Unit) {
-    val vine = LocalVineColors.current
+private fun MethodStep(selectedMethod: String?, onSelect: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 8.dp)) {
         MethodCard(
-            title = "Drop a pin manually",
-            subtitle = "Tap a point on the map — no block selection needed",
-            icon = { Icon(Icons.Filled.AddLocationAlt, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp)) },
+            title = UnifiedPinContract.METHOD_TITLES[0],
+            subtitle = UnifiedPinContract.METHOD_SUBTITLES[0],
+            icon = { Icon(Icons.Filled.AddLocationAlt, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp)) },
             color = VineColors.Primary,
+            selected = selectedMethod == UnifiedPinContract.SCOPE_POINT,
         ) { onSelect(UnifiedPinContract.SCOPE_POINT) }
         MethodCard(
-            title = "Select a row",
-            subtitle = "Pick a block, then one or more rows or row sections",
-            icon = { Icon(Icons.Filled.TableRows, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp)) },
+            title = UnifiedPinContract.METHOD_TITLES[1],
+            subtitle = UnifiedPinContract.METHOD_SUBTITLES[1],
+            icon = { Icon(Icons.Filled.TableRows, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp)) },
             color = VineColors.LeafGreen,
+            selected = selectedMethod == UnifiedPinContract.SCOPE_ROW,
         ) { onSelect(UnifiedPinContract.SCOPE_ROW) }
         MethodCard(
-            title = "Select a block",
-            subtitle = "Flag a whole block",
-            icon = { Icon(Icons.Filled.GridView, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp)) },
+            title = UnifiedPinContract.METHOD_TITLES[2],
+            subtitle = UnifiedPinContract.METHOD_SUBTITLES[2],
+            icon = { Icon(Icons.Filled.GridView, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp)) },
             color = VineColors.EarthBrown,
+            selected = selectedMethod == UnifiedPinContract.SCOPE_BLOCK,
         ) { onSelect(UnifiedPinContract.SCOPE_BLOCK) }
     }
 }
 
+/**
+ * One enlarged location-choice control — full-width, min height
+ * [UnifiedPinContract.METHOD_BUTTON_MIN_HEIGHT] (≈ double the original card),
+ * with a clear burgundy selected state. Identical sizing on iOS.
+ */
 @Composable
 private fun MethodCard(
     title: String,
     subtitle: String,
     icon: @Composable () -> Unit,
     color: Color,
+    selected: Boolean,
     onClick: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .heightIn(min = UnifiedPinContract.METHOD_BUTTON_MIN_HEIGHT.dp)
+            .clip(RoundedCornerShape(16.dp))
             .background(vine.cardBackground)
+            .then(
+                if (selected) {
+                    Modifier.border(2.dp, VineColors.Burgundy, RoundedCornerShape(16.dp))
+                } else {
+                    Modifier
+                },
+            )
             .clickable(onClick = onClick)
-            .padding(14.dp),
+            .padding(horizontal = 18.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Box(
-            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(color),
+            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(color),
             contentAlignment = Alignment.Center,
         ) { icon() }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-            Text(subtitle, fontSize = 12.sp, color = vine.textSecondary)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+            Text(subtitle, fontSize = 13.sp, color = vine.textSecondary)
         }
-        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(18.dp))
+        if (selected) {
+            Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = VineColors.Burgundy, modifier = Modifier.size(24.dp))
+        } else {
+            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(20.dp))
+        }
     }
 }
 
@@ -465,7 +594,9 @@ private fun LocationStep(
     paddockId: String?,
     onPaddock: (String?) -> Unit,
     segments: Set<ManualIssueSegment>,
-    onSegments: (Set<ManualIssueSegment>) -> Unit,
+    // Row-first selection: (tapped block id, tapped segments). The block is
+    // derived from the tapped row's geometry — never picked from a dropdown.
+    onRowTap: (String, Set<ManualIssueSegment>) -> Unit,
     validationMessage: String?,
     onContinue: () -> Unit,
 ) {
@@ -516,63 +647,82 @@ private fun LocationStep(
                 }
             }
             UnifiedPinContract.SCOPE_ROW -> {
-                ComposerBlockDropdown(state.paddocks, paddockId, onPaddock)
-                val rows = selectedPaddock?.rows.orEmpty()
-                    .filter { it.startPoint != null && it.endPoint != null }
-                    .sortedBy { it.number }
-                if (selectedPaddock != null && rows.isEmpty()) {
+                // Row-first: every mapped row in the vineyard is listed under
+                // its block header (the existing row/quarter controls), so
+                // "Row 41" is never ambiguous across blocks. The pin's block is
+                // DERIVED from the tapped row — there is no block dropdown.
+                val rowBlocks = state.paddocks
+                    .map { block ->
+                        block to block.rows.orEmpty()
+                            .filter { it.startPoint != null && it.endPoint != null }
+                            .sortedBy { it.number }
+                    }
+                    .filter { it.second.isNotEmpty() }
+                    .sortedBy { it.first.name.lowercase() }
+                if (rowBlocks.isEmpty()) {
                     Text(
-                        "This block has no mapped rows — flag the whole block instead",
-                        fontSize = 12.sp,
+                        "No mapped rows in this vineyard — use Select a block instead.",
+                        fontSize = 13.sp,
                         color = vine.textSecondary,
                     )
                 }
-                if (segments.isNotEmpty()) {
+                if (segments.isNotEmpty() && selectedPaddock != null) {
                     Text(
                         ManualIssueContract.rowSelectionSummary(segments.toList()),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = VineColors.LeafGreen,
                     )
+                    Text(
+                        "Block: ${selectedPaddock.name} — detected from the selected row",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                    )
                 }
-                rows.forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        val all = (1..4).map { ManualIssueSegment(row.number, it) }
-                        val wholeSelected = all.all { it in segments }
-                        Box(
-                            modifier = Modifier
-                                .width(38.dp)
-                                .heightIn(min = 28.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (wholeSelected) VineColors.LeafGreen else MaterialTheme.colorScheme.surfaceVariant)
-                                .clickable {
-                                    onSegments(if (wholeSelected) segments - all.toSet() else segments + all.toSet())
-                                },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                "${row.number}",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (wholeSelected) Color.White else MaterialTheme.colorScheme.onSurface,
-                            )
-                        }
-                        (1..4).forEach { quarter ->
-                            val segment = ManualIssueSegment(row.number, quarter)
-                            val selected = segment in segments
+                rowBlocks.forEach { (block, rows) ->
+                    val inBlock = block.id == paddockId
+                    Text(
+                        block.name,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (inBlock && segments.isNotEmpty()) VineColors.LeafGreen else vine.textPrimary,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    rows.forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            val all = (1..4).map { ManualIssueSegment(row.number, it) }
+                            val wholeSelected = inBlock && all.all { it in segments }
                             Box(
                                 modifier = Modifier
-                                    .weight(1f)
+                                    .width(38.dp)
                                     .heightIn(min = 28.dp)
-                                    .clip(RoundedCornerShape(5.dp))
-                                    .background(if (selected) VineColors.LeafGreen else MaterialTheme.colorScheme.surfaceVariant)
-                                    .clickable {
-                                        onSegments(if (selected) segments - segment else segments + segment)
-                                    },
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (wholeSelected) VineColors.LeafGreen else MaterialTheme.colorScheme.surfaceVariant)
+                                    .clickable { onRowTap(block.id, all.toSet()) },
                                 contentAlignment = Alignment.Center,
                             ) {
-                                if (selected) {
-                                    Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
+                                Text(
+                                    "${row.number}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (wholeSelected) Color.White else MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                            (1..4).forEach { quarter ->
+                                val segment = ManualIssueSegment(row.number, quarter)
+                                val selected = inBlock && segment in segments
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .heightIn(min = 28.dp)
+                                        .clip(RoundedCornerShape(5.dp))
+                                        .background(if (selected) VineColors.LeafGreen else MaterialTheme.colorScheme.surfaceVariant)
+                                        .clickable { onRowTap(block.id, setOf(segment)) },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (selected) {
+                                        Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
+                                    }
                                 }
                             }
                         }
@@ -658,6 +808,7 @@ private fun TypeStep(
     selection: ComposerTypeSelection?,
     onSelect: (ComposerTypeSelection) -> Unit,
     onAddCustom: () -> Unit,
+    onGrowthStage: () -> Unit,
     validationMessage: String?,
     saving: Boolean,
     onSave: () -> Unit,
@@ -697,6 +848,10 @@ private fun TypeStep(
                     mode = "Growth",
                     selection = selection,
                     onSelect = onSelect,
+                    // Growth Stage renders exactly once, first, at the same
+                    // tile size — it opens the existing E-L stage picker.
+                    showGrowthStage = true,
+                    onGrowthStage = onGrowthStage,
                 )
                 else -> CustomTypesPage(
                     types = state.customPinTypes.filter { it.isActive },
@@ -736,8 +891,14 @@ private data class ComposerButton(val name: String, val colorToken: String?)
  */
 private fun composerButtons(state: AppUiState, mode: String): List<ComposerButton> {
     val remote = (if (mode == "Growth") state.growthButtons else state.repairButtons)
-        .filterNot { it.isGrowthStageButton }
-        .distinctBy { it.name + "|" + it.color }
+        // Growth Stage never appears here — it has its own dedicated tile that
+        // opens the existing stage picker (dedupe by flag AND by name).
+        .filterNot {
+            it.isGrowthStageButton ||
+                it.name.trim().equals(UnifiedPinContract.GROWTH_STAGE_BUTTON, ignoreCase = true)
+        }
+        // Left/right launcher duplicates collapse to one tile each.
+        .distinctBy { UnifiedPinContract.catalogueKey(it.name, it.color.ifBlank { null }) }
         .map { ComposerButton(it.name, it.color.ifBlank { null }) }
     if (remote.isNotEmpty()) return remote
     return if (mode == "Growth") {
@@ -762,6 +923,8 @@ private fun StandardButtonsPage(
     mode: String,
     selection: ComposerTypeSelection?,
     onSelect: (ComposerTypeSelection) -> Unit,
+    showGrowthStage: Boolean = false,
+    onGrowthStage: () -> Unit = {},
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
@@ -769,6 +932,36 @@ private fun StandardButtonsPage(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxSize().padding(top = 12.dp),
     ) {
+        if (showGrowthStage) {
+            item {
+                val stageSelection = selection as? ComposerTypeSelection.GrowthStageSel
+                Column(
+                    modifier = Modifier
+                        .heightIn(min = 74.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(launcherColor(UnifiedPinContract.GROWTH_STAGE_PIN_COLOR))
+                        .clickable(onClick = onGrowthStage)
+                        .padding(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    if (stageSelection != null) {
+                        Icon(Icons.Filled.Check, contentDescription = "Selected", tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
+                    Text(
+                        UnifiedPinContract.GROWTH_STAGE_BUTTON,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                    )
+                    Text(
+                        stageSelection?.stage?.let { "EL ${it.code}" } ?: "Pick the E-L stage",
+                        fontSize = 11.sp,
+                        color = Color.White.copy(alpha = 0.9f),
+                    )
+                }
+            }
+        }
         items(buttons) { button ->
             val isSelected = (selection as? ComposerTypeSelection.Standard)
                 ?.let { it.name == button.name && it.mode == mode } == true
