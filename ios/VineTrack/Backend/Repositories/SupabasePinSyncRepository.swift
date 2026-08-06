@@ -10,9 +10,12 @@ final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
 
     func fetchPins(vineyardId: UUID, since: Date?) async throws -> [BackendPin] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        // Embed the structured row selection (sql/171 placement contract) so
+        // row-scope pins carry their canonical location in the normal delta
+        // sync — no per-pin round trips.
         let query = provider.client
             .from("pins")
-            .select()
+            .select("*, pin_row_segments(row_number, segment_number)")
             .eq("vineyard_id", value: vineyardId.uuidString)
         if let since {
             return try await query

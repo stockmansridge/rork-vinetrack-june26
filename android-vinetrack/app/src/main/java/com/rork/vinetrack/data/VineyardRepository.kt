@@ -82,7 +82,10 @@ class VineyardRepository(private val session: SessionStore) {
     }
 
     suspend fun listPins(vineyardId: String): List<Pin> = withContext(Dispatchers.IO) {
-        get("pins?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=created_at.desc")
+        // Embed the structured row selection (sql/171 placement contract) so
+        // row-scope pins carry their canonical location in the normal delta
+        // sync — no per-pin round trips.
+        get("pins?select=*,pin_row_segments(row_number,segment_number)&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=created_at.desc")
     }
 
     suspend fun listTrips(vineyardId: String): List<Trip> = withContext(Dispatchers.IO) {

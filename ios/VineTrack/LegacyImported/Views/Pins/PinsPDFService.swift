@@ -174,8 +174,16 @@ struct PinsPDFService {
                 let rowHeight: CGFloat = 32
                 checkPageBreak(needed: rowHeight)
 
-                let typeStr = pin.mode == .repairs ? "R" : "G"
-                let typeColor = pin.mode == .repairs ? UIColor.systemRed : UIColor.systemGreen
+                let typeStr: String
+                let typeColor: UIColor
+                switch pin.mode {
+                case .repairs:
+                    typeStr = "R"; typeColor = .systemRed
+                case .growth:
+                    typeStr = "G"; typeColor = .systemGreen
+                case .manualIssue:
+                    typeStr = "C"; typeColor = .systemOrange
+                }
                 let typeAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9, weight: .bold), .foregroundColor: typeColor]
                 (typeStr as NSString).draw(at: CGPoint(x: colType, y: y), withAttributes: typeAttrs)
 
@@ -183,8 +191,17 @@ struct PinsPDFService {
 
                 (report.paddockName as NSString).draw(in: CGRect(x: colBlock, y: y, width: 95, height: 12), withAttributes: cellAttrs)
 
-                let rowStr = pin.rowNumber != nil ? "\(pin.rowNumber!).5" : "—"
-                (rowStr as NSString).draw(at: CGPoint(x: colRow, y: y), withAttributes: cellAttrs)
+                // Canonical placement (sql/171): row-scope pins show their
+                // segment-derived summary; snapped pins keep the exact
+                // attached row (never only the legacy row_number column).
+                let placement = PinPlacementContract.placement(for: pin)
+                let attachedRow = PinPlacementContract.attachedRowText(
+                    pinRowNumber: pin.pinRowNumber,
+                    drivingRowNumber: pin.drivingRowNumber,
+                    legacyRowNumber: pin.rowNumber
+                )
+                let rowStr = placement.rowSummary ?? attachedRow ?? "—"
+                (rowStr as NSString).draw(in: CGRect(x: colRow, y: y, width: 55, height: 12), withAttributes: cellAttrs)
 
                 let sideStr = pin.side.map { "\($0.rawValue) hand side" } ?? "—"
                 (sideStr as NSString).draw(in: CGRect(x: colSide, y: y, width: 60, height: 12), withAttributes: cellAttrs)
@@ -310,12 +327,29 @@ struct PinsPDFService {
     }
 
     static func generateCSV(pins: [PinReport], vineyardName: String, timeZone: TimeZone = .current) -> Data {
-        var csv = "Type,Name,Block,Row,Side,Heading,Status,Created By,Completed By,Completed At,Latitude,Longitude,Date\n"
+        // Canonical placement columns (sql/171): block-scope pins export their
+        // block, row-scope pins the segment-derived row summary, and point
+        // pins without a block their coordinates — never marked unassigned.
+        var csv = "Type,Name,Block,Row,Side,Heading,Status,Created By,Completed By,Completed At,Latitude,Longitude,Date,"
+            + "Location Scope,Location Assigned,Assignment Basis,Block ID,Row Summary,Location Warning\n"
 
         for report in pins {
             let pin = report.pin
-            let typeStr = pin.mode == .repairs ? "Repair" : "Growth"
-            let rowStr = pin.rowNumber != nil ? "\(pin.rowNumber!).5" : ""
+            let typeStr: String
+            switch pin.mode {
+            case .repairs: typeStr = "Repair"
+            case .growth: typeStr = "Growth"
+            case .manualIssue: typeStr = "Custom"
+            }
+            let placement = PinPlacementContract.placement(for: pin)
+            // Exact path-row values are preserved (19.5 stays 19.5); the
+            // legacy row_number only backs the value up when nothing newer
+            // exists. No side is ever invented — absent stays blank.
+            let rowStr = PinPlacementContract.attachedRowText(
+                pinRowNumber: pin.pinRowNumber,
+                drivingRowNumber: pin.drivingRowNumber,
+                legacyRowNumber: pin.rowNumber
+            ) ?? ""
             let heading = headingText(for: pin.heading)
             let statusStr = pin.isCompleted ? "Completed" : "Active"
             let createdBy = pin.createdBy ?? ""
@@ -328,7 +362,7 @@ struct PinsPDFService {
                 escapeCSV(pin.buttonName),
                 escapeCSV(report.paddockName),
                 escapeCSV(rowStr),
-                escapeCSV(pin.side.map { "\($0.rawValue) hand side" } ?? "—"),
+                escapeCSV((pin.pinSide ?? pin.side).map { "\($0.rawValue) hand side" } ?? ""),
                 escapeCSV(pin.heading.map { "\(heading) (\(Int($0))°)" } ?? "\u{2014}"),
                 escapeCSV(statusStr),
                 escapeCSV(createdBy),
@@ -336,7 +370,13 @@ struct PinsPDFService {
                 escapeCSV(completedAt),
                 String(format: "%.6f", pin.latitude),
                 String(format: "%.6f", pin.longitude),
-                escapeCSV(dateStr)
+                escapeCSV(dateStr),
+                escapeCSV(placement.locationScope ?? ""),
+                placement.isAssigned ? "true" : "false",
+                escapeCSV(placement.basis),
+                escapeCSV(pin.paddockId?.uuidString ?? ""),
+                escapeCSV(placement.rowSummary ?? ""),
+                escapeCSV(placement.warningCode ?? "")
             ].joined(separator: ",")
             csv += row + "\n"
         }

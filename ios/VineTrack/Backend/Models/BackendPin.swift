@@ -1,5 +1,17 @@
 import Foundation
 
+/// One live row segment embedded on a pins row via the PostgREST
+/// relationship select (`pin_row_segments(row_number, segment_number)`).
+nonisolated struct BackendPinRowSegment: Codable, Sendable, Hashable {
+    let rowNumber: Int
+    let segmentNumber: Int
+
+    enum CodingKeys: String, CodingKey {
+        case rowNumber = "row_number"
+        case segmentNumber = "segment_number"
+    }
+}
+
 nonisolated struct BackendPin: Codable, Sendable, Identifiable {
     let id: UUID
     let vineyardId: UUID
@@ -45,6 +57,10 @@ nonisolated struct BackendPin: Codable, Sendable, Identifiable {
     let assignedUserId: UUID?
     let dueDate: String?
     let linkedWorkTaskId: UUID?
+    // Structured row selection (sql/169/171) embedded by the delta-sync
+    // select so row-scope pins resolve their canonical placement without a
+    // per-pin round trip. Nil on payloads fetched before this contract.
+    let rowSegments: [BackendPinRowSegment]?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -88,6 +104,7 @@ nonisolated struct BackendPin: Codable, Sendable, Identifiable {
         case assignedUserId = "assigned_user_id"
         case dueDate = "due_date"
         case linkedWorkTaskId = "linked_work_task_id"
+        case rowSegments = "pin_row_segments"
     }
 }
 
@@ -273,7 +290,8 @@ extension BackendPin {
             snappedLatitude: snappedLatitude,
             snappedLongitude: snappedLongitude,
             snappedToRow: snappedToRow ?? false,
-            locationScope: locationScope
+            locationScope: locationScope,
+            rowSegments: rowSegments?.map { ManualIssueSegment(row: $0.rowNumber, segment: $0.segmentNumber) }
         )
     }
 }

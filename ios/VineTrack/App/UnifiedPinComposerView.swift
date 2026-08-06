@@ -796,7 +796,8 @@ struct UnifiedPinComposerView: View {
                 createdBy: auth.userName,
                 createdByUserId: auth.userId,
                 attachment: attachment,
-                locationScope: method
+                locationScope: method,
+                rowSegments: rowSegments
             ) else {
                 validationMessage = "Could not create pin — no vineyard selected."
                 return
@@ -818,7 +819,8 @@ struct UnifiedPinComposerView: View {
                 createdBy: auth.userName,
                 createdByUserId: auth.userId,
                 attachment: attachment,
-                locationScope: method
+                locationScope: method,
+                rowSegments: rowSegments
             ) else {
                 validationMessage = "Could not create pin — no vineyard selected."
                 return

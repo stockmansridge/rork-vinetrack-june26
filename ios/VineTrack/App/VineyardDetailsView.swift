@@ -193,10 +193,12 @@ struct VineyardDetailsView: View {
                     }
                 }
 
+                // Point pins without a block association are validly located
+                // (sql/171) — this grouping means "no block", never a warning.
                 let unassignedPins = store.pins.filter { $0.paddockId == nil }
                 if !unassignedPins.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Unassigned")
+                        Text("Not in a block")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.secondary)
 

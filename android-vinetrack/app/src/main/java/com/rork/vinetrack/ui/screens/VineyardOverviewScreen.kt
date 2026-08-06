@@ -215,11 +215,13 @@ fun VineyardOverviewScreen(
                 items(blocksWithPins, key = { "pins-${it.id}" }) { block ->
                     PinsSummaryCard(block = block, pins = pins.filter { it.paddockId == block.id })
                 }
+                // Point pins without a block association are validly located
+                // (sql/171) — this grouping means "no block", never a warning.
                 val unassigned = pins.filter { it.paddockId == null }
                 if (unassigned.isNotEmpty()) {
                     item {
                         VineyardCard {
-                            Text("Unassigned", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+                            Text("Not in a block", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
                             Spacer(Modifier.height(8.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                                 PinCount("Repairs", unassigned.count { it.isRepair() }, VineColors.Orange)

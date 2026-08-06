@@ -37,6 +37,11 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
     /// How the location was chosen in the unified composer (sql/170):
     /// "point" / "row" / "block". Nil for pins created outside it.
     var locationScope: String?
+    /// Structured row selection (`pin_row_segments`, sql/169/171) — the
+    /// authoritative location for row-scope pins. Nil for point/block pins
+    /// and for cached records synced before the placement contract; the
+    /// canonical placement then falls back safely (block stays visible).
+    var rowSegments: [ManualIssueSegment]?
 
     // MARK: - Attachment geometry (additive, optional)
     /// Driving path / mid-row the operator was on, e.g. 14.5.
@@ -101,7 +106,8 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         snappedLatitude: Double? = nil,
         snappedLongitude: Double? = nil,
         snappedToRow: Bool = false,
-        locationScope: String? = nil
+        locationScope: String? = nil,
+        rowSegments: [ManualIssueSegment]? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -134,6 +140,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         self.snappedLongitude = snappedLongitude
         self.snappedToRow = snappedToRow
         self.locationScope = locationScope
+        self.rowSegments = rowSegments
     }
 
     // Custom Codable so older persisted JSON (without the new fields) still
@@ -146,6 +153,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         case photoData, photoPath, tripId, growthStageCode, notes
         case drivingRowNumber, pinRowNumber, pinSide, alongRowDistanceM
         case snappedLatitude, snappedLongitude, snappedToRow, locationScope
+        case rowSegments
     }
 
     init(from decoder: Decoder) throws {
@@ -181,6 +189,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         snappedLongitude = try c.decodeIfPresent(Double.self, forKey: .snappedLongitude)
         snappedToRow = try c.decodeIfPresent(Bool.self, forKey: .snappedToRow) ?? false
         locationScope = try c.decodeIfPresent(String.self, forKey: .locationScope)
+        rowSegments = try c.decodeIfPresent([ManualIssueSegment].self, forKey: .rowSegments)
     }
 }
 

@@ -960,6 +960,17 @@ fun resolveTripOperatorName(trip: Trip, members: List<VineyardMember>): String? 
 fun resolveTripOperatorCategory(trip: Trip, categories: List<OperatorCategory>): OperatorCategory? =
     trip.operatorCategoryId?.let { id -> categories.firstOrNull { it.id == id } }
 
+/**
+ * One live row segment embedded on a pins row via the PostgREST relationship
+ * select (`pin_row_segments(row_number, segment_number)`) — sql/171 placement
+ * contract. Mirrors iOS `BackendPinRowSegment`.
+ */
+@Serializable
+data class PinRowSegmentValue(
+    @SerialName("row_number") val rowNumber: Int,
+    @SerialName("segment_number") val segmentNumber: Int,
+)
+
 @Serializable
 data class Pin(
     val id: String,
@@ -1018,6 +1029,14 @@ data class Pin(
     @SerialName("sync_version") val syncVersion: Long? = null,
     @SerialName("completed_at") val completedAt: String? = null,
     @SerialName("completed_by") val completedBy: String? = null,
+    /**
+     * Structured row selection (`pin_row_segments`, sql/169/171) — the
+     * authoritative location for row-scope pins, embedded by the delta-sync
+     * select. Null for point/block pins and for cached records synced before
+     * the placement contract; the canonical placement then falls back safely
+     * (the block stays visible — see [PinPlacementContract]).
+     */
+    @SerialName("pin_row_segments") val rowSegments: List<PinRowSegmentValue>? = null,
 ) {
     /** True when this pin has a synced photo in the `vineyard-pin-photos` bucket. */
     val hasPhoto: Boolean get() = !photoPath.isNullOrBlank()

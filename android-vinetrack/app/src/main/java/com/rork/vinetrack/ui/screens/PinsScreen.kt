@@ -114,6 +114,7 @@ import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.LauncherButton
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
+import com.rork.vinetrack.data.model.PinPlacementContract
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.PinSyncState
@@ -2357,16 +2358,25 @@ private fun pinFacingLine(pin: Pin): String {
     }
 }
 
-/** Secondary line, e.g. "Pinot Noir row 14.5" — block name plus the attached row. */
+/**
+ * Secondary line under a pin — canonical placement (sql/171): row-scope pins
+ * show "Block — Rows 41–43" from their segments, block-scope pins show the
+ * block alone (a block is never hidden because a row value is absent), point
+ * pins without a block show "Point location", and "Unassigned location"
+ * appears only for a genuinely unlocated record. Mirrors the iOS list line.
+ */
 private fun pinBlockRowLine(pin: Pin, paddockName: String?): String {
-    val block = paddockName?.takeIf { it.isNotBlank() }
-    val row = pin.pinRowNumber ?: pin.rowNumber?.toDouble()
-    return when {
-        block != null && row != null -> "$block row ${rowText(row)}"
-        block != null -> block
-        row != null -> "Row ${rowText(row)}"
-        else -> "Unassigned block"
-    }
+    val placement = PinPlacementContract.placementFor(pin)
+    val attachedRowText = PinPlacementContract.attachedRowText(
+        pinRowNumber = pin.pinRowNumber,
+        drivingRowNumber = null,
+        legacyRowNumber = pin.rowNumber,
+    )
+    return PinPlacementContract.blockContextLine(
+        blockName = paddockName?.takeIf { it.isNotBlank() },
+        placement = placement,
+        attachedRowText = attachedRowText,
+    )
 }
 
 /**
@@ -2913,6 +2923,11 @@ private fun PinDetailSheet(
             ) {
                 Text("Details", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
                 PinDetailRow("Block", paddockName ?: "\u2014")
+                // Row-scope pins: the structured selection is authoritative
+                // (sql/171) — same placement result as the list and map.
+                PinPlacementContract.placementFor(pin).rowSummary?.let {
+                    PinDetailRow("Rows", it)
+                }
                 pin.pinRowNumber?.let { PinDetailRow("On row", "Row ${rowText(it)}") }
                 if (pin.drivingRowNumber != null || pin.heading != null || pin.pinSide != null || pin.side != null) {
                     PinDetailRow("Driving path", pinFacingLine(pin))

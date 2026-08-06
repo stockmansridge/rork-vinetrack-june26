@@ -194,6 +194,7 @@ import com.rork.vinetrack.data.model.ManualIssueUpdateParams
 import com.rork.vinetrack.data.model.UnifiedPinContract
 import com.rork.vinetrack.data.model.toMapPin
 import com.rork.vinetrack.data.model.Pin
+import com.rork.vinetrack.data.model.PinRowSegmentValue
 import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.data.model.SavedInput
 import com.rork.vinetrack.data.model.SavedSprayPreset
@@ -4877,7 +4878,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         // Known-offline: queue immediately without attempting the network.
         if (!_ui.value.isOnline) {
-            val queued = enqueuePinCreate(input, photoUri = photoUri)
+            val queued = enqueuePinCreate(input, photoUri = photoUri, segments = canonicalSegments)
             canonicalSegments?.let { customPinSync.enqueueSegments(queued.id, it) }
             onCreatedPin(queued)
             onResult(true)
@@ -4894,6 +4895,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 canonicalSegments?.let { segs ->
                     runCatching { pinRepo.setRowSegments(created.id, segs) }
                         .onFailure { customPinSync.enqueueSegments(created.id, segs) }
+                    // The insert response carries no embedded segments — attach
+                    // them so the canonical placement (sql/171) resolves as a
+                    // row assignment immediately, not only after a refresh.
+                    created = created.copy(
+                        rowSegments = segs.map { PinRowSegmentValue(it.row, it.segment) },
+                    )
                 }
                 // A new pin only has its server id after creation, so any
                 // selected photo is uploaded here (mirrors iOS deferred upload).
@@ -4932,7 +4939,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 // Clear network/transient failure — queue for automatic replay
                 // rather than dropping the pin.
-                val queued = enqueuePinCreate(input, photoUri = photoUri)
+                val queued = enqueuePinCreate(input, photoUri = photoUri, segments = canonicalSegments)
                 canonicalSegments?.let { customPinSync.enqueueSegments(queued.id, it) }
                 onCreatedPin(queued)
                 onResult(true)
@@ -5090,7 +5097,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * compressed JPEG is retained locally and keyed to the same client pin id
      * (Stage 7B) so it isn't lost; the upload itself happens in a later slice.
      */
-    private fun enqueuePinCreate(input: PinRepository.PinInput, photoUri: Uri?): Pin {
+    private fun enqueuePinCreate(
+        input: PinRepository.PinInput,
+        photoUri: Uri?,
+        // Structured ROW selection so the optimistic pin resolves the same
+        // canonical placement (sql/171) as the record it replays into.
+        segments: List<com.rork.vinetrack.data.model.ManualIssueSegment>? = null,
+    ): Pin {
         pinCreateSync.enqueue(input)
         val clientPinId = input.id ?: UUID.randomUUID().toString()
         val hasPhoto = photoUri != null
@@ -5117,6 +5130,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             snappedLatitude = input.snappedLatitude,
             snappedLongitude = input.snappedLongitude,
             snappedToRow = input.snappedToRow,
+            rowSegments = segments?.map { PinRowSegmentValue(it.row, it.segment) },
         )
         _ui.update { st ->
             st.copy(

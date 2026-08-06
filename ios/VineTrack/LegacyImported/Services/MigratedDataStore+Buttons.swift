@@ -134,7 +134,10 @@ extension MigratedDataStore {
         growthStageCode: String? = nil,
         notes: String? = nil,
         attachment: PinAttachmentResolver.Attachment? = nil,
-        locationScope: String? = nil
+        locationScope: String? = nil,
+        // Structured ROW selection (unified composer) so the optimistic local
+        // pin resolves the same canonical placement as the synced record.
+        rowSegments: [ManualIssueSegment]? = nil
     ) -> VinePin? {
         guard let vineyardId = selectedVineyardId else { return nil }
         let pin = VinePin(
@@ -161,7 +164,8 @@ extension MigratedDataStore {
             snappedLatitude: attachment?.snappedCoordinate?.latitude,
             snappedLongitude: attachment?.snappedCoordinate?.longitude,
             snappedToRow: attachment?.snappedToRow ?? false,
-            locationScope: locationScope
+            locationScope: locationScope,
+            rowSegments: rowSegments
         )
         addPin(pin)
         return pin
@@ -181,7 +185,8 @@ extension MigratedDataStore {
         createdByUserId: UUID? = nil,
         notes: String? = nil,
         attachment: PinAttachmentResolver.Attachment? = nil,
-        locationScope: String? = nil
+        locationScope: String? = nil,
+        rowSegments: [ManualIssueSegment]? = nil
     ) -> VinePin? {
         guard let vineyardId = selectedVineyardId else { return nil }
         let pin = VinePin(
@@ -208,7 +213,8 @@ extension MigratedDataStore {
             snappedLatitude: attachment?.snappedCoordinate?.latitude,
             snappedLongitude: attachment?.snappedCoordinate?.longitude,
             snappedToRow: attachment?.snappedToRow ?? false,
-            locationScope: locationScope
+            locationScope: locationScope,
+            rowSegments: rowSegments
         )
         addPin(pin)
         return pin

@@ -11,6 +11,7 @@ import android.net.Uri
 import androidx.core.content.FileProvider
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
+import com.rork.vinetrack.data.model.PinPlacementContract
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import java.io.File
 import java.text.SimpleDateFormat
@@ -92,12 +93,17 @@ object PinExporter {
         // Manual Issue columns (sql/169) — blank for repair/growth pins.
         // Machine-readable ids and raw values stay separate from labels.
         "Priority", "Issue Status", "Location Scope", "Due Date", "Completed At", "Record ID",
+        // Canonical placement columns (sql/171): block-scope pins export their
+        // block, row-scope pins the segment-derived row summary, point pins
+        // without a block their coordinates — never marked unassigned.
+        "Location Assigned", "Assignment Basis", "Block ID", "Row Summary", "Location Warning",
     )
 
     private fun buildCsv(pins: List<Pin>, paddocks: List<Paddock>): String {
         val sb = StringBuilder()
         sb.append(csvHeaders.joinToString(",") { escape(it) }).append("\n")
         for (pin in pins) {
+            val placement = PinPlacementContract.placementFor(pin)
             val cells = listOf(
                 pin.displayTitle,
                 modeLabel(pin),
@@ -113,10 +119,15 @@ object PinExporter {
                 pin.notes ?: "",
                 pin.priority ?: "",
                 pin.status ?: "",
-                pin.locationScope ?: "",
+                placement.locationScope ?: "",
                 pin.dueDate ?: "",
                 formatDateTime(pin.completedAt) ?: "",
                 pin.id,
+                if (placement.isAssigned) "true" else "false",
+                placement.basis,
+                pin.paddockId ?: "",
+                placement.rowSummary ?: "",
+                placement.warningCode ?: "",
             )
             sb.append(cells.joinToString(",") { escape(it) }).append("\n")
         }
@@ -226,9 +237,13 @@ object PinExporter {
             s.canvas.drawText(pin.displayTitle, MARGIN, s.y, bodyBoldPaint)
             s.canvas.drawText(status, PAGE_WIDTH - MARGIN - 70f, s.y, bodyPaint)
             s.y += 4f
+            // Canonical placement (sql/171): the block is never hidden because
+            // a row value is absent; row-scope pins add their segment summary.
+            val placement = PinPlacementContract.placementFor(pin)
             val detail = buildList {
                 add(modeLabel(pin))
                 paddockName(pin, paddocks).takeIf { it != "—" }?.let { add(it) }
+                placement.rowSummary?.let { add(it) }
                 rowLabel(pin)?.let { r -> add("Row $r" + (sideLabel(pin)?.let { " · $it" } ?: "")) }
             }.joinToString("  •  ")
             text(s, detail, captionPaint)

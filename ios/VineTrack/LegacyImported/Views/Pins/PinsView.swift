@@ -947,19 +947,23 @@ struct PinRowView: View {
                         .foregroundStyle(.primary)
                 }
 
-                if let pinRow = pin.pinRowNumber {
-                    Text("\(paddockName) row \(pinRow)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if let rowNumber = pin.rowNumber {
-                    Text("\(paddockName) row \(rowNumber).5")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text(paddockName)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                // Canonical placement (sql/171): the block is never hidden
+                // because a row value is absent; row-scope pins show their
+                // segment-derived summary; a point pin without a block is a
+                // valid point location, not an unassigned record.
+                let placement = PinPlacementContract.placement(for: pin)
+                let attachedRowText = PinPlacementContract.attachedRowText(
+                    pinRowNumber: pin.pinRowNumber,
+                    drivingRowNumber: nil,
+                    legacyRowNumber: pin.rowNumber
+                )
+                Text(PinPlacementContract.blockContextLine(
+                    blockName: paddockName == "\u{2014}" ? nil : paddockName,
+                    placement: placement,
+                    attachedRowText: attachedRowText
+                ))
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
                 if let createdBy = pin.createdBy, !createdBy.isEmpty {
                     HStack(spacing: 4) {
@@ -1374,6 +1378,11 @@ struct PinDetailSheet: View {
 
                 Section("Details") {
                     LabeledContent(fmt.blockTermCapitalised, value: paddockName)
+                    // Row-scope pins: the structured selection is authoritative
+                    // (sql/171) — same placement result as the list and map.
+                    if let rowSummary = PinPlacementContract.placement(for: pin).rowSummary {
+                        LabeledContent("Rows", value: rowSummary)
+                    }
                     // New attachment model: prefer split row info when available.
                     // Side belongs with the driving path, not the attached vine row.
                     if pin.pinRowNumber != nil || pin.drivingRowNumber != nil {
