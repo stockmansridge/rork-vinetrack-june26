@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SwapVert
@@ -1227,6 +1228,11 @@ internal fun PruningCard(content: @Composable ColumnScope.() -> Unit) {
     )
 }
 
+/** Slate, deliberately not a shade of the pruned green: skipped sections are
+ * complete but they are not work, and the screen should say so. Matches the
+ * iOS `Color(.systemGray)`. */
+private val PruningSkippedTint = Color(0xFF8E8E93)
+
 private fun statusTint(status: PruningStatus): Color = when (status) {
     PruningStatus.NotStarted -> Color(0xFF8E8E93)
     PruningStatus.Ahead -> VineColors.Success
@@ -1688,6 +1694,7 @@ private fun PruningBlockDetail(
                         selectedCount = selected.size,
                         rangeFromIndex = rangeFromIndex,
                         rangeToIndex = rangeToIndex,
+                        hasSkipped = metrics.hasSkippedSections,
                         onRangeFrom = { rangeFromIndex = it },
                         onRangeTo = { rangeToIndex = it },
                         onSelectRange = {
@@ -1712,6 +1719,7 @@ private fun PruningBlockDetail(
                     PruningRowLine(
                         row = row,
                         completed = lockedSegments,
+                        skipped = metrics.skipped,
                         selected = selected,
                         onToggle = { segment ->
                             selected = if (selected.contains(segment)) selected - segment else selected + segment
@@ -1847,6 +1855,14 @@ private fun DetailProgressCard(metrics: PruningBlockMetrics, setup: PruningBlock
                 )
             }
             PruningProgressBarView(metrics.fractionComplete, metrics.timeElapsedFraction, statusTint(metrics.status))
+            // The split only appears once something is out of rotation, so a
+            // vineyard that never skips a row sees exactly the screen it had.
+            if (metrics.hasSkippedSections) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    GridLegend(VineColors.LeafGreen, "Pruned ${fmtPercent(metrics.fractionPruned)}")
+                    GridLegend(PruningSkippedTint, "Skipped ${fmtPercent(metrics.fractionSkipped)}")
+                }
+            }
             metrics.timeElapsedFraction?.let { elapsed ->
                 Text(
                     "Work ${fmtPercent(metrics.fractionComplete)} · Time ${fmtPercent(elapsed)}",
@@ -1855,10 +1871,25 @@ private fun DetailProgressCard(metrics: PruningBlockMetrics, setup: PruningBlock
                 )
             }
             HorizontalDivider(color = vine.cardBorder)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DetailStat("Vines pruned", "${metrics.vinesPruned} of ${metrics.vinesTotal}", Modifier.weight(1f))
-                DetailStat("Due date", fmtDate(PruningCalculator.parseDate(setup?.dueDate)), Modifier.weight(1f))
-                DetailStat("Est. finish", fmtDate(metrics.projectedFinish), Modifier.weight(1f))
+            if (metrics.hasSkippedSections) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DetailStat("Vines pruned", "${metrics.vinesPruned} of ${metrics.vinesTotal}", Modifier.weight(1f))
+                    DetailStat(
+                        "Skipped",
+                        "${fmt(metrics.skippedRowEquivalents)} rows · ${metrics.vinesSkipped} vines",
+                        Modifier.weight(1f),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DetailStat("Due date", fmtDate(PruningCalculator.parseDate(setup?.dueDate)), Modifier.weight(1f))
+                    DetailStat("Est. finish", fmtDate(metrics.projectedFinish), Modifier.weight(1f))
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DetailStat("Vines pruned", "${metrics.vinesPruned} of ${metrics.vinesTotal}", Modifier.weight(1f))
+                    DetailStat("Due date", fmtDate(PruningCalculator.parseDate(setup?.dueDate)), Modifier.weight(1f))
+                    DetailStat("Est. finish", fmtDate(metrics.projectedFinish), Modifier.weight(1f))
+                }
             }
             setup?.crew?.takeIf { it.isNotBlank() }?.let {
                 Text("Crew: $it", fontSize = 12.sp, color = vine.textSecondary)
@@ -1940,6 +1971,7 @@ private fun RowGridHeader(
     selectedCount: Int,
     rangeFromIndex: Int,
     rangeToIndex: Int,
+    hasSkipped: Boolean,
     onRangeFrom: (Int) -> Unit,
     onRangeTo: (Int) -> Unit,
     onSelectRange: () -> Unit,
@@ -1985,6 +2017,9 @@ private fun RowGridHeader(
                 GridLegend(VineColors.LeafGreen, "Done")
                 GridLegend(VineColors.Primary, "Selected")
                 GridLegend(vine.cardBorder, "Remaining")
+                if (hasSkipped) {
+                    GridLegend(PruningSkippedTint, "Skipped")
+                }
             }
         }
     }
@@ -2035,6 +2070,7 @@ private fun GridLegend(color: Color, label: String) {
 private fun PruningRowLine(
     row: PruningRowRef,
     completed: Set<PruningSegment>,
+    skipped: Set<PruningSegment>,
     selected: Set<PruningSegment>,
     onToggle: (PruningSegment) -> Unit,
     onToggleRow: () -> Unit,
@@ -2062,6 +2098,10 @@ private fun PruningRowLine(
             (1..4).forEach { quarter ->
                 val segment = row.segment(quarter)
                 val isDone = completed.contains(segment)
+                // A skipped quarter is COMPLETE and locked exactly like a pruned
+                // one — it just reads as out of rotation rather than as work
+                // done, so the two are never confused at a glance.
+                val isSkipped = isDone && skipped.contains(segment)
                 val isSelected = selected.contains(segment)
                 Box(
                     modifier = Modifier
@@ -2070,6 +2110,7 @@ private fun PruningRowLine(
                         .clip(RoundedCornerShape(5.dp))
                         .background(
                             when {
+                                isSkipped -> PruningSkippedTint
                                 isDone -> VineColors.LeafGreen
                                 isSelected -> VineColors.Primary
                                 else -> vine.cardBorder.copy(alpha = 0.6f)
@@ -2078,7 +2119,9 @@ private fun PruningRowLine(
                         .then(if (!isDone) Modifier.clickable { onToggle(segment) } else Modifier),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (isDone) {
+                    if (isSkipped) {
+                        Icon(Icons.Filled.Remove, contentDescription = "Row ${segment.row}, quarter ${segment.quarter}, skipped", tint = Color.White, modifier = Modifier.size(12.dp))
+                    } else if (isDone) {
                         Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
                     } else if (isSelected) {
                         Icon(Icons.Filled.ContentCut, contentDescription = null, tint = Color.White, modifier = Modifier.size(11.dp))
@@ -2115,17 +2158,40 @@ private fun DetailHistoryCard(
                 entries.forEachIndexed { index, entry ->
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                fmtDate(PruningCalculator.parseDate(entry.date)),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = vine.textPrimary,
-                            )
-                            val parts = mutableListOf<String>()
-                            if (entry.worker.isNotBlank()) parts.add(entry.worker)
-                            entry.labourHours?.takeIf { it > 0 }?.let { parts.add("${fmt(it, 1)} h") }
-                            parts.add(PruningMethods.label(entry.method))
-                            Text(parts.joinToString(" · "), fontSize = 12.sp, color = vine.textSecondary)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    fmtDate(PruningCalculator.parseDate(entry.date)),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = vine.textPrimary,
+                                )
+                                if (entry.isSkipped) {
+                                    Text(
+                                        "Skipped",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = PruningSkippedTint,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(50))
+                                            .background(PruningSkippedTint.copy(alpha = 0.18f))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
+                            // A skipped record has no worker, no hours and no
+                            // method to show. Its labour reads as an em dash,
+                            // never as zero — zero would claim the work was
+                            // done for free.
+                            val detail = if (entry.isSkipped) {
+                                "${skippedSelectionSummary(entry)} · Labour — · Cost —"
+                            } else {
+                                val parts = mutableListOf<String>()
+                                if (entry.worker.isNotBlank()) parts.add(entry.worker)
+                                entry.labourHours?.takeIf { it > 0 }?.let { parts.add("${fmt(it, 1)} h") }
+                                parts.add(PruningMethods.label(entry.method))
+                                parts.joinToString(" · ")
+                            }
+                            Text(detail, fontSize = 12.sp, color = vine.textSecondary)
                             if (entry.notes.isNotBlank()) {
                                 Text(entry.notes, fontSize = 12.sp, color = vine.textSecondary, fontStyle = FontStyle.Italic)
                             }
@@ -2286,6 +2352,25 @@ private data class PruningLabourRow(
 /** Compact currency label (e.g. "$42.50") matching the Work Tasks screen. */
 private fun fmtCurrency(value: Double): String =
     if (value % 1.0 == 0.0) "$%,d".format(value.toLong()) else "$%,.2f".format(value)
+
+/** "Rows 8–9 marked skipped" for whole rows, "Row 8, sections 2–4 marked
+ * skipped" when only part of a single row is out of rotation. Matches the iOS
+ * `skippedSelectionSummary` exactly. */
+private fun skippedSelectionSummary(entry: PruningEntry): String {
+    val numbers = entry.segments.map { it.row }.distinct().sorted()
+    val low = numbers.firstOrNull() ?: return "Marked skipped"
+    val high = numbers.last()
+    if (numbers.size == 1) {
+        val quarters = entry.segments.filter { it.row == low }.map { it.quarter }.sorted()
+        if (quarters.size == 4) return "Row $low marked skipped"
+        val contiguous = quarters.size > 1 && quarters.last() - quarters.first() == quarters.size - 1
+        val range = if (contiguous) "${quarters.first()}–${quarters.last()}" else quarters.joinToString(", ")
+        return "Row $low, sections $range marked skipped"
+    }
+    val contiguous = numbers.size == (high - low + 1)
+    val label = if (contiguous) "Rows $low–$high" else "Rows ${numbers.joinToString(", ")}"
+    return "$label marked skipped"
+}
 
 /** Distinct selected row numbers grouped into compact ranges, e.g. "44–46, 50". */
 private fun rowRangeSummary(segments: List<PruningSegment>): String {
