@@ -931,16 +931,18 @@ struct PinRowView: View {
                     if let legacy = pin.rowNumber { return "\(legacy).5" }
                     return nil
                 }()
-                let sideLabel = (pin.pinSide ?? pin.side).rawValue
+                // Honest optional side: composer-created pins have no
+                // Left/Right, so the phrase is omitted rather than invented.
+                let sideLabel = (pin.pinSide ?? pin.side).map { "\($0.rawValue) hand side" }
 
                 // Only claim a facing direction when one was actually recorded.
                 let facingSuffix = pin.heading.map { " facing \(PinAttachmentFormatter.fullCompassName(degrees: $0))" } ?? ""
                 if let drivingPathText {
-                    Text("Row \(drivingPathText) — \(sideLabel) hand side\(facingSuffix)")
+                    Text("Row \(drivingPathText)\(sideLabel.map { " — \($0)" } ?? "")\(facingSuffix)")
                         .font(.subheadline)
                         .foregroundStyle(.primary)
                 } else {
-                    Text("\(sideLabel) hand side\(facingSuffix)")
+                    Text("\(sideLabel ?? "Pin location")\(facingSuffix)")
                         .font(.subheadline)
                         .foregroundStyle(.primary)
                 }
@@ -1379,17 +1381,19 @@ struct PinDetailSheet: View {
                             LabeledContent("On Row", value: "Row \(pinRow)")
                         }
                         if let drivingPath = pin.drivingRowNumber {
-                            let side = (pin.pinSide ?? pin.side).rawValue
+                            let sidePhrase = (pin.pinSide ?? pin.side).map { " — \($0.rawValue) hand side" } ?? ""
                             let facingSuffix = pin.heading.map { " facing \(PinAttachmentFormatter.fullCompassName(degrees: $0))" } ?? ""
                             LabeledContent(
                                 "Driving path",
-                                value: "Row \(String(format: "%.1f", drivingPath)) — \(side) hand side\(facingSuffix)"
+                                value: "Row \(String(format: "%.1f", drivingPath))\(sidePhrase)\(facingSuffix)"
                             )
                         }
                     } else if let rowNumber = pin.rowNumber {
                         // Legacy fallback only when neither new field is set.
                         LabeledContent("Row", value: "\(rowNumber).5")
-                        LabeledContent("Side", value: "\(pin.side.rawValue) hand side")
+                        if let side = pin.side {
+                            LabeledContent("Side", value: "\(side.rawValue) hand side")
+                        }
                     }
                     LabeledContent("Facing", value: pin.heading.map { "\(compassDirection) (\(Int($0))\u{00B0})" } ?? "\u{2014}")
                     if let createdByName = resolveDisplayName(userId: pin.createdByUserId, fallbackText: pin.createdBy) {

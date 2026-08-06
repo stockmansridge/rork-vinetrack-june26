@@ -125,7 +125,7 @@ fun HomeDashboard(
     onOpenTool: (ToolRoute) -> Unit,
     onOpenSetupWizard: () -> Unit,
     onOpenObservations: (String?) -> Unit,
-    onOpenManualIssues: () -> Unit,
+    onOpenAddPinAction: () -> Unit,
     onOpenPinsList: () -> Unit,
 ) {
     var overlay by remember { mutableStateOf(HomeOverlay.None) }
@@ -161,7 +161,7 @@ fun HomeDashboard(
                 onOpenTool = onOpenTool,
                 onOpenSetupWizard = onOpenSetupWizard,
                 onOpenObservations = onOpenObservations,
-                onOpenManualIssues = onOpenManualIssues,
+                onOpenAddPinAction = onOpenAddPinAction,
                 onOpenPinsList = onOpenPinsList,
                 onOpenMap = { overlay = HomeOverlay.Overview },
                 onOpenRain = { overlay = HomeOverlay.Rain },
@@ -181,7 +181,7 @@ private fun DashboardContent(
     onOpenTool: (ToolRoute) -> Unit,
     onOpenSetupWizard: () -> Unit,
     onOpenObservations: (String?) -> Unit,
-    onOpenManualIssues: () -> Unit,
+    onOpenAddPinAction: () -> Unit,
     onOpenPinsList: () -> Unit,
     onOpenMap: () -> Unit,
     onOpenRain: () -> Unit,
@@ -239,7 +239,7 @@ private fun DashboardContent(
             QuickActionsSection(
                 onRepairs = { onOpenObservations("Repairs") },
                 onGrowth = { onOpenObservations("Growth") },
-                onManualIssue = onOpenManualIssues,
+                onAddPinAction = onOpenAddPinAction,
             )
 
             OverviewSection(state, onOpenMap)
@@ -834,7 +834,7 @@ private fun WeatherCard(onClick: () -> Unit) {
 }
 
 @Composable
-private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onManualIssue: () -> Unit) {
+private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onAddPinAction: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -856,8 +856,8 @@ private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onM
                 onClick = onGrowth,
             )
         }
-        // Full-width Manual Issue action — its own Quick Action, roughly half
-        // the visual height of the tiles above, same design language (iOS parity).
+        // Full-width unified pin Quick Action (sql/170) — opens the
+        // location-first Add Pin / Action composer (iOS parity).
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -868,16 +868,16 @@ private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onM
                         listOf(Color(0xFFF29E1C), Color(0xFFD97805)),
                     ),
                 )
-                .clickable { onManualIssue() }
+                .clickable { onAddPinAction() }
                 .padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Icon(Icons.Filled.AddLocationAlt, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("Add Manual Issue", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                Text("Add Pin / Action", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                 Text(
-                    "Drop a pin, select rows or flag a block",
+                    "Drop a pin, select a row or select a block",
                     fontSize = 12.sp,
                     color = Color.White.copy(alpha = 0.85f),
                     maxLines = 1,

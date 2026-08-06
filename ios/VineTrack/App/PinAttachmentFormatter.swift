@@ -51,13 +51,15 @@ nonisolated enum PinAttachmentFormatter {
     static func drivingPathLine(_ pin: VinePin) -> String? {
         guard let path = pin.drivingRowNumber else { return nil }
         let formatted = formatPath(path)
-        let side = pin.pinSide ?? pin.side
+        // Honest optional side: composer-created pins have no Left/Right,
+        // so the phrase is omitted rather than invented.
+        let sidePhrase = (pin.pinSide ?? pin.side).map { " — \($0.rawValue) hand side" } ?? ""
         // Only claim a facing direction when one was actually recorded.
         guard let heading = pin.heading else {
-            return "Row \(formatted) — \(side.rawValue) hand side"
+            return "Row \(formatted)\(sidePhrase)"
         }
         let facing = fullCompassName(degrees: heading)
-        return "Row \(formatted) — \(side.rawValue) hand side facing \(facing)"
+        return "Row \(formatted)\(sidePhrase) facing \(facing)"
     }
 
     /// Subtitle for confirmation toasts after a pin is dropped during a

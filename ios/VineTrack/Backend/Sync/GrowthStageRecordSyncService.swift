@@ -160,7 +160,7 @@ final class GrowthStageRecordSyncService {
             updated.latitude = pin.latitude
             updated.longitude = pin.longitude
             updated.rowNumber = pin.rowNumber
-            updated.side = pin.side.rawValue
+            updated.side = pin.side?.rawValue
             updated.notes = pin.notes
             updated.photoPaths = pin.photoPath.map { [$0] } ?? updated.photoPaths
             updated.recordedByName = pin.createdBy ?? updated.recordedByName

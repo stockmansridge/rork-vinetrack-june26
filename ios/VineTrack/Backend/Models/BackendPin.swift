@@ -124,6 +124,8 @@ nonisolated struct BackendPinUpsert: Encodable, Sendable {
     let snappedLatitude: Double?
     let snappedLongitude: Double?
     let snappedToRow: Bool
+    // Unified composer location method (sql/170): "point" / "row" / "block".
+    let locationScope: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -154,6 +156,7 @@ nonisolated struct BackendPinUpsert: Encodable, Sendable {
         case snappedLatitude = "snapped_latitude"
         case snappedLongitude = "snapped_longitude"
         case snappedToRow = "snapped_to_row"
+        case locationScope = "location_scope"
     }
 }
 
@@ -185,7 +188,7 @@ extension BackendPin {
             longitude: pin.longitude,
             heading: pin.heading,
             rowNumber: pin.rowNumber,
-            side: pin.side.rawValue,
+            side: pin.side?.rawValue,
             growthStageCode: pin.growthStageCode,
             isCompleted: pin.isCompleted,
             completedBy: pin.completedBy,
@@ -200,7 +203,8 @@ extension BackendPin {
             alongRowDistanceM: pin.alongRowDistanceM,
             snappedLatitude: pin.snappedLatitude,
             snappedLongitude: pin.snappedLongitude,
-            snappedToRow: pin.snappedToRow
+            snappedToRow: pin.snappedToRow,
+            locationScope: pin.locationScope
         )
     }
 
@@ -216,7 +220,9 @@ extension BackendPin {
         nameColorMap: [String: String] = [:]
     ) -> VinePin? {
         guard let latitude, let longitude else { return nil }
-        let resolvedSide = PinSide(rawValue: side ?? "") ?? .left
+        // Honest optional side: a pin saved without Left/Right (unified
+        // composer, Android null) stays side-less instead of faking Left.
+        let resolvedSide = PinSide(rawValue: side ?? "")
         let pinMode = PinMode(rawValue: mode ?? "") ?? .repairs
         // Android historically saved the pin's name only in `title` (and often
         // an empty string — not NULL — in `button_name`), so treat empty as
@@ -266,7 +272,8 @@ extension BackendPin {
             alongRowDistanceM: alongRowDistanceM,
             snappedLatitude: snappedLatitude,
             snappedLongitude: snappedLongitude,
-            snappedToRow: snappedToRow ?? false
+            snappedToRow: snappedToRow ?? false,
+            locationScope: locationScope
         )
     }
 }

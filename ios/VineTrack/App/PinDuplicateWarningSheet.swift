@@ -106,15 +106,17 @@ struct PinDuplicateWarningSheet: View {
                                 LabeledContent("On Row", value: "Row \(pinRow)")
                             }
                             if let drivingPath = existingPin.drivingRowNumber {
-                                let side = (existingPin.pinSide ?? existingPin.side).rawValue
+                                let sidePhrase = (existingPin.pinSide ?? existingPin.side).map { " — \($0.rawValue) hand side" } ?? ""
                                 LabeledContent(
                                     "Driving path",
-                                    value: "Row \(String(format: "%.1f", drivingPath)) — \(side) hand side facing \(fullFacing)"
+                                    value: "Row \(String(format: "%.1f", drivingPath))\(sidePhrase) facing \(fullFacing)"
                                 )
                             }
                         } else if let row = existingPin.rowNumber {
                             LabeledContent("Row", value: "\(row).5")
-                            LabeledContent("Side", value: "\(existingPin.side.rawValue) hand side")
+                            if let side = existingPin.side {
+                                LabeledContent("Side", value: "\(side.rawValue) hand side")
+                            }
                         }
                         LabeledContent(
                             "Created",

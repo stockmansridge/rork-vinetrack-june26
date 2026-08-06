@@ -993,20 +993,22 @@ private struct NewHomeTabView: View {
             }
             .padding(.horizontal)
 
-            // Full-width Manual Issue action — its own Quick Action, roughly
-            // half the visual height of the tiles above, same design language.
+            // Full-width unified pin Quick Action (sql/170) — opens the
+            // location-first Add Pin / Action composer. After a save the
+            // composer returns to the existing Pins tab; there is no
+            // separate Manual Issues destination.
             NavigationLink {
-                ManualIssuesListView(initialCompose: true)
+                UnifiedPinComposerView(onSaved: { selectedTab = 1 })
             } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "mappin.circle.fill")
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(.white)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Add Manual Issue")
+                        Text("Add Pin / Action")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.white)
-                        Text("Drop a pin, select rows or flag a block")
+                        Text("Drop a pin, select a row or select a block")
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.85))
                             .lineLimit(1)

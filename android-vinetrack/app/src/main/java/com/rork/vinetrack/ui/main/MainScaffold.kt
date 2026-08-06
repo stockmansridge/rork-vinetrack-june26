@@ -55,7 +55,6 @@ import com.rork.vinetrack.ui.screens.GrowthStageImagesScreen
 import com.rork.vinetrack.ui.screens.HomeDashboard
 import com.rork.vinetrack.ui.screens.IrrigationScreen
 import com.rork.vinetrack.ui.screens.MaintenanceScreen
-import com.rork.vinetrack.ui.screens.ManualIssuesScreen
 import com.rork.vinetrack.ui.screens.MoreScreen
 import com.rork.vinetrack.ui.screens.OperationPreferencesScreen
 import com.rork.vinetrack.ui.screens.OptimalRipenessScreen
@@ -83,6 +82,7 @@ import com.rork.vinetrack.ui.screens.TeamAccessScreen
 import com.rork.vinetrack.ui.screens.TripAuditScreen
 import com.rork.vinetrack.ui.screens.TripFunctionsSettingsScreen
 import com.rork.vinetrack.ui.screens.TripsScreen
+import com.rork.vinetrack.ui.screens.UnifiedPinComposerScreen
 import com.rork.vinetrack.ui.screens.VineyardLocationScreen
 import com.rork.vinetrack.ui.screens.WeatherDataScreen
 import com.rork.vinetrack.ui.screens.WorkTasksScreen
@@ -111,9 +111,9 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
     // When true, the Setup Wizard is shown as a full-screen overlay (opened from
     // the Home wizard card). Mirrors the iOS SetupWizardView sheet.
     var showSetupWizard by rememberSaveable { mutableStateOf(false) }
-    // Manual Issues (sql/169): full-screen overlay opened from the Home
-    // "Add Manual Issue" Quick Action. Mirrors iOS ManualIssuesListView.
-    var showManualIssues by rememberSaveable { mutableStateOf(false) }
+    // Unified "Add Pin / Action" composer (sql/170): full-screen overlay
+    // opened from the Home Quick Action. Mirrors the iOS composer.
+    var showAddPinComposer by rememberSaveable { mutableStateOf(false) }
 
     // Live trip mode holds the screen awake app-wide — not just while the trip
     // detail screen is open — so the display never dims mid-trip while the
@@ -156,7 +156,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
                 MainTab.entries.forEach { entry ->
                     NavigationBarItem(
                         selected = tab == entry && tool == null && launcherMode == null,
-                        onClick = { tab = entry; tool = null; pinMode = null; launcherMode = null; pinsOpenInList = false; showManualIssues = false },
+                        onClick = { tab = entry; tool = null; pinMode = null; launcherMode = null; pinsOpenInList = false; showAddPinComposer = false },
                         icon = {
                             if (entry == MainTab.Trip) {
                                 SteeringWheelIcon(Modifier.size(24.dp))
@@ -184,14 +184,21 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
         if (showSetupWizard) {
             BackHandler { showSetupWizard = false }
             SetupWizardScreen(vm, state, modifier, onBack = { showSetupWizard = false })
-        } else if (showManualIssues) {
-            BackHandler { showManualIssues = false }
-            ManualIssuesScreen(
+        } else if (showAddPinComposer) {
+            UnifiedPinComposerScreen(
                 vm = vm,
                 state = state,
                 modifier = modifier,
-                onBack = { showManualIssues = false },
-                initialCompose = true,
+                onBack = { showAddPinComposer = false },
+                onSaved = {
+                    // Return to the existing Pins map/list — the new pin shows
+                    // through normal pin sync; no separate Manual Issues list.
+                    showAddPinComposer = false
+                    tab = MainTab.Pins
+                    tool = null
+                    pinMode = null
+                    launcherMode = null
+                },
             )
         } else if (openLauncher != null) {
             BackHandler { launcherMode = null }
@@ -227,7 +234,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState) {
                 onOpenTab = { tab = it; tool = null; pinMode = null },
                 onOpenTool = { tool = it; pinMode = null },
                 onOpenSetupWizard = { showSetupWizard = true },
-                onOpenManualIssues = { showManualIssues = true },
+                onOpenAddPinAction = { showAddPinComposer = true },
                 onOpenObservations = { mode ->
                     if (mode == null) {
                         tab = MainTab.Pins; tool = null; pinMode = null

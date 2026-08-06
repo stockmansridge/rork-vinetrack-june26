@@ -124,14 +124,17 @@ extension MigratedDataStore {
         button: ButtonConfig,
         coordinate: CLLocationCoordinate2D,
         heading: Double?,
-        side: PinSide = .right,
+        // Nil for the unified composer, which has no Left/Right selection;
+        // the launcher paths keep passing their explicit side.
+        side: PinSide? = .right,
         paddockId: UUID? = nil,
         rowNumber: Int? = nil,
         createdBy: String? = nil,
         createdByUserId: UUID? = nil,
         growthStageCode: String? = nil,
         notes: String? = nil,
-        attachment: PinAttachmentResolver.Attachment? = nil
+        attachment: PinAttachmentResolver.Attachment? = nil,
+        locationScope: String? = nil
     ) -> VinePin? {
         guard let vineyardId = selectedVineyardId else { return nil }
         let pin = VinePin(
@@ -157,7 +160,8 @@ extension MigratedDataStore {
             alongRowDistanceM: attachment?.alongRowDistanceM,
             snappedLatitude: attachment?.snappedCoordinate?.latitude,
             snappedLongitude: attachment?.snappedCoordinate?.longitude,
-            snappedToRow: attachment?.snappedToRow ?? false
+            snappedToRow: attachment?.snappedToRow ?? false,
+            locationScope: locationScope
         )
         addPin(pin)
         return pin
@@ -170,13 +174,14 @@ extension MigratedDataStore {
         stageDescription: String,
         coordinate: CLLocationCoordinate2D,
         heading: Double?,
-        side: PinSide = .right,
+        side: PinSide? = .right,
         paddockId: UUID? = nil,
         rowNumber: Int? = nil,
         createdBy: String? = nil,
         createdByUserId: UUID? = nil,
         notes: String? = nil,
-        attachment: PinAttachmentResolver.Attachment? = nil
+        attachment: PinAttachmentResolver.Attachment? = nil,
+        locationScope: String? = nil
     ) -> VinePin? {
         guard let vineyardId = selectedVineyardId else { return nil }
         let pin = VinePin(
@@ -202,7 +207,8 @@ extension MigratedDataStore {
             alongRowDistanceM: attachment?.alongRowDistanceM,
             snappedLatitude: attachment?.snappedCoordinate?.latitude,
             snappedLongitude: attachment?.snappedCoordinate?.longitude,
-            snappedToRow: attachment?.snappedToRow ?? false
+            snappedToRow: attachment?.snappedToRow ?? false,
+            locationScope: locationScope
         )
         addPin(pin)
         return pin

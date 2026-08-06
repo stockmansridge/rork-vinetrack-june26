@@ -308,6 +308,14 @@ object PendingEntityType {
      * machinery or Work Task data — the RPC signatures make it impossible.
      */
     const val MANUAL_ISSUE = "manual_issue"
+    /**
+     * A unified pin composer write queued offline (sql/170): a vineyard
+     * custom pin type create, a Custom pin create, or the row-segment
+     * persistence for a Repair/Growth pin saved with a ROW location. Replay
+     * ordering inside the queue is type -> pin -> segments; the stable
+     * client-generated ids keep every replay idempotent.
+     */
+    const val CUSTOM_PIN = "custom_pin"
 }
 
 /** The kind of write a pending row represents. */

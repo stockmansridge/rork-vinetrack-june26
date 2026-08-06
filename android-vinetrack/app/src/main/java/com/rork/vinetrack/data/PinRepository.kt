@@ -68,6 +68,10 @@ class PinRepository(private val session: SessionStore) {
         @SerialName("snapped_latitude") val snappedLatitude: Double? = null,
         @SerialName("snapped_longitude") val snappedLongitude: Double? = null,
         @SerialName("snapped_to_row") val snappedToRow: Boolean = false,
+        // How the location was chosen in the unified composer (sql/170):
+        // "point" / "row" / "block". Null for pins created outside it, so
+        // legacy queued payloads keep decoding unchanged.
+        @SerialName("location_scope") val locationScope: String? = null,
         @SerialName("is_completed") val isCompleted: Boolean = false,
         val latitude: Double? = null,
         val longitude: Double? = null,
@@ -121,6 +125,37 @@ class PinRepository(private val session: SessionStore) {
 
     @Serializable
     private data class SoftDeleteArgs(@SerialName("p_pin_id") val pinId: String)
+
+    @Serializable
+    private data class RowSegmentsArgs(
+        @SerialName("p_pin_id") val pinId: String,
+        @SerialName("p_segments") val segments: List<com.rork.vinetrack.data.model.ManualIssueSegment>,
+    )
+
+    /**
+     * Persist the structured ROW selection for a Repair/Growth pin saved
+     * through the unified composer (sql/170 `set_pin_row_segments`). Replaces
+     * atomically server-side, so replaying after an offline queue is safe.
+     * Raises PIN_NOT_FOUND while the parent pin insert hasn't landed yet —
+     * callers treat that as retryable.
+     */
+    suspend fun setRowSegments(
+        pinId: String,
+        segments: List<com.rork.vinetrack.data.model.ManualIssueSegment>,
+    ): Unit = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("set_pin_row_segments")) {
+            authHeaders(token)
+            contentType(ContentType.Application.Json)
+            setBody(RowSegmentsArgs(pinId, segments))
+        }
+        when {
+            response.status.isSuccess() -> Unit
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
 
     suspend fun createPin(input: PinInput): Pin = withContext(Dispatchers.IO) {
         requireConfig()

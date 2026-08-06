@@ -11,7 +11,10 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
     let heading: Double?
     let buttonName: String
     let buttonColor: String
-    let side: PinSide
+    /// Legacy operator side (Left/Right). Nil for pins created through the
+    /// unified composer, which has no side selection — shown honestly as
+    /// side-less instead of a fake default.
+    let side: PinSide?
     let mode: PinMode
     var paddockId: UUID?
     /// Legacy field. Stores the integer floor of the driving path/mid-row
@@ -31,6 +34,9 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
     var tripId: UUID?
     var growthStageCode: String?
     var notes: String?
+    /// How the location was chosen in the unified composer (sql/170):
+    /// "point" / "row" / "block". Nil for pins created outside it.
+    var locationScope: String?
 
     // MARK: - Attachment geometry (additive, optional)
     /// Driving path / mid-row the operator was on, e.g. 14.5.
@@ -72,7 +78,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         heading: Double?,
         buttonName: String,
         buttonColor: String,
-        side: PinSide,
+        side: PinSide?,
         mode: PinMode,
         paddockId: UUID? = nil,
         rowNumber: Int? = nil,
@@ -94,7 +100,8 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         alongRowDistanceM: Double? = nil,
         snappedLatitude: Double? = nil,
         snappedLongitude: Double? = nil,
-        snappedToRow: Bool = false
+        snappedToRow: Bool = false,
+        locationScope: String? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -126,6 +133,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         self.snappedLatitude = snappedLatitude
         self.snappedLongitude = snappedLongitude
         self.snappedToRow = snappedToRow
+        self.locationScope = locationScope
     }
 
     // Custom Codable so older persisted JSON (without the new fields) still
@@ -137,7 +145,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         case isCompleted, completedBy, completedByUserId, completedAt
         case photoData, photoPath, tripId, growthStageCode, notes
         case drivingRowNumber, pinRowNumber, pinSide, alongRowDistanceM
-        case snappedLatitude, snappedLongitude, snappedToRow
+        case snappedLatitude, snappedLongitude, snappedToRow, locationScope
     }
 
     init(from decoder: Decoder) throws {
@@ -149,7 +157,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         heading = try c.decodeIfPresent(Double.self, forKey: .heading)
         buttonName = try c.decode(String.self, forKey: .buttonName)
         buttonColor = try c.decode(String.self, forKey: .buttonColor)
-        side = try c.decode(PinSide.self, forKey: .side)
+        side = try c.decodeIfPresent(PinSide.self, forKey: .side)
         mode = try c.decode(PinMode.self, forKey: .mode)
         paddockId = try c.decodeIfPresent(UUID.self, forKey: .paddockId)
         rowNumber = try c.decodeIfPresent(Int.self, forKey: .rowNumber)
@@ -172,6 +180,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         snappedLatitude = try c.decodeIfPresent(Double.self, forKey: .snappedLatitude)
         snappedLongitude = try c.decodeIfPresent(Double.self, forKey: .snappedLongitude)
         snappedToRow = try c.decodeIfPresent(Bool.self, forKey: .snappedToRow) ?? false
+        locationScope = try c.decodeIfPresent(String.self, forKey: .locationScope)
     }
 }
 

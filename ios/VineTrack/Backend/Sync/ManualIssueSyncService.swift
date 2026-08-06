@@ -356,7 +356,7 @@ final class ManualIssueSyncService {
             heading: nil,
             buttonName: record.title,
             buttonColor: "orange",
-            side: .left,
+            side: nil, // manual issues never carry an operator side
             mode: .manualIssue,
             paddockId: record.paddockId,
             timestamp: existing?.timestamp ?? Date(),

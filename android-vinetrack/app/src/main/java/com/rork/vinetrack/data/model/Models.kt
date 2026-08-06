@@ -1004,6 +1004,8 @@ data class Pin(
     val priority: String? = null,
     val status: String? = null,
     @SerialName("location_scope") val locationScope: String? = null,
+    /** Structural reference to the vineyard-shared custom pin type (sql/170). */
+    @SerialName("custom_type_id") val customTypeId: String? = null,
     @SerialName("assigned_user_id") val assignedUserId: String? = null,
     @SerialName("due_date") val dueDate: String? = null,
     @SerialName("linked_work_task_id") val linkedWorkTaskId: String? = null,

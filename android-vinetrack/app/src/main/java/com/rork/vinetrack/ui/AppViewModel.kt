@@ -40,6 +40,8 @@ import com.rork.vinetrack.data.MaintenanceLogDeleteSync
 import com.rork.vinetrack.data.MaintenanceLogRepository
 import com.rork.vinetrack.data.MaintenancePhotoRepository
 import com.rork.vinetrack.data.MaintenanceLogUpdateSync
+import com.rork.vinetrack.data.CustomPinSync
+import com.rork.vinetrack.data.CustomPinTypeRepository
 import com.rork.vinetrack.data.ManualIssueRepository
 import com.rork.vinetrack.data.ManualIssueSync
 import com.rork.vinetrack.data.PinPhotoImageUtil
@@ -180,12 +182,16 @@ import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import com.rork.vinetrack.data.model.AppNotice
+import com.rork.vinetrack.data.model.CustomPinCreateParams
+import com.rork.vinetrack.data.model.CustomPinType
+import com.rork.vinetrack.data.model.CustomPinTypeCreateParams
 import com.rork.vinetrack.data.model.ManualIssue
 import com.rork.vinetrack.data.model.ManualIssueContract
 import com.rork.vinetrack.data.model.ManualIssueCreateParams
 import com.rork.vinetrack.data.model.ManualIssueScopes
 import com.rork.vinetrack.data.model.ManualIssueStatuses
 import com.rork.vinetrack.data.model.ManualIssueUpdateParams
+import com.rork.vinetrack.data.model.UnifiedPinContract
 import com.rork.vinetrack.data.model.toMapPin
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.data.model.SavedChemical
@@ -394,6 +400,8 @@ data class AppUiState(
     val pins: List<Pin> = emptyList(),
     /** Manual Issues (sql/169) — canonical records incl. row segments; markers mirror into [pins]. */
     val manualIssues: List<ManualIssue> = emptyList(),
+    /** Vineyard-shared custom pin types (sql/170) offered by the Custom tab. */
+    val customPinTypes: List<CustomPinType> = emptyList(),
     val trips: List<Trip> = emptyList(),
     val machines: List<VineyardMachine> = emptyList(),
     val workTasks: List<WorkTask> = emptyList(),
@@ -861,6 +869,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val manualIssueRepo = ManualIssueRepository(session)
     private val manualIssueSync = ManualIssueSync(manualIssueRepo, pendingWrites)
+
+    /**
+     * Unified pin composer (sql/170): vineyard-shared custom pin type
+     * catalogue plus the simplified Custom pin create, with an offline replay
+     * coordinator ordered type -> pin -> segments so a pin referencing an
+     * offline-created type never replays before its catalogue row.
+     */
+    private val customPinTypeRepo = CustomPinTypeRepository(session)
+    private val customPinSync = CustomPinSync(customPinTypeRepo, pinRepo, pendingWrites)
 
     /**
      * Offline-first sync for the System Admin Pruning Tracker + Fertiliser
@@ -1865,6 +1882,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Replay queued unified-composer writes (sql/170): custom pin type
+     * creates, Custom pin creates, and Repair/Growth row-segment writes.
+     * Ordered type -> pin -> segments inside the coordinator. Runs after
+     * [replayPendingPinCreates] so a segments write finds its pin row.
+     */
+    private fun replayPendingCustomPins() {
+        if (session.accessToken == null) return
+        viewModelScope.launch {
+            customPinSync.replayAll(
+                onTypeSynced = { type -> reconcileCustomPinType(type) },
+                onPinSynced = { issue -> reconcileManualIssue(issue) },
+            )
+        }
+    }
+
+    /**
      * Replay any queued pin completion toggles (Stage 9A). Completion-only —
      * never edit/delete/photo writes. Skipped when offline or with no session
      * so it can't fire during early startup. Reconciles each synced pin into
@@ -2798,6 +2831,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // mutex-guarded coroutine; per-coordinator dependency gates keep the
         // ordering correct even though these are scheduled fire-and-forget.
         replayPendingPinCreates()
+        replayPendingCustomPins()
         replayPendingPinCompletions()
         replayPendingPinEdits()
         replayPendingPinDeletes()
@@ -2865,6 +2899,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // one row then replaying the whole pipeline keeps dependants correctly
         // ordered (a single coordinator in isolation could bypass a gate).
         replayPendingPinCreates()
+        replayPendingCustomPins()
         replayPendingPinCompletions()
         replayPendingPinEdits()
         replayPendingPinDeletes()
@@ -2921,6 +2956,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // outbox is empty or no session yet.
                 if (online) {
                     replayPendingPinCreates()
+                    replayPendingCustomPins()
                     replayPendingPinCompletions()
                     replayPendingPinEdits()
                     replayPendingPinDeletes()
@@ -3194,6 +3230,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayAllPendingWrites() {
         replayPendingPinCreates()
+        replayPendingCustomPins()
         replayPendingPinCompletions()
         replayPendingPinEdits()
         replayPendingPinDeletes()
@@ -4011,6 +4048,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // (Stage 7C). Pin-create + pin-photo only; no other write replays.
             if (_ui.value.isOnline) {
                 replayPendingPinCreates()
+                replayPendingCustomPins()
                 replayPendingPinCompletions()
                 replayPendingPinEdits()
                 replayPendingPinDeletes()
@@ -4777,6 +4815,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // row-attachment columns and the snapped point — never recomputed
         // here, so the payload can't drift from what the user was shown.
         placement: PinPlacementResult? = null,
+        // Unified composer location method (sql/170): "point" / "row" /
+        // "block". Null for pins created outside the composer.
+        locationScope: String? = null,
+        // Structured ROW selection persisted via set_pin_row_segments after
+        // the insert (queued when offline). Only used with locationScope=row.
+        segments: List<com.rork.vinetrack.data.model.ManualIssueSegment>? = null,
         // Quick-pin parity: fires with the created (or queued optimistic) pin so the
         // launcher's success card and auto-photo prompt have the concrete row to
         // work with. Independent of [onResult], which still reports save success.
@@ -4816,15 +4860,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             snappedLatitude = placement?.snappedLatitude,
             snappedLongitude = placement?.snappedLongitude,
             snappedToRow = placement?.snappedToRow ?: false,
+            locationScope = locationScope?.ifBlank { null },
             isCompleted = isCompleted,
             latitude = latitude,
             longitude = longitude,
             createdBy = session.userId,
         )
+        val canonicalSegments = segments
+            ?.takeIf { locationScope == ManualIssueScopes.ROW }
+            ?.let { ManualIssueContract.canonicalSegments(it) }
+            ?.takeIf { it.isNotEmpty() }
 
         // Known-offline: queue immediately without attempting the network.
         if (!_ui.value.isOnline) {
             val queued = enqueuePinCreate(input, photoUri = photoUri)
+            canonicalSegments?.let { customPinSync.enqueueSegments(queued.id, it) }
             onCreatedPin(queued)
             onResult(true)
             return
@@ -4834,6 +4884,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(pinError = null) }
             try {
                 var created = pinRepo.createPin(input)
+                // Persist the structured ROW selection right after the insert;
+                // if the RPC fails transiently the write is queued for replay
+                // so the row relationship is never silently dropped.
+                canonicalSegments?.let { segs ->
+                    runCatching { pinRepo.setRowSegments(created.id, segs) }
+                        .onFailure { customPinSync.enqueueSegments(created.id, segs) }
+                }
                 // A new pin only has its server id after creation, so any
                 // selected photo is uploaded here (mirrors iOS deferred upload).
                 if (photoUri != null) {
@@ -4872,11 +4929,156 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // Clear network/transient failure — queue for automatic replay
                 // rather than dropping the pin.
                 val queued = enqueuePinCreate(input, photoUri = photoUri)
+                canonicalSegments?.let { customPinSync.enqueueSegments(queued.id, it) }
                 onCreatedPin(queued)
                 onResult(true)
             }
         }
     }
+
+    /** Reconcile a canonical custom pin type into state (insert or replace by id). */
+    private fun reconcileCustomPinType(type: CustomPinType) {
+        _ui.update { st ->
+            val rest = st.customPinTypes.filterNot { it.id == type.id }
+            st.copy(customPinTypes = (rest + type).sortedBy { it.name.lowercase() })
+        }
+    }
+
+    /**
+     * Load the vineyard-shared custom pin types (sql/170) for the Custom tab.
+     * Active items only — deactivated items stay on historical pins but are
+     * hidden from new selection. Offline keeps whatever is already in state.
+     */
+    fun refreshCustomPinTypes() {
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        if (!_ui.value.isOnline || session.accessToken == null) return
+        viewModelScope.launch {
+            runCatching { customPinTypeRepo.listTypes(vineyardId) }
+                .onSuccess { types ->
+                    _ui.update { st ->
+                        if (st.selectedVineyardId == vineyardId) {
+                            st.copy(customPinTypes = types.sortedBy { it.name.lowercase() })
+                        } else {
+                            st
+                        }
+                    }
+                }
+        }
+    }
+
+    /**
+     * Add a vineyard-shared custom pin type. Duplicate ACTIVE names (trimmed,
+     * case-insensitive) converge on the existing shared entry — locally when
+     * already known, server-side otherwise. Offline: a stable client id is
+     * minted, the type appears immediately, and the create replays later so a
+     * pin can reference the id straight away.
+     */
+    fun addCustomPinType(name: String, onResult: (CustomPinType?, String?) -> Unit) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(null, "No vineyard selected."); return }
+        val trimmed = UnifiedPinContract.normalizeCustomTypeName(name)
+            ?: run { onResult(null, "A name is required."); return }
+        _ui.value.customPinTypes
+            .firstOrNull { it.isActive && it.name.trim().lowercase() == trimmed.lowercase() }
+            ?.let { existing -> onResult(existing, null); return }
+        val params = CustomPinTypeCreateParams(
+            id = UUID.randomUUID().toString(),
+            vineyardId = vineyardId,
+            name = trimmed,
+        )
+        val optimistic = CustomPinType(
+            id = params.id,
+            vineyardId = vineyardId,
+            name = trimmed,
+            isActive = true,
+        )
+        if (!_ui.value.isOnline) {
+            customPinSync.enqueueTypeCreate(params)
+            reconcileCustomPinType(optimistic)
+            onResult(optimistic, null)
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val created = customPinTypeRepo.createType(params)
+                reconcileCustomPinType(created)
+                onResult(created, null)
+            } catch (e: BackendError.Server) {
+                if (e.code in 400..499) {
+                    onResult(null, "The custom item was rejected. Please check the name.")
+                } else {
+                    customPinSync.enqueueTypeCreate(params)
+                    reconcileCustomPinType(optimistic)
+                    onResult(optimistic, null)
+                }
+            } catch (e: Exception) {
+                customPinSync.enqueueTypeCreate(params)
+                reconcileCustomPinType(optimistic)
+                onResult(optimistic, null)
+            }
+        }
+    }
+
+    /**
+     * Save a Custom-tab pin through the simplified sql/170 RPC (the only
+     * remaining ManualIssue creation path). Online when possible; otherwise
+     * queued with the optimistic record + marker shown immediately. The pin
+     * lands on the shared pins map/list like every other pin.
+     */
+    fun createCustomPin(params: CustomPinCreateParams, onResult: (Boolean, String?) -> Unit) {
+        if (!_ui.value.isOnline) {
+            customPinSync.enqueuePinCreate(params)
+            reconcileManualIssue(optimisticCustomPin(params))
+            onResult(true, null)
+            return
+        }
+        viewModelScope.launch {
+            try {
+                reconcileManualIssue(customPinTypeRepo.createCustomPin(params))
+                onResult(true, null)
+            } catch (e: BackendError.Server) {
+                if (e.code in 400..499) {
+                    onResult(false, "The pin was rejected. Please check the details.")
+                } else {
+                    customPinSync.enqueuePinCreate(params)
+                    reconcileManualIssue(optimisticCustomPin(params))
+                    onResult(true, null)
+                }
+            } catch (e: Exception) {
+                customPinSync.enqueuePinCreate(params)
+                reconcileManualIssue(optimisticCustomPin(params))
+                onResult(true, null)
+            }
+        }
+    }
+
+    private fun optimisticCustomPin(params: CustomPinCreateParams): ManualIssue = ManualIssue(
+        id = params.id,
+        vineyardId = params.vineyardId,
+        paddockId = params.paddockId,
+        title = params.title,
+        description = params.notes,
+        category = ManualIssueContract.DEFAULT_CATEGORY,
+        priority = ManualIssueContract.DEFAULT_PRIORITY,
+        status = ManualIssueContract.DEFAULT_STATUS,
+        locationScope = params.locationScope,
+        latitude = params.latitude,
+        longitude = params.longitude,
+        snappedLatitude = params.snappedLatitude,
+        snappedLongitude = params.snappedLongitude,
+        drivingRowNumber = params.drivingRowNumber,
+        pinRowNumber = params.pinRowNumber,
+        pinSide = null,
+        alongRowDistanceM = params.alongRowDistanceM,
+        snappedToRow = params.snappedToRow,
+        createdAt = params.clientUpdatedAt,
+        updatedAt = params.clientUpdatedAt,
+        clientUpdatedAt = params.clientUpdatedAt,
+        segments = if (params.locationScope == ManualIssueScopes.ROW) {
+            ManualIssueContract.canonicalSegments(params.segments.orEmpty())
+        } else {
+            null
+        },
+    )
 
     /**
      * Queue a pin create in the outbox and show an optimistic local pin so the

@@ -49,6 +49,9 @@ struct VineTrackApp: App {
     @State private var historicalYieldRecordSyncService = HistoricalYieldRecordSyncService()
     @State private var pruningSyncService = PruningSyncService()
     @State private var manualIssueSyncService = ManualIssueSyncService()
+    /// Unified pin composer (sql/170): vineyard-shared custom pin types +
+    /// Custom pin creates + row-segment persistence, with an offline outbox.
+    @State private var customPinTypeService = CustomPinTypeService()
     @State private var fertiliserSyncService = FertiliserSyncService()
     @State private var subscriptionService: SubscriptionService
     @State private var entitlementGate: EntitlementGate
@@ -123,6 +126,7 @@ struct VineTrackApp: App {
                         .environment(historicalYieldRecordSyncService)
                         .environment(pruningSyncService)
                         .environment(manualIssueSyncService)
+                        .environment(customPinTypeService)
                         .environment(fertiliserSyncService)
                         .environment(subscriptionService)
                         .environment(entitlementGate)

@@ -186,7 +186,7 @@ struct PinsPDFService {
                 let rowStr = pin.rowNumber != nil ? "\(pin.rowNumber!).5" : "—"
                 (rowStr as NSString).draw(at: CGPoint(x: colRow, y: y), withAttributes: cellAttrs)
 
-                let sideStr = "\(pin.side.rawValue) hand side"
+                let sideStr = pin.side.map { "\($0.rawValue) hand side" } ?? "—"
                 (sideStr as NSString).draw(in: CGRect(x: colSide, y: y, width: 60, height: 12), withAttributes: cellAttrs)
 
                 let statusStr = pin.isCompleted ? "Done" : "Active"
@@ -199,7 +199,7 @@ struct PinsPDFService {
 
                 let detailY = y + 13
                 let heading = headingText(for: pin.heading)
-                var detail = "\(pin.side.rawValue) hand side facing \(heading)"
+                var detail = pin.side.map { "\($0.rawValue) hand side facing \(heading)" } ?? "Facing \(heading)"
                 if let createdBy = pin.createdBy, !createdBy.isEmpty {
                     detail += " • by \(createdBy)"
                 }
@@ -328,7 +328,7 @@ struct PinsPDFService {
                 escapeCSV(pin.buttonName),
                 escapeCSV(report.paddockName),
                 escapeCSV(rowStr),
-                escapeCSV("\(pin.side.rawValue) hand side"),
+                escapeCSV(pin.side.map { "\($0.rawValue) hand side" } ?? "—"),
                 escapeCSV(pin.heading.map { "\(heading) (\(Int($0))°)" } ?? "\u{2014}"),
                 escapeCSV(statusStr),
                 escapeCSV(createdBy),

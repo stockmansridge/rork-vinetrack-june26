@@ -114,7 +114,7 @@ extension GrowthStageRecord {
             latitude: pin.latitude,
             longitude: pin.longitude,
             rowNumber: pin.rowNumber,
-            side: pin.side.rawValue,
+            side: pin.side?.rawValue,
             notes: pin.notes,
             photoPaths: pin.photoPath.map { [$0] } ?? [],
             recordedByName: pin.createdBy,

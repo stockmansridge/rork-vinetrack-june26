@@ -94,7 +94,7 @@ nonisolated enum PinDuplicateChecker {
             // Only constrain by side when the caller actually knows the
             // side — otherwise treat both sides as candidate duplicates.
             // Prefer the new pin_side; legacy pin.side is operator-side too.
-            if let side, (pin.pinSide ?? pin.side) != side { continue }
+            if let side, let candidateSide = pin.pinSide ?? pin.side, candidateSide != side { continue }
             if let mode, pin.mode != mode { continue }
             guard let snappedOther = RowGuidance.snapToRow(
                 coordinate: pin.attachedCoordinate,
