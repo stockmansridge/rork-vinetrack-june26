@@ -40,6 +40,8 @@ import com.rork.vinetrack.data.MaintenanceLogDeleteSync
 import com.rork.vinetrack.data.MaintenanceLogRepository
 import com.rork.vinetrack.data.MaintenancePhotoRepository
 import com.rork.vinetrack.data.MaintenanceLogUpdateSync
+import com.rork.vinetrack.data.ManualIssueRepository
+import com.rork.vinetrack.data.ManualIssueSync
 import com.rork.vinetrack.data.PinPhotoImageUtil
 import com.rork.vinetrack.data.PinPhotoRepository
 import com.rork.vinetrack.data.VineyardLogoRepository
@@ -177,6 +179,13 @@ import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import com.rork.vinetrack.data.model.AppNotice
+import com.rork.vinetrack.data.model.ManualIssue
+import com.rork.vinetrack.data.model.ManualIssueContract
+import com.rork.vinetrack.data.model.ManualIssueCreateParams
+import com.rork.vinetrack.data.model.ManualIssueScopes
+import com.rork.vinetrack.data.model.ManualIssueStatuses
+import com.rork.vinetrack.data.model.ManualIssueUpdateParams
+import com.rork.vinetrack.data.model.toMapPin
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.data.model.SavedInput
@@ -382,6 +391,8 @@ data class AppUiState(
     val seasonMigrationPrompt: SeasonMigrationPrompt? = null,
     val paddocks: List<Paddock> = emptyList(),
     val pins: List<Pin> = emptyList(),
+    /** Manual Issues (sql/169) — canonical records incl. row segments; markers mirror into [pins]. */
+    val manualIssues: List<ManualIssue> = emptyList(),
     val trips: List<Trip> = emptyList(),
     val machines: List<VineyardMachine> = emptyList(),
     val workTasks: List<WorkTask> = emptyList(),
@@ -840,6 +851,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * online-only. Replayed on reconnect and after a successful vineyard load.
      */
     private val pinCreateSync = PinCreateSync(pinRepo, pendingWrites)
+
+    /**
+     * Manual Issues (sql/169): server-authoritative RPC repository plus the
+     * offline replay coordinator that queues create / update / status /
+     * cancel / delete through the shared pending-write outbox. Mirrors the
+     * iOS ManualIssueSyncService contract exactly.
+     */
+    private val manualIssueRepo = ManualIssueRepository(session)
+    private val manualIssueSync = ManualIssueSync(manualIssueRepo, pendingWrites)
 
     /**
      * Offline-first sync for the System Admin Pruning Tracker + Fertiliser
@@ -4480,6 +4500,258 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * (Stage 4A-iv). Only pin CREATE is queue-enabled; validation/permission
      * failures are surfaced as errors and never queued.
      */
+    // MARK: - Manual Issues (sql/169)
+
+    /** Reconcile a canonical server issue into state and mirror its marker onto the shared pins list. */
+    private fun reconcileManualIssue(issue: ManualIssue) {
+        _ui.update { st ->
+            val issues = if (st.manualIssues.any { it.id == issue.id }) {
+                st.manualIssues.map { if (it.id == issue.id) issue else it }
+            } else {
+                listOf(issue) + st.manualIssues
+            }
+            val pin = issue.toMapPin()
+            val pins = when {
+                pin == null || issue.deletedAt != null -> st.pins.filter { it.id != issue.id }
+                st.pins.any { it.id == issue.id } -> st.pins.map { if (it.id == issue.id) pin else it }
+                else -> listOf(pin) + st.pins
+            }
+            st.copy(manualIssues = issues.filter { it.deletedAt == null }, pins = pins)
+        }
+    }
+
+    private fun removeManualIssueFromState(issueId: String) {
+        _ui.update { st ->
+            st.copy(
+                manualIssues = st.manualIssues.filter { it.id != issueId },
+                pins = st.pins.filter { it.id != issueId },
+            )
+        }
+    }
+
+    /** True when the issue still has an unresolved queued write. */
+    fun isManualIssuePending(issueId: String): Boolean = manualIssueSync.isPending(issueId)
+
+    fun manualIssuePendingCount(): Int = manualIssueSync.pendingCount()
+
+    /**
+     * Replay the outbox, then pull the canonical list — active issues
+     * (open + in progress) by default, all statuses when [includeFinished].
+     */
+    fun refreshManualIssues(includeFinished: Boolean = false) {
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        viewModelScope.launch {
+            if (session.accessToken != null) {
+                manualIssueSync.replayAll(
+                    onSynced = { reconcileManualIssue(it) },
+                    onDeleted = { removeManualIssueFromState(it) },
+                )
+            }
+            runCatching {
+                manualIssueRepo.list(
+                    vineyardId = vineyardId,
+                    statuses = if (includeFinished) ManualIssueStatuses.all else null,
+                )
+            }.onSuccess { remote ->
+                _ui.update { st ->
+                    // Keep locally queued issues the server doesn't know yet,
+                    // and never let an active-only page evict cached finished
+                    // records (legacy-cache safety).
+                    val kept = st.manualIssues.filter { cached ->
+                        remote.none { it.id == cached.id } && (
+                            manualIssueSync.isPending(cached.id) ||
+                                (!includeFinished && !ManualIssueStatuses.isActive(cached.status))
+                            )
+                    }
+                    var pins = st.pins
+                    remote.forEach { issue ->
+                        issue.toMapPin()?.let { pin ->
+                            pins = if (pins.any { it.id == pin.id }) {
+                                pins.map { if (it.id == pin.id) pin else it }
+                            } else {
+                                listOf(pin) + pins
+                            }
+                        }
+                    }
+                    st.copy(manualIssues = remote + kept, pins = pins)
+                }
+            }
+        }
+    }
+
+    /** Create online when possible; otherwise queue + show the optimistic record and marker immediately. */
+    fun createManualIssue(params: ManualIssueCreateParams, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            try {
+                reconcileManualIssue(manualIssueRepo.create(params))
+                onResult(true, null)
+            } catch (e: BackendError.Server) {
+                if (e.code in 400..499) {
+                    onResult(false, "The issue was rejected. Please check the details.")
+                } else {
+                    manualIssueSync.enqueueCreate(params)
+                    reconcileManualIssue(optimisticManualIssue(params))
+                    onResult(true, null)
+                }
+            } catch (e: Exception) {
+                manualIssueSync.enqueueCreate(params)
+                reconcileManualIssue(optimisticManualIssue(params))
+                onResult(true, null)
+            }
+        }
+    }
+
+    fun updateManualIssue(params: ManualIssueUpdateParams, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            try {
+                reconcileManualIssue(manualIssueRepo.update(params))
+                onResult(true, null)
+            } catch (e: BackendError.Server) {
+                if (e.code in 400..499) {
+                    onResult(false, "The change was rejected. Please check the details.")
+                } else {
+                    queueManualIssueUpdate(params)
+                    onResult(true, null)
+                }
+            } catch (e: Exception) {
+                queueManualIssueUpdate(params)
+                onResult(true, null)
+            }
+        }
+    }
+
+    private fun queueManualIssueUpdate(params: ManualIssueUpdateParams) {
+        manualIssueSync.enqueueUpdate(params)
+        val existing = _ui.value.manualIssues.firstOrNull { it.id == params.id } ?: return
+        reconcileManualIssue(
+            existing.copy(
+                title = params.title,
+                description = params.description,
+                category = params.category,
+                priority = params.priority,
+                locationScope = params.locationScope,
+                paddockId = params.paddockId,
+                latitude = params.latitude,
+                longitude = params.longitude,
+                snappedLatitude = params.snappedLatitude,
+                snappedLongitude = params.snappedLongitude,
+                drivingRowNumber = params.drivingRowNumber,
+                pinRowNumber = params.pinRowNumber,
+                pinSide = params.pinSide,
+                alongRowDistanceM = params.alongRowDistanceM,
+                snappedToRow = params.snappedToRow,
+                assignedUserId = params.assignedUserId,
+                dueDate = params.dueDate,
+                clientUpdatedAt = params.clientUpdatedAt,
+                updatedAt = params.clientUpdatedAt,
+                segments = if (params.locationScope == ManualIssueScopes.ROW) {
+                    ManualIssueContract.canonicalSegments(params.segments.orEmpty())
+                } else {
+                    null
+                },
+            ),
+        )
+    }
+
+    /** Server-authoritative status change — completion metadata is stamped/cleared server-side. */
+    fun setManualIssueStatus(issueId: String, status: String, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            try {
+                reconcileManualIssue(
+                    manualIssueRepo.setStatus(issueId, status, java.time.Instant.now().toString()),
+                )
+                onResult(true, null)
+            } catch (e: BackendError.Server) {
+                if (e.code in 400..499) {
+                    onResult(false, "The change was rejected.")
+                } else {
+                    manualIssueSync.enqueueStatus(issueId, status)
+                    applyLocalManualIssueStatus(issueId, status)
+                    onResult(true, null)
+                }
+            } catch (e: Exception) {
+                manualIssueSync.enqueueStatus(issueId, status)
+                applyLocalManualIssueStatus(issueId, status)
+                onResult(true, null)
+            }
+        }
+    }
+
+    private fun applyLocalManualIssueStatus(issueId: String, status: String) {
+        val existing = _ui.value.manualIssues.firstOrNull { it.id == issueId } ?: return
+        val stamp = java.time.Instant.now().toString()
+        reconcileManualIssue(
+            existing.copy(
+                status = status,
+                completedAt = if (status == ManualIssueStatuses.COMPLETED) stamp else null,
+                clientUpdatedAt = stamp,
+                updatedAt = stamp,
+            ),
+        )
+    }
+
+    /** action = "cancel" (keeps history) or "delete" (soft delete — owner/manager/supervisor). */
+    fun cancelOrDeleteManualIssue(issueId: String, action: String, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            try {
+                val result = manualIssueRepo.deleteOrCancel(issueId, action)
+                if (action == "delete") removeManualIssueFromState(issueId) else reconcileManualIssue(result)
+                onResult(true, null)
+            } catch (e: BackendError.Server) {
+                if (e.code in 400..499) {
+                    onResult(false, "You don't have permission to do that.")
+                } else {
+                    queueManualIssueTerminal(issueId, action)
+                    onResult(true, null)
+                }
+            } catch (e: Exception) {
+                queueManualIssueTerminal(issueId, action)
+                onResult(true, null)
+            }
+        }
+    }
+
+    private fun queueManualIssueTerminal(issueId: String, action: String) {
+        if (action == "delete") {
+            manualIssueSync.enqueueDelete(issueId)
+            removeManualIssueFromState(issueId)
+        } else {
+            manualIssueSync.enqueueCancel(issueId)
+            applyLocalManualIssueStatus(issueId, ManualIssueStatuses.CANCELLED)
+        }
+    }
+
+    private fun optimisticManualIssue(params: ManualIssueCreateParams): ManualIssue = ManualIssue(
+        id = params.id,
+        vineyardId = params.vineyardId,
+        paddockId = params.paddockId,
+        title = params.title,
+        description = params.description,
+        category = params.category,
+        priority = params.priority,
+        status = ManualIssueContract.DEFAULT_STATUS,
+        locationScope = params.locationScope,
+        latitude = params.latitude,
+        longitude = params.longitude,
+        snappedLatitude = params.snappedLatitude,
+        snappedLongitude = params.snappedLongitude,
+        drivingRowNumber = params.drivingRowNumber,
+        pinRowNumber = params.pinRowNumber,
+        pinSide = params.pinSide,
+        alongRowDistanceM = params.alongRowDistanceM,
+        snappedToRow = params.snappedToRow,
+        assignedUserId = params.assignedUserId,
+        dueDate = params.dueDate,
+        createdAt = params.clientUpdatedAt,
+        updatedAt = params.clientUpdatedAt,
+        clientUpdatedAt = params.clientUpdatedAt,
+        segments = if (params.locationScope == ManualIssueScopes.ROW) {
+            ManualIssueContract.canonicalSegments(params.segments.orEmpty())
+        } else {
+            null
+        },
+    )
+
     fun createPin(
         title: String,
         mode: String,

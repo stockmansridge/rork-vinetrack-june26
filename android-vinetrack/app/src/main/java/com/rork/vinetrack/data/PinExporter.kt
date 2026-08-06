@@ -89,6 +89,9 @@ object PinExporter {
     private val csvHeaders = listOf(
         "Category", "Type", "Status", "Block", "Row", "Side",
         "Latitude", "Longitude", "Dropped By", "Dropped At", "Completed By", "Notes",
+        // Manual Issue columns (sql/169) — blank for repair/growth pins.
+        // Machine-readable ids and raw values stay separate from labels.
+        "Priority", "Issue Status", "Location Scope", "Due Date", "Completed At", "Record ID",
     )
 
     private fun buildCsv(pins: List<Pin>, paddocks: List<Paddock>): String {
@@ -108,6 +111,12 @@ object PinExporter {
                 formatDateTime(pin.createdAt) ?: "",
                 pin.completedBy ?: "",
                 pin.notes ?: "",
+                pin.priority ?: "",
+                pin.status ?: "",
+                pin.locationScope ?: "",
+                pin.dueDate ?: "",
+                formatDateTime(pin.completedAt) ?: "",
+                pin.id,
             )
             sb.append(cells.joinToString(",") { escape(it) }).append("\n")
         }
@@ -289,8 +298,11 @@ object PinExporter {
 
     // MARK: - Field helpers
 
-    private fun modeLabel(pin: Pin): String =
-        if (pin.mode?.contains("growth", ignoreCase = true) == true) "Growth" else "Repairs"
+    private fun modeLabel(pin: Pin): String = when {
+        pin.mode?.contains("manual", ignoreCase = true) == true -> "Manual Issue"
+        pin.mode?.contains("growth", ignoreCase = true) == true -> "Growth"
+        else -> "Repairs"
+    }
 
     private fun paddockName(pin: Pin, paddocks: List<Paddock>): String =
         pin.paddockId?.let { id -> paddocks.firstOrNull { it.id == id }?.name } ?: "—"

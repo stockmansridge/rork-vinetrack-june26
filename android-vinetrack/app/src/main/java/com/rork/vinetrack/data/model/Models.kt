@@ -995,6 +995,18 @@ data class Pin(
     @SerialName("pin_row_number") val pinRowNumber: Double? = null,
     @SerialName("pin_side") val pinSide: String? = null,
     @SerialName("along_row_distance_m") val alongRowDistanceM: Double? = null,
+    // Canonical snapped point (sql/041) — iOS `snappedLatitude/-Longitude` parity.
+    @SerialName("snapped_latitude") val snappedLatitude: Double? = null,
+    @SerialName("snapped_longitude") val snappedLongitude: Double? = null,
+    @SerialName("snapped_to_row") val snappedToRow: Boolean = false,
+    // Manual Issue columns (sql/169; null on legacy rows). Decoded for
+    // display — writes go through the manual-issue RPCs only.
+    val priority: String? = null,
+    val status: String? = null,
+    @SerialName("location_scope") val locationScope: String? = null,
+    @SerialName("assigned_user_id") val assignedUserId: String? = null,
+    @SerialName("due_date") val dueDate: String? = null,
+    @SerialName("linked_work_task_id") val linkedWorkTaskId: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
     // Conflict/sync metadata (Stage 9B-1). Decoded and preserved only — not yet sent

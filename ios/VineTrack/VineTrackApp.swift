@@ -48,6 +48,7 @@ struct VineTrackApp: App {
     @State private var damageRecordSyncService = DamageRecordSyncService()
     @State private var historicalYieldRecordSyncService = HistoricalYieldRecordSyncService()
     @State private var pruningSyncService = PruningSyncService()
+    @State private var manualIssueSyncService = ManualIssueSyncService()
     @State private var fertiliserSyncService = FertiliserSyncService()
     @State private var subscriptionService: SubscriptionService
     @State private var entitlementGate: EntitlementGate
@@ -121,6 +122,7 @@ struct VineTrackApp: App {
                         .environment(damageRecordSyncService)
                         .environment(historicalYieldRecordSyncService)
                         .environment(pruningSyncService)
+                        .environment(manualIssueSyncService)
                         .environment(fertiliserSyncService)
                         .environment(subscriptionService)
                         .environment(entitlementGate)

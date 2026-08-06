@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.AddLocationAlt
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
@@ -124,6 +125,7 @@ fun HomeDashboard(
     onOpenTool: (ToolRoute) -> Unit,
     onOpenSetupWizard: () -> Unit,
     onOpenObservations: (String?) -> Unit,
+    onOpenManualIssues: () -> Unit,
     onOpenPinsList: () -> Unit,
 ) {
     var overlay by remember { mutableStateOf(HomeOverlay.None) }
@@ -159,6 +161,7 @@ fun HomeDashboard(
                 onOpenTool = onOpenTool,
                 onOpenSetupWizard = onOpenSetupWizard,
                 onOpenObservations = onOpenObservations,
+                onOpenManualIssues = onOpenManualIssues,
                 onOpenPinsList = onOpenPinsList,
                 onOpenMap = { overlay = HomeOverlay.Overview },
                 onOpenRain = { overlay = HomeOverlay.Rain },
@@ -178,6 +181,7 @@ private fun DashboardContent(
     onOpenTool: (ToolRoute) -> Unit,
     onOpenSetupWizard: () -> Unit,
     onOpenObservations: (String?) -> Unit,
+    onOpenManualIssues: () -> Unit,
     onOpenPinsList: () -> Unit,
     onOpenMap: () -> Unit,
     onOpenRain: () -> Unit,
@@ -235,6 +239,7 @@ private fun DashboardContent(
             QuickActionsSection(
                 onRepairs = { onOpenObservations("Repairs") },
                 onGrowth = { onOpenObservations("Growth") },
+                onManualIssue = onOpenManualIssues,
             )
 
             OverviewSection(state, onOpenMap)
@@ -829,7 +834,7 @@ private fun WeatherCard(onClick: () -> Unit) {
 }
 
 @Composable
-private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit) {
+private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onManualIssue: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -850,6 +855,35 @@ private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit) {
                 modifier = Modifier.weight(1f),
                 onClick = onGrowth,
             )
+        }
+        // Full-width Manual Issue action — its own Quick Action, roughly half
+        // the visual height of the tiles above, same design language (iOS parity).
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 50.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0xFFF29E1C), Color(0xFFD97805)),
+                    ),
+                )
+                .clickable { onManualIssue() }
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(Icons.Filled.AddLocationAlt, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Add Manual Issue", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                Text(
+                    "Drop a pin, select rows or flag a block",
+                    fontSize = 12.sp,
+                    color = Color.White.copy(alpha = 0.85f),
+                    maxLines = 1,
+                )
+            }
+            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
         }
     }
 }

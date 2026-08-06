@@ -183,4 +183,8 @@ nonisolated enum PinSide: String, Codable, Sendable, Hashable {
 nonisolated enum PinMode: String, Codable, Sendable, Hashable, CaseIterable {
     case repairs = "Repairs"
     case growth = "Growth"
+    /// Manual Issue (sql/169) — a lightweight issue/action/planning marker.
+    /// Writes are RPC-owned (ManualIssueSyncService); the shared pin sync
+    /// only reads these rows so they appear on every existing map surface.
+    case manualIssue = "ManualIssue"
 }

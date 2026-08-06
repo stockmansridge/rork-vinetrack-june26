@@ -295,6 +295,19 @@ object PendingEntityType {
      * the former "fertiliser_product" discriminator is retired.
      */
     const val FERTILISER_RECORD = "fertiliser_record"
+    /**
+     * A Manual Issue write queued offline (sql/169). CREATE / UPDATE /
+     * status-change / cancel / delete are carried on this discriminator,
+     * keyed by the stable client-generated issue id
+     * ([PendingWrite.clientId] = issueId) so no other queue can pick up a
+     * manual-issue write. All writes replay through the server-authoritative
+     * RPCs (`create_manual_issue` is idempotent by id; `update_manual_issue`
+     * and `set_manual_issue_status` are last-write-wins on
+     * `client_updated_at`), so a retry can never duplicate an issue or
+     * clobber a newer edit. A manual issue never creates labour, cost,
+     * machinery or Work Task data — the RPC signatures make it impossible.
+     */
+    const val MANUAL_ISSUE = "manual_issue"
 }
 
 /** The kind of write a pending row represents. */

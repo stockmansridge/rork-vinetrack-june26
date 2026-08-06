@@ -992,6 +992,45 @@ private struct NewHomeTabView: View {
                 .buttonStyle(.plain)
             }
             .padding(.horizontal)
+
+            // Full-width Manual Issue action — its own Quick Action, roughly
+            // half the visual height of the tiles above, same design language.
+            NavigationLink {
+                ManualIssuesListView(initialCompose: true)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "mappin.circle.fill")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.white)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Add Manual Issue")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                        Text("Drop a pin, select rows or flag a block")
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.85))
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+                .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity, minHeight: 50)
+                .padding(.vertical, 4)
+                .background(
+                    LinearGradient(
+                        colors: [Color(red: 0.95, green: 0.62, blue: 0.11), Color(red: 0.85, green: 0.47, blue: 0.02)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    in: .rect(cornerRadius: 14)
+                )
+                .shadow(color: Color(red: 0.95, green: 0.62, blue: 0.11).opacity(0.25), radius: 4, y: 2)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal)
         }
     }
 

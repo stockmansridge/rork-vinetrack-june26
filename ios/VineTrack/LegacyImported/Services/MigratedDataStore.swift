@@ -328,6 +328,8 @@ final class MigratedDataStore {
             switch item.mode {
             case .repairs: isDefault = trimmed.hasPrefix("default repair")
             case .growth: isDefault = trimmed.hasPrefix("default growth")
+            // Manual issues have no launcher button templates.
+            case .manualIssue: isDefault = false
             }
             if isDefault {
                 let key = "\(item.vineyardId.uuidString)|\(item.mode.rawValue)"

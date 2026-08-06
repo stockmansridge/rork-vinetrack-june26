@@ -212,6 +212,13 @@ struct PinsView: View {
                         filterModes.insert(.growth)
                     }
                 }
+                FilterChip(title: "Manual Issues", isSelected: filterModes.contains(.manualIssue)) {
+                    if filterModes.contains(.manualIssue) {
+                        filterModes.remove(.manualIssue)
+                    } else {
+                        filterModes.insert(.manualIssue)
+                    }
+                }
 
                 Divider()
                     .frame(height: 20)

@@ -313,6 +313,11 @@ final class PinSyncService {
                 // belonging to another vineyard are still pushed: the payload
                 // carries their own vineyard id.
                 guard var pin = pinsById[pinId] else { orphans.append(pinId); continue }
+                // Manual issues are RPC-owned (sql/169): every write goes
+                // through ManualIssueSyncService so the server enforces the
+                // no-labour contract and permissions. The generic upsert
+                // path must never touch them — reclaim the queue slot.
+                if pin.mode == .manualIssue { orphans.append(pinId); continue }
                 // Self-heal: stamp the current authenticated user as the
                 // creator if the pin was created without one. Never
                 // overwrite an existing non-nil value — that would lose

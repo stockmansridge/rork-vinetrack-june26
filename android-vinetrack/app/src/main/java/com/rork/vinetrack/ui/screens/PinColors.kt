@@ -26,6 +26,14 @@ internal val launcherColorTokens: List<String> = listOf(
 internal val RepairColor = VineColors.VineRed
 internal val GrowthColor = VineColors.LeafGreen
 
+/**
+ * Manual Issue accent (amber). Deliberately distinct from the repairs red,
+ * growth green, and completed/healthy tints so a manual issue is never
+ * mistaken for another record type. The create RPC also stamps
+ * button_color='orange' on the row, so this fallback rarely fires.
+ */
+internal val ManualIssueColor = VineColors.Orange
+
 /** Map an iOS `ButtonConfig.color` token to the matching Android brand colour. */
 internal fun launcherColor(token: String): Color = when (token.trim().lowercase()) {
     "blue" -> VineColors.Primary
@@ -44,8 +52,11 @@ internal fun launcherColor(token: String): Color = when (token.trim().lowercase(
 }
 
 /** Mode-specific accent for a pin's stored `mode` raw value. */
-internal fun pinModeColor(mode: String?): Color =
-    if (mode?.contains("growth", ignoreCase = true) == true) GrowthColor else RepairColor
+internal fun pinModeColor(mode: String?): Color = when {
+    mode?.contains("manual", ignoreCase = true) == true -> ManualIssueColor
+    mode?.contains("growth", ignoreCase = true) == true -> GrowthColor
+    else -> RepairColor
+}
 
 /**
  * Build a button-name → colour-token map from the vineyard's launcher button

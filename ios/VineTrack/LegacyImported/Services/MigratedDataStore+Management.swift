@@ -979,6 +979,9 @@ extension MigratedDataStore {
             updateRepairButtons(configs)
         case .growth:
             updateGrowthButtons(configs)
+        case .manualIssue:
+            // Manual issues have no launcher button set to apply.
+            break
         }
     }
 

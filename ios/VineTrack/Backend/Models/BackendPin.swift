@@ -39,6 +39,12 @@ nonisolated struct BackendPin: Codable, Sendable, Identifiable {
     let snappedLatitude: Double?
     let snappedLongitude: Double?
     let snappedToRow: Bool?
+    // Manual Issue columns (added in 169; nullable on legacy rows). Decoded
+    // for display; writes go through the manual-issue RPCs only.
+    let locationScope: String?
+    let assignedUserId: UUID?
+    let dueDate: String?
+    let linkedWorkTaskId: UUID?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -78,6 +84,10 @@ nonisolated struct BackendPin: Codable, Sendable, Identifiable {
         case snappedLatitude = "snapped_latitude"
         case snappedLongitude = "snapped_longitude"
         case snappedToRow = "snapped_to_row"
+        case locationScope = "location_scope"
+        case assignedUserId = "assigned_user_id"
+        case dueDate = "due_date"
+        case linkedWorkTaskId = "linked_work_task_id"
     }
 }
 
@@ -217,7 +227,13 @@ extension BackendPin {
         // never a hardcoded blue.
         let resolvedColor = buttonColor.nonEmptyTrimmed
             ?? nameColorMap[resolvedName].nonEmptyTrimmed
-            ?? (pinMode == .growth ? "darkgreen" : "red")
+            ?? {
+                switch pinMode {
+                case .growth: return "darkgreen"
+                case .manualIssue: return "orange"
+                case .repairs: return "red"
+                }
+            }()
         return VinePin(
             id: id,
             vineyardId: vineyardId,
