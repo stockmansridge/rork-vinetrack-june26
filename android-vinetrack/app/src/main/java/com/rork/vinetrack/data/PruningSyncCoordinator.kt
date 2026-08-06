@@ -473,7 +473,12 @@ class PruningSyncCoordinator(
             replayPass(PendingEntityType.PRUNING_ENTRY, PendingOpType.CREATE, conflictIsSuccess = false) { write ->
                 val queued = json.decodeFromString(PruningEntry.serializer(), write.payloadJson)
                 val entry = repointToActivityDate(queued)
-                adoptCanonicalSeason(entry, repo.recordEntry(entry))
+                // A skipped record takes the sql/168 path, whose signature has
+                // nowhere to put a worker, hours, a rate or a task — so an
+                // out-of-rotation section can never reach the server carrying
+                // labour, however the queued draft was built.
+                val result = if (entry.isSkipped) repo.recordSkippedEntry(entry) else repo.recordEntry(entry)
+                adoptCanonicalSeason(entry, result)
             }
             // Edits replay AFTER creates — an edit of an entry whose create
             // hasn't landed yet returns entry_not_found and stays queued.
@@ -615,7 +620,12 @@ class PruningSyncCoordinator(
                 val entry = repointToActivityDate(queued)
                 // LWW timestamp = when the edit was (re-)queued, NOT the replay
                 // time — a delayed retry must never beat a newer edit.
-                val result = repo.updateEntry(entry, Instant.ofEpochMilli(write.createdAt).toString())
+                val editedAt = Instant.ofEpochMilli(write.createdAt).toString()
+                val result = if (entry.isSkipped) {
+                    repo.updateSkippedEntry(entry, editedAt)
+                } else {
+                    repo.updateEntry(entry, editedAt)
+                }
                 when {
                     result.error == "entry_not_found" ->
                         retryOrBlock(write, "Waiting for the pruning entry to reach the server — will retry.")

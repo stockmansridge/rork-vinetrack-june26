@@ -231,6 +231,17 @@ data class PruningEntry(
     val serverSeasonId: String? = null,
     /** `pruning_seasons.season_year` of [serverSeasonId] as the server sees it. */
     val serverSeasonYear: Int? = null,
+    /**
+     * `pruning_entries.is_skipped` (sql/168) — this record marks its sections
+     * OUT OF PRUNING ROTATION (vines removed, row pulled out, replanted, dead)
+     * rather than pruned.
+     *
+     * A skipped record counts its sections as COMPLETE for progress and as
+     * nothing at all for pruning work: no vines pruned, no labour, no cost, no
+     * worker, no Work Task, no rate. The default keeps every entry cached
+     * before this field existed decoding as what it was — pruned.
+     */
+    val isSkipped: Boolean = false,
 ) {
     /** A full row = 1.0; each quarter = 0.25. */
     val rowEquivalents: Double get() = segments.size / 4.0
@@ -293,26 +304,65 @@ data class PruningBlockMetrics(
      */
     val rows: List<PruningRowRef>,
     val rowCount: Int,
+    /**
+     * EVERY finished quarter — pruned AND skipped. This is what "complete"
+     * means for progress, rows remaining and sections remaining.
+     */
     val completed: Set<PruningSegment>,
+    /** Quarters finished by actual pruning work. [completed] minus [skipped]. */
+    val pruned: Set<PruningSegment> = emptySet(),
+    /**
+     * Quarters marked OUT OF ROTATION (sql/168 `is_skipped`). Complete, but
+     * never pruning work — no vines, no labour, no cost, no rate.
+     */
+    val skipped: Set<PruningSegment> = emptySet(),
     val completedRowEquivalents: Double,
+    /** Row equivalents finished by real pruning work. */
+    val prunedRowEquivalents: Double = 0.0,
+    /** Row equivalents marked skipped. */
+    val skippedRowEquivalents: Double = 0.0,
     val totalRowEquivalents: Double,
+    /** Pruned + skipped ÷ total — the headline "Complete overall". */
     val fractionComplete: Double,
+    /** Pruned ÷ total — the "Pruned" line of the split display. */
+    val fractionPruned: Double = 0.0,
+    /** Skipped ÷ total — the "Skipped" line of the split display. */
+    val fractionSkipped: Double = 0.0,
     val vinesPerRow: Double,
     /**
-     * EXACT (unrounded) vines pruned — sum of each completed quarter's exact
+     * EXACT (unrounded) vines pruned — sum of each pruned quarter's exact
      * vines. Vineyard totals MUST sum this and round once at display
      * (rounding per block first drifts against iOS/portal).
      */
     val vinesPrunedExact: Double,
     /** Display value for this block: round(vinesPrunedExact). */
     val vinesPruned: Int,
+    /**
+     * EXACT vines inside skipped sections. Counted as complete, never as
+     * pruned — reported separately so "vines pruned" stays truthful.
+     */
+    val vinesSkippedExact: Double = 0.0,
+    val vinesSkipped: Int = 0,
     val vinesTotal: Int,
     val averageRowLength: Double,
+    /** Hectares finished — pruned + skipped. Use for completion reporting. */
+    val completionAreaHa: Double = 0.0,
+    /**
+     * Hectares actually WORKED. Skipped area is excluded, so this is the only
+     * safe denominator for cost per hectare.
+     */
+    val workedAreaHa: Double = 0.0,
     val ratePerWorkday: Double?,
     val projectedFinish: LocalDate?,
     val status: PruningStatus,
     val timeElapsedFraction: Double?,
-)
+) {
+    /**
+     * True when any section of this block is out of rotation — the trigger for
+     * showing the Pruned / Skipped / Complete split instead of one figure.
+     */
+    val hasSkippedSections: Boolean get() = skipped.isNotEmpty()
+}
 
 /** Outcome of the vineyard-wide completion forecast (mirrors iOS). */
 sealed interface PruningForecastOutcome {
@@ -372,14 +422,33 @@ data class PruningVineyardForecast(
  */
 data class PruningVineyardSummary(
     val blockCount: Int,
+    /** Pruned + skipped row equivalents — what "complete" means. */
     val completedRowEquivalents: Double,
+    /** Row equivalents finished by real pruning work. */
+    val prunedRowEquivalents: Double = 0.0,
+    /** Row equivalents marked out of rotation. */
+    val skippedRowEquivalents: Double = 0.0,
     val totalRowEquivalents: Double,
     /** Exact completion fraction (row-equivalent based, capped at 1). */
     val fraction: Double,
+    /** Pruned ÷ total — the "Pruned: 70%" line. */
+    val fractionPruned: Double = 0.0,
+    /** Skipped ÷ total — the "Skipped: 10%" line. */
+    val fractionSkipped: Double = 0.0,
     val vinesPrunedExact: Double,
     /** round(vinesPrunedExact) — the ONE rounding point for vine totals. */
     val vinesPruned: Int,
+    /** Vines inside skipped sections — complete, but never pruned. */
+    val vinesSkippedExact: Double = 0.0,
+    val vinesSkipped: Int = 0,
     val vinesTotal: Int,
+    /** Hectares finished (pruned + skipped). */
+    val completionAreaHa: Double = 0.0,
+    /**
+     * Hectares actually worked — the ONLY safe denominator for cost per
+     * hectare. Skipped area is excluded by construction.
+     */
+    val workedAreaHa: Double = 0.0,
     val vinesPerDay: Double?,
     val vinesPerLabourHour: Double?,
     val labourHours: Double,
@@ -395,8 +464,25 @@ data class PruningVineyardSummary(
 ) {
     /** Vines pruned ÷ elapsed calendar days ("Average vines / day"). */
     val averageVinesPerElapsedDay: Double? get() = forecast.averageVinesPerElapsedDay
-    val vinesRemaining: Int get() = maxOf(vinesTotal - vinesPruned, 0)
+
+    /**
+     * Vines still needing work. Skipped vines are complete and are never coming
+     * back into rotation, so they leave the remaining workload.
+     */
+    val vinesRemaining: Int get() = maxOf(vinesTotal - vinesPruned - vinesSkipped, 0)
     val displayPercent: Int get() = PruningCalculator.displayPercent(fraction)
+
+    /** "Pruned: 70%" — real work only. */
+    val prunedPercent: Int get() = PruningCalculator.displayPercent(fractionPruned)
+
+    /** "Skipped: 10%" — out of rotation. */
+    val skippedPercent: Int get() = PruningCalculator.displayPercent(fractionSkipped)
+
+    /**
+     * True when the vineyard has any out-of-rotation sections, so the UI should
+     * show the Pruned / Skipped / Complete split rather than one figure.
+     */
+    val hasSkippedSections: Boolean get() = skippedRowEquivalents > 0.0
 }
 
 /**
@@ -508,8 +594,58 @@ object PruningCalculator {
      * [lastDays] working days. Days without entries (e.g. rain days) never
      * count against the rate.
      */
+    /**
+     * Quarters marked SKIPPED (out of rotation), canonicalised onto the block's
+     * rows exactly like [completedSegments].
+     *
+     * A quarter that is ALSO claimed by a real pruning record is not returned:
+     * recorded work always outranks a skip, so a stray overlapping skip can
+     * never erase pruning from the vines-pruned figures.
+     */
+    fun skippedSegments(entries: List<PruningEntry>, rows: List<PruningRowRef>): Set<PruningSegment> {
+        val skipped = completedSegments(entries.filter { it.isSkipped }, rows)
+        if (skipped.isEmpty()) return emptySet()
+        val worked = completedSegments(entries.filter { !it.isSkipped }, rows)
+        return skipped - worked
+    }
+
+    /**
+     * Entries that represent actual pruning WORK. Skipped records carry no
+     * labour, no vines and no rate, so every work-rate calculation drops them
+     * from both sides of the ratio rather than counting them as a fast day.
+     */
+    fun workEntries(entries: List<PruningEntry>): List<PruningEntry> = entries.filter { !it.isSkipped }
+
+    /**
+     * Hectares represented by a set of quarters: each quarter is 25% of THAT
+     * row's length × the block's row width. Rows without geometry use the
+     * average mapped length, matching the vine-weighting rule.
+     */
+    fun areaHectares(
+        segments: Collection<PruningSegment>,
+        rows: List<PruningRowRef>,
+        paddock: Paddock,
+    ): Double {
+        // Row width is optional on a block that was never fully mapped; with no
+        // width there is no area to report, and 0 is the honest answer.
+        val rowWidth = paddock.rowWidth ?: 0.0
+        if (rowWidth <= 0 || rows.isEmpty()) return 0.0
+        val mapped = rows.mapNotNull { it.lengthMetres }.filter { it > 0 }
+        val fallback = if (mapped.isEmpty()) {
+            if (paddock.effectiveTotalRowLength > 0) paddock.effectiveTotalRowLength / rows.size else 0.0
+        } else {
+            mapped.sum() / mapped.size
+        }
+        if (fallback <= 0.0 && mapped.isEmpty()) return 0.0
+        val lengthByKey = rows.associateBy({ it.key }, { it.lengthMetres ?: fallback })
+        val metres = segments.sumOf { (lengthByKey[it.rowKey] ?: fallback) / 4.0 }
+        return metres * rowWidth / 10_000.0
+    }
+
     fun rowEquivalentsPerDay(entries: List<PruningEntry>, lastDays: Int?): Double? {
-        val byDay = entries.groupBy { it.date }
+        // Skipped records are excluded: marking a dead block out of rotation is
+        // not a productive day and must never inflate the crew's throughput.
+        val byDay = workEntries(entries).groupBy { it.date }
         if (byDay.isEmpty()) return null
         val days = byDay.keys.sortedDescending()
         val selected = if (lastDays != null) days.take(lastDays) else days
@@ -594,7 +730,7 @@ object PruningCalculator {
      */
     fun exactVinesPerDay(entries: List<PruningEntry>, rows: List<PruningRowRef>): Double? {
         val byDay = HashMap<String, Double>()
-        for (entry in entries) {
+        for (entry in workEntries(entries)) {
             byDay[entry.date] = (byDay[entry.date] ?: 0.0) + exactVines(entry.segments, rows)
         }
         if (byDay.isEmpty()) return null
@@ -609,7 +745,7 @@ object PruningCalculator {
     fun vinesPerLabourHour(entries: List<PruningEntry>, rows: List<PruningRowRef>): Double? {
         var vines = 0.0
         var hours = 0.0
-        for (entry in entries) {
+        for (entry in workEntries(entries)) {
             val entryHours = entry.labourHours
             if (entryHours != null && entryHours > 0) {
                 vines += exactVines(entry.segments, rows)
@@ -635,9 +771,14 @@ object PruningCalculator {
         asOf: LocalDate = LocalDate.now(),
     ): PruningVineyardSummary {
         var completedEq = 0.0
+        var prunedEq = 0.0
+        var skippedEq = 0.0
         var totalEq = 0.0
         var vinesPrunedExact = 0.0
+        var vinesSkippedExact = 0.0
         var vinesTotal = 0
+        var completionAreaHa = 0.0
+        var workedAreaHa = 0.0
         var blocksComplete = 0
         var blocksAtRisk = 0
         var projected: LocalDate? = null
@@ -648,15 +789,23 @@ object PruningCalculator {
 
         for ((metrics, blockEntries) in blocks) {
             completedEq += metrics.completedRowEquivalents
+            prunedEq += metrics.prunedRowEquivalents
+            skippedEq += metrics.skippedRowEquivalents
             totalEq += metrics.totalRowEquivalents
             vinesPrunedExact += metrics.vinesPrunedExact
+            vinesSkippedExact += metrics.vinesSkippedExact
             vinesTotal += metrics.vinesTotal
+            completionAreaHa += metrics.completionAreaHa
+            workedAreaHa += metrics.workedAreaHa
             if (metrics.status == PruningStatus.Complete) blocksComplete += 1
             if (metrics.status == PruningStatus.Behind || metrics.status == PruningStatus.AtRisk) blocksAtRisk += 1
             metrics.projectedFinish?.let { finish ->
                 projected = projected?.let { if (finish.isAfter(it)) finish else it } ?: finish
             }
-            for (entry in blockEntries) {
+            // Skipped records are excluded from EVERY work figure below: they
+            // carry no vines pruned, no labour and no rate, so including them
+            // would make an out-of-rotation block look like a productive day.
+            for (entry in workEntries(blockEntries)) {
                 val vines = exactVines(entry.segments, metrics.rows)
                 vinesByDay[entry.date] = (vinesByDay[entry.date] ?: 0.0) + vines
                 // A VALID entry is one whose segments actually resolve onto
@@ -676,22 +825,31 @@ object PruningCalculator {
 
         val fraction = if (totalEq > 0) min(completedEq / totalEq, 1.0) else 0.0
         val complete = (totalEq > 0 && completedEq >= totalEq - 0.0001) ||
-            (vinesTotal > 0 && vinesTotal - vinesPrunedExact < 0.5)
+            (vinesTotal > 0 && vinesTotal - vinesPrunedExact - vinesSkippedExact < 0.5)
         val forecast = vineyardForecast(
             vinesPrunedExact = vinesPrunedExact,
             vinesTotal = vinesTotal,
             isComplete = complete,
             entryDates = validEntryDays,
             asOf = asOf,
+            vinesSkippedExact = vinesSkippedExact,
         )
         return PruningVineyardSummary(
             blockCount = blocks.size,
             completedRowEquivalents = completedEq,
+            prunedRowEquivalents = prunedEq,
+            skippedRowEquivalents = skippedEq,
             totalRowEquivalents = totalEq,
             fraction = fraction,
+            fractionPruned = if (totalEq > 0) min(prunedEq / totalEq, 1.0) else 0.0,
+            fractionSkipped = if (totalEq > 0) min(skippedEq / totalEq, 1.0) else 0.0,
             vinesPrunedExact = vinesPrunedExact,
             vinesPruned = vinesPrunedExact.roundToInt(),
+            vinesSkippedExact = vinesSkippedExact,
+            vinesSkipped = vinesSkippedExact.roundToInt(),
             vinesTotal = vinesTotal,
+            completionAreaHa = completionAreaHa,
+            workedAreaHa = workedAreaHa,
             vinesPerDay = if (vinesByDay.isNotEmpty()) vinesByDay.values.sum() / vinesByDay.size else null,
             vinesPerLabourHour = if (hours > 0) vinesForHours / hours else null,
             labourHours = hours,
@@ -719,11 +877,17 @@ object PruningCalculator {
         isComplete: Boolean,
         entryDates: Collection<LocalDate>,
         asOf: LocalDate = LocalDate.now(),
+        /**
+         * Vines inside sections marked OUT OF ROTATION. They are already
+         * complete and will never be pruned, so they leave the remaining
+         * workload without ever counting as work done.
+         */
+        vinesSkippedExact: Double = 0.0,
     ): PruningVineyardForecast {
         val days = entryDates.sorted()
         val first = days.firstOrNull()
         val last = days.lastOrNull()
-        val remaining = max(vinesTotal - vinesPrunedExact, 0.0)
+        val remaining = max(vinesTotal - vinesPrunedExact - vinesSkippedExact, 0.0)
         val empty = PruningVineyardForecast(
             firstEntryDate = first,
             lastEntryDate = last,
@@ -797,14 +961,24 @@ object PruningCalculator {
     ): PruningBlockMetrics {
         val rows = rowRefs(paddock, setup)
         val rowCount = rows.size
+        // `completed` is pruned + skipped: both finish a section, so both count
+        // toward progress, rows remaining and sections remaining. Only `pruned`
+        // is ever treated as work done.
         val completed = completedSegments(entries, rows)
+        val skipped = skippedSegments(entries, rows)
+        val pruned = completed - skipped
         val completedRowEq = completed.size / 4.0
+        val prunedRowEq = pruned.size / 4.0
+        val skippedRowEq = skipped.size / 4.0
         val totalRowEq = rowCount.toDouble()
         val fraction = if (totalRowEq > 0) min(completedRowEq / totalRowEq, 1.0) else 0.0
+        val prunedFraction = if (totalRowEq > 0) min(prunedRowEq / totalRowEq, 1.0) else 0.0
+        val skippedFraction = if (totalRowEq > 0) min(skippedRowEq / totalRowEq, 1.0) else 0.0
 
         val totalVines = paddock.effectiveVineCount
         val vinesPerRow = if (rowCount > 0) totalVines.toDouble() / rowCount else 0.0
-        val vinesPrunedExact = exactVines(completed, rows)
+        val vinesPrunedExact = exactVines(pruned, rows)
+        val vinesSkippedExact = exactVines(skipped, rows)
         val averageRowLength = if (rowCount > 0) paddock.effectiveTotalRowLength / rowCount else 0.0
 
         val rate = preferredRate(entries)
@@ -833,14 +1007,24 @@ object PruningCalculator {
             rows = rows,
             rowCount = rowCount,
             completed = completed,
+            pruned = pruned,
+            skipped = skipped,
             completedRowEquivalents = completedRowEq,
+            prunedRowEquivalents = prunedRowEq,
+            skippedRowEquivalents = skippedRowEq,
             totalRowEquivalents = totalRowEq,
             fractionComplete = fraction,
+            fractionPruned = prunedFraction,
+            fractionSkipped = skippedFraction,
             vinesPerRow = vinesPerRow,
             vinesPrunedExact = vinesPrunedExact,
             vinesPruned = vinesPrunedExact.roundToInt(),
+            vinesSkippedExact = vinesSkippedExact,
+            vinesSkipped = vinesSkippedExact.roundToInt(),
             vinesTotal = totalVines,
             averageRowLength = averageRowLength,
+            completionAreaHa = areaHectares(completed, rows, paddock),
+            workedAreaHa = areaHectares(pruned, rows, paddock),
             ratePerWorkday = rate,
             projectedFinish = projected,
             status = blockStatus,

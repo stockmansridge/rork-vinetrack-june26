@@ -153,6 +153,12 @@ nonisolated struct BackendPruningEntry: Codable, Sendable, Identifiable {
     /// Parent activity (sql/166); the server back-fills legacy rows with their own id.
     let pruningActivityId: UUID?
     let allocationIndex: Int?
+    /// `pruning_entries.is_skipped` (sql/168) — this record marks its sections
+    /// OUT OF PRUNING ROTATION rather than pruned.
+    ///
+    /// Optional so a response from a server that predates the column still
+    /// decodes; absent means `false`, the historical meaning of every row.
+    let isSkipped: Bool?
     let createdAt: Date?
     let createdBy: UUID?
     let updatedAt: Date?
@@ -176,6 +182,7 @@ nonisolated struct BackendPruningEntry: Codable, Sendable, Identifiable {
         case workTaskId = "work_task_id"
         case pruningActivityId = "pruning_activity_id"
         case allocationIndex = "allocation_index"
+        case isSkipped = "is_skipped"
         case createdAt = "created_at"
         case createdBy = "created_by"
         case updatedAt = "updated_at"
@@ -205,8 +212,117 @@ nonisolated struct BackendPruningEntry: Codable, Sendable, Identifiable {
             enteredBy: createdBy,
             reversedAt: deletedAt,
             pruningActivityId: pruningActivityId,
-            allocationIndex: allocationIndex
+            allocationIndex: allocationIndex,
+            skipped: isSkipped
         )
+    }
+}
+
+/// Parameters for `record_skipped_pruning_entry` (sql/168) — marking rows or
+/// row sections OUT OF PRUNING ROTATION.
+///
+/// The absence of worker, hours, times, method, rate and work-task fields is
+/// the whole point: a skipped record cannot carry labour because there is
+/// nowhere to put it. The server enforces the same shape with a check
+/// constraint, so the guarantee holds for every client.
+nonisolated struct RecordSkippedPruningEntryParams: Encodable, Sendable {
+    typealias Segment = RecordPruningEntryParams.Segment
+
+    let id: UUID
+    let vineyardId: UUID
+    let seasonId: UUID
+    let paddockId: UUID
+    let seasonYear: Int
+    let entryDate: String
+    let segments: [Segment]
+    let notes: String
+    let clientUpdatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id = "p_id"
+        case vineyardId = "p_vineyard_id"
+        case seasonId = "p_season_id"
+        case paddockId = "p_paddock_id"
+        case seasonYear = "p_season_year"
+        case entryDate = "p_entry_date"
+        case segments = "p_segments"
+        case notes = "p_notes"
+        case clientUpdatedAt = "p_client_updated_at"
+    }
+
+    /// Every key encoded explicitly, nils as JSON null — PostgREST resolves an
+    /// RPC by its exact argument-name set, so a call shape that varies with the
+    /// data is what produces PGRST202 and wedges the offline queue.
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(vineyardId, forKey: .vineyardId)
+        try container.encode(seasonId, forKey: .seasonId)
+        try container.encode(paddockId, forKey: .paddockId)
+        try container.encode(seasonYear, forKey: .seasonYear)
+        try container.encode(entryDate, forKey: .entryDate)
+        try container.encode(segments, forKey: .segments)
+        try container.encode(notes, forKey: .notes)
+        try container.encode(clientUpdatedAt, forKey: .clientUpdatedAt)
+    }
+
+    /// Builds the push from a local skipped record. Only the identifiers needed
+    /// to locate the selection travel — the entry's worker, hours and task are
+    /// deliberately not read, so a draft that somehow acquired them cannot leak
+    /// labour onto an out-of-rotation section.
+    init(from entry: PruningEntry, clientUpdatedAt: Date) {
+        self.id = entry.id
+        self.vineyardId = entry.vineyardId
+        self.seasonId = entry.seasonId
+        self.paddockId = entry.paddockId
+        // Same canonical rule as a pruning record (sql/161): the season is the
+        // year of the entry's own date, never the device clock at sync time.
+        self.seasonYear = PruningSeasonId.seasonYear(for: entry.date)
+        self.entryDate = PruningSyncDate.ymd(from: entry.date)
+        self.notes = entry.notes
+        self.clientUpdatedAt = clientUpdatedAt
+        self.segments = entry.segments.map {
+            Segment(row: $0.row, segment: $0.quarter, rowId: $0.rowId, label: "\($0.row)")
+        }
+    }
+}
+
+/// Parameters for `update_skipped_pruning_entry` (sql/168) — changing the date
+/// or the section selection of an existing skipped record.
+nonisolated struct UpdateSkippedPruningEntryParams: Encodable, Sendable {
+    typealias Segment = RecordPruningEntryParams.Segment
+
+    let entryId: UUID
+    let entryDate: String
+    let segments: [Segment]
+    let notes: String
+    let clientUpdatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case entryId = "p_entry_id"
+        case entryDate = "p_entry_date"
+        case segments = "p_segments"
+        case notes = "p_notes"
+        case clientUpdatedAt = "p_client_updated_at"
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(entryId, forKey: .entryId)
+        try container.encode(entryDate, forKey: .entryDate)
+        try container.encode(segments, forKey: .segments)
+        try container.encode(notes, forKey: .notes)
+        try container.encode(clientUpdatedAt, forKey: .clientUpdatedAt)
+    }
+
+    init(from entry: PruningEntry, clientUpdatedAt: Date) {
+        self.entryId = entry.id
+        self.entryDate = PruningSyncDate.ymd(from: entry.date)
+        self.notes = entry.notes
+        self.clientUpdatedAt = clientUpdatedAt
+        self.segments = entry.segments.map {
+            Segment(row: $0.row, segment: $0.quarter, rowId: $0.rowId, label: "\($0.row)")
+        }
     }
 }
 

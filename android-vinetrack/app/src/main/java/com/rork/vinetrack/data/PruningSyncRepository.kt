@@ -134,6 +134,13 @@ class PruningSyncRepository(private val session: SessionStore) {
         /** Parent activity (sql/166); the server back-fills legacy rows with their own id. */
         @SerialName("pruning_activity_id") val pruningActivityId: String? = null,
         @SerialName("allocation_index") val allocationIndex: Int? = null,
+        /**
+         * `pruning_entries.is_skipped` (sql/168) — the record marks its sections
+         * OUT OF PRUNING ROTATION rather than pruned. Defaults to false so a
+         * response from a server predating the column still decodes, with the
+         * historical meaning of every row.
+         */
+        @SerialName("is_skipped") val isSkipped: Boolean = false,
         @SerialName("created_at") val createdAt: String? = null,
         @SerialName("created_by") val createdBy: String? = null,
         @SerialName("updated_at") val updatedAt: String? = null,
@@ -170,6 +177,7 @@ class PruningSyncRepository(private val session: SessionStore) {
             reversedAtMs = parseInstantMs(deletedAt),
             serverSeasonId = pruningSeasonId,
             serverSeasonYear = serverSeasonYear,
+            isSkipped = isSkipped,
         )
     }
 
@@ -216,6 +224,37 @@ class PruningSyncRepository(private val session: SessionStore) {
         @SerialName("p_segments") val segments: List<SegmentArg>,
         /** Optional Work Task link (sql/113). */
         @SerialName("p_work_task_id") val workTaskId: String? = null,
+    )
+
+    /**
+     * Arguments for `record_skipped_pruning_entry` (sql/168).
+     *
+     * The absence of worker, hours, times, method, rate and work-task keys is
+     * the whole point: a skipped record cannot carry labour because there is
+     * nowhere to put it. The server enforces the same shape with a check
+     * constraint, so the guarantee holds for every client.
+     */
+    @Serializable
+    private data class RecordSkippedEntryArgs(
+        @SerialName("p_id") val id: String,
+        @SerialName("p_vineyard_id") val vineyardId: String,
+        @SerialName("p_season_id") val seasonId: String,
+        @SerialName("p_paddock_id") val paddockId: String,
+        @SerialName("p_season_year") val seasonYear: Int,
+        @SerialName("p_entry_date") val entryDate: String,
+        @SerialName("p_segments") val segments: List<SegmentArg>,
+        @SerialName("p_notes") val notes: String,
+        @SerialName("p_client_updated_at") val clientUpdatedAt: String,
+    )
+
+    /** Arguments for `update_skipped_pruning_entry` (sql/168). */
+    @Serializable
+    private data class UpdateSkippedEntryArgs(
+        @SerialName("p_entry_id") val entryId: String,
+        @SerialName("p_entry_date") val entryDate: String,
+        @SerialName("p_segments") val segments: List<SegmentArg>,
+        @SerialName("p_notes") val notes: String,
+        @SerialName("p_client_updated_at") val clientUpdatedAt: String,
     )
 
     @Serializable
@@ -542,6 +581,81 @@ class PruningSyncRepository(private val session: SessionStore) {
                 runCatching {
                     resultJson.decodeFromString(RecordEntryResult.serializer(), response.bodyAsText())
                 }.getOrDefault(RecordEntryResult(entryId = entry.id))
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
+    /**
+     * Marks rows or row sections OUT OF PRUNING ROTATION through
+     * `record_skipped_pruning_entry` (sql/168).
+     *
+     * Same season resolution, same segment claim, same idempotency on the
+     * client id as [recordEntry] — the record simply has no worker, hours, cost
+     * or Work Task to give. The entry's labour fields are deliberately NOT read
+     * here, so a draft that somehow acquired them cannot leak labour onto an
+     * out-of-rotation section.
+     */
+    suspend fun recordSkippedEntry(entry: PruningEntry): RecordEntryResult = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val args = RecordSkippedEntryArgs(
+            id = entry.id,
+            vineyardId = entry.vineyardId,
+            seasonId = entry.seasonId,
+            paddockId = entry.paddockId,
+            // Same canonical rule as a pruning record (sql/161): the season is
+            // the year of the entry's own date, never the device clock.
+            seasonYear = PruningSeasonIds.seasonYearFor(entry.date),
+            entryDate = entry.date,
+            segments = entry.segments.map {
+                SegmentArg(row = it.row, segment = it.quarter, rowId = it.rowId, label = it.row.toString())
+            },
+            notes = entry.notes,
+            clientUpdatedAt = Instant.now().toString(),
+        )
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("record_skipped_pruning_entry")) {
+            authHeaders(token)
+            contentType(ContentType.Application.Json)
+            setBody(rpcJson.encodeToString(RecordSkippedEntryArgs.serializer(), args))
+        }
+        when {
+            response.status.isSuccess() ->
+                runCatching {
+                    resultJson.decodeFromString(RecordEntryResult.serializer(), response.bodyAsText())
+                }.getOrDefault(RecordEntryResult(entryId = entry.id))
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
+    /**
+     * Edits the date or section selection of an existing skipped record through
+     * `update_skipped_pruning_entry` (sql/168). Reversal uses [deleteEntry],
+     * exactly as it does for a pruning record.
+     */
+    suspend fun updateSkippedEntry(
+        entry: PruningEntry,
+        clientUpdatedAt: String = Instant.now().toString(),
+    ): UpdateEntryResult = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val args = UpdateSkippedEntryArgs(
+            entryId = entry.id,
+            entryDate = entry.date,
+            segments = entry.segments.map {
+                SegmentArg(row = it.row, segment = it.quarter, rowId = it.rowId, label = it.row.toString())
+            },
+            notes = entry.notes,
+            clientUpdatedAt = clientUpdatedAt,
+        )
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("update_skipped_pruning_entry")) {
+            authHeaders(token)
+            contentType(ContentType.Application.Json)
+            setBody(rpcJson.encodeToString(UpdateSkippedEntryArgs.serializer(), args))
+        }
+        when {
+            response.status.isSuccess() -> resultJson.decodeFromString(UpdateEntryResult.serializer(), response.bodyAsText())
             response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
         }

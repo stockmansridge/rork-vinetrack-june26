@@ -2368,6 +2368,18 @@ private fun PruningEntrySheet(
     var showUnlinkDialog by remember { mutableStateOf(false) }
     var unlinkKeepTask by remember { mutableStateOf(false) }
     var unlinkDeleteTask by remember { mutableStateOf(false) }
+    /**
+     * The skip toggle. On, this stops being a work record: the sections are
+     * marked OUT OF PRUNING ROTATION and every labour, costing and Work Task
+     * field disappears — there is nothing to enter, so nothing is shown.
+     *
+     * The kind of a record is fixed once saved (converting a pruning record
+     * into a skipped one would silently delete recorded labour, and the reverse
+     * would invent work that never happened), so on an edit it is preloaded
+     * from the record and locked. The server refuses both conversions too.
+     */
+    var markSkipped by remember { mutableStateOf(existingEntry?.isSkipped == true) }
+    var showSkipConfirm by remember { mutableStateOf(false) }
     /** Stable ids of the linked task's live lines when the editor opened —
      * lines missing from the saved set soft-delete through the normal flow. */
     var originalLineIds by remember { mutableStateOf(setOf<String>()) }
@@ -2418,10 +2430,12 @@ private fun PruningEntrySheet(
     val willUnlink = unlinkKeepTask || unlinkDeleteTask
     /** Whether the Work Task costing fields (work type + labour lines) are
      * active: creating a new task, or updating an existing linked one. */
-    val showsTaskFields = if (isEditing && hasLinkedTask) {
-        updateLinkedTask && !willUnlink && linkedTask != null
-    } else {
-        createTask
+    val showsTaskFields = when {
+        // A skipped record has no costing at all, so the Work Task branch is
+        // closed before any of its state can matter.
+        markSkipped -> false
+        isEditing && hasLinkedTask -> updateLinkedTask && !willUnlink && linkedTask != null
+        else -> createTask
     }
 
     // Person-hours convention: with labour lines, the pruning entry's labour
@@ -2441,13 +2455,21 @@ private fun PruningEntrySheet(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                if (isEditing) "Edit Pruning Record — ${paddock.name}" else "Record Pruning — ${paddock.name}",
+                when {
+                    markSkipped -> "Mark Skipped — ${paddock.name}"
+                    isEditing -> "Edit Pruning Record — ${paddock.name}"
+                    else -> "Record Pruning — ${paddock.name}"
+                },
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = vine.textPrimary,
             )
             Text(
-                "${segments.size} quarters · ${fmt(segments.size / 4.0)} row equivalents · ~${PruningCalculator.vines(segments, rows)} vines",
+                if (markSkipped) {
+                    "${segments.size} quarters · ${fmt(segments.size / 4.0)} row equivalents"
+                } else {
+                    "${segments.size} quarters · ${fmt(segments.size / 4.0)} row equivalents · ~${PruningCalculator.vines(segments, rows)} vines"
+                },
                 fontSize = 13.sp,
                 color = vine.textSecondary,
             )
@@ -2466,6 +2488,32 @@ private fun PruningEntrySheet(
                 Text(fmtDate(date), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
             }
 
+            // The toggle sits directly under the date so it is read before any
+            // labour field is filled in, not after.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Mark as skipped", fontSize = 14.sp, color = vine.textPrimary)
+                    Text(
+                        "Out of pruning rotation — counts as complete, records no work",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
+                }
+                Switch(
+                    checked = markSkipped,
+                    onCheckedChange = { markSkipped = it },
+                    enabled = !isEditing,
+                )
+            }
+            if (markSkipped) {
+                Text(
+                    "For rows temporarily or permanently out of pruning rotation — vines removed, rows pulled out, replanted or dead sections. They count as complete in pruning progress, and record no worker, labour, cost or Work Task.",
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
+            }
+
+            if (!markSkipped) {
             OutlinedTextField(
                 value = worker,
                 onValueChange = { worker = it },
@@ -2522,15 +2570,24 @@ private fun PruningEntrySheet(
             }
 
             PruningMethodPicker(method) { method = it }
+            }
 
+            // Notes stay in both modes: one lightweight field, and "why is this
+            // out of rotation" is exactly what a grower wants next season.
             OutlinedTextField(
                 value = notes,
                 onValueChange = { notes = it },
-                label = { Text("Notes (optional)") },
+                label = {
+                    Text(
+                        if (markSkipped) "Why are these sections out of rotation? (optional)" else "Notes (optional)"
+                    )
+                },
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            if (isEditing && hasLinkedTask) {
+            if (markSkipped) {
+                // No Work Task, no labour lines, no costing — nothing to show.
+            } else if (isEditing && hasLinkedTask) {
                 if (willUnlink) {
                     Text(
                         if (unlinkDeleteTask) {
@@ -2671,8 +2728,7 @@ private fun PruningEntrySheet(
                 )
             }
 
-            Button(
-                onClick = {
+            val performSave: () -> Unit = performSave@{
                     if (existingEntry != null) {
                         // Person-hours convention: with a live task, the entry's
                         // labour hours = sum of the labour-line person-hours.
@@ -2680,6 +2736,20 @@ private fun PruningEntrySheet(
                             labourPersonHours.takeIf { it > 0 }
                         } else {
                             hoursText.replace(',', '.').toDoubleOrNull()
+                        }
+                        // Editing a skipped record only ever changes its date,
+                        // its section selection and its note — there is nothing
+                        // else on it to change.
+                        if (existingEntry.isSkipped) {
+                            onSaveEdit(
+                                existingEntry.copy(
+                                    date = date.toString(),
+                                    segments = segments,
+                                    notes = notes.trim(),
+                                ),
+                                PruningEditTaskAction.None,
+                            )
+                            return@performSave
                         }
                         val updated = existingEntry.copy(
                             date = date.toString(),
@@ -2729,6 +2799,26 @@ private fun PruningEntrySheet(
                             else -> PruningEditTaskAction.None
                         }
                         onSaveEdit(updated, action)
+                    } else if (markSkipped) {
+                        // A SKIPPED record: the sections are out of rotation, so
+                        // there is no worker, no hours, no times, no method, no
+                        // vine count, no cost and no Work Task to create. It
+                        // carries only what is needed to locate the selection,
+                        // and it takes the same offline queue and the same
+                        // reversal path as any other pruning record.
+                        onSave(
+                            PruningEntry(
+                                id = UUID.randomUUID().toString(),
+                                vineyardId = vineyardId,
+                                paddockId = paddock.id,
+                                date = date.toString(),
+                                segments = segments,
+                                notes = notes.trim(),
+                                createdAtMs = System.currentTimeMillis(),
+                                isSkipped = true,
+                            ),
+                            null,
+                        )
                     } else {
                         val entry = PruningEntry(
                             id = UUID.randomUUID().toString(),
@@ -2770,6 +2860,14 @@ private fun PruningEntrySheet(
                         }
                         onSave(entry, draft)
                     }
+            }
+
+            Button(
+                onClick = {
+                    // Marking sections out of rotation changes what the
+                    // vineyard's progress figures mean, so it is always
+                    // confirmed — including on an edit.
+                    if (markSkipped) showSkipConfirm = true else performSave()
                 },
                 enabled = if (isEditing) {
                     !showsTaskFields || labourValid
@@ -2781,11 +2879,35 @@ private fun PruningEntrySheet(
             ) {
                 Text(
                     when {
+                        markSkipped -> "Mark Skipped"
                         isEditing -> "Save Changes"
                         segments.size == 1 -> "Record 1 quarter"
                         else -> "Record ${segments.size} quarters"
                     },
                     fontWeight = FontWeight.SemiBold,
+                )
+            }
+
+            if (showSkipConfirm) {
+                AlertDialog(
+                    onDismissRequest = { showSkipConfirm = false },
+                    title = { Text("Mark selected rows as skipped?") },
+                    text = {
+                        Text(
+                            "These rows will count as complete in pruning progress, but no pruning work, labour or cost will be recorded."
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showSkipConfirm = false
+                            performSave()
+                        }) {
+                            Text("Mark Skipped", fontWeight = FontWeight.SemiBold)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showSkipConfirm = false }) { Text("Cancel") }
+                    },
                 )
             }
         }

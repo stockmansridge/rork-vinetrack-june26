@@ -207,6 +207,14 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
     /// `pruning_entries.allocation_index` — 0 for the PRIMARY allocation, the
     /// only one carrying the activity's labour, timing and Work Task link.
     var allocationIndex: Int?
+    /// `pruning_entries.is_skipped` (sql/168) — this record marks its sections
+    /// as OUT OF PRUNING ROTATION (vines removed, row pulled out, replanted,
+    /// dead) rather than pruned.
+    ///
+    /// Optional in the Codable sense ONLY, so entries cached before the column
+    /// existed still decode instead of wiping the whole local cache. Always
+    /// read it through `isSkipped`, never compare to `true` directly.
+    var skipped: Bool?
 
     init(
         id: UUID = UUID(),
@@ -228,7 +236,8 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
         enteredBy: UUID? = nil,
         reversedAt: Date? = nil,
         pruningActivityId: UUID? = nil,
-        allocationIndex: Int? = nil
+        allocationIndex: Int? = nil,
+        skipped: Bool? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -253,10 +262,19 @@ nonisolated struct PruningEntry: Codable, Identifiable, Sendable, Hashable {
         self.reversedAt = reversedAt
         self.pruningActivityId = pruningActivityId
         self.allocationIndex = allocationIndex
+        self.skipped = skipped
     }
 
     /// A full row = 1.0; each quarter = 0.25.
     var rowEquivalents: Double { Double(segments.count) / 4.0 }
+
+    /// True when this record marks its sections SKIPPED — out of rotation.
+    ///
+    /// A skipped record counts its sections as COMPLETE for progress, and as
+    /// nothing at all for pruning work: no vines pruned, no labour, no cost, no
+    /// worker, no Work Task, no rate. It never carries labour of its own, so
+    /// every rate calculation must exclude it on BOTH sides of the ratio.
+    var isSkipped: Bool { skipped == true }
 
     /// The parent activity this allocation belongs to. A legacy single-block
     /// record is its own activity, matching the server's back-fill, so grouping
@@ -352,10 +370,26 @@ nonisolated struct PruningBlockMetrics: Sendable {
     /// manual fallback rows only when none are configured).
     var rows: [PruningRowRef]
     var rowCount: Int
+    /// EVERY finished quarter — pruned AND skipped. This is what "complete"
+    /// means for progress, rows remaining and sections remaining.
     var completed: Set<PruningSegment>
+    /// Quarters finished by actual pruning work. `completed` minus `skipped`.
+    var pruned: Set<PruningSegment>
+    /// Quarters marked OUT OF ROTATION (sql/168 `is_skipped`). Complete, but
+    /// never pruning work — no vines, no labour, no cost, no rate.
+    var skipped: Set<PruningSegment>
     var completedRowEquivalents: Double
+    /// Row equivalents finished by real pruning work.
+    var prunedRowEquivalents: Double
+    /// Row equivalents marked skipped.
+    var skippedRowEquivalents: Double
     var totalRowEquivalents: Double
+    /// Pruned + skipped ÷ total — the headline "Complete overall".
     var fractionComplete: Double
+    /// Pruned ÷ total — the "Pruned" line of the split display.
+    var fractionPruned: Double
+    /// Skipped ÷ total — the "Skipped" line of the split display.
+    var fractionSkipped: Double
     var vinesPerRow: Double
     /// EXACT (unrounded) vines pruned — sum of each completed quarter's exact
     /// vines. Vineyard totals MUST sum this and round once at display
@@ -363,12 +397,25 @@ nonisolated struct PruningBlockMetrics: Sendable {
     var vinesPrunedExact: Double
     /// Display value for this block: round(vinesPrunedExact).
     var vinesPruned: Int
+    /// EXACT vines inside skipped sections. Counted as complete, never as
+    /// pruned — reported separately so "vines pruned" stays truthful.
+    var vinesSkippedExact: Double
+    var vinesSkipped: Int
     var vinesTotal: Int
     var averageRowLength: Double
+    /// Hectares finished — pruned + skipped. Use for completion reporting.
+    var completionAreaHa: Double
+    /// Hectares actually WORKED. Skipped area is excluded, so this is the only
+    /// safe denominator for cost per hectare.
+    var workedAreaHa: Double
     var ratePerWorkday: Double?
     var projectedFinish: Date?
     var status: PruningStatus
     var timeElapsedFraction: Double?
+
+    /// True when any section of this block is out of rotation — the trigger
+    /// for showing the Pruned / Skipped / Complete split instead of one figure.
+    var hasSkippedSections: Bool { !skipped.isEmpty }
 }
 
 /// Pure calculation helpers for the Pruning Tracker.
@@ -480,10 +527,53 @@ nonisolated enum PruningCalculator {
         return set
     }
 
+    /// Quarters marked SKIPPED (out of rotation), canonicalised onto the
+    /// block's rows exactly like `completedSegments`.
+    ///
+    /// A quarter that is ALSO claimed by a real pruning record is not returned:
+    /// recorded work always outranks a skip, so a stray overlapping skip can
+    /// never erase pruning from the vines-pruned figures.
+    static func skippedSegments(entries: [PruningEntry], rows: [PruningRowRef]) -> Set<PruningSegment> {
+        let skipped = completedSegments(entries: entries.filter(\.isSkipped), rows: rows)
+        guard !skipped.isEmpty else { return [] }
+        let worked = completedSegments(entries: entries.filter { !$0.isSkipped }, rows: rows)
+        return skipped.subtracting(worked)
+    }
+
+    /// Entries that represent actual pruning WORK. Skipped records carry no
+    /// labour, no vines and no rate, so every work-rate calculation drops them
+    /// from both sides of the ratio rather than counting them as a fast day.
+    static func workEntries(_ entries: [PruningEntry]) -> [PruningEntry] {
+        entries.filter { !$0.isSkipped }
+    }
+
+    /// Hectares represented by a set of quarters: each quarter is 25% of THAT
+    /// row's length × the block's row width. Rows without geometry use the
+    /// average mapped length, matching the vine-weighting rule.
+    static func areaHectares(
+        for segments: some Collection<PruningSegment>,
+        rows: [PruningRowRef],
+        paddock: Paddock
+    ) -> Double {
+        guard paddock.rowWidth > 0, !rows.isEmpty else { return 0 }
+        let mapped = rows.compactMap(\.lengthMetres).filter { $0 > 0 }
+        let fallback = mapped.isEmpty
+            ? (paddock.effectiveTotalRowLength > 0 ? paddock.effectiveTotalRowLength / Double(rows.count) : 0)
+            : mapped.reduce(0, +) / Double(mapped.count)
+        guard fallback > 0 || !mapped.isEmpty else { return 0 }
+        var lengthByKey: [String: Double] = [:]
+        for ref in rows { lengthByKey[ref.id] = ref.lengthMetres ?? fallback }
+        let metres = segments.reduce(0.0) { $0 + (lengthByKey[$1.rowKey] ?? fallback) / 4.0 }
+        return metres * paddock.rowWidth / 10_000.0
+    }
+
     /// Average row equivalents per day-with-entries, over the most recent `lastDays`
     /// working days (days without entries — e.g. rain days — never count against the rate).
+    ///
+    /// Skipped records are excluded: marking a dead block out of rotation is not
+    /// a productive day and must never inflate the crew's throughput.
     static func rowEquivalentsPerDay(entries: [PruningEntry], lastDays: Int?, calendar: Calendar = .current) -> Double? {
-        let byDay = Dictionary(grouping: entries) { calendar.startOfDay(for: $0.date) }
+        let byDay = Dictionary(grouping: workEntries(entries)) { calendar.startOfDay(for: $0.date) }
         guard !byDay.isEmpty else { return nil }
         let days = byDay.keys.sorted(by: >)
         let selected = lastDays.map { Array(days.prefix($0)) } ?? days
@@ -559,14 +649,24 @@ nonisolated enum PruningCalculator {
     ) -> PruningBlockMetrics {
         let rows = rowRefs(paddock: paddock, setup: setup)
         let rowCount = rows.count
+        // `completed` is pruned + skipped: both finish a section, so both count
+        // toward progress, rows remaining and sections remaining. Only `pruned`
+        // is ever treated as work done.
         let completed = completedSegments(entries: entries, rows: rows)
+        let skipped = skippedSegments(entries: entries, rows: rows)
+        let pruned = completed.subtracting(skipped)
         let completedRowEq = Double(completed.count) / 4.0
+        let prunedRowEq = Double(pruned.count) / 4.0
+        let skippedRowEq = Double(skipped.count) / 4.0
         let totalRowEq = Double(rowCount)
         let fraction = totalRowEq > 0 ? min(completedRowEq / totalRowEq, 1.0) : 0
+        let prunedFraction = totalRowEq > 0 ? min(prunedRowEq / totalRowEq, 1.0) : 0
+        let skippedFraction = totalRowEq > 0 ? min(skippedRowEq / totalRowEq, 1.0) : 0
 
         let totalVines = paddock.effectiveVineCount
         let vinesPerRow = rowCount > 0 ? Double(totalVines) / Double(rowCount) : 0
-        let vinesPrunedExact = exactVines(for: completed, rows: rows)
+        let vinesPrunedExact = exactVines(for: pruned, rows: rows)
+        let vinesSkippedExact = exactVines(for: skipped, rows: rows)
         let averageRowLength = rowCount > 0 ? paddock.effectiveTotalRowLength / Double(rowCount) : 0
 
         let rate = preferredRate(entries: entries, calendar: calendar)
@@ -607,14 +707,24 @@ nonisolated enum PruningCalculator {
             rows: rows,
             rowCount: rowCount,
             completed: completed,
+            pruned: pruned,
+            skipped: skipped,
             completedRowEquivalents: completedRowEq,
+            prunedRowEquivalents: prunedRowEq,
+            skippedRowEquivalents: skippedRowEq,
             totalRowEquivalents: totalRowEq,
             fractionComplete: fraction,
+            fractionPruned: prunedFraction,
+            fractionSkipped: skippedFraction,
             vinesPerRow: vinesPerRow,
             vinesPrunedExact: vinesPrunedExact,
             vinesPruned: Int(vinesPrunedExact.rounded()),
+            vinesSkippedExact: vinesSkippedExact,
+            vinesSkipped: Int(vinesSkippedExact.rounded()),
             vinesTotal: totalVines,
             averageRowLength: averageRowLength,
+            completionAreaHa: areaHectares(for: completed, rows: rows, paddock: paddock),
+            workedAreaHa: areaHectares(for: pruned, rows: rows, paddock: paddock),
             ratePerWorkday: rate,
             projectedFinish: projected,
             status: blockStatus,
@@ -652,7 +762,7 @@ nonisolated enum PruningCalculator {
         calendar: Calendar = .current
     ) -> Double? {
         var byDay: [Date: Double] = [:]
-        for entry in entries {
+        for entry in workEntries(entries) {
             byDay[calendar.startOfDay(for: entry.date), default: 0] += exactVines(for: entry.segments, rows: rows)
         }
         guard !byDay.isEmpty else { return nil }
@@ -665,7 +775,7 @@ nonisolated enum PruningCalculator {
     static func vinesPerLabourHour(entries: [PruningEntry], rows: [PruningRowRef]) -> Double? {
         var vines = 0.0
         var hours = 0.0
-        for entry in entries {
+        for entry in workEntries(entries) {
             if let entryHours = entry.labourHours, entryHours > 0 {
                 vines += exactVines(for: entry.segments, rows: rows)
                 hours += entryHours
@@ -689,9 +799,14 @@ nonisolated enum PruningCalculator {
         asOf: Date = Date()
     ) -> PruningVineyardSummary {
         var completedEq = 0.0
+        var prunedEq = 0.0
+        var skippedEq = 0.0
         var totalEq = 0.0
         var vinesPrunedExact = 0.0
+        var vinesSkippedExact = 0.0
         var vinesTotal = 0
+        var completionAreaHa = 0.0
+        var workedAreaHa = 0.0
         var blocksComplete = 0
         var blocksAtRisk = 0
         var projected: Date?
@@ -703,15 +818,23 @@ nonisolated enum PruningCalculator {
         for block in blocks {
             let metrics = block.metrics
             completedEq += metrics.completedRowEquivalents
+            prunedEq += metrics.prunedRowEquivalents
+            skippedEq += metrics.skippedRowEquivalents
             totalEq += metrics.totalRowEquivalents
             vinesPrunedExact += metrics.vinesPrunedExact
+            vinesSkippedExact += metrics.vinesSkippedExact
             vinesTotal += metrics.vinesTotal
+            completionAreaHa += metrics.completionAreaHa
+            workedAreaHa += metrics.workedAreaHa
             if metrics.status == .complete { blocksComplete += 1 }
             if metrics.status == .behind || metrics.status == .atRisk { blocksAtRisk += 1 }
             if let finish = metrics.projectedFinish {
                 projected = max(projected ?? finish, finish)
             }
-            for entry in block.entries {
+            // Skipped records are excluded from EVERY work figure below: they
+            // carry no vines pruned, no labour and no rate, so including them
+            // would make an out-of-rotation block look like a productive day.
+            for entry in workEntries(block.entries) {
                 let vines = exactVines(for: entry.segments, rows: metrics.rows)
                 let day = calendar.startOfDay(for: entry.date)
                 vinesByDay[day, default: 0] += vines
@@ -731,23 +854,32 @@ nonisolated enum PruningCalculator {
 
         let fraction = totalEq > 0 ? min(completedEq / totalEq, 1.0) : 0
         let complete = (totalEq > 0 && completedEq >= totalEq - 0.0001)
-            || (vinesTotal > 0 && Double(vinesTotal) - vinesPrunedExact < 0.5)
+            || (vinesTotal > 0 && Double(vinesTotal) - vinesPrunedExact - vinesSkippedExact < 0.5)
         let forecast = vineyardForecast(
             vinesPrunedExact: vinesPrunedExact,
             vinesTotal: vinesTotal,
             isComplete: complete,
             entryDates: validEntryDays,
             asOf: asOf,
-            calendar: calendar
+            calendar: calendar,
+            vinesSkippedExact: vinesSkippedExact
         )
         return PruningVineyardSummary(
             blockCount: blocks.count,
             completedRowEquivalents: completedEq,
+            prunedRowEquivalents: prunedEq,
+            skippedRowEquivalents: skippedEq,
             totalRowEquivalents: totalEq,
             fraction: fraction,
+            fractionPruned: totalEq > 0 ? min(prunedEq / totalEq, 1.0) : 0,
+            fractionSkipped: totalEq > 0 ? min(skippedEq / totalEq, 1.0) : 0,
             vinesPrunedExact: vinesPrunedExact,
             vinesPruned: Int(vinesPrunedExact.rounded()),
+            vinesSkippedExact: vinesSkippedExact,
+            vinesSkipped: Int(vinesSkippedExact.rounded()),
             vinesTotal: vinesTotal,
+            completionAreaHa: completionAreaHa,
+            workedAreaHa: workedAreaHa,
             vinesPerDay: vinesByDay.isEmpty ? nil : vinesByDay.values.reduce(0, +) / Double(vinesByDay.count),
             vinesPerLabourHour: hours > 0 ? vinesForHours / hours : nil,
             labourHours: hours,
@@ -767,18 +899,22 @@ nonisolated enum PruningCalculator {
     ///
     /// Never derived from per-block rates or per-block projections, and never
     /// from "days that contain entries" — rain days count as elapsed time.
+    /// `vinesSkippedExact` — vines inside sections marked OUT OF ROTATION.
+    /// They are already complete and will never be pruned, so they leave the
+    /// remaining workload without ever counting as work done.
     static func vineyardForecast(
         vinesPrunedExact: Double,
         vinesTotal: Int,
         isComplete: Bool,
         entryDates: some Collection<Date>,
         asOf: Date = Date(),
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        vinesSkippedExact: Double = 0
     ) -> PruningVineyardForecast {
         let days = entryDates.map { calendar.startOfDay(for: $0) }.sorted()
         let first = days.first
         let last = days.last
-        let remaining = max(Double(vinesTotal) - vinesPrunedExact, 0)
+        let remaining = max(Double(vinesTotal) - vinesPrunedExact - vinesSkippedExact, 0)
 
         var forecast = PruningVineyardForecast(
             firstEntryDate: first,
@@ -849,14 +985,31 @@ nonisolated enum PruningCalculator {
 /// exact; round only at display.
 nonisolated struct PruningVineyardSummary: Sendable {
     var blockCount: Int
+    /// Pruned + skipped row equivalents — what "complete" means.
     var completedRowEquivalents: Double
+    /// Row equivalents finished by real pruning work.
+    var prunedRowEquivalents: Double = 0
+    /// Row equivalents marked out of rotation.
+    var skippedRowEquivalents: Double = 0
     var totalRowEquivalents: Double
     /// Exact completion fraction (row-equivalent based, capped at 1).
     var fraction: Double
+    /// Pruned ÷ total — the "Pruned: 70%" line.
+    var fractionPruned: Double = 0
+    /// Skipped ÷ total — the "Skipped: 10%" line.
+    var fractionSkipped: Double = 0
     var vinesPrunedExact: Double
     /// round(vinesPrunedExact) — the ONE rounding point for vine totals.
     var vinesPruned: Int
+    /// Vines inside skipped sections — complete, but never pruned.
+    var vinesSkippedExact: Double = 0
+    var vinesSkipped: Int = 0
     var vinesTotal: Int
+    /// Hectares finished (pruned + skipped).
+    var completionAreaHa: Double = 0
+    /// Hectares actually worked — the ONLY safe denominator for cost per
+    /// hectare. Skipped area is excluded by construction.
+    var workedAreaHa: Double = 0
     var vinesPerDay: Double?
     var vinesPerLabourHour: Double?
     var labourHours: Double
@@ -870,6 +1023,15 @@ nonisolated struct PruningVineyardSummary: Sendable {
 
     /// Vines pruned ÷ elapsed calendar days ("Average vines / day").
     var averageVinesPerElapsedDay: Double? { forecast.averageVinesPerElapsedDay }
-    var vinesRemaining: Int { max(vinesTotal - vinesPruned, 0) }
+    /// Vines still needing work. Skipped vines are complete and are never
+    /// coming back into rotation, so they leave the remaining workload.
+    var vinesRemaining: Int { max(vinesTotal - vinesPruned - vinesSkipped, 0) }
     var displayPercent: Int { PruningCalculator.displayPercent(fraction) }
+    /// "Pruned: 70%" — real work only.
+    var prunedPercent: Int { PruningCalculator.displayPercent(fractionPruned) }
+    /// "Skipped: 10%" — out of rotation.
+    var skippedPercent: Int { PruningCalculator.displayPercent(fractionSkipped) }
+    /// True when the vineyard has any out-of-rotation sections, so the UI
+    /// should show the Pruned / Skipped / Complete split rather than one figure.
+    var hasSkippedSections: Bool { skippedRowEquivalents > 0 }
 }

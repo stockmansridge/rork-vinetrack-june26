@@ -47,6 +47,18 @@ struct PruningBlockDetailView: View {
         editingEntry == nil ? metrics.completed : metrics.completed.subtracting(editingSegments)
     }
 
+    /// Quarters inside the rows the user selected that are ALREADY complete and
+    /// therefore excluded from this save.
+    ///
+    /// The grid locks completed quarters, so a range selection quietly drops
+    /// them. Counting them here lets the sheet say so out loud instead of the
+    /// user wondering why a row they picked was only partly recorded.
+    private var alreadyCompleteInSelectedRows: Int {
+        let touchedRows = Set(selectedSegments.map(\.rowKey))
+        guard !touchedRows.isEmpty else { return 0 }
+        return lockedSegments.filter { touchedRows.contains($0.rowKey) }.count
+    }
+
     private func beginEdit(_ entry: PruningEntry) {
         editingEntry = entry
         selectedSegments = PruningCalculator.completedSegments(entries: [entry], rows: rows)
@@ -107,7 +119,8 @@ struct PruningBlockDetailView: View {
                 rows: rows,
                 defaultMethod: setup?.method ?? .spur,
                 defaultWorker: setup?.crew ?? "",
-                existingEntry: editingEntry
+                existingEntry: editingEntry,
+                alreadyCompleteInSelectedRows: alreadyCompleteInSelectedRows
             ) {
                 selectedSegments.removeAll()
                 editingEntry = nil
@@ -244,6 +257,21 @@ struct PruningBlockDetailView: View {
                 tint: metrics.status.tint
             )
 
+            // The split only appears once something is out of rotation, so a
+            // vineyard that never skips a row sees exactly the screen it had.
+            if metrics.hasSkippedSections {
+                HStack(spacing: 12) {
+                    legendDot(
+                        color: VineyardTheme.leafGreen,
+                        text: "Pruned \(PruningCalculator.displayPercent(metrics.fractionPruned))%"
+                    )
+                    legendDot(
+                        color: skippedTint,
+                        text: "Skipped \(PruningCalculator.displayPercent(metrics.fractionSkipped))%"
+                    )
+                }
+            }
+
             if let elapsed = metrics.timeElapsedFraction {
                 HStack(spacing: 12) {
                     legendDot(color: metrics.status.tint, text: "Work \(PruningCalculator.displayPercent(metrics.fractionComplete))%")
@@ -255,6 +283,12 @@ struct PruningBlockDetailView: View {
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
                 detailRow(label: "Vines pruned", value: "\(metrics.vinesPruned.formatted()) of \(metrics.vinesTotal.formatted())")
+                if metrics.hasSkippedSections {
+                    detailRow(
+                        label: "Skipped",
+                        value: "\(metrics.skippedRowEquivalents.formatted(.number.precision(.fractionLength(0...2)))) rows · \(metrics.vinesSkipped.formatted()) vines"
+                    )
+                }
                 if let due = setup?.dueDate {
                     detailRow(label: "Due date", value: due.formatted(date: .abbreviated, time: .omitted))
                 }
@@ -395,7 +429,10 @@ struct PruningBlockDetailView: View {
             rangeSelector
 
             HStack(spacing: 14) {
-                gridLegend(color: VineyardTheme.leafGreen, text: "Done")
+                gridLegend(color: VineyardTheme.leafGreen, text: "Pruned")
+                if metrics.hasSkippedSections {
+                    gridLegend(color: skippedTint, text: "Skipped")
+                }
                 gridLegend(color: .blue, text: "Selected")
                 gridLegend(color: Color(.systemGray5), text: "Remaining")
             }
@@ -518,6 +555,10 @@ struct PruningBlockDetailView: View {
 
     private func quarterCell(segment: PruningSegment) -> some View {
         let isDone = lockedSegments.contains(segment)
+        // A skipped quarter is COMPLETE and locked exactly like a pruned one —
+        // it just reads as out of rotation rather than as work done, so the two
+        // are never confused at a glance.
+        let isSkipped = isDone && metrics.skipped.contains(segment)
         let isSelected = selectedSegments.contains(segment)
         return Button {
             guard !isDone else { return }
@@ -529,8 +570,16 @@ struct PruningBlockDetailView: View {
         } label: {
             ZStack {
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(isDone ? VineyardTheme.leafGreen : (isSelected ? Color.blue : Color(.systemGray5)))
-                if isDone {
+                    .fill(
+                        isSkipped
+                            ? skippedTint
+                            : (isDone ? VineyardTheme.leafGreen : (isSelected ? Color.blue : Color(.systemGray5)))
+                    )
+                if isSkipped {
+                    Image(systemName: "minus")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                } else if isDone {
                     Image(systemName: "checkmark")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.white)
@@ -545,8 +594,15 @@ struct PruningBlockDetailView: View {
         }
         .buttonStyle(.plain)
         .disabled(isDone)
-        .accessibilityLabel("Row \(segment.row), quarter \(segment.quarter)\(isDone ? ", complete" : isSelected ? ", selected" : "")")
+        .accessibilityLabel(
+            "Row \(segment.row), quarter \(segment.quarter)"
+                + (isSkipped ? ", skipped" : isDone ? ", pruned" : isSelected ? ", selected" : "")
+        )
     }
+
+    /// Slate, deliberately not a shade of the pruned green: skipped sections
+    /// are complete but they are not work, and the grid should say so.
+    private var skippedTint: Color { Color(.systemGray) }
 
     private func rowFullySelectedOrDone(_ row: PruningRowRef) -> Bool {
         (1...4).allSatisfy { quarter in
@@ -625,8 +681,18 @@ struct PruningBlockDetailView: View {
                 ForEach(entries) { entry in
                     HStack(alignment: .top, spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.date.formatted(date: .abbreviated, time: .omitted))
-                                .font(.footnote.weight(.semibold))
+                            HStack(spacing: 6) {
+                                Text(entry.date.formatted(date: .abbreviated, time: .omitted))
+                                    .font(.footnote.weight(.semibold))
+                                if entry.isSkipped {
+                                    Text("Skipped")
+                                        .font(.caption2.weight(.bold))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(skippedTint.opacity(0.18), in: .capsule)
+                                        .foregroundStyle(skippedTint)
+                                }
+                            }
                             Text(entryDetail(entry))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -692,6 +758,12 @@ struct PruningBlockDetailView: View {
     }
 
     private func entryDetail(_ entry: PruningEntry) -> String {
+        // A skipped record has no worker, no hours and no method to show. Its
+        // labour reads as an em dash, never as zero — zero would claim the work
+        // was done for free.
+        if entry.isSkipped {
+            return "\(skippedSelectionSummary(entry)) · Labour — · Cost —"
+        }
         var parts: [String] = []
         if !entry.worker.isEmpty { parts.append(entry.worker) }
         if let hours = entry.labourHours, hours > 0 {
@@ -699,6 +771,27 @@ struct PruningBlockDetailView: View {
         }
         parts.append(entry.method.label)
         return parts.joined(separator: " · ")
+    }
+
+    /// "Rows 8–9 marked skipped" for whole rows, "Row 8, sections 2–4 marked
+    /// skipped" when only part of a single row is out of rotation.
+    private func skippedSelectionSummary(_ entry: PruningEntry) -> String {
+        let numbers = Set(entry.segments.map(\.row)).sorted()
+        guard let low = numbers.first, let high = numbers.last else { return "Marked skipped" }
+        if numbers.count == 1 {
+            let quarters = entry.segments.filter { $0.row == low }.map(\.quarter).sorted()
+            if quarters.count == 4 {
+                return "Row \(low) marked skipped"
+            }
+            let list = quarters.map(String.init).joined(separator: ", ")
+            let range = (quarters.count > 1 && quarters.last! - quarters.first! == quarters.count - 1)
+                ? "\(quarters.first!)–\(quarters.last!)"
+                : list
+            return "Row \(low), sections \(range) marked skipped"
+        }
+        let contiguous = numbers.count == (high - low + 1)
+        let label = contiguous ? "Rows \(low)–\(high)" : "Rows \(numbers.map(String.init).joined(separator: ", "))"
+        return "\(label) marked skipped"
     }
 }
 
@@ -746,6 +839,9 @@ private struct PruningEntrySheet: View {
     /// entry, `segments` carries the edited quarter set, and saving routes
     /// through the offline edit queue + `update_pruning_entry` RPC.
     let existingEntry: PruningEntry?
+    /// Quarters inside the selected rows that are already complete and will be
+    /// left alone. Surfaced as a notice rather than silently dropped.
+    let alreadyCompleteInSelectedRows: Int
     let onSaved: () -> Void
 
     @State private var date: Date = Date()
@@ -764,6 +860,11 @@ private struct PruningEntrySheet: View {
     @State private var showUnlinkDialog: Bool = false
     @State private var unlinkKeepTask: Bool = false
     @State private var unlinkDeleteTask: Bool = false
+    /// The skip toggle. On, this stops being a work record: the sections are
+    /// marked OUT OF PRUNING ROTATION and every labour, costing and Work Task
+    /// field disappears — there is nothing to enter, so nothing is shown.
+    @State private var markSkipped: Bool = false
+    @State private var showSkipConfirm: Bool = false
 
     private var taskTypeOptions: [String] {
         WorkTaskTypeCatalog.merged(with: dataStore.workTaskTypes)
@@ -806,6 +907,41 @@ private struct PruningEntrySheet: View {
         segments.count == 1 ? "Record 1 quarter" : "Record \(segments.count) quarters"
     }
 
+    private var saveButtonTitle: String {
+        if markSkipped { return "Mark Skipped" }
+        return isEditing ? "Save Changes" : recordButtonTitle
+    }
+
+    private var navigationTitle: String {
+        if markSkipped { return "Mark Skipped \u{2014} \(paddock.name)" }
+        return isEditing ? "Edit Pruning Record \u{2014} \(paddock.name)" : "Record Pruning \u{2014} \(paddock.name)"
+    }
+
+    /// The toggle plus the two things the user needs to know before using it:
+    /// what it will and won't record, and whether any of their selection is
+    /// already complete and will therefore be left alone.
+    @ViewBuilder
+    private var skipSection: some View {
+        Section {
+            Toggle("Mark as skipped", isOn: $markSkipped.animation(.easeInOut(duration: 0.2)))
+                .disabled(isEditing)
+            if alreadyCompleteInSelectedRows > 0 {
+                Label(
+                    "Some selected sections are already complete. Only the remaining sections will be marked as skipped.",
+                    systemImage: "info.circle"
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
+        } footer: {
+            if markSkipped {
+                Text("For rows temporarily or permanently out of pruning rotation \u{2014} vines removed, rows pulled out, replanted or dead sections. They count as complete in pruning progress, and record no worker, labour, cost or Work Task.")
+            } else if isEditing, existingEntry?.isSkipped == false {
+                Text("This is a pruning record. To take sections out of rotation, reverse it and mark the sections skipped instead.")
+            }
+        }
+    }
+
     private var isEditing: Bool { existingEntry != nil }
 
     private var hasLinkedTask: Bool { existingEntry?.workTaskId != nil }
@@ -821,6 +957,9 @@ private struct PruningEntrySheet: View {
     /// Whether the Work Task costing fields (work type + labour lines) are
     /// active: creating a new task, or updating an existing linked one.
     private var showsTaskFields: Bool {
+        // A skipped record has no costing at all, so the Work Task branch is
+        // closed before any of its state can matter.
+        if markSkipped { return false }
         if isEditing, hasLinkedTask {
             return updateLinkedTask && !willUnlink && linkedTask != nil
         }
@@ -837,13 +976,18 @@ private struct PruningEntrySheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Work Completed") {
+                Section(markSkipped ? "Sections" : "Work Completed") {
                     LabeledContent("Block", value: paddock.name)
                     LabeledContent("Row equivalents", value: (Double(segments.count) / 4.0).formatted(.number.precision(.fractionLength(0...2))))
-                    LabeledContent("Vines (approx.)", value: "\(PruningCalculator.vines(for: segments, rows: rows).formatted())")
+                    if !markSkipped {
+                        LabeledContent("Vines (approx.)", value: "\(PruningCalculator.vines(for: segments, rows: rows).formatted())")
+                    }
                     DatePicker("Date", selection: $date, displayedComponents: .date)
                 }
 
+                skipSection
+
+                if !markSkipped {
                 Section("Crew") {
                     TextField("Worker or crew", text: $worker)
                     if showsTaskFields {
@@ -868,12 +1012,21 @@ private struct PruningEntrySheet: View {
                         }
                     }
                 }
-
-                Section("Notes") {
-                    TextField("Optional notes", text: $notes, axis: .vertical)
-                        .lineLimit(2...4)
                 }
 
+                // Notes stay in both modes: one lightweight field, and "why is
+                // this out of rotation" is exactly the thing a grower wants to
+                // find next season.
+                Section("Notes") {
+                    TextField(
+                        markSkipped ? "Why are these sections out of rotation? (optional)" : "Optional notes",
+                        text: $notes,
+                        axis: .vertical
+                    )
+                    .lineLimit(2...4)
+                }
+
+                if !markSkipped {
                 Section {
                     if isEditing, hasLinkedTask {
                         if willUnlink {
@@ -967,22 +1120,46 @@ private struct PruningEntrySheet: View {
                         }
                     }
                 }
+                }
                 if let original = existingEntry {
                     editSummarySection(original)
                 }
             }
-            .navigationTitle(isEditing ? "Edit Pruning Record \u{2014} \(paddock.name)" : "Record Pruning \u{2014} \(paddock.name)")
+            .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isEditing ? "Save Changes" : recordButtonTitle) { save() }
-                        .fontWeight(.semibold)
-                        .disabled((!isEditing && segments.isEmpty) || (showsTaskFields && !labourLinesValid))
-                        .accessibilityLabel(isEditing ? "Save pruning changes" : "Record pruning")
+                    Button(saveButtonTitle) {
+                        // Marking sections out of rotation changes what the
+                        // vineyard's progress figures mean, so it is always
+                        // confirmed — including on an edit.
+                        if markSkipped {
+                            showSkipConfirm = true
+                        } else {
+                            save()
+                        }
+                    }
+                    .fontWeight(.semibold)
+                    .disabled((!isEditing && segments.isEmpty) || (showsTaskFields && !labourLinesValid))
+                    .accessibilityLabel(
+                        markSkipped
+                            ? "Mark the selected sections as skipped"
+                            : (isEditing ? "Save pruning changes" : "Record pruning")
+                    )
                 }
+            }
+            .confirmationDialog(
+                "Mark selected rows as skipped?",
+                isPresented: $showSkipConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Mark Skipped") { save() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("These rows will count as complete in pruning progress, but no pruning work, labour or cost will be recorded.")
             }
             .onAppear {
                 if let entry = existingEntry {
@@ -1017,6 +1194,11 @@ private struct PruningEntrySheet: View {
     /// Preloads the form from the entry being edited, including the linked
     /// Work Task's REAL labour lines (stable ids preserved for the diff).
     private func preload(from entry: PruningEntry) {
+        // The kind of a record is fixed once saved: converting a pruning record
+        // into a skipped one would silently delete recorded labour, and the
+        // reverse would invent work that never happened. The server refuses
+        // both, so the toggle is preloaded and locked.
+        markSkipped = entry.isSkipped
         date = entry.date
         worker = entry.worker
         labourHoursText = numText(entry.labourHours)
@@ -1261,6 +1443,26 @@ private struct PruningEntrySheet: View {
             )
             pruningStore.upsertSetup(season)
         }
+        // A SKIPPED record: the sections are out of rotation, so there is no
+        // worker, no hours, no times, no method, no vine count, no cost and no
+        // Work Task to create. It carries only what is needed to locate the
+        // selection, and it takes the same offline queue and the same reversal
+        // path as any other pruning record.
+        if markSkipped {
+            let skippedEntry = PruningEntry(
+                vineyardId: vineyardId,
+                paddockId: paddock.id,
+                seasonId: season.id,
+                date: date,
+                segments: segments,
+                notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
+                skipped: true
+            )
+            pruningStore.addEntry(skippedEntry)
+            onSaved()
+            dismiss()
+            return
+        }
         // The Work Task is created first with a client-generated id; the entry
         // stores that id, so both records stay linked through offline replay
         // and a retry can never create a second task for the same entry.
@@ -1299,6 +1501,22 @@ private struct PruningEntrySheet: View {
     private func saveEdit(_ original: PruningEntry) {
         var updated = original
         updated.date = date
+        // Editing a skipped record only ever changes its date, its section
+        // selection and its note — there is nothing else on it to change.
+        if original.isSkipped {
+            if PruningSeasonId.seasonYear(for: date) != PruningSeasonId.seasonYear(for: original.date) {
+                updated.seasonId = pruningStore.setup(for: paddock.id, on: date)?.id
+                    ?? PruningSeasonId.make(
+                        vineyardId: original.vineyardId,
+                        paddockId: original.paddockId,
+                        date: date
+                    )
+            }
+            updated.segments = segments
+            updated.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+            pruningStore.updateEntry(updated)
+            return
+        }
         // A date edit that crosses a pruning year re-points the entry at that
         // year's season — `update_pruning_entry` (sql/161) does exactly the
         // same server-side and returns the canonical id, which we adopt.

@@ -15,6 +15,16 @@ protocol PruningSyncRepositoryProtocol: Sendable {
     /// Transaction-safe edit through `update_pruning_entry` (sql/120) — the
     /// ONLY way an existing entry, its quarters and totals change.
     func updateEntry(_ params: UpdatePruningEntryParams) async throws -> UpdatePruningEntryResult
+    /// Marks rows or row sections OUT OF PRUNING ROTATION through
+    /// `record_skipped_pruning_entry` (sql/168). Same season resolution, same
+    /// segment claim, same idempotency on the client id — the record simply
+    /// has no worker, hours, cost or Work Task to give.
+    func recordSkippedEntry(_ params: RecordSkippedPruningEntryParams) async throws -> RecordPruningEntryResult
+    /// Edits the date or section selection of an existing skipped record
+    /// through `update_skipped_pruning_entry` (sql/168).
+    func updateSkippedEntry(_ params: UpdateSkippedPruningEntryParams) async throws -> UpdatePruningEntryResult
+    /// Reversal is the SAME path for both kinds of record — there is no
+    /// separate un-skip operation.
     func deleteEntry(id: UUID) async throws
     /// Creates a multi-block pruning ACTIVITY through `record_pruning_activity`
     /// (sql/166). Idempotent on the client activity id; a failed allocation
@@ -100,6 +110,22 @@ final class SupabasePruningSyncRepository: PruningSyncRepositoryProtocol {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         return try await provider.client
             .rpc("update_pruning_entry", params: params)
+            .execute()
+            .value
+    }
+
+    func recordSkippedEntry(_ params: RecordSkippedPruningEntryParams) async throws -> RecordPruningEntryResult {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        return try await provider.client
+            .rpc("record_skipped_pruning_entry", params: params)
+            .execute()
+            .value
+    }
+
+    func updateSkippedEntry(_ params: UpdateSkippedPruningEntryParams) async throws -> UpdatePruningEntryResult {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        return try await provider.client
+            .rpc("update_skipped_pruning_entry", params: params)
             .execute()
             .value
     }

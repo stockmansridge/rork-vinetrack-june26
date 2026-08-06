@@ -415,13 +415,22 @@ final class PruningSyncService {
                 }
                 guard entry.vineyardId == vineyardId else { continue }
                 do {
-                    let result = try await repository.recordEntry(
-                        RecordPruningEntryParams(from: entry, clientUpdatedAt: ts)
-                    )
+                    // A skipped record takes the sql/168 path, whose signature
+                    // has nowhere to put a worker, hours, a rate or a task — so
+                    // an out-of-rotation section can never reach the server
+                    // carrying labour, however the local draft was built.
+                    let result = entry.isSkipped
+                        ? try await repository.recordSkippedEntry(
+                            RecordSkippedPruningEntryParams(from: entry, clientUpdatedAt: ts)
+                          )
+                        : try await repository.recordEntry(
+                            RecordPruningEntryParams(from: entry, clientUpdatedAt: ts)
+                          )
                     adoptCanonicalSeason(for: entry, result: result)
                     entryMetadata.clearDirty([id])
                 } catch {
-                    print("[PruningSync] record_pruning_entry failed for entry \(id): \(error)")
+                    let rpc = entry.isSkipped ? "record_skipped_pruning_entry" : "record_pruning_entry"
+                    print("[PruningSync] \(rpc) failed for entry \(id): \(error)")
                     if firstError == nil { firstError = error }
                 }
             }
@@ -472,7 +481,13 @@ final class PruningSyncService {
             }
             guard entry.vineyardId == vineyardId else { continue }
             do {
-                let result = try await repository.updateEntry(UpdatePruningEntryParams(from: entry, clientUpdatedAt: ts))
+                let result = entry.isSkipped
+                    ? try await repository.updateSkippedEntry(
+                        UpdateSkippedPruningEntryParams(from: entry, clientUpdatedAt: ts)
+                      )
+                    : try await repository.updateEntry(
+                        UpdatePruningEntryParams(from: entry, clientUpdatedAt: ts)
+                      )
                 if result.error == "entry_not_found" {
                     // Ordered dependency: the entry create hasn't landed on the
                     // server yet — keep the edit queued and retry next sync.
