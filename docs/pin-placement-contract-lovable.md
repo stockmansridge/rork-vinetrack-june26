@@ -3,6 +3,12 @@
 Applies after `sql/171_pin_placement_contract.sql`. iOS and Android already
 follow this contract; the portal must adopt it verbatim.
 
+> **Important:** running SQL 171 alone does NOT change what the portal
+> displays. The portal computes "Unassigned location" in its own front-end
+> code from the base `pins` columns. Until the portal's queries are switched
+> to `pin_placements` / `pins_export`, it will keep showing the old, wrong
+> labels. See "Prompt to paste into Lovable" at the bottom.
+
 ## The bug this replaces
 
 The portal currently treats a pin as assigned only when
@@ -94,3 +100,67 @@ representative marker; no duplicated row number on the base row), block
 (`paddock_id` + block scope + marker). Do NOT "fix" anything by copying row
 values onto the base pins row — the read contract understands the structured
 model.
+
+## Prompt to paste into Lovable
+
+Copy the block below into Lovable verbatim:
+
+```text
+The database now provides a canonical, server-authoritative pin placement
+contract. Replace ALL pin location logic in the portal with it.
+
+1. Data source changes
+- Pins list / map / dashboard counts: stop selecting placement fields from
+  the base `pins` table. Query `public.pin_placements` instead (it has one
+  row per pin and respects RLS; filter `deleted_at IS NULL`). Join it to any
+  other pin data you need by `pin_id`.
+- Pin detail: you may call the RPC `resolve_pin_placement(p_pin_id uuid)`
+  which returns the same fields as JSON, or reuse the row already fetched
+  from `pin_placements`. Never call the RPC per pin in a list.
+- CSV / report exports: select from `public.pins_export`.
+
+2. Delete the old rule
+- Remove every rule equivalent to "assigned = paddock_id exists AND a row
+  number exists". Do not re-derive assignment client-side under any
+  circumstances.
+
+3. Render strictly from these fields
+- Block column: show `paddock_name` when present. When `location_scope` is
+  'point' and there is no block, show "Point location" (with coordinates on
+  hover/detail) — this is a VALID location, not a warning.
+- Row column: show `row_summary` when present (e.g. "Rows 2–4, 6",
+  "Row 5 (sections 1–2)"). For snapped point pins without segments, keep the
+  existing "On Row: … / Side: …" wording from `pin_row_number`,
+  `driving_row_number` (preserve decimals like 19.5) and `pin_side` — but
+  only show a side when `pin_side` is non-null; never invent one. Otherwise
+  show "—".
+- The amber "Unassigned location" badge/text may appear ONLY when
+  `location_warning_code = 'unassigned_location'`. The value
+  'location_metadata_incomplete' is informational at most — never amber.
+- Never hide a known block name because a row value is absent.
+- Use `is_location_assigned` for any "assigned/unassigned" filter or count.
+
+4. Do not change any write path. Do not copy row values onto the pins table.
+```
+
+## Verification query (Supabase SQL editor)
+
+Run this to see how the new contract classifies the pins the portal is
+currently flagging:
+
+```sql
+select pin_id, title, location_scope, is_location_assigned,
+       location_assignment_basis, paddock_name, row_summary,
+       round(latitude::numeric, 6) as lat, round(longitude::numeric, 6) as lng,
+       location_warning_code
+from public.pin_placements
+where deleted_at is null
+order by (location_warning_code = 'unassigned_location') desc, created_at desc
+limit 50;
+```
+
+Expected: pins the portal shows as "Unassigned location" but which have
+coordinates resolve to `location_scope = 'point'`,
+`is_location_assigned = true`, `location_warning_code = null`. Only pins
+with no coordinates, no block and no segments keep
+`location_warning_code = 'unassigned_location'`.
