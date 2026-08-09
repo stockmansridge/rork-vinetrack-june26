@@ -33,6 +33,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +62,7 @@ import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.main.OperationalToolCatalog
 import com.rork.vinetrack.ui.main.OperationalToolDefinition
 import com.rork.vinetrack.ui.theme.LocalVineColors
+import kotlin.math.roundToInt
 
 private val ROW_HEIGHT = 64.dp
 private val ROW_SPACING = 8.dp
@@ -152,6 +154,11 @@ fun CustomiseToolsScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(ROW_SPACING)) {
                     localVisible.forEach { toolId ->
                         val tool = OperationalToolCatalog.tool(toolId) ?: return@forEach
+                        // key(toolId) keeps each row's composable identity stable
+                        // across reorders — without it Compose re-associates rows by
+                        // position and the in-flight drag gesture is cancelled after
+                        // every single swap.
+                        key(toolId) {
                         val isDragging = draggingId == toolId
                         val rowStepPx = with(density) { (ROW_HEIGHT + ROW_SPACING).toPx() }
                         ToolRowCard(
@@ -192,7 +199,10 @@ fun CustomiseToolsScreen(
                                         .semantics {
                                             contentDescription = "Move tool, ${tool.title}"
                                         }
-                                        .pointerInput(localVisible, authorisedIds) {
+                                        // Keyed by the stable toolId only — keying on the
+                                        // list restarts (cancels) the gesture after each
+                                        // swap, limiting a drag to one row at a time.
+                                        .pointerInput(toolId) {
                                             detectDragGestures(
                                                 onDragStart = {
                                                     draggingId = toolId
@@ -213,7 +223,9 @@ fun CustomiseToolsScreen(
                                                     dragOffset += delta.y
                                                     val index = localVisible.indexOf(toolId)
                                                     if (index < 0) return@detectDragGestures
-                                                    val steps = (dragOffset / rowStepPx).toInt()
+                                                    // Round so rows swap at the midpoint for
+                                                    // a smooth continuous reorder feel.
+                                                    val steps = (dragOffset / rowStepPx).roundToInt()
                                                     if (steps == 0) return@detectDragGestures
                                                     val target = (index + steps)
                                                         .coerceIn(0, localVisible.lastIndex)
@@ -229,6 +241,7 @@ fun CustomiseToolsScreen(
                                 )
                             },
                         )
+                        }
                     }
                 }
             }
