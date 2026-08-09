@@ -143,6 +143,17 @@ androidComponents {
     }
 }
 
+// The AAB export pipeline invokes `testReleaseUnitTest` by name. With the
+// release unit-test variant disabled above, provide that task name as an alias
+// that runs the IDENTICAL pure-JVM test suite against the debug variant — same
+// bytecode, full coverage, and none of the release lint-model task chain that
+// broke the export machine.
+tasks.register("testReleaseUnitTest") {
+    group = "verification"
+    description = "Alias: runs the unit tests against the debug variant (release unit tests are disabled)."
+    dependsOn("testDebugUnitTest")
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
