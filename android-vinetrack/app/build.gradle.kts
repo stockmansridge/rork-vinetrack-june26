@@ -1,3 +1,4 @@
+import com.android.build.api.variant.HasUnitTestBuilder
 import java.util.Properties
 
 plugins {
@@ -127,6 +128,18 @@ android {
     lint {
         checkReleaseBuilds = false
         abortOnError = false
+    }
+}
+
+androidComponents {
+    // The unit tests are pure JVM and already run against the debug variant
+    // (identical bytecode) — building them AGAIN for release adds no coverage
+    // but drags `releaseUnitTestRuntimeClasspath` → `generateReleaseLintModel`
+    // → LintModelWriterTask into the AAB export, which fails on the export
+    // machine's constrained/cold lint classpath (missing VariantInputs class).
+    // Disabling release unit tests removes that whole task chain.
+    beforeVariants(selector().withBuildType("release")) { variantBuilder ->
+        (variantBuilder as HasUnitTestBuilder).enableUnitTest = false
     }
 }
 
