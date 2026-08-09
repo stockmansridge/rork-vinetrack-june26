@@ -537,7 +537,7 @@ private fun MethodStep(selectedMethod: String?, onSelect: (String) -> Unit) {
 /**
  * One enlarged location-choice control — full-width, min height
  * [UnifiedPinContract.METHOD_BUTTON_MIN_HEIGHT] (≈ double the original card),
- * with a clear burgundy selected state. Identical sizing on iOS.
+ * with a clear blue selected state. Identical sizing on iOS.
  */
 @Composable
 private fun MethodCard(
@@ -557,7 +557,7 @@ private fun MethodCard(
             .background(vine.cardBackground)
             .then(
                 if (selected) {
-                    Modifier.border(2.dp, VineColors.Burgundy, RoundedCornerShape(16.dp))
+                    Modifier.border(2.dp, VineColors.ActionBlue, RoundedCornerShape(16.dp))
                 } else {
                     Modifier
                 },
@@ -576,7 +576,7 @@ private fun MethodCard(
             Text(subtitle, fontSize = 13.sp, color = vine.textSecondary)
         }
         if (selected) {
-            Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = VineColors.Burgundy, modifier = Modifier.size(24.dp))
+            Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = VineColors.ActionBlue, modifier = Modifier.size(24.dp))
         } else {
             Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(20.dp))
         }

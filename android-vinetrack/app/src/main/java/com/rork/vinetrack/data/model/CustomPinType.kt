@@ -85,17 +85,17 @@ object UnifiedPinContract {
     const val QUICK_ACTION_TITLE = "Manual Pin / Repair / Observation"
 
     /** Quick Action supporting text — identical on every platform. */
-    const val QUICK_ACTION_SUBTITLE = "Drop a pin, select a row or select a block"
+    const val QUICK_ACTION_SUBTITLE = "Either by Pin, Row or Block"
 
     /**
-     * Shared semantic burgundy for the Quick Action card. iOS `VineyardTheme.burgundy`
-     * and Android `VineColors.Burgundy` are both defined from this exact value so the
+     * Shared semantic blue for the Quick Action card. iOS `VineyardTheme.actionBlue`
+     * and Android `VineColors.ActionBlue` are both defined from this exact value so the
      * platforms cannot drift. Saved Repair/Growth/Custom pin colours are unaffected.
      */
-    const val QUICK_ACTION_COLOR_HEX = "#800020"
+    const val QUICK_ACTION_COLOR_HEX = "#1565C0"
 
     /** Darker companion used only as the card gradient's second stop. */
-    const val QUICK_ACTION_COLOR_DARK_HEX = "#5C0017"
+    const val QUICK_ACTION_COLOR_DARK_HEX = "#0D47A1"
 
     /**
      * Minimum height (dp on Android, pt on iOS) of each of the three

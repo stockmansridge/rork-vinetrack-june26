@@ -14,9 +14,9 @@ the same.
 3. **Add one button** on the existing Pins / Repairs / Observations page:
    - Label: `Manual Pin / Repair / Observation` (EXACT wording — do not use
      the earlier "Add Pin / Action" label)
-   - Supporting text: `Drop a pin, select a row or select a block`
-   - Colour: the shared semantic burgundy `#800020` (gradient second stop
-     `#5C0017`). This applies to this button/card only — saved Repair,
+   - Supporting text: `Either by Pin, Row or Block`
+   - Colour: the shared semantic blue `#1565C0` (gradient second stop
+     `#0D47A1`). This applies to this button/card only — saved Repair,
      Growth and Custom pin colours are unchanged.
 4. That button opens the location-first workflow described below, then
    returns to the existing pins map/list after save. No separate Manual

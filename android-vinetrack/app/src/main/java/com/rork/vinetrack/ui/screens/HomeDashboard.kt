@@ -858,7 +858,7 @@ private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onA
             )
         }
         // Full-width unified pin Quick Action (sql/170) — opens the
-        // location-first composer (iOS parity). Burgundy identity from the
+        // location-first composer (iOS parity). Blue identity from the
         // shared contract (UnifiedPinContract.QUICK_ACTION_COLOR_HEX).
         Row(
             modifier = Modifier
@@ -867,7 +867,7 @@ private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onA
                 .clip(RoundedCornerShape(14.dp))
                 .background(
                     Brush.linearGradient(
-                        listOf(VineColors.Burgundy, VineColors.BurgundyDark),
+                        listOf(VineColors.ActionBlue, VineColors.ActionBlueDark),
                     ),
                 )
                 .clickable { onAddPinAction() }

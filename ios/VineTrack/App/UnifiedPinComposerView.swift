@@ -134,7 +134,7 @@ struct UnifiedPinComposerView: View {
 
     /// One enlarged location-choice control — full-width, min height
     /// `UnifiedPinContract.methodButtonMinHeight` (≈ double the original card),
-    /// with a clear burgundy selected state. Identical sizing on Android.
+    /// with a clear blue selected state. Identical sizing on Android.
     private func methodCard(title: String, subtitle: String, icon: String, color: Color, scope: String) -> some View {
         let isSelected = methodChosen && method == scope
         return Button {
@@ -169,7 +169,7 @@ struct UnifiedPinComposerView: View {
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.title3)
-                        .foregroundStyle(VineyardTheme.burgundy)
+                        .foregroundStyle(VineyardTheme.actionBlue)
                 } else {
                     Image(systemName: "chevron.right")
                         .font(.subheadline.weight(.semibold))
@@ -182,7 +182,7 @@ struct UnifiedPinComposerView: View {
             .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 16))
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
-                    .stroke(isSelected ? VineyardTheme.burgundy : Color.clear, lineWidth: 2)
+                    .stroke(isSelected ? VineyardTheme.actionBlue : Color.clear, lineWidth: 2)
             )
         }
         .buttonStyle(.plain)

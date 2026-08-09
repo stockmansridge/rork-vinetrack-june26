@@ -22,15 +22,15 @@ nonisolated enum UnifiedPinContract {
     static let quickActionTitle = "Manual Pin / Repair / Observation"
 
     /// Quick Action supporting text — identical on every platform.
-    static let quickActionSubtitle = "Drop a pin, select a row or select a block"
+    static let quickActionSubtitle = "Either by Pin, Row or Block"
 
-    /// Shared semantic burgundy for the Quick Action card. `VineyardTheme.burgundy`
-    /// (iOS) and `VineColors.Burgundy` (Android) are both defined from this exact
+    /// Shared semantic blue for the Quick Action card. `VineyardTheme.actionBlue`
+    /// (iOS) and `VineColors.ActionBlue` (Android) are both defined from this exact
     /// value so the platforms cannot drift. Saved pin colours are unaffected.
-    static let quickActionColorHex = "#800020"
+    static let quickActionColorHex = "#1565C0"
 
     /// Darker companion used only as the card gradient's second stop.
-    static let quickActionColorDarkHex = "#5C0017"
+    static let quickActionColorDarkHex = "#0D47A1"
 
     /// Minimum height (pt on iOS, dp on Android) of each of the three
     /// location-choice controls — approximately double the original ~64 card.

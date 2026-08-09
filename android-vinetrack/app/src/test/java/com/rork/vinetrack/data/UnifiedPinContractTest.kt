@@ -130,13 +130,13 @@ class UnifiedPinContractTest {
     @Test
     fun `quick action label is exactly Manual Pin Repair Observation`() {
         assertEquals("Manual Pin / Repair / Observation", UnifiedPinContract.QUICK_ACTION_TITLE)
-        assertEquals("Drop a pin, select a row or select a block", UnifiedPinContract.QUICK_ACTION_SUBTITLE)
+        assertEquals("Either by Pin, Row or Block", UnifiedPinContract.QUICK_ACTION_SUBTITLE)
     }
 
     @Test
-    fun `quick action uses the shared burgundy semantic colour`() {
-        assertEquals("#800020", UnifiedPinContract.QUICK_ACTION_COLOR_HEX)
-        assertEquals("#5C0017", UnifiedPinContract.QUICK_ACTION_COLOR_DARK_HEX)
+    fun `quick action uses the shared blue semantic colour`() {
+        assertEquals("#1565C0", UnifiedPinContract.QUICK_ACTION_COLOR_HEX)
+        assertEquals("#0D47A1", UnifiedPinContract.QUICK_ACTION_COLOR_DARK_HEX)
     }
 
     @Test

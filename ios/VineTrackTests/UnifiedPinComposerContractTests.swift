@@ -75,12 +75,12 @@ struct UnifiedPinComposerContractTests {
 
     @Test func quickActionLabelIsExactlyManualPinRepairObservation() {
         #expect(UnifiedPinContract.quickActionTitle == "Manual Pin / Repair / Observation")
-        #expect(UnifiedPinContract.quickActionSubtitle == "Drop a pin, select a row or select a block")
+        #expect(UnifiedPinContract.quickActionSubtitle == "Either by Pin, Row or Block")
     }
 
-    @Test func quickActionUsesTheSharedBurgundySemanticColour() {
-        #expect(UnifiedPinContract.quickActionColorHex == "#800020")
-        #expect(UnifiedPinContract.quickActionColorDarkHex == "#5C0017")
+    @Test func quickActionUsesTheSharedBlueSemanticColour() {
+        #expect(UnifiedPinContract.quickActionColorHex == "#1565C0")
+        #expect(UnifiedPinContract.quickActionColorDarkHex == "#0D47A1")
     }
 
     @Test func locationControlsUseTheEnlargedLayoutInCanonicalOrder() {

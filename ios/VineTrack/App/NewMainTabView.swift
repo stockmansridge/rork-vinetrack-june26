@@ -995,7 +995,7 @@ private struct NewHomeTabView: View {
 
             // Full-width unified pin Quick Action (sql/170): opens the
             // location-first "Manual Pin / Repair / Observation" composer.
-            // Burgundy identity from the shared contract
+            // Blue identity from the shared contract
             // (UnifiedPinContract.quickActionColorHex); after a save the
             // composer returns to the existing Pins tab.
             NavigationLink {
@@ -1026,13 +1026,13 @@ private struct NewHomeTabView: View {
                 .padding(.vertical, 4)
                 .background(
                     LinearGradient(
-                        colors: [VineyardTheme.burgundy, VineyardTheme.burgundyDark],
+                        colors: [VineyardTheme.actionBlue, VineyardTheme.actionBlueDark],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
                     in: .rect(cornerRadius: 14)
                 )
-                .shadow(color: VineyardTheme.burgundy.opacity(0.25), radius: 4, y: 2)
+                .shadow(color: VineyardTheme.actionBlue.opacity(0.25), radius: 4, y: 2)
             }
             .buttonStyle(.plain)
             .padding(.horizontal)
