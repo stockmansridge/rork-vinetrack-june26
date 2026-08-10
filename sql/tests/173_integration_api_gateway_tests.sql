@@ -102,23 +102,23 @@ begin
   perform public.integration_grant_scope(c_a, 'trips:read');
   perform public.integration_revoke_scope(c_a, 'trips:read');
 
-  j := public.integration_create_api_key(c_a, 'valid', 'live', null);
+  j := public.integration_create_api_key(c_a, 'live', 'valid', null);
   k_valid    := j->>'secret';
   k_valid_id := (j->>'api_key_id')::uuid;
 
-  j := public.integration_create_api_key(c_a, 'to-revoke', 'live', null);
+  j := public.integration_create_api_key(c_a, 'live', 'to-revoke', null);
   k_revoked := j->>'secret';
   perform public.integration_revoke_api_key(c_a, (j->>'api_key_id')::uuid);
 
-  j := public.integration_create_api_key(c_a, 'to-expire', 'test', now() + interval '1 hour');
+  j := public.integration_create_api_key(c_a, 'test', 'to-expire', now() + interval '1 hour');
   k_expired    := j->>'secret';
   k_expired_id := (j->>'api_key_id')::uuid;
 
-  j := public.integration_create_api_key(c_b, 'paused-client-key', 'live', null);
+  j := public.integration_create_api_key(c_b, 'live', 'paused-client-key', null);
   k_b := j->>'secret';
   perform public.integration_set_status(c_b, 'pause');
 
-  j := public.integration_create_api_key(c_c, 'revoked-client-key', 'live', null);
+  j := public.integration_create_api_key(c_c, 'live', 'revoked-client-key', null);
   k_c := j->>'secret';
   perform public.integration_set_status(c_c, 'revoke');
 
