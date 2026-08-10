@@ -42,6 +42,10 @@ else
     # Then configure the same value as the Authorization header in the
     # RevenueCat dashboard webhook settings.
     revenuecat-webhook
+    # Stage 3A — public read-only VineTrack API gateway (SQL 172/173).
+    # Deployed with --no-verify-jwt: callers present VineTrack API keys
+    # (Authorization: Bearer vt_live_...), not Supabase JWTs.
+    vinetrack-api
   )
 fi
 
@@ -67,12 +71,15 @@ for fn in "${FUNCTIONS[@]}"; do
     echo "Function source not found at supabase/functions/$fn" >&2
     exit 1
   fi
-  if [ "$fn" = "revenuecat-webhook" ]; then
-    # CRITICAL: RevenueCat sends a shared-secret Authorization header, NOT a
-    # Supabase JWT. With gateway JWT verification on, every delivery would be
-    # rejected with 401 before the function's own auth check runs. The
-    # function authenticates itself (constant-time secret compare, fails
-    # closed when REVENUECAT_WEBHOOK_SECRET is unset).
+  if [ "$fn" = "revenuecat-webhook" ] || [ "$fn" = "vinetrack-api" ]; then
+    # CRITICAL: these functions authenticate callers themselves and do NOT
+    # receive Supabase JWTs:
+    #   - revenuecat-webhook: shared-secret Authorization header
+    #     (constant-time compare, fails closed when secret unset).
+    #   - vinetrack-api: VineTrack API keys (Bearer vt_live_...) validated
+    #     against the SQL 172 integration foundation.
+    # With gateway JWT verification on, every request would be rejected
+    # with 401 before the function's own auth check runs.
     supabase functions deploy "$fn" --project-ref "$PROJECT_REF" --no-verify-jwt
   else
     supabase functions deploy "$fn" --project-ref "$PROJECT_REF"

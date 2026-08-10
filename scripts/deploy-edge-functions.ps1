@@ -31,7 +31,7 @@ param(
     #   supabase secrets set REVENUECAT_WEBHOOK_SECRET="<random long secret>" --project-ref tbafuqwruefgkbyxrxyb
     # Then configure the same value as the Authorization header in the
     # RevenueCat dashboard webhook settings.
-    [string[]]$Functions = @("davis-proxy", "willyweather-proxy", "open-meteo-proxy", "wunderground-proxy", "weather-current", "weather-nearby-stations", "chemical-info-lookup", "tractor-fuel-lookup", "send-invitation-email", "support-request", "test-resend-email", "test-invitation-email", "test-support-staff-email", "test-support-receipt-email", "test-notification-email", "revenuecat-webhook"),
+    [string[]]$Functions = @("davis-proxy", "willyweather-proxy", "open-meteo-proxy", "wunderground-proxy", "weather-current", "weather-nearby-stations", "chemical-info-lookup", "tractor-fuel-lookup", "send-invitation-email", "support-request", "test-resend-email", "test-invitation-email", "test-support-staff-email", "test-support-receipt-email", "test-notification-email", "revenuecat-webhook", "vinetrack-api"),
     [switch]$ListAfter = $true,
     [switch]$SkipVerify
 )
@@ -74,12 +74,15 @@ foreach ($fn in $Functions) {
         exit 1
     }
 
-    if ($fn -eq "revenuecat-webhook") {
-        # CRITICAL: RevenueCat sends a shared-secret Authorization header, NOT
-        # a Supabase JWT. With gateway JWT verification on, every delivery
-        # would be rejected with 401 before the function's own auth check
-        # runs. The function authenticates itself (constant-time secret
-        # compare, fails closed when REVENUECAT_WEBHOOK_SECRET is unset).
+    if ($fn -eq "revenuecat-webhook" -or $fn -eq "vinetrack-api") {
+        # CRITICAL: these functions authenticate callers themselves and do
+        # NOT receive Supabase JWTs:
+        #   - revenuecat-webhook: RevenueCat sends a shared-secret
+        #     Authorization header (constant-time compare, fails closed).
+        #   - vinetrack-api: external integrations send VineTrack API keys
+        #     (Authorization: Bearer vt_live_...) validated against SQL 172.
+        # With gateway JWT verification on, every request would be rejected
+        # with 401 before the function's own auth check runs.
         & supabase functions deploy $fn --project-ref $ProjectRef --no-verify-jwt
     } else {
         & supabase functions deploy $fn --project-ref $ProjectRef
