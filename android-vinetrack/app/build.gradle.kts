@@ -138,8 +138,13 @@ androidComponents {
     // → LintModelWriterTask into the AAB export, which fails on the export
     // machine's constrained/cold lint classpath (missing VariantInputs class).
     // Disabling release unit tests removes that whole task chain.
+    //
+    // Safe cast: any exception thrown inside this callback surfaces during
+    // AGP's afterEvaluate, where the export machine can't even load AGP's
+    // crash reporter (PluginCrashReporter) — producing a masked
+    // "Failed to notify project evaluation listener" configuration failure.
     beforeVariants(selector().withBuildType("release")) { variantBuilder ->
-        (variantBuilder as HasUnitTestBuilder).enableUnitTest = false
+        (variantBuilder as? HasUnitTestBuilder)?.enableUnitTest = false
     }
 }
 
@@ -148,10 +153,22 @@ androidComponents {
 // that runs the IDENTICAL pure-JVM test suite against the debug variant — same
 // bytecode, full coverage, and none of the release lint-model task chain that
 // broke the export machine.
-tasks.register("testReleaseUnitTest") {
-    group = "verification"
-    description = "Alias: runs the unit tests against the debug variant (release unit tests are disabled)."
-    dependsOn("testDebugUnitTest")
+//
+// Registered in afterEvaluate WITH an existence check: AGP creates its own
+// variant tasks during ITS afterEvaluate (which runs first because the plugin
+// is applied before this script body). An eager top-level register of the same
+// name collides with AGP's registration whenever the variant disabling above
+// does not apply, and that collision throws inside project evaluation — the
+// exact masked configuration failure seen on the AAB export machine.
+afterEvaluate {
+    if (tasks.findByName("testReleaseUnitTest") == null) {
+        tasks.register("testReleaseUnitTest") {
+            group = "verification"
+            description =
+                "Alias: runs the unit tests against the debug variant (release unit tests are disabled)."
+            dependsOn("testDebugUnitTest")
+        }
+    }
 }
 
 kotlin {
