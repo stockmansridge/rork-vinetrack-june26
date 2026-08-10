@@ -103,6 +103,13 @@ object UnifiedPinContract {
      */
     const val METHOD_BUTTON_MIN_HEIGHT = 128
 
+    /**
+     * Minimum height (dp on Android, pt on iOS) of the Repair/Growth/Custom
+     * type tiles in the composer — matches the large launcher buttons on the
+     * normal Repairs and Growth pages.
+     */
+    const val TYPE_BUTTON_MIN_HEIGHT = 100
+
     /** Location-choice titles in canonical order — identical on both platforms. */
     val METHOD_TITLES: List<String> = listOf("Drop a pin manually", "Select a row", "Select a block")
 

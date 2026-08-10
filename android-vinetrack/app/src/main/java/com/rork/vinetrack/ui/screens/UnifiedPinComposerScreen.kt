@@ -13,8 +13,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -23,6 +25,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -30,7 +33,12 @@ import androidx.compose.material.icons.filled.AddLocationAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TableRows
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -61,11 +69,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
+import com.google.maps.android.compose.CameraPositionState
 import com.google.maps.android.compose.GoogleMap
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapType
@@ -81,6 +95,7 @@ import com.rork.vinetrack.data.model.ManualIssueContract
 import com.rork.vinetrack.data.model.ManualIssueLatLng
 import com.rork.vinetrack.data.model.ManualIssueSegment
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.PaddockRow
 import com.rork.vinetrack.data.model.UnifiedPinContract
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -602,49 +617,54 @@ private fun LocationStep(
 ) {
     val vine = LocalVineColors.current
     val selectedPaddock = state.paddocks.firstOrNull { it.id == paddockId }
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
+    var fullScreenMap by remember { mutableStateOf(false) }
+    var rowFilter by remember { mutableStateOf("") }
+
+    // Shared camera start for the inline and full-screen maps.
+    val mapStart = tapped ?: state.paddocks.firstOrNull { !it.polygonPoints.isNullOrEmpty() }
+        ?.polygonPoints?.let { pts ->
+            ManualIssueContract.blockCentroid(pts.map { ManualIssueLatLng(it.latitude, it.longitude) })
+                ?.let { LatLng(it.latitude, it.longitude) }
+        }
+    val camera = rememberCameraPositionState {
+        position = CameraPosition.fromLatLngZoom(mapStart ?: LatLng(-34.9, 138.6), if (mapStart != null) 16f else 5f)
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
         Spacer(Modifier.height(2.dp))
         when (method) {
             UnifiedPinContract.SCOPE_POINT -> {
-                val start = tapped ?: state.paddocks.firstOrNull { !it.polygonPoints.isNullOrEmpty() }
-                    ?.polygonPoints?.let { pts ->
-                        ManualIssueContract.blockCentroid(pts.map { ManualIssueLatLng(it.latitude, it.longitude) })
-                            ?.let { LatLng(it.latitude, it.longitude) }
-                    }
-                val camera = rememberCameraPositionState {
-                    position = CameraPosition.fromLatLngZoom(start ?: LatLng(-34.9, 138.6), if (start != null) 16f else 5f)
-                }
-                GoogleMap(
-                    cameraPositionState = camera,
-                    properties = MapProperties(mapType = MapType.HYBRID),
-                    uiSettings = MapUiSettings(zoomControlsEnabled = false),
-                    onMapClick = { onTap(it) },
-                    modifier = Modifier.fillMaxWidth().height(320.dp).clip(RoundedCornerShape(12.dp)),
+                // The map lives OUTSIDE any scrollable container so it owns
+                // every pinch and drag — smooth continuous zoom/pan, exactly
+                // like the main vineyard map.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp)),
                 ) {
-                    tapped?.let { Marker(state = MarkerState(position = it)) }
+                    if (!fullScreenMap) {
+                        GoogleMap(
+                            cameraPositionState = camera,
+                            properties = MapProperties(mapType = MapType.HYBRID),
+                            uiSettings = MapUiSettings(zoomControlsEnabled = false),
+                            onMapClick = { onTap(it) },
+                            modifier = Modifier.matchParentSize(),
+                        ) {
+                            tapped?.let { Marker(state = MarkerState(position = it)) }
+                        }
+                    }
+                    ComposerMapIconButton(
+                        icon = Icons.Filled.Fullscreen,
+                        contentDescription = "Full-screen map",
+                        onClick = { fullScreenMap = true },
+                        modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
+                    )
                 }
+                Spacer(Modifier.height(8.dp))
                 // Canonical snapping preview — the same one-shot resolution the
                 // save uses, so the label always matches what gets stored.
-                tapped?.let { point ->
-                    val placement = PinPlacement.resolve(
-                        paddocks = state.paddocks,
-                        selectedPaddockId = null,
-                        latitude = point.latitude,
-                        longitude = point.longitude,
-                        side = null,
-                    )
-                    val block = state.paddocks.firstOrNull { it.id == placement.paddockId }
-                    val label = when {
-                        placement.snappedToRow && block != null ->
-                            "${block.name} · on row ${formatRow(placement.pinRowNumber)}"
-                        block != null -> "${block.name} · not attached to a row"
-                        else -> "Pin placed outside mapped blocks"
-                    }
-                    Text(label, fontSize = 12.sp, color = vine.textSecondary)
-                }
+                PlacementPreviewLabel(state = state, tapped = tapped)
             }
             UnifiedPinContract.SCOPE_ROW -> {
                 // Row-first: every mapped row in the vineyard is listed under
@@ -659,9 +679,25 @@ private fun LocationStep(
                     }
                     .filter { it.second.isNotEmpty() }
                     .sortedBy { it.first.name.lowercase() }
+                // Filtering never touches the selection — selected rows stay
+                // selected while the visible list narrows.
+                val filteredRowBlocks = filterRowBlocks(rowBlocks, rowFilter)
+                Column(
+                    modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                 if (rowBlocks.isEmpty()) {
                     Text(
                         "No mapped rows in this vineyard — use Select a block instead.",
+                        fontSize = 13.sp,
+                        color = vine.textSecondary,
+                    )
+                } else {
+                    RowSelectionFilterField(value = rowFilter, onValueChange = { rowFilter = it })
+                }
+                if (rowBlocks.isNotEmpty() && filteredRowBlocks.isEmpty()) {
+                    Text(
+                        "No blocks or rows match \u201c${rowFilter.trim()}\u201d.",
                         fontSize = 13.sp,
                         color = vine.textSecondary,
                     )
@@ -679,7 +715,7 @@ private fun LocationStep(
                         color = vine.textSecondary,
                     )
                 }
-                rowBlocks.forEach { (block, rows) ->
+                filteredRowBlocks.forEach { (block, rows) ->
                     val inBlock = block.id == paddockId
                     Text(
                         block.name,
@@ -728,73 +764,296 @@ private fun LocationStep(
                         }
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                }
             }
             else -> {
-                ComposerBlockDropdown(state.paddocks, paddockId, onPaddock)
-                if (selectedPaddock != null) {
-                    Text("The whole block will be flagged", fontSize = 12.sp, color = vine.textSecondary)
+                Column(
+                    modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Tap a block — the whole block will be flagged.",
+                        fontSize = 13.sp,
+                        color = vine.textSecondary,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    ComposerBlockList(paddocks = state.paddocks, paddockId = paddockId, onSelect = onPaddock)
+                    Spacer(Modifier.height(8.dp))
                 }
             }
         }
 
         validationMessage?.let {
-            Text(it, fontSize = 13.sp, color = VineColors.Destructive)
+            Text(it, fontSize = 13.sp, color = VineColors.Destructive, modifier = Modifier.padding(top = 6.dp))
         }
 
         Button(
             onClick = onContinue,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
         ) { Text("Continue") }
         Spacer(Modifier.height(16.dp))
     }
+
+    // Edge-to-edge map for precise placement: tap to move the pin while the
+    // placement label and Continue float on top, so the flow never leaves the
+    // map.
+    if (fullScreenMap) {
+        FullScreenPinMap(
+            state = state,
+            tapped = tapped,
+            onTap = onTap,
+            initialPosition = camera.position,
+            onSyncCamera = { camera.position = it },
+            validationMessage = validationMessage,
+            onContinue = onContinue,
+            onClose = { fullScreenMap = false },
+        )
+    }
 }
 
+/**
+ * Full-width tappable block cards — generous touch area with a clear
+ * checkmark on the selected block (replaces the old compact dropdown).
+ */
 @Composable
-private fun ComposerBlockDropdown(
+private fun ComposerBlockList(
     paddocks: List<Paddock>,
     paddockId: String?,
     onSelect: (String?) -> Unit,
 ) {
     val vine = LocalVineColors.current
-    var expanded by remember { mutableStateOf(false) }
-    val selected = paddocks.firstOrNull { it.id == paddockId }
-    Column {
+    if (paddocks.isEmpty()) {
+        Text("No blocks mapped in this vineyard yet.", fontSize = 13.sp, color = vine.textSecondary)
+        return
+    }
+    paddocks.sortedBy { it.name.lowercase() }.forEach { paddock ->
+        val selected = paddock.id == paddockId
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
+                .heightIn(min = 56.dp)
+                .clip(RoundedCornerShape(12.dp))
                 .background(vine.cardBackground)
-                .clickable { expanded = !expanded }
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .then(
+                    if (selected) {
+                        Modifier.border(2.dp, VineColors.LeafGreen, RoundedCornerShape(12.dp))
+                    } else {
+                        Modifier
+                    },
+                )
+                .clickable { onSelect(paddock.id) }
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                selected?.name ?: "Select a block",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = if (selected != null) vine.textPrimary else vine.textSecondary,
+                paddock.name,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textPrimary,
                 modifier = Modifier.weight(1f),
             )
-            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(16.dp))
+            if (selected) {
+                Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = VineColors.LeafGreen, modifier = Modifier.size(22.dp))
+            }
         }
-        if (expanded) {
-            paddocks.forEach { paddock ->
-                Row(
+    }
+}
+
+/**
+ * Row-filter matching: a block-name substring match keeps the whole block;
+ * otherwise only rows whose number starts with the query stay visible.
+ * Filtering only narrows what is VISIBLE — the selection is untouched.
+ */
+private fun filterRowBlocks(
+    rowBlocks: List<Pair<Paddock, List<PaddockRow>>>,
+    filter: String,
+): List<Pair<Paddock, List<PaddockRow>>> {
+    val query = filter.trim()
+    if (query.isEmpty()) return rowBlocks
+    return rowBlocks.mapNotNull { (block, rows) ->
+        if (block.name.contains(query, ignoreCase = true)) {
+            block to rows
+        } else {
+            val matching = rows.filter { it.number.toString().startsWith(query) }
+            if (matching.isNotEmpty()) block to matching else null
+        }
+    }
+}
+
+/** Compact one-line filter above the row selector (block name or row number). */
+@Composable
+private fun RowSelectionFilterField(value: String, onValueChange: (String) -> Unit) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(vine.cardBackground)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(Icons.Filled.Search, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(16.dp))
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = TextStyle(fontSize = 14.sp, color = vine.textPrimary),
+            cursorBrush = SolidColor(VineColors.Primary),
+            modifier = Modifier.weight(1f).padding(vertical = 10.dp),
+            decorationBox = { inner ->
+                Box {
+                    if (value.isEmpty()) {
+                        Text("Filter by block or row number", fontSize = 14.sp, color = vine.textSecondary)
+                    }
+                    inner()
+                }
+            },
+        )
+        if (value.isNotEmpty()) {
+            Icon(
+                Icons.Filled.Close,
+                contentDescription = "Clear filter",
+                tint = vine.textSecondary,
+                modifier = Modifier
+                    .size(18.dp)
+                    .clickable { onValueChange("") },
+            )
+        }
+    }
+}
+
+/** Small translucent icon button floated over a map. */
+@Composable
+private fun ComposerMapIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = contentDescription, tint = Color.White, modifier = Modifier.size(22.dp))
+    }
+}
+
+/**
+ * Canonical snapping preview — the same one-shot resolution the save uses,
+ * so the label always matches what gets stored.
+ */
+@Composable
+private fun PlacementPreviewLabel(state: AppUiState, tapped: LatLng?, onDark: Boolean = false) {
+    val vine = LocalVineColors.current
+    val color = if (onDark) Color.White.copy(alpha = 0.92f) else vine.textSecondary
+    if (tapped == null) {
+        Text("Tap the map to place the pin", fontSize = if (onDark) 13.sp else 12.sp, color = color)
+        return
+    }
+    val placement = PinPlacement.resolve(
+        paddocks = state.paddocks,
+        selectedPaddockId = null,
+        latitude = tapped.latitude,
+        longitude = tapped.longitude,
+        side = null,
+    )
+    val block = state.paddocks.firstOrNull { it.id == placement.paddockId }
+    val label = when {
+        placement.snappedToRow && block != null ->
+            "${block.name} · on row ${formatRow(placement.pinRowNumber)}"
+        block != null -> "${block.name} · not attached to a row"
+        else -> "Pin placed outside mapped blocks"
+    }
+    Text(
+        label,
+        fontSize = if (onDark) 13.sp else 12.sp,
+        fontWeight = if (onDark) FontWeight.Medium else FontWeight.Normal,
+        color = color,
+    )
+}
+
+/**
+ * Edge-to-edge pin-drop map for precise placement. Zoom is uncapped (with
+ * zoom controls for fine steps); the canonical placement label and the
+ * Continue button float on top so the user can drop the pin and proceed
+ * without leaving the map. Closing syncs the camera back to the inline map.
+ */
+@Composable
+private fun FullScreenPinMap(
+    state: AppUiState,
+    tapped: LatLng?,
+    onTap: (LatLng) -> Unit,
+    initialPosition: CameraPosition,
+    onSyncCamera: (CameraPosition) -> Unit,
+    validationMessage: String?,
+    onContinue: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val fullCamera = remember { CameraPositionState(position = initialPosition) }
+    val close = {
+        onSyncCamera(fullCamera.position)
+        onClose()
+    }
+    Dialog(
+        onDismissRequest = close,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+            GoogleMap(
+                cameraPositionState = fullCamera,
+                properties = MapProperties(mapType = MapType.HYBRID),
+                uiSettings = MapUiSettings(zoomControlsEnabled = true),
+                onMapClick = onTap,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                tapped?.let { Marker(state = MarkerState(position = it)) }
+            }
+            ComposerMapIconButton(
+                icon = Icons.Filled.FullscreenExit,
+                contentDescription = "Exit full-screen map",
+                onClick = close,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(12.dp),
+            )
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
-                            onSelect(paddock.id)
-                            expanded = false
-                        }
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text(paddock.name, fontSize = 14.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
-                    if (paddock.id == paddockId) {
-                        Icon(Icons.Filled.Check, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(16.dp))
+                    PlacementPreviewLabel(state = state, tapped = tapped, onDark = true)
+                    validationMessage?.let {
+                        Text(it, fontSize = 13.sp, color = Color(0xFFFF8A80))
                     }
                 }
+                Button(
+                    onClick = {
+                        onSyncCamera(fullCamera.position)
+                        onContinue()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
+                ) { Text("Continue") }
             }
         }
     }
@@ -937,7 +1196,7 @@ private fun StandardButtonsPage(
                 val stageSelection = selection as? ComposerTypeSelection.GrowthStageSel
                 Column(
                     modifier = Modifier
-                        .heightIn(min = 74.dp)
+                        .heightIn(min = UnifiedPinContract.TYPE_BUTTON_MIN_HEIGHT.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .background(launcherColor(UnifiedPinContract.GROWTH_STAGE_PIN_COLOR))
                         .clickable(onClick = onGrowthStage)
@@ -946,13 +1205,18 @@ private fun StandardButtonsPage(
                     verticalArrangement = Arrangement.Center,
                 ) {
                     if (stageSelection != null) {
-                        Icon(Icons.Filled.Check, contentDescription = "Selected", tint = Color.White, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = Color.White, modifier = Modifier.size(22.dp))
+                    } else {
+                        Icon(Icons.Filled.LocationOn, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
                     }
+                    Spacer(Modifier.height(4.dp))
                     Text(
                         UnifiedPinContract.GROWTH_STAGE_BUTTON,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Black,
                         color = Color.White,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        maxLines = 2,
                     )
                     Text(
                         stageSelection?.stage?.let { "EL ${it.code}" } ?: "Pick the E-L stage",
@@ -968,7 +1232,7 @@ private fun StandardButtonsPage(
             val tileColor = launcherColor(button.colorToken ?: "")
             Column(
                 modifier = Modifier
-                    .heightIn(min = 74.dp)
+                    .heightIn(min = UnifiedPinContract.TYPE_BUTTON_MIN_HEIGHT.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(tileColor)
                     .clickable { onSelect(ComposerTypeSelection.Standard(button.name, button.colorToken, mode)) }
@@ -977,13 +1241,18 @@ private fun StandardButtonsPage(
                 verticalArrangement = Arrangement.Center,
             ) {
                 if (isSelected) {
-                    Icon(Icons.Filled.Check, contentDescription = "Selected", tint = Color.White, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Filled.CheckCircle, contentDescription = "Selected", tint = Color.White, modifier = Modifier.size(22.dp))
+                } else {
+                    Icon(Icons.Filled.LocationOn, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
                 }
+                Spacer(Modifier.height(4.dp))
                 Text(
                     button.name,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Black,
                     color = Color.White,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    maxLines = 2,
                 )
             }
         }

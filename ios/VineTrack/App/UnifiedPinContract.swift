@@ -36,6 +36,11 @@ nonisolated enum UnifiedPinContract {
     /// location-choice controls — approximately double the original ~64 card.
     static let methodButtonMinHeight: CGFloat = 128
 
+    /// Minimum height (pt on iOS, dp on Android) of the Repair/Growth/Custom
+    /// type tiles in the composer — matches the large launcher buttons on the
+    /// normal Repairs and Growth pages.
+    static let typeButtonMinHeight: CGFloat = 100
+
     /// Location-choice titles in canonical order — identical on both platforms.
     static let methodTitles: [String] = ["Drop a pin manually", "Select a row", "Select a block"]
 

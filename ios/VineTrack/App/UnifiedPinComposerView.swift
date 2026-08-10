@@ -52,6 +52,10 @@ struct UnifiedPinComposerView: View {
     @State private var validationMessage: String?
     @State private var isSaving = false
 
+    // Full-screen pin-drop map (point method) and the row-selector filter.
+    @State private var showFullMap = false
+    @State private var rowFilter = ""
+
     private var selectedPaddock: Paddock? {
         store.paddocks.first { $0.id == selectedPaddockId }
     }
@@ -191,28 +195,41 @@ struct UnifiedPinComposerView: View {
     // MARK: - Step 2: location
 
     private var locationStep: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                switch method {
-                case UnifiedPinContract.scopeRow:
-                    rowGrid
-                case UnifiedPinContract.scopeBlock:
-                    blockPicker
-                    if selectedPaddock != nil {
-                        Label("The whole block will be flagged", systemImage: "square.dashed")
+        VStack(spacing: 0) {
+            switch method {
+            case UnifiedPinContract.scopeRow:
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        rowGrid
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                }
+            case UnifiedPinContract.scopeBlock:
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Tap a block \u{2014} the whole block will be flagged.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                        blockPicker
                     }
-                default:
-                    pointPicker
+                    .padding(.horizontal)
+                    .padding(.top, 16)
                 }
+            default:
+                // The map lives OUTSIDE any scroll view so it owns every
+                // pinch and drag — smooth continuous zoom/pan.
+                pointPicker
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+            }
 
+            VStack(spacing: 8) {
                 if let validationMessage {
                     Text(validationMessage)
                         .font(.footnote)
                         .foregroundStyle(.red)
                 }
-
                 Button {
                     continueFromLocation()
                 } label: {
@@ -224,15 +241,18 @@ struct UnifiedPinComposerView: View {
                         .background(VineyardTheme.primary, in: .rect(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
-                .padding(.top, 4)
             }
             .padding(.horizontal)
             .padding(.top, 8)
+            .padding(.bottom, 10)
         }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button("Back") { step = .method }
             }
+        }
+        .fullScreenCover(isPresented: $showFullMap) {
+            fullScreenMapView
         }
     }
 
@@ -261,9 +281,6 @@ struct UnifiedPinComposerView: View {
 
     private var pointPicker: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Tap the map to place the pin")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
             MapReader { proxy in
                 Map(initialPosition: .region(initialRegion)) {
                     if let tappedCoordinate {
@@ -275,8 +292,6 @@ struct UnifiedPinComposerView: View {
                     }
                 }
                 .mapStyle(.hybrid)
-                .frame(height: 320)
-                .clipShape(.rect(cornerRadius: 10))
                 .onTapGesture { position in
                     if let coordinate = proxy.convert(position, from: .local) {
                         tappedCoordinate = coordinate
@@ -284,25 +299,149 @@ struct UnifiedPinComposerView: View {
                     }
                 }
             }
-            // Canonical snapping preview — the same resolution the save uses.
-            if let tappedCoordinate {
-                let attachment = resolvedAttachment(for: tappedCoordinate)
-                let block = RowGuidance.paddock(for: tappedCoordinate, in: store.paddocks)
-                if let block, attachment.snappedToRow, let row = attachment.pinRowNumber {
-                    Label("\(block.name) · on row \(row)", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else if let block {
-                    Label("\(block.name) · not attached to a row", systemImage: "mappin")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Label("Pin placed outside mapped blocks", systemImage: "mappin")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipShape(.rect(cornerRadius: 10))
+            .overlay(alignment: .topTrailing) {
+                mapExpandButton
+            }
+            placementPreviewLabel(onDark: false)
+        }
+    }
+
+    /// Expand control floated over the inline map's corner.
+    private var mapExpandButton: some View {
+        Button {
+            showFullMap = true
+        } label: {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 40, height: 40)
+                .background(.black.opacity(0.55), in: .rect(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .padding(10)
+        .accessibilityLabel("Full-screen map")
+    }
+
+    /// Canonical snapping preview — the same resolution the save uses, so
+    /// the label always matches what gets stored.
+    @ViewBuilder
+    private func placementPreviewLabel(onDark: Bool) -> some View {
+        let tint: Color = onDark ? .white.opacity(0.92) : Color.secondary
+        if let tappedCoordinate {
+            let attachment = resolvedAttachment(for: tappedCoordinate)
+            let block = RowGuidance.paddock(for: tappedCoordinate, in: store.paddocks)
+            if let block, attachment.snappedToRow, let row = attachment.pinRowNumber {
+                Label("\(block.name) · on row \(row)", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    .font(.footnote)
+                    .foregroundStyle(tint)
+            } else if let block {
+                Label("\(block.name) · not attached to a row", systemImage: "mappin")
+                    .font(.footnote)
+                    .foregroundStyle(tint)
+            } else {
+                Label("Pin placed outside mapped blocks", systemImage: "mappin")
+                    .font(.footnote)
+                    .foregroundStyle(tint)
+            }
+        } else {
+            Label("Tap the map to place the pin", systemImage: "hand.tap")
+                .font(.footnote)
+                .foregroundStyle(tint)
+        }
+    }
+
+    /// Edge-to-edge pin-drop map: over-zoom past the normal framing (the
+    /// imagery softens rather than disappearing), tap to move the pin, and
+    /// the placement label + Continue float on top so the flow never leaves
+    /// the map.
+    private var fullScreenMapView: some View {
+        ZStack {
+            MapReader { proxy in
+                // Over-zoom: a tiny minimum camera distance lets the user zoom
+                // well past the normal framing — the imagery upsamples (softens)
+                // rather than disappearing.
+                Map(initialPosition: .region(fullScreenRegion), bounds: MapCameraBounds(minimumDistance: 10)) {
+                    if let tappedCoordinate {
+                        Annotation("", coordinate: tappedCoordinate) {
+                            Image(systemName: "mappin.circle.fill")
+                                .font(.title2)
+                                .foregroundStyle(.white, VineyardTheme.primary)
+                        }
+                    }
+                }
+                .mapStyle(.hybrid)
+                .onTapGesture { position in
+                    if let coordinate = proxy.convert(position, from: .local) {
+                        tappedCoordinate = coordinate
+                        validationMessage = nil
+                    }
+                }
+                .ignoresSafeArea()
+            }
+
+            VStack {
+                HStack {
+                    Spacer()
+                    Button {
+                        showFullMap = false
+                    } label: {
+                        Image(systemName: "arrow.down.right.and.arrow.up.left")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .background(.black.opacity(0.55), in: .rect(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Exit full-screen map")
+                }
+
+                Spacer()
+
+                VStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        placementPreviewLabel(onDark: true)
+                        if let validationMessage {
+                            Text(validationMessage)
+                                .font(.footnote)
+                                .foregroundStyle(Color(red: 1.0, green: 0.54, blue: 0.5))
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(.black.opacity(0.55), in: .rect(cornerRadius: 12))
+
+                    Button {
+                        continueFromLocation()
+                        if step == .type { showFullMap = false }
+                    } label: {
+                        Text("Continue")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(VineyardTheme.primary, in: .rect(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         }
+    }
+
+    /// Full-screen map framing: tightly on the dropped pin when one exists,
+    /// otherwise the same start region as the inline map.
+    private var fullScreenRegion: MKCoordinateRegion {
+        if let tappedCoordinate {
+            return MKCoordinateRegion(
+                center: tappedCoordinate,
+                span: MKCoordinateSpan(latitudeDelta: 0.0015, longitudeDelta: 0.0015)
+            )
+        }
+        return initialRegion
     }
 
     private var initialRegion: MKCoordinateRegion {
@@ -324,17 +463,45 @@ struct UnifiedPinComposerView: View {
         )
     }
 
+    /// Full-width tappable block cards — generous touch area with a clear
+    /// checkmark on the selected block (replaces the old compact menu).
+    @ViewBuilder
     private var blockPicker: some View {
-        Picker("Block", selection: $selectedPaddockId) {
-            Text("Select a block").tag(UUID?.none)
-            ForEach(store.paddocks) { paddock in
-                Text(paddock.name).tag(UUID?.some(paddock.id))
+        let paddocks = store.paddocks.sorted { $0.name.lowercased() < $1.name.lowercased() }
+        if paddocks.isEmpty {
+            Text("No blocks mapped in this vineyard yet.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(paddocks) { paddock in
+                let isSelected = paddock.id == selectedPaddockId
+                Button {
+                    selectedPaddockId = paddock.id
+                    selectedSegments = []
+                    validationMessage = nil
+                } label: {
+                    HStack {
+                        Text(paddock.name)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        if isSelected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(VineyardTheme.leafGreen)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                    .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(isSelected ? VineyardTheme.leafGreen : Color.clear, lineWidth: 2)
+                    )
+                }
+                .buttonStyle(.plain)
             }
-        }
-        .pickerStyle(.menu)
-        .onChange(of: selectedPaddockId) { _, _ in
-            selectedSegments = []
-            validationMessage = nil
         }
     }
 
@@ -382,6 +549,9 @@ struct UnifiedPinComposerView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         } else {
+            // Compact one-line filter — narrows what is VISIBLE only; the
+            // selection is untouched while filtering.
+            rowFilterField
             if !selectedSegments.isEmpty, let selectedPaddock {
                 Text(ManualIssueContract.rowSelectionSummary(Array(selectedSegments)))
                     .font(.footnote.weight(.medium))
@@ -390,10 +560,63 @@ struct UnifiedPinComposerView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            ForEach(blocks) { entry in
+            let filtered = filteredRowBlocks(blocks)
+            if filtered.isEmpty {
+                Text("No blocks or rows match \u{201c}\(rowFilter.trimmingCharacters(in: .whitespaces))\u{201d}.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(filtered) { entry in
                 blockRowSection(entry)
             }
         }
+    }
+
+    /// Compact one-line filter above the row selector (block name or row number).
+    private var rowFilterField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            TextField("Filter by block or row number", text: $rowFilter)
+                .font(.subheadline)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            if !rowFilter.isEmpty {
+                Button {
+                    rowFilter = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear filter")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 10))
+    }
+
+    /// Row-filter matching: a block-name substring match keeps the whole
+    /// block; otherwise only rows whose number starts with the query stay
+    /// visible. Mirrors the Android composer exactly.
+    private func filteredRowBlocks(_ blocks: [RowBlockEntry]) -> [RowBlockEntry] {
+        let query = rowFilter.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return blocks }
+        var result: [RowBlockEntry] = []
+        for entry in blocks {
+            if entry.paddock.name.localizedCaseInsensitiveContains(query) {
+                result.append(entry)
+            } else {
+                let rows = entry.rows.filter { String($0.number).hasPrefix(query) }
+                if !rows.isEmpty {
+                    result.append(RowBlockEntry(paddock: entry.paddock, rows: rows))
+                }
+            }
+        }
+        return result
     }
 
     @ViewBuilder
@@ -550,6 +773,9 @@ struct UnifiedPinComposerView: View {
                 if selectedGrowthStage != nil {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.title3)
+                } else {
+                    Image(systemName: "mappin.and.ellipse")
+                        .font(.title3.weight(.semibold))
                 }
                 Text(UnifiedPinContract.growthStageButton)
                     .font(.headline.weight(.heavy))
@@ -561,7 +787,7 @@ struct UnifiedPinComposerView: View {
                     .opacity(0.9)
             }
             .foregroundStyle(.white)
-            .frame(maxWidth: .infinity, minHeight: 74)
+            .frame(maxWidth: .infinity, minHeight: UnifiedPinContract.typeButtonMinHeight)
             .background(
                 LinearGradient(
                     colors: [
@@ -599,6 +825,9 @@ struct UnifiedPinComposerView: View {
                             if isSelected {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.title3)
+                            } else {
+                                Image(systemName: "mappin.and.ellipse")
+                                    .font(.title3.weight(.semibold))
                             }
                             Text(button.name)
                                 .font(.headline.weight(.heavy))
@@ -607,7 +836,7 @@ struct UnifiedPinComposerView: View {
                                 .minimumScaleFactor(0.7)
                         }
                         .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity, minHeight: 74)
+                        .frame(maxWidth: .infinity, minHeight: UnifiedPinContract.typeButtonMinHeight)
                         .background(
                             LinearGradient(
                                 colors: [Color.fromString(button.color), Color.fromString(button.color).opacity(0.82)],
