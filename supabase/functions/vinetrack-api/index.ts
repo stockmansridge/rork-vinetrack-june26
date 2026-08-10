@@ -1,6 +1,6 @@
 // Supabase Edge Function: vinetrack-api
 //
-// VineTrack public read-only API gateway — Stage 3A + Stage 3B.
+// VineTrack public read-only API gateway — Stage 3A + Stage 3B + Stage 3C.
 //
 // Routes (versioned; the route version is authoritative):
 //   GET /v1/me
@@ -18,6 +18,18 @@
 //   GET /v1/fuel-purchases/{fuel_purchase_id}                           (3B)
 //   GET /v1/equipment?vineyard_id=<uuid>[&type=]                        (3B)
 //   GET /v1/equipment/{equipment_id}                                    (3B)
+//   GET /v1/work-tasks?vineyard_id=<uuid>[&from=&to=&status=&task_type=&block_id=]   (3C)
+//   GET /v1/work-tasks/{work_task_id}                                                (3C)
+//   GET /v1/pruning?vineyard_id=<uuid>[&from=&to=&block_id=]                         (3C)
+//   GET /v1/pruning/{pruning_activity_id}                                            (3C)
+//   GET /v1/irrigation-records?vineyard_id=<uuid>[&from=&to=&status=&block_id=]      (3C)
+//   GET /v1/irrigation-records/{irrigation_record_id}                                (3C)
+//   GET /v1/growth-stages?vineyard_id=<uuid>[&from=&to=&block_id=&stage_code=]       (3C)
+//   GET /v1/growth-stages/{growth_stage_id}                                          (3C)
+//   GET /v1/yield-records?vineyard_id=<uuid>[&from=&to=&vintage=]                    (3C)
+//   GET /v1/yield-records/{yield_record_id}                                          (3C)
+//   GET /v1/pins?vineyard_id=<uuid>[&block_id=&status=&category=&type=]              (3C)
+//   GET /v1/pins/{pin_id}                                                            (3C)
 //
 // Authentication:  Authorization: Bearer vt_live_... / vt_test_...
 //   - Supabase JWTs are NOT accepted as integration credentials.
@@ -227,6 +239,18 @@ function num(v: unknown): number | null {
 
 function round3(v: number): number {
   return Math.round(v * 1000) / 1000;
+}
+
+function round4(v: number): number {
+  return Math.round(v * 10000) / 10000;
+}
+
+/** Optional plain-text equality filter value (bounded, applied via .eq). */
+function textParam(url: URL, name: string): string | null {
+  const raw = url.searchParams.get(name);
+  if (raw === null) return null;
+  if (raw.length < 1 || raw.length > 100) throw new ApiError("invalid_request");
+  return raw;
 }
 
 // ---------------------------------------------------------------------------
@@ -1641,6 +1665,1196 @@ async function handleEquipmentGet(
 }
 
 // ---------------------------------------------------------------------------
+// Stage 3C shared helpers
+// ---------------------------------------------------------------------------
+
+/** Cap for id-list sub-filters resolved through child/join tables. */
+const SUBFILTER_MAX_IDS = 5000;
+
+/** Batch block-name lookup restricted to the validated vineyard. */
+async function loadBlockNames(
+  db: SupabaseClient, vineyardId: string, ids: string[],
+): Promise<Map<string, string>> {
+  const unique = [...new Set(ids)].filter((id) => UUID_RE.test(id));
+  if (unique.length === 0) return new Map();
+  const { data, error } = await db.from("paddocks")
+    .select("id, name")
+    .eq("vineyard_id", vineyardId)
+    .in("id", unique);
+  if (error) {
+    console.error("[vinetrack-api] block name lookup failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  return new Map((data ?? []).map((p: { id: string; name: string }) => [p.id, p.name]));
+}
+
+/** Validated optional block_id filter parameter. */
+function blockIdParam(url: URL): string | null {
+  const raw = url.searchParams.get("block_id");
+  if (raw === null) return null;
+  if (!UUID_RE.test(raw)) throw new ApiError("invalid_request");
+  return raw;
+}
+
+// ---------------------------------------------------------------------------
+// Work tasks (public.work_tasks, sql/014 + 050 additive columns; children
+// work_task_paddocks sql/051, work_task_labour_lines sql/050,
+// work_task_machine_lines sql/103; linked GPS trips via trips.work_task_id
+// sql/102).
+//
+// There is no canonical title column — task_type is the task's label.
+// Labour lines carry worker TYPE/counts (not identity), so they are
+// operational; hourly_rate/total_cost require costs:read. Machine lines'
+// operator_user_id requires labour:read; their monetary fields require
+// costs:read.
+// ---------------------------------------------------------------------------
+interface WorkTaskRow {
+  id: string; vineyard_id: string;
+  task_type: string; status: string | null;
+  date: string; start_date: string | null; end_date: string | null;
+  duration_hours: number | null; area_ha: number | null;
+  paddock_id: string | null; paddock_name: string;
+  description: string | null; notes: string;
+  is_archived: boolean; is_finalized: boolean;
+  created_at: string; updated_at: string;
+}
+
+const WORK_TASK_COLUMNS =
+  "id, vineyard_id, task_type, status, date, start_date, end_date, duration_hours, area_ha, " +
+  "paddock_id, paddock_name, description, notes, is_archived, is_finalized, created_at, updated_at";
+
+interface TaskBlockLink { work_task_id: string; paddock_id: string }
+
+/** Blocks per task: work_task_paddocks joins, legacy paddock_id fallback. */
+async function loadWorkTaskBlocks(
+  db: SupabaseClient, vineyardId: string, tasks: WorkTaskRow[],
+): Promise<Map<string, { id: string; name: string | null }[]>> {
+  const result = new Map<string, { id: string; name: string | null }[]>();
+  if (tasks.length === 0) return result;
+  const { data, error } = await db.from("work_task_paddocks")
+    .select("work_task_id, paddock_id")
+    .in("work_task_id", tasks.map((t) => t.id))
+    .is("deleted_at", null);
+  if (error) {
+    console.error("[vinetrack-api] work task paddocks lookup failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  const links = (data ?? []) as TaskBlockLink[];
+  const allBlockIds = links.map((l) => l.paddock_id);
+  for (const t of tasks) if (t.paddock_id) allBlockIds.push(t.paddock_id);
+  const names = await loadBlockNames(db, vineyardId, allBlockIds);
+  for (const l of links) {
+    const list = result.get(l.work_task_id) ?? [];
+    if (!list.some((b) => b.id === l.paddock_id)) {
+      list.push({ id: l.paddock_id, name: names.get(l.paddock_id) ?? null });
+    }
+    result.set(l.work_task_id, list);
+  }
+  // Legacy single-block tasks: fall back to the parent columns.
+  for (const t of tasks) {
+    if ((result.get(t.id)?.length ?? 0) === 0 && t.paddock_id) {
+      result.set(t.id, [{
+        id: t.paddock_id,
+        name: names.get(t.paddock_id) ?? (t.paddock_name.trim() || null),
+      }]);
+    }
+  }
+  return result;
+}
+
+function mapWorkTask(row: WorkTaskRow, blocks: { id: string; name: string | null }[]) {
+  return {
+    id: row.id,
+    vineyard_id: row.vineyard_id,
+    task_type: row.task_type.trim() || null,
+    status: row.status ?? null,
+    date: row.date,
+    start_date: row.start_date ?? null,
+    end_date: row.end_date ?? null,
+    duration_hours: row.duration_hours ?? null,
+    area_ha: row.area_ha ?? null,
+    blocks,
+    description: row.description ?? null,
+    notes: row.notes.trim() || null,
+    is_archived: row.is_archived,
+    is_finalized: row.is_finalized,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+interface LabourLineRow {
+  work_date: string; worker_type: string; worker_count: number;
+  hours_per_worker: number; total_hours: number;
+  hourly_rate: number | null; total_cost: number; notes: string;
+}
+
+interface MachineLineRow {
+  work_date: string; equipment_source: string | null; equipment_ref_id: string | null;
+  equipment_name_snapshot: string; operator_user_id: string | null;
+  duration_hours: number | null; start_time: string | null; end_time: string | null;
+  start_engine_hours: number | null; end_engine_hours: number | null;
+  engine_hours_used: number | null; fuel_litres: number | null;
+  fuel_cost: number | null; hourly_machine_rate: number | null;
+  total_machine_cost: number | null; entry_source: string; notes: string;
+}
+
+/** Resolve a machine line's equipment link to the canonical machine id. */
+function resolveLineEquipment(idx: MachineIndex, line: MachineLineRow): MachineRow | null {
+  if (!line.equipment_ref_id) return null;
+  if (line.equipment_source === "vineyard_machine") return idx.byId.get(line.equipment_ref_id) ?? null;
+  if (line.equipment_source === "tractor") return idx.byLegacyTractorId.get(line.equipment_ref_id) ?? null;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Pruning (public.pruning_activities, sql/166 — the parent activity record;
+// allocations live in public.pruning_entries, one per block).
+//
+// A REVERSED activity (deleted_at set via reverse/delete RPCs) has its
+// quarters unclaimed — VineTrack's live progress excludes it entirely, so
+// the API omits reversed activities from the collection. Reversed activity
+// can therefore never inflate totals.
+//
+// worker_or_crew is a free-text identity snapshot -> labour:read.
+// hourly_rate and the derived labour_cost -> costs:read.
+// ---------------------------------------------------------------------------
+interface PruningActivityRow {
+  id: string; vineyard_id: string; entry_date: string;
+  worker_or_crew: string; pruning_method: string;
+  start_time: string | null; finish_time: string | null;
+  labour_hours: number | null; hourly_rate: number | null;
+  notes: string; work_task_id: string | null;
+  season_year: number | null; vintage_year: number | null;
+  allocation_count: number; total_quarters: number;
+  total_row_equivalents: number; total_estimated_vines: number;
+  block_summary: string;
+  created_at: string; updated_at: string;
+}
+
+const PRUNING_ACTIVITY_COLUMNS =
+  "id, vineyard_id, entry_date, worker_or_crew, pruning_method, start_time, finish_time, " +
+  "labour_hours, hourly_rate, notes, work_task_id, season_year, vintage_year, " +
+  "allocation_count, total_quarters, total_row_equivalents, total_estimated_vines, " +
+  "block_summary, created_at, updated_at";
+
+interface PruningAllocationRow {
+  pruning_activity_id: string; paddock_id: string;
+  row_equivalents_completed: number; estimated_vines_completed: number;
+}
+
+async function loadPruningAllocations(
+  db: SupabaseClient, vineyardId: string, activityIds: string[],
+): Promise<Map<string, { block_id: string; block_name: string | null; row_equivalents: number; vines_pruned: number }[]>> {
+  const result = new Map<string, { block_id: string; block_name: string | null; row_equivalents: number; vines_pruned: number }[]>();
+  if (activityIds.length === 0) return result;
+  const { data, error } = await db.from("pruning_entries")
+    .select("pruning_activity_id, paddock_id, row_equivalents_completed, estimated_vines_completed")
+    .in("pruning_activity_id", activityIds)
+    .is("deleted_at", null);
+  if (error) {
+    console.error("[vinetrack-api] pruning allocations lookup failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  const rows = (data ?? []) as PruningAllocationRow[];
+  const names = await loadBlockNames(db, vineyardId, rows.map((r) => r.paddock_id));
+  for (const r of rows) {
+    const list = result.get(r.pruning_activity_id) ?? [];
+    list.push({
+      block_id: r.paddock_id,
+      block_name: names.get(r.paddock_id) ?? null,
+      row_equivalents: round3(r.row_equivalents_completed),
+      vines_pruned: r.estimated_vines_completed,
+    });
+    result.set(r.pruning_activity_id, list);
+  }
+  return result;
+}
+
+function mapPruningActivity(
+  row: PruningActivityRow,
+  blocks: { block_id: string; block_name: string | null; row_equivalents: number; vines_pruned: number }[],
+  profile: AuthProfile,
+) {
+  const hours = row.labour_hours;
+  const vines = row.total_estimated_vines;
+  const base: Record<string, unknown> = {
+    id: row.id,
+    vineyard_id: row.vineyard_id,
+    date: row.entry_date,
+    pruning_method: row.pruning_method || null,
+    season_year: row.season_year ?? null,
+    vintage_year: row.vintage_year ?? null,
+    started_at: row.start_time ?? null,
+    ended_at: row.finish_time ?? null,
+    labour_hours: hours ?? null,
+    vines_pruned: vines,
+    row_equivalents: round3(row.total_row_equivalents),
+    quarters_completed: row.total_quarters,
+    // Derived: total estimated vines / activity labour hours (documented).
+    vines_per_labour_hour: hours !== null && hours > 0 && vines > 0
+      ? Math.round((vines / hours) * 10) / 10
+      : null,
+    block_summary: row.block_summary.trim() || null,
+    blocks,
+    work_task_id: row.work_task_id ?? null,
+    notes: row.notes.trim() || null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+  if (hasScope(profile, "labour:read")) {
+    base.crew = row.worker_or_crew.trim() || null;
+  }
+  if (hasScope(profile, "costs:read")) {
+    base.hourly_rate = row.hourly_rate ?? null;
+    base.labour_cost = hours !== null && row.hourly_rate !== null
+      ? round3(hours * row.hourly_rate)
+      : null;
+  }
+  return base;
+}
+
+// ---------------------------------------------------------------------------
+// Irrigation records (public.irrigation_sessions + irrigation_session_blocks,
+// sql/125 + 130 + 142). Canonical units: litres, L/h, mm, whole minutes.
+//
+// Lifecycle: soft-deleted sessions are excluded; sessions with
+// status='reversed' are excluded from the DEFAULT collection (they are
+// corrections, not live history) but retrievable via ?status=reversed and
+// by id. No cost or labour fields exist on irrigation sessions.
+// ---------------------------------------------------------------------------
+interface IrrigationSessionRow {
+  id: string; vineyard_id: string;
+  irrigation_system_id: string; valve_id: string;
+  session_date: string; vintage_year: number;
+  started_at: string | null; finished_at: string | null;
+  duration_minutes: number; calculation_method: string;
+  flow_litres_per_hour: number | null;
+  total_volume_litres: number; effective_volume_litres: number | null;
+  irrigation_efficiency_percent: number | null;
+  status: string; source_type: string; notes: string | null;
+  created_at: string; updated_at: string;
+}
+
+const IRRIGATION_COLUMNS =
+  "id, vineyard_id, irrigation_system_id, valve_id, session_date, vintage_year, started_at, " +
+  "finished_at, duration_minutes, calculation_method, flow_litres_per_hour, total_volume_litres, " +
+  "effective_volume_litres, irrigation_efficiency_percent, status, source_type, notes, " +
+  "created_at, updated_at";
+
+const IRRIGATION_STATUS_VALUES = [
+  "completed", "corrected", "reversed", "planned", "running", "cancelled", "imported", "estimated",
+];
+
+interface IrrigationSessionBlockRow {
+  session_id: string; block_id: string;
+  allocation_percentage: number; allocated_volume_litres: number;
+  effective_volume_litres: number | null; serviced_area_m2: number | null;
+  serviced_vine_count: number | null; water_litres_per_vine: number | null;
+  water_litres_per_hectare: number | null; irrigation_depth_mm: number | null;
+  effective_irrigation_depth_mm: number | null;
+}
+
+async function loadIrrigationBlocks(
+  db: SupabaseClient, vineyardId: string, sessionIds: string[],
+): Promise<Map<string, (IrrigationSessionBlockRow & { block_name: string | null })[]>> {
+  const result = new Map<string, (IrrigationSessionBlockRow & { block_name: string | null })[]>();
+  if (sessionIds.length === 0) return result;
+  const { data, error } = await db.from("irrigation_session_blocks")
+    .select("session_id, block_id, allocation_percentage, allocated_volume_litres, effective_volume_litres, " +
+      "serviced_area_m2, serviced_vine_count, water_litres_per_vine, water_litres_per_hectare, " +
+      "irrigation_depth_mm, effective_irrigation_depth_mm")
+    .in("session_id", sessionIds);
+  if (error) {
+    console.error("[vinetrack-api] irrigation session blocks lookup failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  const rows = (data ?? []) as unknown as IrrigationSessionBlockRow[];
+  const names = await loadBlockNames(db, vineyardId, rows.map((r) => r.block_id));
+  for (const r of rows) {
+    const list = result.get(r.session_id) ?? [];
+    list.push({ ...r, block_name: names.get(r.block_id) ?? null });
+    result.set(r.session_id, list);
+  }
+  return result;
+}
+
+function mapIrrigationRecord(
+  row: IrrigationSessionRow,
+  blocks: (IrrigationSessionBlockRow & { block_name: string | null })[],
+  detail: boolean,
+) {
+  return {
+    id: row.id,
+    vineyard_id: row.vineyard_id,
+    date: row.session_date,
+    vintage_year: row.vintage_year,
+    status: row.status,
+    started_at: row.started_at ?? null,
+    ended_at: row.finished_at ?? null,
+    duration_minutes: row.duration_minutes,
+    calculation_method: row.calculation_method,
+    source_type: row.source_type,
+    flow_l_per_hour: row.flow_litres_per_hour ?? null,
+    volume_l: row.total_volume_litres,
+    effective_volume_l: row.effective_volume_litres ?? null,
+    efficiency_percent: row.irrigation_efficiency_percent ?? null,
+    irrigation_system_id: row.irrigation_system_id,
+    valve_id: row.valve_id,
+    blocks: blocks.map((b) => {
+      const base: Record<string, unknown> = {
+        block_id: b.block_id,
+        block_name: b.block_name,
+        allocation_percent: b.allocation_percentage,
+        volume_l: b.allocated_volume_litres,
+      };
+      if (detail) {
+        base.effective_volume_l = b.effective_volume_litres ?? null;
+        // serviced_area_m2 is canonical; ha conversion is exact (÷ 10000).
+        base.area_ha = b.serviced_area_m2 !== null ? round4(b.serviced_area_m2 / 10000) : null;
+        base.vine_count = b.serviced_vine_count ?? null;
+        base.water_l_per_vine = b.water_litres_per_vine ?? null;
+        base.water_l_per_ha = b.water_litres_per_hectare ?? null;
+        base.depth_mm = b.irrigation_depth_mm ?? null;
+        base.effective_depth_mm = b.effective_irrigation_depth_mm ?? null;
+      }
+      return base;
+    }),
+    notes: (row.notes ?? "").trim() || null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Growth stages (public.growth_stage_records, sql/055 — the canonical store;
+// the iOS client mirrors legacy growth pins into it, so this table is the
+// complete observation history).
+//
+// photo_paths (private storage paths) are intentionally NOT exposed.
+// recorded_by identity -> labour:read.
+// ---------------------------------------------------------------------------
+interface GrowthStageRow {
+  id: string; vineyard_id: string; paddock_id: string | null;
+  stage_code: string; stage_label: string | null;
+  variety: string | null; variety_id: string | null;
+  observed_at: string; latitude: number | null; longitude: number | null;
+  row_number: number | null; side: string | null; notes: string | null;
+  recorded_by_name: string | null; created_by: string | null;
+  created_at: string; updated_at: string;
+}
+
+const GROWTH_STAGE_COLUMNS =
+  "id, vineyard_id, paddock_id, stage_code, stage_label, variety, variety_id, observed_at, " +
+  "latitude, longitude, row_number, side, notes, recorded_by_name, created_by, created_at, updated_at";
+
+function mapGrowthStage(row: GrowthStageRow, blockName: string | null, profile: AuthProfile) {
+  const base: Record<string, unknown> = {
+    id: row.id,
+    vineyard_id: row.vineyard_id,
+    block_id: row.paddock_id ?? null,
+    block_name: blockName,
+    observed_at: row.observed_at,
+    stage_code: row.stage_code,
+    stage_label: row.stage_label ?? null,
+    variety: row.variety ?? null,
+    variety_id: row.variety_id ?? null,
+    row_number: row.row_number ?? null,
+    // Stored as 'Left'/'Right'; normalised to lowercase (documented).
+    side: row.side ? row.side.toLowerCase() : null,
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
+    notes: (row.notes ?? "").trim() || null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+  if (hasScope(profile, "labour:read")) {
+    base.recorded_by = (row.created_by || row.recorded_by_name)
+      ? { user_id: row.created_by ?? null, name: row.recorded_by_name ?? null }
+      : null;
+  }
+  return base;
+}
+
+// ---------------------------------------------------------------------------
+// Yield records (public.historical_yield_records, sql/014 — archived
+// season results with per-block breakdown in block_results jsonb, camelCase
+// iOS Codable keys).
+//
+// In-progress sampling sessions (yield_estimation_sessions) are working
+// data, not recorded yield — intentionally NOT exposed.
+// No pricing/revenue fields exist canonically; costs:read gates nothing
+// here today (documented).
+// ---------------------------------------------------------------------------
+interface YieldRecordRow {
+  id: string; vineyard_id: string;
+  season: string; year: number; archived_at: string;
+  total_yield_tonnes: number; total_area_hectares: number;
+  notes: string; block_results: unknown;
+  created_at: string; updated_at: string;
+}
+
+const YIELD_RECORD_COLUMNS =
+  "id, vineyard_id, season, year, archived_at, total_yield_tonnes, total_area_hectares, " +
+  "notes, block_results, created_at, updated_at";
+
+interface YieldBlockJson {
+  paddockId?: unknown; paddockName?: unknown; areaHectares?: unknown;
+  yieldTonnes?: unknown; yieldPerHectare?: unknown; averageBunchesPerVine?: unknown;
+  averageBunchWeightGrams?: unknown; totalVines?: unknown; samplesRecorded?: unknown;
+  damageFactor?: unknown; actualYieldTonnes?: unknown; actualRecordedAt?: unknown;
+}
+
+function mapYieldBlocks(raw: unknown) {
+  if (!Array.isArray(raw)) return [];
+  return (raw as YieldBlockJson[]).map((b) => ({
+    block_id: typeof b.paddockId === "string" ? b.paddockId.toLowerCase() : null,
+    block_name: typeof b.paddockName === "string" ? b.paddockName : null,
+    area_ha: num(b.areaHectares),
+    estimated_yield_tonnes: num(b.yieldTonnes),
+    yield_tonnes_per_ha: num(b.yieldPerHectare),
+    average_bunches_per_vine: num(b.averageBunchesPerVine),
+    average_bunch_weight_g: num(b.averageBunchWeightGrams),
+    vine_count: num(b.totalVines),
+    samples_recorded: num(b.samplesRecorded),
+    damage_factor: num(b.damageFactor),
+    actual_yield_tonnes: num(b.actualYieldTonnes),
+    actual_recorded_at: typeof b.actualRecordedAt === "string" ? b.actualRecordedAt : null,
+  }));
+}
+
+function mapYieldRecord(row: YieldRecordRow) {
+  const area = row.total_area_hectares;
+  return {
+    id: row.id,
+    vineyard_id: row.vineyard_id,
+    season: row.season.trim() || null,
+    vintage_year: row.year > 0 ? row.year : null,
+    archived_at: row.archived_at,
+    total_yield_tonnes: row.total_yield_tonnes,
+    total_area_ha: area,
+    // Derived: total_yield_tonnes / total_area_hectares (documented).
+    yield_tonnes_per_ha: area > 0 ? round3(row.total_yield_tonnes / area) : null,
+    blocks: mapYieldBlocks(row.block_results),
+    notes: row.notes.trim() || null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Pins (public.pins, sql/004 + 013/035/041/169/170; canonical placement
+// resolution via the public.pin_placements view, sql/171).
+//
+// The exact snapped path/row identity is preserved: path_number
+// (driving_row_number, e.g. 19.5), row_number (pin_row_number), side
+// (left/right). photo_path (private storage path) is NOT exposed.
+// Identity fields (assigned_to / completed_by) -> labour:read.
+// Resolved (completed) pins remain in the collection as history and are
+// filterable by status.
+// ---------------------------------------------------------------------------
+interface PinRow {
+  id: string; vineyard_id: string; paddock_id: string | null;
+  mode: string | null; category: string | null; priority: string | null;
+  status: string | null; title: string | null; notes: string | null;
+  latitude: number | null; longitude: number | null;
+  row_number: number | null; side: string | null;
+  growth_stage_code: string | null;
+  is_completed: boolean; completed_by: string | null;
+  completed_by_user_id: string | null; completed_at: string | null;
+  assigned_user_id: string | null; due_date: string | null;
+  linked_work_task_id: string | null; custom_type_id: string | null;
+  driving_row_number: number | null; pin_row_number: number | null;
+  pin_side: string | null; along_row_distance_m: number | null;
+  snapped_latitude: number | null; snapped_longitude: number | null;
+  snapped_to_row: boolean;
+  created_at: string; updated_at: string;
+}
+
+const PIN_COLUMNS =
+  "id, vineyard_id, paddock_id, mode, category, priority, status, title, notes, latitude, longitude, " +
+  "row_number, side, growth_stage_code, is_completed, completed_by, completed_by_user_id, completed_at, " +
+  "assigned_user_id, due_date, linked_work_task_id, custom_type_id, driving_row_number, pin_row_number, " +
+  "pin_side, along_row_distance_m, snapped_latitude, snapped_longitude, snapped_to_row, created_at, updated_at";
+
+const PIN_MODE_MAP: Record<string, string> = {
+  "Repairs": "repairs", "Growth": "growth", "ManualIssue": "manual_issue",
+};
+const PIN_TYPE_PARAM_TO_MODE: Record<string, string> = {
+  "repairs": "Repairs", "growth": "Growth", "manual_issue": "ManualIssue",
+};
+const PIN_STATUS_VALUES = ["open", "in_progress", "completed", "cancelled"];
+
+/**
+ * Canonical stored status wins (composer pins, sql/169); legacy pins have
+ * no stored status and derive from is_completed. Documented derivation.
+ */
+function pinStatus(row: PinRow): string {
+  if (row.status && PIN_STATUS_VALUES.includes(row.status)) return row.status;
+  return row.is_completed ? "completed" : "open";
+}
+
+interface PinPlacementRow {
+  pin_id: string;
+  location_scope: string | null;
+  location_assignment_basis: string | null;
+  paddock_id: string | null;
+  paddock_name: string | null;
+  row_summary: string | null;
+  segments: unknown;
+  location_warning_code: string | null;
+}
+
+/** Batch placement resolution via the sql/171 canonical view. */
+async function loadPinPlacements(
+  db: SupabaseClient, pinIds: string[],
+): Promise<Map<string, PinPlacementRow>> {
+  if (pinIds.length === 0) return new Map();
+  const { data, error } = await db.from("pin_placements")
+    .select("pin_id, location_scope, location_assignment_basis, paddock_id, paddock_name, " +
+      "row_summary, segments, location_warning_code")
+    .in("pin_id", pinIds);
+  if (error) {
+    console.error("[vinetrack-api] pin placement lookup failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  return new Map(((data ?? []) as unknown as PinPlacementRow[]).map((p) => [p.pin_id, p]));
+}
+
+async function loadCustomPinTypes(
+  db: SupabaseClient, ids: string[],
+): Promise<Map<string, string>> {
+  const unique = [...new Set(ids)].filter((id) => UUID_RE.test(id));
+  if (unique.length === 0) return new Map();
+  const { data, error } = await db.from("vineyard_custom_pin_types")
+    .select("id, name")
+    .in("id", unique);
+  if (error) {
+    console.error("[vinetrack-api] custom pin type lookup failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  return new Map((data ?? []).map((t: { id: string; name: string }) => [t.id, t.name]));
+}
+
+function mapPin(
+  row: PinRow,
+  placement: PinPlacementRow | null,
+  customTypeNames: Map<string, string>,
+  profile: AuthProfile,
+  detail: boolean,
+) {
+  const base: Record<string, unknown> = {
+    id: row.id,
+    vineyard_id: row.vineyard_id,
+    type: row.mode ? (PIN_MODE_MAP[row.mode] ?? row.mode.toLowerCase()) : null,
+    custom_type: row.custom_type_id
+      ? { id: row.custom_type_id, name: customTypeNames.get(row.custom_type_id) ?? null }
+      : null,
+    category: row.category ?? null,
+    priority: row.priority ?? null,
+    status: pinStatus(row),
+    title: (row.title ?? "").trim() || null,
+    notes: (row.notes ?? "").trim() || null,
+    growth_stage_code: row.growth_stage_code ?? null,
+    block_id: placement?.paddock_id ?? row.paddock_id ?? null,
+    block_name: placement?.paddock_name ?? null,
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
+    // Exact snapped path/row identity — never reduced to raw GPS.
+    row: {
+      snapped_to_row: row.snapped_to_row,
+      path_number: row.driving_row_number ?? null,
+      row_number: row.pin_row_number ?? row.row_number ?? null,
+      side: (row.pin_side ?? row.side)?.toLowerCase() ?? null,
+      along_row_distance_m: row.along_row_distance_m ?? null,
+      snapped_latitude: row.snapped_latitude ?? null,
+      snapped_longitude: row.snapped_longitude ?? null,
+    },
+    location: {
+      scope: placement?.location_scope ?? null,
+      assignment_basis: placement?.location_assignment_basis ?? null,
+      row_summary: placement?.row_summary ?? null,
+      warning: placement?.location_warning_code ?? null,
+    },
+    due_date: row.due_date ?? null,
+    work_task_id: row.linked_work_task_id ?? null,
+    resolved_at: row.completed_at ?? null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+  if (detail) {
+    const segs = Array.isArray(placement?.segments) ? placement!.segments as Record<string, unknown>[] : [];
+    base.row_segments = segs
+      .map((s) => ({ row: num(s.row), segment: num(s.segment) }))
+      .filter((s) => s.row !== null && s.segment !== null);
+  }
+  if (hasScope(profile, "labour:read")) {
+    base.assigned_to = row.assigned_user_id ? { user_id: row.assigned_user_id, name: null } : null;
+    base.completed_by = (row.completed_by_user_id || row.completed_by)
+      ? { user_id: row.completed_by_user_id ?? null, name: row.completed_by?.trim() || null }
+      : null;
+  }
+  return base;
+}
+
+// ---------------------------------------------------------------------------
+// Route handlers — Stage 3C: Work tasks
+// ---------------------------------------------------------------------------
+async function handleWorkTaskList(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string, url: URL,
+): Promise<Response> {
+  const args = await prepareCollection(ctx, db, key, url, "work_tasks:read",
+    ["status", "task_type", "block_id"], true);
+
+  const statusFilter = textParam(url, "status");
+  const taskTypeFilter = textParam(url, "task_type");
+  const blockFilter = blockIdParam(url);
+
+  // block filter: parent legacy paddock_id OR membership in work_task_paddocks.
+  let blockOrExpr: string | null = null;
+  if (blockFilter) {
+    const { data, error } = await db.from("work_task_paddocks")
+      .select("work_task_id")
+      .eq("vineyard_id", args.vineyardId)
+      .eq("paddock_id", blockFilter)
+      .is("deleted_at", null)
+      .limit(SUBFILTER_MAX_IDS);
+    if (error) {
+      console.error("[vinetrack-api] work task block filter failed:", error.message);
+      throw new ApiError("internal_error");
+    }
+    const ids = [...new Set((data ?? []).map((r: { work_task_id: string }) => r.work_task_id))];
+    blockOrExpr = ids.length > 0
+      ? `paddock_id.eq.${blockFilter},id.in.(${ids.join(",")})`
+      : `paddock_id.eq.${blockFilter}`;
+  }
+
+  const dateFilter = applyDateRange(args.fromDate, args.toDate, "date");
+  const { rows, nextCursor } = await pagedList<WorkTaskRow>(
+    db, "work_tasks", WORK_TASK_COLUMNS, args.limit, args.cursor, false,
+    (q) => {
+      q = q.eq("vineyard_id", args.vineyardId);
+      q = dateFilter(q);
+      if (statusFilter) q = q.eq("status", statusFilter);
+      if (taskTypeFilter) q = q.eq("task_type", taskTypeFilter);
+      if (blockOrExpr) q = q.or(blockOrExpr);
+      return q;
+    },
+  );
+
+  const blocks = await loadWorkTaskBlocks(db, args.vineyardId, rows);
+  return jsonResponse(req, ctx, {
+    data: rows.map((r) => mapWorkTask(r, blocks.get(r.id) ?? [])),
+    pagination: { next_cursor: nextCursor },
+  }, 200);
+}
+
+async function handleWorkTaskGet(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string,
+  profile: AuthProfile, url: URL, taskId: string,
+): Promise<Response> {
+  enforceAllowedParams(url, []);
+  if (!UUID_RE.test(taskId)) throw new ApiError("invalid_request");
+
+  const { data, error } = await db.from("work_tasks")
+    .select(WORK_TASK_COLUMNS)
+    .eq("id", taskId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) {
+    console.error("[vinetrack-api] work task fetch failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  if (!data) {
+    requireScope(profile, "work_tasks:read");
+    throw new ApiError("resource_not_found");
+  }
+
+  const task = data as unknown as WorkTaskRow;
+  ctx.vineyardId = task.vineyard_id;
+  await validateVineyardRequest(db, key, "work_tasks:read", task.vineyard_id, true);
+
+  const blocks = await loadWorkTaskBlocks(db, task.vineyard_id, [task]);
+  const body = mapWorkTask(task, blocks.get(task.id) ?? []) as Record<string, unknown>;
+
+  const includeCosts = hasScope(profile, "costs:read");
+  const includeLabour = hasScope(profile, "labour:read");
+
+  // Labour lines (per-day, per-worker-type; counts and hours — no identity).
+  const { data: labourData, error: labourErr } = await db.from("work_task_labour_lines")
+    .select("work_date, worker_type, worker_count, hours_per_worker, total_hours, hourly_rate, total_cost, notes")
+    .eq("work_task_id", task.id)
+    .is("deleted_at", null)
+    .order("work_date", { ascending: true });
+  if (labourErr) {
+    console.error("[vinetrack-api] work task labour lines failed:", labourErr.message);
+    throw new ApiError("internal_error");
+  }
+  const labourLines = (labourData ?? []) as LabourLineRow[];
+  let totalLabourHours = 0;
+  body.labour_lines = labourLines.map((l) => {
+    totalLabourHours += l.total_hours;
+    const line: Record<string, unknown> = {
+      work_date: l.work_date,
+      worker_type: l.worker_type.trim() || null,
+      worker_count: l.worker_count,
+      hours_per_worker: l.hours_per_worker,
+      total_hours: l.total_hours,
+      notes: l.notes.trim() || null,
+    };
+    if (includeCosts) {
+      line.hourly_rate = l.hourly_rate ?? null;
+      line.total_cost = l.hourly_rate !== null ? l.total_cost : null;
+    }
+    return line;
+  });
+  body.total_labour_hours = round3(totalLabourHours);
+
+  // Machine lines (manual machine work; equipment resolves to canonical id).
+  const { data: machineData, error: machineErr } = await db.from("work_task_machine_lines")
+    .select("work_date, equipment_source, equipment_ref_id, equipment_name_snapshot, operator_user_id, " +
+      "duration_hours, start_time, end_time, start_engine_hours, end_engine_hours, engine_hours_used, " +
+      "fuel_litres, fuel_cost, hourly_machine_rate, total_machine_cost, entry_source, notes")
+    .eq("work_task_id", task.id)
+    .is("deleted_at", null)
+    .order("work_date", { ascending: true });
+  if (machineErr) {
+    console.error("[vinetrack-api] work task machine lines failed:", machineErr.message);
+    throw new ApiError("internal_error");
+  }
+  const machineLines = (machineData ?? []) as unknown as MachineLineRow[];
+  const idx = machineLines.length > 0
+    ? await loadMachineIndex(db, task.vineyard_id)
+    : { byId: new Map<string, MachineRow>(), byLegacyTractorId: new Map<string, MachineRow>() };
+  body.machine_lines = machineLines.map((l) => {
+    const machine = resolveLineEquipment(idx, l);
+    const line: Record<string, unknown> = {
+      work_date: l.work_date,
+      equipment_id: machine?.id ?? null,
+      equipment_name: l.equipment_name_snapshot.trim() || (machine ? machine.name.trim() : "") || null,
+      duration_hours: l.duration_hours ?? null,
+      started_at: l.start_time ?? null,
+      ended_at: l.end_time ?? null,
+      engine_hours_start: l.start_engine_hours ?? null,
+      engine_hours_end: l.end_engine_hours ?? null,
+      engine_hours_used: l.engine_hours_used ?? null,
+      fuel_volume_l: l.fuel_litres ?? null,
+      entry_source: l.entry_source,
+      notes: l.notes.trim() || null,
+    };
+    if (includeCosts) {
+      line.fuel_cost = l.fuel_cost ?? null;
+      line.hourly_rate = l.hourly_machine_rate ?? null;
+      line.total_cost = l.total_machine_cost ?? null;
+    }
+    if (includeLabour) {
+      line.operator = l.operator_user_id ? { user_id: l.operator_user_id, name: null } : null;
+    }
+    return line;
+  });
+
+  // Linked GPS trips (ids only; full trips are a separate scoped resource).
+  const { data: tripData, error: tripErr } = await db.from("trips")
+    .select("id")
+    .eq("work_task_id", task.id)
+    .is("deleted_at", null);
+  if (tripErr) {
+    console.error("[vinetrack-api] work task trips lookup failed:", tripErr.message);
+    throw new ApiError("internal_error");
+  }
+  body.trip_ids = (tripData ?? []).map((t: { id: string }) => t.id);
+
+  return jsonResponse(req, ctx, { data: body }, 200);
+}
+
+// ---------------------------------------------------------------------------
+// Route handlers — Stage 3C: Pruning
+// ---------------------------------------------------------------------------
+async function handlePruningList(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string,
+  profile: AuthProfile, url: URL,
+): Promise<Response> {
+  const args = await prepareCollection(ctx, db, key, url, "pruning:read", ["block_id"], true);
+
+  const blockFilter = blockIdParam(url);
+  let activityIdFilter: string[] | null = null;
+  if (blockFilter) {
+    const { data, error } = await db.from("pruning_entries")
+      .select("pruning_activity_id")
+      .eq("vineyard_id", args.vineyardId)
+      .eq("paddock_id", blockFilter)
+      .is("deleted_at", null)
+      .not("pruning_activity_id", "is", null)
+      .limit(SUBFILTER_MAX_IDS);
+    if (error) {
+      console.error("[vinetrack-api] pruning block filter failed:", error.message);
+      throw new ApiError("internal_error");
+    }
+    activityIdFilter = [...new Set((data ?? [])
+      .map((r: { pruning_activity_id: string | null }) => r.pruning_activity_id)
+      .filter((v): v is string => typeof v === "string"))];
+    if (activityIdFilter.length === 0) return emptyCollection(req, ctx);
+  }
+
+  const dateFilter = applyDateRange(args.fromDate, args.toDate, "entry_date");
+  const { rows, nextCursor } = await pagedList<PruningActivityRow>(
+    db, "pruning_activities", PRUNING_ACTIVITY_COLUMNS, args.limit, args.cursor, false,
+    (q) => {
+      q = q.eq("vineyard_id", args.vineyardId);
+      q = dateFilter(q);
+      if (activityIdFilter) q = q.in("id", activityIdFilter);
+      return q;
+    },
+  );
+
+  const allocations = await loadPruningAllocations(db, args.vineyardId, rows.map((r) => r.id));
+  return jsonResponse(req, ctx, {
+    data: rows.map((r) => mapPruningActivity(r, allocations.get(r.id) ?? [], profile)),
+    pagination: { next_cursor: nextCursor },
+  }, 200);
+}
+
+async function handlePruningGet(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string,
+  profile: AuthProfile, url: URL, activityId: string,
+): Promise<Response> {
+  enforceAllowedParams(url, []);
+  if (!UUID_RE.test(activityId)) throw new ApiError("invalid_request");
+
+  const { data, error } = await db.from("pruning_activities")
+    .select(PRUNING_ACTIVITY_COLUMNS)
+    .eq("id", activityId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) {
+    console.error("[vinetrack-api] pruning fetch failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  if (!data) {
+    requireScope(profile, "pruning:read");
+    throw new ApiError("resource_not_found");
+  }
+
+  const activity = data as unknown as PruningActivityRow;
+  ctx.vineyardId = activity.vineyard_id;
+  await validateVineyardRequest(db, key, "pruning:read", activity.vineyard_id, true);
+
+  const allocations = await loadPruningAllocations(db, activity.vineyard_id, [activity.id]);
+  return jsonResponse(req, ctx, {
+    data: mapPruningActivity(activity, allocations.get(activity.id) ?? [], profile),
+  }, 200);
+}
+
+// ---------------------------------------------------------------------------
+// Route handlers — Stage 3C: Irrigation records
+// ---------------------------------------------------------------------------
+async function handleIrrigationList(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string, url: URL,
+): Promise<Response> {
+  const args = await prepareCollection(ctx, db, key, url, "irrigation:read",
+    ["status", "block_id"], true);
+
+  const statusFilter = url.searchParams.get("status");
+  if (statusFilter !== null && !IRRIGATION_STATUS_VALUES.includes(statusFilter)) {
+    throw new ApiError("invalid_request");
+  }
+
+  const blockFilter = blockIdParam(url);
+  let sessionIdFilter: string[] | null = null;
+  if (blockFilter) {
+    const { data, error } = await db.from("irrigation_session_blocks")
+      .select("session_id")
+      .eq("vineyard_id", args.vineyardId)
+      .eq("block_id", blockFilter)
+      .limit(SUBFILTER_MAX_IDS);
+    if (error) {
+      console.error("[vinetrack-api] irrigation block filter failed:", error.message);
+      throw new ApiError("internal_error");
+    }
+    sessionIdFilter = [...new Set((data ?? []).map((r: { session_id: string }) => r.session_id))];
+    if (sessionIdFilter.length === 0) return emptyCollection(req, ctx);
+  }
+
+  const dateFilter = applyDateRange(args.fromDate, args.toDate, "session_date");
+  const { rows, nextCursor } = await pagedList<IrrigationSessionRow>(
+    db, "irrigation_sessions", IRRIGATION_COLUMNS, args.limit, args.cursor, false,
+    (q) => {
+      q = q.eq("vineyard_id", args.vineyardId);
+      q = dateFilter(q);
+      if (statusFilter) q = q.eq("status", statusFilter);
+      // Reversed sessions are corrections — excluded from the default view.
+      else q = q.neq("status", "reversed");
+      if (sessionIdFilter) q = q.in("id", sessionIdFilter);
+      return q;
+    },
+  );
+
+  const blocks = await loadIrrigationBlocks(db, args.vineyardId, rows.map((r) => r.id));
+  return jsonResponse(req, ctx, {
+    data: rows.map((r) => mapIrrigationRecord(r, blocks.get(r.id) ?? [], false)),
+    pagination: { next_cursor: nextCursor },
+  }, 200);
+}
+
+async function handleIrrigationGet(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string,
+  profile: AuthProfile, url: URL, recordId: string,
+): Promise<Response> {
+  enforceAllowedParams(url, []);
+  if (!UUID_RE.test(recordId)) throw new ApiError("invalid_request");
+
+  const { data, error } = await db.from("irrigation_sessions")
+    .select(IRRIGATION_COLUMNS)
+    .eq("id", recordId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) {
+    console.error("[vinetrack-api] irrigation fetch failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  if (!data) {
+    requireScope(profile, "irrigation:read");
+    throw new ApiError("resource_not_found");
+  }
+
+  const session = data as unknown as IrrigationSessionRow;
+  ctx.vineyardId = session.vineyard_id;
+  await validateVineyardRequest(db, key, "irrigation:read", session.vineyard_id, true);
+
+  const blocks = await loadIrrigationBlocks(db, session.vineyard_id, [session.id]);
+  const body = mapIrrigationRecord(session, blocks.get(session.id) ?? [], true) as Record<string, unknown>;
+
+  // System / valve display names (detail only).
+  const [{ data: system, error: sysErr }, { data: valve, error: valveErr }] = await Promise.all([
+    db.from("irrigation_systems").select("id, name").eq("id", session.irrigation_system_id).maybeSingle(),
+    db.from("irrigation_valves").select("id, name, valve_number").eq("id", session.valve_id).maybeSingle(),
+  ]);
+  if (sysErr || valveErr) {
+    console.error("[vinetrack-api] irrigation system/valve lookup failed:", sysErr?.message ?? valveErr?.message);
+    throw new ApiError("internal_error");
+  }
+  body.system = system ? { id: system.id, name: system.name } : null;
+  body.valve = valve ? { id: valve.id, name: valve.name, valve_number: valve.valve_number ?? null } : null;
+
+  return jsonResponse(req, ctx, { data: body }, 200);
+}
+
+// ---------------------------------------------------------------------------
+// Route handlers — Stage 3C: Growth stages
+// ---------------------------------------------------------------------------
+async function handleGrowthStageList(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string,
+  profile: AuthProfile, url: URL,
+): Promise<Response> {
+  const args = await prepareCollection(ctx, db, key, url, "growth_stages:read",
+    ["block_id", "stage_code"], true);
+
+  const blockFilter = blockIdParam(url);
+  const stageCodeFilter = textParam(url, "stage_code");
+
+  const dateFilter = applyDateRange(args.fromDate, args.toDate, "observed_at");
+  const { rows, nextCursor } = await pagedList<GrowthStageRow>(
+    db, "growth_stage_records", GROWTH_STAGE_COLUMNS, args.limit, args.cursor, false,
+    (q) => {
+      q = q.eq("vineyard_id", args.vineyardId);
+      q = dateFilter(q);
+      if (blockFilter) q = q.eq("paddock_id", blockFilter);
+      if (stageCodeFilter) q = q.eq("stage_code", stageCodeFilter);
+      return q;
+    },
+  );
+
+  const names = await loadBlockNames(db, args.vineyardId,
+    rows.map((r) => r.paddock_id).filter((v): v is string => v !== null));
+  return jsonResponse(req, ctx, {
+    data: rows.map((r) => mapGrowthStage(r, r.paddock_id ? names.get(r.paddock_id) ?? null : null, profile)),
+    pagination: { next_cursor: nextCursor },
+  }, 200);
+}
+
+async function handleGrowthStageGet(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string,
+  profile: AuthProfile, url: URL, recordId: string,
+): Promise<Response> {
+  enforceAllowedParams(url, []);
+  if (!UUID_RE.test(recordId)) throw new ApiError("invalid_request");
+
+  const { data, error } = await db.from("growth_stage_records")
+    .select(GROWTH_STAGE_COLUMNS)
+    .eq("id", recordId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) {
+    console.error("[vinetrack-api] growth stage fetch failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  if (!data) {
+    requireScope(profile, "growth_stages:read");
+    throw new ApiError("resource_not_found");
+  }
+
+  const record = data as unknown as GrowthStageRow;
+  ctx.vineyardId = record.vineyard_id;
+  await validateVineyardRequest(db, key, "growth_stages:read", record.vineyard_id, true);
+
+  const names = record.paddock_id
+    ? await loadBlockNames(db, record.vineyard_id, [record.paddock_id])
+    : new Map<string, string>();
+  return jsonResponse(req, ctx, {
+    data: mapGrowthStage(record, record.paddock_id ? names.get(record.paddock_id) ?? null : null, profile),
+  }, 200);
+}
+
+// ---------------------------------------------------------------------------
+// Route handlers — Stage 3C: Yield records
+// ---------------------------------------------------------------------------
+async function handleYieldRecordList(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string, url: URL,
+): Promise<Response> {
+  const args = await prepareCollection(ctx, db, key, url, "yield:read", ["vintage"], true);
+
+  const vintageRaw = url.searchParams.get("vintage");
+  let vintage: number | null = null;
+  if (vintageRaw !== null) {
+    if (!/^\d{4}$/.test(vintageRaw)) throw new ApiError("invalid_request");
+    vintage = Number(vintageRaw);
+  }
+
+  const dateFilter = applyDateRange(args.fromDate, args.toDate, "archived_at");
+  const { rows, nextCursor } = await pagedList<YieldRecordRow>(
+    db, "historical_yield_records", YIELD_RECORD_COLUMNS, args.limit, args.cursor, false,
+    (q) => {
+      q = q.eq("vineyard_id", args.vineyardId);
+      q = dateFilter(q);
+      if (vintage !== null) q = q.eq("year", vintage);
+      return q;
+    },
+  );
+
+  return jsonResponse(req, ctx, {
+    data: rows.map(mapYieldRecord),
+    pagination: { next_cursor: nextCursor },
+  }, 200);
+}
+
+async function handleYieldRecordGet(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string,
+  profile: AuthProfile, url: URL, recordId: string,
+): Promise<Response> {
+  enforceAllowedParams(url, []);
+  if (!UUID_RE.test(recordId)) throw new ApiError("invalid_request");
+
+  const { data, error } = await db.from("historical_yield_records")
+    .select(YIELD_RECORD_COLUMNS)
+    .eq("id", recordId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) {
+    console.error("[vinetrack-api] yield record fetch failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  if (!data) {
+    requireScope(profile, "yield:read");
+    throw new ApiError("resource_not_found");
+  }
+
+  const record = data as unknown as YieldRecordRow;
+  ctx.vineyardId = record.vineyard_id;
+  await validateVineyardRequest(db, key, "yield:read", record.vineyard_id, true);
+
+  return jsonResponse(req, ctx, { data: mapYieldRecord(record) }, 200);
+}
+
+// ---------------------------------------------------------------------------
+// Route handlers — Stage 3C: Pins
+// ---------------------------------------------------------------------------
+async function handlePinList(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string,
+  profile: AuthProfile, url: URL,
+): Promise<Response> {
+  const args = await prepareCollection(ctx, db, key, url, "pins:read",
+    ["block_id", "status", "category", "type"], false);
+
+  const blockFilter = blockIdParam(url);
+  const categoryFilter = textParam(url, "category");
+
+  const statusFilter = url.searchParams.get("status");
+  if (statusFilter !== null && !PIN_STATUS_VALUES.includes(statusFilter)) {
+    throw new ApiError("invalid_request");
+  }
+
+  const typeFilter = url.searchParams.get("type");
+  let modeEq: string | null = null;
+  if (typeFilter !== null) {
+    modeEq = PIN_TYPE_PARAM_TO_MODE[typeFilter] ?? null;
+    if (!modeEq) throw new ApiError("invalid_request");
+  }
+
+  const { rows, nextCursor } = await pagedList<PinRow>(
+    db, "pins", PIN_COLUMNS, args.limit, args.cursor, false,
+    (q) => {
+      q = q.eq("vineyard_id", args.vineyardId);
+      if (blockFilter) q = q.eq("paddock_id", blockFilter);
+      if (categoryFilter) q = q.eq("category", categoryFilter);
+      if (modeEq) q = q.eq("mode", modeEq);
+      if (statusFilter) {
+        // Matches the documented status derivation: canonical stored status
+        // wins; legacy pins (no stored status) derive from is_completed.
+        if (statusFilter === "completed") {
+          q = q.or("status.eq.completed,and(status.is.null,is_completed.eq.true)");
+        } else if (statusFilter === "open") {
+          q = q.or("status.eq.open,and(status.is.null,is_completed.eq.false)");
+        } else {
+          q = q.eq("status", statusFilter);
+        }
+      }
+      return q;
+    },
+  );
+
+  const placements = await loadPinPlacements(db, rows.map((r) => r.id));
+  const customTypes = await loadCustomPinTypes(db,
+    rows.map((r) => r.custom_type_id).filter((v): v is string => v !== null));
+
+  return jsonResponse(req, ctx, {
+    data: rows.map((r) => mapPin(r, placements.get(r.id) ?? null, customTypes, profile, false)),
+    pagination: { next_cursor: nextCursor },
+  }, 200);
+}
+
+async function handlePinGet(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string,
+  profile: AuthProfile, url: URL, pinId: string,
+): Promise<Response> {
+  enforceAllowedParams(url, []);
+  if (!UUID_RE.test(pinId)) throw new ApiError("invalid_request");
+
+  const { data, error } = await db.from("pins")
+    .select(PIN_COLUMNS)
+    .eq("id", pinId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) {
+    console.error("[vinetrack-api] pin fetch failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  if (!data) {
+    requireScope(profile, "pins:read");
+    throw new ApiError("resource_not_found");
+  }
+
+  const pin = data as unknown as PinRow;
+  ctx.vineyardId = pin.vineyard_id;
+  await validateVineyardRequest(db, key, "pins:read", pin.vineyard_id, true);
+
+  const placements = await loadPinPlacements(db, [pin.id]);
+  const customTypes = await loadCustomPinTypes(db, pin.custom_type_id ? [pin.custom_type_id] : []);
+  return jsonResponse(req, ctx, {
+    data: mapPin(pin, placements.get(pin.id) ?? null, customTypes, profile, true),
+  }, 200);
+}
+
+// ---------------------------------------------------------------------------
 // Safe request logging. Never logs credentials, headers or bodies.
 // ---------------------------------------------------------------------------
 async function logRequest(db: SupabaseClient, ctx: RequestContext, status: number, errorCode: string | null): Promise<void> {
@@ -1681,7 +2895,19 @@ type Route =
   | { name: "fuel_purchases_list" }
   | { name: "fuel_purchase_get"; id: string }
   | { name: "equipment_list" }
-  | { name: "equipment_get"; id: string };
+  | { name: "equipment_get"; id: string }
+  | { name: "work_tasks_list" }
+  | { name: "work_task_get"; id: string }
+  | { name: "pruning_list" }
+  | { name: "pruning_get"; id: string }
+  | { name: "irrigation_list" }
+  | { name: "irrigation_get"; id: string }
+  | { name: "growth_stages_list" }
+  | { name: "growth_stage_get"; id: string }
+  | { name: "yield_records_list" }
+  | { name: "yield_record_get"; id: string }
+  | { name: "pins_list" }
+  | { name: "pin_get"; id: string };
 
 /** Collection + single-resource route table: segment -> route names + log templates. */
 const RESOURCE_ROUTES: Record<string, { list: Route["name"]; get: Route["name"]; idLabel: string }> = {
@@ -1692,6 +2918,12 @@ const RESOURCE_ROUTES: Record<string, { list: Route["name"]; get: Route["name"];
   "fuel-records": { list: "fuel_records_list", get: "fuel_record_get", idLabel: "fuel_record_id" },
   "fuel-purchases": { list: "fuel_purchases_list", get: "fuel_purchase_get", idLabel: "fuel_purchase_id" },
   "equipment": { list: "equipment_list", get: "equipment_get", idLabel: "equipment_id" },
+  "work-tasks": { list: "work_tasks_list", get: "work_task_get", idLabel: "work_task_id" },
+  "pruning": { list: "pruning_list", get: "pruning_get", idLabel: "pruning_activity_id" },
+  "irrigation-records": { list: "irrigation_list", get: "irrigation_get", idLabel: "irrigation_record_id" },
+  "growth-stages": { list: "growth_stages_list", get: "growth_stage_get", idLabel: "growth_stage_id" },
+  "yield-records": { list: "yield_records_list", get: "yield_record_get", idLabel: "yield_record_id" },
+  "pins": { list: "pins_list", get: "pin_get", idLabel: "pin_id" },
 };
 
 Deno.serve(async (req: Request) => {
@@ -1816,6 +3048,42 @@ Deno.serve(async (req: Request) => {
         break;
       case "equipment_get":
         response = await handleEquipmentGet(req, ctx, db, key, profile, url, (route as { id: string }).id);
+        break;
+      case "work_tasks_list":
+        response = await handleWorkTaskList(req, ctx, db, key, url);
+        break;
+      case "work_task_get":
+        response = await handleWorkTaskGet(req, ctx, db, key, profile, url, (route as { id: string }).id);
+        break;
+      case "pruning_list":
+        response = await handlePruningList(req, ctx, db, key, profile, url);
+        break;
+      case "pruning_get":
+        response = await handlePruningGet(req, ctx, db, key, profile, url, (route as { id: string }).id);
+        break;
+      case "irrigation_list":
+        response = await handleIrrigationList(req, ctx, db, key, url);
+        break;
+      case "irrigation_get":
+        response = await handleIrrigationGet(req, ctx, db, key, profile, url, (route as { id: string }).id);
+        break;
+      case "growth_stages_list":
+        response = await handleGrowthStageList(req, ctx, db, key, profile, url);
+        break;
+      case "growth_stage_get":
+        response = await handleGrowthStageGet(req, ctx, db, key, profile, url, (route as { id: string }).id);
+        break;
+      case "yield_records_list":
+        response = await handleYieldRecordList(req, ctx, db, key, url);
+        break;
+      case "yield_record_get":
+        response = await handleYieldRecordGet(req, ctx, db, key, profile, url, (route as { id: string }).id);
+        break;
+      case "pins_list":
+        response = await handlePinList(req, ctx, db, key, profile, url);
+        break;
+      case "pin_get":
+        response = await handlePinGet(req, ctx, db, key, profile, url, (route as { id: string }).id);
         break;
     }
     status = response.status;

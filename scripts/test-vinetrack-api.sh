@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# test-vinetrack-api.sh — Stage 3A + 3B gateway security tests (HTTP level)
+# test-vinetrack-api.sh — Stage 3A + 3B + 3C gateway security tests (HTTP level)
 # =============================================================================
 # Runs the security/contract checks against a DEPLOYED vinetrack-api gateway.
 # Complements sql/tests/173_integration_api_gateway_tests.sql (DB level).
@@ -14,7 +14,9 @@
 # Required:
 #   GATEWAY_URL           e.g. https://tbafuqwruefgkbyxrxyb.supabase.co/functions/v1/vinetrack-api
 #   VT_KEY_FULL           active key; integration has vineyards:read, blocks:read,
-#                         trips:read, sprays:read, fuel:read, equipment:read
+#                         trips:read, sprays:read, fuel:read, equipment:read,
+#                         work_tasks:read, pruning:read, irrigation:read,
+#                         growth_stages:read, yield:read, pins:read
 #                         (NO costs:read / labour:read) and a grant to
 #                         VT_VINEYARD_GRANTED
 #   VT_VINEYARD_GRANTED   vineyard UUID granted to the integration
@@ -41,6 +43,18 @@
 #   VT_EQUIPMENT_GRANTED  vineyard_machines/spray_equipment/equipment_items UUID
 #                         inside VT_VINEYARD_GRANTED
 #   VT_EQUIPMENT_OTHER    equipment UUID inside VT_VINEYARD_OTHER
+#   VT_WORK_TASK_GRANTED    work_tasks UUID inside VT_VINEYARD_GRANTED
+#   VT_WORK_TASK_OTHER      work_tasks UUID inside VT_VINEYARD_OTHER
+#   VT_PRUNING_GRANTED      pruning_activities UUID inside VT_VINEYARD_GRANTED
+#   VT_PRUNING_OTHER        pruning_activities UUID inside VT_VINEYARD_OTHER
+#   VT_IRRIGATION_GRANTED   irrigation_sessions UUID inside VT_VINEYARD_GRANTED
+#   VT_IRRIGATION_OTHER     irrigation_sessions UUID inside VT_VINEYARD_OTHER
+#   VT_GROWTH_STAGE_GRANTED growth_stage_records UUID inside VT_VINEYARD_GRANTED
+#   VT_GROWTH_STAGE_OTHER   growth_stage_records UUID inside VT_VINEYARD_OTHER
+#   VT_YIELD_GRANTED        historical_yield_records UUID inside VT_VINEYARD_GRANTED
+#   VT_YIELD_OTHER          historical_yield_records UUID inside VT_VINEYARD_OTHER
+#   VT_PIN_GRANTED          pins UUID inside VT_VINEYARD_GRANTED
+#   VT_PIN_OTHER            pins UUID inside VT_VINEYARD_OTHER
 #
 # Usage:
 #   GATEWAY_URL=... VT_KEY_FULL=vt_test_... VT_VINEYARD_GRANTED=... \
@@ -302,6 +316,173 @@ else skip "granted equipment (2 tests)"; fi
 if [ -n "${VT_EQUIPMENT_OTHER-}" ]; then
   s=$(call GET "/v1/equipment/$VT_EQUIPMENT_OTHER" "Bearer $VT_KEY_FULL"); check "other account's equipment -> 404" 404 "$s" resource_not_found
 else skip "other-account equipment"; fi
+
+echo
+echo "== Stage 3C: operational collections =="
+for res in work-tasks pruning irrigation-records growth-stages yield-records pins; do
+  s=$(call GET "/v1/$res?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_FULL")
+  check "GET /v1/$res -> 200" 200 "$s"
+  check_body "/v1/$res collection envelope" \
+    'has("data") and (.data | type == "array") and (.pagination | has("next_cursor"))'
+  s=$(call GET "/v1/$res" "Bearer $VT_KEY_FULL")
+  check "/v1/$res without vineyard_id -> 400 invalid_request" 400 "$s" invalid_request
+done
+
+if [ -n "${VT_KEY_NO_SCOPES-}" ]; then
+  s=$(call GET "/v1/work-tasks?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_NO_SCOPES"); check "no scopes -> work-tasks 403 insufficient_scope" 403 "$s" insufficient_scope
+  s=$(call GET "/v1/pins?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_NO_SCOPES"); check "no scopes -> pins 403 insufficient_scope" 403 "$s" insufficient_scope
+else skip "no-scope key 3C (2 tests)"; fi
+if [ -n "${VT_KEY_BLOCKS_ONLY-}" ]; then
+  s=$(call GET "/v1/pruning?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_BLOCKS_ONLY"); check "blocks:read does NOT imply pruning:read" 403 "$s" insufficient_scope
+  s=$(call GET "/v1/irrigation-records?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_BLOCKS_ONLY"); check "blocks:read does NOT imply irrigation:read" 403 "$s" insufficient_scope
+  s=$(call GET "/v1/yield-records?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_BLOCKS_ONLY"); check "blocks:read does NOT imply yield:read" 403 "$s" insufficient_scope
+else skip "blocks-only key 3C (3 tests)"; fi
+if [ -n "${VT_VINEYARD_OTHER-}" ]; then
+  s=$(call GET "/v1/work-tasks?vineyard_id=$VT_VINEYARD_OTHER" "Bearer $VT_KEY_FULL"); check "work-tasks in ungranted vineyard -> 403" 403 "$s" vineyard_access_denied
+  s=$(call GET "/v1/pins?vineyard_id=$VT_VINEYARD_OTHER" "Bearer $VT_KEY_FULL"); check "pins in ungranted vineyard -> 403" 403 "$s" vineyard_access_denied
+else skip "other-account vineyard 3C (2 tests)"; fi
+
+echo
+echo "== Stage 3C: filters =="
+s=$(call GET "/v1/work-tasks?vineyard_id=$VT_VINEYARD_GRANTED&from=2020-01-01&to=2030-12-31&status=completed&task_type=Mowing&block_id=$VT_BLOCK_GRANTED" "Bearer $VT_KEY_FULL"); check "work-tasks combined filters accepted" 200 "$s"
+s=$(call GET "/v1/work-tasks?vineyard_id=$VT_VINEYARD_GRANTED&block_id=not-a-uuid" "Bearer $VT_KEY_FULL"); check "work-tasks bad block_id -> 400" 400 "$s" invalid_request
+s=$(call GET "/v1/work-tasks?vineyard_id=$VT_VINEYARD_GRANTED&worker=bob" "Bearer $VT_KEY_FULL"); check "work-tasks unknown param -> 400" 400 "$s" invalid_request
+s=$(call GET "/v1/pruning?vineyard_id=$VT_VINEYARD_GRANTED&from=2020-01-01&to=2030-12-31&block_id=$VT_BLOCK_GRANTED" "Bearer $VT_KEY_FULL"); check "pruning date+block filters accepted" 200 "$s"
+s=$(call GET "/v1/irrigation-records?vineyard_id=$VT_VINEYARD_GRANTED&status=completed" "Bearer $VT_KEY_FULL"); check "irrigation status=completed accepted" 200 "$s"
+s=$(call GET "/v1/irrigation-records?vineyard_id=$VT_VINEYARD_GRANTED&status=finished" "Bearer $VT_KEY_FULL"); check "irrigation unknown status -> 400" 400 "$s" invalid_request
+s=$(call GET "/v1/growth-stages?vineyard_id=$VT_VINEYARD_GRANTED&stage_code=EL-12&block_id=$VT_BLOCK_GRANTED" "Bearer $VT_KEY_FULL"); check "growth-stages stage_code+block filters accepted" 200 "$s"
+s=$(call GET "/v1/yield-records?vineyard_id=$VT_VINEYARD_GRANTED&vintage=2026" "Bearer $VT_KEY_FULL"); check "yield vintage=2026 accepted" 200 "$s"
+s=$(call GET "/v1/yield-records?vineyard_id=$VT_VINEYARD_GRANTED&vintage=26" "Bearer $VT_KEY_FULL"); check "yield bad vintage -> 400" 400 "$s" invalid_request
+s=$(call GET "/v1/pins?vineyard_id=$VT_VINEYARD_GRANTED&status=open&type=repairs&block_id=$VT_BLOCK_GRANTED" "Bearer $VT_KEY_FULL"); check "pins status+type+block filters accepted" 200 "$s"
+s=$(call GET "/v1/pins?vineyard_id=$VT_VINEYARD_GRANTED&status=fixed" "Bearer $VT_KEY_FULL"); check "pins unknown status -> 400" 400 "$s" invalid_request
+s=$(call GET "/v1/pins?vineyard_id=$VT_VINEYARD_GRANTED&type=spaceship" "Bearer $VT_KEY_FULL"); check "pins unknown type -> 400" 400 "$s" invalid_request
+s=$(call GET "/v1/pins?vineyard_id=$VT_VINEYARD_GRANTED&from=2020-01-01" "Bearer $VT_KEY_FULL"); check "pins reject date params -> 400" 400 "$s" invalid_request
+
+echo
+echo "== Stage 3C: sensitive-field gating (base key = no costs/labour) =="
+s=$(call GET "/v1/pruning?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_FULL")
+if [ "$s" = 200 ]; then
+  check_body "pruning omits crew without labour:read" '[.data[] | has("crew")] | any | not'
+  check_body "pruning omits hourly_rate/labour_cost without costs:read" \
+    '[.data[] | has("hourly_rate") or has("labour_cost")] | any | not'
+fi
+s=$(call GET "/v1/growth-stages?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_FULL")
+if [ "$s" = 200 ]; then
+  check_body "growth-stages omit recorded_by without labour:read" '[.data[] | has("recorded_by")] | any | not'
+fi
+s=$(call GET "/v1/pins?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_FULL")
+if [ "$s" = 200 ]; then
+  check_body "pins omit assigned_to/completed_by without labour:read" \
+    '[.data[] | has("assigned_to") or has("completed_by")] | any | not'
+fi
+
+if [ -n "${VT_KEY_SENSITIVE-}" ]; then
+  s=$(call GET "/v1/pruning?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_SENSITIVE")
+  if [ "$s" = 200 ]; then
+    check_body "pruning includes crew + rate fields with labour:read + costs:read" \
+      '(.data | length == 0) or ([.data[] | has("crew") and has("hourly_rate") and has("labour_cost")] | all)'
+  else check "sensitive key can list pruning" 200 "$s"; fi
+  s=$(call GET "/v1/pins?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_SENSITIVE")
+  if [ "$s" = 200 ]; then
+    check_body "pins include identity fields with labour:read" \
+      '(.data | length == 0) or ([.data[] | has("assigned_to") and has("completed_by")] | all)'
+  else check "sensitive key can list pins" 200 "$s"; fi
+else skip "sensitive key 3C (2 tests)"; fi
+
+echo
+echo "== Stage 3C: single resources & cross-vineyard non-disclosure =="
+for res in work-tasks pruning irrigation-records growth-stages yield-records pins; do
+  s=$(call GET "/v1/$res/00000000-0000-0000-0000-000000000000" "Bearer $VT_KEY_FULL")
+  check "random /v1/$res uuid -> 404" 404 "$s" resource_not_found
+done
+
+if [ -n "${VT_WORK_TASK_GRANTED-}" ]; then
+  s=$(call GET "/v1/work-tasks/$VT_WORK_TASK_GRANTED" "Bearer $VT_KEY_FULL"); check "granted work task retrievable" 200 "$s"
+  check_body "work task detail has labour_lines + machine_lines + trip_ids" \
+    '.data | (.labour_lines | type == "array") and (.machine_lines | type == "array") and (.trip_ids | type == "array")'
+  check_body "work task labour lines omit rates without costs:read" \
+    '[.data.labour_lines[] | has("hourly_rate") or has("total_cost")] | any | not'
+  check_body "work task blocks carry id + name" \
+    '(.data.blocks | length == 0) or ([.data.blocks[] | has("id") and has("name")] | all)'
+else skip "granted work task (4 tests)"; fi
+if [ -n "${VT_WORK_TASK_OTHER-}" ]; then
+  s=$(call GET "/v1/work-tasks/$VT_WORK_TASK_OTHER" "Bearer $VT_KEY_FULL"); check "other account's work task -> 404" 404 "$s" resource_not_found
+else skip "other-account work task"; fi
+
+if [ -n "${VT_PRUNING_GRANTED-}" ]; then
+  s=$(call GET "/v1/pruning/$VT_PRUNING_GRANTED" "Bearer $VT_KEY_FULL"); check "granted pruning activity retrievable" 200 "$s"
+  check_body "pruning uses explicit vine/labour metrics" \
+    '.data | has("vines_pruned") and has("labour_hours") and has("vines_per_labour_hour") and has("row_equivalents")'
+  check_body "pruning detail omits crew without labour:read" '.data | has("crew") | not'
+else skip "granted pruning activity (3 tests)"; fi
+if [ -n "${VT_PRUNING_OTHER-}" ]; then
+  s=$(call GET "/v1/pruning/$VT_PRUNING_OTHER" "Bearer $VT_KEY_FULL"); check "other account's pruning activity -> 404" 404 "$s" resource_not_found
+else skip "other-account pruning activity"; fi
+
+if [ -n "${VT_IRRIGATION_GRANTED-}" ]; then
+  s=$(call GET "/v1/irrigation-records/$VT_IRRIGATION_GRANTED" "Bearer $VT_KEY_FULL"); check "granted irrigation record retrievable" 200 "$s"
+  check_body "irrigation uses explicit units (volume_l, duration_minutes)" \
+    '.data | has("volume_l") and has("duration_minutes") and has("status")'
+  check_body "irrigation detail blocks carry depth_mm" \
+    '(.data.blocks | length == 0) or ([.data.blocks[] | has("depth_mm")] | all)'
+else skip "granted irrigation record (3 tests)"; fi
+if [ -n "${VT_IRRIGATION_OTHER-}" ]; then
+  s=$(call GET "/v1/irrigation-records/$VT_IRRIGATION_OTHER" "Bearer $VT_KEY_FULL"); check "other account's irrigation record -> 404" 404 "$s" resource_not_found
+else skip "other-account irrigation record"; fi
+
+if [ -n "${VT_GROWTH_STAGE_GRANTED-}" ]; then
+  s=$(call GET "/v1/growth-stages/$VT_GROWTH_STAGE_GRANTED" "Bearer $VT_KEY_FULL"); check "granted growth stage retrievable" 200 "$s"
+  check_body "growth stage has stage_code + observed_at" '.data | has("stage_code") and has("observed_at")'
+  check_body "growth stage omits recorded_by without labour:read" '.data | has("recorded_by") | not'
+else skip "granted growth stage (3 tests)"; fi
+if [ -n "${VT_GROWTH_STAGE_OTHER-}" ]; then
+  s=$(call GET "/v1/growth-stages/$VT_GROWTH_STAGE_OTHER" "Bearer $VT_KEY_FULL"); check "other account's growth stage -> 404" 404 "$s" resource_not_found
+else skip "other-account growth stage"; fi
+
+if [ -n "${VT_YIELD_GRANTED-}" ]; then
+  s=$(call GET "/v1/yield-records/$VT_YIELD_GRANTED" "Bearer $VT_KEY_FULL"); check "granted yield record retrievable" 200 "$s"
+  check_body "yield uses tonnes/ha units + vintage" \
+    '.data | has("total_yield_tonnes") and has("total_area_ha") and has("vintage_year")'
+  check_body "yield blocks use explicit unit names" \
+    '(.data.blocks | length == 0) or ([.data.blocks[] | has("area_ha") and has("average_bunch_weight_g")] | all)'
+else skip "granted yield record (3 tests)"; fi
+if [ -n "${VT_YIELD_OTHER-}" ]; then
+  s=$(call GET "/v1/yield-records/$VT_YIELD_OTHER" "Bearer $VT_KEY_FULL"); check "other account's yield record -> 404" 404 "$s" resource_not_found
+else skip "other-account yield record"; fi
+
+if [ -n "${VT_PIN_GRANTED-}" ]; then
+  s=$(call GET "/v1/pins/$VT_PIN_GRANTED" "Bearer $VT_KEY_FULL"); check "granted pin retrievable" 200 "$s"
+  check_body "pin preserves snapped path/row identity" \
+    '.data.row | has("path_number") and has("row_number") and has("side") and has("snapped_to_row")'
+  check_body "pin has coordinates + placement + status" \
+    '.data | has("latitude") and has("longitude") and has("status") and (.location | has("scope") and has("assignment_basis"))'
+  check_body "pin detail includes row_segments" '.data.row_segments | type == "array"'
+  check_body "pin never exposes private photo paths" \
+    '.data | tostring | contains("photo_path") | not'
+else skip "granted pin (5 tests)"; fi
+if [ -n "${VT_PIN_OTHER-}" ]; then
+  s=$(call GET "/v1/pins/$VT_PIN_OTHER" "Bearer $VT_KEY_FULL"); check "other account's pin -> 404" 404 "$s" resource_not_found
+else skip "other-account pin"; fi
+
+echo
+echo "== Stage 3C: pagination =="
+s=$(call GET "/v1/pins?vineyard_id=$VT_VINEYARD_GRANTED&limit=1" "Bearer $VT_KEY_FULL")
+check "pins limit=1 accepted" 200 "$s"
+NEXT3C=$(jq -r '.pagination.next_cursor // empty' "$BODY_FILE")
+FIRST3C=$(jq -r '.data[0].id // empty' "$BODY_FILE")
+if [ -n "$NEXT3C" ]; then
+  s=$(call GET "/v1/pins?vineyard_id=$VT_VINEYARD_GRANTED&limit=1&cursor=$NEXT3C" "Bearer $VT_KEY_FULL")
+  check "pins cursor page 2 -> 200" 200 "$s"
+  SECOND3C=$(jq -r '.data[0].id // empty' "$BODY_FILE")
+  if [ -n "$SECOND3C" ] && [ "$SECOND3C" != "$FIRST3C" ]; then
+    PASS=$((PASS+1)); echo "PASS  pins cursor advances without duplicates"
+  else
+    FAIL=$((FAIL+1)); echo "FAIL  pins cursor advances without duplicates (first=$FIRST3C second=$SECOND3C)"
+  fi
+else
+  skip "pins cursor iteration (needs >=2 pins in granted vineyard)"
+fi
+s=$(call GET "/v1/work-tasks?vineyard_id=$VT_VINEYARD_GRANTED&cursor=%%%bogus" "Bearer $VT_KEY_FULL"); check "work-tasks invalid cursor -> 400 invalid_cursor" 400 "$s" invalid_cursor
 
 echo
 echo "== Stage 3B: pagination =="

@@ -1,4 +1,4 @@
-# VineTrack API — v1 (Stage 3A + Stage 3B)
+# VineTrack API — v1 (Stage 3A + Stage 3B + Stage 3C)
 
 The canonical engineering contract for the VineTrack public read-only API.
 This document seeds the future developer portal; it is not end-user marketing
@@ -120,6 +120,18 @@ silently ignored) so integration mistakes surface immediately.
 | `GET /v1/fuel-purchases/{id}` | `fuel:read` |
 | `GET /v1/equipment` | `equipment:read` |
 | `GET /v1/equipment/{id}` | `equipment:read` |
+| `GET /v1/work-tasks` | `work_tasks:read` |
+| `GET /v1/work-tasks/{id}` | `work_tasks:read` |
+| `GET /v1/pruning` | `pruning:read` |
+| `GET /v1/pruning/{id}` | `pruning:read` |
+| `GET /v1/irrigation-records` | `irrigation:read` |
+| `GET /v1/irrigation-records/{id}` | `irrigation:read` |
+| `GET /v1/growth-stages` | `growth_stages:read` |
+| `GET /v1/growth-stages/{id}` | `growth_stages:read` |
+| `GET /v1/yield-records` | `yield:read` |
+| `GET /v1/yield-records/{id}` | `yield:read` |
+| `GET /v1/pins` | `pins:read` |
+| `GET /v1/pins/{id}` | `pins:read` |
 
 Scopes never imply each other: `blocks:read` does not include
 `vineyards:read`. Sensitive scopes (`labour:read`, `costs:read`,
@@ -144,6 +156,14 @@ grants access to any route (`costs:read` alone cannot call
 | Fuel purchase | `price_per_litre`, `total_price` | `fuel:read` | `costs:read` |
 | Fuel purchase | `volume_l`, `date` | `fuel:read` | none |
 | Equipment | (no cost-bearing fields exist canonically) | `equipment:read` | — |
+| Work task detail | `labour_lines[].hourly_rate`, `labour_lines[].total_cost`, `machine_lines[].fuel_cost`, `machine_lines[].hourly_rate`, `machine_lines[].total_cost` | `work_tasks:read` | `costs:read` |
+| Work task detail | `machine_lines[].operator` | `work_tasks:read` | `labour:read` |
+| Pruning | `crew` (worker/crew identity snapshot) | `pruning:read` | `labour:read` |
+| Pruning | `hourly_rate`, `labour_cost` | `pruning:read` | `costs:read` |
+| Irrigation record | (no cost or labour fields exist canonically) | `irrigation:read` | — |
+| Growth stage | `recorded_by` (user id + name) | `growth_stages:read` | `labour:read` |
+| Yield record | (no pricing/revenue fields exist canonically — `costs:read` gates nothing today; any future financial grape-sale data will be `costs:read`-gated) | `yield:read` | — |
+| Pin | `assigned_to`, `completed_by` (user id + name) | `pins:read` | `labour:read` |
 
 Monetary values are returned in the vineyard's local currency as recorded;
 no currency column exists canonically, so no currency code is asserted.
@@ -164,11 +184,13 @@ GET /v1/blocks?vineyard_id=<uuid>&limit=100&cursor=<next_cursor>
   - Structural resources (`vineyards`, `blocks`, `equipment`):
     `created_at` then `id`, **ascending** (Stage 3A behaviour, unchanged).
   - Operational/chronological resources (`trips`, `spray-jobs`,
-    `fuel-records`, `fuel-purchases`): `created_at` then `id`,
-    **descending** — newest records first. `created_at` (not the business
-    date) is the sort key because it is NOT NULL on every operational
-    table, which keeps the keyset cursor deterministic; business-date
-    filtering is provided separately via `from`/`to`.
+    `fuel-records`, `fuel-purchases`, `work-tasks`, `pruning`,
+    `irrigation-records`, `growth-stages`, `yield-records`, `pins`):
+    `created_at` then `id`, **descending** — newest records first.
+    `created_at` (not the business date) is the sort key because it is
+    NOT NULL on every operational table, which keeps the keyset cursor
+    deterministic; business-date filtering is provided separately via
+    `from`/`to`.
 
 ## Date filters
 
@@ -184,13 +206,23 @@ both days and is evaluated against UTC timestamps (a day means
 | spray-jobs | spray date (`date`) — records without a date are excluded by a date filter |
 | fuel-records | fill date/time (`date`) |
 | fuel-purchases | purchase date (`date`) |
+| work-tasks | task business date (`date`) |
+| pruning | activity date (`date`) |
+| irrigation-records | session date (`date`) |
+| growth-stages | observation time (`observed_at`) |
+| yield-records | season archive time (`archived_at`) |
+| pins | — (no date filter; pins filter by block/status/category/type) |
 
 ## Units
 
 Field names carry their unit explicitly: `distance_km`, `volume_l`,
 `water_volume_l`, `treated_area_ha`, `duration_minutes`, `row_width_m`,
 `tank_capacity_l`, `fuel_usage_l_per_hour`, `price_per_litre`,
-`temperature_c`, `wind_speed_kmh`, `humidity_percent`. Spray product
+`temperature_c`, `wind_speed_kmh`, `humidity_percent`, `labour_hours`,
+`duration_hours`, `vines_pruned`, `vines_per_labour_hour`,
+`flow_l_per_hour`, `depth_mm`, `water_l_per_vine`, `water_l_per_ha`,
+`total_yield_tonnes`, `total_area_ha`, `yield_tonnes_per_ha`,
+`average_bunch_weight_g`, `along_row_distance_m`. Spray product
 rates/quantities keep the product's recorded unit (`Litres`, `mL`, `Kg`,
 `g`) in a `unit` field and are never converted.
 
@@ -550,6 +582,352 @@ equipment: trailers, pumps, tools) — or a canonical machine subtype:
 Same shape. Ids are looked up across all three catalogues; an id in an
 ungranted vineyard returns `resource_not_found`.
 
+### GET /v1/work-tasks?vineyard_id={uuid}
+
+Requires `work_tasks:read`. General vineyard work tasks (the canonical
+source is VineTrack's Work Tasks module). `vineyard_id` is **required**.
+Optional filters: `from`, `to` (task date), `status` (stored status value),
+`task_type`, `block_id`, `limit`, `cursor`. Newest first.
+
+```json
+{
+  "id": "e1f2...",
+  "vineyard_id": "1f0a...",
+  "task_type": "Mowing",
+  "status": "completed",
+  "date": "2026-08-01T00:00:00Z",
+  "start_date": "2026-08-01T00:00:00Z",
+  "end_date": "2026-08-02T00:00:00Z",
+  "duration_hours": 6.5,
+  "area_ha": 4.2,
+  "blocks": [ { "id": "77b3...", "name": "Block 12" } ],
+  "description": "Mid-rows both directions",
+  "notes": null,
+  "is_archived": false,
+  "is_finalized": true,
+  "created_at": "2026-08-01T05:12:40Z",
+  "updated_at": "2026-08-02T03:01:11Z"
+}
+```
+
+- There is **no** canonical title column — `task_type` is the task's label.
+- `status` is the stored client value (free text, nullable); `is_archived`
+  and `is_finalized` are returned as explicit flags. Archived tasks remain
+  in the collection as history; deleted tasks never appear.
+- `blocks` come from the task's multi-block links, falling back to the
+  legacy single-block reference for older tasks.
+- The `block_id` filter matches tasks linked to that block through either
+  path.
+
+### GET /v1/work-tasks/{work_task_id}
+
+Same shape plus:
+
+- `labour_lines`: per-day, per-worker-TYPE entries — `work_date`,
+  `worker_type`, `worker_count`, `hours_per_worker`, `total_hours`,
+  `notes`. Worker type is a category (e.g. "Contractor"), never an
+  identity, so it is not labour-gated. With `costs:read` each line gains
+  `hourly_rate` and `total_cost`.
+- `total_labour_hours`: sum of line total hours (derived, documented).
+- `machine_lines`: manual machine work — `work_date`, `equipment_id`
+  (canonical machine id when resolvable), `equipment_name`,
+  `duration_hours`, `started_at`, `ended_at`, `engine_hours_start/-end/
+  -used`, `fuel_volume_l`, `entry_source`, `notes`. With `costs:read`:
+  `fuel_cost`, `hourly_rate`, `total_cost`. With `labour:read`:
+  `operator` (`{ user_id, name }`; name is `null` — machine lines store
+  no name snapshot).
+- `trip_ids`: linked GPS trip ids (full trips are a separate
+  `trips:read`-scoped resource).
+- Internal labour/machine line row ids are **not** exposed — they are not
+  stable external references.
+
+### GET /v1/pruning?vineyard_id={uuid}
+
+Requires `pruning:read`. Actual pruning ACTIVITY records (one activity =
+one crew/day of work across one or more blocks) — not season
+configuration. `vineyard_id` is **required**. Optional filters: `from`,
+`to` (activity date), `block_id`, `limit`, `cursor`. Newest first.
+
+```json
+{
+  "id": "ab12...",
+  "vineyard_id": "1f0a...",
+  "date": "2026-07-15",
+  "pruning_method": "spur",
+  "season_year": 2026,
+  "vintage_year": 2027,
+  "started_at": "2026-07-15T20:00:00Z",
+  "ended_at": "2026-07-16T01:30:00Z",
+  "labour_hours": 22,
+  "vines_pruned": 1840,
+  "row_equivalents": 11.5,
+  "quarters_completed": 46,
+  "vines_per_labour_hour": 83.6,
+  "block_summary": "Cabernet Franc · Sauvignon Blanc",
+  "blocks": [
+    { "block_id": "77b3...", "block_name": "Cabernet Franc", "row_equivalents": 7.25, "vines_pruned": 1160 },
+    { "block_id": "88c4...", "block_name": "Sauvignon Blanc", "row_equivalents": 4.25, "vines_pruned": 680 }
+  ],
+  "work_task_id": null,
+  "notes": null,
+  "created_at": "2026-07-16T01:31:00Z",
+  "updated_at": "2026-07-16T01:31:00Z"
+}
+```
+
+- **Reversed activities are omitted from the collection entirely.**
+  Reversal is VineTrack's only way to revert completed pruning quarters;
+  a reversed activity's work no longer exists in live progress, so the
+  API mirrors that exactly — reversed activity can never inflate totals.
+- `vines_pruned` / `row_equivalents` / `quarters_completed` are the
+  server-attributed values from VineTrack's idempotent quarter model —
+  never double-counted across devices.
+- `vines_per_labour_hour` is derived (`vines_pruned ÷ labour_hours`,
+  1 decimal) and `null` when labour hours are absent.
+- `crew` (free-text worker/crew identity snapshot) appears **only** with
+  `labour:read`.
+- `hourly_rate` and the derived `labour_cost`
+  (`labour_hours × hourly_rate`) appear **only** with `costs:read`.
+- Labour is stored ONCE per activity (never apportioned across blocks).
+- The internal row/quarter grid is not exposed; per-block
+  `row_equivalents` (quarters ÷ 4) is the stable external measure.
+
+### GET /v1/pruning/{pruning_activity_id}
+
+Same shape (blocks included). A reversed activity returns
+`resource_not_found`.
+
+### GET /v1/irrigation-records?vineyard_id={uuid}
+
+Requires `irrigation:read`. Actual irrigation session records with their
+server-computed per-block water allocation. `vineyard_id` is **required**.
+Optional filters: `from`, `to` (session date), `status`, `block_id`,
+`limit`, `cursor`. Newest first.
+
+```json
+{
+  "id": "cd34...",
+  "vineyard_id": "1f0a...",
+  "date": "2026-08-05",
+  "vintage_year": 2027,
+  "status": "completed",
+  "started_at": "2026-08-05T18:00:00Z",
+  "ended_at": "2026-08-05T22:00:00Z",
+  "duration_minutes": 240,
+  "calculation_method": "configured_flow",
+  "source_type": "manual_ios",
+  "flow_l_per_hour": 1200,
+  "volume_l": 4800,
+  "effective_volume_l": 4320,
+  "efficiency_percent": 90,
+  "irrigation_system_id": "ef56...",
+  "valve_id": "0a1b...",
+  "blocks": [
+    { "block_id": "77b3...", "block_name": "Block 12", "allocation_percent": 100, "volume_l": 4800 }
+  ],
+  "notes": null,
+  "created_at": "2026-08-05T22:05:00Z",
+  "updated_at": "2026-08-05T22:05:00Z"
+}
+```
+
+- Canonical units: litres, litres/hour, mm, whole minutes (1 L over 1 m²
+  = 1 mm depth). Values are the server-computed canonical results — the
+  API never recomputes them.
+- `status` ∈ `completed`, `corrected`, `reversed`, `planned`, `running`,
+  `cancelled`, `imported`, `estimated`. Sessions with `status=reversed`
+  are **excluded from the default collection** (they are corrections);
+  request them explicitly with `?status=reversed`. Deleted sessions never
+  appear.
+- Metrics that could not be calculated are `null` — never zero
+  (VineTrack's missing-data rule).
+- No cost or labour fields exist on irrigation sessions.
+- Irrigation system/valve configuration is NOT dumped into the record;
+  the record carries only its frozen per-session results plus
+  `irrigation_system_id` / `valve_id` references.
+
+### GET /v1/irrigation-records/{irrigation_record_id}
+
+Same shape plus per-block detail metrics — each block gains
+`effective_volume_l`, `area_ha` (exact m² ÷ 10000 conversion),
+`vine_count`, `water_l_per_vine`, `water_l_per_ha`, `depth_mm`,
+`effective_depth_mm` — and display references `system`
+(`{ id, name }`) and `valve` (`{ id, name, valve_number }`).
+Reversed sessions ARE retrievable by id (explicit status).
+
+### GET /v1/growth-stages?vineyard_id={uuid}
+
+Requires `growth_stages:read`. Recorded E-L growth-stage observations
+(canonical store: growth-stage records; legacy pin observations are
+mirrored into it by the apps). `vineyard_id` is **required**. Optional
+filters: `from`, `to` (observation time), `block_id`, `stage_code`,
+`limit`, `cursor`. Newest first.
+
+```json
+{
+  "id": "f6a7...",
+  "vineyard_id": "1f0a...",
+  "block_id": "77b3...",
+  "block_name": "Block 12",
+  "observed_at": "2026-08-04T21:15:00Z",
+  "stage_code": "EL-12",
+  "stage_label": "5 leaves separated",
+  "variety": "Sauvignon Blanc",
+  "variety_id": "9d0e...",
+  "row_number": 14,
+  "side": "left",
+  "latitude": -41.2743,
+  "longitude": 173.2801,
+  "notes": null,
+  "created_at": "2026-08-04T21:16:02Z",
+  "updated_at": "2026-08-04T21:16:02Z"
+}
+```
+
+- `stage_code` is the canonical stable E-L code as recorded;
+  `stage_label` is its display label.
+- `side` is normalised to lowercase `left`/`right` (documented).
+- `recorded_by` (`{ user_id, name }`) appears **only** with
+  `labour:read`.
+- Photo storage paths / attachment URLs are **not** exposed — imagery
+  access is a future explicit API design.
+
+### GET /v1/growth-stages/{growth_stage_id}
+
+Same shape; same gating.
+
+### GET /v1/yield-records?vineyard_id={uuid}
+
+Requires `yield:read`. Archived season yield results with per-block
+breakdown — VineTrack's recorded yield history. `vineyard_id` is
+**required**. Optional filters: `from`, `to` (archive time), `vintage`
+(4-digit year), `limit`, `cursor`. Newest first.
+
+```json
+{
+  "id": "1b2c...",
+  "vineyard_id": "1f0a...",
+  "season": "2025/26",
+  "vintage_year": 2026,
+  "archived_at": "2026-04-20T03:00:00Z",
+  "total_yield_tonnes": 182.4,
+  "total_area_ha": 24.6,
+  "yield_tonnes_per_ha": 7.415,
+  "blocks": [
+    {
+      "block_id": "77b3...",
+      "block_name": "Block 12",
+      "area_ha": 4.2,
+      "estimated_yield_tonnes": 31.5,
+      "yield_tonnes_per_ha": 7.5,
+      "average_bunches_per_vine": 38.2,
+      "average_bunch_weight_g": 152,
+      "vine_count": 5400,
+      "samples_recorded": 20,
+      "damage_factor": 1,
+      "actual_yield_tonnes": 30.9,
+      "actual_recorded_at": "2026-04-19T00:00:00Z"
+    }
+  ],
+  "notes": null,
+  "created_at": "2026-04-20T03:00:05Z",
+  "updated_at": "2026-04-20T03:00:05Z"
+}
+```
+
+- Per-block `yield_tonnes_per_ha` is the canonically STORED value; the
+  top-level `yield_tonnes_per_ha` is derived
+  (`total_yield_tonnes ÷ total_area_ha`, documented) and `null` when the
+  area is zero.
+- `estimated_yield_tonnes` vs `actual_yield_tonnes` are both preserved
+  (estimates from sampling; actuals when recorded at harvest).
+- No pricing/revenue fields exist canonically — there is nothing for
+  `costs:read` to gate today. If financial grape-sale data is added
+  later it will be `costs:read`-gated commercial information.
+- In-progress sampling sessions are working data and are **not** exposed.
+- Variety is not stored on yield records canonically, so no `variety`
+  field (or filter) is invented.
+
+### GET /v1/yield-records/{yield_record_id}
+
+Same shape.
+
+### GET /v1/pins?vineyard_id={uuid}
+
+Requires `pins:read`. Vineyard operational pins — repairs, growth
+observations and manual issues — with VineTrack's canonical placement
+resolution. `vineyard_id` is **required**. Optional filters: `block_id`,
+`status` (`open`, `in_progress`, `completed`, `cancelled`), `category`,
+`type` (`repairs`, `growth`, `manual_issue`), `limit`, `cursor`.
+Newest first.
+
+```json
+{
+  "id": "2d3e...",
+  "vineyard_id": "1f0a...",
+  "type": "repairs",
+  "custom_type": null,
+  "category": "infrastructure",
+  "priority": "high",
+  "status": "open",
+  "title": "Broken dripper line",
+  "notes": "Second span from the end post",
+  "growth_stage_code": null,
+  "block_id": "77b3...",
+  "block_name": "Block 12",
+  "latitude": -41.2745,
+  "longitude": 173.2803,
+  "row": {
+    "snapped_to_row": true,
+    "path_number": 19.5,
+    "row_number": 19,
+    "side": "left",
+    "along_row_distance_m": 42.7,
+    "snapped_latitude": -41.27451,
+    "snapped_longitude": 173.28032
+  },
+  "location": {
+    "scope": "point",
+    "assignment_basis": "snapped_point",
+    "row_summary": null,
+    "warning": null
+  },
+  "due_date": null,
+  "work_task_id": null,
+  "resolved_at": null,
+  "created_at": "2026-08-06T02:10:00Z",
+  "updated_at": "2026-08-06T02:10:00Z"
+}
+```
+
+- **Snapped path/row identity is preserved exactly**: `row.path_number`
+  is the driving path (e.g. `19.5`), `row.row_number` the pinned vine
+  row, `row.side` `left`/`right` (normalised lowercase). Pins are never
+  reduced to raw GPS.
+- `location` is VineTrack's server-authoritative placement resolution
+  (scope `point`/`row`/`block`; assignment basis e.g. `snapped_point`,
+  `row_segments`, `block`, `legacy_block`, `unassigned`;
+  `row_summary` like `"Rows 2–4 · Row 5 (sections 1–2)"` for row-scope
+  pins).
+- `status` derivation (documented): the canonical stored status wins;
+  legacy pins without one derive `completed`/`open` from their
+  completion flag. `resolved_at` is the completion time. Resolved pins
+  remain in the collection as history — filter with `status`.
+- `type` is the pin mode (`repairs`, `growth`, `manual_issue`);
+  `custom_type` (`{ id, name }`) identifies a vineyard-defined custom
+  pin type when used.
+- `assigned_to` and `completed_by` (`{ user_id, name }`) appear **only**
+  with `labour:read`.
+- Photo storage paths are **not** exposed. Duplicate-detection
+  diagnostics are internal and not exposed.
+- The `block_id` filter matches the pin's stored block link.
+
+### GET /v1/pins/{pin_id}
+
+Same shape plus `row_segments`: the exact row/section selection of a
+row-scope pin as `[{ "row": 5, "segment": 1 }, ...]` (sections are
+quarters 1–4).
+
 ## Collection vs detail representation
 
 Collections return an efficient summary; single-record endpoints return
@@ -557,7 +935,11 @@ full detail. Specifically: `/v1/spray-jobs` collections include tank/
 product COUNTS and names but not the full tank mix — `GET
 /v1/spray-jobs/{id}` returns full `tanks`, `blocks` and the linked plan
 header. `/v1/trips` collections omit the `rows` work summary and `costs`
-object — both are detail-only.
+object — both are detail-only. `/v1/work-tasks` collections omit
+`labour_lines` / `machine_lines` / `trip_ids` (detail-only).
+`/v1/irrigation-records` collections carry per-block allocation percent
+and volume only; full per-block metrics are detail-only. `/v1/pins`
+collections omit `row_segments` (detail-only).
 
 ## curl examples
 
@@ -615,6 +997,30 @@ curl \
   "https://tbafuqwruefgkbyxrxyb.supabase.co/functions/v1/vinetrack-api/v1/equipment?vineyard_id=<VINEYARD_UUID>&type=tractor"
 ```
 
+```bash
+curl \
+  -H "Authorization: Bearer <VT_API_KEY>" \
+  "https://tbafuqwruefgkbyxrxyb.supabase.co/functions/v1/vinetrack-api/v1/work-tasks?vineyard_id=<VINEYARD_UUID>&from=2026-07-01&to=2026-07-31"
+```
+
+```bash
+curl \
+  -H "Authorization: Bearer <VT_API_KEY>" \
+  "https://tbafuqwruefgkbyxrxyb.supabase.co/functions/v1/vinetrack-api/v1/pruning?vineyard_id=<VINEYARD_UUID>&block_id=<BLOCK_UUID>"
+```
+
+```bash
+curl \
+  -H "Authorization: Bearer <VT_API_KEY>" \
+  "https://tbafuqwruefgkbyxrxyb.supabase.co/functions/v1/vinetrack-api/v1/irrigation-records?vineyard_id=<VINEYARD_UUID>&status=completed"
+```
+
+```bash
+curl \
+  -H "Authorization: Bearer <VT_API_KEY>" \
+  "https://tbafuqwruefgkbyxrxyb.supabase.co/functions/v1/vinetrack-api/v1/pins?vineyard_id=<VINEYARD_UUID>&status=open&type=repairs"
+```
+
 Never embed real production keys in source code, docs, or client-side apps.
 
 ### PowerShell note
@@ -644,6 +1050,12 @@ select integration_grant_scope('<integration_id>', 'trips:read');
 select integration_grant_scope('<integration_id>', 'sprays:read');
 select integration_grant_scope('<integration_id>', 'fuel:read');
 select integration_grant_scope('<integration_id>', 'equipment:read');
+select integration_grant_scope('<integration_id>', 'work_tasks:read');
+select integration_grant_scope('<integration_id>', 'pruning:read');
+select integration_grant_scope('<integration_id>', 'irrigation:read');
+select integration_grant_scope('<integration_id>', 'growth_stages:read');
+select integration_grant_scope('<integration_id>', 'yield:read');
+select integration_grant_scope('<integration_id>', 'pins:read');
 -- Sensitive scopes only when the integration truly needs them:
 -- select integration_grant_scope('<integration_id>', 'costs:read');
 -- select integration_grant_scope('<integration_id>', 'labour:read');
@@ -658,7 +1070,7 @@ select integration_create_api_key('<integration_id>', 'test', 'dev key', null);
 - Deploy via `scripts/deploy-edge-functions.ps1` / `.sh` (the scripts pass
   `--no-verify-jwt` for this function — callers present VineTrack keys, not
   Supabase JWTs).
-- Requires SQL 172 + SQL 173 + SQL 174 applied first.
+- Requires SQL 172 + SQL 173 + SQL 174 + SQL 175 applied first.
 - OpenAPI 3.1 document: `docs/vinetrack-api-openapi.yaml` (descriptive —
   the implementation remains canonical).
 - Secrets: only the standard Supabase-injected `SUPABASE_URL` and
