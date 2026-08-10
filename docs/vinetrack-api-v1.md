@@ -1,4 +1,4 @@
-# VineTrack API — v1 (Stage 3A + Stage 3B + Stage 3C)
+# VineTrack API — v1 (Stage 3A + Stage 3B + Stage 3C + Stage 3D)
 
 The canonical engineering contract for the VineTrack public read-only API.
 This document seeds the future developer portal; it is not end-user marketing
@@ -97,9 +97,16 @@ All responses are UTF-8 `application/json`. There are no HTML error pages.
 | `rate_limit_exceeded` | 429 | Per-key request limit exceeded. |
 | `method_not_allowed` | 405 | The API is read-only; only GET (and OPTIONS) are supported. |
 | `internal_error` | 500 | Unexpected failure; quote `request_id` to support. |
+| `disease_risk_unavailable` | 503 | Disease risk could not be computed AND no recent cached assessment exists (see `/v1/disease-risk`). |
 
 Unknown query parameters are **rejected** with `invalid_request` (never
 silently ignored) so integration mistakes surface immediately.
+
+**Stale data is not an error.** When an environmental endpoint serves
+cached data as a fallback it still returns HTTP `200` with the staleness
+marked explicitly in the payload (`is_stale: true` /
+`source_status: "stale_fallback"`). Errors are reserved for the case
+where nothing can be served at all.
 
 ## Scopes
 
@@ -132,6 +139,9 @@ silently ignored) so integration mistakes surface immediately.
 | `GET /v1/yield-records/{id}` | `yield:read` |
 | `GET /v1/pins` | `pins:read` |
 | `GET /v1/pins/{id}` | `pins:read` |
+| `GET /v1/weather` | `weather:read` |
+| `GET /v1/rainfall` | `rainfall:read` |
+| `GET /v1/disease-risk` | `disease_risk:read` |
 
 Scopes never imply each other: `blocks:read` does not include
 `vineyards:read`. Sensitive scopes (`labour:read`, `costs:read`,
@@ -164,6 +174,7 @@ grants access to any route (`costs:read` alone cannot call
 | Growth stage | `recorded_by` (user id + name) | `growth_stages:read` | `labour:read` |
 | Yield record | (no pricing/revenue fields exist canonically — `costs:read` gates nothing today; any future financial grape-sale data will be `costs:read`-gated) | `yield:read` | — |
 | Pin | `assigned_to`, `completed_by` (user id + name) | `pins:read` | `labour:read` |
+| Weather / Rainfall / Disease risk | (no cost or labour fields exist — `costs:read` and `labour:read` are irrelevant to environmental resources and never affect access to them) | resource scope | — |
 
 Monetary values are returned in the vineyard's local currency as recorded;
 no currency column exists canonically, so no currency code is asserted.
@@ -191,6 +202,14 @@ GET /v1/blocks?vineyard_id=<uuid>&limit=100&cursor=<next_cursor>
     NOT NULL on every operational table, which keeps the keyset cursor
     deterministic; business-date filtering is provided separately via
     `from`/`to`.
+  - `/v1/rainfall` is a daily series with no per-row uuid after source
+    resolution, so its cursor is keyed on the **date** itself,
+    descending (newest day first). It is equally opaque — treat it like
+    any other cursor.
+
+`/v1/weather` and `/v1/disease-risk` are **singleton** responses (one
+document per vineyard) and are not paginated — they return `data` plus a
+`meta` freshness object instead of a `pagination` object.
 
 ## Date filters
 
@@ -212,6 +231,7 @@ both days and is evaluated against UTC timestamps (a day means
 | growth-stages | observation time (`observed_at`) |
 | yield-records | season archive time (`archived_at`) |
 | pins | — (no date filter; pins filter by block/status/category/type) |
+| rainfall | observation date (`date`) — vineyard-local calendar day |
 
 ## Units
 
@@ -222,9 +242,14 @@ Field names carry their unit explicitly: `distance_km`, `volume_l`,
 `duration_hours`, `vines_pruned`, `vines_per_labour_hour`,
 `flow_l_per_hour`, `depth_mm`, `water_l_per_vine`, `water_l_per_ha`,
 `total_yield_tonnes`, `total_area_ha`, `yield_tonnes_per_ha`,
-`average_bunch_weight_g`, `along_row_distance_m`. Spray product
+`average_bunch_weight_g`, `along_row_distance_m`, `rainfall_mm`,
+`rainfall_today_mm`, `rainfall_rate_mm_per_hour`, `wind_gust_kmh`,
+`wind_speed_max_kmh`, `temp_min_c`, `temp_max_c`, `et0_mm`. Spray product
 rates/quantities keep the product's recorded unit (`Litres`, `mL`, `Kg`,
-`g`) in a `unit` field and are never converted.
+`g`) in a `unit` field and are never converted. All environmental data is
+metric — provider-native imperial values (e.g. Davis °F / mph / inches)
+are converted deterministically by the canonical ingestion proxies before
+storage; the API performs no unit conversion of its own.
 
 ## Rate limits
 
@@ -928,6 +953,259 @@ Same shape plus `row_segments`: the exact row/section selection of a
 row-scope pin as `[{ "row": 5, "segment": 1 }, ...]` (sections are
 quarters 1–4).
 
+### GET /v1/weather
+
+Singleton environmental document for one granted vineyard. Requires
+`weather:read` plus an explicit vineyard grant.
+
+```text
+GET /v1/weather?vineyard_id=<uuid>
+```
+
+```json
+{
+  "data": {
+    "vineyard_id": "...",
+    "current": {
+      "temperature_c": 14.2,
+      "humidity_percent": 78,
+      "wind_speed_kmh": 9.7,
+      "wind_gust_kmh": 18.4,
+      "wind_direction_degrees": 315,
+      "wind_direction": "NW",
+      "rainfall_today_mm": 4.2,
+      "rainfall_rate_mm_per_hour": 0,
+      "leaf_wetness": 3.5,
+      "observed_at": "2026-08-10T02:40:00Z",
+      "fetched_at": "2026-08-10T02:41:12Z",
+      "is_stale": false,
+      "source": {
+        "provider": "davis_weatherlink",
+        "station_id": "123456",
+        "station_name": "Home Block Station"
+      }
+    },
+    "current_status": "ok",
+    "forecast": [
+      {
+        "date": "2026-08-10",
+        "rain_mm": 2.5,
+        "rain_probability_percent": 70,
+        "temp_min_c": 6.1,
+        "temp_max_c": 15.4,
+        "wind_speed_max_kmh": 32,
+        "et0_mm": 1.8
+      }
+    ],
+    "forecast_status": "ok",
+    "forecast_source": {
+      "provider": "willyweather",
+      "location": { "latitude": -33.28, "longitude": 149.1, "label": "Orange", "basis": "forecast_location" },
+      "horizon_days": 7,
+      "fetched_at": "2026-08-10T01:15:03Z",
+      "is_stale": false
+    }
+  },
+  "meta": { "generated_at": "2026-08-10T02:41:30Z" }
+}
+```
+
+**Observed vs forecast — never mixed.** `current` is the vineyard's own
+weather-station observation (Davis WeatherLink, the only canonical stored
+observation source). `forecast` is provider forecast data. They carry
+separate provenance and separate status fields and are never merged into
+one ambiguous list.
+
+**Current observation.**
+
+- Served **cache-only** from VineTrack's canonical observation store — a
+  public API call can never trigger an upstream station fetch (the same
+  rule the apps' RPC enforces).
+- `current_status`: `ok` (observation present), `no_data` (station
+  configured but nothing cached yet), `not_configured` (no active
+  station for this vineyard). `current` is `null` except for `ok`.
+- Freshness: `is_stale: true` when the reading is older than **20
+  minutes** (VineTrack's canonical staleness threshold). `observed_at`
+  is the station's reading time; `fetched_at` is when VineTrack cached it.
+- Wind semantics (canonical Davis mapping): `wind_speed_kmh` is the
+  station's current wind speed; `wind_gust_kmh` is the recent gust (high
+  over the last 10 minutes). `wind_direction_degrees` is the raw bearing;
+  `wind_direction` is the derived 16-point compass name.
+- `leaf_wetness` is the station's measured leaf-wetness sensor value
+  (unitless Davis scale); `null` when the station has no such sensor.
+  Missing readings are `null` — never zero.
+
+**Forecast.**
+
+- Provider-abstracted: field names are VineTrack-normalised and survive a
+  provider change. The provider chain is the vineyard's canonical
+  preference (`auto` | `open_meteo` | `willyweather`); `auto` uses
+  WillyWeather when the vineyard has a saved WillyWeather location,
+  otherwise Open-Meteo.
+- Horizon: up to **7 days** (`horizon_days`), each item with an explicit
+  ISO `date`.
+- `rain_probability_percent` is available from WillyWeather only
+  (Open-Meteo forecast items carry `null`). `et0_mm` provenance differs
+  by provider: Open-Meteo supplies FAO ET0 directly; for WillyWeather it
+  is VineTrack's deterministic Hargreaves estimate from tmin/tmax (the
+  same calculation the apps use).
+- Freshness: forecasts are served from a server-side cache with a
+  **3-hour TTL** — API traffic can trigger at most one upstream provider
+  request per vineyard per window. `forecast_status`: `ok` (fresh),
+  `stale` (upstream failed; last good bundle served with
+  `is_stale: true`), `unavailable` (upstream failed, no cache),
+  `not_configured` (no forecast location/coordinates known).
+- `forecast_source.location` explains WHICH place the forecast
+  represents: the saved WillyWeather town (`basis:
+  "forecast_location"`) or the vineyard's server-resolved coordinates
+  (`basis: "station" | "blocks" | "pins"`), rounded to 2 decimal places
+  (~1 km) — coarse weather location, never precise private geometry.
+- No provider credentials, provider-internal identifiers beyond the safe
+  station/location metadata above, signed URLs, or raw provider payloads
+  are ever exposed.
+- Arbitrary-coordinate lookups are **not supported** — `lat`/`lon`
+  parameters are rejected. Environmental data is vineyard-based only.
+
+### GET /v1/rainfall
+
+Daily observed rainfall history for one granted vineyard. Requires
+`rainfall:read` plus an explicit vineyard grant.
+
+```text
+GET /v1/rainfall?vineyard_id=<uuid>[&from=YYYY-MM-DD&to=YYYY-MM-DD&limit=&cursor=]
+```
+
+```json
+{
+  "data": [
+    {
+      "date": "2026-08-09",
+      "rainfall_mm": 4.2,
+      "source": "davis_weatherlink",
+      "station": { "id": "123456", "name": "Home Block Station" },
+      "notes": null,
+      "updated_at": "2026-08-10T00:05:12Z"
+    },
+    {
+      "date": "2026-08-08",
+      "rainfall_mm": 0,
+      "source": "manual",
+      "station": null,
+      "notes": "Gauge emptied late",
+      "updated_at": "2026-08-09T08:11:00Z"
+    }
+  ],
+  "pagination": { "next_cursor": "eyJkIjoi..." }
+}
+```
+
+- **Observed rainfall only** — forecast rainfall is never returned here
+  (it lives in `/v1/weather` `forecast[].rain_mm`, clearly labelled as
+  forecast).
+- One record per vineyard-local calendar day that has data; days without
+  any recorded rainfall are omitted (this is an observation list, not a
+  calendar grid). Aggregation is the consumer's job — records are always
+  **daily** (no silent aggregation switching).
+- `source` is the canonical provenance of the winning record for that
+  day: `manual` (manager-entered, always wins) > `davis_weatherlink`
+  (on-vineyard station) > `wunderground_pws` (nearby personal station) >
+  `open_meteo` (broad-model gap-fill). Exactly the resolution the apps
+  and portal use — the API never shows a different number than VineTrack.
+- `station` identifies the recording station where applicable; `notes`
+  carries the manual-entry note when present.
+- Ordered newest day first; standard `limit` (default 100, max 1000) with
+  an opaque date-keyed cursor. `from`/`to` are inclusive ISO dates.
+- Retention is indefinite (no expiry) — full history is queryable.
+
+### GET /v1/disease-risk
+
+Current disease-pressure assessment for one granted vineyard. Requires
+`disease_risk:read` plus an explicit vineyard grant.
+
+```text
+GET /v1/disease-risk?vineyard_id=<uuid>
+```
+
+```json
+{
+  "data": {
+    "vineyard_id": "...",
+    "calculated_at": "2026-08-10T02:41:30Z",
+    "model_version": "mvp-1",
+    "wetness_source": "estimated_proxy",
+    "weather_source": {
+      "provider": "open_meteo",
+      "location": { "latitude": -33.28, "longitude": 149.1, "basis": "blocks" },
+      "fetched_at": "2026-08-10T02:41:30Z",
+      "observed_through": "2026-08-10T02:00:00Z",
+      "hours_used": 96,
+      "source_status": "ok"
+    },
+    "risks": [
+      {
+        "disease": "downy_mildew",
+        "risk_level": "medium",
+        "summary": "Past 48h: 12.4 mm rain, min 11.0°C, 14 estimated wet hours.",
+        "window_hours": 48,
+        "inputs": { "rainfall_mm": 12.4, "min_temperature_c": 11, "wet_hours": 14 }
+      },
+      {
+        "disease": "powdery_mildew",
+        "risk_level": "low",
+        "summary": "1 of last 3 days had 6+ favourable hours (21–30°C, RH ≥ 60%).",
+        "window_hours": 72,
+        "inputs": { "favourable_days_of_last_3": 1, "latest_temperature_c": 14.2 }
+      },
+      {
+        "disease": "botrytis",
+        "risk_level": "low",
+        "summary": "6 estimated wet hours in 15–25°C window over past 36h.",
+        "window_hours": 36,
+        "inputs": { "wet_hours_15_to_25_c": 6 }
+      }
+    ]
+  },
+  "meta": {
+    "generated_at": "2026-08-10T02:41:30Z",
+    "source_updated_at": "2026-08-10T02:41:30Z",
+    "is_stale": false
+  }
+}
+```
+
+- **Exactly three disease models exist in VineTrack today** and only
+  those are returned: `downy_mildew` (simplified 10:10:24 rule),
+  `powdery_mildew` (simplified Gubler-Thomas), `botrytis` (simplified
+  Broome/Bulit). The API runs the SAME models the iOS and Android apps
+  run — same thresholds, same inputs, same wording.
+- `risk_level` is `low` | `medium` | `high`. **No numeric score is
+  exposed**: the apps' internal 10/60/90 values are a chart index derived
+  from the level, not a canonical score — exposing one would manufacture
+  pseudo-precision.
+- `wetness_source: "estimated_proxy"` is the canonical caveat: leaf
+  wetness is estimated (rain > 0 mm OR RH ≥ 90% OR temperature−dew-point
+  ≤ 2°C), not measured.
+- `inputs` are the observed model inputs (the "why"), not tunable
+  internals. `window_hours` is each model's assessment window.
+- Provenance answers all four freshness questions: `calculated_at` (when
+  computed), `weather_source.observed_through` (the weather-data window's
+  end), `weather_source.source_status` (`ok` | `stale_fallback`), and
+  `model_version` (`mvp-1` — bumped whenever the shared models change so
+  consumers can interpret shifts safely; no algorithm was changed for
+  this API).
+- **Current risk only.** VineTrack does not store historical disease-risk
+  results, so no history endpoint is pretended — there is no date filter.
+- Freshness: computed at most once per vineyard per **30 minutes**
+  (cached server-side). If the weather source is unreachable, the last
+  assessment (up to 24 h old) is served with
+  `weather_source.source_status: "stale_fallback"` and `meta.is_stale:
+  true`. With no coordinates or no usable cache the endpoint returns
+  `503 disease_risk_unavailable` — upstream provider errors are never
+  leaked.
+- This endpoint returns calculated risk output — measured environmental
+  data lives in `/v1/weather` and `/v1/rainfall`, and no free-form
+  agronomy advice is generated.
+
 ## Collection vs detail representation
 
 Collections return an efficient summary; single-record endpoints return
@@ -1021,6 +1299,24 @@ curl \
   "https://tbafuqwruefgkbyxrxyb.supabase.co/functions/v1/vinetrack-api/v1/pins?vineyard_id=<VINEYARD_UUID>&status=open&type=repairs"
 ```
 
+```bash
+curl \
+  -H "Authorization: Bearer <VT_API_KEY>" \
+  "https://tbafuqwruefgkbyxrxyb.supabase.co/functions/v1/vinetrack-api/v1/weather?vineyard_id=<VINEYARD_UUID>"
+```
+
+```bash
+curl \
+  -H "Authorization: Bearer <VT_API_KEY>" \
+  "https://tbafuqwruefgkbyxrxyb.supabase.co/functions/v1/vinetrack-api/v1/rainfall?vineyard_id=<VINEYARD_UUID>&from=2026-01-01&to=2026-08-10"
+```
+
+```bash
+curl \
+  -H "Authorization: Bearer <VT_API_KEY>" \
+  "https://tbafuqwruefgkbyxrxyb.supabase.co/functions/v1/vinetrack-api/v1/disease-risk?vineyard_id=<VINEYARD_UUID>"
+```
+
 Never embed real production keys in source code, docs, or client-side apps.
 
 ### PowerShell note
@@ -1056,6 +1352,9 @@ select integration_grant_scope('<integration_id>', 'irrigation:read');
 select integration_grant_scope('<integration_id>', 'growth_stages:read');
 select integration_grant_scope('<integration_id>', 'yield:read');
 select integration_grant_scope('<integration_id>', 'pins:read');
+select integration_grant_scope('<integration_id>', 'weather:read');
+select integration_grant_scope('<integration_id>', 'rainfall:read');
+select integration_grant_scope('<integration_id>', 'disease_risk:read');
 -- Sensitive scopes only when the integration truly needs them:
 -- select integration_grant_scope('<integration_id>', 'costs:read');
 -- select integration_grant_scope('<integration_id>', 'labour:read');
@@ -1070,11 +1369,14 @@ select integration_create_api_key('<integration_id>', 'test', 'dev key', null);
 - Deploy via `scripts/deploy-edge-functions.ps1` / `.sh` (the scripts pass
   `--no-verify-jwt` for this function — callers present VineTrack keys, not
   Supabase JWTs).
-- Requires SQL 172 + SQL 173 + SQL 174 + SQL 175 applied first.
+- Requires SQL 172 + SQL 173 + SQL 174 + SQL 175 + SQL 176 applied first.
 - OpenAPI 3.1 document: `docs/vinetrack-api-openapi.yaml` (descriptive —
   the implementation remains canonical).
-- Secrets: only the standard Supabase-injected `SUPABASE_URL` and
+- Secrets: the standard Supabase-injected `SUPABASE_URL` and
   `SUPABASE_SERVICE_ROLE_KEY`. Optional: `VINETRACK_API_RATE_LIMIT_PER_MINUTE`
   (default 300), `VINETRACK_API_CORS_ORIGINS` (comma-separated exact origins;
-  default: no browser origins allowed — this is a server-to-server API).
+  default: no browser origins allowed — this is a server-to-server API),
+  and `WILLYWEATHER_API_KEY` (the existing global project secret — used only
+  to refresh the per-vineyard forecast cache; without it WillyWeather-backed
+  forecasts report `not_configured` and everything else still works).
 - HTTP test harness: `scripts/test-vinetrack-api.sh`.

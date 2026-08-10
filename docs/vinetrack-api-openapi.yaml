@@ -43,6 +43,9 @@ tags:
   - name: Growth Stages
   - name: Yield
   - name: Pins
+  - name: Weather
+  - name: Rainfall
+  - name: Disease Risk
 
 paths:
   /v1/me:
@@ -664,6 +667,98 @@ paths:
                   data: { $ref: "#/components/schemas/PinDetail" }
         default: { $ref: "#/components/responses/Error" }
 
+  /v1/weather:
+    get:
+      tags: [Weather]
+      summary: Current observation + forecast for one vineyard (singleton)
+      description: |
+        Scope: weather:read. Singleton document (data + meta — no
+        pagination). `current` is the vineyard's own weather-station
+        observation served CACHE-ONLY (a public API call never triggers an
+        upstream station fetch; stale after 20 minutes). `forecast` is
+        provider-abstracted daily forecast data (up to 7 days) served from
+        a 3-hour server-side cache; on upstream failure the last good
+        bundle is returned with is_stale=true (status "stale"). Observed
+        and forecast data are never mixed. Arbitrary lat/lon lookups are
+        rejected — environmental data is vineyard-based only.
+      parameters:
+        - $ref: "#/components/parameters/vineyardId"
+      responses:
+        "200":
+          description: Weather document
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/WeatherDocument" }
+                  meta: { $ref: "#/components/schemas/EnvironmentalMeta" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/rainfall:
+    get:
+      tags: [Rainfall]
+      summary: Daily observed rainfall history for one vineyard
+      description: |
+        Scope: rainfall:read. Observed rainfall only — never forecast.
+        One record per vineyard-local day that has data, newest first,
+        with per-day source provenance (manual > davis_weatherlink >
+        wunderground_pws > open_meteo — the exact resolution VineTrack
+        itself displays). Cursor is date-keyed and opaque.
+      parameters:
+        - $ref: "#/components/parameters/vineyardId"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Rainfall records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/RainfallRecord" }
+                  pagination: { $ref: "#/components/schemas/Pagination" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/disease-risk:
+    get:
+      tags: [Disease Risk]
+      summary: Current disease-pressure assessment for one vineyard (singleton)
+      description: |
+        Scope: disease_risk:read. Returns VineTrack's three implemented
+        disease models only (downy_mildew, powdery_mildew, botrytis) — the
+        same simplified MVP models the mobile apps run, with the canonical
+        estimated-wetness proxy. risk_level is low/medium/high; no numeric
+        score exists canonically so none is exposed. Current risk only —
+        VineTrack stores no historical risk results. Computed at most once
+        per vineyard per 30 minutes; if the weather source is unreachable
+        the last assessment (≤24 h) is served with
+        source_status=stale_fallback, otherwise 503
+        disease_risk_unavailable.
+      parameters:
+        - $ref: "#/components/parameters/vineyardId"
+      responses:
+        "200":
+          description: Disease risk document
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/DiseaseRiskDocument" }
+                  meta: { $ref: "#/components/schemas/EnvironmentalMeta" }
+        "503":
+          description: disease_risk_unavailable — no computation possible and no usable cache
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        default: { $ref: "#/components/responses/Error" }
+
 components:
   securitySchemes:
     vinetrackApiKey:
@@ -676,7 +771,8 @@ components:
         Scopes granted to the integration:
         vineyards:read, blocks:read, trips:read, sprays:read, fuel:read,
         equipment:read, work_tasks:read, pruning:read, irrigation:read,
-        growth_stages:read, yield:read, pins:read (resources);
+        growth_stages:read, yield:read, pins:read, weather:read,
+        rainfall:read, disease_risk:read (resources);
         costs:read, labour:read, team:read (sensitive field gating —
         never grant resource access alone).
 
@@ -726,7 +822,9 @@ components:
         resource_not_found (404 — also used for inaccessible resources,
         existence is never disclosed); invalid_request, invalid_cursor
         (400); rate_limit_exceeded (429); method_not_allowed (405);
-        internal_error (500).
+        internal_error (500); disease_risk_unavailable (503).
+        Stale environmental fallbacks are NOT errors — they return 200
+        with is_stale / source_status markers.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -749,6 +847,164 @@ components:
         next_cursor:
           type: [string, "null"]
           description: Cursor for the next page; null on the last page.
+
+    EnvironmentalMeta:
+      type: object
+      description: Freshness metadata for singleton environmental documents.
+      properties:
+        generated_at: { type: string, format: date-time }
+        source_updated_at: { type: string, format: date-time }
+        is_stale: { type: boolean }
+
+    WeatherDocument:
+      type: object
+      properties:
+        vineyard_id: { type: string, format: uuid }
+        current:
+          oneOf:
+            - { type: "null" }
+            - $ref: "#/components/schemas/CurrentWeather"
+        current_status:
+          type: string
+          enum: [ok, no_data, not_configured]
+        forecast:
+          type: array
+          items: { $ref: "#/components/schemas/ForecastDay" }
+        forecast_status:
+          type: string
+          enum: [ok, stale, unavailable, not_configured]
+        forecast_source:
+          oneOf:
+            - { type: "null" }
+            - $ref: "#/components/schemas/ForecastSource"
+
+    CurrentWeather:
+      type: object
+      description: |
+        Vineyard weather-station observation (Davis WeatherLink — the only
+        canonical stored observation source). Missing readings are null,
+        never zero. wind_speed_kmh is the current wind; wind_gust_kmh is
+        the recent gust (high over the last 10 minutes). leaf_wetness is
+        the measured sensor value (unitless Davis scale) when present.
+      properties:
+        temperature_c: { type: [number, "null"] }
+        humidity_percent: { type: [number, "null"] }
+        wind_speed_kmh: { type: [number, "null"] }
+        wind_gust_kmh: { type: [number, "null"] }
+        wind_direction_degrees: { type: [number, "null"] }
+        wind_direction:
+          type: [string, "null"]
+          description: Derived 16-point compass name (e.g. NW).
+        rainfall_today_mm: { type: [number, "null"] }
+        rainfall_rate_mm_per_hour: { type: [number, "null"] }
+        leaf_wetness: { type: [number, "null"] }
+        observed_at: { type: string, format: date-time }
+        fetched_at: { type: string, format: date-time }
+        is_stale:
+          type: boolean
+          description: True when the reading is older than 20 minutes (canonical threshold).
+        source:
+          type: object
+          properties:
+            provider: { type: string, enum: [davis_weatherlink] }
+            station_id: { type: [string, "null"] }
+            station_name: { type: [string, "null"] }
+
+    ForecastDay:
+      type: object
+      description: |
+        Provider-abstracted daily forecast item. rain_probability_percent
+        is provided by WillyWeather only (null from Open-Meteo). et0_mm is
+        FAO ET0 from Open-Meteo, or VineTrack's deterministic Hargreaves
+        estimate for WillyWeather.
+      properties:
+        date: { type: string, format: date }
+        rain_mm: { type: [number, "null"] }
+        rain_probability_percent: { type: [number, "null"] }
+        temp_min_c: { type: [number, "null"] }
+        temp_max_c: { type: [number, "null"] }
+        wind_speed_max_kmh: { type: [number, "null"] }
+        et0_mm: { type: [number, "null"] }
+
+    ForecastSource:
+      type: object
+      properties:
+        provider: { type: string, enum: [willyweather, open_meteo] }
+        location:
+          type: object
+          description: Coarse weather location (~1 km rounding), never precise private geometry.
+          properties:
+            latitude: { type: [number, "null"] }
+            longitude: { type: [number, "null"] }
+            label: { type: [string, "null"] }
+            basis:
+              type: string
+              enum: [forecast_location, station, blocks, pins]
+        horizon_days: { type: integer }
+        fetched_at: { type: string, format: date-time }
+        is_stale: { type: boolean }
+
+    RainfallRecord:
+      type: object
+      description: Observed daily rainfall (never forecast). One record per day with data.
+      properties:
+        date: { type: string, format: date }
+        rainfall_mm: { type: number }
+        source:
+          type: string
+          enum: [manual, davis_weatherlink, wunderground_pws, open_meteo]
+          description: Winning provenance for the day (manual always overrides providers).
+        station:
+          type: [object, "null"]
+          properties:
+            id: { type: [string, "null"] }
+            name: { type: [string, "null"] }
+        notes: { type: [string, "null"] }
+        updated_at: { type: string, format: date-time }
+
+    DiseaseRiskDocument:
+      type: object
+      properties:
+        vineyard_id: { type: string, format: uuid }
+        calculated_at: { type: string, format: date-time }
+        model_version:
+          type: string
+          description: Shared iOS/Android MVP model identifier (mvp-1). Bumped whenever the models change.
+        wetness_source:
+          type: string
+          enum: [estimated_proxy]
+          description: Leaf wetness is estimated (rain > 0 OR RH >= 90% OR T - dewpoint <= 2°C), not measured.
+        weather_source:
+          type: object
+          properties:
+            provider: { type: string, enum: [open_meteo] }
+            location:
+              type: object
+              properties:
+                latitude: { type: number }
+                longitude: { type: number }
+                basis: { type: string, enum: [station, blocks, pins] }
+            fetched_at: { type: string, format: date-time }
+            observed_through: { type: [string, "null"], format: date-time }
+            hours_used: { type: integer }
+            source_status: { type: string, enum: [ok, stale_fallback] }
+        risks:
+          type: array
+          items: { $ref: "#/components/schemas/DiseaseRiskItem" }
+
+    DiseaseRiskItem:
+      type: object
+      description: One implemented disease model's current assessment. No numeric score exists canonically.
+      properties:
+        disease:
+          type: string
+          enum: [downy_mildew, powdery_mildew, botrytis]
+        risk_level: { type: string, enum: [low, medium, high] }
+        summary: { type: string }
+        window_hours: { type: integer }
+        inputs:
+          type: object
+          additionalProperties: { type: [number, "null"] }
 
     ErrorEnvelope:
       type: object

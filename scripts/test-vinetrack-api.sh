@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# test-vinetrack-api.sh — Stage 3A + 3B + 3C gateway security tests (HTTP level)
+# test-vinetrack-api.sh — Stage 3A + 3B + 3C + 3D gateway security tests (HTTP level)
 # =============================================================================
 # Runs the security/contract checks against a DEPLOYED vinetrack-api gateway.
 # Complements sql/tests/173_integration_api_gateway_tests.sql (DB level).
@@ -16,7 +16,8 @@
 #   VT_KEY_FULL           active key; integration has vineyards:read, blocks:read,
 #                         trips:read, sprays:read, fuel:read, equipment:read,
 #                         work_tasks:read, pruning:read, irrigation:read,
-#                         growth_stages:read, yield:read, pins:read
+#                         growth_stages:read, yield:read, pins:read,
+#                         weather:read, rainfall:read, disease_risk:read
 #                         (NO costs:read / labour:read) and a grant to
 #                         VT_VINEYARD_GRANTED
 #   VT_VINEYARD_GRANTED   vineyard UUID granted to the integration
@@ -503,6 +504,114 @@ else
   skip "trips cursor iteration (needs >=2 trips in granted vineyard)"
 fi
 s=$(call GET "/v1/trips?vineyard_id=$VT_VINEYARD_GRANTED&cursor=%%%bogus" "Bearer $VT_KEY_FULL"); check "trips invalid cursor -> 400 invalid_cursor" 400 "$s" invalid_cursor
+
+echo
+echo "== Stage 3D: weather =="
+s=$(call GET "/v1/weather?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_FULL")
+check "weather:read allows /v1/weather" 200 "$s"
+check_body "weather envelope has data + meta.generated_at" \
+  '.data.vineyard_id != null and .meta.generated_at != null'
+check_body "weather current_status is a known value" \
+  '.data.current_status | IN("ok","no_data","not_configured")'
+check_body "weather forecast_status is a known value" \
+  '.data.forecast_status | IN("ok","stale","unavailable","not_configured")'
+check_body "weather current uses metric VineTrack field names when present" \
+  '.data.current == null or (.data.current | has("temperature_c") and has("humidity_percent") and has("wind_speed_kmh") and has("is_stale") and has("observed_at"))'
+check_body "weather forecast days use VineTrack field names when present" \
+  '(.data.forecast | length) == 0 or (.data.forecast[0] | has("date") and has("rain_mm") and has("temp_min_c") and has("temp_max_c"))'
+check_body "weather never leaks provider credentials or raw payloads" \
+  '. | tostring | (contains("api_key") or contains("api_secret") or contains("willyweather.com.au") or contains("raw_payload")) | not'
+s=$(call GET "/v1/weather" "Bearer $VT_KEY_FULL"); check "weather without vineyard_id -> 400" 400 "$s" invalid_request
+s=$(call GET "/v1/weather?vineyard_id=$VT_VINEYARD_GRANTED&lat=-33.2" "Bearer $VT_KEY_FULL"); check "weather rejects lat/lon params -> 400" 400 "$s" invalid_request
+s=$(call POST "/v1/weather?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_FULL"); check "POST /v1/weather -> 405" 405 "$s" method_not_allowed
+if [ -n "${VT_KEY_BLOCKS_ONLY-}" ]; then
+  s=$(call GET "/v1/weather?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_BLOCKS_ONLY"); check "blocks-only key -> weather 403 insufficient_scope" 403 "$s" insufficient_scope
+else skip "blocks-only weather scope"; fi
+if [ -n "${VT_VINEYARD_OTHER-}" ]; then
+  s=$(call GET "/v1/weather?vineyard_id=$VT_VINEYARD_OTHER" "Bearer $VT_KEY_FULL"); check "ungranted vineyard -> weather 403 vineyard_access_denied" 403 "$s" vineyard_access_denied
+else skip "ungranted-vineyard weather"; fi
+
+echo
+echo "== Stage 3D: rainfall =="
+s=$(call GET "/v1/rainfall?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_FULL")
+check "rainfall:read allows /v1/rainfall" 200 "$s"
+check_body "rainfall collection envelope" '.data | type == "array"'
+check_body "rainfall pagination envelope" '.pagination | has("next_cursor")'
+check_body "rainfall sources come from the canonical family" \
+  '[.data[].source] | all(IN("manual","davis_weatherlink","wunderground_pws","open_meteo"))'
+check_body "rainfall_mm is numeric mm" '[.data[].rainfall_mm] | all(type == "number")'
+check_body "rainfall dates are ISO and descending" \
+  '(.data | length) < 2 or ([.data[].date] as $d | $d == ($d | sort | reverse))'
+s=$(call GET "/v1/rainfall?vineyard_id=$VT_VINEYARD_GRANTED&from=2026-01-01&to=2026-01-31" "Bearer $VT_KEY_FULL"); check "rainfall from/to filter -> 200" 200 "$s"
+check_body "rainfall from/to range respected" \
+  '[.data[].date] | all(. >= "2026-01-01" and . <= "2026-01-31")'
+s=$(call GET "/v1/rainfall?vineyard_id=$VT_VINEYARD_GRANTED&from=2026-02-31" "Bearer $VT_KEY_FULL"); check "rainfall non-real date -> 400" 400 "$s" invalid_request
+s=$(call GET "/v1/rainfall?vineyard_id=$VT_VINEYARD_GRANTED&from=2026-05-01&to=2026-01-01" "Bearer $VT_KEY_FULL"); check "rainfall from > to -> 400" 400 "$s" invalid_request
+s=$(call GET "/v1/rainfall?vineyard_id=$VT_VINEYARD_GRANTED&interval=monthly" "Bearer $VT_KEY_FULL"); check "rainfall unknown param -> 400" 400 "$s" invalid_request
+s=$(call GET "/v1/rainfall?vineyard_id=$VT_VINEYARD_GRANTED&cursor=%%%bogus" "Bearer $VT_KEY_FULL"); check "rainfall invalid cursor -> 400" 400 "$s" invalid_cursor
+s=$(call GET "/v1/rainfall?vineyard_id=$VT_VINEYARD_GRANTED&limit=1" "Bearer $VT_KEY_FULL")
+check "rainfall limit=1 accepted" 200 "$s"
+NEXT3D=$(jq -r '.pagination.next_cursor // empty' "$BODY_FILE")
+FIRST3D=$(jq -r '.data[0].date // empty' "$BODY_FILE")
+if [ -n "$NEXT3D" ]; then
+  s=$(call GET "/v1/rainfall?vineyard_id=$VT_VINEYARD_GRANTED&limit=1&cursor=$NEXT3D" "Bearer $VT_KEY_FULL")
+  check "rainfall cursor page 2 -> 200" 200 "$s"
+  SECOND3D=$(jq -r '.data[0].date // empty' "$BODY_FILE")
+  if [ -n "$SECOND3D" ] && [ "$SECOND3D" != "$FIRST3D" ]; then
+    PASS=$((PASS+1)); echo "PASS  rainfall date cursor advances without duplicates"
+  else
+    FAIL=$((FAIL+1)); echo "FAIL  rainfall date cursor advances without duplicates (first=$FIRST3D second=$SECOND3D)"
+  fi
+else
+  skip "rainfall cursor iteration (needs >=2 rainfall days in granted vineyard)"
+fi
+if [ -n "${VT_KEY_BLOCKS_ONLY-}" ]; then
+  s=$(call GET "/v1/rainfall?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_BLOCKS_ONLY"); check "blocks-only key -> rainfall 403 insufficient_scope" 403 "$s" insufficient_scope
+else skip "blocks-only rainfall scope"; fi
+if [ -n "${VT_VINEYARD_OTHER-}" ]; then
+  s=$(call GET "/v1/rainfall?vineyard_id=$VT_VINEYARD_OTHER" "Bearer $VT_KEY_FULL"); check "ungranted vineyard -> rainfall 403 vineyard_access_denied" 403 "$s" vineyard_access_denied
+else skip "ungranted-vineyard rainfall"; fi
+
+echo
+echo "== Stage 3D: disease risk =="
+s=$(call GET "/v1/disease-risk?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_FULL")
+if [ "$s" = 200 ]; then
+  PASS=$((PASS+1)); echo "PASS  disease_risk:read allows /v1/disease-risk"
+  check_body "disease risk returns exactly the three implemented models" \
+    '[.data.risks[].disease] | sort == ["botrytis","downy_mildew","powdery_mildew"]'
+  check_body "risk levels are low/medium/high" \
+    '[.data.risks[].risk_level] | all(IN("low","medium","high"))'
+  check_body "no manufactured numeric score exposed" \
+    '[.data.risks[] | has("score")] | all(. == false)'
+  check_body "model_version + wetness provenance present" \
+    '.data.model_version != null and .data.wetness_source == "estimated_proxy"'
+  check_body "weather-source provenance present" \
+    '.data.weather_source | has("provider") and has("observed_through") and has("source_status")'
+  check_body "calculated_at + freshness meta present" \
+    '.data.calculated_at != null and (.meta | has("is_stale"))'
+  check_body "disease risk never leaks provider secrets" \
+    '. | tostring | (contains("api_key") or contains("api_secret")) | not'
+elif [ "$s" = 503 ]; then
+  code=$(jq -r '.error.code // empty' "$BODY_FILE")
+  if [ "$code" = "disease_risk_unavailable" ]; then
+    PASS=$((PASS+1)); echo "PASS  disease-risk unavailable path returns stable 503 disease_risk_unavailable"
+    SKIP=$((SKIP+7)); echo "SKIP  disease-risk body checks (no coordinates/upstream in this environment)"
+  else
+    FAIL=$((FAIL+1)); echo "FAIL  disease-risk 503 without disease_risk_unavailable (code=$code)"
+  fi
+else
+  FAIL=$((FAIL+1)); echo "FAIL  /v1/disease-risk unexpected status $s (body=$(head -c 300 "$BODY_FILE"))"
+fi
+s=$(call GET "/v1/disease-risk" "Bearer $VT_KEY_FULL"); check "disease-risk without vineyard_id -> 400" 400 "$s" invalid_request
+s=$(call GET "/v1/disease-risk?vineyard_id=$VT_VINEYARD_GRANTED&disease=downy" "Bearer $VT_KEY_FULL"); check "disease-risk unknown param -> 400" 400 "$s" invalid_request
+s=$(call POST "/v1/disease-risk?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_FULL"); check "POST /v1/disease-risk -> 405" 405 "$s" method_not_allowed
+if [ -n "${VT_KEY_BLOCKS_ONLY-}" ]; then
+  s=$(call GET "/v1/disease-risk?vineyard_id=$VT_VINEYARD_GRANTED" "Bearer $VT_KEY_BLOCKS_ONLY"); check "blocks-only key -> disease-risk 403 insufficient_scope" 403 "$s" insufficient_scope
+else skip "blocks-only disease-risk scope"; fi
+if [ -n "${VT_VINEYARD_OTHER-}" ]; then
+  s=$(call GET "/v1/disease-risk?vineyard_id=$VT_VINEYARD_OTHER" "Bearer $VT_KEY_FULL"); check "ungranted vineyard -> disease-risk 403 vineyard_access_denied" 403 "$s" vineyard_access_denied
+else skip "ungranted-vineyard disease-risk"; fi
+s=$(call GET "/v1/weather/some-id" "Bearer $VT_KEY_FULL"); check "environmental singletons have no {id} form -> 404" 404 "$s" resource_not_found
 
 echo
 echo "== Done: $PASS passed, $FAIL failed, $SKIP skipped =="

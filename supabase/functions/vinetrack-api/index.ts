@@ -30,6 +30,9 @@
 //   GET /v1/yield-records/{yield_record_id}                                          (3C)
 //   GET /v1/pins?vineyard_id=<uuid>[&block_id=&status=&category=&type=]              (3C)
 //   GET /v1/pins/{pin_id}                                                            (3C)
+//   GET /v1/weather?vineyard_id=<uuid>                                               (3D)
+//   GET /v1/rainfall?vineyard_id=<uuid>[&from=&to=]                                  (3D)
+//   GET /v1/disease-risk?vineyard_id=<uuid>                                          (3D)
 //
 // Authentication:  Authorization: Bearer vt_live_... / vt_test_...
 //   - Supabase JWTs are NOT accepted as integration credentials.
@@ -64,6 +67,8 @@
 // SUPABASE_SERVICE_ROLE_KEY. Optional configuration:
 //   VINETRACK_API_RATE_LIMIT_PER_MINUTE (default 300)
 //   VINETRACK_API_CORS_ORIGINS (comma-separated exact origins; default none)
+//   WILLYWEATHER_API_KEY (existing global project secret; only used to
+//     refresh the per-vineyard forecast cache — never exposed in responses)
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -88,6 +93,7 @@ const ERRORS: Record<string, { status: number; message: string }> = {
   rate_limit_exceeded: { status: 429, message: "The API request limit has been exceeded." },
   method_not_allowed: { status: 405, message: "This API is read-only. Only GET is supported." },
   internal_error: { status: 500, message: "An internal error occurred. Contact support and quote the request_id." },
+  disease_risk_unavailable: { status: 503, message: "Disease risk is currently unavailable for this vineyard. Ensure the vineyard has mapped blocks or a configured weather station, then try again shortly." },
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -235,6 +241,14 @@ function nextDay(iso: string): string {
 /** Coerce a loosely-typed jsonb value into a finite number or null. */
 function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function round1(v: number): number {
+  return Math.round(v * 10) / 10;
+}
+
+function round2(v: number): number {
+  return Math.round(v * 100) / 100;
 }
 
 function round3(v: number): number {
@@ -2855,6 +2869,856 @@ async function handlePinGet(
 }
 
 // ---------------------------------------------------------------------------
+// Stage 3D: environmental & advisory resources (weather / rainfall /
+// disease-risk). Canonical sources — audited, never guessed:
+//
+//   * Current weather — public.vineyard_weather_observations (sql/026 +
+//     sql/104): the Davis WeatherLink cache written ONLY by the davis-proxy
+//     edge function. Reads here are CACHE-ONLY: the public API can never
+//     trigger an upstream Davis fetch (the same rule the app RPC
+//     get_vineyard_current_weather enforces). Canonical stale threshold:
+//     20 minutes. raw_payload is NEVER selected or exposed.
+//   * Forecast — the vineyard's canonical forecast provider chain
+//     (sql/061 vineyards.forecast_provider: auto | open_meteo |
+//     willyweather). WillyWeather uses the global project key and the
+//     vineyard's saved WillyWeather location; Open-Meteo uses the
+//     server-resolved vineyard coordinates. Both are served through
+//     integration_environment_cache (sql/176) so API traffic can trigger
+//     at most ONE upstream request per vineyard per TTL window.
+//   * Rainfall — public.rainfall_daily (sql/028-031) via the
+//     service-role helper integration_get_rainfall (sql/176). Observed
+//     rainfall only (never forecast), priority-resolved per date:
+//     manual > davis_weatherlink > wunderground_pws > open_meteo.
+//   * Disease risk — the three MVP models shared 1:1 by the iOS and
+//     Android apps (downy mildew simplified 10:10:24, powdery mildew
+//     simplified Gubler-Thomas, botrytis simplified Broome/Bulit),
+//     computed from Open-Meteo hourly data with the canonical
+//     estimated-wetness proxy (rain > 0 OR RH >= 90% OR T - dewpoint
+//     <= 2°C). No numeric score is exposed — the apps' 10/60/90 values
+//     are a chart index, not a canonical score. Results are cached per
+//     vineyard (30-minute TTL) with a marked stale fallback up to 24 h.
+// ---------------------------------------------------------------------------
+const CURRENT_WEATHER_STALE_MS = 20 * 60_000; // canonical (sql/026)
+const FORECAST_CACHE_TTL_MS = 3 * 3_600_000;
+const FORECAST_HORIZON_DAYS = 7;
+const DISEASE_CACHE_TTL_MS = 30 * 60_000;
+const DISEASE_STALE_FALLBACK_MAX_MS = 24 * 3_600_000;
+const UPSTREAM_TIMEOUT_MS = 8_000;
+const DISEASE_MODEL_VERSION = "mvp-1";
+
+const COMPASS_POINTS = [
+  "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+  "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+];
+
+/** 16-point compass direction — the same mapping the weather-current proxy uses. */
+function compassDirection(deg: number): string {
+  const n = ((deg % 360) + 360) % 360;
+  return COMPASS_POINTS[Math.round(n / 22.5) % 16];
+}
+
+/** Coerce upstream-provider values (numbers or numeric strings) safely. */
+function coerceNum(v: unknown): number | null {
+  if (v == null) return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Date-keyed keyset cursor for /v1/rainfall (daily series has no uuid key
+// after priority resolution — the date IS the stable key).
+function encodeDateCursor(date: string): string {
+  return btoa(JSON.stringify({ d: date })).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+function decodeDateCursor(raw: string): string {
+  try {
+    const b64 = raw.replaceAll("-", "+").replaceAll("_", "/");
+    const parsed = JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)));
+    if (typeof parsed?.d !== "string" || !DATE_RE.test(parsed.d)) throw new Error("bad cursor");
+    const ms = Date.parse(parsed.d + "T00:00:00Z");
+    if (Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== parsed.d) throw new Error("bad cursor");
+    return parsed.d;
+  } catch {
+    throw new ApiError("invalid_cursor");
+  }
+}
+
+// --- Environment cache (sql/176) — service-role only, non-fatal on error ---
+interface EnvCacheRow {
+  payload: Record<string, unknown>;
+  fetched_at: string;
+}
+
+async function readEnvCache(db: SupabaseClient, vineyardId: string, kind: string): Promise<EnvCacheRow | null> {
+  const { data, error } = await db.from("integration_environment_cache")
+    .select("payload, fetched_at")
+    .eq("vineyard_id", vineyardId)
+    .eq("kind", kind)
+    .maybeSingle();
+  if (error) {
+    console.error("[vinetrack-api] env cache read failed:", error.message);
+    return null;
+  }
+  return data ? (data as unknown as EnvCacheRow) : null;
+}
+
+async function writeEnvCache(db: SupabaseClient, vineyardId: string, kind: string, payload: Record<string, unknown>): Promise<void> {
+  const { error } = await db.from("integration_environment_cache").upsert({
+    vineyard_id: vineyardId,
+    kind,
+    payload,
+    fetched_at: new Date().toISOString(),
+  }, { onConflict: "vineyard_id,kind" });
+  if (error) console.error("[vinetrack-api] env cache write failed:", error.message);
+}
+
+// --- Vineyard coordinate resolution -----------------------------------------
+// Mirrors the canonical server-side order used by the open-meteo-proxy edge
+// function: weather-station coordinates, then block polygon centroid, then
+// pin centroid. Coordinates are exposed externally rounded to 2 dp (~1 km)
+// — coarse weather location, never precise private geometry.
+interface VineyardCoords {
+  lat: number;
+  lon: number;
+  basis: "station" | "blocks" | "pins";
+}
+
+async function resolveVineyardCoords(db: SupabaseClient, vineyardId: string): Promise<VineyardCoords | null> {
+  const { data: integs } = await db.from("vineyard_weather_integrations")
+    .select("provider, station_latitude, station_longitude")
+    .eq("vineyard_id", vineyardId);
+  if (Array.isArray(integs)) {
+    const order = ["davis_weatherlink", "wunderground", "willyweather"];
+    const sorted = [...integs].sort((a, b) => {
+      const ai = order.indexOf(String((a as Record<string, unknown>).provider));
+      const bi = order.indexOf(String((b as Record<string, unknown>).provider));
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    });
+    for (const it of sorted) {
+      const la = coerceNum((it as Record<string, unknown>).station_latitude);
+      const lo = coerceNum((it as Record<string, unknown>).station_longitude);
+      if (la !== null && lo !== null) return { lat: la, lon: lo, basis: "station" };
+    }
+  }
+
+  const { data: paddocks } = await db.from("paddocks")
+    .select("polygon_points")
+    .eq("vineyard_id", vineyardId)
+    .is("deleted_at", null);
+  if (Array.isArray(paddocks) && paddocks.length > 0) {
+    let sumLat = 0, sumLon = 0, count = 0;
+    for (const p of paddocks) {
+      const pts = (p as Record<string, unknown>).polygon_points;
+      if (!Array.isArray(pts)) continue;
+      for (const pt of pts) {
+        const la = coerceNum((pt as Record<string, unknown>)?.latitude);
+        const lo = coerceNum((pt as Record<string, unknown>)?.longitude);
+        if (la !== null && lo !== null) { sumLat += la; sumLon += lo; count++; }
+      }
+    }
+    if (count > 0) return { lat: sumLat / count, lon: sumLon / count, basis: "blocks" };
+  }
+
+  const { data: pins } = await db.from("pins")
+    .select("latitude, longitude")
+    .eq("vineyard_id", vineyardId)
+    .is("deleted_at", null)
+    .limit(2000);
+  if (Array.isArray(pins) && pins.length > 0) {
+    let sumLat = 0, sumLon = 0, count = 0;
+    for (const p of pins) {
+      const la = coerceNum((p as Record<string, unknown>).latitude);
+      const lo = coerceNum((p as Record<string, unknown>).longitude);
+      if (la !== null && lo !== null) { sumLat += la; sumLon += lo; count++; }
+    }
+    if (count > 0) return { lat: sumLat / count, lon: sumLon / count, basis: "pins" };
+  }
+
+  return null;
+}
+
+// --- Current weather (Davis cache, cache-only) ------------------------------
+const WEATHER_CURRENT_COLUMNS =
+  "station_id, station_name, observed_at, fetched_at, temperature_c, humidity_pct, " +
+  "wind_speed_kmh, wind_gust_kmh, wind_direction_deg, rain_today_mm, rain_rate_mm_per_hr, leaf_wetness";
+
+interface CurrentObsRow {
+  station_id: string | null;
+  station_name: string | null;
+  observed_at: string;
+  fetched_at: string;
+  temperature_c: number | null;
+  humidity_pct: number | null;
+  wind_speed_kmh: number | null;
+  wind_gust_kmh: number | null;
+  wind_direction_deg: number | null;
+  rain_today_mm: number | null;
+  rain_rate_mm_per_hr: number | null;
+  leaf_wetness: number | null;
+}
+
+interface CurrentWeatherResult {
+  status: "ok" | "no_data" | "not_configured";
+  observation: Record<string, unknown> | null;
+}
+
+async function loadCurrentWeather(db: SupabaseClient, vineyardId: string): Promise<CurrentWeatherResult> {
+  // Configured = an active Davis integration with credentials present.
+  // Presence is tested with NOT NULL filters — credential VALUES are never
+  // selected into the gateway.
+  const { data: integ, error: integErr } = await db.from("vineyard_weather_integrations")
+    .select("station_id, station_name")
+    .eq("vineyard_id", vineyardId)
+    .eq("provider", "davis_weatherlink")
+    .eq("is_active", true)
+    .not("api_key", "is", null)
+    .not("api_secret", "is", null)
+    .maybeSingle();
+  if (integErr) {
+    console.error("[vinetrack-api] weather integration lookup failed:", integErr.message);
+    throw new ApiError("internal_error");
+  }
+  if (!integ) return { status: "not_configured", observation: null };
+
+  const { data: obsRows, error: obsErr } = await db.from("vineyard_weather_observations")
+    .select(WEATHER_CURRENT_COLUMNS)
+    .eq("vineyard_id", vineyardId)
+    .eq("source", "davis_weatherlink")
+    .order("observed_at", { ascending: false })
+    .limit(1);
+  if (obsErr) {
+    console.error("[vinetrack-api] weather observation fetch failed:", obsErr.message);
+    throw new ApiError("internal_error");
+  }
+  const row = (obsRows?.[0] ?? null) as unknown as CurrentObsRow | null;
+  if (!row) return { status: "no_data", observation: null };
+
+  const integRow = integ as unknown as { station_id: string | null; station_name: string | null };
+  const deg = num(row.wind_direction_deg);
+  const observedMs = Date.parse(row.observed_at);
+  return {
+    status: "ok",
+    observation: {
+      temperature_c: num(row.temperature_c),
+      humidity_percent: num(row.humidity_pct),
+      wind_speed_kmh: num(row.wind_speed_kmh),
+      wind_gust_kmh: num(row.wind_gust_kmh),
+      wind_direction_degrees: deg,
+      wind_direction: deg !== null ? compassDirection(deg) : null,
+      rainfall_today_mm: num(row.rain_today_mm),
+      rainfall_rate_mm_per_hour: num(row.rain_rate_mm_per_hr),
+      leaf_wetness: num(row.leaf_wetness),
+      observed_at: row.observed_at,
+      fetched_at: row.fetched_at,
+      is_stale: Number.isFinite(observedMs) ? Date.now() - observedMs > CURRENT_WEATHER_STALE_MS : true,
+      source: {
+        provider: "davis_weatherlink",
+        station_id: row.station_id ?? integRow.station_id ?? null,
+        station_name: row.station_name ?? integRow.station_name ?? null,
+      },
+    },
+  };
+}
+
+// --- Forecast (provider-abstracted, cached) ----------------------------------
+interface ForecastDay {
+  date: string;
+  rain_mm: number | null;
+  rain_probability_percent: number | null;
+  temp_min_c: number | null;
+  temp_max_c: number | null;
+  wind_speed_max_kmh: number | null;
+  et0_mm: number | null;
+}
+
+interface ForecastResult {
+  days: ForecastDay[];
+  status: "ok" | "stale" | "unavailable" | "not_configured";
+  source: Record<string, unknown> | null;
+}
+
+/** Hargreaves ET0 estimate — ported 1:1 from the willyweather-proxy. */
+function estimateHargreavesET0(tmin: number | null, tmax: number | null): number | null {
+  if (tmin === null || tmax === null || tmax <= tmin) return null;
+  const tmean = (tmin + tmax) / 2;
+  const et0 = 0.0023 * (tmean + 17.8) * Math.sqrt(tmax - tmin) * (15 / 2.45);
+  return Math.max(0, Math.round(et0 * 100) / 100);
+}
+
+/** Midpoint of a WillyWeather rainfall range entry (proxy-canonical rule). */
+// deno-lint-ignore no-explicit-any
+function wwRainfallMidpoint(entry: any): number | null {
+  const s = coerceNum(entry?.startRange);
+  const e = coerceNum(entry?.endRange);
+  if (s !== null && e !== null) return (s + e) / 2;
+  if (e !== null) return e / 2;
+  if (s !== null) return s;
+  return null;
+}
+
+/**
+ * Normalise the WillyWeather combined forecast payload into the
+ * VineTrack-normalised external contract. Ported 1:1 from the
+ * willyweather-proxy normaliseForecast(). Provider field names never leak.
+ */
+// deno-lint-ignore no-explicit-any
+function normaliseWillyWeatherForecast(raw: any): ForecastDay[] | null {
+  const forecasts = raw?.forecasts;
+  if (!forecasts || typeof forecasts !== "object") return null;
+
+  interface Bucket { date: string; rain: number | null; prob: number | null; tmin: number | null; tmax: number | null; wind: number | null }
+  const byDate: Record<string, Bucket> = {};
+  const bucket = (dt: unknown): Bucket => {
+    const date = String(dt ?? "").slice(0, 10);
+    if (!byDate[date]) byDate[date] = { date, rain: null, prob: null, tmin: null, tmax: null, wind: null };
+    return byDate[date];
+  };
+
+  const rainDays = forecasts?.rainfall?.days;
+  if (Array.isArray(rainDays)) {
+    for (const d of rainDays) {
+      const b = bucket(d?.dateTime);
+      const entries = Array.isArray(d?.entries) ? d.entries : [];
+      if (entries.length > 0) b.rain = wwRainfallMidpoint(entries[0]);
+    }
+  }
+  const probDays = forecasts?.rainfallprobability?.days;
+  if (Array.isArray(probDays)) {
+    for (const d of probDays) {
+      const b = bucket(d?.dateTime);
+      const entries = Array.isArray(d?.entries) ? d.entries : [];
+      if (entries.length > 0) b.prob = coerceNum(entries[0]?.probability);
+    }
+  }
+  const tempDays = forecasts?.temperature?.days;
+  if (Array.isArray(tempDays)) {
+    for (const d of tempDays) {
+      const b = bucket(d?.dateTime);
+      const entries = Array.isArray(d?.entries) ? d.entries : [];
+      let lo: number | null = null;
+      let hi: number | null = null;
+      for (const e of entries) {
+        const t = coerceNum(e?.temperature);
+        if (t === null) continue;
+        if (lo === null || t < lo) lo = t;
+        if (hi === null || t > hi) hi = t;
+      }
+      b.tmin = lo;
+      b.tmax = hi;
+    }
+  }
+  const windDays = forecasts?.wind?.days;
+  if (Array.isArray(windDays)) {
+    for (const d of windDays) {
+      const b = bucket(d?.dateTime);
+      const entries = Array.isArray(d?.entries) ? d.entries : [];
+      let maxSpd: number | null = null;
+      for (const e of entries) {
+        const s = coerceNum(e?.speed);
+        if (s === null) continue;
+        if (maxSpd === null || s > maxSpd) maxSpd = s;
+      }
+      b.wind = maxSpd;
+    }
+  }
+
+  const sorted = Object.values(byDate)
+    .filter((b) => DATE_RE.test(b.date))
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(0, FORECAST_HORIZON_DAYS);
+  if (sorted.length === 0) return null;
+  return sorted.map((b) => ({
+    date: b.date,
+    rain_mm: b.rain,
+    rain_probability_percent: b.prob,
+    temp_min_c: b.tmin,
+    temp_max_c: b.tmax,
+    wind_speed_max_kmh: b.wind,
+    et0_mm: estimateHargreavesET0(b.tmin, b.tmax),
+  }));
+}
+
+async function fetchWillyWeatherForecast(apiKey: string, locationId: string): Promise<ForecastDay[] | null> {
+  const u = new URL(`https://api.willyweather.com.au/v2/${encodeURIComponent(apiKey)}/locations/${encodeURIComponent(locationId)}/weather.json`);
+  u.searchParams.set("forecasts", "rainfall,temperature,wind,rainfallprobability");
+  u.searchParams.set("days", String(FORECAST_HORIZON_DAYS));
+  u.searchParams.set("units", "speed:km/h,temperature:c,distance:km");
+  try {
+    const res = await fetch(u.toString(), { signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+    if (!res.ok) {
+      // Log status only — never the upstream body (may echo the key path).
+      console.error("[vinetrack-api] willyweather forecast upstream status:", res.status);
+      return null;
+    }
+    return normaliseWillyWeatherForecast(await res.json());
+  } catch (e) {
+    console.error("[vinetrack-api] willyweather forecast fetch failed:", e instanceof Error ? e.name : String(e));
+    return null;
+  }
+}
+
+async function fetchOpenMeteoDailyForecast(lat: number, lon: number): Promise<ForecastDay[] | null> {
+  const u = new URL("https://api.open-meteo.com/v1/forecast");
+  u.searchParams.set("latitude", lat.toFixed(4));
+  u.searchParams.set("longitude", lon.toFixed(4));
+  u.searchParams.set("daily", "precipitation_sum,temperature_2m_min,temperature_2m_max,wind_speed_10m_max,et0_fao_evapotranspiration");
+  u.searchParams.set("forecast_days", String(FORECAST_HORIZON_DAYS));
+  u.searchParams.set("timezone", "auto");
+  try {
+    const res = await fetch(u.toString(), { signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+    if (!res.ok) {
+      console.error("[vinetrack-api] open-meteo daily upstream status:", res.status);
+      return null;
+    }
+    // deno-lint-ignore no-explicit-any
+    const data: any = await res.json();
+    const daily = data?.daily;
+    const time: unknown[] = Array.isArray(daily?.time) ? daily.time : [];
+    if (time.length === 0) return null;
+    const pick = (name: string, i: number): number | null => {
+      const arr = daily?.[name];
+      return Array.isArray(arr) ? coerceNum(arr[i]) : null;
+    };
+    return time.slice(0, FORECAST_HORIZON_DAYS).map((t, i) => ({
+      date: String(t).slice(0, 10),
+      rain_mm: pick("precipitation_sum", i),
+      rain_probability_percent: null,
+      temp_min_c: pick("temperature_2m_min", i),
+      temp_max_c: pick("temperature_2m_max", i),
+      wind_speed_max_kmh: pick("wind_speed_10m_max", i),
+      et0_mm: pick("et0_fao_evapotranspiration", i),
+    }));
+  } catch (e) {
+    console.error("[vinetrack-api] open-meteo daily fetch failed:", e instanceof Error ? e.name : String(e));
+    return null;
+  }
+}
+
+function forecastFromPayload(
+  payload: Record<string, unknown>,
+  fetchedAt: string,
+  isStale: boolean,
+  status: ForecastResult["status"],
+): ForecastResult {
+  const days = Array.isArray(payload.days) ? (payload.days as ForecastDay[]) : [];
+  return {
+    days,
+    status,
+    source: {
+      provider: payload.provider ?? null,
+      location: payload.location ?? null,
+      horizon_days: payload.horizon_days ?? FORECAST_HORIZON_DAYS,
+      fetched_at: fetchedAt,
+      is_stale: isStale,
+    },
+  };
+}
+
+async function loadForecast(db: SupabaseClient, vineyardId: string): Promise<ForecastResult> {
+  // Canonical per-vineyard provider preference (sql/061).
+  const { data: vy, error: vyErr } = await db.from("vineyards")
+    .select("forecast_provider")
+    .eq("id", vineyardId)
+    .maybeSingle();
+  if (vyErr) console.error("[vinetrack-api] forecast provider lookup failed:", vyErr.message);
+  const pref = String((vy as Record<string, unknown> | null)?.forecast_provider ?? "auto");
+
+  const { data: ww } = await db.from("vineyard_weather_integrations")
+    .select("station_id, station_name, station_latitude, station_longitude")
+    .eq("vineyard_id", vineyardId)
+    .eq("provider", "willyweather")
+    .eq("is_active", true)
+    .maybeSingle();
+  const wwRow = ww as unknown as { station_id: string | null; station_name: string | null; station_latitude: number | null; station_longitude: number | null } | null;
+  const wwLocationId = wwRow?.station_id ? String(wwRow.station_id) : null;
+
+  const provider = pref === "willyweather" ? "willyweather"
+    : pref === "open_meteo" ? "open_meteo"
+    : (wwLocationId ? "willyweather" : "open_meteo");
+
+  // Serve from cache while fresh (cache is invalidated by provider switch).
+  const cached = await readEnvCache(db, vineyardId, "forecast");
+  const providerCache = cached && String(cached.payload?.provider ?? "") === provider ? cached : null;
+  if (providerCache && Date.now() - Date.parse(providerCache.fetched_at) < FORECAST_CACHE_TTL_MS) {
+    return forecastFromPayload(providerCache.payload, providerCache.fetched_at, false, "ok");
+  }
+
+  // Refresh upstream (at most once per vineyard per TTL window).
+  let fresh: { days: ForecastDay[]; location: Record<string, unknown> } | null = null;
+  if (provider === "willyweather") {
+    const apiKey = Deno.env.get("WILLYWEATHER_API_KEY") ?? "";
+    if (!apiKey || !wwLocationId) return { days: [], status: "not_configured", source: null };
+    const days = await fetchWillyWeatherForecast(apiKey, wwLocationId);
+    if (days) {
+      fresh = {
+        days,
+        location: {
+          latitude: wwRow?.station_latitude != null ? round2(Number(wwRow.station_latitude)) : null,
+          longitude: wwRow?.station_longitude != null ? round2(Number(wwRow.station_longitude)) : null,
+          label: wwRow?.station_name ?? null,
+          basis: "forecast_location",
+        },
+      };
+    }
+  } else {
+    const coords = await resolveVineyardCoords(db, vineyardId);
+    if (!coords) return { days: [], status: "not_configured", source: null };
+    const days = await fetchOpenMeteoDailyForecast(coords.lat, coords.lon);
+    if (days) {
+      fresh = {
+        days,
+        location: { latitude: round2(coords.lat), longitude: round2(coords.lon), label: null, basis: coords.basis },
+      };
+    }
+  }
+
+  if (fresh) {
+    const payload: Record<string, unknown> = {
+      provider,
+      horizon_days: FORECAST_HORIZON_DAYS,
+      location: fresh.location,
+      days: fresh.days,
+    };
+    await writeEnvCache(db, vineyardId, "forecast", payload);
+    return forecastFromPayload(payload, new Date().toISOString(), false, "ok");
+  }
+
+  // Upstream failed — marked stale fallback if a same-provider bundle exists.
+  if (providerCache) {
+    return forecastFromPayload(providerCache.payload, providerCache.fetched_at, true, "stale");
+  }
+  return { days: [], status: "unavailable", source: null };
+}
+
+// --- Disease risk models (ported 1:1 from the shared iOS/Android MVP) --------
+interface EnvHour {
+  epochMs: number;
+  temperatureC: number;
+  dewPointC: number | null;
+  humidityPercent: number | null;
+  precipitationMm: number;
+}
+
+interface HourlyBundle {
+  hours: EnvHour[];
+  utcOffsetSeconds: number;
+}
+
+/** Canonical estimated-wetness proxy: rain > 0 OR RH >= 90% OR T - dewpoint <= 2°C. */
+function isWetHour(h: EnvHour): boolean {
+  if (h.precipitationMm > 0) return true;
+  if (h.humidityPercent !== null && h.humidityPercent >= 90) return true;
+  if (h.dewPointC !== null && (h.temperatureC - h.dewPointC) <= 2) return true;
+  return false;
+}
+
+async function fetchOpenMeteoHourly(lat: number, lon: number): Promise<HourlyBundle | null> {
+  const u = new URL("https://api.open-meteo.com/v1/forecast");
+  u.searchParams.set("latitude", lat.toFixed(4));
+  u.searchParams.set("longitude", lon.toFixed(4));
+  u.searchParams.set("hourly", "temperature_2m,dew_point_2m,relative_humidity_2m,precipitation");
+  u.searchParams.set("past_days", "3");
+  u.searchParams.set("forecast_days", "1");
+  u.searchParams.set("timezone", "auto");
+  try {
+    const res = await fetch(u.toString(), { signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
+    if (!res.ok) {
+      console.error("[vinetrack-api] open-meteo hourly upstream status:", res.status);
+      return null;
+    }
+    // deno-lint-ignore no-explicit-any
+    const data: any = await res.json();
+    const offset = coerceNum(data?.utc_offset_seconds) ?? 0;
+    const hourly = data?.hourly;
+    const time: unknown[] = Array.isArray(hourly?.time) ? hourly.time : [];
+    if (time.length === 0) return null;
+    const arr = (name: string): unknown[] => (Array.isArray(hourly?.[name]) ? hourly[name] : []);
+    const temps = arr("temperature_2m");
+    const dews = arr("dew_point_2m");
+    const rhs = arr("relative_humidity_2m");
+    const precs = arr("precipitation");
+    const hours: EnvHour[] = [];
+    for (let i = 0; i < time.length; i++) {
+      const t = coerceNum(temps[i]);
+      if (t === null) continue;
+      // Open-Meteo returns local times without a zone suffix; convert using
+      // the response's own UTC offset.
+      const asIfUtc = Date.parse(String(time[i]) + "Z");
+      if (Number.isNaN(asIfUtc)) continue;
+      hours.push({
+        epochMs: asIfUtc - offset * 1000,
+        temperatureC: t,
+        dewPointC: coerceNum(dews[i]),
+        humidityPercent: coerceNum(rhs[i]),
+        precipitationMm: coerceNum(precs[i]) ?? 0,
+      });
+    }
+    if (hours.length === 0) return null;
+    hours.sort((a, b) => a.epochMs - b.epochMs);
+    return { hours, utcOffsetSeconds: offset };
+  } catch (e) {
+    console.error("[vinetrack-api] open-meteo hourly fetch failed:", e instanceof Error ? e.name : String(e));
+    return null;
+  }
+}
+
+interface DiseaseRiskItem {
+  disease: string;
+  risk_level: "low" | "medium" | "high";
+  summary: string;
+  window_hours: number;
+  inputs: Record<string, number | null>;
+}
+
+const HOUR_MS = 3_600_000;
+
+/** Downy mildew — simplified 10:10:24 rule (48 h window). */
+function assessDownyMildew(hours: EnvHour[], nowMs: number): DiseaseRiskItem {
+  const window = hours.filter((h) => h.epochMs >= nowMs - 48 * HOUR_MS && h.epochMs <= nowMs);
+  if (window.length === 0) {
+    return { disease: "downy_mildew", risk_level: "low", summary: "Insufficient hourly data to assess.", window_hours: 48, inputs: {} };
+  }
+  const rain = window.reduce((s, h) => s + h.precipitationMm, 0);
+  const minTemp = Math.min(...window.map((h) => h.temperatureC));
+  const wetHours = window.filter(isWetHour).length;
+  let level: DiseaseRiskItem["risk_level"] = "low";
+  if (rain >= 10 && minTemp >= 10 && wetHours >= 10) {
+    level = rain >= 20 && wetHours >= 18 ? "high" : "medium";
+  }
+  return {
+    disease: "downy_mildew",
+    risk_level: level,
+    summary: `Past 48h: ${round1(rain).toFixed(1)} mm rain, min ${round1(minTemp).toFixed(1)}°C, ${wetHours} estimated wet hours.`,
+    window_hours: 48,
+    inputs: { rainfall_mm: round1(rain), min_temperature_c: round1(minTemp), wet_hours: wetHours },
+  };
+}
+
+/** Powdery mildew — simplified Gubler-Thomas (72 h window, local days). */
+function assessPowderyMildew(hours: EnvHour[], nowMs: number, localDay: (ms: number) => string): DiseaseRiskItem {
+  const window = hours.filter((h) => h.epochMs >= nowMs - 72 * HOUR_MS && h.epochMs <= nowMs);
+  if (window.length === 0) {
+    return { disease: "powdery_mildew", risk_level: "low", summary: "Insufficient hourly data to assess.", window_hours: 72, inputs: {} };
+  }
+  const byDay = new Map<string, EnvHour[]>();
+  for (const h of window) {
+    const key = localDay(h.epochMs);
+    const list = byDay.get(key) ?? [];
+    list.push(h);
+    byDay.set(key, list);
+  }
+  let favourableDays = 0;
+  for (const dayHours of byDay.values()) {
+    const sorted = [...dayHours].sort((a, b) => a.epochMs - b.epochMs);
+    let run = 0;
+    let maxRun = 0;
+    for (const h of sorted) {
+      const humidOK = (h.humidityPercent ?? 0) >= 60;
+      const tempOK = h.temperatureC >= 21 && h.temperatureC <= 30;
+      if (humidOK && tempOK) {
+        run += 1;
+        maxRun = Math.max(maxRun, run);
+      } else {
+        run = 0;
+      }
+    }
+    if (maxRun >= 6) favourableDays += 1;
+  }
+  const latestTemp = window[window.length - 1].temperatureC;
+  let level: DiseaseRiskItem["risk_level"] = "low";
+  if (favourableDays >= 3) level = "medium";
+  if (favourableDays >= 3 && latestTemp >= 25) level = "high";
+  return {
+    disease: "powdery_mildew",
+    risk_level: level,
+    summary: `${favourableDays} of last 3 days had 6+ favourable hours (21–30°C, RH ≥ 60%).`,
+    window_hours: 72,
+    inputs: { favourable_days_of_last_3: favourableDays, latest_temperature_c: round1(latestTemp) },
+  };
+}
+
+/** Botrytis — simplified Broome/Bulit (wet hours at 15–25°C over 36 h). */
+function assessBotrytis(hours: EnvHour[], nowMs: number): DiseaseRiskItem {
+  const window = hours.filter((h) => h.epochMs >= nowMs - 36 * HOUR_MS && h.epochMs <= nowMs);
+  if (window.length === 0) {
+    return { disease: "botrytis", risk_level: "low", summary: "Insufficient hourly data to assess.", window_hours: 36, inputs: {} };
+  }
+  const wetCount = window.filter((h) => isWetHour(h) && h.temperatureC >= 15 && h.temperatureC <= 25).length;
+  let level: DiseaseRiskItem["risk_level"] = "low";
+  if (wetCount >= 15) level = "medium";
+  if (wetCount >= 24) level = "high";
+  return {
+    disease: "botrytis",
+    risk_level: level,
+    summary: `${wetCount} estimated wet hours in 15–25°C window over past 36h.`,
+    window_hours: 36,
+    inputs: { wet_hours_15_to_25_c: wetCount },
+  };
+}
+
+function buildDiseaseRiskPayload(vineyardId: string, bundle: HourlyBundle, coords: VineyardCoords): Record<string, unknown> {
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const localDay = (ms: number) => new Date(ms + bundle.utcOffsetSeconds * 1000).toISOString().slice(0, 10);
+  const past = bundle.hours.filter((h) => h.epochMs <= nowMs);
+  const observedThrough = past.length > 0 ? new Date(past[past.length - 1].epochMs).toISOString() : null;
+  return {
+    vineyard_id: vineyardId,
+    calculated_at: nowIso,
+    model_version: DISEASE_MODEL_VERSION,
+    wetness_source: "estimated_proxy",
+    weather_source: {
+      provider: "open_meteo",
+      location: { latitude: round2(coords.lat), longitude: round2(coords.lon), basis: coords.basis },
+      fetched_at: nowIso,
+      observed_through: observedThrough,
+      hours_used: bundle.hours.length,
+      source_status: "ok",
+    },
+    risks: [
+      assessDownyMildew(bundle.hours, nowMs),
+      assessPowderyMildew(bundle.hours, nowMs, localDay),
+      assessBotrytis(bundle.hours, nowMs),
+    ],
+  };
+}
+
+// --- Stage 3D route handlers -------------------------------------------------
+async function handleWeather(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string, url: URL,
+): Promise<Response> {
+  enforceAllowedParams(url, ["vineyard_id"]);
+  const vineyardId = url.searchParams.get("vineyard_id");
+  if (!vineyardId || !UUID_RE.test(vineyardId)) throw new ApiError("invalid_request");
+  ctx.vineyardId = vineyardId;
+
+  await validateVineyardRequest(db, key, "weather:read", vineyardId, false);
+
+  const [current, forecast] = await Promise.all([
+    loadCurrentWeather(db, vineyardId),
+    loadForecast(db, vineyardId),
+  ]);
+
+  return jsonResponse(req, ctx, {
+    data: {
+      vineyard_id: vineyardId,
+      current: current.observation,
+      current_status: current.status,
+      forecast: forecast.days,
+      forecast_status: forecast.status,
+      forecast_source: forecast.source,
+    },
+    meta: { generated_at: new Date().toISOString() },
+  }, 200);
+}
+
+interface RainfallRpcRow {
+  date: string;
+  rainfall_mm: number | string;
+  source: string;
+  station_id: string | null;
+  station_name: string | null;
+  notes: string | null;
+  updated_at: string;
+}
+
+async function handleRainfallList(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string, url: URL,
+): Promise<Response> {
+  enforceAllowedParams(url, ["vineyard_id", "from", "to", "limit", "cursor"]);
+  const vineyardId = url.searchParams.get("vineyard_id");
+  if (!vineyardId || !UUID_RE.test(vineyardId)) throw new ApiError("invalid_request");
+  ctx.vineyardId = vineyardId;
+
+  const limit = parseLimit(url.searchParams.get("limit"));
+  const fromDate = parseDateParam(url.searchParams.get("from"));
+  const toDate = parseDateParam(url.searchParams.get("to"));
+  if (fromDate && toDate && fromDate > toDate) throw new ApiError("invalid_request");
+  const rawCursor = url.searchParams.get("cursor");
+  const before = rawCursor ? decodeDateCursor(rawCursor) : null;
+
+  await validateVineyardRequest(db, key, "rainfall:read", vineyardId, false);
+
+  const { data, error } = await db.rpc("integration_get_rainfall", {
+    p_vineyard_id: vineyardId,
+    p_from: fromDate,
+    p_to: toDate,
+    p_before: before,
+    p_limit: limit + 1,
+  });
+  if (error) {
+    console.error("[vinetrack-api] rainfall rpc failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  const rows = (Array.isArray(data) ? data : []) as RainfallRpcRow[];
+  const hasMore = rows.length > limit;
+  const page = rows.slice(0, limit);
+
+  return jsonResponse(req, ctx, {
+    data: page.map((r) => ({
+      date: String(r.date).slice(0, 10),
+      rainfall_mm: coerceNum(r.rainfall_mm),
+      source: r.source,
+      station: r.station_id || r.station_name
+        ? { id: r.station_id ?? null, name: r.station_name ?? null }
+        : null,
+      notes: r.notes && String(r.notes).trim().length > 0 ? r.notes : null,
+      updated_at: r.updated_at,
+    })),
+    pagination: {
+      next_cursor: hasMore ? encodeDateCursor(String(page[page.length - 1].date).slice(0, 10)) : null,
+    },
+  }, 200);
+}
+
+async function handleDiseaseRisk(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string, url: URL,
+): Promise<Response> {
+  enforceAllowedParams(url, ["vineyard_id"]);
+  const vineyardId = url.searchParams.get("vineyard_id");
+  if (!vineyardId || !UUID_RE.test(vineyardId)) throw new ApiError("invalid_request");
+  ctx.vineyardId = vineyardId;
+
+  await validateVineyardRequest(db, key, "disease_risk:read", vineyardId, false);
+
+  const cached = await readEnvCache(db, vineyardId, "disease_risk");
+  const nowMs = Date.now();
+  if (cached && nowMs - Date.parse(cached.fetched_at) < DISEASE_CACHE_TTL_MS) {
+    return jsonResponse(req, ctx, {
+      data: cached.payload,
+      meta: { generated_at: new Date().toISOString(), source_updated_at: cached.fetched_at, is_stale: false },
+    }, 200);
+  }
+
+  const coords = await resolveVineyardCoords(db, vineyardId);
+  const bundle = coords ? await fetchOpenMeteoHourly(coords.lat, coords.lon) : null;
+
+  if (!coords || !bundle || bundle.hours.length === 0) {
+    // Marked stale fallback (existing app behaviour: keep serving the last
+    // good assessment rather than failing hard) — capped at 24 h.
+    if (cached && nowMs - Date.parse(cached.fetched_at) < DISEASE_STALE_FALLBACK_MAX_MS) {
+      const payload = { ...cached.payload };
+      payload.weather_source = {
+        ...((payload.weather_source as Record<string, unknown>) ?? {}),
+        source_status: "stale_fallback",
+      };
+      return jsonResponse(req, ctx, {
+        data: payload,
+        meta: { generated_at: new Date().toISOString(), source_updated_at: cached.fetched_at, is_stale: true },
+      }, 200);
+    }
+    throw new ApiError("disease_risk_unavailable");
+  }
+
+  const payload = buildDiseaseRiskPayload(vineyardId, bundle, coords);
+  await writeEnvCache(db, vineyardId, "disease_risk", payload);
+  return jsonResponse(req, ctx, {
+    data: payload,
+    meta: { generated_at: new Date().toISOString(), source_updated_at: String(payload.calculated_at), is_stale: false },
+  }, 200);
+}
+
+// ---------------------------------------------------------------------------
 // Safe request logging. Never logs credentials, headers or bodies.
 // ---------------------------------------------------------------------------
 async function logRequest(db: SupabaseClient, ctx: RequestContext, status: number, errorCode: string | null): Promise<void> {
@@ -2907,7 +3771,10 @@ type Route =
   | { name: "yield_records_list" }
   | { name: "yield_record_get"; id: string }
   | { name: "pins_list" }
-  | { name: "pin_get"; id: string };
+  | { name: "pin_get"; id: string }
+  | { name: "weather" }
+  | { name: "rainfall_list" }
+  | { name: "disease_risk" };
 
 /** Collection + single-resource route table: segment -> route names + log templates. */
 const RESOURCE_ROUTES: Record<string, { list: Route["name"]; get: Route["name"]; idLabel: string }> = {
@@ -2976,6 +3843,16 @@ Deno.serve(async (req: Request) => {
       if (segments.length === 2 && segments[1] === "me") {
         route = { name: "me" };
         ctx.canonicalPath = "/v1/me";
+      } else if (segments.length === 2 && segments[1] === "weather") {
+        // Singleton environmental resources (Stage 3D) — no {id} form.
+        route = { name: "weather" };
+        ctx.canonicalPath = "/v1/weather";
+      } else if (segments.length === 2 && segments[1] === "rainfall") {
+        route = { name: "rainfall_list" };
+        ctx.canonicalPath = "/v1/rainfall";
+      } else if (segments.length === 2 && segments[1] === "disease-risk") {
+        route = { name: "disease_risk" };
+        ctx.canonicalPath = "/v1/disease-risk";
       } else if (segments.length >= 2 && RESOURCE_ROUTES[segments[1]]) {
         const def = RESOURCE_ROUTES[segments[1]];
         if (segments.length === 2) {
@@ -3084,6 +3961,15 @@ Deno.serve(async (req: Request) => {
         break;
       case "pin_get":
         response = await handlePinGet(req, ctx, db, key, profile, url, (route as { id: string }).id);
+        break;
+      case "weather":
+        response = await handleWeather(req, ctx, db, key, url);
+        break;
+      case "rainfall_list":
+        response = await handleRainfallList(req, ctx, db, key, url);
+        break;
+      case "disease_risk":
+        response = await handleDiseaseRisk(req, ctx, db, key, url);
         break;
     }
     status = response.status;
