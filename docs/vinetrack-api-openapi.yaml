@@ -1,0 +1,704 @@
+# VineTrack public API — OpenAPI 3.1 (descriptive).
+# The implementation (supabase/functions/vinetrack-api/index.ts) and
+# docs/vinetrack-api-v1.md remain canonical; this document describes them and
+# must never drive or distort the implementation.
+openapi: 3.1.0
+info:
+  title: VineTrack API
+  version: "v1"
+  description: |
+    Read-only integration API for VineTrack vineyard data.
+
+    Authentication uses VineTrack API keys (`vt_live_...` / `vt_test_...`)
+    presented as `Authorization: Bearer <key>`. Supabase JWTs and
+    query-string credentials are rejected. An API key only reaches
+    vineyards and scopes that were explicitly granted to its integration —
+    nothing is inherited from the person who created the key.
+
+    Sensitive-field gating: cost fields additionally require the
+    `costs:read` scope; operator/labour identity fields additionally
+    require `labour:read`. Sensitive scopes never grant access to a
+    resource on their own. Gated fields are omitted (not null) without the
+    extra scope.
+
+    All collections use opaque cursor pagination (`limit` default 100,
+    max 1000). Operational collections are ordered newest-first.
+    Rate limit: 300 requests/minute per API key
+    (X-RateLimit-Limit / X-RateLimit-Remaining / Retry-After headers).
+servers:
+  - url: https://tbafuqwruefgkbyxrxyb.supabase.co/functions/v1/vinetrack-api
+security:
+  - vinetrackApiKey: []
+tags:
+  - name: Identity
+  - name: Vineyards
+  - name: Blocks
+  - name: Trips
+  - name: Spray Jobs
+  - name: Fuel
+  - name: Equipment
+
+paths:
+  /v1/me:
+    get:
+      tags: [Identity]
+      summary: Describe the authenticated integration
+      description: Requires a valid active key; no resource scope.
+      responses:
+        "200":
+          description: Integration profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Me" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/vineyards:
+    get:
+      tags: [Vineyards]
+      summary: List granted vineyards
+      description: "Scope: vineyards:read. Returns only explicitly granted vineyards."
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200": { $ref: "#/components/responses/VineyardCollection" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/vineyards/{vineyard_id}:
+    get:
+      tags: [Vineyards]
+      summary: Get one vineyard
+      description: "Scope: vineyards:read. Ungranted vineyards return 404 (existence is never disclosed)."
+      parameters:
+        - { name: vineyard_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Vineyard
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Vineyard" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/blocks:
+    get:
+      tags: [Blocks]
+      summary: List blocks in one vineyard
+      description: "Scope: blocks:read. vineyard_id is required (explicit vineyard isolation)."
+      parameters:
+        - $ref: "#/components/parameters/vineyardId"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Blocks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Block" }
+                  pagination: { $ref: "#/components/schemas/Pagination" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/blocks/{block_id}:
+    get:
+      tags: [Blocks]
+      summary: Get one block
+      description: "Scope: blocks:read. Blocks in ungranted vineyards return 404."
+      parameters:
+        - { name: block_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Block
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Block" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/trips:
+    get:
+      tags: [Trips]
+      summary: List trips in one vineyard
+      description: |
+        Scope: trips:read. Newest first. `operator` requires labour:read.
+      parameters:
+        - $ref: "#/components/parameters/vineyardId"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+        - { name: equipment_id, in: query, required: false, schema: { type: string, format: uuid }, description: "Canonical machine id; unknown/cross-vineyard ids match nothing." }
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Trips
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/TripSummary" }
+                  pagination: { $ref: "#/components/schemas/Pagination" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/trips/{trip_id}:
+    get:
+      tags: [Trips]
+      summary: Get one trip (detail)
+      description: |
+        Scope: trips:read. Adds `rows` work summary; `costs` requires
+        costs:read (labour_cost also requires labour:read).
+      parameters:
+        - { name: trip_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Trip detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/TripDetail" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/spray-jobs:
+    get:
+      tags: [Spray Jobs]
+      summary: List completed spray application records
+      description: "Scope: sprays:read. Canonical completed application/compliance records; templates excluded. Newest first."
+      parameters:
+        - $ref: "#/components/parameters/vineyardId"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Spray records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/SpraySummary" }
+                  pagination: { $ref: "#/components/schemas/Pagination" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/spray-jobs/{spray_job_id}:
+    get:
+      tags: [Spray Jobs]
+      summary: Get one spray record (full detail)
+      description: |
+        Scope: sprays:read. Adds blocks, full tank/product mix and the
+        linked plan header. Product cost_per_unit and chemical_cost_total
+        require costs:read.
+      parameters:
+        - { name: spray_job_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Spray record detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/SprayDetail" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/fuel-records:
+    get:
+      tags: [Fuel]
+      summary: List fuel usage (fill) records
+      description: |
+        Scope: fuel:read. Newest first. `operator` requires labour:read;
+        cost_per_litre/total_cost require costs:read.
+      parameters:
+        - $ref: "#/components/parameters/vineyardId"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+        - { name: equipment_id, in: query, required: false, schema: { type: string, format: uuid } }
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Fuel records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/FuelRecord" }
+                  pagination: { $ref: "#/components/schemas/Pagination" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/fuel-records/{fuel_record_id}:
+    get:
+      tags: [Fuel]
+      summary: Get one fuel usage record
+      parameters:
+        - { name: fuel_record_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Fuel record
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/FuelRecord" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/fuel-purchases:
+    get:
+      tags: [Fuel]
+      summary: List fuel purchase records
+      description: |
+        Scope: fuel:read. Newest first. total_price/price_per_litre require
+        costs:read (omitted otherwise).
+      parameters:
+        - $ref: "#/components/parameters/vineyardId"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Fuel purchases
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/FuelPurchase" }
+                  pagination: { $ref: "#/components/schemas/Pagination" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/fuel-purchases/{fuel_purchase_id}:
+    get:
+      tags: [Fuel]
+      summary: Get one fuel purchase record
+      parameters:
+        - { name: fuel_purchase_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Fuel purchase
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/FuelPurchase" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/equipment:
+    get:
+      tags: [Equipment]
+      summary: List equipment in one vineyard
+      description: |
+        Scope: equipment:read. One unified typed resource (kind = machine |
+        sprayer | item). No cost fields exist canonically.
+      parameters:
+        - $ref: "#/components/parameters/vineyardId"
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [machine, sprayer, item, tractor, atv, side_by_side, harvester, utility_vehicle, other_vineyard_machine]
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Equipment
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Equipment" }
+                  pagination: { $ref: "#/components/schemas/Pagination" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /v1/equipment/{equipment_id}:
+    get:
+      tags: [Equipment]
+      summary: Get one equipment asset
+      parameters:
+        - { name: equipment_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Equipment asset
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Equipment" }
+        default: { $ref: "#/components/responses/Error" }
+
+components:
+  securitySchemes:
+    vinetrackApiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: "vt_live_... / vt_test_... (VineTrack API key — not a JWT)"
+      description: |
+        VineTrack integration API key. Created once by a vineyard Owner;
+        the plaintext is shown exactly once and only its hash is stored.
+        Scopes granted to the integration:
+        vineyards:read, blocks:read, trips:read, sprays:read, fuel:read,
+        equipment:read (resources); costs:read, labour:read, team:read
+        (sensitive field gating — never grant resource access alone).
+
+  parameters:
+    vineyardId:
+      name: vineyard_id
+      in: query
+      required: true
+      description: Explicitly granted vineyard (required on every collection).
+      schema: { type: string, format: uuid }
+    limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+    cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor from pagination.next_cursor. Do not construct.
+      schema: { type: string }
+    from:
+      name: from
+      in: query
+      required: false
+      description: Inclusive ISO date lower bound (YYYY-MM-DD, UTC days).
+      schema: { type: string, format: date }
+    to:
+      name: to
+      in: query
+      required: false
+      description: Inclusive ISO date upper bound (YYYY-MM-DD, UTC days).
+      schema: { type: string, format: date }
+
+  responses:
+    Error:
+      description: |
+        Error envelope. Codes: missing_api_key, invalid_api_key,
+        expired_api_key, revoked_api_key (401); integration_not_active,
+        insufficient_scope, vineyard_access_denied (403);
+        resource_not_found (404 — also used for inaccessible resources,
+        existence is never disclosed); invalid_request, invalid_cursor
+        (400); rate_limit_exceeded (429); method_not_allowed (405);
+        internal_error (500).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    VineyardCollection:
+      description: Vineyards
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                type: array
+                items: { $ref: "#/components/schemas/Vineyard" }
+              pagination: { $ref: "#/components/schemas/Pagination" }
+
+  schemas:
+    Pagination:
+      type: object
+      properties:
+        next_cursor:
+          type: [string, "null"]
+          description: Cursor for the next page; null on the last page.
+
+    ErrorEnvelope:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            request_id: { type: string, pattern: "^req_[0-9a-f]{32}$" }
+
+    Me:
+      type: object
+      properties:
+        integration_id: { type: string, format: uuid }
+        name: { type: string }
+        environment: { type: string, enum: [live, test] }
+        status: { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+        vineyards:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+
+    Vineyard:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        country_code: { type: [string, "null"] }
+        country: { type: [string, "null"] }
+        timezone: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Block:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        vineyard_id: { type: string, format: uuid }
+        name: { type: string }
+        planting_year: { type: [integer, "null"] }
+        row_count: { type: [integer, "null"] }
+        row_width_m: { type: [number, "null"] }
+        vine_spacing_m: { type: [number, "null"] }
+        varieties:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              percent: { type: [number, "null"] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Operator:
+      type: object
+      description: Present only with labour:read.
+      properties:
+        user_id: { type: [string, "null"], format: uuid }
+        name: { type: [string, "null"] }
+
+    TripSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        vineyard_id: { type: string, format: uuid }
+        title: { type: [string, "null"] }
+        function: { type: [string, "null"] }
+        status: { type: string, enum: [active, paused, completed] }
+        started_at: { type: [string, "null"], format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
+        duration_minutes:
+          type: [integer, "null"]
+          description: Pause-aware; null while a trip is active.
+        distance_km: { type: [number, "null"] }
+        block_ids:
+          type: array
+          items: { type: string, format: uuid }
+        block_name: { type: [string, "null"] }
+        equipment_id: { type: [string, "null"], format: uuid }
+        equipment_name: { type: [string, "null"] }
+        work_task_id: { type: [string, "null"], format: uuid }
+        tank_count: { type: [integer, "null"] }
+        engine_hours_start: { type: [number, "null"] }
+        engine_hours_end: { type: [number, "null"] }
+        notes: { type: [string, "null"] }
+        operator: { $ref: "#/components/schemas/Operator" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    TripDetail:
+      allOf:
+        - $ref: "#/components/schemas/TripSummary"
+        - type: object
+          properties:
+            rows:
+              type: object
+              properties:
+                planned: { type: integer }
+                completed: { type: integer }
+                skipped: { type: integer }
+            costs:
+              type: [object, "null"]
+              description: >
+                Present only with costs:read; labour_cost additionally
+                requires labour:read. Null when no costing exists.
+              properties:
+                fuel_cost: { type: [number, "null"] }
+                chemical_cost: { type: [number, "null"] }
+                input_cost: { type: [number, "null"] }
+                total_cost: { type: [number, "null"] }
+                labour_cost: { type: [number, "null"] }
+
+    SprayConditions:
+      type: object
+      properties:
+        temperature_c: { type: [number, "null"] }
+        wind_speed_kmh: { type: [number, "null"] }
+        wind_direction: { type: [string, "null"] }
+        humidity_percent: { type: [number, "null"] }
+
+    SpraySummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        vineyard_id: { type: string, format: uuid }
+        status: { type: string, enum: [completed] }
+        date: { type: [string, "null"], format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
+        reference: { type: [string, "null"] }
+        operation_type: { type: [string, "null"] }
+        equipment_id: { type: [string, "null"], format: uuid }
+        equipment_name: { type: [string, "null"] }
+        equipment_type: { type: [string, "null"] }
+        spray_equipment_id: { type: [string, "null"], format: uuid }
+        conditions: { $ref: "#/components/schemas/SprayConditions" }
+        water_volume_l: { type: number }
+        treated_area_ha:
+          type: [number, "null"]
+          description: Derived from the canonical tank mix.
+        tank_count: { type: integer }
+        product_names:
+          type: array
+          items: { type: string }
+        average_speed_kmh: { type: [number, "null"] }
+        fans_jets: { type: [string, "null"] }
+        trip_id: { type: [string, "null"], format: uuid }
+        spray_job_id: { type: [string, "null"], format: uuid }
+        notes: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    SprayProduct:
+      type: object
+      properties:
+        product_id: { type: [string, "null"], format: uuid }
+        name: { type: [string, "null"] }
+        quantity_per_tank: { type: [number, "null"] }
+        rate_per_ha: { type: [number, "null"] }
+        rate_per_100l: { type: [number, "null"] }
+        unit:
+          type: [string, "null"]
+          description: Recorded unit (Litres, mL, Kg, g) — never converted.
+        cost_per_unit:
+          type: [number, "null"]
+          description: Present only with costs:read.
+
+    SprayDetail:
+      allOf:
+        - $ref: "#/components/schemas/SpraySummary"
+        - type: object
+          properties:
+            blocks:
+              type: array
+              items:
+                type: object
+                properties:
+                  block_id: { type: string, format: uuid }
+                  name: { type: [string, "null"] }
+            tanks:
+              type: array
+              items:
+                type: object
+                properties:
+                  tank_number: { type: [integer, "null"] }
+                  water_volume_l: { type: [number, "null"] }
+                  spray_rate_l_per_ha: { type: [number, "null"] }
+                  concentration_factor: { type: [number, "null"] }
+                  area_ha: { type: [number, "null"] }
+                  products:
+                    type: array
+                    items: { $ref: "#/components/schemas/SprayProduct" }
+            chemical_cost_total:
+              type: [number, "null"]
+              description: Present only with costs:read.
+            spray_job:
+              type: [object, "null"]
+              description: Linked planned spray job header, when any.
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: [string, "null"] }
+                status: { type: string }
+                target: { type: [string, "null"] }
+                operation_type: { type: [string, "null"] }
+                planned_date: { type: [string, "null"], format: date }
+
+    FuelRecord:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        vineyard_id: { type: string, format: uuid }
+        date: { type: string, format: date-time }
+        equipment_id: { type: [string, "null"], format: uuid }
+        equipment_name: { type: [string, "null"] }
+        volume_l: { type: number }
+        engine_hours: { type: [number, "null"] }
+        filled_to_full: { type: [boolean, "null"] }
+        notes: { type: [string, "null"] }
+        operator: { $ref: "#/components/schemas/Operator" }
+        cost_per_litre:
+          type: [number, "null"]
+          description: Present only with costs:read.
+        total_cost:
+          type: [number, "null"]
+          description: Present only with costs:read.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    FuelPurchase:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        vineyard_id: { type: string, format: uuid }
+        date: { type: string, format: date-time }
+        volume_l: { type: number }
+        total_price:
+          type: number
+          description: Present only with costs:read.
+        price_per_litre:
+          type: [number, "null"]
+          description: Derived (total_price / volume_l); present only with costs:read.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Equipment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        vineyard_id: { type: string, format: uuid }
+        kind: { type: string, enum: [machine, sprayer, item] }
+        name: { type: [string, "null"] }
+        equipment_type: { type: [string, "null"] }
+        make: { type: [string, "null"] }
+        model: { type: [string, "null"] }
+        year: { type: [integer, "null"] }
+        serial_number: { type: [string, "null"] }
+        vin_number: { type: [string, "null"] }
+        fuel_usage_l_per_hour: { type: [number, "null"] }
+        tank_capacity_l: { type: [number, "null"] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
