@@ -46,8 +46,8 @@ declare
   v_vb  uuid := gen_random_uuid();  -- vineyard B (owner B)
 
   c_a uuid;                          -- Owner A's integration client
-  k1 uuid; k1_secret text;           -- active key
-  k2 uuid; k2_secret text;           -- key revoked after logging
+  k1 uuid; k1_secret text; k1_hash text;  -- active key
+  k2 uuid; k2_secret text; k2_hash text;  -- key revoked after logging
 
   j jsonb;
   e jsonb;
@@ -110,6 +110,12 @@ begin
   j := public.integration_create_api_key(c_a, 'test', 't177 key two', null);
   k2 := (j->>'api_key_id')::uuid;
   k2_secret := j->>'secret';
+
+  -- Compute the stored hashes NOW, while still running as postgres —
+  -- _integration_hash_secret is an internal helper and is correctly NOT
+  -- executable by the authenticated role used in T3.
+  k1_hash := public._integration_hash_secret(k1_secret);
+  k2_hash := public._integration_hash_secret(k2_secret);
 
   -- Seed 7 log rows through the CANONICAL writer (also proves the write
   -- path is intact), then spread created_at for deterministic paging.
@@ -184,8 +190,7 @@ begin
   if e ? 'key_hash' or e ? 'api_key_hash' then
     raise exception 'T3: hash field exposed';
   end if;
-  if position(public._integration_hash_secret(k1_secret) in j::text) > 0
-     or position(public._integration_hash_secret(k2_secret) in j::text) > 0
+  if position(k1_hash in j::text) > 0 or position(k2_hash in j::text) > 0
      or position(k1_secret in j::text) > 0 or position(k2_secret in j::text) > 0 then
     raise exception 'T3: key hash or secret material leaked into the response';
   end if;
