@@ -1362,6 +1362,23 @@ select integration_create_api_key('<integration_id>', 'test', 'dev key', null);
 -- The 'secret' field of the last result is shown ONCE. Store it now.
 ```
 
+## Webhooks
+
+Stage 5A adds outbound webhooks on top of this API: subscribe an HTTPS
+endpoint to events such as `trip.completed`, `spray_job.completed` or
+`pin.resolved` and VineTrack POSTs a signed, compact envelope when the data
+changes. Webhooks use the same integration clients, vineyard grants and
+scopes as this API — an integration only receives events for vineyards it
+has been granted and event families whose read scope it holds.
+
+Delivery is at-least-once with signed payloads
+(`X-VineTrack-Signature: v1=<hex HMAC-SHA256>`), automatic retries with
+backoff, endpoint health tracking, test sends and replays. Payloads carry
+identifiers only — fetch authoritative state from this API.
+
+Full contract, signature verification guide, event catalogue and
+management RPC surface: `docs/vinetrack-webhooks.md`.
+
 ## Deployment (engineering)
 
 - Function: `supabase/functions/vinetrack-api` on project
