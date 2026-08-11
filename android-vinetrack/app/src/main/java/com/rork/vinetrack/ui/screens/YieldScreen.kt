@@ -100,9 +100,11 @@ import com.rork.vinetrack.data.model.HistoricalBlockResult
 import com.rork.vinetrack.data.model.HistoricalYieldRecord
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PickingRecord
+import com.rork.vinetrack.data.model.PlantingGroupTotal
 import com.rork.vinetrack.data.model.canonicalVarietyName
 import com.rork.vinetrack.data.model.plantingGroupKey
 import com.rork.vinetrack.data.model.plantingGroupNormalise
+import com.rork.vinetrack.data.model.plantingGroupTotals
 import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -500,27 +502,50 @@ private fun PickingLogView(
                     totals.forEach { (groupKey, picks) ->
                         val first = picks.first()
                         item(key = "total-$vintage-${groupKey.first}-${groupKey.second}") {
+                            // Planting-group production breakdown (sql/184):
+                            // partition this bucket's picks per planting group.
+                            // Shown only once at least one pick is linked —
+                            // fully-legacy history keeps the compact row.
+                            // Group rows reconcile exactly to the variety
+                            // total (they partition the same picks).
+                            val plantingTotals = remember(picks) { plantingGroupTotals(picks) }
+                            val showPlantings = plantingTotals.any { it.groupKey != null }
+                            val plantingConfig = if (showPlantings) {
+                                plantingGroupConfig(state.paddocks.firstOrNull { it.id == first.paddockId })
+                            } else emptyMap()
                             VineyardCard {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(
-                                            if (first.varietyName.isBlank()) first.paddockName
-                                            else "${first.paddockName} · ${first.varietyName}",
-                                            color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                                        )
-                                        Text(
-                                            "${picks.size} pick${if (picks.size == 1) "" else "s"}",
-                                            color = vine.textSecondary, fontSize = 12.sp,
-                                        )
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(
+                                                if (first.varietyName.isBlank()) first.paddockName
+                                                else "${first.paddockName} · ${first.varietyName}",
+                                                color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                                            )
+                                            Text(
+                                                "${picks.size} pick${if (picks.size == 1) "" else "s"}",
+                                                color = vine.textSecondary, fontSize = 12.sp,
+                                            )
+                                        }
+                                        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(
+                                                "${String.format(Locale.getDefault(), "%.2f", picks.sumOf { it.weightKg } / 1000.0)} t",
+                                                color = VineColors.LeafGreen, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                                            )
+                                            val value = picks.mapNotNull { it.displayGrapeValue }.takeIf { it.isNotEmpty() }?.sum()
+                                            value?.let {
+                                                Text(fmt.formatCurrency(it), color = vine.textSecondary, fontSize = 12.sp)
+                                            }
+                                        }
                                     }
-                                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(
-                                            "${String.format(Locale.getDefault(), "%.2f", picks.sumOf { it.weightKg } / 1000.0)} t",
-                                            color = VineColors.LeafGreen, fontSize = 15.sp, fontWeight = FontWeight.Bold,
-                                        )
-                                        val value = picks.mapNotNull { it.displayGrapeValue }.takeIf { it.isNotEmpty() }?.sum()
-                                        value?.let {
-                                            Text(fmt.formatCurrency(it), color = vine.textSecondary, fontSize = 12.sp)
+                                    if (showPlantings) {
+                                        Column(
+                                            modifier = Modifier.padding(start = 12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                                        ) {
+                                            plantingTotals.forEach { group ->
+                                                PlantingGroupTotalRow(group, plantingConfig[group.groupKey], fmt)
+                                            }
                                         }
                                     }
                                 }
@@ -2621,6 +2646,79 @@ private fun initialPlantingKey(
         options.firstOrNull { it.key != LEGACY_PLANTING_KEY && it.groupKey == groupKey }?.let { return it.key }
     }
     return options.firstOrNull { it.key == LEGACY_PLANTING_KEY }?.key
+}
+
+/**
+ * One planting-group sub-row in the picking-log totals card: `clone ·
+ * rootstock`, live group hectares + section count from the block's current
+ * configuration, group tonnes and t/ha. The unlinked bucket is labelled
+ * explicitly. Mirrors the iOS `PickingLogListView.plantingGroupRow`.
+ */
+@Composable
+private fun PlantingGroupTotalRow(
+    group: PlantingGroupTotal,
+    config: Pair<Double, Int>?,
+    fmt: RegionFormatter,
+) {
+    val vine = LocalVineColors.current
+    val linked = group.groupKey != null
+    val label = if (!linked) "Not linked to a planting"
+    else listOfNotNull(
+        group.clone?.trim()?.ifBlank { null },
+        group.rootstock?.trim()?.ifBlank { null },
+    ).joinToString(" · ").ifEmpty { "No clone / rootstock" }
+    val hectares = config?.first ?: 0.0
+    Row(verticalAlignment = Alignment.Top) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(
+                label,
+                color = if (linked) vine.textPrimary else vine.textSecondary,
+                fontSize = 12.sp,
+                fontWeight = if (linked) FontWeight.Medium else FontWeight.Normal,
+            )
+            if (hectares > 0) {
+                val sections = config?.second ?: 0
+                Text(
+                    fmt.formatArea(hectares) + if (sections > 1) " · $sections sections" else "",
+                    color = vine.textSecondary, fontSize = 11.sp,
+                )
+            }
+        }
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(
+                "${String.format(Locale.getDefault(), "%.2f", group.actualYieldTonnes)} t",
+                color = if (linked) VineColors.LeafGreen else vine.textSecondary,
+                fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+            )
+            if (hectares > 0) {
+                Text(
+                    fmt.formatYieldPerArea(group.actualYieldTonnes / hectares),
+                    color = VineColors.Orange, fontSize = 11.sp,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Live block configuration per planting group: summed member hectares
+ * (allocation percent × block area) and section count, keyed by the
+ * canonical group key. Groups no longer present on the block simply show
+ * without hectares (their snapshots remain on the records). Mirrors the
+ * iOS `PickingLogListView.plantingGroupConfig`.
+ */
+private fun plantingGroupConfig(block: Paddock?): Map<String, Pair<Double, Int>> {
+    block ?: return emptyMap()
+    val result = mutableMapOf<String, Pair<Double, Int>>()
+    block.varietyAllocations.orEmpty().forEach { alloc ->
+        val name = alloc.displayName?.takeIf { it.isNotBlank() } ?: return@forEach
+        val key = plantingGroupKey(name, alloc.clone, alloc.rootstock)
+        val percent = alloc.displayPercent ?: 0.0
+        val ha = if (percent > 0) block.areaHectares * percent / 100.0 else 0.0
+        val prev = result[key] ?: (0.0 to 0)
+        result[key] = (prev.first + ha) to (prev.second + 1)
+    }
+    return result
 }
 
 private fun formatPlain(value: Double): String =

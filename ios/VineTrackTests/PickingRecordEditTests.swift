@@ -316,6 +316,34 @@ struct PickingRecordEditTests {
         #expect((json["clone"] as? String) == "777")
     }
 
+    @Test func plantingGroupTotalsPartitionAndReconcileExactly() {
+        // Yield Overview contract: one production row per planting group;
+        // identical sections are ONE row; the unlinked bucket is last; and
+        // the group rows always sum exactly to the variety total.
+        let key777 = PlantingGroup.key(varietyName: "Pinot Noir", clone: "777", rootstock: "Richter 110")
+        let key667 = PlantingGroup.key(varietyName: "Pinot Noir", clone: "667", rootstock: "Richter 110")
+        let records = [
+            makeRecord(varietyName: "Pinot Noir", plantingGroupKey: key777, clone: "777", rootstock: "Richter 110", weightKg: 2000),
+            makeRecord(varietyName: "Pinot Noir", plantingGroupKey: key777, clone: "777", rootstock: "Richter 110", weightKg: 2140),
+            makeRecord(varietyName: "Pinot Noir", plantingGroupKey: key667, clone: "667", rootstock: "Richter 110", weightKg: 2590),
+            makeRecord(varietyName: "Pinot Noir", plantingGroupKey: nil, clone: nil, rootstock: nil, weightKg: 500)
+        ]
+
+        let groups = PickingYieldAggregator.plantingGroupTotals(for: records)
+        #expect(groups.count == 3)
+        #expect(groups[0].groupKey == key777)
+        #expect(groups[0].pickCount == 2)
+        #expect(abs(groups[0].actualYieldTonnes - 4.14) < 0.000001)
+        #expect(groups[1].groupKey == key667)
+        #expect(abs(groups[1].actualYieldTonnes - 2.59) < 0.000001)
+        #expect(groups.last?.groupKey == nil)
+        #expect(groups.last?.pickCount == 1)
+
+        let groupSum = groups.reduce(0.0) { $0 + $1.totalWeightKg }
+        let bucketSum = records.reduce(0.0) { $0 + $1.weightKg }
+        #expect(abs(groupSum - bucketSum) < 0.000001)
+    }
+
     @Test func grapeValueStaysDerivedNeverStored() {
         var edited = makeRecord(weightKg: 2000, sold: true)
         edited.pricePerTonne = 1500

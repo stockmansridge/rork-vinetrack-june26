@@ -2,6 +2,7 @@ package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.model.PickingRecord
 import com.rork.vinetrack.data.model.plantingGroupKey
+import com.rork.vinetrack.data.model.plantingGroupTotals
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -340,6 +341,35 @@ class PickingRecordEditParityTest {
         assertNull(replayed.plantingGroupKey)
         assertNull(replayed.varietyAllocationIds)
         assertEquals("777", replayed.clone)
+    }
+
+    @Test
+    fun plantingGroupTotalsPartitionAndReconcileExactly() {
+        // Yield Overview contract (matches iOS
+        // plantingGroupTotalsPartitionAndReconcileExactly): one production
+        // row per planting group; identical sections are ONE row; the
+        // unlinked bucket is last; group rows sum exactly to the variety
+        // total.
+        val key777 = plantingGroupKey("Pinot Noir", "777", "Richter 110")
+        val key667 = plantingGroupKey("Pinot Noir", "667", "Richter 110")
+        val records = listOf(
+            makeRecord(varietyName = "Pinot Noir", plantingGroupKey = key777, clone = "777", rootstock = "Richter 110", weightKg = 2000.0),
+            makeRecord(varietyName = "Pinot Noir", plantingGroupKey = key777, clone = "777", rootstock = "Richter 110", weightKg = 2140.0),
+            makeRecord(varietyName = "Pinot Noir", plantingGroupKey = key667, clone = "667", rootstock = "Richter 110", weightKg = 2590.0),
+            makeRecord(varietyName = "Pinot Noir", plantingGroupKey = null, clone = null, weightKg = 500.0),
+        )
+
+        val groups = plantingGroupTotals(records)
+        assertEquals(3, groups.size)
+        assertEquals(key777, groups[0].groupKey)
+        assertEquals(2, groups[0].pickCount)
+        assertEquals(4.14, groups[0].actualYieldTonnes, 1e-9)
+        assertEquals(key667, groups[1].groupKey)
+        assertEquals(2.59, groups[1].actualYieldTonnes, 1e-9)
+        assertNull(groups.last().groupKey)
+        assertEquals(1, groups.last().pickCount)
+
+        assertEquals(records.sumOf { it.weightKg }, groups.sumOf { it.totalWeightKg }, 1e-9)
     }
 
     @Test

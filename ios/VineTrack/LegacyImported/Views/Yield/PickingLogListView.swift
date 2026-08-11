@@ -83,7 +83,7 @@ struct PickingLogListView: View {
 
         return Section {
             ForEach(totals) { total in
-                totalRow(total)
+                totalRow(total, vintageRecords: vintageRecords)
             }
             ForEach(vintageRecords) { record in
                 Button {
@@ -108,28 +108,115 @@ struct PickingLogListView: View {
         }
     }
 
-    private func totalRow(_ total: PickingYieldAggregator.Total) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(total.varietyName.isEmpty ? total.paddockName : "\(total.paddockName) · \(total.varietyName)")
-                    .font(.subheadline.weight(.semibold))
-                Text("\(total.pickCount) pick\(total.pickCount == 1 ? "" : "s")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("\(total.actualYieldTonnes, format: .number.precision(.fractionLength(2))) t")
-                    .font(.subheadline.weight(.bold).monospacedDigit())
-                    .foregroundStyle(VineyardTheme.leafGreen)
-                if let value = total.totalGrapeValue {
-                    Text(fmt.formatCurrency(value))
+    private func totalRow(_ total: PickingYieldAggregator.Total, vintageRecords: [PickingRecord]) -> some View {
+        // Planting-group production breakdown (sql/184): partition this
+        // Block + Variety + Vintage bucket's picks per planting group. Only
+        // shown once at least one pick is linked — fully-legacy history
+        // keeps the compact single-row total. Group rows always reconcile
+        // exactly to the variety total (they partition the same picks).
+        let bucket = vintageRecords.filter { record in
+            record.paddockId == total.paddockId &&
+            record.vintage == total.vintage &&
+            PickingYieldAggregator.normalisedVariety(record.varietyName)
+                == PickingYieldAggregator.normalisedVariety(total.varietyName)
+        }
+        let groups = PickingYieldAggregator.plantingGroupTotals(for: bucket)
+        let showGroups = groups.contains { $0.groupKey != nil }
+        let groupConfig: [String: (hectares: Double, sections: Int)] =
+            showGroups ? plantingGroupConfig(paddockId: total.paddockId) : [:]
+
+        return VStack(spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(total.varietyName.isEmpty ? total.paddockName : "\(total.paddockName) · \(total.varietyName)")
+                        .font(.subheadline.weight(.semibold))
+                    Text("\(total.pickCount) pick\(total.pickCount == 1 ? "" : "s")")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("\(total.actualYieldTonnes, format: .number.precision(.fractionLength(2))) t")
+                        .font(.subheadline.weight(.bold).monospacedDigit())
+                        .foregroundStyle(VineyardTheme.leafGreen)
+                    if let value = total.totalGrapeValue {
+                        Text(fmt.formatCurrency(value))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if showGroups {
+                VStack(spacing: 6) {
+                    ForEach(groups) { group in
+                        plantingGroupRow(group, config: group.groupKey.flatMap { groupConfig[$0] })
+                    }
+                }
+                .padding(.leading, 12)
             }
         }
         .padding(.vertical, 2)
+    }
+
+    /// One planting-group sub-row: `clone · rootstock`, current group
+    /// hectares + section count from the block's live configuration, group
+    /// tonnes and t/ha. The unlinked bucket is labelled explicitly.
+    private func plantingGroupRow(
+        _ group: PickingYieldAggregator.PlantingGroupTotal,
+        config: (hectares: Double, sections: Int)?
+    ) -> some View {
+        let label: String
+        if group.groupKey == nil {
+            label = "Not linked to a planting"
+        } else {
+            let parts = [group.clone, group.rootstock].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            label = parts.isEmpty ? "No clone / rootstock" : parts.joined(separator: " · ")
+        }
+        let hectares = config?.hectares ?? 0
+
+        return HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label)
+                    .font(.caption.weight(group.groupKey == nil ? .regular : .medium))
+                    .foregroundStyle(group.groupKey == nil ? .secondary : .primary)
+                if let config, hectares > 0 {
+                    Text("\(fmt.formatArea(hectares: hectares))\(config.sections > 1 ? " · \(config.sections) sections" : "")")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 1) {
+                Text("\(group.actualYieldTonnes, format: .number.precision(.fractionLength(2))) t")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(group.groupKey == nil ? .secondary : VineyardTheme.leafGreen)
+                if hectares > 0 {
+                    Text(fmt.formatYieldPerArea(perHectare: group.actualYieldTonnes / hectares))
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
+    /// Live block configuration per planting group: summed member hectares
+    /// (allocation percent × block area) and section count, keyed by the
+    /// canonical group key. Groups no longer present on the block simply
+    /// show without hectares (their snapshots remain on the records).
+    private func plantingGroupConfig(paddockId: UUID) -> [String: (hectares: Double, sections: Int)] {
+        guard let paddock = store.paddocks.first(where: { $0.id == paddockId }) else { return [:] }
+        var result: [String: (hectares: Double, sections: Int)] = [:]
+        for allocation in paddock.varietyAllocations {
+            let resolved = PaddockVarietyResolver.resolve(allocation: allocation, varieties: store.grapeVarieties)
+            guard let name = resolved.displayName, !name.isEmpty else { continue }
+            let key = PlantingGroup.key(varietyName: name, clone: allocation.clone, rootstock: allocation.rootstock)
+            let hectares = allocation.percent > 0 ? paddock.areaHectares * allocation.percent / 100.0 : 0
+            var entry = result[key] ?? (0, 0)
+            entry.hectares += hectares
+            entry.sections += 1
+            result[key] = entry
+        }
+        return result
     }
 
     private func recordRow(_ record: PickingRecord) -> some View {

@@ -221,6 +221,67 @@ nonisolated enum PickingYieldAggregator {
         }
     }
 
+    /// Per-planting-group breakdown of ONE Block + Variety + Vintage bucket
+    /// (sql/184). Groups partition the bucket's picks by `plantingGroupKey`;
+    /// the nil bucket collects unlinked picks. The sum of all group weights
+    /// always reconciles exactly to the bucket total by construction.
+    struct PlantingGroupTotal: Sendable, Identifiable {
+        /// Canonical group key, or nil for the unlinked bucket.
+        var groupKey: String?
+        /// Display snapshots from the group's picks (first non-nil wins).
+        var clone: String?
+        var rootstock: String?
+        var pickCount: Int
+        var totalWeightKg: Double
+
+        var actualYieldTonnes: Double { totalWeightKg / 1000.0 }
+        var id: String { groupKey ?? "unlinked" }
+    }
+
+    /// Partition one bucket's records into planting-group sub-totals.
+    /// Linked groups keep first-appearance order; the unlinked bucket, if
+    /// any, is always last.
+    static func plantingGroupTotals(for records: [PickingRecord]) -> [PlantingGroupTotal] {
+        var order: [String] = []
+        var linked: [String: PlantingGroupTotal] = [:]
+        var unlinked: PlantingGroupTotal?
+        for record in records {
+            if let key = record.plantingGroupKey {
+                if var existing = linked[key] {
+                    existing.pickCount += 1
+                    existing.totalWeightKg += record.weightKg
+                    if existing.clone == nil { existing.clone = record.clone }
+                    if existing.rootstock == nil { existing.rootstock = record.rootstock }
+                    linked[key] = existing
+                } else {
+                    order.append(key)
+                    linked[key] = PlantingGroupTotal(
+                        groupKey: key,
+                        clone: record.clone,
+                        rootstock: record.rootstock,
+                        pickCount: 1,
+                        totalWeightKg: record.weightKg
+                    )
+                }
+            } else if var existing = unlinked {
+                existing.pickCount += 1
+                existing.totalWeightKg += record.weightKg
+                unlinked = existing
+            } else {
+                unlinked = PlantingGroupTotal(
+                    groupKey: nil,
+                    clone: nil,
+                    rootstock: nil,
+                    pickCount: 1,
+                    totalWeightKg: record.weightKg
+                )
+            }
+        }
+        var result = order.compactMap { linked[$0] }
+        if let unlinked { result.append(unlinked) }
+        return result
+    }
+
     /// Detailed-derived actual yield tonnes for one Block + Variety + Vintage,
     /// or nil when no picking records exist for that combination (in which
     /// case a Basic manually entered actual, if any, remains authoritative).

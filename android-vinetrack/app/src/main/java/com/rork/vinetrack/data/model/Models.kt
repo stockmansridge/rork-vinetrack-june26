@@ -322,6 +322,68 @@ fun plantingGroupKey(varietyName: String?, clone: String?, rootstock: String?): 
     ).joinToString("|")
 
 /**
+ * Per-planting-group breakdown of ONE Block + Variety + Vintage bucket
+ * (sql/184). Mirrors the iOS `PickingYieldAggregator.PlantingGroupTotal`.
+ * [groupKey] is null for the unlinked bucket. Group weights always
+ * reconcile exactly to the bucket total (they partition the same picks).
+ */
+data class PlantingGroupTotal(
+    val groupKey: String?,
+    val clone: String?,
+    val rootstock: String?,
+    val pickCount: Int,
+    val totalWeightKg: Double,
+) {
+    val actualYieldTonnes: Double get() = totalWeightKg / 1000.0
+}
+
+/**
+ * Partition one bucket's picking records into planting-group sub-totals.
+ * Linked groups keep first-appearance order; the unlinked bucket, if any,
+ * is always last. Mirrors iOS `PickingYieldAggregator.plantingGroupTotals`.
+ */
+fun plantingGroupTotals(records: List<PickingRecord>): List<PlantingGroupTotal> {
+    val order = mutableListOf<String>()
+    val linked = mutableMapOf<String, PlantingGroupTotal>()
+    var unlinked: PlantingGroupTotal? = null
+    for (record in records) {
+        val key = record.plantingGroupKey
+        if (key != null) {
+            val existing = linked[key]
+            if (existing != null) {
+                linked[key] = existing.copy(
+                    pickCount = existing.pickCount + 1,
+                    totalWeightKg = existing.totalWeightKg + record.weightKg,
+                    clone = existing.clone ?: record.clone,
+                    rootstock = existing.rootstock ?: record.rootstock,
+                )
+            } else {
+                order.add(key)
+                linked[key] = PlantingGroupTotal(
+                    groupKey = key,
+                    clone = record.clone,
+                    rootstock = record.rootstock,
+                    pickCount = 1,
+                    totalWeightKg = record.weightKg,
+                )
+            }
+        } else {
+            unlinked = unlinked?.copy(
+                pickCount = (unlinked?.pickCount ?: 0) + 1,
+                totalWeightKg = (unlinked?.totalWeightKg ?: 0.0) + record.weightKg,
+            ) ?: PlantingGroupTotal(
+                groupKey = null,
+                clone = null,
+                rootstock = null,
+                pickCount = 1,
+                totalWeightKg = record.weightKg,
+            )
+        }
+    }
+    return order.mapNotNull { linked[it] } + listOfNotNull(unlinked)
+}
+
+/**
  * One tank-fill session within a spray trip, mirroring the iOS `TankSession`
  * JSONB element shape stored in `trips.tank_sessions`. Date fields are kept as
  * tolerant ISO strings (parsed via [parseIsoToEpochMs]) so legacy rows and any
