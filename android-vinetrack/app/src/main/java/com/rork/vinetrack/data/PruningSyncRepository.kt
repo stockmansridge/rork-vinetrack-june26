@@ -78,9 +78,19 @@ class PruningSyncRepository(private val session: SessionStore) {
         @SerialName("manual_row_count") val manualRowCount: Int? = null,
         @SerialName("estimated_labour_hours") val estimatedLabourHours: Double? = null,
         val notes: String? = null,
+        /**
+         * `pruning_seasons.status` — 'active' | 'complete' | 'archived'.
+         * Read for parity with the portal; never written by mobile (the
+         * season upsert omits it, so an archive set on the portal is always
+         * preserved). Defaults to 'active' for servers predating the column.
+         */
+        val status: String = "active",
         @SerialName("deleted_at") val deletedAt: String? = null,
         @SerialName("updated_at") val updatedAt: String? = null,
     ) {
+        /** Archived on the portal — must not keep showing as an active setup. */
+        val isArchived: Boolean get() = status.equals("archived", ignoreCase = true)
+
         fun toModel(): PruningBlockSetup = PruningBlockSetup(
             id = id,
             vineyardId = vineyardId,
@@ -510,7 +520,17 @@ class PruningSyncRepository(private val session: SessionStore) {
 
     // MARK: Writes
 
-    suspend fun upsertSeason(setup: PruningBlockSetup) = withContext(Dispatchers.IO) {
+    /**
+     * Upsert a block's season setup. [clientUpdatedAt] defaults to now for
+     * direct online saves; the offline replay passes the ORIGINAL edit time
+     * so the sql/185 stale-write guard can drop a late replay that would
+     * otherwise overwrite a newer edit from another device/portal (the
+     * skipped write returns success with no row — nothing to parse here).
+     */
+    suspend fun upsertSeason(
+        setup: PruningBlockSetup,
+        clientUpdatedAt: String = Instant.now().toString(),
+    ) = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val body = SeasonUpsert(
@@ -527,7 +547,7 @@ class PruningSyncRepository(private val session: SessionStore) {
             estimatedLabourHours = setup.estimatedLabourHours,
             notes = setup.notes,
             createdBy = session.userId,
-            clientUpdatedAt = Instant.now().toString(),
+            clientUpdatedAt = clientUpdatedAt,
         )
         val response = SupabaseClient.http.post(SupabaseClient.restUrl("pruning_seasons?on_conflict=id")) {
             authHeaders(token)

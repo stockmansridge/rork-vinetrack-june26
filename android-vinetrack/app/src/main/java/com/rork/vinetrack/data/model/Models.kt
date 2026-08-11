@@ -110,31 +110,48 @@ data class PaddockRow(
 /**
  * A single variety allocation on a block. Tolerant of the various key names
  * written by iOS, the Lovable web portal, and legacy rows — mirrors the
- * iOS `PaddockVarietyAllocation` decoder. `clone`/`rootstock` are display
- * snapshots; `cloneKey`/`rootstockKey` carry the stable shared-catalogue
- * identity (sql/182), including the sentinels
+ * iOS `PaddockVarietyAllocation` decoder: snake_case aliases (`variety_id`,
+ * `variety_key`, `variety_name`, `clone_key`, `rootstock_key`, `root_stock`)
+ * decode into the canonical camelCase fields, and the legacy
+ * `varietyName`/`percentage` spellings are separate fields resolved through
+ * [displayName]/[displayPercent]. `clone`/`rootstock` are display snapshots;
+ * `cloneKey`/`rootstockKey` carry the stable shared-catalogue identity
+ * (sql/182), including the sentinels
  * [CloneRootstockSentinels.MASS_SELECTION] and
  * [CloneRootstockSentinels.OWN_ROOTS]. Null keys = not specified/recorded.
+ *
+ * Writes go through `canonicalAllocationsJson` (PaddockRepository) which
+ * encodes the canonical shared contract: `id`, `varietyKey`, `varietyId`,
+ * `name`, `percent`, `clone`, `rootstock`, `cloneKey`, `rootstockKey` —
+ * legacy alias spellings are normalised, never round-tripped.
  */
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 @Serializable
 data class PaddockVarietyAllocation(
     /**
      * Stable allocation id (uuid string). iOS mints one for every allocation
-     * and Android now mints one on creation too — it is the ONLY exact
-     * planting identity (sql/183): a block can carry two allocations of the
-     * same variety with identical clone AND rootstock. Preserved verbatim on
-     * every round-trip; never regenerate an existing id.
+     * and Android now mints one on creation too — it is the group MEMBER
+     * planting identity consumed by the picking log (sql/184): a block can
+     * carry two allocations of the same variety with identical clone AND
+     * rootstock. Preserved verbatim on every round-trip; never regenerate
+     * or erase an existing id because Android edited the block.
      */
     val id: String? = null,
+    @kotlinx.serialization.json.JsonNames("variety_key", "key")
     val varietyKey: String? = null,
+    @kotlinx.serialization.json.JsonNames("variety_id")
     val varietyId: String? = null,
     val name: String? = null,
+    @kotlinx.serialization.json.JsonNames("variety_name")
     val varietyName: String? = null,
     val percentage: Double? = null,
     val percent: Double? = null,
     val clone: String? = null,
+    @kotlinx.serialization.json.JsonNames("root_stock")
     val rootstock: String? = null,
+    @kotlinx.serialization.json.JsonNames("clone_key")
     val cloneKey: String? = null,
+    @kotlinx.serialization.json.JsonNames("rootstock_key")
     val rootstockKey: String? = null,
 ) {
     val displayPercent: Double? get() = percent ?: percentage

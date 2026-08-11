@@ -97,7 +97,17 @@ final class PickingRecordSyncService {
     private func pull(vineyardId: UUID) async throws {
         guard let store else { return }
         let lastSync = metadata.lastSync(for: vineyardId)
-        let remote = try await repository.fetch(vineyardId: vineyardId, since: lastSync)
+        // Always pull the FULL vineyard slice (audit #4). An incremental
+        // cursor of `updated_at >= lastSync` compares the server's updated_at
+        // against the device clock captured at the end of the previous sync —
+        // a device clock running ahead of the server (or a portal row
+        // committing while a pull is in flight) would fall permanently behind
+        // the cursor and never be fetched again. Per-vineyard picking volume
+        // is small, upserts are idempotent and deletes are tombstoned
+        // (`deleted_at`), so a full fetch is safe and self-healing — the same
+        // correction already used by the labour/machine-line sync services.
+        // `lastSync` is kept solely to detect the one-time initial seed below.
+        let remote = try await repository.fetch(vineyardId: vineyardId, since: nil)
         if lastSync == nil {
             let remoteIds = Set(remote.map { $0.id })
             let local = store.pickingRecords.filter { $0.vineyardId == vineyardId }

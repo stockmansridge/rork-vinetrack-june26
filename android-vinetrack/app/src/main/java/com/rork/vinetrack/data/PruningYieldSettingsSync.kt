@@ -90,7 +90,11 @@ class PruningYieldSettingsSync(
                 try {
                     val saved = settingsRepo.upsertSettings(payload.settings, payload.clientUpdatedAt)
                     pending.remove(write.id)
-                    onSynced(saved)
+                    // NULL = the sql/185 stale-write guard ignored this replay
+                    // because another device already saved a NEWER value — the
+                    // marker is resolved and the newer server row (delivered by
+                    // the next pull) stays authoritative. Never retried.
+                    if (saved != null) onSynced(saved)
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to sync calculator settings.")
                 } catch (e: BackendError.Server) {

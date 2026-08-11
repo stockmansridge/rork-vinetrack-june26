@@ -463,7 +463,14 @@ class PruningSyncCoordinator(
         try {
             replayPass(PendingEntityType.PRUNING_SEASON, PendingOpType.UPDATE) { write ->
                 val setup = json.decodeFromString(PruningBlockSetup.serializer(), write.payloadJson)
-                repo.upsertSeason(setup)
+                // Replay with the marker's ENQUEUE time (the edit time), not
+                // the replay time — the sql/185 stale-write guard must be able
+                // to drop this write if another device saved a newer setup
+                // while this one was offline (conflict-order safety).
+                repo.upsertSeason(
+                    setup,
+                    clientUpdatedAt = java.time.Instant.ofEpochMilli(write.createdAt).toString(),
+                )
             }
             // conflictIsSuccess = false: `record_pruning_entry` guards every
             // insert with ON CONFLICT, so a 409 here is a REAL failure (e.g.
@@ -704,8 +711,12 @@ class PruningSyncCoordinator(
                     clientId = setup.id,
                 )
             }
+            // A season archived on the portal (`status = 'archived'`) is
+            // treated like a tombstone for display parity — it must not keep
+            // showing as an active block setup on mobile. Mobile never writes
+            // `status`, so the portal's archive marker is always preserved.
             val mergedSetups = remoteSeasons
-                .filter { it.deletedAt == null && it.id !in pendingSeasonIds }
+                .filter { it.deletedAt == null && !it.isArchived && it.id !in pendingSeasonIds }
                 .map { it.toModel() } +
                 localSetups.filter { it.id in pendingSeasonIds } +
                 seededSetups

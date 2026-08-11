@@ -767,7 +767,11 @@ final class PruningSyncService {
             if remote.isEmpty { return }
         }
         for item in remote {
-            if item.deletedAt != nil {
+            // A season archived on the portal (`status = 'archived'`) must not
+            // keep showing as an active block setup on mobile — treat it like
+            // a tombstone for display. Client upserts never send `status`, so
+            // the archive marker itself is always preserved server-side.
+            if item.deletedAt != nil || item.status?.lowercased() == "archived" {
                 pruningStore.applyRemoteSeasonDelete(item.id)
                 seasonMetadata.clearDirty([item.id])
                 seasonMetadata.clearDeleted([item.id])

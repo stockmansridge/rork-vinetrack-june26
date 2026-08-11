@@ -5,7 +5,7 @@ workflow. Defined and implemented first in this repository (iOS + Android +
 Supabase); the Lovable Portal consumes this contract as-is and must NOT create
 portal-specific data structures or modify the schema independently.
 
-- Migrations: `sql/180_picking_records.sql`, `sql/184_picking_record_planting_groups.sql` (planting-group identity — full contract in `docs/picking-records-allocation-identity-contract.md`; sql/183 was superseded before deploy)
+- Migrations: `sql/180_picking_records.sql`, `sql/184_picking_record_planting_groups.sql` (planting-group identity — full contract in `docs/picking-records-allocation-identity-contract.md`; sql/183 was superseded before deploy), `sql/185_sync_stale_write_protection.sql` (write-once `created_by` + editor `updated_by` attribution guard)
 - Tests: `sql/tests/180_picking_records_tests.sql` (rollback-only)
 - iOS: `PickingRecord` / `BackendPickingRecord` / `PickingRecordSyncService`
 - Android: `PickingRecord` / `PickingRecordRepository` / `PickingRecordCreateSync` / `PickingRecordUpdateSync` / `PickingRecordDeleteSync`
@@ -174,7 +174,11 @@ Date (`picked_at`), Block (`paddock_id` + `paddock_name` snapshot), Variety
   automatically; a client-supplied vintage is overwritten.
 - `grape_value` — generated column; including it FAILS the write.
 - `created_by`, `created_at`, `updated_at`, `updated_by`, `sync_version` —
-  server audit columns.
+  server audit columns. Since sql/185 `created_by` is **write-once**: an
+  UPDATE always preserves the original author whatever the client sends
+  (the iOS upsert used to overwrite it with the current editor), an INSERT
+  defaults it to `auth.uid()` when omitted, and `updated_by` is set to the
+  editor on every authenticated write.
 
 ### Write shape
 
@@ -257,14 +261,15 @@ revenue-side aggregate for future commercial reporting.
 ### iOS
 - Model `PickingRecord` + `PickingYieldAggregator` (`LegacyImported/Models/PickingRecord.swift`)
 - DTOs `BackendPickingRecord[Upsert]` (`Backend/Models/BackendPickingRecord.swift`) — `picked_at` encoded as local-calendar `yyyy-MM-dd`
-- Sync `PickingRecordSyncService` (push→pull, last-write-wins, offline queue) wired into the full sweep and manual sync screen — creates AND edits ride the same dirty-mark → upsert path
+- Sync `PickingRecordSyncService` (push→pull, last-write-wins, offline queue) wired into the full sweep and manual sync screen — creates AND edits ride the same dirty-mark → upsert path; the pull always fetches the FULL vineyard slice (no device-clock delta cursor — a clock running ahead of the server could permanently skip later portal/iOS edits)
 - UI: `RecordActualYieldSheet` (`Basic | Detailed` segmented control; Detailed keeps the sheet open for fast harvest entry; `init(editing:)` reuses the same form for edit-in-place; the Planting picker lists one option per planting GROUP and writes `planting_group_key` + `variety_allocation_ids` + `clone` + `rootstock` atomically), `PickingLogListView` (vintage-grouped log + totals; each Block + Variety total expands into per-planting-group production rows — `clone · rootstock`, live group hectares + section count from the block config, group tonnes and t/ha, unlinked bucket labelled and listed last; rows partition the same picks so they reconcile exactly to the variety total; helper: `PickingYieldAggregator.plantingGroupTotals`; tap a record to edit, swipe to delete), sugar preference in `RegionUnitsSettingsView`; group key helper: `PlantingGroup.key`
 
 ### Android
 - Model `PickingRecord` (`data/model/Models.kt`), repository `PickingRecordRepository`
 - Offline outbox: `PICKING_RECORD` entity type, `PickingRecordCreateSync` / `PickingRecordUpdateSync` / `PickingRecordDeleteSync` (idempotent by client-minted id, coalesced per record, replayed in every replay pipeline)
 - UI: `RecordYieldSheet` mode toggle + detailed form (an `editing` record locks it to Detailed and saves update-in-place; `buildPlantingOptions` mirrors the iOS planting-group picker exactly), `PickingLogView` (hub → Picking Log; totals cards carry the same per-planting-group production rows as iOS via `plantingGroupTotals()` in `Models.kt`; tap a record to edit), sugar preference in `RegionUnitsSettingsScreen`; group key helper: `plantingGroupKey()` in `Models.kt`
-- Allocation ids: `PaddockVarietyAllocation.id` is decoded/preserved on every round-trip and minted (`UUID.randomUUID()`) when Android creates a new allocation — never regenerated for existing entries; they are the group MEMBER ids
+- Allocation ids: `PaddockVarietyAllocation.id` is decoded/preserved on every round-trip and minted (`UUID.randomUUID()`) when Android creates a new allocation — never regenerated for existing entries; they are the group MEMBER ids. Block saves encode through `canonicalAllocationsJson` (id + canonical keys, legacy `varietyName`/`percentage` normalised to `name`/`percent`), decode tolerates snake_case aliases (`variety_id`, `clone_key`, `rootstock_key`, …), and offline block edits queue through `PaddockEditSync` with the snapshot ids verbatim
+- Offline cache: pulled picking records are cached per vineyard (`DomainCacheStore`), offline creates/edits/deletes overlay the pulled/cached baseline (`PendingWriteOverlay.overlayPicking`) until replay succeeds — an online pull never visually reverts a queued local edit; picking records re-pull on foreground/reconnect/vineyard switch/manual refresh (`refreshRemoteSnapshots`)
 - Aggregation: `computeVarietyYieldSummaries(records, paddocks, pickingRecords)` applies the supersede rule per (paddock, variety, vintage)
 
 ## 9. What the Portal must NOT do

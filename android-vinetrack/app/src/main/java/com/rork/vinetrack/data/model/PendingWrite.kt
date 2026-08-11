@@ -238,6 +238,18 @@ object PendingEntityType {
      */
     const val PICKING_RECORD = "picking_record"
     /**
+     * A block (paddock) edit queued offline — full-row upsert, allocations-only
+     * patch, or phenology-dates patch, discriminated by the payload's `kind`
+     * and replayed by [PaddockEditSync]. Keyed by the block id
+     * ([PendingWrite.clientId] = paddockId) and coalesced per block + kind so
+     * only the latest edit of each kind replays. The payload snapshot carries
+     * `variety_allocations[].id` verbatim, so replay can never regenerate or
+     * erase allocation identity (the picking log's planting-group member ids,
+     * sql/184). Only UPDATE ops are carried — the write is a merge-duplicates
+     * upsert / partial PATCH; deletes stay online-only RPCs.
+     */
+    const val PADDOCK = "paddock"
+    /**
      * A per-block Pruning Yield Calculator configuration save queued offline
      * (sql/181). Backs `pruning_yield_settings`, a merge-duplicates upsert
      * keyed by the (vineyard_id, paddock_id) unique key. Only an UPDATE op is

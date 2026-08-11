@@ -7,6 +7,7 @@ import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.HistoricalYieldRecord
 import com.rork.vinetrack.data.model.MaintenanceLog
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.PickingRecord
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.TractorFuelLog
@@ -57,6 +58,7 @@ class DomainCacheStore(context: Context) {
     private val machineLineSerializer = ListSerializer(WorkTaskMachineLine.serializer())
     private val tripSerializer = ListSerializer(Trip.serializer())
     private val yieldSessionSerializer = ListSerializer(YieldEstimationSession.serializer())
+    private val pickingSerializer = ListSerializer(PickingRecord.serializer())
 
     // MARK: - Cache owner
 
@@ -275,6 +277,20 @@ class DomainCacheStore(context: Context) {
 
     fun tripsSyncedAt(vineyardId: String): Long? = readTimestamp(keyTripsAt(vineyardId))
 
+    // MARK: - Detailed picking records by vineyard (sql/180 — audit #2 offline cache)
+
+    fun loadPicking(vineyardId: String): List<PickingRecord> =
+        decode(prefs.getString(keyPicking(vineyardId), null), pickingSerializer)
+
+    fun savePicking(vineyardId: String, records: List<PickingRecord>, syncedAt: Long) {
+        prefs.edit {
+            putString(keyPicking(vineyardId), json.encodeToString(pickingSerializer, records))
+            putLong(keyPickingAt(vineyardId), syncedAt)
+        }
+    }
+
+    fun pickingSyncedAt(vineyardId: String): Long? = readTimestamp(keyPickingAt(vineyardId))
+
     // MARK: - Maintenance
 
     /** Wipe the entire cache (used when the cache owner changes). */
@@ -316,6 +332,8 @@ class DomainCacheStore(context: Context) {
     private fun keyMachineAt(workTaskId: String) = "worktask_machine_at_$workTaskId"
     private fun keyTrips(vineyardId: String) = "trips_$vineyardId"
     private fun keyTripsAt(vineyardId: String) = "trips_at_$vineyardId"
+    private fun keyPicking(vineyardId: String) = "picking_$vineyardId"
+    private fun keyPickingAt(vineyardId: String) = "picking_at_$vineyardId"
 
     private companion object {
         const val KEY_OWNER = "cache_owner_user_id"

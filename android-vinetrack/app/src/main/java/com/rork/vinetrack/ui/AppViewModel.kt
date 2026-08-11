@@ -17,6 +17,7 @@ import com.rork.vinetrack.data.auth.GoogleSignInHelper
 import com.rork.vinetrack.data.AppConfig
 import com.rork.vinetrack.data.BackendError
 import com.rork.vinetrack.data.VineTrackAccessRepository
+import com.rork.vinetrack.data.VintageResolver
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import com.rork.vinetrack.data.subscription.EntitlementVerificationStore
 import com.rork.vinetrack.data.subscription.PaywallPackageUi
@@ -53,6 +54,7 @@ import com.rork.vinetrack.data.GrowthRecordUpdateSync
 import com.rork.vinetrack.data.GrowthStageImageRepository
 import com.rork.vinetrack.data.GrowthStageRecordRepository
 import com.rork.vinetrack.data.GrapeVarietyDeleteOutcome
+import com.rork.vinetrack.data.PaddockEditSync
 import com.rork.vinetrack.data.PaddockReferenceCounts
 import com.rork.vinetrack.data.PaddockRepository
 import com.rork.vinetrack.data.PaddockTransferService
@@ -255,6 +257,13 @@ private const val MAX_DISPLAY_ATTEMPTS = 8
 
 /** Minimum gap between foreground session checks (rapid start/stop cycles). */
 private const val FOREGROUND_CHECK_DEBOUNCE_MS = 30_000L
+
+/**
+ * Minimum gap between targeted remote-snapshot re-pulls (picking records,
+ * clone/rootstock catalogues, pruning tracker — audit #1/#9/#11). Keeps
+ * rapid foreground/reconnect cycles from stacking duplicate requests.
+ */
+private const val REMOTE_SNAPSHOT_MIN_INTERVAL_MS = 60_000L
 
 /** Log tag for System Admin status resolution (gates admin-only surfaces). */
 private const val ADMIN_TAG = "VineTrackAdmin"
@@ -1142,6 +1151,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val pickingCreateSync = PickingRecordCreateSync(pickingRepo, pendingWrites)
     private val pickingUpdateSync = PickingRecordUpdateSync(pickingRepo, pendingWrites)
     private val pickingDeleteSync = PickingRecordDeleteSync(pickingRepo, pendingWrites)
+    private val paddockEditSync = PaddockEditSync(paddockRepo, pendingWrites, session)
 
     /**
      * Shared per-block Pruning Yield Calculator settings (sql/181):
@@ -2688,8 +2698,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         st.copy(pickingRecords = listOf(record) + st.pickingRecords)
                     }
                 }
+                persistPickingCache()
             }
         }
+    }
+
+    /**
+     * Write-through the selected vineyard's picking cache after a replay
+     * reconciliation or direct write, so an offline restart hydrates the
+     * latest known rows instead of a pre-edit snapshot (audit #2).
+     */
+    private fun persistPickingCache() {
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        domainCache.savePicking(
+            session.userId,
+            vineyardId,
+            _ui.value.pickingRecords.filter { it.vineyardId == vineyardId },
+        )
     }
 
     /**
@@ -2704,9 +2729,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             pickingUpdateSync.replayAll(
                 onSynced = { record ->
                     _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.map { if (it.id == record.id) record else it }) }
+                    persistPickingCache()
                 },
                 onMissing = { recordId ->
                     _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.filterNot { it.id == recordId }) }
+                    persistPickingCache()
                 },
             )
         }
@@ -2721,7 +2748,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             pickingDeleteSync.replayAll { recordId ->
                 _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.filterNot { it.id == recordId }) }
+                persistPickingCache()
             }
+        }
+    }
+
+    /**
+     * Replay any queued block edits (audit #5). PADDOCK / UPDATE only —
+     * full-row upserts, allocations-only and phenology-only patches, oldest
+     * first. Each synced server row replaces the optimistic block and the
+     * paddock cache is refreshed; a block deleted elsewhere is dropped.
+     */
+    private fun replayPendingPaddockEdits() {
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        viewModelScope.launch {
+            paddockEditSync.replayAll(
+                onSynced = { saved ->
+                    _ui.update { st ->
+                        st.copy(paddocks = st.paddocks.map { if (it.id == saved.id) saved else it }
+                            .sortedBy { it.name.lowercase() })
+                    }
+                    val uid = session.userId
+                    if (uid != null && saved.vineyardId == _ui.value.selectedVineyardId) {
+                        domainCache.savePaddocks(uid, saved.vineyardId, _ui.value.paddocks)
+                    }
+                },
+                onMissing = { paddockId ->
+                    _ui.update { st -> st.copy(paddocks = st.paddocks.filterNot { it.id == paddockId }) }
+                },
+            )
         }
     }
 
@@ -3068,6 +3123,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingPinCompletions()
         replayPendingPinEdits()
         replayPendingPinDeletes()
+        replayPendingPaddockEdits()
         replayPendingTripStart()
         replayPendingTripMetadata()
         replayPendingTripSeeding()
@@ -3140,6 +3196,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingPinCompletions()
         replayPendingPinEdits()
         replayPendingPinDeletes()
+        replayPendingPaddockEdits()
         replayPendingTripStart()
         replayPendingTripMetadata()
         replayPendingTripSeeding()
@@ -3184,9 +3241,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Mirror device connectivity into [AppUiState.isOnline]. Read-only: this
-     * never triggers loads, retries, or write replays — it only powers the
-     * offline banner and Sync Status surface.
+     * Mirror device connectivity into [AppUiState.isOnline]. On reconnect the
+     * ordered offline-write replay pipeline is flushed and a throttled
+     * remote-snapshot refresh follows so data edited elsewhere (portal/iOS)
+     * appears without an app restart.
      */
     private fun observeConnectivity() {
         viewModelScope.launch {
@@ -3201,6 +3259,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     replayPendingPinCompletions()
                     replayPendingPinEdits()
                     replayPendingPinDeletes()
+                    replayPendingPaddockEdits()
                     // TRIP_START first: the server row must exist before any
                     // dependent same-trip marker can write to it.
                     replayPendingTripStart()
@@ -3241,6 +3300,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     replayPendingDamageDeletes()
                     replayPendingButtonConfig()
                     replayPendingYieldSessions()
+                    // Freshness parity (audit #1/#9/#11): after the replay
+                    // pipeline, re-pull snapshots changed on other devices.
+                    refreshRemoteSnapshots()
                 }
             }
         }
@@ -3463,9 +3525,94 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             reportClientTelemetry()
             // Pick up a layout change made on another device (throttled).
             operationalToolLayoutStore.refreshFromServer()
-            if (_ui.value.isOnline) replayAllPendingWrites()
+            if (_ui.value.isOnline) {
+                replayAllPendingWrites()
+                // Freshness parity (audit #1/#9/#11): re-pull remote snapshots
+                // changed while backgrounded (throttled to once a minute).
+                refreshRemoteSnapshots()
+            }
         }
     }
+
+    /** Elapsed-time of the last remote-snapshot refresh, to avoid duplicate pulls. */
+    private var lastRemoteSnapshotRefreshMs = 0L
+
+    /**
+     * Targeted freshness re-pull for the domains other devices/portal edit
+     * remotely (audit #1 picking records, #9 clone/rootstock catalogues, #11
+     * pruning tracker + yield settings). One consistent pattern across
+     * foreground, reconnect, vineyard switch and manual refresh: the caller
+     * replays queued writes first, then this pulls — throttled to once per
+     * minute so rapid foreground/reconnect cycles never stack duplicate
+     * requests. Every pull soft-fails independently; freshness must never
+     * break the field workflow.
+     */
+    private fun refreshRemoteSnapshots(force: Boolean = false) {
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!force && now - lastRemoteSnapshotRefreshMs < REMOTE_SNAPSHOT_MIN_INTERVAL_MS) return
+        lastRemoteSnapshotRefreshMs = now
+        viewModelScope.launch {
+            // Picking records (sql/180): pull, cache write-through, then the
+            // pending overlay so a queued local edit is never visually
+            // reverted by the pull (audit #2).
+            runCatching {
+                val fresh = pickingRepo.listPickingRecords(vineyardId)
+                domainCache.savePicking(session.userId, vineyardId, fresh)
+                val overlaid = PendingWriteOverlay.overlayPicking(
+                    fresh, pendingWrites.list(), vineyardId, ::derivePickingVintage,
+                )
+                if (_ui.value.selectedVineyardId == vineyardId) {
+                    _ui.update { it.copy(pickingRecords = overlaid) }
+                }
+            }
+            // Clone/rootstock catalogues + this vineyard's custom records
+            // (sql/182) so remote catalogue additions reach the pickers.
+            runCatching {
+                val clones = cloneRootstockRepo.getCloneCatalog()
+                val rootstocks = cloneRootstockRepo.getRootstockCatalog()
+                val customClones = cloneRootstockRepo.listVineyardClones(vineyardId)
+                val customRootstocks = cloneRootstockRepo.listVineyardRootstocks(vineyardId)
+                _ui.update {
+                    it.copy(
+                        cloneCatalog = clones,
+                        rootstockCatalog = rootstocks,
+                        vineyardClones = customClones,
+                        vineyardRootstocks = customRootstocks,
+                    )
+                }
+            }
+            // Per-block pruning yield settings (sql/181) — skipped while an
+            // offline save is still queued so the pull can't revert it.
+            runCatching {
+                val hasPendingSettings = pendingWrites.list().any {
+                    it.entityType == PendingEntityType.PRUNING_YIELD_SETTINGS &&
+                        it.status in PendingWriteStatus.unresolved
+                }
+                if (!hasPendingSettings) {
+                    val settings = pruningYieldSettingsRepo.listSettings(vineyardId)
+                    pruningYieldSettingsStore.save(vineyardId, settings)
+                    if (_ui.value.selectedVineyardId == vineyardId) {
+                        _ui.update { it.copy(pruningYieldSettings = settings) }
+                    }
+                }
+            }
+            // Pruning tracker (seasons/entries/activities): offline-first
+            // store reconcile — dashboards re-read the store (audit #11).
+            runCatching { refreshPruning(vineyardId) }
+            runCatching { refreshPruningActivities(vineyardId) }
+        }
+    }
+
+    /** Local vintage mirror for optimistic picking rows (server stays authoritative). */
+    private fun derivePickingVintage(pickedAt: String): Int = runCatching {
+        VintageResolver.vintageYear(
+            java.time.LocalDate.parse(pickedAt.take(10)),
+            _ui.value.seasonStartMonth,
+            _ui.value.seasonStartDay,
+        )
+    }.getOrDefault(0)
 
     /**
      * Re-run the full ordered replay pipeline (same safe order as the
@@ -3479,6 +3626,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingPinCompletions()
         replayPendingPinEdits()
         replayPendingPinDeletes()
+        replayPendingPaddockEdits()
         replayPendingTripStart()
         replayPendingTripMetadata()
         replayPendingTripSeeding()
@@ -10683,6 +10831,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 ) else it
             }, growthError = null)
         }
+        val optimistic = _ui.value.paddocks.firstOrNull { it.id == paddockId }
+        // Known-offline: keep the optimistic dates and queue a phenology
+        // marker for automatic replay (audit #5 — block edits persist offline).
+        if (!_ui.value.isOnline) {
+            optimistic?.let { paddockEditSync.enqueuePhenology(it, dates) }
+            onResult(optimistic != null)
+            return
+        }
         viewModelScope.launch {
             try {
                 val updated = paddockRepo.updatePhenologyDates(paddockId, dates)
@@ -10694,8 +10850,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(paddocks = previous, growthError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
-                _ui.update { it.copy(paddocks = previous, growthError = "Couldn't save phenology dates. Check your connection.") }
-                onResult(false)
+                // Transient network failure — keep the optimistic dates and
+                // queue for automatic replay rather than rolling back.
+                optimistic?.let { paddockEditSync.enqueuePhenology(it, dates) }
+                onResult(optimistic != null)
             }
         }
     }
@@ -10719,6 +10877,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 growthError = null,
             )
         }
+        val optimistic = _ui.value.paddocks.firstOrNull { it.id == paddockId }
+        // Known-offline: keep the optimistic allocations (ids verbatim) and
+        // queue an allocations marker for automatic replay (audit #5/#6).
+        if (!_ui.value.isOnline) {
+            optimistic?.let { paddockEditSync.enqueueAllocations(it, allocations) }
+            onResult(optimistic != null)
+            return
+        }
         viewModelScope.launch {
             try {
                 val updated = paddockRepo.updateVarietyAllocations(paddockId, allocations)
@@ -10730,8 +10896,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(paddocks = previous, growthError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
-                _ui.update { it.copy(paddocks = previous, growthError = "Couldn't save varieties. Check your connection.") }
-                onResult(false)
+                // Transient network failure — keep the optimistic allocations
+                // and queue for automatic replay rather than rolling back.
+                optimistic?.let { paddockEditSync.enqueueAllocations(it, allocations) }
+                onResult(optimistic != null)
             }
         }
     }
@@ -10817,6 +10985,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             else st.paddocks + candidate
             st.copy(paddocks = list.sortedBy { it.name.lowercase() }, blockEditError = null)
         }
+        // Known-offline: keep the optimistic block and queue the full-row
+        // upsert for automatic replay (audit #5 — the snapshot carries every
+        // allocation id verbatim, so replay never regenerates identity).
+        if (!_ui.value.isOnline) {
+            paddockEditSync.enqueueUpsert(candidate)
+            onResult(true)
+            return
+        }
         viewModelScope.launch {
             try {
                 val saved = paddockRepo.upsertPaddock(candidate, createdBy = session.userId)
@@ -10832,8 +11008,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(paddocks = previous, blockEditError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
-                _ui.update { it.copy(paddocks = previous, blockEditError = "Couldn't save block. Check your connection.") }
-                onResult(false)
+                // Transient network failure — keep the optimistic block and
+                // queue the upsert for automatic replay rather than rolling back.
+                paddockEditSync.enqueueUpsert(candidate)
+                onResult(true)
             }
         }
     }
@@ -11030,6 +11208,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val created = pickingRepo.insertPickingRecord(record, now)
                 _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.map { if (it.id == created.id) created else it }) }
+                persistPickingCache()
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 signOut(); onResult(false)
@@ -11081,6 +11260,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     // Row is gone on the server (deleted elsewhere) — drop the stale copy.
                     _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.filterNot { it.id == record.id }) }
                 }
+                persistPickingCache()
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 signOut(); onResult(false)
@@ -11119,6 +11299,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 pickingRepo.softDeletePickingRecord(id)
+                persistPickingCache()
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
                 signOut(); onResult(false)
@@ -11165,7 +11346,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val saved = pruningYieldSettingsRepo.upsertSettings(item, now)
-                reconcilePruningYieldSettings(saved)
+                // NULL = the sql/185 stale-write guard kept a newer edit from
+                // another device — pull the authoritative row instead.
+                if (saved != null) {
+                    reconcilePruningYieldSettings(saved)
+                } else {
+                    runCatching {
+                        pruningYieldSettingsRepo.listSettings(item.vineyardId)
+                            .firstOrNull { it.paddockId == item.paddockId }
+                            ?.let { reconcilePruningYieldSettings(it) }
+                    }
+                }
             } catch (e: BackendError.Unauthorized) {
                 signOut()
             } catch (e: BackendError.Server) {
@@ -12056,13 +12247,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 domainCache.loadYieldSessions(userId, vineyardId) ?: emptyList()
             }
         }
-        // Detailed picking-log records (sql/180): soft-fail to existing state.
-        // Offline creates queued in the outbox replay automatically and are
-        // reconciled back into state by the PICKING_RECORD coordinators.
+        // Detailed picking-log records (sql/180): soft-fail to existing
+        // state, then the per-vineyard offline cache (audit #2). Queued
+        // offline creates/edits/deletes are overlaid below and replay
+        // automatically through the PICKING_RECORD coordinators.
+        var pickingFromServer = false
         val pickingRecords = try {
-            pickingRepo.listPickingRecords(vineyardId)
+            pickingRepo.listPickingRecords(vineyardId).also { pickingFromServer = true }
         } catch (e: Exception) {
-            _ui.value.pickingRecords
+            _ui.value.pickingRecords.ifEmpty {
+                domainCache.loadPicking(userId, vineyardId) ?: emptyList()
+            }
         }
         // Shared per-block Pruning Yield Calculator settings (sql/181):
         // Supabase authoritative, soft-fail to the offline cache, then state.
@@ -12094,6 +12289,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (sprayFromServer) domainCache.saveSpray(userId, vineyardId, sprayRecords)
         if (sprayTemplatesFromServer) domainCache.saveSprayTemplates(userId, vineyardId, sprayJobTemplates)
         if (workTasksFromServer) domainCache.saveWorkTasks(userId, vineyardId, workTasks)
+        if (pickingFromServer) domainCache.savePicking(userId, vineyardId, pickingRecords)
         // Pending-write restart hydration (Stage O-1): overlay any unresolved
         // outbox markers for the selected vineyard so offline creates/edits/
         // deletes survive an offline app restart rather than vanishing until
@@ -12126,6 +12322,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // save/delete after a cold restart.
         val overlaidYieldSessions =
             PendingWriteOverlay.overlayYieldSessions(yieldSessions, pendingSnapshot, vineyardId)
+        // Block-edit overlay (audit #5): offline block edits survive a cold
+        // restart; allocation ids in the queued snapshots stay verbatim.
+        val overlaidPaddocks =
+            PendingWriteOverlay.overlayPaddocks(paddocks, pendingSnapshot, vineyardId)
+        // Picking overlay (audit #2): queued creates/edits/deletes stay
+        // visible over the pulled/cached baseline until replay succeeds — an
+        // online pull can never visually revert a queued local edit.
+        val overlaidPicking =
+            PendingWriteOverlay.overlayPicking(pickingRecords, pendingSnapshot, vineyardId, ::derivePickingVintage)
         // Launcher button overlay (Android Stage N): restore an offline button
         // layout edit over the fetched/default config.
         val (overlaidRepairButtons, overlaidGrowthButtons) =
@@ -12145,7 +12350,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         _ui.update {
             it.copy(
-                paddocks = paddocks,
+                paddocks = overlaidPaddocks,
                 pins = pins,
                 trips = trips,
                 machines = machines,
@@ -12178,7 +12383,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 vineyardClones = vineyardClones,
                 vineyardRootstocks = vineyardRootstocks,
                 yieldRecords = overlaidYield,
-                pickingRecords = pickingRecords,
+                pickingRecords = overlaidPicking,
                 pruningYieldSettings = pruningYieldSettings,
                 damageRecords = overlaidDamage,
                 yieldSessions = overlaidYieldSessions,
@@ -12214,6 +12419,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         refreshCacheStatus()
+        // Vineyard switch / manual refresh re-pulled picking records,
+        // catalogues and yield settings above; kick the pruning tracker
+        // refresh too (audit #11) and reset the freshness throttle.
+        lastRemoteSnapshotRefreshMs = android.os.SystemClock.elapsedRealtime()
+        if (_ui.value.isOnline) {
+            viewModelScope.launch { runCatching { refreshPruning(vineyardId) } }
+            viewModelScope.launch { runCatching { refreshPruningActivities(vineyardId) } }
+        }
     }
 
     /**

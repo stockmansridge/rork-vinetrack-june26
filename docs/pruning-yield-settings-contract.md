@@ -77,6 +77,15 @@ Prefer: resolution=merge-duplicates, return=representation
   from the block configuration).
 - A client upsert (changed `client_updated_at`) **resurrects** a soft-deleted
   row — the block has one current configuration again.
+- **Stale-write protection (sql/185):** an UPDATE whose `client_updated_at`
+  is OLDER than the stored `client_updated_at` is silently **skipped** — a
+  late offline replay can never overwrite a newer edit from another
+  device/portal. The skipped write returns success with an **empty
+  representation**; clients must treat that as "a newer value already won"
+  (resolve the queued write, pull the authoritative row), never as an error
+  to retry. Equal timestamps (idempotent re-sends) and writes that don't
+  move `client_updated_at` backwards apply normally. Offline replays must
+  send the ORIGINAL edit time, not the replay time.
 
 Read: `GET ...?vineyard_id=eq.<id>&deleted_at=is.null`.
 

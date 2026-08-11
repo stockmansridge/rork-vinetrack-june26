@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.HistoricalYieldRecord
 import com.rork.vinetrack.data.model.MaintenanceLog
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.PickingRecord
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.TractorFuelLog
@@ -292,6 +293,28 @@ class DomainCacheRepository(context: Context) {
 
     fun tripsSyncedAt(userId: String?, vineyardId: String): Long? =
         if (ownerMatches(userId)) store.tripsSyncedAt(vineyardId) else null
+
+    // MARK: - Detailed picking records by vineyard (sql/180 — audit #2 offline cache)
+
+    /**
+     * Save picking records from a successful online fetch, claiming the cache
+     * for [userId]. Server snapshot only — callers must pass the raw server
+     * list (before the pending-write overlay) so optimistic rows never bake
+     * into the cache.
+     */
+    fun savePicking(userId: String?, vineyardId: String, records: List<PickingRecord>) {
+        ensureOwner(userId)
+        store.savePicking(vineyardId, records, System.currentTimeMillis())
+    }
+
+    /** Cached picking records for the vineyard, or null if absent / owned by someone else. */
+    fun loadPicking(userId: String?, vineyardId: String): List<PickingRecord>? {
+        if (!ownerMatches(userId) || store.pickingSyncedAt(vineyardId) == null) return null
+        return store.loadPicking(vineyardId)
+    }
+
+    fun pickingSyncedAt(userId: String?, vineyardId: String): Long? =
+        if (ownerMatches(userId)) store.pickingSyncedAt(vineyardId) else null
 
     // MARK: - Maintenance
 

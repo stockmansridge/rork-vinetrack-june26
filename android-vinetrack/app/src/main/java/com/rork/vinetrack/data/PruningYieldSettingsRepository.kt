@@ -50,12 +50,16 @@ class PruningYieldSettingsRepository(private val session: SessionStore) {
     /**
      * Upsert a block's saved configuration. Shared by the online save flow and
      * the offline replay ([PruningYieldSettingsSync]) so the values are
-     * preserved byte-for-byte. Returns the server row.
+     * preserved byte-for-byte. Returns the server row, or NULL when the
+     * sql/185 stale-write guard silently ignored the write because another
+     * device/portal already saved a NEWER configuration (the empty
+     * `return=representation` body is the guard's signature) — callers must
+     * treat the newer server value as authoritative, never retry.
      */
     suspend fun upsertSettings(
         settings: PruningYieldSettings,
         clientUpdatedAt: String,
-    ): PruningYieldSettings = withContext(Dispatchers.IO) {
+    ): PruningYieldSettings? = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val body = SettingsUpsert(
@@ -84,7 +88,13 @@ class PruningYieldSettingsRepository(private val session: SessionStore) {
             contentType(ContentType.Application.Json)
             setBody(body)
         }
-        firstRow(response)
+        when {
+            // Success with an empty representation = the stale-write guard
+            // skipped the UPDATE (sql/185) — a newer edit already won.
+            response.status.isSuccess() -> response.body<List<PruningYieldSettings>>().firstOrNull()
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
     }
 
     suspend fun listSettings(vineyardId: String): List<PruningYieldSettings> =

@@ -5,10 +5,12 @@ import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.HistoricalYieldRecord
 import com.rork.vinetrack.data.model.LauncherButton
 import com.rork.vinetrack.data.model.MaintenanceLog
+import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
+import com.rork.vinetrack.data.model.PickingRecord
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.TractorFuelLog
 import com.rork.vinetrack.data.model.WorkTask
@@ -449,6 +451,96 @@ object PendingWriteOverlay {
         return (created + baseline).filterNot { it.id in deleteIds }
     }
 
+    /**
+     * Overlay unresolved PADDOCK (block edit) markers for [vineyardId] onto
+     * [baseline] (audit #5). Applied oldest-first so a queued full upsert and
+     * later partial edits compose the same way they will replay:
+     *  - `upsert` payloads replace the same-id block (or append a brand-new
+     *    block), snapshot verbatim — allocation ids preserved.
+     *  - `allocations` payloads replace only the block's variety allocations.
+     *  - `phenology` payloads replace only the four milestone dates.
+     * Blocks are never invented from a partial edit alone and other
+     * vineyards' markers are never touched.
+     */
+    fun overlayPaddocks(
+        baseline: List<Paddock>,
+        pending: List<PendingWrite>,
+        vineyardId: String,
+    ): List<Paddock> {
+        val markers = pending.unresolvedFor(PendingEntityType.PADDOCK)
+        if (markers.isEmpty()) return baseline
+
+        val payloads = markers
+            .sortedBy { it.updatedAt }
+            .mapNotNull { decode<PaddockEditSync.Payload>(it) }
+            .filter { it.vineyardId == vineyardId }
+        if (payloads.isEmpty()) return baseline
+
+        var rows = baseline
+        payloads.forEach { p ->
+            rows = when (p.kind) {
+                PaddockEditSync.KIND_UPSERT -> {
+                    val snapshot = p.paddock ?: return@forEach
+                    if (rows.any { it.id == snapshot.id }) {
+                        rows.map { if (it.id == snapshot.id) snapshot else it }
+                    } else {
+                        rows + snapshot
+                    }
+                }
+                PaddockEditSync.KIND_ALLOCATIONS -> rows.map {
+                    if (it.id == p.paddockId) it.copy(varietyAllocations = p.allocations) else it
+                }
+                PaddockEditSync.KIND_PHENOLOGY -> rows.map {
+                    if (it.id == p.paddockId) it.copy(
+                        budburstDate = p.budburstDate,
+                        floweringDate = p.floweringDate,
+                        veraisonDate = p.veraisonDate,
+                        harvestDate = p.harvestDate,
+                    ) else it
+                }
+                else -> rows
+            }
+        }
+        return rows
+    }
+
+    /**
+     * Overlay unresolved PICKING_RECORD markers for [vineyardId] onto
+     * [baseline] (audit #2). CREATE rows are reconstructed from the create
+     * payload (vintage re-derived locally via [deriveVintage] — the server
+     * remains authoritative once the insert lands), UPDATE snapshots replace
+     * the form-owned fields of existing rows, DELETE rows are hidden. A queued
+     * local edit therefore keeps overlaying a fresh server pull until replay
+     * succeeds and its marker is removed — an online pull can never visually
+     * revert a pending edit.
+     */
+    fun overlayPicking(
+        baseline: List<PickingRecord>,
+        pending: List<PendingWrite>,
+        vineyardId: String,
+        deriveVintage: (pickedAt: String) -> Int = { 0 },
+    ): List<PickingRecord> {
+        val markers = pending.unresolvedFor(PendingEntityType.PICKING_RECORD)
+        if (markers.isEmpty()) return baseline
+
+        val baselineIds = baseline.mapTo(HashSet()) { it.id }
+        val created = markers
+            .decodeLatest(PendingOpType.CREATE) { decode<PickingRecordCreateSync.Payload>(it) }
+            .filter { it.vineyardId == vineyardId && it.id !in baselineIds }
+            .map { it.toRow(deriveVintage) }
+
+        val updatesById = markers
+            .decodeLatest(PendingOpType.UPDATE) { decode<PickingRecordUpdateSync.Payload>(it) }
+            .filter { it.vineyardId == vineyardId }
+            .associateBy { it.id }
+
+        val deleteIds = markers.deleteIds { decode<PickingRecordDeleteSync.Payload>(it)?.pickingRecordId }
+
+        return (created + baseline)
+            .map { row -> updatesById[row.id]?.applyTo(row, deriveVintage) ?: row }
+            .filterNot { it.id in deleteIds }
+    }
+
     // --- marker filtering helpers -------------------------------------------
 
     /** Unresolved (pending/in-progress/failed/blocked) markers for one entity type. */
@@ -738,4 +830,65 @@ object PendingWriteOverlay {
             totalMachineCost = totalMachineCost,
             notes = notes,
         )
+
+    private fun PickingRecordCreateSync.Payload.toRow(deriveVintage: (String) -> Int): PickingRecord =
+        PickingRecord(
+            id = id,
+            vineyardId = vineyardId,
+            pickedAt = pickedAt,
+            // Local display mirror only — the server re-derives the
+            // authoritative vintage from picked_at when the insert lands.
+            vintage = deriveVintage(pickedAt),
+            paddockId = paddockId,
+            paddockName = paddockName,
+            varietyId = varietyId,
+            varietyKey = varietyKey,
+            varietyName = varietyName,
+            plantingGroupKey = plantingGroupKey,
+            varietyAllocationIds = varietyAllocationIds,
+            clone = clone,
+            rootstock = rootstock,
+            weightKg = weightKg,
+            sugarValue = sugarValue,
+            sugarUnit = sugarUnit,
+            ph = ph,
+            taGPerL = taGPerL,
+            purpose = purpose,
+            sold = sold,
+            soldTo = soldTo,
+            pricePerTonne = pricePerTonne,
+            notes = notes,
+        )
+
+    private fun PickingRecordUpdateSync.Payload.applyTo(
+        row: PickingRecord,
+        deriveVintage: (String) -> Int,
+    ): PickingRecord = row.copy(
+        pickedAt = pickedAt,
+        // Keep the baseline vintage unless the edit moved the date — then
+        // mirror the server's derivation locally for display grouping.
+        vintage = if (pickedAt == row.pickedAt) row.vintage else deriveVintage(pickedAt),
+        paddockId = paddockId,
+        paddockName = paddockName,
+        varietyId = varietyId,
+        varietyKey = varietyKey,
+        varietyName = varietyName,
+        plantingGroupKey = plantingGroupKey,
+        varietyAllocationIds = varietyAllocationIds,
+        clone = clone,
+        rootstock = rootstock,
+        weightKg = weightKg,
+        sugarValue = sugarValue,
+        sugarUnit = sugarUnit,
+        ph = ph,
+        taGPerL = taGPerL,
+        purpose = purpose,
+        sold = sold,
+        soldTo = soldTo,
+        pricePerTonne = pricePerTonne,
+        // grape_value is server-generated; the model derives a display
+        // fallback from sold + price, so it is never invented here.
+        grapeValue = null,
+        notes = notes,
+    )
 }

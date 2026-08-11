@@ -248,28 +248,48 @@ class PaddockRepository(private val session: SessionStore) {
         }
     }
 
-    private fun allocationArray(allocations: List<PaddockVarietyAllocation>?): JsonArray = buildJsonArray {
-        allocations.orEmpty().forEach { a ->
-            add(buildJsonObject {
-                a.varietyKey?.let { put("varietyKey", JsonPrimitive(it)) }
-                a.varietyId?.let { put("varietyId", JsonPrimitive(it)) }
-                a.name?.let { put("name", JsonPrimitive(it)) }
-                a.percent?.let { put("percent", JsonPrimitive(it)) }
-                a.clone?.let { put("clone", JsonPrimitive(it)) }
-                a.rootstock?.let { put("rootstock", JsonPrimitive(it)) }
-                // Stable shared-catalogue identities (sql/182); camelCase per
-                // the canonical allocation contract shared with iOS/portal.
-                a.cloneKey?.let { put("cloneKey", JsonPrimitive(it)) }
-                a.rootstockKey?.let { put("rootstockKey", JsonPrimitive(it)) }
-            })
-        }
-    }
+    private fun allocationArray(allocations: List<PaddockVarietyAllocation>?): JsonArray =
+        canonicalAllocationsJson(allocations)
 
     private suspend fun firstRow(response: HttpResponse): Paddock = when {
         response.status.isSuccess() -> response.body<List<Paddock>>().firstOrNull()
             ?: throw BackendError.Server(response.status.value, "Empty response")
         response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
         else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+    }
+}
+
+/**
+ * Canonical shared-contract encoding of a block's `variety_allocations`
+ * JSONB — the exact shape iOS (`PaddockVarietyAllocation` Codable) and the
+ * portal read and write:
+ *
+ *  - `id` is the stable allocation identity (the picking log's planting
+ *    group MEMBER id, sql/184). It is preserved VERBATIM: never minted,
+ *    regenerated, or dropped here. An allocation without an id stays
+ *    id-less (legacy) rather than being given a fresh identity on every
+ *    Android save.
+ *  - Legacy alias spellings are normalised on write: `varietyName` →
+ *    `name`, `percentage` → `percent`. Aliases are never round-tripped.
+ *  - `cloneKey`/`rootstockKey` are the stable shared-catalogue identities
+ *    (sql/182), written camelCase per the shared contract.
+ *
+ * Top-level (not private) so parity tests can prove allocation identity
+ * survives an Android read → edit → write round-trip byte-for-byte.
+ */
+internal fun canonicalAllocationsJson(allocations: List<PaddockVarietyAllocation>?): JsonArray = buildJsonArray {
+    allocations.orEmpty().forEach { a ->
+        add(buildJsonObject {
+            a.id?.let { put("id", JsonPrimitive(it)) }
+            a.varietyKey?.let { put("varietyKey", JsonPrimitive(it)) }
+            a.varietyId?.let { put("varietyId", JsonPrimitive(it)) }
+            a.displayName?.let { put("name", JsonPrimitive(it)) }
+            a.displayPercent?.let { put("percent", JsonPrimitive(it)) }
+            a.clone?.let { put("clone", JsonPrimitive(it)) }
+            a.rootstock?.let { put("rootstock", JsonPrimitive(it)) }
+            a.cloneKey?.let { put("cloneKey", JsonPrimitive(it)) }
+            a.rootstockKey?.let { put("rootstockKey", JsonPrimitive(it)) }
+        })
     }
 }
 
