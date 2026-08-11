@@ -173,9 +173,29 @@ records or any personal information beyond the identity references listed
 above. `costs:read` never exposes bank, invoice or supplier data (none is
 stored canonically).
 
-Write scopes (`trips:write` etc.) exist in the catalogue but are
-**reserved** — no public write endpoint exists in v1, and none is granted
-any effect.
+### Write scopes (Stage 8)
+
+Five write scopes are **active**. Write permission always requires ALL of:
+active integration + valid (non-expired, non-revoked) API key + explicit
+vineyard grant + the write scope. Read scopes never permit writes.
+
+| Scope | Enables | Routes |
+|---|---|---|
+| `work_tasks:write` | Create/update work tasks — operational fields only (labour & machine cost lines are not writable externally) | `POST /v1/work-tasks`, `PATCH /v1/work-tasks/{id}` |
+| `fuel:write` | Create/update operational fuel log entries — no cost, purchasing or operator identity fields | `POST /v1/fuel-records`, `PATCH /v1/fuel-records/{id}` |
+| `irrigation:write` | Record irrigation sessions — create-only; VineTrack's calculation core derives volume, allocations, efficiency and vintage | `POST /v1/irrigation-records` |
+| `growth_stages:write` | Record E-L growth-stage observations — create-only, catalogue codes only | `POST /v1/growth-stages` |
+| `yield:write` | Create/update archived season yield records (canonical per-block shape) | `POST /v1/yield-records`, `PATCH /v1/yield-records/{id}` |
+
+The remaining write scopes (`trips:write`, `sprays:write`,
+`pruning:write`, `equipment:write`, `pins:write`) stay **reserved** — no
+public write endpoint exists for them and granting them has no effect.
+`pins:write` is deliberately deferred: pin placement (row/side/snapping)
+is resolved on-device at capture time and no server-side placement
+resolver exists, so external coordinates cannot pass through VineTrack's
+canonical placement resolution — pins remain read-only. There is **no
+public DELETE endpoint** of any kind, and no write surface for users,
+team, billing, vineyard structure, chemicals or spray records.
 
 ### Sensitive-field gating summary
 
@@ -199,8 +219,9 @@ absent. The base scope is always required first.
 
 ## 5–6. REST API catalogue
 
-All routes are `GET` (the API is read-only; other methods return
-`method_allowed` 405 errors — exact code `method_not_allowed`).
+All resources are readable with `GET`; five resources additionally accept
+writes (`POST`/`PATCH` — see §6b). Unsupported methods on a known route
+return 405 `method_not_allowed`; there are no DELETE routes.
 `vineyard_id` is **required** on every collection except `/v1/vineyards`
 and `/v1/me`. Unknown query parameters are rejected with
 `invalid_request`. Every route additionally requires an active vineyard
@@ -212,6 +233,62 @@ Common errors on all routes: `missing_api_key`, `invalid_api_key`,
 `internal_error` — plus `vineyard_access_denied` (collections),
 `resource_not_found` (`/{id}` routes and unknown paths), `invalid_cursor`
 (paginated routes).
+
+### 6b. Write API (Stage 8)
+
+| Route | Scope | Notes |
+|---|---|---|
+| `POST /v1/work-tasks` | `work_tasks:write` | `Idempotency-Key` required; `vineyard_id`, `task_type`, `date` required in the body; optional `description`, `status`, `notes`, `start_date`, `end_date`, `duration_hours`, `block_ids[]`, `external_id` |
+| `PATCH /v1/work-tasks/{id}` | `work_tasks:write` | Partial update; `expected_updated_at` required; finalised/archived tasks refuse edits (409) |
+| `POST /v1/fuel-records` | `fuel:write` | `Idempotency-Key` required; `vineyard_id`, `date`, `volume_l` required; optional `equipment_id`, `engine_hours`, `filled_to_full`, `notes`, `external_id`. Cost fields are never writable |
+| `PATCH /v1/fuel-records/{id}` | `fuel:write` | Partial update; `expected_updated_at` required |
+| `POST /v1/irrigation-records` | `irrigation:write` | `Idempotency-Key` required; `vineyard_id`, `system_id`, `valve_id`, `date`, `duration_minutes`, `calculation_method` (+ the method's raw inputs). Create-only — corrections use the in-app reverse/re-record workflow |
+| `POST /v1/growth-stages` | `growth_stages:write` | `Idempotency-Key` required; `vineyard_id`, `stage_code` (catalogue E-L code); optional `observed_at`, `block_id`, `variety`, `notes`, `external_id`. Create-only |
+| `POST /v1/yield-records` | `yield:write` | `Idempotency-Key` required; `vineyard_id`, `vintage_year`; optional `season`, totals, `notes`, `blocks[]`, `external_id`. Totals derive from blocks when omitted |
+| `PATCH /v1/yield-records/{id}` | `yield:write` | Partial update; `expected_updated_at` required; `blocks` replaces the full set and re-derives totals |
+
+**Idempotency (every POST).** Send an `Idempotency-Key` header (1–255
+chars, your choice — a UUID per logical operation is ideal). Retrying with
+the same key and the same payload returns the original result (same
+record, `Idempotency-Replayed: true` header, no duplicate). The same key
+with a **different** payload returns `409 idempotency_conflict`. Keys are
+stored durably server-side — replay protection survives network retries
+and server restarts. Missing key → `400 idempotency_required`.
+
+**Concurrency (every PATCH).** Include `expected_updated_at` — the exact
+`updated_at` from your latest GET. If the record changed since (in the
+apps, the portal, or by another integration), you get `409 conflict` and
+nothing is overwritten: re-GET, re-apply, retry. PATCH is a partial
+update: omitted fields stay unchanged; `null` clears only nullable
+fields. The record's vineyard, canonical id, provenance and finalisation
+flags can never be changed.
+
+**Provenance.** API-created records carry `origin: "integration"` in
+every read response (VineTrack-created records show `origin:
+"vinetrack"`). The creating integration is recorded server-side and the
+record is never attributed to a human user.
+
+**External IDs.** Optionally supply `external_id` (1–255 chars) — your
+system's identifier for the record. It is scoped to your integration,
+unique per resource type among live records (duplicate → `409 conflict`),
+returned in all read/write responses and in webhook payloads, and never
+replaces the VineTrack UUID. Only the integration that created a record
+may set or change its `external_id` — mappings cannot be claimed on
+VineTrack-created records or hijacked across integrations.
+
+**Responses.** Creates return `201`, updates `200`, both with the full
+canonical resource representation under `data` (including the VineTrack
+`id`, your `external_id`, `origin` and timestamps) — no follow-up GET
+needed. Validation problems return `422 validation_failed` with safe
+field-level `details` (`[{field, issue}]`).
+
+**Webhooks & loop prevention.** External writes flow through the exact
+same canonical event pipeline as in-app writes — e.g. a successful
+`POST /v1/work-tasks` emits `work_task.created` to your subscribed
+endpoints. Event payloads now carry `origin` (and `external_id` when set,
+additive and backwards-compatible), so a receiver can ignore events for
+records it created itself: check `origin == "integration"` and match
+`external_id` against your own mappings.
 
 ### Core
 
@@ -488,7 +565,11 @@ Recommended client behaviour:
 | `invalid_request` | 400 | Malformed/unsupported/missing parameter, or credential in the query string | No — fix the request |
 | `invalid_cursor` | 400 | Unreadable pagination cursor | No — restart iteration |
 | `rate_limit_exceeded` | 429 | Per-key limit exceeded | Yes — after `Retry-After` |
-| `method_not_allowed` | 405 | Only GET (and OPTIONS) are supported | No |
+| `method_not_allowed` | 405 | Method not supported on this endpoint (no DELETE anywhere) | No |
+| `validation_failed` | 422 | Body failed validation — see field-level `details` | No — fix the payload |
+| `idempotency_required` | 400 | POST without an `Idempotency-Key` header | No — add the header |
+| `idempotency_conflict` | 409 | Same `Idempotency-Key` reused with a different payload | No — use a new key |
+| `conflict` | 409 | Stale `expected_updated_at`, duplicate `external_id`, or an immutable/locked record | Re-GET, then retry |
 | `internal_error` | 500 | Unexpected failure | Yes — with backoff; quote `request_id` to support |
 | `disease_risk_unavailable` | 503 | Disease risk could not be computed and no recent cache exists | Yes — later |
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# test-vinetrack-api.sh — Stage 3A + 3B + 3C + 3D gateway security tests (HTTP level)
+# test-vinetrack-api.sh — Stage 3A-3D + Stage 8 gateway security tests (HTTP level)
 # =============================================================================
 # Runs the security/contract checks against a DEPLOYED vinetrack-api gateway.
 # Complements sql/tests/173_integration_api_gateway_tests.sql (DB level).
@@ -56,6 +56,13 @@
 #   VT_YIELD_OTHER          historical_yield_records UUID inside VT_VINEYARD_OTHER
 #   VT_PIN_GRANTED          pins UUID inside VT_VINEYARD_GRANTED
 #   VT_PIN_OTHER            pins UUID inside VT_VINEYARD_OTHER
+#   VT_KEY_WRITE            (Stage 8) active key whose integration has
+#                           work_tasks:write (+ optionally the other write
+#                           scopes) and a grant to VT_VINEYARD_GRANTED.
+#                           NOTE: the write tests CREATE clearly-labelled
+#                           "Stage 8 API test" work tasks inside
+#                           VT_VINEYARD_GRANTED — use a dedicated test
+#                           vineyard, then archive/delete the test tasks.
 #
 # Usage:
 #   GATEWAY_URL=... VT_KEY_FULL=vt_test_... VT_VINEYARD_GRANTED=... \
@@ -102,6 +109,16 @@ check_body() {
   else
     FAIL=$((FAIL+1)); echo "FAIL  $name (body=$(head -c 300 "$BODY_FILE"))"
   fi
+}
+
+# call_write <method> <path> <auth> <idempotency-key-or-empty> <raw-body-or-empty>
+call_write() {
+  local method="$1" path="$2" auth="$3" idem="$4" body="$5"
+  local args=(-s -X "$method" -o "$BODY_FILE" -D "$HDR_FILE" -w "%{http_code}" -H "Content-Type: application/json")
+  [ -n "$auth" ] && args+=(-H "Authorization: $auth")
+  [ -n "$idem" ] && args+=(-H "Idempotency-Key: $idem")
+  [ -n "$body" ] && args+=(--data "$body")
+  curl "${args[@]}" "${GATEWAY_URL}${path}"
 }
 
 skip() { SKIP=$((SKIP+1)); echo "SKIP  $1 (fixture not provided)"; }
@@ -612,6 +629,72 @@ if [ -n "${VT_VINEYARD_OTHER-}" ]; then
   s=$(call GET "/v1/disease-risk?vineyard_id=$VT_VINEYARD_OTHER" "Bearer $VT_KEY_FULL"); check "ungranted vineyard -> disease-risk 403 vineyard_access_denied" 403 "$s" vineyard_access_denied
 else skip "ungranted-vineyard disease-risk"; fi
 s=$(call GET "/v1/weather/some-id" "Bearer $VT_KEY_FULL"); check "environmental singletons have no {id} form -> 404" 404 "$s" resource_not_found
+
+echo
+echo "== Stage 8: write API method gating =="
+s=$(call DELETE "/v1/work-tasks/00000000-0000-4000-8000-000000000001" "Bearer $VT_KEY_FULL"); check "DELETE anywhere -> 405 (no public DELETE API)" 405 "$s" method_not_allowed
+s=$(call PUT "/v1/work-tasks/00000000-0000-4000-8000-000000000001" "Bearer $VT_KEY_FULL"); check "PUT -> 405" 405 "$s" method_not_allowed
+s=$(call_write POST "/v1/trips" "Bearer $VT_KEY_FULL" "k" '{}'); check "POST on a read-only resource -> 405" 405 "$s" method_not_allowed
+s=$(call_write PATCH "/v1/irrigation-records/00000000-0000-4000-8000-000000000001" "Bearer $VT_KEY_FULL" "" '{}'); check "PATCH on a create-only resource -> 405" 405 "$s" method_not_allowed
+s=$(call_write POST "/v1/not-a-resource" "Bearer $VT_KEY_FULL" "k" '{}'); check "POST unknown path -> 404" 404 "$s" resource_not_found
+s=$(call_write POST "/v1/work-tasks" "" "k" '{}'); check "unauthenticated POST -> 401" 401 "$s" missing_api_key
+s=$(call_write POST "/v1/work-tasks" "Bearer $VT_KEY_FULL" "scope-test-1" "{\"vineyard_id\":\"$VT_VINEYARD_GRANTED\",\"task_type\":\"X\",\"date\":\"2026-01-15T09:00:00Z\"}")
+check "read-scope key cannot write -> 403 insufficient_scope" 403 "$s" insufficient_scope
+
+echo
+echo "== Stage 8: write API contract =="
+if [ -n "${VT_KEY_WRITE-}" ]; then
+  WAUTH="Bearer $VT_KEY_WRITE"
+  IDEM="s8-test-$(date +%s)-$RANDOM"
+  WT_BODY="{\"vineyard_id\":\"$VT_VINEYARD_GRANTED\",\"task_type\":\"Stage 8 API test\",\"date\":\"2026-01-15T09:00:00Z\",\"notes\":\"Created by test-vinetrack-api.sh — safe to archive\",\"external_id\":\"$IDEM\"}"
+
+  s=$(call_write POST "/v1/work-tasks" "$WAUTH" "" "$WT_BODY"); check "POST without Idempotency-Key -> 400 idempotency_required" 400 "$s" idempotency_required
+  s=$(call_write POST "/v1/work-tasks" "$WAUTH" "$IDEM-mal" '{not json'); check "malformed JSON -> 400 invalid_request" 400 "$s" invalid_request
+  s=$(call_write POST "/v1/work-tasks" "$WAUTH" "$IDEM-empty" ''); check "missing body -> 400 invalid_request" 400 "$s" invalid_request
+  s=$(call_write POST "/v1/work-tasks" "$WAUTH" "$IDEM-nov" '{"task_type":"X","date":"2026-01-15T09:00:00Z"}')
+  check "missing vineyard_id -> 422 validation_failed" 422 "$s" validation_failed
+  check_body "validation details carry field + issue" '.error.details | type == "array" and length > 0 and all(has("field") and has("issue"))'
+  s=$(call_write POST "/v1/work-tasks" "$WAUTH" "$IDEM-unk" "{\"vineyard_id\":\"$VT_VINEYARD_GRANTED\",\"task_type\":\"X\",\"date\":\"2026-01-15T09:00:00Z\",\"labour_cost\":500}")
+  check "unknown field -> 422 validation_failed" 422 "$s" validation_failed
+  check_body "no SQL/internal text in validation errors" '. | tostring | test("(?i)(syntax error|pg_|constraint|stack)") | not'
+
+  s=$(call_write POST "/v1/work-tasks" "$WAUTH" "$IDEM" "$WT_BODY")
+  check "valid POST /v1/work-tasks -> 201" 201 "$s"
+  check_body "created representation carries id + origin + external_id" '.data.id != null and .data.origin == "integration" and .data.external_id != null'
+  WREQ=$(grep -i '^x-vinetrack-request-id:' "$HDR_FILE" | tr -d '\r' | awk '{print $2}')
+  if [ -n "$WREQ" ]; then PASS=$((PASS+1)); echo "PASS  write responses carry X-VineTrack-Request-ID"; else FAIL=$((FAIL+1)); echo "FAIL  write X-VineTrack-Request-ID missing"; fi
+  WT_ID=$(jq -r '.data.id' "$BODY_FILE"); WT_UPDATED=$(jq -r '.data.updated_at' "$BODY_FILE")
+
+  s=$(call_write POST "/v1/work-tasks" "$WAUTH" "$IDEM" "$WT_BODY")
+  check "idempotent replay -> 201 with the ORIGINAL record" 201 "$s"
+  check_body "replay returns the same id" ".data.id == \"$WT_ID\""
+  if grep -qi '^idempotency-replayed: true' "$HDR_FILE"; then PASS=$((PASS+1)); echo "PASS  Idempotency-Replayed header on replay"; else FAIL=$((FAIL+1)); echo "FAIL  Idempotency-Replayed header missing"; fi
+  s=$(call_write POST "/v1/work-tasks" "$WAUTH" "$IDEM" "{\"vineyard_id\":\"$VT_VINEYARD_GRANTED\",\"task_type\":\"Different payload\",\"date\":\"2026-01-16T09:00:00Z\"}")
+  check "same key + different payload -> 409 idempotency_conflict" 409 "$s" idempotency_conflict
+
+  s=$(call GET "/v1/work-tasks/$WT_ID" "$WAUTH")
+  if [ "$s" = 200 ]; then
+    PASS=$((PASS+1)); echo "PASS  GET sees the POSTed record"
+  else SKIP=$((SKIP+1)); echo "SKIP  GET-after-POST (write key lacks work_tasks:read)"; fi
+
+  s=$(call_write PATCH "/v1/work-tasks/$WT_ID" "$WAUTH" "" '{"status":"in_progress"}')
+  check "PATCH without expected_updated_at -> 422" 422 "$s" validation_failed
+  s=$(call_write PATCH "/v1/work-tasks/$WT_ID" "$WAUTH" "" '{"expected_updated_at":"2000-01-01T00:00:00Z","status":"in_progress"}')
+  check "stale expected_updated_at -> 409 conflict" 409 "$s" conflict
+  s=$(call_write PATCH "/v1/work-tasks/$WT_ID" "$WAUTH" "" "{\"expected_updated_at\":\"$WT_UPDATED\",\"status\":\"in_progress\"}")
+  check "valid PATCH -> 200" 200 "$s"
+  check_body "PATCH response reflects the update" '.data.status == "in_progress"'
+  s=$(call_write PATCH "/v1/work-tasks/00000000-0000-4000-8000-0000000000aa" "$WAUTH" "" '{"expected_updated_at":"2026-01-01T00:00:00Z"}')
+  check "PATCH unknown id -> 404" 404 "$s" resource_not_found
+
+  if [ -n "${VT_VINEYARD_OTHER-}" ]; then
+    s=$(call_write POST "/v1/work-tasks" "$WAUTH" "$IDEM-other" "{\"vineyard_id\":\"$VT_VINEYARD_OTHER\",\"task_type\":\"X\",\"date\":\"2026-01-15T09:00:00Z\"}")
+    check "POST to ungranted vineyard -> 403 vineyard_access_denied" 403 "$s" vineyard_access_denied
+  else skip "ungranted-vineyard write"; fi
+  echo "NOTE  Stage 8 test work task created: $WT_ID (task_type='Stage 8 API test') — archive/delete it in-app."
+else
+  skip "Stage 8 write-contract tests (set VT_KEY_WRITE)"
+fi
 
 echo
 echo "== Done: $PASS passed, $FAIL failed, $SKIP skipped =="

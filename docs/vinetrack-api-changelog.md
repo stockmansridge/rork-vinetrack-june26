@@ -8,6 +8,47 @@ Categories: `added` | `changed` | `fixed` | `deprecated` | `removed` |
 
 ---
 
+## 2026-08-11 — v1 Stage 8 (controlled external write API)
+
+### added
+
+- **Write API** — first production write surface, 8 routes (no DELETE):
+  - `POST /v1/work-tasks`, `PATCH /v1/work-tasks/{work_task_id}` (`work_tasks:write`)
+  - `POST /v1/fuel-records`, `PATCH /v1/fuel-records/{fuel_record_id}` (`fuel:write`; operational entry only — no cost fields)
+  - `POST /v1/irrigation-records` (`irrigation:write`; create-only — VineTrack's calculation core derives volume, allocations and vintage)
+  - `POST /v1/growth-stages` (`growth_stages:write`; create-only, catalogue E-L codes only)
+  - `POST /v1/yield-records`, `PATCH /v1/yield-records/{yield_record_id}` (`yield:write`; canonical per-block shape)
+- **Idempotency** — every POST requires an `Idempotency-Key` header;
+  durable database-backed replay (same key + payload → original result +
+  `Idempotency-Replayed: true`; different payload → `409
+  idempotency_conflict`; missing → `400 idempotency_required`).
+- **Optimistic concurrency** — every PATCH requires
+  `expected_updated_at`; mismatch → `409 conflict` (external writes never
+  silently overwrite newer in-app edits).
+- **Provenance** — `origin` (`vinetrack` | `integration`) and
+  integration-scoped `external_id` on work tasks, fuel records,
+  irrigation records, growth stages and yield records; returned on all
+  read/write responses. API-created records are never attributed to a
+  human user.
+- **New error codes** — `validation_failed` (422, field-level `details`),
+  `idempotency_required` (400), `idempotency_conflict` (409), `conflict`
+  (409).
+- **Webhook payload provenance** (additive, backwards-compatible) — event
+  `data` now carries `origin`, plus `external_id` when set, enabling
+  receiver-side loop prevention. Signature scheme, headers, retry policy
+  and `api_version` are unchanged.
+
+### changed
+
+- `method_not_allowed` (405) no longer claims the API is read-only;
+  unsupported methods on known routes return 405, unknown paths 404.
+- Activated the catalogue descriptions for the five write scopes.
+- Pins remain **read-only** (`pins:write` stays reserved): pin placement
+  is device-resolved at capture time and no server-side placement
+  resolver exists.
+
+---
+
 ## 2026-08-11 — v1 (initial public developer-platform release)
 
 ### added
@@ -54,4 +95,5 @@ Categories: `added` | `changed` | `fixed` | `deprecated` | `removed` |
 - `spray_job.created` is catalogued but **not emitted** in v1
   (reserved — spray records represent completed applications).
 - `team:read` is catalogued but not used by any route or event in v1.
-- No public write endpoints exist in v1.
+- No public write endpoints existed in the initial release (superseded by
+  the Stage 8 entry above).

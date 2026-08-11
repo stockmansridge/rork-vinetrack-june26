@@ -7,7 +7,18 @@ info:
   title: VineTrack API
   version: "v1"
   description: |
-    Read-only integration API for VineTrack vineyard data.
+    Integration API for VineTrack vineyard data — read across all resource
+    modules, plus controlled writes (Stage 8) for work tasks, fuel records,
+    irrigation records, growth stages and yield records.
+
+    Writes: every POST requires an `Idempotency-Key` header (durable,
+    database-backed — same key + same payload replays the original result;
+    same key + different payload is `409 idempotency_conflict`). Every PATCH
+    is a partial update and requires `expected_updated_at` in the body (the
+    `updated_at` from your latest GET); a mismatch is `409 conflict`.
+    Records created through the API carry machine provenance
+    (`origin: integration`) and an optional integration-scoped
+    `external_id` for reconciliation. There are NO DELETE endpoints.
 
     Authentication uses VineTrack API keys (`vt_live_...` / `vt_test_...`)
     presented as `Authorization: Bearer <key>`. Supabase JWTs and
@@ -256,6 +267,41 @@ paths:
                   pagination: { $ref: "#/components/schemas/Pagination" }
         default: { $ref: "#/components/responses/Error" }
 
+    post:
+      tags: [Fuel]
+      summary: Create an operational fuel log entry
+      description: |
+        Scope: fuel:write. Requires Idempotency-Key. Operational entry only
+        — no cost, purchasing or operator identity fields are accepted.
+        equipment_id must be equipment in the same vineyard.
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FuelRecordCreate" }
+            example:
+              vineyard_id: "00000000-0000-0000-0000-000000000000"
+              date: "2026-01-15T07:30:00Z"
+              volume_l: 55.5
+              equipment_id: "00000000-0000-0000-0000-000000000002"
+              engine_hours: 1204.5
+              filled_to_full: true
+              external_id: "fms-fuel-1"
+      responses:
+        "201":
+          description: Created fuel record (canonical representation)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/FuelRecord" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /v1/fuel-records/{fuel_record_id}:
     get:
       tags: [Fuel]
@@ -271,6 +317,35 @@ paths:
                 type: object
                 properties:
                   data: { $ref: "#/components/schemas/FuelRecord" }
+        default: { $ref: "#/components/responses/Error" }
+
+    patch:
+      tags: [Fuel]
+      summary: Update a fuel log entry (partial)
+      description: |
+        Scope: fuel:write. Partial update with required expected_updated_at
+        (409 conflict on mismatch). Cost fields remain non-writable.
+      parameters:
+        - { name: fuel_record_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FuelRecordUpdate" }
+            example:
+              expected_updated_at: "2026-01-15T07:30:12.345678+00:00"
+              volume_l: 60
+      responses:
+        "200":
+          description: Updated fuel record (canonical representation)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/FuelRecord" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
   /v1/fuel-purchases:
@@ -394,6 +469,41 @@ paths:
                     items: { $ref: "#/components/schemas/WorkTaskSummary" }
                   pagination: { $ref: "#/components/schemas/Pagination" }
         default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [Work Tasks]
+      summary: Create a work task
+      description: |
+        Scope: work_tasks:write. Requires Idempotency-Key. vineyard_id is
+        part of the body. Blocks must belong to the vineyard. Labour and
+        machine cost lines are not writable externally. Returns the
+        canonical representation immediately (201).
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkTaskCreate" }
+            example:
+              vineyard_id: "00000000-0000-0000-0000-000000000000"
+              task_type: "Slashing"
+              date: "2026-01-15T09:00:00Z"
+              status: "planned"
+              notes: "Mid-row slashing, north end first"
+              block_ids: ["00000000-0000-0000-0000-000000000001"]
+              external_id: "farmos-task-100"
+      responses:
+        "201":
+          description: Created work task (canonical representation)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/WorkTaskSummary" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
 
   /v1/work-tasks/{work_task_id}:
     get:
@@ -414,6 +524,38 @@ paths:
                 type: object
                 properties:
                   data: { $ref: "#/components/schemas/WorkTaskDetail" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [Work Tasks]
+      summary: Update a work task (partial)
+      description: |
+        Scope: work_tasks:write. Partial update — omitted fields are
+        unchanged; null clears only nullable fields. expected_updated_at is
+        required (409 conflict on mismatch). Finalised/archived tasks refuse
+        external edits (409). The vineyard, provenance and finalisation
+        flags can never be changed. external_id can only be set on records
+        this integration created.
+      parameters:
+        - { name: work_task_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkTaskUpdate" }
+            example:
+              expected_updated_at: "2026-01-15T09:00:12.345678+00:00"
+              status: "in_progress"
+      responses:
+        "200":
+          description: Updated work task (canonical representation)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/WorkTaskSummary" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
   /v1/pruning:
@@ -498,6 +640,45 @@ paths:
                   pagination: { $ref: "#/components/schemas/Pagination" }
         default: { $ref: "#/components/responses/Error" }
 
+    post:
+      tags: [Irrigation]
+      summary: Record an irrigation session (create-only)
+      description: |
+        Scope: irrigation:write. Requires Idempotency-Key. Supply the raw
+        inputs for one calculation method — VineTrack's canonical
+        calculation core derives volume, per-block allocations, efficiency
+        and vintage; externally supplied calculated values are never
+        accepted. There is no external update: corrections use VineTrack's
+        in-app reverse/re-record workflow (then POST a replacement).
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IrrigationRecordCreate" }
+            example:
+              vineyard_id: "00000000-0000-0000-0000-000000000000"
+              system_id: "00000000-0000-0000-0000-000000000003"
+              valve_id: "00000000-0000-0000-0000-000000000004"
+              date: "2026-01-20"
+              duration_minutes: 120
+              calculation_method: "total_volume"
+              volume_l: 5000
+              external_id: "ctrl-run-77"
+      responses:
+        "201":
+          description: Recorded irrigation session (canonical representation)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/IrrigationRecordDetail" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /v1/irrigation-records/{irrigation_record_id}:
     get:
       tags: [Irrigation]
@@ -549,6 +730,42 @@ paths:
                   pagination: { $ref: "#/components/schemas/Pagination" }
         default: { $ref: "#/components/responses/Error" }
 
+    post:
+      tags: [Growth Stages]
+      summary: Record a growth-stage observation (create-only)
+      description: |
+        Scope: growth_stages:write. Requires Idempotency-Key. Only E-L codes
+        from the VineTrack catalogue are accepted; the stage label is set
+        server-side. Placement metadata (row/side/coordinates) is
+        device-resolved and never accepted externally. Observations are
+        insert-only — there is no external update.
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GrowthStageCreate" }
+            example:
+              vineyard_id: "00000000-0000-0000-0000-000000000000"
+              stage_code: "EL4"
+              observed_at: "2025-09-20T08:00:00Z"
+              block_id: "00000000-0000-0000-0000-000000000001"
+              variety: "Shiraz"
+              external_id: "sensor-obs-9"
+      responses:
+        "201":
+          description: Recorded observation (canonical representation)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/GrowthStage" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /v1/growth-stages/{growth_stage_id}:
     get:
       tags: [Growth Stages]
@@ -595,6 +812,44 @@ paths:
                   pagination: { $ref: "#/components/schemas/Pagination" }
         default: { $ref: "#/components/responses/Error" }
 
+    post:
+      tags: [Yield]
+      summary: Create an archived yield record
+      description: |
+        Scope: yield:write. Requires Idempotency-Key. Blocks must belong to
+        the vineyard (one entry per block). Per-block yield-per-hectare is
+        always server-derived; totals are derived from the blocks when not
+        supplied. The canonical per-block storage shape is preserved
+        exactly.
+      parameters:
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/YieldRecordCreate" }
+            example:
+              vineyard_id: "00000000-0000-0000-0000-000000000000"
+              vintage_year: 2026
+              season: "2025/26"
+              blocks:
+                - block_id: "00000000-0000-0000-0000-000000000001"
+                  area_ha: 2.0
+                  yield_tonnes: 15.0
+              external_id: "erp-yield-2026"
+      responses:
+        "201":
+          description: Created yield record (canonical representation)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/YieldRecord" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /v1/yield-records/{yield_record_id}:
     get:
       tags: [Yield]
@@ -610,6 +865,35 @@ paths:
                 type: object
                 properties:
                   data: { $ref: "#/components/schemas/YieldRecord" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [Yield]
+      summary: Update a yield record (partial)
+      description: |
+        Scope: yield:write. Partial update with required expected_updated_at
+        (409 conflict on mismatch). Supplying blocks replaces the full block
+        set and re-derives totals unless totals are given explicitly.
+      parameters:
+        - { name: yield_record_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/YieldRecordUpdate" }
+            example:
+              expected_updated_at: "2026-01-15T10:00:12.345678+00:00"
+              notes: "Final weighbridge figures"
+      responses:
+        "200":
+          description: Updated yield record (canonical representation)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/YieldRecord" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
   /v1/pins:
@@ -812,6 +1096,17 @@ components:
       required: false
       description: Restrict to records linked to one block.
       schema: { type: string, format: uuid }
+    idempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Caller-chosen key (1-255 chars) making the POST safely retryable.
+        Same key + same payload returns the original result (with an
+        Idempotency-Replayed: true response header); same key + different
+        payload is 409 idempotency_conflict. Durable — survives retries and
+        server restarts.
+      schema: { type: string, minLength: 1, maxLength: 255 }
 
   responses:
     Error:
@@ -820,8 +1115,10 @@ components:
         expired_api_key, revoked_api_key (401); integration_not_active,
         insufficient_scope, vineyard_access_denied (403);
         resource_not_found (404 — also used for inaccessible resources,
-        existence is never disclosed); invalid_request, invalid_cursor
-        (400); rate_limit_exceeded (429); method_not_allowed (405);
+        existence is never disclosed); invalid_request, invalid_cursor,
+        idempotency_required (400); validation_failed (422 — carries
+        field-level details); conflict, idempotency_conflict (409);
+        rate_limit_exceeded (429); method_not_allowed (405);
         internal_error (500); disease_risk_unavailable (503).
         Stale environmental fallbacks are NOT errors — they return 200
         with is_stale / source_status markers.
@@ -1016,6 +1313,167 @@ components:
             code: { type: string }
             message: { type: string }
             request_id: { type: string, pattern: "^req_[0-9a-f]{32}$" }
+            details:
+              type: array
+              description: Field-level validation details (validation_failed / conflict only).
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  issue: { type: string }
+
+    WorkTaskCreate:
+      type: object
+      required: [vineyard_id, task_type, date]
+      additionalProperties: false
+      properties:
+        vineyard_id: { type: string, format: uuid, description: "Granted vineyard. Set at create; a record can never be moved." }
+        task_type: { type: string, minLength: 1, maxLength: 100 }
+        date: { type: string, format: date-time }
+        description: { type: [string, "null"], maxLength: 2000 }
+        status: { type: [string, "null"], maxLength: 50 }
+        notes: { type: [string, "null"], maxLength: 4000 }
+        start_date: { type: [string, "null"], format: date-time }
+        end_date: { type: [string, "null"], format: date-time, description: "Must not be before start_date." }
+        duration_hours: { type: [number, "null"], minimum: 0 }
+        block_ids:
+          type: [array, "null"]
+          items: { type: string, format: uuid }
+          description: Blocks must exist in the vineyard.
+        external_id: { type: [string, "null"], minLength: 1, maxLength: 255 }
+
+    WorkTaskUpdate:
+      type: object
+      required: [expected_updated_at]
+      additionalProperties: false
+      properties:
+        expected_updated_at: { type: string, format: date-time, description: "updated_at from your latest GET (409 conflict on mismatch)." }
+        task_type: { type: [string, "null"], maxLength: 100 }
+        date: { type: string, format: date-time }
+        description: { type: [string, "null"], maxLength: 2000 }
+        status: { type: [string, "null"], maxLength: 50 }
+        notes: { type: [string, "null"], maxLength: 4000 }
+        start_date: { type: [string, "null"], format: date-time }
+        end_date: { type: [string, "null"], format: date-time }
+        duration_hours: { type: [number, "null"], minimum: 0 }
+        block_ids:
+          type: [array, "null"]
+          items: { type: string, format: uuid }
+          description: Full replacement of the active block set; null clears it.
+        external_id: { type: [string, "null"], maxLength: 255, description: "Only settable on records this integration created." }
+
+    FuelRecordCreate:
+      type: object
+      required: [vineyard_id, date, volume_l]
+      additionalProperties: false
+      properties:
+        vineyard_id: { type: string, format: uuid }
+        date: { type: string, format: date-time, description: "Must not be in the future." }
+        volume_l: { type: number, exclusiveMinimum: 0 }
+        equipment_id: { type: [string, "null"], format: uuid, description: "Equipment in the same vineyard." }
+        engine_hours: { type: [number, "null"], minimum: 0 }
+        filled_to_full: { type: [boolean, "null"] }
+        notes: { type: [string, "null"], maxLength: 4000 }
+        external_id: { type: [string, "null"], minLength: 1, maxLength: 255 }
+
+    FuelRecordUpdate:
+      type: object
+      required: [expected_updated_at]
+      additionalProperties: false
+      properties:
+        expected_updated_at: { type: string, format: date-time }
+        date: { type: string, format: date-time }
+        volume_l: { type: number, exclusiveMinimum: 0 }
+        equipment_id: { type: [string, "null"], format: uuid }
+        engine_hours: { type: [number, "null"], minimum: 0 }
+        filled_to_full: { type: [boolean, "null"] }
+        notes: { type: [string, "null"], maxLength: 4000 }
+        external_id: { type: [string, "null"], maxLength: 255 }
+
+    IrrigationRecordCreate:
+      type: object
+      required: [vineyard_id, system_id, valve_id, date, duration_minutes, calculation_method]
+      additionalProperties: false
+      properties:
+        vineyard_id: { type: string, format: uuid }
+        system_id: { type: string, format: uuid }
+        valve_id: { type: string, format: uuid, description: "Must belong to system_id and the vineyard." }
+        date: { type: string, format: date }
+        duration_minutes: { type: integer, minimum: 1, maximum: 10080 }
+        calculation_method:
+          type: string
+          enum: [configured_flow, session_flow, total_volume, meter_readings]
+        flow_l_per_hour: { type: [number, "null"], exclusiveMinimum: 0, description: "For session_flow." }
+        meter_start_l: { type: [number, "null"], minimum: 0, description: "For meter_readings." }
+        meter_end_l: { type: [number, "null"], minimum: 0, description: "For meter_readings." }
+        volume_l: { type: [number, "null"], exclusiveMinimum: 0, description: "For total_volume." }
+        started_at: { type: [string, "null"], format: date-time }
+        ended_at: { type: [string, "null"], format: date-time, description: "When both times are given, their difference must match duration_minutes." }
+        notes: { type: [string, "null"], maxLength: 4000 }
+        external_id: { type: [string, "null"], minLength: 1, maxLength: 255 }
+
+    GrowthStageCreate:
+      type: object
+      required: [vineyard_id, stage_code]
+      additionalProperties: false
+      properties:
+        vineyard_id: { type: string, format: uuid }
+        stage_code: { type: string, description: "Supported E-L code from the VineTrack catalogue (e.g. EL4). Case-insensitive." }
+        observed_at: { type: [string, "null"], format: date-time, description: "Defaults to now; must not be in the future." }
+        block_id: { type: [string, "null"], format: uuid }
+        variety: { type: [string, "null"], maxLength: 100 }
+        notes: { type: [string, "null"], maxLength: 4000 }
+        external_id: { type: [string, "null"], minLength: 1, maxLength: 255 }
+
+    YieldBlockInput:
+      type: object
+      required: [block_id]
+      additionalProperties: false
+      properties:
+        block_id: { type: string, format: uuid }
+        area_ha: { type: [number, "null"], minimum: 0 }
+        yield_tonnes: { type: [number, "null"], minimum: 0 }
+        vine_count: { type: [integer, "null"], minimum: 0 }
+        average_bunches_per_vine: { type: [number, "null"], minimum: 0 }
+        average_bunch_weight_g: { type: [number, "null"], minimum: 0 }
+        samples_recorded: { type: [integer, "null"], minimum: 0 }
+        damage_factor: { type: [number, "null"], minimum: 0, maximum: 1 }
+        actual_yield_tonnes: { type: [number, "null"], minimum: 0 }
+        actual_recorded_at: { type: [string, "null"], format: date-time }
+
+    YieldRecordCreate:
+      type: object
+      required: [vineyard_id, vintage_year]
+      additionalProperties: false
+      properties:
+        vineyard_id: { type: string, format: uuid }
+        vintage_year: { type: integer, minimum: 1900, maximum: 2100 }
+        season: { type: [string, "null"], maxLength: 50 }
+        total_yield_tonnes: { type: [number, "null"], minimum: 0, description: "Derived from blocks when omitted." }
+        total_area_ha: { type: [number, "null"], minimum: 0, description: "Derived from blocks when omitted." }
+        notes: { type: [string, "null"], maxLength: 4000 }
+        blocks:
+          type: [array, "null"]
+          items: { $ref: "#/components/schemas/YieldBlockInput" }
+          description: One entry per block; per-block yield/ha is always server-derived.
+        external_id: { type: [string, "null"], minLength: 1, maxLength: 255 }
+
+    YieldRecordUpdate:
+      type: object
+      required: [expected_updated_at]
+      additionalProperties: false
+      properties:
+        expected_updated_at: { type: string, format: date-time }
+        vintage_year: { type: integer, minimum: 1900, maximum: 2100 }
+        season: { type: [string, "null"], maxLength: 50 }
+        total_yield_tonnes: { type: [number, "null"], minimum: 0 }
+        total_area_ha: { type: [number, "null"], minimum: 0 }
+        notes: { type: [string, "null"], maxLength: 4000 }
+        blocks:
+          type: [array, "null"]
+          items: { $ref: "#/components/schemas/YieldBlockInput" }
+          description: Full replacement; totals re-derived unless supplied.
+        external_id: { type: [string, "null"], maxLength: 255 }
 
     Me:
       type: object
@@ -1238,6 +1696,8 @@ components:
         total_cost:
           type: [number, "null"]
           description: Present only with costs:read.
+        origin: { type: string, enum: [vinetrack, integration], description: "Creator origin (Stage 8 provenance)." }
+        external_id: { type: [string, "null"], description: "Integration-supplied reconciliation id (creator-owned)." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -1300,6 +1760,8 @@ components:
         notes: { type: [string, "null"] }
         is_archived: { type: boolean }
         is_finalized: { type: boolean }
+        origin: { type: string, enum: [vinetrack, integration], description: "Creator origin (Stage 8 provenance)." }
+        external_id: { type: [string, "null"], description: "Integration-supplied reconciliation id (creator-owned)." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -1412,6 +1874,8 @@ components:
           type: array
           items: { $ref: "#/components/schemas/IrrigationBlockSummary" }
         notes: { type: [string, "null"] }
+        origin: { type: string, enum: [vinetrack, integration], description: "Creator origin (Stage 8 provenance)." }
+        external_id: { type: [string, "null"], description: "Integration-supplied reconciliation id (creator-owned)." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -1464,6 +1928,8 @@ components:
         longitude: { type: [number, "null"] }
         notes: { type: [string, "null"] }
         recorded_by: { $ref: "#/components/schemas/Operator" }
+        origin: { type: string, enum: [vinetrack, integration], description: "Creator origin (Stage 8 provenance)." }
+        external_id: { type: [string, "null"], description: "Integration-supplied reconciliation id (creator-owned)." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -1496,6 +1962,8 @@ components:
               actual_yield_tonnes: { type: [number, "null"] }
               actual_recorded_at: { type: [string, "null"], format: date-time }
         notes: { type: [string, "null"] }
+        origin: { type: string, enum: [vinetrack, integration], description: "Creator origin (Stage 8 provenance)." }
+        external_id: { type: [string, "null"], description: "Integration-supplied reconciliation id (creator-owned)." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 

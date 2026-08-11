@@ -1,12 +1,14 @@
-// Stage 6A documentation checks for the VineTrack developer platform.
+// Stage 6A + Stage 8 documentation checks for the VineTrack developer platform.
 //
 // Run:  deno run --allow-read scripts/check-developer-docs.ts
 //
 // Verifies (without duplicating application logic):
 //   1. OpenAPI spec parses and is OpenAPI 3.1 with bearer auth.
-//   2. OpenAPI path list EXACTLY matches the gateway route definitions
-//      (derived from RESOURCE_ROUTES + the special routes in
-//      supabase/functions/vinetrack-api/index.ts).
+//   2. OpenAPI method/path set EXACTLY matches the gateway route definitions
+//      (derived from RESOURCE_ROUTES + WRITE_RESOURCES + the special routes
+//      in supabase/functions/vinetrack-api/index.ts). Stage 8: the API is
+//      no longer GET-only — POST/PATCH write routes must match too; DELETE
+//      must not exist anywhere.
 //   3. Every gateway route is mentioned in the developer guide.
 //   4. Event catalogue JSON matches the SQL event catalogue (172 + 178),
 //      contains no duplicates, and every required scope exists in the
@@ -68,18 +70,55 @@ if (openapi) {
   const hasBearer = Object.values(schemes).some((s) => s.type === "http" && s.scheme === "bearer");
   check(hasBearer, "OpenAPI declares HTTP bearer security scheme");
 
-  const paths = Object.keys((openapi.paths ?? {}) as Record<string, unknown>).sort();
+  const pathsObj = (openapi.paths ?? {}) as Record<string, Record<string, unknown>>;
+  const paths = Object.keys(pathsObj).sort();
   const missingInSpec = gatewayRoutes.filter((r) => !paths.includes(r));
   const extraInSpec = paths.filter((p) => !gatewayRoutes.includes(p));
   check(missingInSpec.length === 0, "every gateway route documented in OpenAPI", missingInSpec.join(", "));
   check(extraInSpec.length === 0, "OpenAPI documents no non-existent routes", extraInSpec.join(", "));
   check(paths.length === 30, "OpenAPI documents exactly 30 routes", `found ${paths.length}`);
 
-  const specText = JSON.stringify(openapi);
-  check(!specText.includes("post"), "OpenAPI contains no write operations (POST)");
-  for (const method of ['"put"', '"patch"', '"delete"']) {
-    check(!specText.includes(method), `OpenAPI contains no write operations (${method})`);
+  // Stage 8: write routes from the gateway WRITE_RESOURCES table.
+  const writeTable = gateway.match(/const WRITE_RESOURCES[^=]*=\s*\{([\s\S]*?)\n\};/);
+  check(writeTable !== null, "WRITE_RESOURCES table found in gateway");
+  const writeCreate = new Set<string>();
+  const writeUpdate = new Set<string>();
+  if (writeTable) {
+    for (const m of writeTable[1].matchAll(/"([a-z-]+)":\s*\{([\s\S]*?)\n  \}/g)) {
+      const seg = m[1];
+      const body = m[2];
+      if (body.includes("createRpc:")) writeCreate.add(`/v1/${seg}`);
+      if (body.includes("updateRpc:")) {
+        const id = body.match(/idLabel:\s*"([a-z_]+)"/);
+        if (id) writeUpdate.add(`/v1/${seg}/{${id[1]}}`);
+      }
+    }
   }
+  check(writeCreate.size === 5, "gateway defines exactly 5 POST routes", `found ${writeCreate.size}`);
+  check(writeUpdate.size === 3, "gateway defines exactly 3 PATCH routes", `found ${writeUpdate.size}`);
+
+  // Method/path set equality: OpenAPI documents exactly the methods the
+  // gateway serves — nothing more, nothing less. No DELETE anywhere.
+  const HTTP_METHODS = ["get", "post", "put", "patch", "delete"];
+  for (const route of gatewayRoutes) {
+    const expected = ["get"];
+    if (writeCreate.has(route)) expected.push("post");
+    if (writeUpdate.has(route)) expected.push("patch");
+    const actual = Object.keys(pathsObj[route] ?? {}).filter((k) => HTTP_METHODS.includes(k)).sort();
+    check(
+      JSON.stringify(actual) === JSON.stringify(expected.sort()),
+      `OpenAPI methods for ${route} match gateway`,
+      `spec=[${actual.join(",")}] gateway=[${expected.join(",")}]`,
+    );
+  }
+  const allMethods = Object.values(pathsObj).flatMap((p) => Object.keys(p).filter((k) => HTTP_METHODS.includes(k)));
+  check(!allMethods.includes("delete"), "OpenAPI documents no DELETE operations");
+  check(!allMethods.includes("put"), "OpenAPI documents no PUT operations");
+
+  // Write-contract concepts must be documented in the spec.
+  check(openapiRaw.includes("Idempotency-Key"), "OpenAPI documents Idempotency-Key");
+  check(openapiRaw.includes("expected_updated_at"), "OpenAPI documents expected_updated_at concurrency");
+  check(openapiRaw.includes("idempotency_conflict"), "OpenAPI documents idempotency_conflict");
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +128,12 @@ console.log("\n[2] Developer guide route coverage");
 const guide = read("docs/vinetrack-developer-platform.md");
 const missingInGuide = gatewayRoutes.filter((r) => !guide.includes(r));
 check(missingInGuide.length === 0, "every gateway route mentioned in developer guide", missingInGuide.join(", "));
+for (const concept of ["Idempotency-Key", "expected_updated_at", "idempotency_conflict", "external_id"]) {
+  check(guide.includes(concept), `developer guide documents ${concept}`);
+}
+for (const s of ["work_tasks:write", "fuel:write", "irrigation:write", "growth_stages:write", "yield:write"]) {
+  check(guide.includes(s), `developer guide documents enabled write scope ${s}`);
+}
 
 // ---------------------------------------------------------------------------
 // 4. Event catalogue: SQL vs JSON vs guide

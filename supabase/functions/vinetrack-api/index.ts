@@ -1,6 +1,6 @@
 // Supabase Edge Function: vinetrack-api
 //
-// VineTrack public read-only API gateway — Stage 3A + Stage 3B + Stage 3C.
+// VineTrack public API gateway — Stages 3A-3D (reads) + Stage 8 (writes).
 //
 // Routes (versioned; the route version is authoritative):
 //   GET /v1/me
@@ -33,6 +33,21 @@
 //   GET /v1/weather?vineyard_id=<uuid>                                               (3D)
 //   GET /v1/rainfall?vineyard_id=<uuid>[&from=&to=]                                  (3D)
 //   GET /v1/disease-risk?vineyard_id=<uuid>                                          (3D)
+//   POST  /v1/work-tasks                        (8; work_tasks:write, Idempotency-Key)
+//   PATCH /v1/work-tasks/{work_task_id}         (8; work_tasks:write, expected_updated_at)
+//   POST  /v1/fuel-records                      (8; fuel:write, Idempotency-Key)
+//   PATCH /v1/fuel-records/{fuel_record_id}     (8; fuel:write, expected_updated_at)
+//   POST  /v1/irrigation-records                (8; irrigation:write, create-only)
+//   POST  /v1/growth-stages                     (8; growth_stages:write, create-only)
+//   POST  /v1/yield-records                     (8; yield:write, Idempotency-Key)
+//   PATCH /v1/yield-records/{yield_record_id}   (8; yield:write, expected_updated_at)
+//
+// Stage 8 writes: every POST requires an Idempotency-Key header (durable,
+// database-backed replay protection); every PATCH requires
+// expected_updated_at in the body (optimistic concurrency). All mutations go
+// through SECURITY DEFINER RPCs (sql/186) that re-run the full five-check
+// validation — the gateway never performs direct inserts/updates. There are
+// NO DELETE routes.
 //
 // Authentication:  Authorization: Bearer vt_live_... / vt_test_...
 //   - Supabase JWTs are NOT accepted as integration credentials.
@@ -91,7 +106,11 @@ const ERRORS: Record<string, { status: number; message: string }> = {
   invalid_request: { status: 400, message: "The request is invalid." },
   invalid_cursor: { status: 400, message: "The supplied pagination cursor is invalid." },
   rate_limit_exceeded: { status: 429, message: "The API request limit has been exceeded." },
-  method_not_allowed: { status: 405, message: "This API is read-only. Only GET is supported." },
+  method_not_allowed: { status: 405, message: "This method is not supported on this endpoint." },
+  validation_failed: { status: 422, message: "The request failed validation." },
+  idempotency_required: { status: 400, message: "POST requests require an Idempotency-Key header (1-255 characters)." },
+  idempotency_conflict: { status: 409, message: "This Idempotency-Key was already used with a different request payload." },
+  conflict: { status: 409, message: "The request conflicts with the current state of the resource." },
   internal_error: { status: 500, message: "An internal error occurred. Contact support and quote the request_id." },
   disease_risk_unavailable: { status: 503, message: "Disease risk is currently unavailable for this vineyard. Ensure the vineyard has mapped blocks or a configured weather station, then try again shortly." },
 };
@@ -132,8 +151,8 @@ function corsHeaders(req: Request): Record<string, string> {
     .split(",").map((s) => s.trim()).filter(Boolean);
   const origin = req.headers.get("origin") ?? "";
   const headers: Record<string, string> = {
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "authorization, content-type",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, content-type, idempotency-key",
   };
   if (origin && allowlist.includes(origin)) {
     headers["Access-Control-Allow-Origin"] = origin;
@@ -164,19 +183,28 @@ function jsonResponse(
 
 class ApiError extends Error {
   code: string;
-  constructor(code: string) {
+  /** Safe field-level validation details (never SQL/internal text). */
+  details?: unknown;
+  constructor(code: string, details?: unknown) {
     super(code);
     this.code = ERRORS[code] ? code : "internal_error";
+    this.details = details;
   }
 }
 
-function errorResponse(req: Request, ctx: RequestContext, code: string, extraHeaders: Record<string, string> = {}): Response {
+function errorResponse(
+  req: Request,
+  ctx: RequestContext,
+  code: string,
+  extraHeaders: Record<string, string> = {},
+  details?: unknown,
+): Response {
   const def = ERRORS[code] ?? ERRORS.internal_error;
   // Every gateway error — including 403 vineyard_access_denied — carries the
   // documented JSON envelope. Regression-tested by scripts/test-vinetrack-api.sh.
-  return jsonResponse(req, ctx, {
-    error: { code, message: def.message, request_id: ctx.requestId },
-  }, def.status, extraHeaders);
+  const err: Record<string, unknown> = { code, message: def.message, request_id: ctx.requestId };
+  if (details !== undefined && details !== null) err.details = details;
+  return jsonResponse(req, ctx, { error: err }, def.status, extraHeaders);
 }
 
 // ---------------------------------------------------------------------------
@@ -891,13 +919,14 @@ interface FuelLogRow {
   operator_user_id: string | null; operator_name: string | null;
   cost_per_litre: number | null; total_cost: number | null;
   filled_to_full: boolean | null; notes: string | null;
+  origin: string; external_id: string | null;
   created_at: string; updated_at: string;
 }
 
 const FUEL_LOG_COLUMNS =
   "id, vineyard_id, tractor_id, machine_id, fill_datetime, litres_added, engine_hours, " +
   "operator_user_id, operator_name, cost_per_litre, total_cost, filled_to_full, notes, " +
-  "created_at, updated_at";
+  "origin, external_id, created_at, updated_at";
 
 function mapFuelRecord(row: FuelLogRow, idx: MachineIndex, profile: AuthProfile) {
   const machine = resolveMachine(idx, row.machine_id, row.tractor_id);
@@ -911,6 +940,8 @@ function mapFuelRecord(row: FuelLogRow, idx: MachineIndex, profile: AuthProfile)
     engine_hours: row.engine_hours ?? null,
     filled_to_full: row.filled_to_full ?? null,
     notes: row.notes ?? null,
+    origin: row.origin,
+    external_id: row.external_id ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -1730,12 +1761,14 @@ interface WorkTaskRow {
   paddock_id: string | null; paddock_name: string;
   description: string | null; notes: string;
   is_archived: boolean; is_finalized: boolean;
+  origin: string; external_id: string | null;
   created_at: string; updated_at: string;
 }
 
 const WORK_TASK_COLUMNS =
   "id, vineyard_id, task_type, status, date, start_date, end_date, duration_hours, area_ha, " +
-  "paddock_id, paddock_name, description, notes, is_archived, is_finalized, created_at, updated_at";
+  "paddock_id, paddock_name, description, notes, is_archived, is_finalized, origin, external_id, " +
+  "created_at, updated_at";
 
 interface TaskBlockLink { work_task_id: string; paddock_id: string }
 
@@ -1792,6 +1825,8 @@ function mapWorkTask(row: WorkTaskRow, blocks: { id: string; name: string | null
     notes: row.notes.trim() || null,
     is_archived: row.is_archived,
     is_finalized: row.is_finalized,
+    origin: row.origin,
+    external_id: row.external_id ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -1947,6 +1982,7 @@ interface IrrigationSessionRow {
   total_volume_litres: number; effective_volume_litres: number | null;
   irrigation_efficiency_percent: number | null;
   status: string; source_type: string; notes: string | null;
+  origin: string; external_id: string | null;
   created_at: string; updated_at: string;
 }
 
@@ -1954,7 +1990,7 @@ const IRRIGATION_COLUMNS =
   "id, vineyard_id, irrigation_system_id, valve_id, session_date, vintage_year, started_at, " +
   "finished_at, duration_minutes, calculation_method, flow_litres_per_hour, total_volume_litres, " +
   "effective_volume_litres, irrigation_efficiency_percent, status, source_type, notes, " +
-  "created_at, updated_at";
+  "origin, external_id, created_at, updated_at";
 
 const IRRIGATION_STATUS_VALUES = [
   "completed", "corrected", "reversed", "planned", "running", "cancelled", "imported", "estimated",
@@ -2035,6 +2071,8 @@ function mapIrrigationRecord(
       return base;
     }),
     notes: (row.notes ?? "").trim() || null,
+    origin: row.origin,
+    external_id: row.external_id ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -2055,12 +2093,14 @@ interface GrowthStageRow {
   observed_at: string; latitude: number | null; longitude: number | null;
   row_number: number | null; side: string | null; notes: string | null;
   recorded_by_name: string | null; created_by: string | null;
+  origin: string; external_id: string | null;
   created_at: string; updated_at: string;
 }
 
 const GROWTH_STAGE_COLUMNS =
   "id, vineyard_id, paddock_id, stage_code, stage_label, variety, variety_id, observed_at, " +
-  "latitude, longitude, row_number, side, notes, recorded_by_name, created_by, created_at, updated_at";
+  "latitude, longitude, row_number, side, notes, recorded_by_name, created_by, origin, external_id, " +
+  "created_at, updated_at";
 
 function mapGrowthStage(row: GrowthStageRow, blockName: string | null, profile: AuthProfile) {
   const base: Record<string, unknown> = {
@@ -2079,6 +2119,8 @@ function mapGrowthStage(row: GrowthStageRow, blockName: string | null, profile: 
     latitude: row.latitude ?? null,
     longitude: row.longitude ?? null,
     notes: (row.notes ?? "").trim() || null,
+    origin: row.origin,
+    external_id: row.external_id ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -2105,12 +2147,13 @@ interface YieldRecordRow {
   season: string; year: number; archived_at: string;
   total_yield_tonnes: number; total_area_hectares: number;
   notes: string; block_results: unknown;
+  origin: string; external_id: string | null;
   created_at: string; updated_at: string;
 }
 
 const YIELD_RECORD_COLUMNS =
   "id, vineyard_id, season, year, archived_at, total_yield_tonnes, total_area_hectares, " +
-  "notes, block_results, created_at, updated_at";
+  "notes, block_results, origin, external_id, created_at, updated_at";
 
 interface YieldBlockJson {
   paddockId?: unknown; paddockName?: unknown; areaHectares?: unknown;
@@ -2151,6 +2194,8 @@ function mapYieldRecord(row: YieldRecordRow) {
     yield_tonnes_per_ha: area > 0 ? round3(row.total_yield_tonnes / area) : null,
     blocks: mapYieldBlocks(row.block_results),
     notes: row.notes.trim() || null,
+    origin: row.origin,
+    external_id: row.external_id ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -3742,6 +3787,161 @@ async function logRequest(db: SupabaseClient, ctx: RequestContext, status: numbe
 }
 
 // ---------------------------------------------------------------------------
+// Stage 8 — write routes (POST create / PATCH partial update). The gateway
+// performs transport-level checks only; ALL validation, idempotency,
+// provenance, audit and event behaviour lives in the sql/186 SECURITY
+// DEFINER RPCs, which re-run the full five-check auth validation internally.
+// ---------------------------------------------------------------------------
+const MAX_WRITE_BODY_BYTES = 262_144; // 256 KB
+
+interface WriteSpec {
+  createRpc?: string;
+  updateRpc?: string;
+  updateIdParam?: string;
+  idLabel: string;
+}
+
+const WRITE_RESOURCES: Record<string, WriteSpec> = {
+  "work-tasks": {
+    createRpc: "integration_api_create_work_task",
+    updateRpc: "integration_api_update_work_task",
+    updateIdParam: "p_work_task_id",
+    idLabel: "work_task_id",
+  },
+  "fuel-records": {
+    createRpc: "integration_api_create_fuel_record",
+    updateRpc: "integration_api_update_fuel_record",
+    updateIdParam: "p_fuel_record_id",
+    idLabel: "fuel_record_id",
+  },
+  // Create-only: irrigation corrections are an in-app reverse/re-record
+  // workflow; growth stages are insert-only by design (sql/055 + 178).
+  "irrigation-records": {
+    createRpc: "integration_api_create_irrigation_record",
+    idLabel: "irrigation_record_id",
+  },
+  "growth-stages": {
+    createRpc: "integration_api_create_growth_stage",
+    idLabel: "growth_stage_id",
+  },
+  "yield-records": {
+    createRpc: "integration_api_create_yield_record",
+    updateRpc: "integration_api_update_yield_record",
+    updateIdParam: "p_yield_record_id",
+    idLabel: "yield_record_id",
+  },
+};
+
+async function readJsonBody(req: Request): Promise<Record<string, unknown>> {
+  const raw = await req.text();
+  if (raw.length === 0 || raw.length > MAX_WRITE_BODY_BYTES) throw new ApiError("invalid_request");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new ApiError("invalid_request");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new ApiError("invalid_request");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/** RPC envelope failure codes -> public error codes. Unknown codes never leak. */
+const WRITE_ERROR_PASSTHROUGH = [
+  "integration_not_active", "insufficient_scope", "vineyard_access_denied",
+  "resource_not_found", "invalid_request", "validation_failed",
+  "idempotency_required", "idempotency_conflict", "conflict",
+];
+
+function mapWriteFailure(code: string | undefined): string {
+  if (code && WRITE_ERROR_PASSTHROUGH.includes(code)) return code;
+  return mapAuthFailure(code);
+}
+
+interface WriteEnvelope {
+  ok: boolean;
+  status?: number;
+  replayed?: boolean;
+  data?: Record<string, unknown>;
+  error?: string;
+  details?: unknown;
+}
+
+async function handleWriteRequest(
+  req: Request, ctx: RequestContext, db: SupabaseClient, url: URL, segments: string[],
+): Promise<Response> {
+  const def = segments[0] === "v1" && segments.length >= 2 ? WRITE_RESOURCES[segments[1]] : undefined;
+  const isCreate = ctx.method === "POST" && segments.length === 2;
+  const isUpdate = ctx.method === "PATCH" && segments.length === 3;
+
+  if (!def || (!isCreate && !isUpdate) || (isCreate && !def.createRpc) || (isUpdate && !def.updateRpc)) {
+    ctx.canonicalPath = "/" + segments.join("/");
+    // A known resource path with an unsupported method is 405; an unknown
+    // path stays 404.
+    const knownShape = segments[0] === "v1" && segments.length >= 2 && segments.length <= 3 &&
+      (RESOURCE_ROUTES[segments[1]] !== undefined ||
+        ["me", "weather", "rainfall", "disease-risk"].includes(segments[1]));
+    throw new ApiError(knownShape ? "method_not_allowed" : "resource_not_found");
+  }
+  ctx.canonicalPath = isCreate ? `/v1/${segments[1]}` : `/v1/${segments[1]}/{${def.idLabel}}`;
+
+  enforceAllowedParams(url, []);
+
+  const key = extractApiKey(req, url);
+  const profile = await authenticate(db, key);
+  if (!profile.valid) throw new ApiError(mapAuthFailure(profile.failure_code));
+  ctx.integrationClientId = profile.integration_client_id ?? null;
+  ctx.apiKeyId = profile.api_key_id ?? null;
+  await checkRateLimit(db, ctx, profile.api_key_id!);
+
+  const body = await readJsonBody(req);
+
+  let rpc: string;
+  let args: Record<string, unknown>;
+  if (isCreate) {
+    // Vineyard context arrives in the body and is stripped before the
+    // resource payload reaches the validator; the RPC folds it back into the
+    // idempotency fingerprint.
+    const vineyardId = body.vineyard_id;
+    if (typeof vineyardId !== "string" || !UUID_RE.test(vineyardId)) {
+      throw new ApiError("validation_failed", [{ field: "vineyard_id", issue: "required vineyard UUID" }]);
+    }
+    ctx.vineyardId = vineyardId;
+    const payload: Record<string, unknown> = { ...body };
+    delete payload.vineyard_id;
+    rpc = def.createRpc!;
+    args = {
+      p_presented_key: key,
+      p_vineyard_id: vineyardId,
+      p_idempotency_key: req.headers.get("idempotency-key"),
+      p_payload: payload,
+    };
+  } else {
+    const id = segments[2];
+    if (!UUID_RE.test(id)) throw new ApiError("resource_not_found");
+    rpc = def.updateRpc!;
+    args = { p_presented_key: key, [def.updateIdParam!]: id, p_payload: body };
+  }
+
+  const { data, error } = await db.rpc(rpc, args);
+  if (error) {
+    console.error(`[vinetrack-api] ${rpc} rpc failed:`, error.message);
+    throw new ApiError("internal_error");
+  }
+  const env = data as WriteEnvelope;
+  if (!env?.ok) {
+    throw new ApiError(mapWriteFailure(env?.error), env?.details);
+  }
+  const resource = env.data ?? {};
+  const resourceVineyard = (resource as Record<string, unknown>).vineyard_id;
+  if (typeof resourceVineyard === "string") ctx.vineyardId = resourceVineyard;
+  const status = env.status ?? (isCreate ? 201 : 200);
+  const headers: Record<string, string> = env.replayed ? { "Idempotency-Replayed": "true" } : {};
+  return jsonResponse(req, ctx, { data: resource }, status, headers);
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 type Route =
@@ -3831,9 +4031,18 @@ Deno.serve(async (req: Request) => {
   let response: Response;
 
   try {
-    if (ctx.method !== "GET") {
+    if (!["GET", "POST", "PATCH"].includes(ctx.method)) {
       ctx.canonicalPath = "/" + segments.join("/");
       throw new ApiError("method_not_allowed");
+    }
+
+    if (ctx.method !== "GET") {
+      // Stage 8 write routes. Success is logged here; failures fall through
+      // to the shared error handler + log below.
+      response = await handleWriteRequest(req, ctx, db, url, segments);
+      status = response.status;
+      await logRequest(db, ctx, status, null);
+      return response;
     }
 
     // Resolve the canonical route template first (also used for logging —
@@ -3974,14 +4183,16 @@ Deno.serve(async (req: Request) => {
     }
     status = response.status;
   } catch (e) {
+    let errorDetails: unknown = undefined;
     if (e instanceof ApiError) {
       errorCode = e.code;
+      errorDetails = e.details;
     } else {
       // Never leak Postgres/PostgREST/internal details externally.
       console.error("[vinetrack-api] unexpected error:", e instanceof Error ? (e.stack ?? e.message) : String(e));
       errorCode = "internal_error";
     }
-    response = errorResponse(req, ctx, errorCode);
+    response = errorResponse(req, ctx, errorCode, {}, errorDetails);
     status = response.status;
   }
 

@@ -119,6 +119,15 @@ Every delivery is an HTTP `POST` with this JSON body:
 - `vineyard_id` — `null` only for `webhook.test`.
 - `data.id` — the resource id, usable directly against the read API
   (for example `GET /v1/trips/{id}`).
+- `data.origin` (Stage 8, additive) — `vinetrack` or `integration`:
+  who created the record. Present on `work_task.*`, `fuel_log.*`,
+  `irrigation_record.*`, `growth_stage.recorded` and `yield_record.*`
+  events. `data.external_id` additionally appears when the creating
+  integration supplied one. **Loop prevention:** if you both write through
+  the API and consume webhooks, ignore events where `origin ==
+  "integration"` and `external_id` matches a record you created. These
+  fields are backwards-compatible additions — the envelope shape,
+  signature formula, headers and retry policy are unchanged.
 
 ### Headers
 

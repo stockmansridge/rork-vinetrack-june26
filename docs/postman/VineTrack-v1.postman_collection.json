@@ -1,298 +1,779 @@
 {
-  "info": {
-    "name": "VineTrack API v1",
-    "description": "Read-only VineTrack integration API. Set the collection variables `vinetrack_api_host` (e.g. https://YOUR-PROJECT.supabase.co/functions/v1/vinetrack-api) and `vinetrack_api_key` (vt_live_... or vt_test_... — never commit real keys). Most collection requests also need `vineyard_id` (take one from GET /v1/vineyards). Docs: docs/vinetrack-developer-platform.md",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
-  },
-  "auth": {
-    "type": "bearer",
-    "bearer": [{ "key": "token", "value": "{{vinetrack_api_key}}", "type": "string" }]
-  },
-  "variable": [
-    { "key": "vinetrack_api_host", "value": "https://YOUR-PROJECT.supabase.co/functions/v1/vinetrack-api" },
-    { "key": "vinetrack_api_key", "value": "vt_test_REPLACE_ME" },
-    { "key": "vineyard_id", "value": "00000000-0000-4000-8000-000000000001" }
-  ],
-  "item": [
-    {
-      "name": "Core",
-      "item": [
-        {
-          "name": "GET /v1/me",
-          "request": {
-            "method": "GET",
-            "url": { "raw": "{{vinetrack_api_host}}/v1/me", "host": ["{{vinetrack_api_host}}"], "path": ["v1", "me"] },
-            "description": "Confirms authentication and lists granted scopes and vineyards. Requires a valid key but no resource scope."
-          }
-        },
-        {
-          "name": "GET /v1/vineyards",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/vineyards?limit=100",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "vineyards"],
-              "query": [{ "key": "limit", "value": "100" }]
-            },
-            "description": "Requires vineyards:read. Returns only explicitly granted vineyards."
-          }
-        },
-        {
-          "name": "GET /v1/blocks",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/blocks?vineyard_id={{vineyard_id}}",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "blocks"],
-              "query": [{ "key": "vineyard_id", "value": "{{vineyard_id}}" }]
-            },
-            "description": "Requires blocks:read. vineyard_id is required."
-          }
-        }
-      ]
-    },
-    {
-      "name": "Operations",
-      "item": [
-        {
-          "name": "GET /v1/trips",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/trips?vineyard_id={{vineyard_id}}&limit=25",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "trips"],
-              "query": [
-                { "key": "vineyard_id", "value": "{{vineyard_id}}" },
-                { "key": "limit", "value": "25" },
-                { "key": "from", "value": "2026-01-01", "disabled": true },
-                { "key": "to", "value": "2026-12-31", "disabled": true },
-                { "key": "equipment_id", "value": "", "disabled": true }
-              ]
-            },
-            "description": "Requires trips:read. operator appears only with labour:read."
-          }
-        },
-        {
-          "name": "GET /v1/spray-jobs",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/spray-jobs?vineyard_id={{vineyard_id}}&limit=25",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "spray-jobs"],
-              "query": [
-                { "key": "vineyard_id", "value": "{{vineyard_id}}" },
-                { "key": "limit", "value": "25" }
-              ]
-            },
-            "description": "Requires sprays:read. Product costs appear only with costs:read."
-          }
-        },
-        {
-          "name": "GET /v1/fuel-records",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/fuel-records?vineyard_id={{vineyard_id}}&limit=25",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "fuel-records"],
-              "query": [
-                { "key": "vineyard_id", "value": "{{vineyard_id}}" },
-                { "key": "limit", "value": "25" }
-              ]
-            },
-            "description": "Requires fuel:read. Costs gated by costs:read; operator by labour:read."
-          }
-        },
-        {
-          "name": "GET /v1/fuel-purchases",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/fuel-purchases?vineyard_id={{vineyard_id}}&limit=25",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "fuel-purchases"],
-              "query": [
-                { "key": "vineyard_id", "value": "{{vineyard_id}}" },
-                { "key": "limit", "value": "25" }
-              ]
-            },
-            "description": "Requires fuel:read. Prices appear only with costs:read."
-          }
-        },
-        {
-          "name": "GET /v1/equipment",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/equipment?vineyard_id={{vineyard_id}}",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "equipment"],
-              "query": [
-                { "key": "vineyard_id", "value": "{{vineyard_id}}" },
-                { "key": "type", "value": "machine", "disabled": true }
-              ]
-            },
-            "description": "Requires equipment:read. type: machine|sprayer|item or a machine subtype."
-          }
-        }
-      ]
-    },
-    {
-      "name": "Vineyard records",
-      "item": [
-        {
-          "name": "GET /v1/work-tasks",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/work-tasks?vineyard_id={{vineyard_id}}&limit=25",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "work-tasks"],
-              "query": [
-                { "key": "vineyard_id", "value": "{{vineyard_id}}" },
-                { "key": "limit", "value": "25" }
-              ]
-            },
-            "description": "Requires work_tasks:read."
-          }
-        },
-        {
-          "name": "GET /v1/pruning",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/pruning?vineyard_id={{vineyard_id}}&limit=25",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "pruning"],
-              "query": [
-                { "key": "vineyard_id", "value": "{{vineyard_id}}" },
-                { "key": "limit", "value": "25" }
-              ]
-            },
-            "description": "Requires pruning:read. crew gated by labour:read; rates by costs:read."
-          }
-        },
-        {
-          "name": "GET /v1/irrigation-records",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/irrigation-records?vineyard_id={{vineyard_id}}&limit=25",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "irrigation-records"],
-              "query": [
-                { "key": "vineyard_id", "value": "{{vineyard_id}}" },
-                { "key": "limit", "value": "25" }
-              ]
-            },
-            "description": "Requires irrigation:read. Reversed sessions excluded by default (?status=reversed)."
-          }
-        },
-        {
-          "name": "GET /v1/growth-stages",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/growth-stages?vineyard_id={{vineyard_id}}&limit=25",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "growth-stages"],
-              "query": [
-                { "key": "vineyard_id", "value": "{{vineyard_id}}" },
-                { "key": "limit", "value": "25" }
-              ]
-            },
-            "description": "Requires growth_stages:read. recorded_by gated by labour:read."
-          }
-        },
-        {
-          "name": "GET /v1/yield-records",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/yield-records?vineyard_id={{vineyard_id}}&limit=25",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "yield-records"],
-              "query": [
-                { "key": "vineyard_id", "value": "{{vineyard_id}}" },
-                { "key": "limit", "value": "25" },
-                { "key": "vintage", "value": "2026", "disabled": true }
-              ]
-            },
-            "description": "Requires yield:read."
-          }
-        },
-        {
-          "name": "GET /v1/pins",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/pins?vineyard_id={{vineyard_id}}&limit=25",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "pins"],
-              "query": [
-                { "key": "vineyard_id", "value": "{{vineyard_id}}" },
-                { "key": "limit", "value": "25" },
-                { "key": "status", "value": "open", "disabled": true },
-                { "key": "type", "value": "repairs", "disabled": true }
-              ]
-            },
-            "description": "Requires pins:read. assigned_to/completed_by gated by labour:read."
-          }
-        }
-      ]
-    },
-    {
-      "name": "Environmental",
-      "item": [
-        {
-          "name": "GET /v1/weather",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/weather?vineyard_id={{vineyard_id}}",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "weather"],
-              "query": [{ "key": "vineyard_id", "value": "{{vineyard_id}}" }]
-            },
-            "description": "Requires weather:read. Singleton document (data + meta), not paginated."
-          }
-        },
-        {
-          "name": "GET /v1/rainfall",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/rainfall?vineyard_id={{vineyard_id}}&limit=31",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "rainfall"],
-              "query": [
-                { "key": "vineyard_id", "value": "{{vineyard_id}}" },
-                { "key": "limit", "value": "31" },
-                { "key": "from", "value": "2026-07-01", "disabled": true },
-                { "key": "to", "value": "2026-07-31", "disabled": true }
-              ]
-            },
-            "description": "Requires rainfall:read. Observed daily rainfall only; newest day first."
-          }
-        },
-        {
-          "name": "GET /v1/disease-risk",
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{vinetrack_api_host}}/v1/disease-risk?vineyard_id={{vineyard_id}}",
-              "host": ["{{vinetrack_api_host}}"],
-              "path": ["v1", "disease-risk"],
-              "query": [{ "key": "vineyard_id", "value": "{{vineyard_id}}" }]
-            },
-            "description": "Requires disease_risk:read. 503 disease_risk_unavailable when nothing can be served."
-          }
-        }
-      ]
-    }
+ "info": {
+  "name": "VineTrack API v1",
+  "description": "VineTrack integration API — reads across all modules plus Stage 8 writes (work tasks, fuel, irrigation, growth stages, yield). POST requests need an Idempotency-Key header (pre-filled with {{$guid}}); PATCH requests need expected_updated_at from your latest GET. Set the collection variables `vinetrack_api_host` (e.g. https://YOUR-PROJECT.supabase.co/functions/v1/vinetrack-api) and `vinetrack_api_key` (vt_live_... or vt_test_... — never commit real keys). Most collection requests also need `vineyard_id` (take one from GET /v1/vineyards). Docs: docs/vinetrack-developer-platform.md",
+  "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+ },
+ "auth": {
+  "type": "bearer",
+  "bearer": [
+   {
+    "key": "token",
+    "value": "{{vinetrack_api_key}}",
+    "type": "string"
+   }
   ]
+ },
+ "variable": [
+  {
+   "key": "vinetrack_api_host",
+   "value": "https://YOUR-PROJECT.supabase.co/functions/v1/vinetrack-api"
+  },
+  {
+   "key": "vinetrack_api_key",
+   "value": "vt_test_REPLACE_ME"
+  },
+  {
+   "key": "vineyard_id",
+   "value": "00000000-0000-4000-8000-000000000001"
+  }
+ ],
+ "item": [
+  {
+   "name": "Core",
+   "item": [
+    {
+     "name": "GET /v1/me",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/me",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "me"
+       ]
+      },
+      "description": "Confirms authentication and lists granted scopes and vineyards. Requires a valid key but no resource scope."
+     }
+    },
+    {
+     "name": "GET /v1/vineyards",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/vineyards?limit=100",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "vineyards"
+       ],
+       "query": [
+        {
+         "key": "limit",
+         "value": "100"
+        }
+       ]
+      },
+      "description": "Requires vineyards:read. Returns only explicitly granted vineyards."
+     }
+    },
+    {
+     "name": "GET /v1/blocks",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/blocks?vineyard_id={{vineyard_id}}",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "blocks"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        }
+       ]
+      },
+      "description": "Requires blocks:read. vineyard_id is required."
+     }
+    }
+   ]
+  },
+  {
+   "name": "Operations",
+   "item": [
+    {
+     "name": "GET /v1/trips",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/trips?vineyard_id={{vineyard_id}}&limit=25",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "trips"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        },
+        {
+         "key": "limit",
+         "value": "25"
+        },
+        {
+         "key": "from",
+         "value": "2026-01-01",
+         "disabled": true
+        },
+        {
+         "key": "to",
+         "value": "2026-12-31",
+         "disabled": true
+        },
+        {
+         "key": "equipment_id",
+         "value": "",
+         "disabled": true
+        }
+       ]
+      },
+      "description": "Requires trips:read. operator appears only with labour:read."
+     }
+    },
+    {
+     "name": "GET /v1/spray-jobs",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/spray-jobs?vineyard_id={{vineyard_id}}&limit=25",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "spray-jobs"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        },
+        {
+         "key": "limit",
+         "value": "25"
+        }
+       ]
+      },
+      "description": "Requires sprays:read. Product costs appear only with costs:read."
+     }
+    },
+    {
+     "name": "GET /v1/fuel-records",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/fuel-records?vineyard_id={{vineyard_id}}&limit=25",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "fuel-records"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        },
+        {
+         "key": "limit",
+         "value": "25"
+        }
+       ]
+      },
+      "description": "Requires fuel:read. Costs gated by costs:read; operator by labour:read."
+     }
+    },
+    {
+     "name": "GET /v1/fuel-purchases",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/fuel-purchases?vineyard_id={{vineyard_id}}&limit=25",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "fuel-purchases"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        },
+        {
+         "key": "limit",
+         "value": "25"
+        }
+       ]
+      },
+      "description": "Requires fuel:read. Prices appear only with costs:read."
+     }
+    },
+    {
+     "name": "GET /v1/equipment",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/equipment?vineyard_id={{vineyard_id}}",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "equipment"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        },
+        {
+         "key": "type",
+         "value": "machine",
+         "disabled": true
+        }
+       ]
+      },
+      "description": "Requires equipment:read. type: machine|sprayer|item or a machine subtype."
+     }
+    }
+   ]
+  },
+  {
+   "name": "Vineyard records",
+   "item": [
+    {
+     "name": "GET /v1/work-tasks",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/work-tasks?vineyard_id={{vineyard_id}}&limit=25",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "work-tasks"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        },
+        {
+         "key": "limit",
+         "value": "25"
+        }
+       ]
+      },
+      "description": "Requires work_tasks:read."
+     }
+    },
+    {
+     "name": "GET /v1/pruning",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/pruning?vineyard_id={{vineyard_id}}&limit=25",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "pruning"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        },
+        {
+         "key": "limit",
+         "value": "25"
+        }
+       ]
+      },
+      "description": "Requires pruning:read. crew gated by labour:read; rates by costs:read."
+     }
+    },
+    {
+     "name": "GET /v1/irrigation-records",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/irrigation-records?vineyard_id={{vineyard_id}}&limit=25",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "irrigation-records"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        },
+        {
+         "key": "limit",
+         "value": "25"
+        }
+       ]
+      },
+      "description": "Requires irrigation:read. Reversed sessions excluded by default (?status=reversed)."
+     }
+    },
+    {
+     "name": "GET /v1/growth-stages",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/growth-stages?vineyard_id={{vineyard_id}}&limit=25",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "growth-stages"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        },
+        {
+         "key": "limit",
+         "value": "25"
+        }
+       ]
+      },
+      "description": "Requires growth_stages:read. recorded_by gated by labour:read."
+     }
+    },
+    {
+     "name": "GET /v1/yield-records",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/yield-records?vineyard_id={{vineyard_id}}&limit=25",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "yield-records"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        },
+        {
+         "key": "limit",
+         "value": "25"
+        },
+        {
+         "key": "vintage",
+         "value": "2026",
+         "disabled": true
+        }
+       ]
+      },
+      "description": "Requires yield:read."
+     }
+    },
+    {
+     "name": "GET /v1/pins",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/pins?vineyard_id={{vineyard_id}}&limit=25",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "pins"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        },
+        {
+         "key": "limit",
+         "value": "25"
+        },
+        {
+         "key": "status",
+         "value": "open",
+         "disabled": true
+        },
+        {
+         "key": "type",
+         "value": "repairs",
+         "disabled": true
+        }
+       ]
+      },
+      "description": "Requires pins:read. assigned_to/completed_by gated by labour:read."
+     }
+    }
+   ]
+  },
+  {
+   "name": "Environmental",
+   "item": [
+    {
+     "name": "GET /v1/weather",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/weather?vineyard_id={{vineyard_id}}",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "weather"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        }
+       ]
+      },
+      "description": "Requires weather:read. Singleton document (data + meta), not paginated."
+     }
+    },
+    {
+     "name": "GET /v1/rainfall",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/rainfall?vineyard_id={{vineyard_id}}&limit=31",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "rainfall"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        },
+        {
+         "key": "limit",
+         "value": "31"
+        },
+        {
+         "key": "from",
+         "value": "2026-07-01",
+         "disabled": true
+        },
+        {
+         "key": "to",
+         "value": "2026-07-31",
+         "disabled": true
+        }
+       ]
+      },
+      "description": "Requires rainfall:read. Observed daily rainfall only; newest day first."
+     }
+    },
+    {
+     "name": "GET /v1/disease-risk",
+     "request": {
+      "method": "GET",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/disease-risk?vineyard_id={{vineyard_id}}",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "disease-risk"
+       ],
+       "query": [
+        {
+         "key": "vineyard_id",
+         "value": "{{vineyard_id}}"
+        }
+       ]
+      },
+      "description": "Requires disease_risk:read. 503 disease_risk_unavailable when nothing can be served."
+     }
+    }
+   ]
+  },
+  {
+   "name": "Writes (Stage 8)",
+   "description": "Requires the matching *:write scope + vineyard grant. POST = create (Idempotency-Key required, 201). PATCH = partial update (expected_updated_at required, 200; 409 conflict when stale). Synthetic example data only.",
+   "item": [
+    {
+     "name": "POST /v1/work-tasks",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Idempotency-Key",
+        "value": "{{$guid}}",
+        "description": "Required on every POST. Reuse the SAME key when retrying the SAME request; a new key for each new logical operation."
+       }
+      ],
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/work-tasks",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "work-tasks"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"vineyard_id\": \"{{vineyard_id}}\",\n  \"task_type\": \"Slashing\",\n  \"date\": \"2026-01-15T09:00:00Z\",\n  \"status\": \"planned\",\n  \"notes\": \"Mid-row slashing, north end first\",\n  \"block_ids\": [\n    \"00000000-0000-4000-8000-000000000002\"\n  ],\n  \"external_id\": \"example-task-100\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      },
+      "description": "Scope: work_tasks:write. Creates a work task; blocks must belong to the vineyard. Returns 201 with the canonical representation. Replaying with the same Idempotency-Key + payload returns the original record (Idempotency-Replayed: true)."
+     }
+    },
+    {
+     "name": "PATCH /v1/work-tasks/{work_task_id}",
+     "request": {
+      "method": "PATCH",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/work-tasks/REPLACE_WITH_WORK_TASK_ID",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "work-tasks",
+        "REPLACE_WITH_WORK_TASK_ID"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"expected_updated_at\": \"REPLACE_WITH_UPDATED_AT_FROM_GET\",\n  \"status\": \"in_progress\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      },
+      "description": "Scope: work_tasks:write. Partial update — omitted fields unchanged, null clears nullable fields. expected_updated_at is the updated_at from your latest GET (409 conflict on mismatch). Finalised/archived tasks refuse edits."
+     }
+    },
+    {
+     "name": "POST /v1/fuel-records",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Idempotency-Key",
+        "value": "{{$guid}}",
+        "description": "Required on every POST. Reuse the SAME key when retrying the SAME request; a new key for each new logical operation."
+       }
+      ],
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/fuel-records",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "fuel-records"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"vineyard_id\": \"{{vineyard_id}}\",\n  \"date\": \"2026-01-15T07:30:00Z\",\n  \"volume_l\": 55.5,\n  \"equipment_id\": \"00000000-0000-4000-8000-000000000003\",\n  \"engine_hours\": 1204.5,\n  \"filled_to_full\": true,\n  \"external_id\": \"example-fuel-1\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      },
+      "description": "Scope: fuel:write. Operational fuel entry only — cost/purchasing/operator fields are not accepted."
+     }
+    },
+    {
+     "name": "PATCH /v1/fuel-records/{fuel_record_id}",
+     "request": {
+      "method": "PATCH",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/fuel-records/REPLACE_WITH_FUEL_RECORD_ID",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "fuel-records",
+        "REPLACE_WITH_FUEL_RECORD_ID"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"expected_updated_at\": \"REPLACE_WITH_UPDATED_AT_FROM_GET\",\n  \"volume_l\": 60\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      },
+      "description": "Scope: fuel:write. Partial update with required expected_updated_at."
+     }
+    },
+    {
+     "name": "POST /v1/irrigation-records",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Idempotency-Key",
+        "value": "{{$guid}}",
+        "description": "Required on every POST. Reuse the SAME key when retrying the SAME request; a new key for each new logical operation."
+       }
+      ],
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/irrigation-records",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "irrigation-records"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"vineyard_id\": \"{{vineyard_id}}\",\n  \"system_id\": \"00000000-0000-4000-8000-000000000004\",\n  \"valve_id\": \"00000000-0000-4000-8000-000000000005\",\n  \"date\": \"2026-01-20\",\n  \"duration_minutes\": 120,\n  \"calculation_method\": \"total_volume\",\n  \"volume_l\": 5000,\n  \"external_id\": \"example-irrigation-77\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      },
+      "description": "Scope: irrigation:write. Create-only. Supply raw inputs for ONE calculation method (configured_flow | session_flow + flow_l_per_hour | total_volume + volume_l | meter_readings + meter_start_l/meter_end_l); VineTrack derives volume, per-block allocations, efficiency and vintage."
+     }
+    },
+    {
+     "name": "POST /v1/growth-stages",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Idempotency-Key",
+        "value": "{{$guid}}",
+        "description": "Required on every POST. Reuse the SAME key when retrying the SAME request; a new key for each new logical operation."
+       }
+      ],
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/growth-stages",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "growth-stages"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"vineyard_id\": \"{{vineyard_id}}\",\n  \"stage_code\": \"EL4\",\n  \"observed_at\": \"2025-09-20T08:00:00Z\",\n  \"block_id\": \"00000000-0000-4000-8000-000000000002\",\n  \"variety\": \"Shiraz\",\n  \"external_id\": \"example-obs-9\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      },
+      "description": "Scope: growth_stages:write. Create-only. Only E-L codes from the VineTrack catalogue are accepted; the stage label is set server-side."
+     }
+    },
+    {
+     "name": "POST /v1/yield-records",
+     "request": {
+      "method": "POST",
+      "header": [
+       {
+        "key": "Idempotency-Key",
+        "value": "{{$guid}}",
+        "description": "Required on every POST. Reuse the SAME key when retrying the SAME request; a new key for each new logical operation."
+       }
+      ],
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/yield-records",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "yield-records"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"vineyard_id\": \"{{vineyard_id}}\",\n  \"vintage_year\": 2026,\n  \"season\": \"2025/26\",\n  \"blocks\": [\n    {\n      \"block_id\": \"00000000-0000-4000-8000-000000000002\",\n      \"area_ha\": 2.0,\n      \"yield_tonnes\": 15.0\n    }\n  ],\n  \"external_id\": \"example-yield-2026\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      },
+      "description": "Scope: yield:write. One entry per block; totals derive from blocks when omitted; per-block yield/ha is always server-derived."
+     }
+    },
+    {
+     "name": "PATCH /v1/yield-records/{yield_record_id}",
+     "request": {
+      "method": "PATCH",
+      "url": {
+       "raw": "{{vinetrack_api_host}}/v1/yield-records/REPLACE_WITH_YIELD_RECORD_ID",
+       "host": [
+        "{{vinetrack_api_host}}"
+       ],
+       "path": [
+        "v1",
+        "yield-records",
+        "REPLACE_WITH_YIELD_RECORD_ID"
+       ]
+      },
+      "body": {
+       "mode": "raw",
+       "raw": "{\n  \"expected_updated_at\": \"REPLACE_WITH_UPDATED_AT_FROM_GET\",\n  \"notes\": \"Final weighbridge figures\"\n}",
+       "options": {
+        "raw": {
+         "language": "json"
+        }
+       }
+      },
+      "description": "Scope: yield:write. Partial update; supplying blocks replaces the full set and re-derives totals unless given explicitly."
+     }
+    }
+   ]
+  }
+ ]
 }
