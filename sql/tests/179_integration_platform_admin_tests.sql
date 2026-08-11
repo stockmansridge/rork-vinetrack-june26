@@ -672,6 +672,8 @@ begin
   -- =========================================================================
   v := public.admin_suspend_integration(cl_b, 'abuse investigation');
   if v ->> 'status' <> 'paused' then raise exception 'T15: suspend result wrong'; end if;
+  -- direct table verification requires postgres (authenticated has no table grants)
+  perform set_config('role', 'postgres', true);
   if not exists (select 1 from public.integration_clients
                  where id = cl_b and status = 'paused' and paused_at is not null) then
     raise exception 'T15: cl_b not paused';
@@ -684,6 +686,7 @@ begin
                    and metadata ->> 'reason' = 'abuse investigation') then
     raise exception 'T15: suspend audit record missing';
   end if;
+  perform set_config('role', 'authenticated', true);
 
   -- double suspend rejected
   v_failed := false;
@@ -722,6 +725,7 @@ begin
   -- reactivate
   v := public.admin_reactivate_integration(cl_b);
   if v ->> 'status' <> 'active' then raise exception 'T15: reactivate result wrong'; end if;
+  perform set_config('role', 'postgres', true);
   if not exists (select 1 from public.integration_clients
                  where id = cl_b and status = 'active' and paused_at is null) then
     raise exception 'T15: cl_b not reactivated';
@@ -732,6 +736,7 @@ begin
                    and metadata ->> 'platform_admin' = 'true') then
     raise exception 'T15: reactivate audit record missing';
   end if;
+  perform set_config('role', 'authenticated', true);
   raise notice 'T15 passed';
 
   -- =========================================================================
@@ -741,6 +746,7 @@ begin
   if v ->> 'status' <> 'revoked' or v ->> 'key_prefix' <> 'vt_test_00000a02' then
     raise exception 'T16: revoke result wrong';
   end if;
+  perform set_config('role', 'postgres', true);
   if not exists (select 1 from public.integration_api_keys
                  where id = k_a2 and revoked_at is not null) then
     raise exception 'T16: key not revoked';
@@ -752,6 +758,7 @@ begin
                    and metadata ->> 'key_prefix' = 'vt_test_00000a02') then
     raise exception 'T16: revoke audit record missing';
   end if;
+  perform set_config('role', 'authenticated', true);
 
   v_failed := false;
   begin
@@ -772,6 +779,7 @@ begin
   -- =========================================================================
   v := public.admin_set_webhook_endpoint_status(ep_a, 'paused', 'receiver maintenance');
   if v ->> 'status' <> 'paused' then raise exception 'T17: pause result wrong'; end if;
+  perform set_config('role', 'postgres', true);
   if not exists (select 1 from public.webhook_endpoints
                  where id = ep_a and status = 'paused' and paused_at is not null) then
     raise exception 'T17: ep_a not paused';
@@ -782,8 +790,10 @@ begin
                    and metadata ->> 'platform_admin' = 'true') then
     raise exception 'T17: pause audit record missing';
   end if;
+  perform set_config('role', 'authenticated', true);
 
   v := public.admin_set_webhook_endpoint_status(ep_b, 'active', 'receiver fixed');
+  perform set_config('role', 'postgres', true);
   if not exists (select 1 from public.webhook_endpoints
                  where id = ep_b and status = 'active'
                    and disabled_at is null and disabled_reason is null
@@ -796,6 +806,7 @@ begin
                    and metadata ->> 'platform_admin' = 'true') then
     raise exception 'T17: reactivate audit record missing';
   end if;
+  perform set_config('role', 'authenticated', true);
 
   v_failed := false;
   begin
