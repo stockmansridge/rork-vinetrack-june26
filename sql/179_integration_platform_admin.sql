@@ -210,16 +210,16 @@ begin
     v_reasons := array['no_usable_api_keys'];
   else
     if v_req_24h >= 20 and v_err_24h::numeric / v_req_24h > 0.10 then
-      v_reasons := v_reasons || 'elevated_api_error_rate_24h';
+      v_reasons := array_append(v_reasons, 'elevated_api_error_rate_24h');
     end if;
     if v_rl_24h >= 10 then
-      v_reasons := v_reasons || 'rate_limited_24h';
+      v_reasons := array_append(v_reasons, 'rate_limited_24h');
     end if;
     if v_max_consec >= 3 then
-      v_reasons := v_reasons || 'webhook_consecutive_failures';
+      v_reasons := array_append(v_reasons, 'webhook_consecutive_failures');
     end if;
     if v_keys_expiring > 0 then
-      v_reasons := v_reasons || 'api_key_expiring_within_7_days';
+      v_reasons := array_append(v_reasons, 'api_key_expiring_within_7_days');
     end if;
 
     if coalesce(array_length(v_reasons, 1), 0) > 0 then
