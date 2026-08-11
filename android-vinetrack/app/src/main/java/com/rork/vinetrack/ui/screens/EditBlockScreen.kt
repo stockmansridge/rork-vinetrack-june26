@@ -941,7 +941,7 @@ private fun AddVarietyDialog(
                     val row = selectedRow ?: return@TextButton
                     onAdd(
                         PaddockVarietyAllocation(
-                            // Stable planting identity (sql/183): keep the id when
+                            // Stable planting identity (sql/184): keep the id when
                             // editing, mint one for a new allocation. Never
                             // regenerate — picking records link to it.
                             id = initial?.id ?: java.util.UUID.randomUUID().toString(),

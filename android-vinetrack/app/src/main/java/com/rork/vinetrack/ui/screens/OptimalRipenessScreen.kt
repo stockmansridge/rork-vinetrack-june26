@@ -881,7 +881,7 @@ private fun BlockAllocationEditor(
                         val remaining = (100.0 - total).coerceAtLeast(0.0)
                         val suggested = if (allocations.isEmpty()) 100.0 else remaining
                         val row = available.first()
-                        // Stable planting identity (sql/183): mint an id for the new
+                        // Stable planting identity (sql/184): mint an id for the new
                         // allocation — picking records link to it.
                         allocations.add(PaddockVarietyAllocation(id = java.util.UUID.randomUUID().toString(), varietyKey = row.varietyKey, name = row.displayName, varietyName = row.displayName, percent = suggested))
                         persist()

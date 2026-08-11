@@ -6,7 +6,7 @@ Supabase); the Lovable Portal consumes this contract as-is and must NOT create
 portal-specific data structures or modify the schema independently.
 
 - Migrations: `sql/180_picking_records.sql`, `sql/184_picking_record_planting_groups.sql` (planting-group identity — full contract in `docs/picking-records-allocation-identity-contract.md`; sql/183 was superseded before deploy), `sql/185_sync_stale_write_protection.sql` (write-once `created_by` + editor `updated_by` attribution guard)
-- Tests: `sql/tests/180_picking_records_tests.sql` (rollback-only)
+- Tests: `sql/tests/180_picking_records_tests.sql`, `sql/tests/184_picking_record_planting_group_tests.sql` (both rollback-only)
 - iOS: `PickingRecord` / `BackendPickingRecord` / `PickingRecordSyncService`
 - Android: `PickingRecord` / `PickingRecordRepository` / `PickingRecordCreateSync` / `PickingRecordUpdateSync` / `PickingRecordDeleteSync`
 
