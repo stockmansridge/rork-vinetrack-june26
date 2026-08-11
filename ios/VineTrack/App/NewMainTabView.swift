@@ -777,9 +777,7 @@ private struct NewHomeTabView: View {
                     Circle()
                         .fill(VineyardTheme.leafGreen.gradient)
                         .frame(width: 40, height: 40)
-                    GrapeVineLeafShape()
-                        .fill(.white)
-                        .frame(width: 22, height: 22)
+                    GrapeLeafIcon(size: 22, color: .white)
                 }
             }
             // The vineyard name is a switcher only when the user belongs to
@@ -905,9 +903,7 @@ private struct NewHomeTabView: View {
                                         .frame(width: 48, height: 48)
                                         .clipShape(.rect(cornerRadius: 12))
                                 } else {
-                                    Image(systemName: "map.fill")
-                                        .font(.title3.weight(.semibold))
-                                        .foregroundStyle(VineyardTheme.leafGreen)
+                                    GrapeLeafIcon(size: 24, color: VineyardTheme.leafGreen)
                                 }
                             }
                             VStack(alignment: .leading, spacing: 2) {

@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -121,6 +122,24 @@ fun OperationalTile(
 /** Compact stat column used in the vineyard overview card. */
 @Composable
 fun OverviewStat(value: String, label: String, icon: ImageVector, iconTint: Color, modifier: Modifier = Modifier) {
+    val vine = LocalVineColors.current
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(18.dp))
+        Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+        Text(label, fontSize = 12.sp, color = vine.textSecondary)
+    }
+}
+
+/**
+ * Painter-based variant of [OverviewStat] for drawable icons such as the
+ * grape vine leaf brand mark (matches the iOS Vines stat icon).
+ */
+@Composable
+fun OverviewStat(value: String, label: String, icon: Painter, iconTint: Color, modifier: Modifier = Modifier) {
     val vine = LocalVineColors.current
     Column(
         modifier = modifier,

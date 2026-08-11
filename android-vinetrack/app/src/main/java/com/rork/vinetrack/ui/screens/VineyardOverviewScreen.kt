@@ -47,10 +47,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.R
 import com.rork.vinetrack.data.MapDefaults
 import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.model.Paddock
@@ -185,7 +188,7 @@ fun VineyardOverviewScreen(
                     OverviewHeading("Vineyard Summary")
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                         StatCard("Total Area", fmt.formatArea(totalAreaHa), Icons.Filled.Map, VineColors.LeafGreen, Modifier.weight(1f))
-                        StatCard("Total Vines", formatLargeCount(totalVines), Icons.Filled.Spa, VineColors.Olive, Modifier.weight(1f))
+                        StatCard("Total Vines", formatLargeCount(totalVines), painterResource(R.drawable.grape_vine_leaf), VineColors.Olive, Modifier.weight(1f))
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                         StatCard("Trellis Length", fmt.formatShortDistance(totalTrellis), Icons.Filled.Straighten, VineColors.EarthBrown, Modifier.weight(1f))
@@ -276,6 +279,34 @@ private fun OverviewHeading(text: String) {
 
 @Composable
 private fun StatCard(label: String, value: String, icon: ImageVector, color: Color, modifier: Modifier = Modifier) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(vine.cardBackground)
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(color.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
+        }
+        Column {
+            Text(value, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+            Text(label, fontSize = 11.sp, color = vine.textSecondary)
+        }
+    }
+}
+
+/**
+ * Painter-based variant of [StatCard] for drawable icons such as the grape
+ * vine leaf brand mark (matches the iOS Vines stat icon).
+ */
+@Composable
+private fun StatCard(label: String, value: String, icon: Painter, color: Color, modifier: Modifier = Modifier) {
     val vine = LocalVineColors.current
     Row(
         modifier = modifier

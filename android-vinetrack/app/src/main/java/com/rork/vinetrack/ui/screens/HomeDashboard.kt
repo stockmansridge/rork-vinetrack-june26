@@ -80,7 +80,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -285,12 +287,20 @@ private fun HeaderRow(
                 modifier = Modifier.size(40.dp).clip(CircleShape),
             )
         } else {
-            Image(
-                painter = painterResource(R.drawable.vinetrack_logo),
-                contentDescription = "VineTrack logo",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.size(40.dp).clip(CircleShape),
-            )
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(VineColors.LeafGreen, VineColors.DarkGreen))),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.grape_vine_leaf),
+                    contentDescription = "Vineyard logo",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
         }
         if (canSwitch) {
             Box(modifier = Modifier.weight(1f)) {
@@ -844,14 +854,14 @@ private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onA
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             QuickActionCard(
                 title = "Repairs",
-                icon = Icons.Filled.Build,
+                icon = rememberVectorPainter(Icons.Filled.Build),
                 colors = listOf(VineColors.Orange, VineColors.Orange.copy(alpha = 0.75f)),
                 modifier = Modifier.weight(1f),
                 onClick = onRepairs,
             )
             QuickActionCard(
                 title = "Growth",
-                icon = Icons.Filled.Grass,
+                icon = painterResource(R.drawable.grape_vine_leaf),
                 colors = listOf(VineColors.LeafGreen, VineColors.DarkGreen),
                 modifier = Modifier.weight(1f),
                 onClick = onGrowth,
@@ -893,7 +903,7 @@ private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onA
 @Composable
 private fun QuickActionCard(
     title: String,
-    icon: ImageVector,
+    icon: Painter,
     colors: List<Color>,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
@@ -940,7 +950,12 @@ private fun OverviewSection(state: AppUiState, onOpenMap: () -> Unit) {
                             .background(VineColors.LeafGreen.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Filled.Map, contentDescription = null, tint = VineColors.LeafGreen)
+                        Icon(
+                            painter = painterResource(R.drawable.grape_vine_leaf),
+                            contentDescription = null,
+                            tint = VineColors.LeafGreen,
+                            modifier = Modifier.size(24.dp),
+                        )
                     }
                 }
                 Column(modifier = Modifier.weight(1f)) {
@@ -960,7 +975,7 @@ private fun OverviewSection(state: AppUiState, onOpenMap: () -> Unit) {
                     if (totalHectares >= 100) "%.0f".format(totalHectares) else "%.1f".format(totalHectares),
                     "Hectares", Icons.Filled.Map, VineColors.Orange, Modifier.weight(1f),
                 )
-                OverviewStat(formattedCount(totalVines), "Vines", Icons.Filled.Spa, VineColors.DarkGreen, Modifier.weight(1f))
+                OverviewStat(formattedCount(totalVines), "Vines", painterResource(R.drawable.grape_vine_leaf), VineColors.DarkGreen, Modifier.weight(1f))
             }
         }
     }
