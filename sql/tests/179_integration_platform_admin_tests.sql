@@ -31,6 +31,12 @@
 
 begin;
 
+-- Stable snapshot: these tests run against a shared/live database. All global
+-- metrics assertions are baseline-relative; repeatable read keeps the baseline
+-- and the later RPC reads on the same snapshot so exact deltas hold even with
+-- concurrent API traffic.
+set transaction isolation level repeatable read;
+
 do $$
 declare
   u_admin uuid;
@@ -67,6 +73,19 @@ declare
   v_text text;
   v_count integer;
   e text;
+  -- Live-data baselines (captured before activity fixtures are inserted)
+  b_req integer;
+  b_rl integer;
+  b_5xx integer;
+  b_unauth integer;
+  b_keys integer;
+  b_d_total integer;
+  b_d_delivered integer;
+  b_d_failed integer;
+  b_d_pending integer;
+  b_d_retry integer;
+  b_att_failed integer;
+  b_ep_auto integer;
 begin
   -- =========================================================================
   -- Fixtures (created as postgres; RLS bypassed)
@@ -122,6 +141,39 @@ begin
 
   insert into public.integration_client_scopes (integration_client_id, scope, granted_by)
   values (cl_a, 'trips:read', u_owner_a);
+
+  -- Baselines: pre-fixture state of the global tables the metrics RPCs read.
+  -- now() is transaction-stable, so these windows match the RPCs' windows.
+  select count(*),
+         count(*) filter (where status_code = 429),
+         count(*) filter (where status_code between 500 and 599),
+         count(*) filter (where integration_client_id is null),
+         count(distinct api_key_id)
+    into b_req, b_rl, b_5xx, b_unauth, b_keys
+  from public.integration_api_requests
+  where created_at >= now() - interval '24 hours';
+
+  select count(*),
+         count(*) filter (where status = 'delivered'),
+         count(*) filter (where status = 'failed'),
+         count(*) filter (where status = 'pending'),
+         count(*) filter (where status = 'pending' and attempt_count >= 1)
+    into b_d_total, b_d_delivered, b_d_failed, b_d_pending, b_d_retry
+  from public.webhook_deliveries
+  where created_at >= now() - interval '24 hours';
+
+  select count(*) filter (where a.error_category is not null)
+    into b_att_failed
+  from public.webhook_delivery_attempts a
+  join public.webhook_deliveries d on d.id = a.delivery_id
+  where a.attempted_at >= now() - interval '24 hours';
+
+  select count(*)
+    into b_ep_auto
+  from public.webhook_endpoints
+  where deleted_at is null
+    and status = 'disabled'
+    and disabled_reason = 'auto_disabled_after_consecutive_failures';
 
   -- API request log: cl_a gets 2x200, 1x429, 1x500; plus one unauthenticated 401.
   insert into public.integration_api_requests
@@ -304,6 +356,8 @@ begin
     raise exception 'T5: expected >= 3 integrations, got %', jsonb_array_length(v -> 'data');
   end if;
 
+  -- Fixture-scoped page (the live DB may have more than a page of integrations)
+  v := public.admin_list_integrations(p_owner_query => 't179');
   select x into v_row from jsonb_array_elements(v -> 'data') x
   where x ->> 'id' = cl_a::text;
   if v_row is null then raise exception 'T5: cl_a missing from list'; end if;
@@ -328,7 +382,7 @@ begin
   -- =========================================================================
   -- T6: filters
   -- =========================================================================
-  v := public.admin_list_integrations(p_environment => 'test');
+  v := public.admin_list_integrations(p_environment => 'test', p_owner_query => 't179');
   if jsonb_array_length(v -> 'data') <> 1
      or (v -> 'data' -> 0 ->> 'id') <> cl_a::text then
     raise exception 'T6: environment=test filter wrong';
@@ -345,7 +399,7 @@ begin
   where x ->> 'id' in (cl_b::text, cl_old::text);
   if v_count <> 2 then raise exception 'T6: owner query filter wrong'; end if;
 
-  v := public.admin_list_integrations(p_rate_limited_only => true);
+  v := public.admin_list_integrations(p_rate_limited_only => true, p_owner_query => 't179');
   select count(*) into v_count from jsonb_array_elements(v -> 'data') x
   where x ->> 'id' = cl_a::text;
   if v_count <> 1 then raise exception 'T6: rate_limited_only filter wrong'; end if;
@@ -386,7 +440,7 @@ begin
   -- =========================================================================
   -- T8: health classification
   -- =========================================================================
-  v := public.admin_list_integrations();
+  v := public.admin_list_integrations(p_owner_query => 't179');
   select x into v_row from jsonb_array_elements(v -> 'data') x where x ->> 'id' = cl_a::text;
   if v_row #>> '{health,classification}' <> 'healthy' then
     raise exception 'T8: cl_a expected healthy, got % (%)',
@@ -403,24 +457,28 @@ begin
       v_row #>> '{health,classification}', v_row #> '{health,reasons}';
   end if;
 
-  v := public.admin_list_integrations(p_health => 'critical');
-  select count(*) into v_count from jsonb_array_elements(v -> 'data') x
-  where x ->> 'id' = cl_b::text;
-  if v_count <> 1 then raise exception 'T8: health filter wrong'; end if;
+  v := public.admin_list_integrations(p_health => 'critical', p_owner_query => 't179');
+  if jsonb_array_length(v -> 'data') <> 1
+     or (v -> 'data' -> 0 ->> 'id') <> cl_b::text then
+    raise exception 'T8: health filter wrong';
+  end if;
   raise notice 'T8 passed';
 
   -- =========================================================================
   -- T9: API metrics
   -- =========================================================================
+  -- Baseline-relative: the fixture adds 5 requests (2x200, 1x429, 1x500,
+  -- 1 unauthenticated 401) using exactly one new api key (k_a1).
   v := public.admin_integration_api_metrics('24h');
-  if (v #>> '{totals,requests}')::integer < 5
-     or (v #>> '{totals,rate_limited}')::integer <> 1
-     or (v #>> '{totals,server_error_5xx}')::integer <> 1
-     or (v #>> '{totals,unauthenticated}')::integer <> 1
-     or (v #>> '{totals,unique_api_keys}')::integer <> 1
+  if (v #>> '{totals,requests}')::integer <> b_req + 5
+     or (v #>> '{totals,rate_limited}')::integer <> b_rl + 1
+     or (v #>> '{totals,server_error_5xx}')::integer <> b_5xx + 1
+     or (v #>> '{totals,unauthenticated}')::integer <> b_unauth + 1
+     or (v #>> '{totals,unique_api_keys}')::integer <> b_keys + 1
      or (v #>> '{totals,avg_duration_ms}') is null
      or (v #>> '{totals,p95_duration_ms}') is null then
-    raise exception 'T9: totals wrong: %', v -> 'totals';
+    raise exception 'T9: totals wrong (baseline req=% rl=% 5xx=% unauth=% keys=%): %',
+      b_req, b_rl, b_5xx, b_unauth, b_keys, v -> 'totals';
   end if;
 
   v := public.admin_integration_api_metrics('24h', null, 'integration');
@@ -448,23 +506,41 @@ begin
     raise exception 'T10: expected >= 5 request rows';
   end if;
 
+  -- Fixture rows are the newest in the table (created_at = now()), so they are
+  -- always on the first page; assertions are presence-based, not count-based,
+  -- because the live DB has its own log rows.
   v := public.admin_list_integration_api_requests(p_unauthenticated_only => true);
-  if jsonb_array_length(v -> 'data') <> 1
-     or (v -> 'data' -> 0 -> 'integration_client_id') <> 'null'::jsonb
-     or (v -> 'data' -> 0 ->> 'error_code') <> 'invalid_api_key' then
+  select x into v_row from jsonb_array_elements(v -> 'data') x
+  where x ->> 'request_id' = 'req_' || md5('t179-r5');
+  if v_row is null
+     or (v_row -> 'integration_client_id') <> 'null'::jsonb
+     or (v_row ->> 'error_code') <> 'invalid_api_key' then
     raise exception 'T10: unauthenticated filter wrong';
+  end if;
+  select count(*) into v_count from jsonb_array_elements(v -> 'data') x
+  where (x -> 'integration_client_id') <> 'null'::jsonb;
+  if v_count <> 0 then
+    raise exception 'T10: unauthenticated filter returned authenticated rows';
   end if;
 
   v := public.admin_list_integration_api_requests(p_rate_limited_only => true);
-  if jsonb_array_length(v -> 'data') <> 1
-     or (v -> 'data' -> 0 ->> 'status_code')::integer <> 429 then
-    raise exception 'T10: rate_limited filter wrong';
-  end if;
+  select x into v_row from jsonb_array_elements(v -> 'data') x
+  where x ->> 'request_id' = 'req_' || md5('t179-r3');
+  if v_row is null then raise exception 'T10: rate_limited fixture row missing'; end if;
+  select count(*) into v_count from jsonb_array_elements(v -> 'data') x
+  where (x ->> 'status_code')::integer <> 429;
+  if v_count <> 0 then raise exception 'T10: rate_limited filter wrong'; end if;
 
   v := public.admin_list_integration_api_requests(p_errors_only => true);
-  if jsonb_array_length(v -> 'data') <> 3 then
-    raise exception 'T10: errors_only expected 3, got %', jsonb_array_length(v -> 'data');
+  select count(*) into v_count from jsonb_array_elements(v -> 'data') x
+  where x ->> 'request_id' in
+    ('req_' || md5('t179-r3'), 'req_' || md5('t179-r4'), 'req_' || md5('t179-r5'));
+  if v_count <> 3 then
+    raise exception 'T10: errors_only expected 3 fixture rows, got %', v_count;
   end if;
+  select count(*) into v_count from jsonb_array_elements(v -> 'data') x
+  where (x ->> 'status_code')::integer < 400;
+  if v_count <> 0 then raise exception 'T10: errors_only returned non-error rows'; end if;
 
   v := public.admin_list_integration_api_requests(p_client_id => cl_a, p_status_class => '2xx');
   if jsonb_array_length(v -> 'data') <> 2
@@ -482,19 +558,24 @@ begin
   -- =========================================================================
   -- T11: webhook metrics
   -- =========================================================================
+  -- Baseline-relative: fixture adds 3 deliveries (delivered/failed/pending-
+  -- retry), 2 failed attempts and 1 auto-disabled endpoint on top of live data.
   v := public.admin_webhook_metrics('24h');
-  if (v #>> '{deliveries,total}')::integer <> 3
-     or (v #>> '{deliveries,delivered}')::integer <> 1
-     or (v #>> '{deliveries,failed}')::integer <> 1
-     or (v #>> '{deliveries,pending}')::integer <> 1
-     or (v #>> '{deliveries,retry_scheduled}')::integer <> 1 then
-    raise exception 'T11: delivery counts wrong: %', v -> 'deliveries';
+  if (v #>> '{deliveries,total}')::integer <> b_d_total + 3
+     or (v #>> '{deliveries,delivered}')::integer <> b_d_delivered + 1
+     or (v #>> '{deliveries,failed}')::integer <> b_d_failed + 1
+     or (v #>> '{deliveries,pending}')::integer <> b_d_pending + 1
+     or (v #>> '{deliveries,retry_scheduled}')::integer <> b_d_retry + 1 then
+    raise exception 'T11: delivery counts wrong (baseline total=%): %',
+      b_d_total, v -> 'deliveries';
   end if;
-  if (v #>> '{endpoints,auto_disabled}')::integer <> 1 then
-    raise exception 'T11: auto_disabled count wrong: %', v -> 'endpoints';
+  if (v #>> '{endpoints,auto_disabled}')::integer <> b_ep_auto + 1 then
+    raise exception 'T11: auto_disabled count wrong (baseline %): %',
+      b_ep_auto, v -> 'endpoints';
   end if;
-  if (v #>> '{attempts,failed}')::integer <> 2 then
-    raise exception 'T11: failed attempts wrong: %', v -> 'attempts';
+  if (v #>> '{attempts,failed}')::integer <> b_att_failed + 2 then
+    raise exception 'T11: failed attempts wrong (baseline %): %',
+      b_att_failed, v -> 'attempts';
   end if;
   if v #>> '{oldest_pending_delivery,public_id}' is null then
     raise exception 'T11: oldest pending delivery missing';
@@ -509,37 +590,48 @@ begin
   -- =========================================================================
   -- T12: endpoint diagnostics — masking + safety + failing filter
   -- =========================================================================
-  v := public.admin_list_webhook_endpoints();
-  if jsonb_array_length(v -> 'data') <> 2 then
-    raise exception 'T12: expected 2 endpoints';
+  -- Client-scoped (the live DB has its own endpoints)
+  v := public.admin_list_webhook_endpoints(p_client_id => cl_a);
+  if jsonb_array_length(v -> 'data') <> 1 then
+    raise exception 'T12: expected 1 endpoint for cl_a';
   end if;
-  select x into v_row from jsonb_array_elements(v -> 'data') x where x ->> 'id' = ep_a::text;
+  v_row := v -> 'data' -> 0;
   if v_row ->> 'url' <> 'https://receiver.example.com/hooks/vinetrack?[redacted]' then
     raise exception 'T12: URL not masked: %', v_row ->> 'url';
   end if;
 
-  v_text := v::text;
+  v2 := public.admin_list_webhook_endpoints(p_client_id => cl_b);
+  if jsonb_array_length(v2 -> 'data') <> 1 then
+    raise exception 'T12: expected 1 endpoint for cl_b';
+  end if;
+
+  v_text := v::text || v2::text;
   if v_text like '%supersecretvalue%' or v_text like '%signing_secret%'
      or v_text like '%whsec_t179%' or v_text like '%secret_ref%' then
     raise exception 'T12: endpoint listing leaks secrets';
   end if;
 
-  v := public.admin_list_webhook_endpoints(p_failing_only => true);
+  v := public.admin_list_webhook_endpoints(p_failing_only => true, p_client_id => cl_b);
   if jsonb_array_length(v -> 'data') <> 1
      or (v -> 'data' -> 0 ->> 'id') <> ep_b::text
      or (v -> 'data' -> 0 ->> 'disabled_reason') <> 'auto_disabled_after_consecutive_failures' then
     raise exception 'T12: failing_only filter wrong';
+  end if;
+  v := public.admin_list_webhook_endpoints(p_failing_only => true, p_client_id => cl_a);
+  if jsonb_array_length(v -> 'data') <> 0 then
+    raise exception 'T12: failing_only returned healthy endpoint';
   end if;
   raise notice 'T12 passed';
 
   -- =========================================================================
   -- T13: delivery diagnostics
   -- =========================================================================
-  v := public.admin_list_webhook_deliveries();
+  -- Client-scoped (the live DB has its own deliveries)
+  v := public.admin_list_webhook_deliveries(p_client_id => cl_a);
   if jsonb_array_length(v -> 'data') <> 3 then
-    raise exception 'T13: expected 3 deliveries';
+    raise exception 'T13: expected 3 deliveries for cl_a';
   end if;
-  v := public.admin_list_webhook_deliveries(p_status => 'failed');
+  v := public.admin_list_webhook_deliveries(p_client_id => cl_a, p_status => 'failed');
   if jsonb_array_length(v -> 'data') <> 1
      or (v -> 'data' -> 0 ->> 'public_id') is null
      or (v -> 'data' -> 0 ->> 'event_type') <> v_event
