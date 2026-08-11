@@ -187,13 +187,16 @@ struct RecordActualYieldSheet: View {
         return varietyOptions.first(where: { $0.id == key })
     }
 
-    /// One selectable planting per variety allocation on the block (sql/183).
-    /// Block + Variety + Clone + Rootstock is NOT unique — two plantings of
-    /// the same variety can share both — so each option carries the STABLE
-    /// allocation id, which is the only exact planting identity.
+    /// One selectable PLANTING GROUP per distinct Variety + Clone + Rootstock
+    /// on the block (sql/184). A group may span several physical
+    /// `variety_allocations[]` sections — identical sections are ONE option,
+    /// and every member allocation id is preserved under the group.
     private struct PlantingOption: Identifiable, Hashable {
-        let id: String            // selection key: allocation uuid or "legacy"
-        let allocationId: UUID?
+        let id: String            // selection key: group key or "legacy"
+        /// `PlantingGroup.key` — nil only for the unlinked legacy option.
+        let groupKey: String?
+        /// Member allocation ids in block-config order (may be empty).
+        let memberAllocationIds: [UUID]
         let clone: String?
         let rootstock: String?
         let label: String
@@ -205,69 +208,74 @@ struct RecordActualYieldSheet: View {
 
     private var plantingOptions: [PlantingOption] {
         guard let paddock = detailPaddock, let selected = selectedVarietyOption else { return [] }
-        struct Candidate {
-            let allocation: PaddockVarietyAllocation
-            let clone: String?
-            let rootstock: String?
-            let base: String
+        struct Group {
+            var clone: String?
+            var rootstock: String?
+            var memberIds: [UUID] = []
+            var totalPercent: Double = 0
         }
-        var candidates: [Candidate] = []
+        // Group allocations of the selected variety by normalised
+        // clone|rootstock, preserving block-config order — identical physical
+        // sections form ONE planting group (sql/184).
+        var order: [String] = []
+        var groups: [String: Group] = [:]
         for allocation in paddock.varietyAllocations {
             let resolved = PaddockVarietyResolver.resolve(allocation: allocation, varieties: store.grapeVarieties)
             guard let name = resolved.displayName,
                   PickingYieldAggregator.normalisedVariety(name) == selected.id else { continue }
             let clone = allocation.clone?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             let rootstock = allocation.rootstock?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-            let base = [clone, rootstock].compactMap { $0 }.joined(separator: " · ")
-            candidates.append(Candidate(allocation: allocation, clone: clone, rootstock: rootstock, base: base))
-        }
-        var baseCounts: [String: Int] = [:]
-        for candidate in candidates {
-            baseCounts[candidate.base.lowercased(), default: 0] += 1
+            let groupId = "\(PlantingGroup.normalise(clone))|\(PlantingGroup.normalise(rootstock))"
+            if groups[groupId] == nil {
+                order.append(groupId)
+                groups[groupId] = Group(clone: clone, rootstock: rootstock)
+            }
+            groups[groupId]?.memberIds.append(allocation.id)
+            if allocation.percent > 0 {
+                groups[groupId]?.totalPercent += allocation.percent
+            }
         }
         var options: [PlantingOption] = []
-        for (index, candidate) in candidates.enumerated() {
-            let ordinal = index + 1
-            var label = candidate.base
-            if label.isEmpty {
-                label = "Planting \(ordinal)"
-            } else if (baseCounts[candidate.base.lowercased()] ?? 0) > 1 {
-                // Identical clone AND rootstock twice on one block — the
-                // allocation id is the only exact identity, so disambiguate
-                // by planting position (plus percent when configured).
-                if candidate.allocation.percent > 0 {
-                    label += " — Planting \(ordinal) (\(Self.numberText(candidate.allocation.percent))%)"
-                } else {
-                    label += " — Planting \(ordinal)"
+        for groupId in order {
+            guard let group = groups[groupId] else { continue }
+            let base = [group.clone, group.rootstock].compactMap { $0 }.joined(separator: " · ")
+            var label = base.isEmpty ? "No clone / rootstock" : base
+            if group.memberIds.count > 1 {
+                label += " — \(group.memberIds.count) plantings"
+                if group.totalPercent > 0 {
+                    label += " (\(Self.numberText(group.totalPercent))%)"
                 }
             }
+            let key = PlantingGroup.key(varietyName: selected.name, clone: group.clone, rootstock: group.rootstock)
             options.append(PlantingOption(
-                id: candidate.allocation.id.uuidString,
-                allocationId: candidate.allocation.id,
-                clone: candidate.clone,
-                rootstock: candidate.rootstock,
+                id: key,
+                groupKey: key,
+                memberAllocationIds: group.memberIds,
+                clone: group.clone,
+                rootstock: group.rootstock,
                 label: label,
-                hasSnapshot: candidate.clone != nil || candidate.rootstock != nil
+                hasSnapshot: group.clone != nil || group.rootstock != nil
             ))
         }
-        // Editing: preserve the record's planting snapshot while block and
-        // variety still match. A record linked to a still-existing allocation
+        // Editing: preserve the record's planting-group snapshot while block
+        // and variety still match. A record linked to a still-existing group
         // selects it directly; anything else gets a legacy option that keeps
-        // the historical snapshot. Unlinked records are NEVER auto-linked —
-        // linking is always an explicit selection.
+        // the historical snapshot (key + member ids as stored). Unlinked
+        // records are NEVER auto-linked — linking is always explicit.
         if let record = editingRecord,
            record.paddockId == paddock.id,
            PickingYieldAggregator.normalisedVariety(record.varietyName) == selected.id,
-           !(record.varietyAllocationId != nil && options.contains(where: { $0.allocationId == record.varietyAllocationId })) {
+           !(record.plantingGroupKey != nil && options.contains(where: { $0.groupKey == record.plantingGroupKey })) {
             let clone = record.clone?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             let rootstock = record.rootstock?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-            if record.varietyAllocationId != nil || clone != nil || rootstock != nil {
+            if record.plantingGroupKey != nil || clone != nil || rootstock != nil {
                 let base = [clone, rootstock].compactMap { $0 }.joined(separator: " · ")
                 let label = (base.isEmpty ? "Original planting" : base)
-                    + (record.varietyAllocationId == nil ? " (not linked)" : "")
+                    + (record.plantingGroupKey == nil ? " (not linked)" : "")
                 options.append(PlantingOption(
                     id: Self.legacyPlantingOptionId,
-                    allocationId: record.varietyAllocationId,
+                    groupKey: record.plantingGroupKey,
+                    memberAllocationIds: record.varietyAllocationIds ?? [],
                     clone: clone,
                     rootstock: rootstock,
                     label: label,
@@ -547,7 +555,7 @@ struct RecordActualYieldSheet: View {
             if varietyOptions.isEmpty, detailPaddock != nil {
                 Text("This block has no configured varieties. Configure them in Block setup to select variety, clone and rootstock here.")
             } else if isEditing {
-                Text("Changing the block resets the variety and planting; changing the variety resets the planting. Each planting is the block's exact variety allocation (clone · rootstock).")
+                Text("Changing the block resets the variety and planting; changing the variety resets the planting. Each planting is a group of the block's sections with the same variety, clone and rootstock.")
             }
         }
 
@@ -651,15 +659,15 @@ struct RecordActualYieldSheet: View {
         }
     }
 
-    /// Initial planting selection when editing: the record's allocation when
-    /// it still exists on the block, otherwise the legacy snapshot option.
-    /// An unlinked record is never auto-matched to an allocation — with two
-    /// identical plantings a snapshot match would be a guess.
+    /// Initial planting selection when editing: the record's planting group
+    /// when it still exists on the block, otherwise the legacy snapshot
+    /// option. An unlinked record is never auto-matched to a group — linking
+    /// stays an explicit user selection.
     private func initialPlantingSelectionId() -> String? {
         guard let record = editingRecord else { return nil }
         let options = plantingOptions
-        if let allocationId = record.varietyAllocationId,
-           let match = options.first(where: { $0.allocationId == allocationId }) {
+        if let groupKey = record.plantingGroupKey,
+           let match = options.first(where: { $0.id != Self.legacyPlantingOptionId && $0.groupKey == groupKey }) {
             return match.id
         }
         return options.first(where: { $0.id == Self.legacyPlantingOptionId })?.id
@@ -730,7 +738,8 @@ struct RecordActualYieldSheet: View {
             varietyId: selectedVarietyOption?.varietyId,
             varietyKey: selectedVarietyOption?.varietyKey,
             varietyName: resolvedDetailVarietyName,
-            varietyAllocationId: planting?.allocationId,
+            plantingGroupKey: planting?.groupKey,
+            varietyAllocationIds: planting?.groupKey != nil ? planting?.memberAllocationIds : nil,
             clone: planting?.clone,
             rootstock: planting?.rootstock,
             weightKg: weight,
@@ -777,7 +786,8 @@ struct RecordActualYieldSheet: View {
         updated.varietyKey = selectedVarietyOption?.varietyKey
         updated.varietyName = resolvedDetailVarietyName
         let planting = selectedPlantingOption
-        updated.varietyAllocationId = planting?.allocationId
+        updated.plantingGroupKey = planting?.groupKey
+        updated.varietyAllocationIds = planting?.groupKey != nil ? planting?.memberAllocationIds : nil
         updated.clone = planting?.clone
         updated.rootstock = planting?.rootstock
         updated.weightKg = weight

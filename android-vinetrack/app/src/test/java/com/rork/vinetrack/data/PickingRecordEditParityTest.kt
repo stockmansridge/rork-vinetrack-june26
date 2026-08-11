@@ -1,6 +1,7 @@
 package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.model.PickingRecord
+import com.rork.vinetrack.data.model.plantingGroupKey
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -22,10 +23,11 @@ import java.time.LocalDate
  *  * the local vintage mirror recomputes when the picked date changes,
  *  * Block + Variety + Vintage totals (the actual yield) recompute after
  *    an edit, and
- *  * the planting identity (`variety_allocation_id` + rootstock snapshot,
- *    sql/183) round-trips exactly — two plantings with identical clone AND
- *    rootstock stay distinct by allocation id, and unlinked records stay
- *    unlinked (never guessed).
+ *  * the planting-GROUP identity (`planting_group_key` +
+ *    `variety_allocation_ids` members + rootstock snapshot, sql/184)
+ *    round-trips exactly — identical sections share ONE group key, every
+ *    member allocation id is preserved under the group (never one
+ *    arbitrary id), and unlinked records stay unlinked (never guessed).
  */
 class PickingRecordEditParityTest {
 
@@ -41,7 +43,8 @@ class PickingRecordEditParityTest {
         vintage: Int = 2027,
         paddockId: String = blockA,
         varietyName: String = "Shiraz",
-        varietyAllocationId: String? = null,
+        plantingGroupKey: String? = null,
+        varietyAllocationIds: List<String>? = null,
         clone: String? = "PT23",
         rootstock: String? = null,
         weightKg: Double = 850.0,
@@ -56,7 +59,8 @@ class PickingRecordEditParityTest {
         varietyId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         varietyKey = "shiraz",
         varietyName = varietyName,
-        varietyAllocationId = varietyAllocationId,
+        plantingGroupKey = plantingGroupKey,
+        varietyAllocationIds = varietyAllocationIds,
         clone = clone,
         rootstock = rootstock,
         weightKg = weightKg,
@@ -100,7 +104,8 @@ class PickingRecordEditParityTest {
         assertEquals(record.paddockId, replayed.paddockId)
         assertEquals(record.varietyKey, replayed.varietyKey)
         assertEquals(record.varietyName, replayed.varietyName)
-        assertEquals(record.varietyAllocationId, replayed.varietyAllocationId)
+        assertEquals(record.plantingGroupKey, replayed.plantingGroupKey)
+        assertEquals(record.varietyAllocationIds, replayed.varietyAllocationIds)
         assertEquals(record.clone, replayed.clone)
         assertEquals(record.rootstock, replayed.rootstock)
         assertEquals(record.weightKg, replayed.weightKg, 1e-9)
@@ -197,34 +202,49 @@ class PickingRecordEditParityTest {
         assertEquals(0.2, detailedActualTonnes(records, blockB, "Shiraz", 2027)!!, 1e-9)
     }
 
-    // ---- Planting identity (sql/183) ------------------------------------------
+    // ---- Planting-group identity (sql/184) -------------------------------------
 
     @Test
-    fun updatePayloadCarriesPlantingIdentity() {
+    fun updatePayloadCarriesPlantingGroupIdentity() {
+        // A multi-section group: BOTH member allocation ids travel under the
+        // group key — never one arbitrary id.
+        val members = listOf(
+            "11111111-2222-4333-8444-555555555555",
+            "66666666-7777-4888-8999-aaaaaaaaaaaa",
+        )
         val record = makeRecord(
             varietyName = "Pinot Noir",
-            varietyAllocationId = "77777777-7777-4777-8777-777777777777",
+            plantingGroupKey = plantingGroupKey("Pinot Noir", "777", "Richter 110"),
+            varietyAllocationIds = members,
             clone = "777",
             rootstock = "Richter 110",
         )
         val payload = PickingRecordUpdateSync.Payload.from(record, "2027-02-11T00:00:00Z")
         val encoded = json.encodeToString(PickingRecordUpdateSync.Payload.serializer(), payload)
 
-        assertTrue(encoded.contains("77777777-7777-4777-8777-777777777777"))
-        assertTrue(encoded.contains("Richter 110"))
+        assertTrue(encoded.contains("pinot noir|777|richter 110"))
+        assertTrue(encoded.contains("11111111-2222-4333-8444-555555555555"))
+        assertTrue(encoded.contains("66666666-7777-4888-8999-aaaaaaaaaaaa"))
 
         val replayed = json.decodeFromString(PickingRecordUpdateSync.Payload.serializer(), encoded).toRecord()
-        assertEquals(record.varietyAllocationId, replayed.varietyAllocationId)
+        assertEquals(record.plantingGroupKey, replayed.plantingGroupKey)
+        assertEquals(members, replayed.varietyAllocationIds)
         assertEquals(record.clone, replayed.clone)
         assertEquals(record.rootstock, replayed.rootstock)
     }
 
     @Test
-    fun createPayloadCarriesPlantingIdentityForOfflineReplay() {
-        // An offline-created pick must replay the exact planting link.
+    fun createPayloadCarriesPlantingGroupForOfflineReplay() {
+        // An offline-created pick must replay the exact group link with every
+        // member id intact.
+        val members = listOf(
+            "11111111-2222-4333-8444-555555555555",
+            "66666666-7777-4888-8999-aaaaaaaaaaaa",
+        )
         val record = makeRecord(
             varietyName = "Pinot Noir",
-            varietyAllocationId = "77777777-7777-4777-8777-777777777777",
+            plantingGroupKey = plantingGroupKey("Pinot Noir", "777", "Richter 110"),
+            varietyAllocationIds = members,
             clone = "777",
             rootstock = "Richter 110",
         )
@@ -237,7 +257,8 @@ class PickingRecordEditParityTest {
             varietyId = record.varietyId,
             varietyKey = record.varietyKey,
             varietyName = record.varietyName,
-            varietyAllocationId = record.varietyAllocationId,
+            plantingGroupKey = record.plantingGroupKey,
+            varietyAllocationIds = record.varietyAllocationIds,
             clone = record.clone,
             rootstock = record.rootstock,
             weightKg = record.weightKg,
@@ -245,39 +266,53 @@ class PickingRecordEditParityTest {
         )
         val encoded = json.encodeToString(PickingRecordCreateSync.Payload.serializer(), payload)
         val decoded = json.decodeFromString(PickingRecordCreateSync.Payload.serializer(), encoded)
-        assertEquals(record.varietyAllocationId, decoded.varietyAllocationId)
+        assertEquals(record.plantingGroupKey, decoded.plantingGroupKey)
+        assertEquals(members, decoded.varietyAllocationIds)
         assertEquals(record.rootstock, decoded.rootstock)
     }
 
     @Test
-    fun identicalCloneRootstockPlantingsStayDistinctByAllocationId() {
-        // The motivating case: one block, two Pinot Noir plantings, BOTH
-        // Clone 777 · Richter 110. Block + variety + clone + rootstock is
-        // identical — only the allocation id separates the picks.
-        val pickOne = makeRecord(
-            id = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
-            varietyName = "Pinot Noir",
-            varietyAllocationId = "11111111-2222-4333-8444-555555555555",
-            clone = "777",
-            rootstock = "Richter 110",
-        )
-        val pickTwo = makeRecord(
-            id = "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2",
-            varietyName = "Pinot Noir",
-            varietyAllocationId = "66666666-7777-4888-8999-aaaaaaaaaaaa",
-            clone = "777",
-            rootstock = "Richter 110",
-        )
+    fun identicalSectionsShareOnePlantingGroupKey() {
+        // The motivating case: one block, two Pinot Noir sections, BOTH
+        // Clone 777 · Richter 110 — they are ONE planting group. The key is
+        // case/whitespace-insensitive so client drift can never fork it
+        // (exact parity with iOS PlantingGroup.key and SQL
+        // public.planting_group_key).
+        val a = plantingGroupKey("Pinot Noir", "777", "Richter 110")
+        val b = plantingGroupKey(" PINOT  Noir ", "777 ", "richter 110")
+        assertEquals(a, b)
+        assertEquals("pinot noir|777|richter 110", a)
 
-        assertEquals(pickOne.clone, pickTwo.clone)
-        assertEquals(pickOne.rootstock, pickTwo.rootstock)
-        assertFalse(pickOne.varietyAllocationId == pickTwo.varietyAllocationId)
+        // Different rootstock = different group.
+        assertFalse(a == plantingGroupKey("Pinot Noir", "777", "Own roots"))
+
+        // nulls normalise to empty segments.
+        assertEquals("chardonnay||", plantingGroupKey("Chardonnay", null, null))
     }
 
     @Test
-    fun serverRowWithoutAllocationColumnsDecodesAsUnlinked() {
-        // Pre-183 rows (and rows on a not-yet-migrated server) decode with a
-        // null planting link — they are never backfilled by guessing.
+    fun linkedGroupWithoutMemberIdsKeepsEmptyListNotNull() {
+        // Legacy member allocations may have no minted ids — the group is
+        // still linked: key set, members empty (never null).
+        val record = makeRecord(
+            varietyName = "Chardonnay",
+            plantingGroupKey = plantingGroupKey("Chardonnay", null, null),
+            varietyAllocationIds = emptyList(),
+            clone = null,
+        )
+        val payload = PickingRecordUpdateSync.Payload.from(record, "2027-02-11T00:00:00Z")
+        val replayed = json.decodeFromString(
+            PickingRecordUpdateSync.Payload.serializer(),
+            json.encodeToString(PickingRecordUpdateSync.Payload.serializer(), payload),
+        ).toRecord()
+        assertEquals("chardonnay||", replayed.plantingGroupKey)
+        assertEquals(emptyList<String>(), replayed.varietyAllocationIds)
+    }
+
+    @Test
+    fun serverRowWithoutPlantingGroupColumnsDecodesAsUnlinked() {
+        // Pre-184 rows (and rows on a not-yet-migrated server) decode with a
+        // null group link — they are never backfilled by guessing.
         val row = """
             {"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc",
              "vineyard_id":"$vineyard","picked_at":"2027-02-10",
@@ -285,7 +320,8 @@ class PickingRecordEditParityTest {
              "variety_name":"Pinot Noir","clone":"777","weight_kg":850.0}
         """.trimIndent()
         val decoded = json.decodeFromString(PickingRecord.serializer(), row)
-        assertNull(decoded.varietyAllocationId)
+        assertNull(decoded.plantingGroupKey)
+        assertNull(decoded.varietyAllocationIds)
         assertNull(decoded.rootstock)
         assertEquals("777", decoded.clone)
     }
@@ -293,14 +329,16 @@ class PickingRecordEditParityTest {
     @Test
     fun unlinkedHistoricalRecordStaysUnlinkedThroughUnrelatedEdits() {
         val edited = makeRecord(clone = "777").copy(weightKg = 990.0)
-        assertNull(edited.varietyAllocationId)
+        assertNull(edited.plantingGroupKey)
+        assertNull(edited.varietyAllocationIds)
 
         val payload = PickingRecordUpdateSync.Payload.from(edited, "2027-02-11T00:00:00Z")
         val replayed = json.decodeFromString(
             PickingRecordUpdateSync.Payload.serializer(),
             json.encodeToString(PickingRecordUpdateSync.Payload.serializer(), payload),
         ).toRecord()
-        assertNull(replayed.varietyAllocationId)
+        assertNull(replayed.plantingGroupKey)
+        assertNull(replayed.varietyAllocationIds)
         assertEquals("777", replayed.clone)
     }
 

@@ -16,6 +16,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -42,7 +45,8 @@ class PickingRecordRepository(private val session: SessionStore) {
         @SerialName("variety_id") val varietyId: String?,
         @SerialName("variety_key") val varietyKey: String?,
         @SerialName("variety_name") val varietyName: String,
-        @SerialName("variety_allocation_id") val varietyAllocationId: String?,
+        @SerialName("planting_group_key") val plantingGroupKey: String?,
+        @SerialName("variety_allocation_ids") val varietyAllocationIds: List<String>?,
         val clone: String?,
         val rootstock: String?,
         @SerialName("weight_kg") val weightKg: Double,
@@ -83,7 +87,8 @@ class PickingRecordRepository(private val session: SessionStore) {
             varietyId = record.varietyId,
             varietyKey = record.varietyKey,
             varietyName = record.varietyName,
-            varietyAllocationId = record.varietyAllocationId,
+            plantingGroupKey = record.plantingGroupKey,
+            varietyAllocationIds = record.varietyAllocationIds,
             clone = record.clone,
             rootstock = record.rootstock,
             weightKg = record.weightKg,
@@ -131,7 +136,13 @@ class PickingRecordRepository(private val session: SessionStore) {
             put("variety_id", record.varietyId)
             put("variety_key", record.varietyKey)
             put("variety_name", record.varietyName)
-            put("variety_allocation_id", record.varietyAllocationId)
+            put("planting_group_key", record.plantingGroupKey)
+            put(
+                "variety_allocation_ids",
+                record.varietyAllocationIds
+                    ?.let { ids -> JsonArray(ids.map { JsonPrimitive(it) }) }
+                    ?: JsonNull,
+            )
             put("clone", record.clone)
             put("rootstock", record.rootstock)
             put("weight_kg", record.weightKg)

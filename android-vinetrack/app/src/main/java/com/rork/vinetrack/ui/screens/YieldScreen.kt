@@ -101,6 +101,8 @@ import com.rork.vinetrack.data.model.HistoricalYieldRecord
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PickingRecord
 import com.rork.vinetrack.data.model.canonicalVarietyName
+import com.rork.vinetrack.data.model.plantingGroupKey
+import com.rork.vinetrack.data.model.plantingGroupNormalise
 import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -1385,11 +1387,12 @@ private fun RecordYieldSheet(
     var selectedVariety by remember { mutableStateOf(initialSelectedVariety) }
     var varietyMenu by remember { mutableStateOf(false) }
     var freeVariety by remember { mutableStateOf(editing?.varietyName.orEmpty()) }
-    // Planting = the block's exact variety allocation (sql/183). The stable
-    // allocation id is the only exact identity — Block + Variety + Clone +
-    // Rootstock can repeat on one block. Editing preselects the record's
-    // allocation when it still exists, else its legacy snapshot; an unlinked
-    // record is never auto-linked (linking is always an explicit selection).
+    // Planting = the block's PLANTING GROUP (sql/184): the set of variety
+    // allocations sharing Variety + Clone + Rootstock — identical physical
+    // sections form ONE selectable group and every member allocation id is
+    // preserved under it. Editing preselects the record's group when it
+    // still exists, else its legacy snapshot; an unlinked record is never
+    // auto-linked (linking is always an explicit selection).
     var selectedPlantingKey by remember {
         mutableStateOf(initialPlantingKey(initialDetailBlock, initialSelectedVariety, editing))
     }
@@ -1480,7 +1483,8 @@ private fun RecordYieldSheet(
             varietyId = alloc?.varietyId ?: editing?.varietyId?.takeIf { varietyUnchanged },
             varietyKey = alloc?.varietyKey ?: editing?.varietyKey?.takeIf { varietyUnchanged },
             varietyName = varietyName,
-            varietyAllocationId = planting?.allocationId,
+            plantingGroupKey = planting?.groupKey,
+            varietyAllocationIds = planting?.takeIf { it.groupKey != null }?.memberAllocationIds,
             clone = planting?.clone,
             rootstock = planting?.rootstock,
             weightKg = w,
@@ -1549,7 +1553,7 @@ private fun RecordYieldSheet(
             }
             if (editing != null) {
                 Text(
-                    "Changing the block resets the variety and planting; changing the variety resets the planting. Each planting is the block's exact variety allocation (clone · rootstock). The vintage recalculates from the picking date, and totals and yield reports update automatically.",
+                    "Changing the block resets the variety and planting; changing the variety resets the planting. Each planting is a group of the block's sections with the same variety, clone and rootstock. The vintage recalculates from the picking date, and totals and yield reports update automatically.",
                     color = vine.textSecondary, fontSize = 12.sp,
                 )
             } else if (detailed) {
@@ -2496,14 +2500,17 @@ private fun accuracyColor(percent: Double): Color = when {
 }
 
 /**
- * One selectable planting (variety allocation) for the Detailed picking form
- * (sql/183). [key] is the selection identity: the stable allocation id when
- * present, a positional fallback for id-less legacy allocations, or
- * [LEGACY_PLANTING_KEY] for the edited record's preserved snapshot.
+ * One selectable PLANTING GROUP for the Detailed picking form (sql/184): the
+ * set of variety allocations sharing Variety + Clone + Rootstock. [key] is
+ * the selection identity: the group key, or [LEGACY_PLANTING_KEY] for the
+ * edited record's preserved snapshot. [groupKey] is null only for the
+ * unlinked legacy option; [memberAllocationIds] preserves every member
+ * section id (may be empty for id-less legacy allocations).
  */
 private data class PlantingOption(
     val key: String,
-    val allocationId: String?,
+    val groupKey: String?,
+    val memberAllocationIds: List<String>,
     val clone: String?,
     val rootstock: String?,
     val label: String,
@@ -2513,12 +2520,13 @@ private data class PlantingOption(
 private const val LEGACY_PLANTING_KEY = "legacy"
 
 /**
- * Build the planting options for a block + selected variety, mirroring the
- * iOS `RecordActualYieldSheet.plantingOptions` algorithm exactly: one option
- * per matching allocation labelled `clone · rootstock`; duplicates (identical
- * clone AND rootstock twice on one block) are disambiguated by planting
- * position plus percent; editing appends a legacy option that preserves the
- * record's snapshot when its allocation is gone or was never linked.
+ * Build the planting-group options for a block + selected variety, mirroring
+ * the iOS `RecordActualYieldSheet.plantingOptions` algorithm exactly:
+ * allocations of the variety are grouped by normalised clone|rootstock (one
+ * option per group, block-config order preserved) labelled `clone ·
+ * rootstock`; a multi-section group appends the section count and combined
+ * percent; editing appends a legacy option that preserves the record's
+ * snapshot when its group is gone or was never linked.
  */
 private fun buildPlantingOptions(
     block: Paddock?,
@@ -2526,59 +2534,65 @@ private fun buildPlantingOptions(
     editing: PickingRecord?,
 ): List<PlantingOption> {
     if (block == null || selectedVarietyName.isNullOrBlank()) return emptyList()
-    data class Candidate(
-        val allocationId: String?,
+    data class Group(
         val clone: String?,
         val rootstock: String?,
-        val base: String,
-        val percent: Double?,
+        val memberIds: MutableList<String> = mutableListOf(),
+        var totalPercent: Double = 0.0,
     )
-    val candidates = block.varietyAllocations.orEmpty()
+    val order = mutableListOf<String>()
+    val groups = mutableMapOf<String, Group>()
+    block.varietyAllocations.orEmpty()
         .filter { it.displayName == selectedVarietyName }
-        .map { alloc ->
+        .forEach { alloc ->
             val clone = alloc.clone?.trim()?.ifBlank { null }
             val rootstock = alloc.rootstock?.trim()?.ifBlank { null }
-            Candidate(alloc.id, clone, rootstock, listOfNotNull(clone, rootstock).joinToString(" · "), alloc.displayPercent)
-        }
-    val baseCounts = candidates.groupingBy { it.base.lowercase() }.eachCount()
-    val options = candidates.mapIndexed { index, c ->
-        val ordinal = index + 1
-        val label = when {
-            c.base.isEmpty() -> "Planting $ordinal"
-            (baseCounts[c.base.lowercase()] ?: 0) > 1 -> {
-                val pct = c.percent
-                if (pct != null && pct > 0) "${c.base} — Planting $ordinal (${formatPlain(pct)}%)"
-                else "${c.base} — Planting $ordinal"
+            val groupId = "${plantingGroupNormalise(clone)}|${plantingGroupNormalise(rootstock)}"
+            val group = groups.getOrPut(groupId) {
+                order.add(groupId)
+                Group(clone, rootstock)
             }
-            else -> c.base
+            alloc.id?.let { group.memberIds.add(it) }
+            alloc.displayPercent?.takeIf { it > 0 }?.let { group.totalPercent += it }
         }
+    val options = order.mapNotNull { groups[it] }.map { group ->
+        val base = listOfNotNull(group.clone, group.rootstock).joinToString(" · ")
+        var label = base.ifEmpty { "No clone / rootstock" }
+        if (group.memberIds.size > 1) {
+            label += " — ${group.memberIds.size} plantings"
+            if (group.totalPercent > 0) label += " (${formatPlain(group.totalPercent)}%)"
+        }
+        val key = plantingGroupKey(selectedVarietyName, group.clone, group.rootstock)
         PlantingOption(
-            key = c.allocationId ?: "pos:$index",
-            allocationId = c.allocationId,
-            clone = c.clone,
-            rootstock = c.rootstock,
+            key = key,
+            groupKey = key,
+            memberAllocationIds = group.memberIds.toList(),
+            clone = group.clone,
+            rootstock = group.rootstock,
             label = label,
-            hasSnapshot = c.clone != null || c.rootstock != null,
+            hasSnapshot = group.clone != null || group.rootstock != null,
         )
     }.toMutableList()
-    // Editing: preserve the record's planting snapshot while block and variety
-    // still match. A record linked to a still-existing allocation selects it
-    // directly; anything else gets a legacy option. Unlinked records are NEVER
-    // auto-linked — linking is always an explicit selection.
+    // Editing: preserve the record's planting-group snapshot while block and
+    // variety still match. A record linked to a still-existing group selects
+    // it directly; anything else gets a legacy option (stored key + member
+    // ids). Unlinked records are NEVER auto-linked — linking is always an
+    // explicit selection.
     if (editing != null && block.id == editing.paddockId &&
         canonicalVarietyName(selectedVarietyName) == canonicalVarietyName(editing.varietyName) &&
-        !(editing.varietyAllocationId != null && options.any { it.allocationId == editing.varietyAllocationId })
+        !(editing.plantingGroupKey != null && options.any { it.groupKey == editing.plantingGroupKey })
     ) {
         val clone = editing.clone?.trim()?.ifBlank { null }
         val rootstock = editing.rootstock?.trim()?.ifBlank { null }
-        if (editing.varietyAllocationId != null || clone != null || rootstock != null) {
+        if (editing.plantingGroupKey != null || clone != null || rootstock != null) {
             val base = listOfNotNull(clone, rootstock).joinToString(" · ")
             val label = base.ifEmpty { "Original planting" } +
-                if (editing.varietyAllocationId == null) " (not linked)" else ""
+                if (editing.plantingGroupKey == null) " (not linked)" else ""
             options.add(
                 PlantingOption(
                     key = LEGACY_PLANTING_KEY,
-                    allocationId = editing.varietyAllocationId,
+                    groupKey = editing.plantingGroupKey,
+                    memberAllocationIds = editing.varietyAllocationIds.orEmpty(),
                     clone = clone,
                     rootstock = rootstock,
                     label = label,
@@ -2591,10 +2605,10 @@ private fun buildPlantingOptions(
 }
 
 /**
- * Initial planting selection when editing: the record's allocation when it
- * still exists on the block, otherwise its legacy snapshot option. An
- * unlinked record is never auto-matched to an allocation — with two identical
- * plantings a snapshot match would be a guess.
+ * Initial planting selection when editing: the record's planting group when
+ * it still exists on the block, otherwise its legacy snapshot option. An
+ * unlinked record is never auto-matched to a group — linking stays an
+ * explicit user selection.
  */
 private fun initialPlantingKey(
     block: Paddock?,
@@ -2603,8 +2617,8 @@ private fun initialPlantingKey(
 ): String? {
     if (editing == null) return null
     val options = buildPlantingOptions(block, selectedVarietyName, editing)
-    editing.varietyAllocationId?.let { allocId ->
-        options.firstOrNull { it.key != LEGACY_PLANTING_KEY && it.allocationId == allocId }?.let { return it.key }
+    editing.plantingGroupKey?.let { groupKey ->
+        options.firstOrNull { it.key != LEGACY_PLANTING_KEY && it.groupKey == groupKey }?.let { return it.key }
     }
     return options.firstOrNull { it.key == LEGACY_PLANTING_KEY }?.key
 }

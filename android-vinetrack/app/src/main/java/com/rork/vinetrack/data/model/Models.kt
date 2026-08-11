@@ -304,6 +304,24 @@ fun canonicalVarietyName(name: String): String =
     name.trim().lowercase().filter { it.isLetterOrDigit() }
 
 /**
+ * Planting-group identity (sql/184) — the exact algorithm shared with iOS
+ * (`PlantingGroup.key`), the Portal and the SQL function
+ * `public.planting_group_key`. See
+ * docs/picking-records-allocation-identity-contract.md §3.
+ * norm(x) = lowercase(trim(collapse internal whitespace)), "" for null.
+ */
+fun plantingGroupNormalise(value: String?): String =
+    value?.trim()?.replace(Regex("\\s+"), " ")?.lowercase().orEmpty()
+
+/** `norm(variety)|norm(clone)|norm(rootstock)` — scoped per block via paddockId. */
+fun plantingGroupKey(varietyName: String?, clone: String?, rootstock: String?): String =
+    listOf(
+        plantingGroupNormalise(varietyName),
+        plantingGroupNormalise(clone),
+        plantingGroupNormalise(rootstock),
+    ).joinToString("|")
+
+/**
  * One tank-fill session within a spray trip, mirroring the iOS `TankSession`
  * JSONB element shape stored in `trips.tank_sessions`. Date fields are kept as
  * tolerant ISO strings (parsed via [parseIsoToEpochMs]) so legacy rows and any
@@ -1949,13 +1967,22 @@ data class PickingRecord(
     @SerialName("variety_key") val varietyKey: String? = null,
     @SerialName("variety_name") val varietyName: String = "",
     /**
-     * Stable `paddocks.variety_allocations[].id` link (sql/183) — the exact
-     * planting identity. Null = not linked (historical rows are never
-     * backfilled by guessing; linking is always an explicit selection).
+     * Stable planting-group identity (sql/184): [plantingGroupKey] of the
+     * variety/clone/rootstock snapshots, scoped per block. A group is the
+     * set of `paddocks.variety_allocations[]` sections sharing Block +
+     * Variety + Clone + Rootstock. Server-canonicalised on every write.
+     * Null = not linked (historical rows are never backfilled by guessing;
+     * linking is always an explicit selection).
      */
-    @SerialName("variety_allocation_id") val varietyAllocationId: String? = null,
+    @SerialName("planting_group_key") val plantingGroupKey: String? = null,
+    /**
+     * Member allocation ids of the planting group at entry time (block-
+     * config order). Empty list = linked group whose member allocations have
+     * no minted ids. Null = not linked. Point-in-time snapshot, no FK.
+     */
+    @SerialName("variety_allocation_ids") val varietyAllocationIds: List<String>? = null,
     val clone: String? = null,
-    /** Rootstock display snapshot from the allocation (sql/183), like [clone]. */
+    /** Rootstock display snapshot from the planting group (sql/184), like [clone]. */
     val rootstock: String? = null,
     @SerialName("weight_kg") val weightKg: Double = 0.0,
     @SerialName("sugar_value") val sugarValue: Double? = null,

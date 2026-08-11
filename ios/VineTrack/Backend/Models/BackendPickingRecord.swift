@@ -38,11 +38,13 @@ nonisolated struct BackendPickingRecord: Codable, Sendable, Identifiable {
     let varietyId: UUID?
     let varietyKey: String?
     let varietyName: String?
-    /// Stable `paddocks.variety_allocations[].id` link (sql/183) — the exact
-    /// planting identity. NULL = unlinked (pre-183 rows are never backfilled).
-    let varietyAllocationId: UUID?
+    /// Stable planting-group identity (sql/184). NULL = unlinked (pre-184
+    /// rows are never backfilled).
+    let plantingGroupKey: String?
+    /// Member `paddocks.variety_allocations[].id` snapshot of the group.
+    let varietyAllocationIds: [UUID]?
     let clone: String?
-    /// Rootstock display snapshot from the allocation (sql/183).
+    /// Rootstock display snapshot from the planting group (sql/184).
     let rootstock: String?
     let weightKg: Double?
     let sugarValue: Double?
@@ -72,7 +74,8 @@ nonisolated struct BackendPickingRecord: Codable, Sendable, Identifiable {
         case varietyId = "variety_id"
         case varietyKey = "variety_key"
         case varietyName = "variety_name"
-        case varietyAllocationId = "variety_allocation_id"
+        case plantingGroupKey = "planting_group_key"
+        case varietyAllocationIds = "variety_allocation_ids"
         case clone
         case rootstock
         case weightKg = "weight_kg"
@@ -108,7 +111,8 @@ nonisolated struct BackendPickingRecordUpsert: Encodable, Sendable {
     let varietyId: UUID?
     let varietyKey: String?
     let varietyName: String
-    let varietyAllocationId: UUID?
+    let plantingGroupKey: String?
+    let varietyAllocationIds: [UUID]?
     let clone: String?
     let rootstock: String?
     let weightKg: Double
@@ -133,7 +137,8 @@ nonisolated struct BackendPickingRecordUpsert: Encodable, Sendable {
         case varietyId = "variety_id"
         case varietyKey = "variety_key"
         case varietyName = "variety_name"
-        case varietyAllocationId = "variety_allocation_id"
+        case plantingGroupKey = "planting_group_key"
+        case varietyAllocationIds = "variety_allocation_ids"
         case clone
         case rootstock
         case weightKg = "weight_kg"
@@ -162,7 +167,8 @@ nonisolated struct BackendPickingRecordUpsert: Encodable, Sendable {
         try c.encode(varietyId, forKey: .varietyId)
         try c.encode(varietyKey, forKey: .varietyKey)
         try c.encode(varietyName, forKey: .varietyName)
-        try c.encode(varietyAllocationId, forKey: .varietyAllocationId)
+        try c.encode(plantingGroupKey, forKey: .plantingGroupKey)
+        try c.encode(varietyAllocationIds, forKey: .varietyAllocationIds)
         try c.encode(clone, forKey: .clone)
         try c.encode(rootstock, forKey: .rootstock)
         try c.encode(weightKg, forKey: .weightKg)
@@ -191,7 +197,8 @@ extension BackendPickingRecord {
             varietyId: record.varietyId,
             varietyKey: record.varietyKey,
             varietyName: record.varietyName,
-            varietyAllocationId: record.varietyAllocationId,
+            plantingGroupKey: record.plantingGroupKey,
+            varietyAllocationIds: record.varietyAllocationIds,
             clone: record.clone,
             rootstock: record.rootstock,
             weightKg: record.weightKg,
@@ -220,7 +227,8 @@ extension BackendPickingRecord {
             varietyId: varietyId,
             varietyKey: varietyKey,
             varietyName: varietyName ?? "",
-            varietyAllocationId: varietyAllocationId,
+            plantingGroupKey: plantingGroupKey,
+            varietyAllocationIds: varietyAllocationIds,
             clone: clone,
             rootstock: rootstock,
             weightKg: weightKg ?? 0,

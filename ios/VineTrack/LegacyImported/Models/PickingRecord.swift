@@ -32,13 +32,18 @@ nonisolated struct PickingRecord: Codable, Identifiable, Sendable, Hashable {
     var varietyKey: String?
     /// Point-in-time snapshot of the variety display name.
     var varietyName: String
-    /// Stable id of the `paddocks.variety_allocations[]` entry this pick was
-    /// recorded against (sql/183). Block + Variety + Clone + Rootstock is NOT
-    /// unique — one block can carry two plantings of the same variety with
-    /// identical clone and rootstock — so this id is the only exact planting
-    /// identity. nil = not linked (historical rows are never backfilled by
-    /// guessing; linking only happens through an explicit selection).
-    var varietyAllocationId: UUID?
+    /// Stable PLANTING-GROUP identity (sql/184): `PlantingGroup.key` of the
+    /// variety/clone/rootstock snapshots, scoped per block. A group is the
+    /// set of `paddocks.variety_allocations[]` sections sharing Block +
+    /// Variety + Clone + Rootstock — one block can carry several identical
+    /// sections, so a single allocation id could never represent the pick.
+    /// Server-canonicalised on every write. nil = not linked (historical
+    /// rows are never backfilled by guessing; linking is always explicit).
+    var plantingGroupKey: String?
+    /// Member allocation ids of the planting group at entry time (block-
+    /// config order). `[]` = linked group whose member allocations have no
+    /// minted ids. nil = not linked. Point-in-time snapshot, no FK.
+    var varietyAllocationIds: [UUID]?
     /// Reference-only clone designation from the block allocation (e.g. `MV6`).
     var clone: String?
     /// Reference-only rootstock display snapshot from the block allocation
@@ -83,7 +88,8 @@ nonisolated struct PickingRecord: Codable, Identifiable, Sendable, Hashable {
         varietyId: UUID? = nil,
         varietyKey: String? = nil,
         varietyName: String = "",
-        varietyAllocationId: UUID? = nil,
+        plantingGroupKey: String? = nil,
+        varietyAllocationIds: [UUID]? = nil,
         clone: String? = nil,
         rootstock: String? = nil,
         weightKg: Double,
@@ -106,7 +112,8 @@ nonisolated struct PickingRecord: Codable, Identifiable, Sendable, Hashable {
         self.varietyId = varietyId
         self.varietyKey = varietyKey
         self.varietyName = varietyName
-        self.varietyAllocationId = varietyAllocationId
+        self.plantingGroupKey = plantingGroupKey
+        self.varietyAllocationIds = varietyAllocationIds
         self.clone = clone
         self.rootstock = rootstock
         self.weightKg = weightKg
@@ -119,6 +126,27 @@ nonisolated struct PickingRecord: Codable, Identifiable, Sendable, Hashable {
         self.soldTo = soldTo
         self.pricePerTonne = pricePerTonne
         self.notes = notes
+    }
+}
+
+/// Planting-group identity helpers (sql/184). The key algorithm is shared
+/// byte-for-byte with Android (`plantingGroupKey`), the Portal and the SQL
+/// function `public.planting_group_key` — see
+/// docs/picking-records-allocation-identity-contract.md §3.
+nonisolated enum PlantingGroup {
+    /// lowercase(trim(collapse internal whitespace)); "" for nil.
+    static func normalise(_ value: String?) -> String {
+        guard let value else { return "" }
+        return value
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+            .lowercased()
+    }
+
+    /// `norm(variety)|norm(clone)|norm(rootstock)` — scoped per block via the
+    /// record's `paddockId`, which is deliberately NOT part of the key.
+    static func key(varietyName: String?, clone: String?, rootstock: String?) -> String {
+        [normalise(varietyName), normalise(clone), normalise(rootstock)].joined(separator: "|")
     }
 }
 
