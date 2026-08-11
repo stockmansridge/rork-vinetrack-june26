@@ -181,6 +181,11 @@ import com.rork.vinetrack.data.model.VineyardTripFunction
 import com.rork.vinetrack.data.model.builtInTripFunctions
 import com.rork.vinetrack.data.model.slugifyTripFunction
 import com.rork.vinetrack.data.model.tripFunctionDisplayName
+import com.rork.vinetrack.data.CloneRootstockRepository
+import com.rork.vinetrack.data.model.CloneCatalogEntry
+import com.rork.vinetrack.data.model.RootstockCatalogEntry
+import com.rork.vinetrack.data.model.VineyardCloneRow
+import com.rork.vinetrack.data.model.VineyardRootstockRow
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PaddockRow
 import com.rork.vinetrack.data.model.PaddockVarietyAllocation
@@ -447,6 +452,14 @@ data class AppUiState(
     /** Per-vineyard Growth launcher buttons from `vineyard_button_configs` (empty = use defaults). */
     val growthButtons: List<LauncherButton> = emptyList(),
     val grapeVarieties: List<GrapeVarietyRow> = emptyList(),
+    /** Global clone catalogue (sql/182) — clones are scoped to one variety. */
+    val cloneCatalog: List<CloneCatalogEntry> = emptyList(),
+    /** Global rootstock catalogue (sql/182) — independent of scion variety. */
+    val rootstockCatalog: List<RootstockCatalogEntry> = emptyList(),
+    /** This vineyard's custom clones (`vineyard_grape_clones`). */
+    val vineyardClones: List<VineyardCloneRow> = emptyList(),
+    /** This vineyard's custom rootstocks (`vineyard_rootstocks`). */
+    val vineyardRootstocks: List<VineyardRootstockRow> = emptyList(),
     val yieldRecords: List<HistoricalYieldRecord> = emptyList(),
     /** Detailed picking-log records (sql/180) for the selected vineyard. */
     val pickingRecords: List<PickingRecord> = emptyList(),
@@ -772,6 +785,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val yieldRepo = YieldRepository(session)
     private val pickingRepo = PickingRecordRepository(session)
     private val pruningYieldSettingsRepo = PruningYieldSettingsRepository(session)
+    private val cloneRootstockRepo = CloneRootstockRepository(session)
     private val damageRepo = DamageRecordRepository(session)
     private val growthImageRepo = GrowthStageImageRepository(session)
     private val fuelRepo = FuelLogRepository(session)
@@ -2759,6 +2773,66 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             replayPendingPruningYieldSettings()
         }
         return shared + migrated
+    }
+
+    /**
+     * Creates a vineyard-scoped CUSTOM clone (sql/182) under [varietyKey]
+     * via the owner/manager-gated `upsert_vineyard_grape_clone` RPC and
+     * folds the returned row into state so pickers update immediately.
+     * [onResult] receives null when the write failed (offline / role) —
+     * callers degrade to preserving the name as free text on the block.
+     */
+    fun addCustomClone(
+        varietyKey: String,
+        displayName: String,
+        onResult: (VineyardCloneRow?) -> Unit,
+    ) {
+        val vineyardId = _ui.value.selectedVineyardId ?: return onResult(null)
+        viewModelScope.launch {
+            try {
+                val row = cloneRootstockRepo.upsertVineyardClone(vineyardId, varietyKey, displayName)
+                _ui.update { st ->
+                    st.copy(
+                        vineyardClones = st.vineyardClones.filterNot {
+                            it.vineyardId == row.vineyardId && it.cloneKey == row.cloneKey
+                        } + row,
+                    )
+                }
+                onResult(row)
+            } catch (e: Exception) {
+                Log.w("CloneRootstock", "addCustomClone failed: ${e.message}")
+                onResult(null)
+            }
+        }
+    }
+
+    /**
+     * Creates a vineyard-scoped CUSTOM rootstock (sql/182) via
+     * `upsert_vineyard_rootstock`. The server rejects reserved sentinel
+     * names and near-duplicates of built-in rootstocks; [onResult] receives
+     * null on any failure so callers degrade to free text.
+     */
+    fun addCustomRootstock(
+        displayName: String,
+        onResult: (VineyardRootstockRow?) -> Unit,
+    ) {
+        val vineyardId = _ui.value.selectedVineyardId ?: return onResult(null)
+        viewModelScope.launch {
+            try {
+                val row = cloneRootstockRepo.upsertVineyardRootstock(vineyardId, displayName)
+                _ui.update { st ->
+                    st.copy(
+                        vineyardRootstocks = st.vineyardRootstocks.filterNot {
+                            it.vineyardId == row.vineyardId && it.rootstockKey == row.rootstockKey
+                        } + row,
+                    )
+                }
+                onResult(row)
+            } catch (e: Exception) {
+                Log.w("CloneRootstock", "addCustomRootstock failed: ${e.message}")
+                onResult(null)
+            }
+        }
     }
 
     /**
@@ -11850,6 +11924,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             _ui.value.grapeVarieties
         }
+        // Shared clone + rootstock catalogues (sql/182): global reference
+        // lists plus this vineyard's custom records. Read-only here;
+        // soft-fail to the existing state so offline keeps the last copy.
+        val cloneCatalog = try {
+            cloneRootstockRepo.getCloneCatalog()
+        } catch (e: Exception) {
+            _ui.value.cloneCatalog
+        }
+        val rootstockCatalog = try {
+            cloneRootstockRepo.getRootstockCatalog()
+        } catch (e: Exception) {
+            _ui.value.rootstockCatalog
+        }
+        val vineyardClones = try {
+            cloneRootstockRepo.listVineyardClones(vineyardId)
+        } catch (e: Exception) {
+            _ui.value.vineyardClones.filter { it.vineyardId == vineyardId }
+        }
+        val vineyardRootstocks = try {
+            cloneRootstockRepo.listVineyardRootstocks(vineyardId)
+        } catch (e: Exception) {
+            _ui.value.vineyardRootstocks.filter { it.vineyardId == vineyardId }
+        }
         // Archived seasonal yield records are an operational list; soft-fail to
         // existing, then to the Stage O-2 server-snapshot cache.
         var yieldFromServer = false
@@ -11998,6 +12095,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 growthButtons = overlaidGrowthButtons,
                 currentUserId = session.userId,
                 grapeVarieties = grapeVarieties,
+                cloneCatalog = cloneCatalog,
+                rootstockCatalog = rootstockCatalog,
+                vineyardClones = vineyardClones,
+                vineyardRootstocks = vineyardRootstocks,
                 yieldRecords = overlaidYield,
                 pickingRecords = pickingRecords,
                 pruningYieldSettings = pruningYieldSettings,

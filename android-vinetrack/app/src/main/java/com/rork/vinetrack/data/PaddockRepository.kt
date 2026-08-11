@@ -257,6 +257,10 @@ class PaddockRepository(private val session: SessionStore) {
                 a.percent?.let { put("percent", JsonPrimitive(it)) }
                 a.clone?.let { put("clone", JsonPrimitive(it)) }
                 a.rootstock?.let { put("rootstock", JsonPrimitive(it)) }
+                // Stable shared-catalogue identities (sql/182); camelCase per
+                // the canonical allocation contract shared with iOS/portal.
+                a.cloneKey?.let { put("cloneKey", JsonPrimitive(it)) }
+                a.rootstockKey?.let { put("rootstockKey", JsonPrimitive(it)) }
             })
         }
     }

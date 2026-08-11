@@ -46,6 +46,10 @@ struct EditPaddockSheet: View {
     @State private var varietySearch: String = ""
     @State private var isAddingCustomVariety: Bool = false
     @State private var customVarietyError: String?
+    // Clone/Rootstock catalogue pickers (sql/182). Each target identifies
+    // the allocation being edited plus its variety scope.
+    @State private var clonePickerTarget: AllocationCatalogPickerTarget?
+    @State private var rootstockPickerTarget: AllocationCatalogPickerTarget?
     private let catalogRepository = SupabaseGrapeVarietyCatalogRepository()
 
     // Soil profile state — loaded from Supabase paddock_soil_profiles.
@@ -112,6 +116,22 @@ struct EditPaddockSheet: View {
             }
             .sheet(isPresented: $showAddVariety) {
                 addVarietyPickerSheet
+            }
+            .sheet(item: $clonePickerTarget) { target in
+                ClonePickerSheet(
+                    target: target,
+                    vineyardId: store.selectedVineyardId
+                ) { key, text in
+                    applyCloneSelection(allocationId: target.id, key: key, text: text)
+                }
+            }
+            .sheet(item: $rootstockPickerTarget) { target in
+                RootstockPickerSheet(
+                    target: target,
+                    vineyardId: store.selectedVineyardId
+                ) { key, text in
+                    applyRootstockSelection(allocationId: target.id, key: key, text: text)
+                }
             }
             .sheet(isPresented: $showSoilProfileEditor, onDismiss: {
                 Task { await loadSoilProfile(force: true) }
@@ -1022,27 +1042,33 @@ struct EditPaddockSheet: View {
                         .buttonStyle(.plain)
                     }
                     VStack(spacing: 6) {
-                        HStack(spacing: 8) {
-                            Text("Clone")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(width: 72, alignment: .leading)
-                            TextField("Optional", text: cloneBinding(for: allocation.id))
-                                .font(.subheadline)
-                                .autocorrectionDisabled()
-                                .textInputAutocapitalization(.characters)
+                        catalogSelectorRow(
+                            label: "Clone",
+                            value: allocation.clone,
+                            placeholder: "Not specified"
+                        ) {
+                            clonePickerTarget = pickerTarget(
+                                for: allocation,
+                                variety: variety,
+                                displayName: displayName,
+                                currentKey: allocation.cloneKey,
+                                currentText: allocation.clone
+                            )
                         }
-                        HStack(spacing: 8) {
-                            Text("Rootstock")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(width: 72, alignment: .leading)
-                            TextField("Optional", text: rootstockBinding(for: allocation.id))
-                                .font(.subheadline)
-                                .autocorrectionDisabled()
-                                .textInputAutocapitalization(.characters)
+                        catalogSelectorRow(
+                            label: "Rootstock",
+                            value: allocation.rootstock,
+                            placeholder: "Not recorded"
+                        ) {
+                            rootstockPickerTarget = pickerTarget(
+                                for: allocation,
+                                variety: variety,
+                                displayName: displayName,
+                                currentKey: allocation.rootstockKey,
+                                currentText: allocation.rootstock
+                            )
                         }
-                        Text("Optional reference only")
+                        Text("Optional — from the shared catalogue, synced across devices")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1369,31 +1395,73 @@ struct EditPaddockSheet: View {
         )
     }
 
-    /// Text binding for the optional, reference-only clone field. Blank
-    /// input stores nil so we never persist empty strings.
-    private func cloneBinding(for allocationId: UUID) -> Binding<String> {
-        Binding(
-            get: { varietyAllocations.first(where: { $0.id == allocationId })?.clone ?? "" },
-            set: { newValue in
-                if let index = varietyAllocations.firstIndex(where: { $0.id == allocationId }) {
-                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                    varietyAllocations[index].clone = trimmed.isEmpty ? nil : trimmed
-                }
+    /// Selector row showing the current clone/rootstock; tapping opens the
+    /// searchable catalogue picker.
+    @ViewBuilder
+    private func catalogSelectorRow(
+        label: String,
+        value: String?,
+        placeholder: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 72, alignment: .leading)
+                Text((value?.isEmpty == false) ? (value ?? "") : placeholder)
+                    .font(.subheadline)
+                    .foregroundStyle((value?.isEmpty == false) ? Color.primary : Color.secondary)
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Build the picker target for an allocation, resolving the stable
+    /// variety key (`shiraz`, `custom:<vid>:<slug>`) so clone options are
+    /// scoped to the allocation's variety.
+    private func pickerTarget(
+        for allocation: PaddockVarietyAllocation,
+        variety: GrapeVariety?,
+        displayName: String,
+        currentKey: String?,
+        currentText: String?
+    ) -> AllocationCatalogPickerTarget {
+        let stableKey: String? = {
+            if let k = allocation.varietyKey, !k.isEmpty { return k }
+            if let k = variety?.key, !k.isEmpty { return k }
+            return BuiltInGrapeVarietyCatalog.entry(matching: displayName)?.key
+        }()
+        return AllocationCatalogPickerTarget(
+            id: allocation.id,
+            varietyKey: stableKey,
+            varietyName: displayName,
+            currentKey: currentKey,
+            currentText: currentText
         )
     }
 
-    /// Text binding for the optional, reference-only rootstock field.
-    private func rootstockBinding(for allocationId: UUID) -> Binding<String> {
-        Binding(
-            get: { varietyAllocations.first(where: { $0.id == allocationId })?.rootstock ?? "" },
-            set: { newValue in
-                if let index = varietyAllocations.firstIndex(where: { $0.id == allocationId }) {
-                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                    varietyAllocations[index].rootstock = trimmed.isEmpty ? nil : trimmed
-                }
-            }
-        )
+    /// Apply a clone picker result: stamp BOTH the stable key and the
+    /// display snapshot (the sql/180 picking log and legacy surfaces read
+    /// the snapshot). Both nil clears the selection.
+    private func applyCloneSelection(allocationId: UUID, key: String?, text: String?) {
+        guard let index = varietyAllocations.firstIndex(where: { $0.id == allocationId }) else { return }
+        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        varietyAllocations[index].cloneKey = key
+        varietyAllocations[index].clone = (trimmed?.isEmpty ?? true) ? nil : trimmed
+    }
+
+    private func applyRootstockSelection(allocationId: UUID, key: String?, text: String?) {
+        guard let index = varietyAllocations.firstIndex(where: { $0.id == allocationId }) else { return }
+        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        varietyAllocations[index].rootstockKey = key
+        varietyAllocations[index].rootstock = (trimmed?.isEmpty ?? true) ? nil : trimmed
     }
 
     private var vineSpacingSection: some View {

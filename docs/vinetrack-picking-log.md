@@ -34,7 +34,7 @@ Only one mode is used for an individual save action.
 | `variety_id` | `uuid` NULL | From the block's `variety_allocations` when resolvable. |
 | `variety_key` | `text` NULL | Stable catalog key from the allocation (trusted across id drift). |
 | `variety_name` | `text` NOT NULL default `''` | Display-name snapshot. Populated from block config; user selects when a block has multiple varieties. |
-| `clone` | `text` NULL | Display string from the allocation (`PaddockVarietyAllocation.clone`) — clones are NOT entities in VineTrack. |
+| `clone` | `text` NULL | Display string from the allocation (`PaddockVarietyAllocation.clone`). Since sql/182 clones ARE catalogue entities (`grape_clone_catalog` / `vineyard_grape_clones`) and allocations also carry a stable `cloneKey`; the picking log deliberately keeps storing the display SNAPSHOT so historical records never change when catalogues evolve. See `docs/vinetrack-clone-rootstock-catalogue.md`. |
 | `weight_kg` | `double precision` NOT NULL, CHECK `> 0` | Mandatory user field. |
 | `sugar_value` | `double precision` NULL | CHECK: requires `sugar_unit` when set. |
 | `sugar_unit` | `text` NULL, CHECK in (`'brix'`,`'baume'`) | **Unit used AT ENTRY TIME** — stored with the value so a later vineyard-preference change never reinterprets history. Normalised lower/trim by trigger; cleared when `sugar_value` is null. |

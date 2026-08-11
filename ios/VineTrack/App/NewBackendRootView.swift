@@ -214,6 +214,9 @@ struct NewBackendRootView: View {
                 // source of truth. Falls back to the cached/built-in copy.
                 await SharedGrapeVarietyCatalogCache.shared.refresh()
                 await syncVineyardGrapeVarieties(vineyardId: vid)
+                // Shared clone + rootstock catalogues (sql/182) — global
+                // system entries plus this vineyard's custom records.
+                await CloneRootstockCatalogStore.shared.refresh(vineyardId: vid)
                 await syncVineyardLocation(vineyardId: vid)
                 await syncVineyardRegionSettings(vineyardId: vid)
                 // Vineyard changed — material telemetry change, report it.
@@ -227,6 +230,7 @@ struct NewBackendRootView: View {
                 // Warm the shared grape-variety catalogue right after sign-in
                 // so the cache is ready before any block screen renders.
                 await SharedGrapeVarietyCatalogCache.shared.refresh()
+                await CloneRootstockCatalogStore.shared.refresh(vineyardId: store.selectedVineyardId)
                 // Best-effort client telemetry heartbeat (SQL 154). Throttled
                 // internally; never blocks sign-in or normal use.
                 await ClientTelemetryService.shared.reportActivity(vineyardId: store.selectedVineyardId)

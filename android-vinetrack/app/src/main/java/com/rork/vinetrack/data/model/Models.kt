@@ -110,8 +110,11 @@ data class PaddockRow(
 /**
  * A single variety allocation on a block. Tolerant of the various key names
  * written by iOS, the Lovable web portal, and legacy rows — mirrors the
- * iOS `PaddockVarietyAllocation` decoder. Clone and rootstock are
- * reference-only display fields.
+ * iOS `PaddockVarietyAllocation` decoder. `clone`/`rootstock` are display
+ * snapshots; `cloneKey`/`rootstockKey` carry the stable shared-catalogue
+ * identity (sql/182), including the sentinels
+ * [CloneRootstockSentinels.MASS_SELECTION] and
+ * [CloneRootstockSentinels.OWN_ROOTS]. Null keys = not specified/recorded.
  */
 @Serializable
 data class PaddockVarietyAllocation(
@@ -123,6 +126,8 @@ data class PaddockVarietyAllocation(
     val percent: Double? = null,
     val clone: String? = null,
     val rootstock: String? = null,
+    val cloneKey: String? = null,
+    val rootstockKey: String? = null,
 ) {
     val displayPercent: Double? get() = percent ?: percentage
     val displayName: String?

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Map
@@ -67,9 +69,13 @@ import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.RowInput
 import com.rork.vinetrack.data.RowNumbering
 import com.rork.vinetrack.data.blockRowLayout
+import com.rork.vinetrack.data.model.CloneRootstockOptions
+import com.rork.vinetrack.data.model.CloneRootstockSentinels
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PaddockVarietyAllocation
+import com.rork.vinetrack.data.model.VineyardCloneRow
+import com.rork.vinetrack.data.model.VineyardRootstockRow
 import com.rork.vinetrack.data.normaliseRowDirection
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -146,6 +152,9 @@ fun EditBlockScreen(
 
     var saving by remember { mutableStateOf(false) }
     var addingVariety by remember { mutableStateOf(false) }
+    // Index of the allocation being edited (clone/rootstock/percent) — the
+    // same dialog as "Add variety", prefilled. null = no edit in progress.
+    var editingAllocationIndex by remember { mutableStateOf<Int?>(null) }
     val error = state.blockEditError
 
     val canSave by remember { derivedStateOf { name.isNotBlank() && !saving } }
@@ -359,6 +368,7 @@ fun EditBlockScreen(
                             AllocationRow(
                                 alloc = alloc,
                                 onPercent = { p -> allocations[index] = alloc.copy(percent = p) },
+                                onEdit = { editingAllocationIndex = index },
                                 onRemove = { allocations.removeAt(index) },
                             )
                             if (index < allocations.lastIndex) Spacer(Modifier.height(10.dp))
@@ -464,8 +474,25 @@ fun EditBlockScreen(
     if (addingVariety) {
         AddVarietyDialog(
             state = state,
+            onCreateCustomClone = vm::addCustomClone,
+            onCreateCustomRootstock = vm::addCustomRootstock,
             onDismiss = { addingVariety = false },
             onAdd = { alloc -> allocations.add(alloc); addingVariety = false },
+        )
+    }
+
+    val editIdx = editingAllocationIndex
+    if (editIdx != null && editIdx < allocations.size) {
+        AddVarietyDialog(
+            state = state,
+            initial = allocations[editIdx],
+            onCreateCustomClone = vm::addCustomClone,
+            onCreateCustomRootstock = vm::addCustomRootstock,
+            onDismiss = { editingAllocationIndex = null },
+            onAdd = { alloc ->
+                allocations[editIdx] = alloc
+                editingAllocationIndex = null
+            },
         )
     }
 
@@ -751,11 +778,18 @@ private fun OptionRow(
 private fun AllocationRow(
     alloc: PaddockVarietyAllocation,
     onPercent: (Double?) -> Unit,
+    onEdit: () -> Unit,
     onRemove: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onEdit)
+                .padding(vertical = 2.dp),
+        ) {
             Text(
                 alloc.displayName ?: alloc.varietyKey ?: "Variety",
                 color = vine.textPrimary,
@@ -766,7 +800,11 @@ private fun AllocationRow(
                 alloc.clone?.takeIf { it.isNotBlank() }?.let { add("Clone $it") }
                 alloc.rootstock?.takeIf { it.isNotBlank() }?.let { add("Rootstock $it") }
             }
-            if (meta.isNotEmpty()) Text(meta.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp)
+            if (meta.isNotEmpty()) {
+                Text(meta.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp)
+            } else {
+                Text("Tap to set clone & rootstock", color = vine.textSecondary, fontSize = 12.sp)
+            }
         }
         OutlinedTextField(
             value = alloc.percent?.let { formatNum(it) } ?: "",
@@ -813,22 +851,35 @@ private fun DateFieldRow(label: String, iso: String?, onChange: (String?) -> Uni
     }
 }
 
+/**
+ * Add or edit ONE variety allocation. Clone and rootstock come from the
+ * shared catalogues (sql/182) via searchable pickers — the same contract as
+ * the iOS `ClonePickerSheet`/`RootstockPickerSheet`. Pass [initial] to edit
+ * an existing allocation (prefilled; confirm replaces it).
+ */
 @Composable
 private fun AddVarietyDialog(
     state: AppUiState,
+    onCreateCustomClone: (String, String, (VineyardCloneRow?) -> Unit) -> Unit,
+    onCreateCustomRootstock: (String, (VineyardRootstockRow?) -> Unit) -> Unit,
     onDismiss: () -> Unit,
     onAdd: (PaddockVarietyAllocation) -> Unit,
+    initial: PaddockVarietyAllocation? = null,
 ) {
     val vine = LocalVineColors.current
-    var selectedKey by remember { mutableStateOf<String?>(null) }
-    var percent by remember { mutableStateOf("") }
-    var clone by remember { mutableStateOf("") }
-    var rootstock by remember { mutableStateOf("") }
+    var selectedKey by remember { mutableStateOf(initial?.varietyKey) }
+    var percent by remember { mutableStateOf(initial?.percent?.let { formatNum(it) } ?: "") }
+    var cloneKey by remember { mutableStateOf(initial?.cloneKey) }
+    var cloneText by remember { mutableStateOf(initial?.clone) }
+    var rootstockKey by remember { mutableStateOf(initial?.rootstockKey) }
+    var rootstockText by remember { mutableStateOf(initial?.rootstock) }
+    var showClonePicker by remember { mutableStateOf(false) }
+    var showRootstockPicker by remember { mutableStateOf(false) }
     val selectedRow = state.grapeVarieties.firstOrNull { it.varietyKey == selectedKey }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add variety") },
+        title = { Text(if (initial == null) "Add variety" else "Edit variety") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -851,7 +902,16 @@ private fun AddVarietyDialog(
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(if (active) VineColors.LeafGreen.copy(alpha = 0.15f) else vine.appBackground)
                                     .border(1.dp, if (active) VineColors.LeafGreen else vine.cardBorder, RoundedCornerShape(10.dp))
-                                    .clickable { selectedKey = row.varietyKey }
+                                    .clickable {
+                                        if (selectedKey != row.varietyKey) {
+                                            // A clone belongs to its variety — changing
+                                            // the variety clears the clone. Rootstock is
+                                            // variety-independent and deliberately kept.
+                                            cloneKey = null
+                                            cloneText = null
+                                        }
+                                        selectedKey = row.varietyKey
+                                    }
                                     .padding(horizontal = 12.dp, vertical = 10.dp),
                             ) {
                                 Text(row.displayName, color = vine.textPrimary, fontSize = 14.sp)
@@ -859,20 +919,18 @@ private fun AddVarietyDialog(
                         }
                     }
                     NumberField("Percentage (%)", percent, KeyboardType.Number) { percent = it }
-                    OutlinedTextField(
-                        value = clone,
-                        onValueChange = { clone = it },
-                        label = { Text("Clone (optional)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = rootstock,
-                        onValueChange = { rootstock = it },
-                        label = { Text("Rootstock (optional)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    CatalogSelectorField(
+                        label = "Clone",
+                        value = cloneText ?: "Not specified",
+                        hint = if (selectedRow == null) "Select a variety first" else null,
+                        enabled = selectedRow != null,
+                    ) { showClonePicker = true }
+                    CatalogSelectorField(
+                        label = "Rootstock",
+                        value = rootstockText ?: "Not recorded",
+                        hint = null,
+                        enabled = true,
+                    ) { showRootstockPicker = true }
                 }
             }
         },
@@ -886,15 +944,330 @@ private fun AddVarietyDialog(
                             varietyKey = row.varietyKey,
                             name = row.displayName,
                             percent = percent.toDoubleOrNull(),
-                            clone = clone.trim().ifBlank { null },
-                            rootstock = rootstock.trim().ifBlank { null },
+                            clone = cloneText?.trim()?.ifBlank { null },
+                            rootstock = rootstockText?.trim()?.ifBlank { null },
+                            cloneKey = cloneKey,
+                            rootstockKey = rootstockKey,
                         ),
                     )
                 },
-            ) { Text("Add") }
+            ) { Text(if (initial == null) "Add" else "Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+
+    val cloneVariety = selectedRow
+    if (showClonePicker && cloneVariety != null) {
+        ClonePickerDialog(
+            state = state,
+            varietyKey = cloneVariety.varietyKey,
+            varietyName = cloneVariety.displayName,
+            currentKey = cloneKey,
+            currentText = cloneText,
+            onCreateCustomClone = onCreateCustomClone,
+            onSelect = { key, text ->
+                cloneKey = key
+                cloneText = text
+                showClonePicker = false
+            },
+            onDismiss = { showClonePicker = false },
+        )
+    }
+    if (showRootstockPicker) {
+        RootstockPickerDialog(
+            state = state,
+            currentKey = rootstockKey,
+            currentText = rootstockText,
+            onCreateCustomRootstock = onCreateCustomRootstock,
+            onSelect = { key, text ->
+                rootstockKey = key
+                rootstockText = text
+                showRootstockPicker = false
+            },
+            onDismiss = { showRootstockPicker = false },
+        )
+    }
+}
+
+/** Tappable read-only field showing the current catalogue selection. */
+@Composable
+private fun CatalogSelectorField(
+    label: String,
+    value: String,
+    hint: String?,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .border(1.dp, vine.cardBorder, RoundedCornerShape(10.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(label, color = vine.textSecondary, fontSize = 12.sp)
+        Text(
+            if (!enabled && hint != null) hint else value,
+            color = if (enabled) vine.textPrimary else vine.textSecondary,
+            fontSize = 14.sp,
+        )
+    }
+}
+
+/**
+ * Searchable clone selector for ONE variety: shared catalogue entries
+ * (scoped to [varietyKey]), the vineyard's custom clones for that variety,
+ * the mass-selection sentinel, "Not specified", a preserved legacy free-text
+ * row, and a custom-add action (degrades to free text offline).
+ */
+@Composable
+private fun ClonePickerDialog(
+    state: AppUiState,
+    varietyKey: String,
+    varietyName: String,
+    currentKey: String?,
+    currentText: String?,
+    onCreateCustomClone: (String, String, (VineyardCloneRow?) -> Unit) -> Unit,
+    onSelect: (String?, String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    var query by remember { mutableStateOf("") }
+    var adding by remember { mutableStateOf(false) }
+    var addError by remember { mutableStateOf<String?>(null) }
+    val system = CloneRootstockOptions.systemClonesForVariety(state.cloneCatalog, varietyKey, query)
+    val custom = CloneRootstockOptions.customClonesForVariety(state.vineyardClones, varietyKey, query)
+    val canAdd = CloneRootstockOptions.canOfferCustomClone(state.cloneCatalog, state.vineyardClones, varietyKey, query)
+    val legacy = currentText?.trim()?.takeIf { currentKey == null && it.isNotEmpty() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Clone — $varietyName") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Search clones") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                PickerOptionRow(
+                    title = "Not specified",
+                    subtitle = "Clone unknown / not recorded",
+                    selected = currentKey == null && legacy == null,
+                ) { onSelect(null, null) }
+                PickerOptionRow(
+                    title = CloneRootstockSentinels.MASS_SELECTION_DISPLAY,
+                    subtitle = "No certified clone — mass-selected material",
+                    selected = currentKey == CloneRootstockSentinels.MASS_SELECTION,
+                ) {
+                    onSelect(CloneRootstockSentinels.MASS_SELECTION, CloneRootstockSentinels.MASS_SELECTION_DISPLAY)
+                }
+                if (legacy != null) {
+                    PickerOptionRow(
+                        title = "Keep “$legacy”",
+                        subtitle = "Existing entry, kept as typed",
+                        selected = true,
+                    ) { onSelect(null, legacy) }
+                }
+                if (system.isNotEmpty()) {
+                    PickerSectionLabel("Catalogue — $varietyName")
+                    system.forEach { entry ->
+                        PickerOptionRow(
+                            title = entry.displayName,
+                            subtitle = entry.subtitle,
+                            selected = currentKey == entry.key,
+                        ) { onSelect(entry.key, entry.displayName) }
+                    }
+                }
+                if (custom.isNotEmpty()) {
+                    PickerSectionLabel("My clones")
+                    custom.forEach { row ->
+                        PickerOptionRow(
+                            title = row.displayName,
+                            subtitle = "Custom · this vineyard",
+                            selected = currentKey == row.cloneKey,
+                        ) { onSelect(row.cloneKey, row.displayName) }
+                    }
+                }
+                if (canAdd) {
+                    TextButton(
+                        enabled = !adding,
+                        onClick = {
+                            adding = true
+                            addError = null
+                            onCreateCustomClone(varietyKey, query.trim()) { row ->
+                                adding = false
+                                if (row != null) {
+                                    onSelect(row.cloneKey, row.displayName)
+                                } else {
+                                    // Degrade gracefully: keep the value as text.
+                                    addError = "Couldn't reach the catalogue — saved as text."
+                                    onSelect(null, query.trim())
+                                }
+                            }
+                        },
+                    ) { Text("Add “${query.trim()}” as custom clone") }
+                    addError?.let { Text(it, color = VineColors.Destructive, fontSize = 12.sp) }
+                }
+                if (system.isEmpty() && custom.isEmpty() && query.isBlank()) {
+                    Text(
+                        "No catalogue clones for $varietyName yet. Search to add one as a custom clone.",
+                        color = vine.textSecondary,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/**
+ * Searchable rootstock selector — the catalogue is independent of variety.
+ * Includes the own-roots sentinel, "Not recorded", custom rootstocks, a
+ * preserved legacy free-text row and a custom-add action.
+ */
+@Composable
+private fun RootstockPickerDialog(
+    state: AppUiState,
+    currentKey: String?,
+    currentText: String?,
+    onCreateCustomRootstock: (String, (VineyardRootstockRow?) -> Unit) -> Unit,
+    onSelect: (String?, String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    var adding by remember { mutableStateOf(false) }
+    var addError by remember { mutableStateOf<String?>(null) }
+    val system = CloneRootstockOptions.systemRootstocks(state.rootstockCatalog, query)
+    val custom = CloneRootstockOptions.customRootstocks(state.vineyardRootstocks, query)
+    val canAdd = CloneRootstockOptions.canOfferCustomRootstock(state.rootstockCatalog, state.vineyardRootstocks, query)
+    val legacy = currentText?.trim()?.takeIf { currentKey == null && it.isNotEmpty() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rootstock") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Search rootstocks") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                PickerOptionRow(
+                    title = "Not recorded",
+                    subtitle = "Rootstock unknown / not recorded",
+                    selected = currentKey == null && legacy == null,
+                ) { onSelect(null, null) }
+                PickerOptionRow(
+                    title = "Own roots / ungrafted",
+                    subtitle = "Vines growing on their own roots",
+                    selected = currentKey == CloneRootstockSentinels.OWN_ROOTS,
+                ) {
+                    onSelect(CloneRootstockSentinels.OWN_ROOTS, CloneRootstockSentinels.OWN_ROOTS_DISPLAY)
+                }
+                if (legacy != null) {
+                    PickerOptionRow(
+                        title = "Keep “$legacy”",
+                        subtitle = "Existing entry, kept as typed",
+                        selected = true,
+                    ) { onSelect(null, legacy) }
+                }
+                if (system.isNotEmpty()) {
+                    PickerSectionLabel("Rootstock catalogue")
+                    system.forEach { entry ->
+                        PickerOptionRow(
+                            title = entry.displayName,
+                            subtitle = entry.parentage ?: "",
+                            selected = currentKey == entry.key,
+                        ) { onSelect(entry.key, entry.displayName) }
+                    }
+                }
+                if (custom.isNotEmpty()) {
+                    PickerSectionLabel("My rootstocks")
+                    custom.forEach { row ->
+                        PickerOptionRow(
+                            title = row.displayName,
+                            subtitle = "Custom · this vineyard",
+                            selected = currentKey == row.rootstockKey,
+                        ) { onSelect(row.rootstockKey, row.displayName) }
+                    }
+                }
+                if (canAdd) {
+                    TextButton(
+                        enabled = !adding,
+                        onClick = {
+                            adding = true
+                            addError = null
+                            onCreateCustomRootstock(query.trim()) { row ->
+                                adding = false
+                                if (row != null) {
+                                    onSelect(row.rootstockKey, row.displayName)
+                                } else {
+                                    addError = "Couldn't reach the catalogue — saved as text."
+                                    onSelect(null, query.trim())
+                                }
+                            }
+                        },
+                    ) { Text("Add “${query.trim()}” as custom rootstock") }
+                    addError?.let { Text(it, color = VineColors.Destructive, fontSize = 12.sp) }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun PickerSectionLabel(text: String) {
+    val vine = LocalVineColors.current
+    Text(text, color = vine.textSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+}
+
+@Composable
+private fun PickerOptionRow(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) VineColors.LeafGreen.copy(alpha = 0.12f) else vine.appBackground)
+            .border(1.dp, if (selected) VineColors.LeafGreen else vine.cardBorder, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, color = vine.textPrimary, fontSize = 14.sp)
+            if (subtitle.isNotEmpty()) Text(subtitle, color = vine.textSecondary, fontSize = 12.sp)
+        }
+        if (selected) {
+            Icon(Icons.Filled.Check, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(18.dp))
+        }
+    }
 }
 
 @Composable
