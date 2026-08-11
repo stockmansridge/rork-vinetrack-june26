@@ -27,8 +27,56 @@ struct RecordActualYieldSheet: View {
 
     let initialMode: Mode
 
+    /// Non-nil when the sheet edits an existing picking record instead of
+    /// creating new ones. Editing reuses the exact Detailed form: the same
+    /// fields, the same block/variety/clone dependency resets, and the same
+    /// sync path (dirty-mark → upsert, last-write-wins). Server-authoritative
+    /// fields are never written: `vintage` re-derives from the picked date on
+    /// the server and `grape_value` is a generated column.
+    let editingRecord: PickingRecord?
+
     init(initialMode: Mode = .basic) {
         self.initialMode = initialMode
+        self.editingRecord = nil
+    }
+
+    /// Edit an existing picking record — prefills every Detailed field,
+    /// preserving the record's historical sugar unit.
+    init(editing record: PickingRecord) {
+        self.initialMode = .detailed
+        self.editingRecord = record
+        _mode = State(initialValue: .detailed)
+        _didApplyInitialMode = State(initialValue: true)
+        _pickDate = State(initialValue: record.pickedAt)
+        _detailPaddockId = State(initialValue: record.paddockId)
+        let trimmedVariety = record.varietyName.trimmingCharacters(in: .whitespacesAndNewlines)
+        _selectedVarietyKey = State(initialValue: trimmedVariety.isEmpty ? nil : PickingYieldAggregator.normalisedVariety(trimmedVariety))
+        _freeTextVariety = State(initialValue: trimmedVariety)
+        _selectedClone = State(initialValue: record.clone)
+        _weightText = State(initialValue: Self.numberText(record.weightKg))
+        _sugarText = State(initialValue: Self.numberText(record.sugarValue))
+        if let unit = record.sugarMeasurement {
+            _sugarUnit = State(initialValue: unit)
+        }
+        _phText = State(initialValue: Self.numberText(record.ph))
+        _taText = State(initialValue: Self.numberText(record.taGPerL))
+        _purpose = State(initialValue: record.purpose)
+        _sold = State(initialValue: record.sold)
+        _soldTo = State(initialValue: record.soldTo ?? "")
+        _priceText = State(initialValue: Self.numberText(record.pricePerTonne))
+        _detailNotes = State(initialValue: record.notes)
+    }
+
+    private var isEditing: Bool { editingRecord != nil }
+
+    /// Plain decimal text for prefilling numeric fields (no grouping, no
+    /// trailing `.0` for whole numbers) so the decimal-pad parser round-trips.
+    private static func numberText(_ value: Double?) -> String {
+        guard let value else { return "" }
+        if value.truncatingRemainder(dividingBy: 1) == 0, abs(value) < 1_000_000_000 {
+            return String(Int(value))
+        }
+        return String(value)
     }
 
     @State private var mode: Mode = .basic
@@ -113,6 +161,23 @@ struct RecordActualYieldSheet: View {
                 varietyKey: allocation.varietyKey
             ))
         }
+        // Editing: the record's original variety stays selectable even when the
+        // block's configuration changed since the pick was recorded, so an edit
+        // never silently loses the historical variety snapshot.
+        if let record = editingRecord, record.paddockId == paddock.id {
+            let name = record.varietyName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty {
+                let key = PickingYieldAggregator.normalisedVariety(name)
+                if seen.insert(key).inserted {
+                    options.append(VarietyOption(
+                        id: key,
+                        name: name,
+                        varietyId: record.varietyId,
+                        varietyKey: record.varietyKey
+                    ))
+                }
+            }
+        }
         return options
     }
 
@@ -135,6 +200,17 @@ struct RecordActualYieldSheet: View {
             if seen.insert(clone.lowercased()).inserted {
                 clones.append(clone)
             }
+        }
+        // Editing: keep the record's original clone selectable while the block
+        // and variety still match the record — historical clone snapshots are
+        // preserved even if Block Setup no longer lists them.
+        if let record = editingRecord,
+           record.paddockId == paddock.id,
+           PickingYieldAggregator.normalisedVariety(record.varietyName) == selected.id,
+           let clone = record.clone?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !clone.isEmpty,
+           seen.insert(clone.lowercased()).inserted {
+            clones.append(clone)
         }
         return clones
     }
@@ -178,26 +254,36 @@ struct RecordActualYieldSheet: View {
         return true
     }
 
-    /// Running detailed total for the chosen Block + Variety + Vintage.
+    /// Running detailed total for the chosen Block + Variety + Vintage. When
+    /// editing, the record being edited is excluded so the "after saving"
+    /// preview reflects its NEW weight, not old + new.
     private var existingDetailedTonnes: Double? {
         guard let paddockId = detailPaddockId else { return nil }
         let varietyName = resolvedDetailVarietyName.isEmpty ? nil : resolvedDetailVarietyName
-        return store.detailedActualYieldTonnes(paddockId: paddockId, varietyName: varietyName, vintage: derivedVintage)
+        let records = store.pickingRecords.filter { $0.id != editingRecord?.id }
+        return PickingYieldAggregator.detailedActualTonnes(
+            records: records,
+            paddockId: paddockId,
+            varietyName: varietyName,
+            vintage: derivedVintage
+        )
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    Picker("Entry mode", selection: $mode) {
-                        ForEach(Mode.allCases) { m in
-                            Text(m.rawValue).tag(m)
+                if !isEditing {
+                    Section {
+                        Picker("Entry mode", selection: $mode) {
+                            ForEach(Mode.allCases) { m in
+                                Text(m.rawValue).tag(m)
+                            }
                         }
-                    }
-                    .pickerStyle(.segmented)
-                } footer: {
-                    if mode == .detailed {
-                        Text("Each save adds one picking record. Actual yield for a block, variety and vintage is the sum of its picking records — it replaces any Basic actual entered for the same combination.")
+                        .pickerStyle(.segmented)
+                    } footer: {
+                        if mode == .detailed {
+                            Text("Each save adds one picking record. Actual yield for a block, variety and vintage is the sum of its picking records — it replaces any Basic actual entered for the same combination.")
+                        }
                     }
                 }
 
@@ -207,7 +293,7 @@ struct RecordActualYieldSheet: View {
                     detailedSections
                 }
             }
-            .navigationTitle("Record Actual Yield")
+            .navigationTitle(isEditing ? "Edit Picking Record" : "Record Actual Yield")
             .navigationBarTitleDisplayMode(.inline)
             .sensoryFeedback(.success, trigger: savedFeedback)
             .toolbar {
@@ -215,8 +301,10 @@ struct RecordActualYieldSheet: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        if mode == .basic {
+                    Button(isEditing ? "Save Changes" : "Save") {
+                        if isEditing {
+                            saveEdit()
+                        } else if mode == .basic {
                             saveBasic()
                             dismiss()
                         } else {
@@ -239,7 +327,12 @@ struct RecordActualYieldSheet: View {
                     detailPaddockId = paddocks.first?.id
                     autoSelectVariety()
                 }
-                sugarUnit = store.settings.regionSettings.sugarUnit
+                // Editing preserves the record's historical sugar unit; only
+                // a fresh entry (or a record without sugar) uses the vineyard
+                // preference as the default.
+                if editingRecord?.sugarMeasurement == nil {
+                    sugarUnit = store.settings.regionSettings.sugarUnit
+                }
                 if mode == .basic { yieldFocused = true }
             }
             .onChange(of: detailPaddockId) { _, _ in
@@ -363,7 +456,7 @@ struct RecordActualYieldSheet: View {
                 TextField("Variety (optional)", text: $freeTextVariety)
             }
 
-            if cloneOptions.count > 1 {
+            if cloneOptions.count > 1 || (isEditing && !cloneOptions.isEmpty) {
                 Picker("Clone", selection: $selectedClone) {
                     Text("Not specified").tag(String?.none)
                     ForEach(cloneOptions, id: \.self) { clone in
@@ -380,6 +473,8 @@ struct RecordActualYieldSheet: View {
         } footer: {
             if varietyOptions.isEmpty, detailPaddock != nil {
                 Text("This block has no configured varieties. Configure them in Block setup to select variety and clone here.")
+            } else if isEditing {
+                Text("Changing the block resets the variety and clone; changing the variety resets the clone.")
             }
         }
 
@@ -571,6 +666,43 @@ struct RecordActualYieldSheet: View {
         detailNotes = ""
         savedFeedback.toggle()
         weightFocused = true
+    }
+
+    /// Applies the edit to the existing record (same id) and dismisses. The
+    /// local `vintage` mirror is recomputed from the new date; the server
+    /// re-derives the authoritative vintage from `picked_at` on upsert, and
+    /// `grape_value` stays server-generated — neither is ever client-written.
+    private func saveEdit() {
+        guard let original = editingRecord,
+              let paddock = detailPaddock,
+              let weight = parsedWeight, weight > 0 else { return }
+
+        let sugarValue = parsedSugar
+        var updated = original
+        updated.pickedAt = pickDate
+        updated.vintage = derivedVintage
+        updated.paddockId = paddock.id
+        updated.paddockName = paddock.name
+        updated.varietyId = selectedVarietyOption?.varietyId
+        updated.varietyKey = selectedVarietyOption?.varietyKey
+        updated.varietyName = resolvedDetailVarietyName
+        let trimmedClone = selectedClone?.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.clone = (trimmedClone?.isEmpty ?? true) ? nil : trimmedClone
+        updated.weightKg = weight
+        updated.sugarValue = sugarValue
+        updated.sugarUnit = sugarValue != nil ? sugarUnit.rawValue : nil
+        updated.ph = parsedPh
+        updated.taGPerL = parsedTa
+        updated.purpose = purpose.trimmingCharacters(in: .whitespaces)
+        updated.sold = sold
+        updated.soldTo = sold ? soldTo.trimmingCharacters(in: .whitespaces).nilIfEmpty : nil
+        updated.pricePerTonne = sold ? parsedPrice : nil
+        updated.notes = detailNotes.trimmingCharacters(in: .whitespaces)
+
+        store.updatePickingRecord(updated)
+        Task { await pickingRecordSync.syncForSelectedVineyard() }
+        savedFeedback.toggle()
+        dismiss()
     }
 }
 

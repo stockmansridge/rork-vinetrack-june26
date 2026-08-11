@@ -8,7 +8,7 @@ portal-specific data structures or modify the schema independently.
 - Migration: `sql/180_picking_records.sql`
 - Tests: `sql/tests/180_picking_records_tests.sql` (rollback-only)
 - iOS: `PickingRecord` / `BackendPickingRecord` / `PickingRecordSyncService`
-- Android: `PickingRecord` / `PickingRecordRepository` / `PickingRecordCreateSync` / `PickingRecordDeleteSync`
+- Android: `PickingRecord` / `PickingRecordRepository` / `PickingRecordCreateSync` / `PickingRecordUpdateSync` / `PickingRecordDeleteSync`
 
 ---
 
@@ -61,7 +61,7 @@ Only one mode is used for an individual save action.
 ### Portal access pattern
 - List: `GET /rest/v1/picking_records?select=*&vineyard_id=eq.{id}&deleted_at=is.null&order=picked_at.desc`
 - Create: `POST /rest/v1/picking_records` with the columns above **minus `vintage`, `grape_value` and server audit columns**; send `client_updated_at`.
-- Edit: `PATCH .../picking_records?id=eq.{id}` (same exclusions; the trigger re-derives `vintage` if `picked_at` changes and re-nulls commercial fields if `sold` flips off).
+- Edit: `PATCH .../picking_records?id=eq.{id}&deleted_at=is.null` (same exclusions; see §5a for the full edit workflow).
 - Delete: `POST /rest/v1/rpc/soft_delete_picking_record` `{ "p_id": "<uuid>" }`.
 
 ## 3. Vintage derivation
@@ -117,6 +117,78 @@ the Portal ready-made totals. Variety identity for matching is the
 case/whitespace-insensitive `variety_name` (clients pick names from block
 config, so names are consistent).
 
+## 5a. Edit / update workflow (canonical, all clients)
+
+Editing an existing picking record is a first-class operation on iOS,
+Android and the Portal. Both apps expose it by tapping a record in the
+Picking Log, which opens the SAME Detailed entry form prefilled from the
+record and saves an update-in-place. The Portal must match these semantics.
+
+### Editable fields
+
+Date (`picked_at`), Block (`paddock_id` + `paddock_name` snapshot), Variety
+(`variety_id` / `variety_key` / `variety_name` snapshot), Clone (`clone`
+snapshot), `weight_kg`, `sugar_value` + `sugar_unit`, `ph`, `ta_g_l`,
+`purpose`, `sold`, `sold_to`, `price_per_tonne`, `notes`.
+
+### Server-authoritative fields — NEVER write on update
+
+- `vintage` — the `BEFORE INSERT OR UPDATE` trigger re-derives it from the
+  (possibly new) `picked_at` via `resolve_vineyard_vintage_year`. Changing
+  the date across a season boundary moves the record to the correct vintage
+  automatically; a client-supplied vintage is overwritten.
+- `grape_value` — generated column; including it FAILS the write.
+- `created_by`, `created_at`, `updated_at`, `updated_by`, `sync_version` —
+  server audit columns.
+
+### Write shape
+
+- `PATCH /rest/v1/picking_records?id=eq.{id}&deleted_at=is.null` with
+  `Prefer: return=representation`, sending the editable columns plus
+  `client_updated_at` (fresh timestamp — last-write-wins).
+- Cleared fields must be sent as **explicit JSON nulls** (e.g. un-selling a
+  pick sends `"sold": false, "sold_to": null, "price_per_tonne": null`) so
+  stale values are cleared server-side. The trigger also re-nulls the
+  commercial fields whenever `sold = false`.
+- An empty result set means the row was soft-deleted elsewhere — treat the
+  edit as moot and drop the local copy; never re-insert.
+- The record `id` NEVER changes — an edit updates in place, it never
+  duplicates. RLS: any `owner | manager | supervisor | operator` member may
+  update (same policy as insert).
+
+### Form dependency rules (identical on iOS + Android)
+
+- **Date changed** → the displayed vintage recomputes locally (mirror only);
+  the server re-derives the authoritative value on save.
+- **Block changed** → Variety and Clone reset (they belonged to the old
+  block) and re-resolve from the new block's `variety_allocations`.
+- **Variety changed** → Clone resets (clones belong to a variety).
+- **Block and Variety unchanged** → the record's original variety/clone stay
+  selectable even if Block Setup no longer lists them, so an edit never
+  silently loses historical snapshots.
+- **Sugar unit is preserved**: the form prefills the record's own
+  `sugar_unit` (never today's vineyard preference). The preference is only
+  the default for records without sugar data.
+
+### After a successful edit
+
+Nothing is stored twice — every downstream surface derives from the picking
+records, so Picking Log rows and totals, Yield Overview, Actual Yield
+(supersede rule, §5) and Yield Reports all recompute automatically from the
+updated row (`picking_yield_totals` for the Portal). Soft delete is
+unchanged (§2 RPC).
+
+### Offline behaviour (apps; for Portal awareness)
+
+- iOS: the edit dirty-marks the record and replays through the same
+  last-write-wins upsert used for creates.
+- Android: a coalesced `PICKING_RECORD / UPDATE` outbox marker replays the
+  PATCH (latest edit wins); it is dependency-gated behind the same record's
+  unresolved CREATE, and an edit of a record whose insert hasn't synced yet
+  is folded into the queued insert payload instead.
+- Parity tests: `ios/VineTrackTests/PickingRecordEditTests.swift` ↔
+  `android-vinetrack/.../PickingRecordEditParityTest.kt`.
+
 ## 6. Cost / value
 
 `grape_value = (weight_kg / 1000) × price_per_tonne` — generated server-side
@@ -138,13 +210,13 @@ revenue-side aggregate for future commercial reporting.
 ### iOS
 - Model `PickingRecord` + `PickingYieldAggregator` (`LegacyImported/Models/PickingRecord.swift`)
 - DTOs `BackendPickingRecord[Upsert]` (`Backend/Models/BackendPickingRecord.swift`) — `picked_at` encoded as local-calendar `yyyy-MM-dd`
-- Sync `PickingRecordSyncService` (push→pull, last-write-wins, offline queue) wired into the full sweep and manual sync screen
-- UI: `RecordActualYieldSheet` (`Basic | Detailed` segmented control; Detailed keeps the sheet open for fast harvest entry), `PickingLogListView` (vintage-grouped log + totals + delete), sugar preference in `RegionUnitsSettingsView`
+- Sync `PickingRecordSyncService` (push→pull, last-write-wins, offline queue) wired into the full sweep and manual sync screen — creates AND edits ride the same dirty-mark → upsert path
+- UI: `RecordActualYieldSheet` (`Basic | Detailed` segmented control; Detailed keeps the sheet open for fast harvest entry; `init(editing:)` reuses the same form for edit-in-place), `PickingLogListView` (vintage-grouped log + totals; tap a record to edit, swipe to delete), sugar preference in `RegionUnitsSettingsView`
 
 ### Android
 - Model `PickingRecord` (`data/model/Models.kt`), repository `PickingRecordRepository`
-- Offline outbox: `PICKING_RECORD` entity type, `PickingRecordCreateSync` / `PickingRecordDeleteSync` (idempotent by client-minted id, replayed in every replay pipeline)
-- UI: `RecordYieldSheet` mode toggle + detailed form, `PickingLogView` (hub → Picking Log), sugar preference in `RegionUnitsSettingsScreen`
+- Offline outbox: `PICKING_RECORD` entity type, `PickingRecordCreateSync` / `PickingRecordUpdateSync` / `PickingRecordDeleteSync` (idempotent by client-minted id, coalesced per record, replayed in every replay pipeline)
+- UI: `RecordYieldSheet` mode toggle + detailed form (an `editing` record locks it to Detailed and saves update-in-place), `PickingLogView` (hub → Picking Log; tap a record to edit), sugar preference in `RegionUnitsSettingsScreen`
 - Aggregation: `computeVarietyYieldSummaries(records, paddocks, pickingRecords)` applies the supersede rule per (paddock, variety, vintage)
 
 ## 9. What the Portal must NOT do

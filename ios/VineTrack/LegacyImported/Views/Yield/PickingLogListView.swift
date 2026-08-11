@@ -12,6 +12,7 @@ struct PickingLogListView: View {
 
     @State private var showRecordSheet: Bool = false
     @State private var recordPendingDeletion: PickingRecord?
+    @State private var recordToEdit: PickingRecord?
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
 
@@ -52,6 +53,9 @@ struct PickingLogListView: View {
         .sheet(isPresented: $showRecordSheet) {
             RecordActualYieldSheet(initialMode: .detailed)
         }
+        .sheet(item: $recordToEdit) { record in
+            RecordActualYieldSheet(editing: record)
+        }
         .task { await pickingRecordSync.syncForSelectedVineyard() }
         .refreshable { await pickingRecordSync.syncForSelectedVineyard() }
         .confirmationDialog(
@@ -82,14 +86,19 @@ struct PickingLogListView: View {
                 totalRow(total)
             }
             ForEach(vintageRecords) { record in
-                recordRow(record)
-                    .swipeActions(edge: .trailing) {
-                        Button(role: .destructive) {
-                            recordPendingDeletion = record
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
+                Button {
+                    recordToEdit = record
+                } label: {
+                    recordRow(record)
+                }
+                .buttonStyle(.plain)
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        recordPendingDeletion = record
+                    } label: {
+                        Label("Delete", systemImage: "trash")
                     }
+                }
             }
         } header: {
             Text("Vintage \(String(vintage))")

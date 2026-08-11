@@ -97,6 +97,7 @@ import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.PickingRecordCreateSync
 import com.rork.vinetrack.data.PickingRecordDeleteSync
 import com.rork.vinetrack.data.PickingRecordRepository
+import com.rork.vinetrack.data.PickingRecordUpdateSync
 import com.rork.vinetrack.data.PruningYieldSettingsRepository
 import com.rork.vinetrack.data.PruningYieldSettingsStore
 import com.rork.vinetrack.data.PruningYieldSettingsSync
@@ -1139,6 +1140,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * CREATE and DELETE only — fully separate from the YIELD_RECORD queues.
      */
     private val pickingCreateSync = PickingRecordCreateSync(pickingRepo, pendingWrites)
+    private val pickingUpdateSync = PickingRecordUpdateSync(pickingRepo, pendingWrites)
     private val pickingDeleteSync = PickingRecordDeleteSync(pickingRepo, pendingWrites)
 
     /**
@@ -2691,6 +2693,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Replay any queued picking-record edits (sql/180). PICKING_RECORD /
+     * UPDATE only; dependency-gated behind an unresolved same-record create.
+     * Each synced row replaces the optimistic copy so the server-derived
+     * vintage and grape value win; a row deleted elsewhere is dropped.
+     */
+    private fun replayPendingPickingUpdates() {
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        viewModelScope.launch {
+            pickingUpdateSync.replayAll(
+                onSynced = { record ->
+                    _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.map { if (it.id == record.id) record else it }) }
+                },
+                onMissing = { recordId ->
+                    _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.filterNot { it.id == recordId }) }
+                },
+            )
+        }
+    }
+
+    /**
      * Replay any queued picking-record deletes (sql/180). PICKING_RECORD /
      * DELETE only; dependency-gated behind an unresolved same-record create.
      */
@@ -3073,6 +3095,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingYieldUpdates()
         replayPendingYieldDeletes()
         replayPendingPickingCreates()
+        replayPendingPickingUpdates()
         replayPendingPickingDeletes()
         replayPendingPruningYieldSettings()
         replayPendingGrowthCreates()
@@ -3144,6 +3167,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingYieldUpdates()
         replayPendingYieldDeletes()
         replayPendingPickingCreates()
+        replayPendingPickingUpdates()
         replayPendingPickingDeletes()
         replayPendingPruningYieldSettings()
         replayPendingGrowthCreates()
@@ -3206,6 +3230,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     replayPendingYieldUpdates()
                     replayPendingYieldDeletes()
                     replayPendingPickingCreates()
+                    replayPendingPickingUpdates()
                     replayPendingPickingDeletes()
                     replayPendingPruningYieldSettings()
                     replayPendingGrowthCreates()
@@ -3481,6 +3506,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingYieldUpdates()
         replayPendingYieldDeletes()
         replayPendingPickingCreates()
+        replayPendingPickingUpdates()
         replayPendingPickingDeletes()
         replayPendingPruningYieldSettings()
         replayPendingGrowthCreates()
@@ -4304,6 +4330,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 replayPendingYieldUpdates()
                 replayPendingYieldDeletes()
                 replayPendingPickingCreates()
+                replayPendingPickingUpdates()
                 replayPendingPickingDeletes()
                 replayPendingPruningYieldSettings()
                 replayPendingGrowthCreates()
@@ -11012,6 +11039,57 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 pickingCreateSync.enqueue(record, now)
                 _ui.update { it.copy(yieldError = "Picking record saved offline — will sync when connection is available.") }
+                onResult(true)
+            }
+        }
+    }
+
+    /**
+     * Edit an existing Detailed picking record in place (sql/180 —
+     * offline/retryable). The caller passes the full edited record with the
+     * SAME id and a locally-derived vintage mirror; the server re-derives the
+     * authoritative vintage from `picked_at` on update and `grape_value` is
+     * never client-written. A record whose CREATE is still queued has the
+     * edit folded into that queued insert instead (the coalescing enqueue
+     * replaces the payload), so the eventual insert carries the edited data
+     * and no premature UPDATE can fire for a row that doesn't exist yet.
+     */
+    fun updatePickingRecord(record: PickingRecord, onResult: (Boolean) -> Unit) {
+        val now = java.time.Instant.now().toString()
+        val previous = _ui.value.pickingRecords
+        _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.map { if (it.id == record.id) record else it }, yieldError = null) }
+
+        if (pickingCreateSync.hasUnresolvedCreate(record.id)) {
+            pickingCreateSync.enqueue(record, now)
+            onResult(true)
+            return
+        }
+
+        if (!_ui.value.isOnline) {
+            pickingUpdateSync.enqueue(record, now)
+            _ui.update { it.copy(yieldError = "Edit saved offline — will sync when connection is available.") }
+            onResult(true)
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val updated = pickingRepo.updatePickingRecord(record, now)
+                if (updated != null) {
+                    _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.map { if (it.id == updated.id) updated else it }) }
+                } else {
+                    // Row is gone on the server (deleted elsewhere) — drop the stale copy.
+                    _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.filterNot { it.id == record.id }) }
+                }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(pickingRecords = previous, yieldError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                pickingUpdateSync.enqueue(record, now)
+                _ui.update { it.copy(yieldError = "Edit saved offline — will sync when connection is available.") }
                 onResult(true)
             }
         }

@@ -5,6 +5,7 @@ import com.rork.vinetrack.data.model.PickingRecord
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -15,6 +16,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * Write/read path for the Detailed picking log (`public.picking_records`,
@@ -99,6 +102,57 @@ class PickingRecordRepository(private val session: SessionStore) {
             setBody(body)
         }
         firstRow(response)
+    }
+
+    /**
+     * Edit an existing picking record in place (same id — sql/180 UPDATE).
+     *
+     * The PATCH body is built as an explicit JSON object so cleared fields
+     * (e.g. un-selling a pick nulls `sold_to`/`price_per_tonne`) also clear
+     * the server columns. Server-authoritative fields are NEVER sent:
+     * `vintage` is re-derived from `picked_at` by the BEFORE UPDATE trigger
+     * and `grape_value` is a generated column. Returns the authoritative
+     * server row, or null when no live row matched (deleted elsewhere).
+     */
+    suspend fun updatePickingRecord(
+        record: PickingRecord,
+        clientUpdatedAt: String,
+    ): PickingRecord? = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val body = buildJsonObject {
+            put("picked_at", record.pickedAt)
+            put("paddock_id", record.paddockId)
+            put("paddock_name", record.paddockName)
+            put("variety_id", record.varietyId)
+            put("variety_key", record.varietyKey)
+            put("variety_name", record.varietyName)
+            put("clone", record.clone)
+            put("weight_kg", record.weightKg)
+            put("sugar_value", record.sugarValue)
+            put("sugar_unit", record.sugarUnit)
+            put("ph", record.ph)
+            put("ta_g_l", record.taGPerL)
+            put("purpose", record.purpose)
+            put("sold", record.sold)
+            put("sold_to", record.soldTo)
+            put("price_per_tonne", record.pricePerTonne)
+            put("notes", record.notes)
+            put("client_updated_at", clientUpdatedAt)
+        }
+        val response = SupabaseClient.http.patch(
+            SupabaseClient.restUrl("picking_records?id=eq.${record.id}&deleted_at=is.null"),
+        ) {
+            authHeaders(token)
+            headers { append("Prefer", "return=representation") }
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+        when {
+            response.status.isSuccess() -> response.body<List<PickingRecord>>().firstOrNull()
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
     }
 
     suspend fun listPickingRecords(vineyardId: String): List<PickingRecord> =

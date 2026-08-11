@@ -140,6 +140,7 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
     var creatingEstimate by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<HistoricalYieldRecord?>(null) }
     var editingEstimate by remember { mutableStateOf<HistoricalYieldRecord?>(null) }
+    var editingPick by remember { mutableStateOf<PickingRecord?>(null) }
 
     // Vineyard-wide per-variety totals, derived from block results matched back to
     // current paddock allocations. Recomputed only when records/paddocks change.
@@ -213,6 +214,7 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
                 state = state,
                 onBack = { destination = YieldDestination.HUB },
                 onAdd = { creatingDetailed = true; creating = true },
+                onEdit = { editingPick = it },
             )
             else -> YieldHubView(
                 state = state,
@@ -236,6 +238,20 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
             initialDetailed = creatingDetailed,
             onDismiss = { creating = false },
             onSaved = { creating = false },
+        )
+    }
+
+    editingPick?.let { pick ->
+        // Re-resolve from state so a replayed sync (server-derived vintage /
+        // grape value) is reflected if the sheet reopens.
+        val livePick = state.pickingRecords.firstOrNull { it.id == pick.id } ?: pick
+        RecordYieldSheet(
+            vm = vm,
+            state = state,
+            initialDetailed = true,
+            editing = livePick,
+            onDismiss = { editingPick = null },
+            onSaved = { editingPick = null },
         )
     }
 
@@ -422,6 +438,7 @@ private fun PickingLogView(
     state: AppUiState,
     onBack: () -> Unit,
     onAdd: () -> Unit,
+    onEdit: (PickingRecord) -> Unit,
 ) {
     val vine = LocalVineColors.current
     val fmt = state.regionFormatter
@@ -510,7 +527,7 @@ private fun PickingLogView(
                     }
                     inVintage.sortedByDescending { it.pickedAt }.forEach { record ->
                         item(key = record.id) {
-                            VineyardCard {
+                            VineyardCard(modifier = Modifier.clickable { onEdit(record) }) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1298,6 +1315,7 @@ private fun RecordYieldSheet(
     vm: AppViewModel,
     state: AppUiState,
     initialDetailed: Boolean = false,
+    editing: PickingRecord? = null,
     onDismiss: () -> Unit,
     onSaved: () -> Unit,
 ) {
@@ -1338,36 +1356,76 @@ private fun RecordYieldSheet(
     }
 
     // ---- Detailed (picking log) state — sql/180 ----
-    var detailed by remember { mutableStateOf(initialDetailed) }
-    var pickedDate by remember { mutableStateOf(LocalDate.now()) }
+    // When [editing] is non-nil the SAME form edits that record in place:
+    // every field prefills from the record (including its historical sugar
+    // unit), the block/variety/clone dependency resets still apply, and the
+    // save updates rather than inserts. `vintage` and `grape_value` remain
+    // server-authoritative and are never client-written.
+    val initialDetailBlock = remember {
+        editing?.let { e -> paddocks.firstOrNull { it.id == e.paddockId } } ?: paddocks.firstOrNull()
+    }
+    var detailed by remember { mutableStateOf(initialDetailed || editing != null) }
+    var pickedDate by remember {
+        mutableStateOf(
+            editing?.pickedAt?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: LocalDate.now(),
+        )
+    }
     var showDatePicker by remember { mutableStateOf(false) }
-    var detailBlock by remember { mutableStateOf(paddocks.firstOrNull()) }
+    var detailBlock by remember { mutableStateOf(initialDetailBlock) }
     var detailBlockMenu by remember { mutableStateOf(false) }
-    var selectedVariety by remember { mutableStateOf<String?>(null) }
+    var selectedVariety by remember {
+        mutableStateOf(
+            editing?.varietyName?.takeIf { it.isNotBlank() }?.let { vn ->
+                // Prefer the exact configured option string so clone filtering matches.
+                initialDetailBlock?.varietyAllocations.orEmpty()
+                    .mapNotNull { it.displayName }
+                    .firstOrNull { canonicalVarietyName(it) == canonicalVarietyName(vn) } ?: vn
+            },
+        )
+    }
     var varietyMenu by remember { mutableStateOf(false) }
-    var freeVariety by remember { mutableStateOf("") }
-    var selectedClone by remember { mutableStateOf<String?>(null) }
+    var freeVariety by remember { mutableStateOf(editing?.varietyName.orEmpty()) }
+    var selectedClone by remember { mutableStateOf(editing?.clone) }
     var cloneMenu by remember { mutableStateOf(false) }
-    var weightText by remember { mutableStateOf("") }
-    var sugarText by remember { mutableStateOf("") }
-    var sugarUnit by remember { mutableStateOf(state.regionSettings.sugarUnit) }
-    var phText by remember { mutableStateOf("") }
-    var taText by remember { mutableStateOf("") }
-    var purpose by remember { mutableStateOf("") }
-    var sold by remember { mutableStateOf(false) }
-    var soldTo by remember { mutableStateOf("") }
-    var priceText by remember { mutableStateOf("") }
-    var detailNotes by remember { mutableStateOf("") }
+    var weightText by remember { mutableStateOf(editing?.weightKg?.let { formatPlain(it) } ?: "") }
+    var sugarText by remember { mutableStateOf(editing?.sugarValue?.let { formatPlain(it) } ?: "") }
+    // Editing preserves the record's historical sugar unit; only a fresh
+    // entry (or a record without sugar) defaults to the vineyard preference.
+    var sugarUnit by remember {
+        mutableStateOf(SugarMeasurementUnit.from(editing?.sugarUnit) ?: state.regionSettings.sugarUnit)
+    }
+    var phText by remember { mutableStateOf(editing?.ph?.let { formatPlain(it) } ?: "") }
+    var taText by remember { mutableStateOf(editing?.taGPerL?.let { formatPlain(it) } ?: "") }
+    var purpose by remember { mutableStateOf(editing?.purpose.orEmpty()) }
+    var sold by remember { mutableStateOf(editing?.sold ?: false) }
+    var soldTo by remember { mutableStateOf(editing?.soldTo.orEmpty()) }
+    var priceText by remember { mutableStateOf(editing?.pricePerTonne?.let { formatPlain(it) } ?: "") }
+    var detailNotes by remember { mutableStateOf(editing?.notes.orEmpty()) }
     var lastSavedInfo by remember { mutableStateOf<String?>(null) }
 
     val allocations = detailBlock?.varietyAllocations.orEmpty().filter { !it.displayName.isNullOrBlank() }
-    val varietyOptions = allocations.mapNotNull { it.displayName }.distinct()
-    val cloneOptions = allocations
+    val baseVarietyOptions = allocations.mapNotNull { it.displayName }.distinct()
+    // Editing: the record's original variety stays selectable even when the
+    // block's configuration changed since the pick, so an edit never silently
+    // loses the historical variety snapshot.
+    val legacyVarietyOption = editing?.varietyName
+        ?.takeIf { vn -> vn.isNotBlank() && detailBlock?.id == editing.paddockId }
+        ?.takeIf { vn -> baseVarietyOptions.none { canonicalVarietyName(it) == canonicalVarietyName(vn) } }
+    val varietyOptions = baseVarietyOptions + listOfNotNull(legacyVarietyOption)
+    val baseCloneOptions = allocations
         .filter { it.displayName == selectedVariety && !it.clone.isNullOrBlank() }
         .mapNotNull { it.clone }
         .distinct()
+    // Editing: keep the record's original clone selectable while block and
+    // variety still match the record — historical clone snapshots are
+    // preserved even if Block Setup no longer lists them.
+    val legacyCloneOption = editing?.clone
+        ?.takeIf { c -> c.isNotBlank() && detailBlock?.id == editing.paddockId }
+        ?.takeIf { canonicalVarietyName(selectedVariety ?: freeVariety) == canonicalVarietyName(editing.varietyName) }
+        ?.takeIf { c -> baseCloneOptions.none { it.equals(c, ignoreCase = true) } }
+    val cloneOptions = baseCloneOptions + listOfNotNull(legacyCloneOption)
     // Vintage mirrors the authoritative server resolver (sql/119); the server
-    // re-derives it from picked_at on insert.
+    // re-derives it from picked_at on insert AND update.
     val derivedVintage = VintageResolver.vintageYear(pickedDate, state.seasonStartMonth, state.seasonStartDay)
     val weight = weightText.trim().toDoubleOrNull()
     val price = priceText.trim().toDoubleOrNull()
@@ -1375,7 +1433,13 @@ private fun RecordYieldSheet(
         (varietyOptions.isEmpty() || selectedVariety != null) && !saving
 
     // Auto-select when the block has exactly one configured variety / clone.
+    // Changing the block resets variety and clone (they belong to the old
+    // block); the initial composition is skipped in edit mode so prefilled
+    // values are never clobbered.
+    var autoSelectBlockId by remember { mutableStateOf(if (editing != null) detailBlock?.id else null) }
     LaunchedEffect(detailBlock?.id) {
+        if (detailBlock?.id == autoSelectBlockId) return@LaunchedEffect
+        autoSelectBlockId = detailBlock?.id
         val opts = detailBlock?.varietyAllocations.orEmpty()
             .filter { !it.displayName.isNullOrBlank() }
             .mapNotNull { it.displayName }
@@ -1383,7 +1447,12 @@ private fun RecordYieldSheet(
         selectedVariety = if (opts.size == 1) opts.first() else null
         selectedClone = null
     }
+    var suppressCloneAutoSelect by remember { mutableStateOf(editing != null) }
     LaunchedEffect(selectedVariety, detailBlock?.id) {
+        if (suppressCloneAutoSelect) {
+            suppressCloneAutoSelect = false
+            return@LaunchedEffect
+        }
         if (selectedClone == null && cloneOptions.size == 1) selectedClone = cloneOptions.first()
     }
 
@@ -1395,18 +1464,26 @@ private fun RecordYieldSheet(
         saving = true
         val varietyName = (selectedVariety ?: freeVariety).trim()
         val alloc = allocations.firstOrNull { it.displayName == varietyName }
+        // Editing with the variety unchanged: keep the record's original
+        // variety ids even if the allocation is no longer configured.
+        val varietyUnchanged = editing != null &&
+            canonicalVarietyName(editing.varietyName) == canonicalVarietyName(varietyName)
         val sugar = sugarText.trim().toDoubleOrNull()
         val record = PickingRecord(
-            id = UUID.randomUUID().toString(),
+            id = editing?.id ?: UUID.randomUUID().toString(),
             vineyardId = vineyardId,
             pickedAt = pickedDate.toString(),
             vintage = derivedVintage,
             paddockId = chosen.id,
             paddockName = chosen.name,
-            varietyId = alloc?.varietyId,
-            varietyKey = alloc?.varietyKey,
+            varietyId = alloc?.varietyId ?: editing?.varietyId?.takeIf { varietyUnchanged },
+            varietyKey = alloc?.varietyKey ?: editing?.varietyKey?.takeIf { varietyUnchanged },
             varietyName = varietyName,
-            clone = (selectedClone ?: cloneOptions.singleOrNull())?.trim(),
+            clone = if (editing != null) {
+                selectedClone?.trim()?.ifBlank { null }
+            } else {
+                (selectedClone ?: cloneOptions.singleOrNull())?.trim()
+            },
             weightKg = w,
             sugarValue = sugar,
             sugarUnit = if (sugar != null) sugarUnit.raw else null,
@@ -1418,6 +1495,13 @@ private fun RecordYieldSheet(
             pricePerTonne = if (sold) price else null,
             notes = detailNotes.trim(),
         )
+        if (editing != null) {
+            vm.updatePickingRecord(record) { ok ->
+                saving = false
+                if (ok) onSaved()
+            }
+            return
+        }
         vm.createPickingRecord(record) { ok ->
             saving = false
             if (ok) {
@@ -1433,32 +1517,43 @@ private fun RecordYieldSheet(
             modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text("Record actual yield", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+            Text(
+                if (editing != null) "Edit picking record" else "Record actual yield",
+                fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary,
+            )
 
             // Basic | Detailed mode. Basic is the original single actual-yield
             // entry; Detailed logs one picking record per save (sql/180).
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(false to "Basic", true to "Detailed").forEach { (value, label) ->
-                    val isSelected = detailed == value
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (isSelected) VineColors.LeafGreen.copy(alpha = 0.15f) else vine.appBackground)
-                            .clickable { detailed = value }
-                            .padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            label,
-                            color = if (isSelected) VineColors.LeafGreen else vine.textSecondary,
-                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                            fontSize = 14.sp,
-                        )
+            // Editing an existing pick locks the sheet to Detailed.
+            if (editing == null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(false to "Basic", true to "Detailed").forEach { (value, label) ->
+                        val isSelected = detailed == value
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSelected) VineColors.LeafGreen.copy(alpha = 0.15f) else vine.appBackground)
+                                .clickable { detailed = value }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                label,
+                                color = if (isSelected) VineColors.LeafGreen else vine.textSecondary,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                fontSize = 14.sp,
+                            )
+                        }
                     }
                 }
             }
-            if (detailed) {
+            if (editing != null) {
+                Text(
+                    "Changing the block resets the variety and clone; changing the variety resets the clone. The vintage recalculates from the picking date, and totals and yield reports update automatically.",
+                    color = vine.textSecondary, fontSize = 12.sp,
+                )
+            } else if (detailed) {
                 Text(
                     "Each save adds one picking record. Actual yield for a block, variety and vintage is the sum of its picking records — it replaces any Basic actual entered for the same combination.",
                     color = vine.textSecondary, fontSize = 12.sp,
@@ -1630,7 +1725,7 @@ private fun RecordYieldSheet(
                 )
             }
 
-            if (cloneOptions.size > 1) {
+            if (cloneOptions.size > 1 || (editing != null && cloneOptions.isNotEmpty())) {
                 ExposedDropdownMenuBox(expanded = cloneMenu, onExpandedChange = { cloneMenu = it }) {
                     OutlinedTextField(
                         value = selectedClone ?: "Not specified",
@@ -1663,7 +1758,7 @@ private fun RecordYieldSheet(
                 val varietyForTotal = (selectedVariety ?: freeVariety).trim()
                 val existingKg = state.pickingRecords
                     .filter {
-                        it.paddockId == detailBlock!!.id && it.vintage == derivedVintage &&
+                        it.id != editing?.id && it.paddockId == detailBlock!!.id && it.vintage == derivedVintage &&
                             (varietyForTotal.isBlank() || canonicalVarietyName(it.varietyName) == canonicalVarietyName(varietyForTotal))
                     }
                     .sumOf { it.weightKg }
@@ -1775,7 +1870,7 @@ private fun RecordYieldSheet(
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
             ) {
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
-                else Text("Save pick")
+                else Text(if (editing != null) "Save changes" else "Save pick")
             }
 
             }

@@ -127,6 +127,21 @@ class PickingRecordCreateSync(
     }
 
     /**
+     * True while this record's CREATE marker is still queued/unresolved. Used
+     * by the edit flow: editing a record whose insert hasn't synced yet folds
+     * the changes into the queued CREATE payload (via [enqueue], which
+     * coalesces by record id) instead of queueing an UPDATE the server would
+     * reject for a row that doesn't exist yet.
+     */
+    fun hasUnresolvedCreate(id: String): Boolean =
+        pending.list().any {
+            it.clientId == id &&
+                it.entityType == PendingEntityType.PICKING_RECORD &&
+                it.opType == PendingOpType.CREATE &&
+                it.status in PendingWriteStatus.unresolved
+        }
+
+    /**
      * Replay every retry-eligible queued picking-record create. Success and
      * duplicate (409) both resolve the marker; [onSynced] fires with the server
      * row (success only) so the caller can reconcile the authoritative vintage
