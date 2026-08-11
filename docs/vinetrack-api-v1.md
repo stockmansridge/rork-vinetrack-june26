@@ -4,6 +4,11 @@ The canonical engineering contract for the VineTrack public read-only API.
 This document seeds the future developer portal; it is not end-user marketing
 copy. Later Lovable documentation must match this contract.
 
+> **Developer-facing guide:** external developers should start with
+> `docs/vinetrack-developer-platform.md` — the consolidated onboarding,
+> API and webhook guide. Both documents must agree; this file remains the
+> deep field-level reference.
+
 Base URL:
 
 ```text
@@ -274,7 +279,7 @@ capabilities. Requires a valid active key but no resource scope.
     "status": "active",
     "scopes": ["blocks:read", "vineyards:read"],
     "vineyards": [
-      { "id": "1f0a...", "name": "Stockman's Ridge" }
+      { "id": "1f0a...", "name": "Riverbend Estate" }
     ]
   }
 }
@@ -294,7 +299,7 @@ Vineyard resource shape:
 ```json
 {
   "id": "1f0a...",
-  "name": "Stockman's Ridge",
+  "name": "Riverbend Estate",
   "country_code": "AU",
   "country": "Australia",
   "timezone": "Australia/Sydney",
@@ -1387,8 +1392,9 @@ management RPC surface: `docs/vinetrack-webhooks.md`.
   `--no-verify-jwt` for this function — callers present VineTrack keys, not
   Supabase JWTs).
 - Requires SQL 172 + SQL 173 + SQL 174 + SQL 175 + SQL 176 applied first.
-- OpenAPI 3.1 document: `docs/vinetrack-api-openapi.yaml` (descriptive —
-  the implementation remains canonical).
+- OpenAPI 3.1 document: `docs/openapi/vinetrack-v1.yaml` (descriptive —
+  the implementation remains canonical). Validated by
+  `scripts/check-developer-docs.ts`.
 - Secrets: the standard Supabase-injected `SUPABASE_URL` and
   `SUPABASE_SERVICE_ROLE_KEY`. Optional: `VINETRACK_API_RATE_LIMIT_PER_MINUTE`
   (default 300), `VINETRACK_API_CORS_ORIGINS` (comma-separated exact origins;

@@ -8,6 +8,12 @@ the API remains the authoritative place to fetch *what* it now looks like.
 Built on the Stage 2 integration foundation (SQL 172): the same integration
 clients, vineyard grants, scopes and audit log govern webhooks.
 
+> **Developer-facing guide:** external developers should start with
+> `docs/vinetrack-developer-platform.md` — the consolidated onboarding,
+> API and webhook guide. Both documents must agree; this file remains the
+> deep webhook reference. Machine-readable event catalogue:
+> `docs/webhooks/vinetrack-events-v1.json`.
+
 ## Delivery model — read this first
 
 - **At-least-once.** A delivery may occasionally arrive more than once

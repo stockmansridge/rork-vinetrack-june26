@@ -1,0 +1,241 @@
+{
+  "$comment": "Canonical machine-readable VineTrack webhook event catalogue (v1). Must agree with sql/172 + sql/178 event catalogue, docs/vinetrack-webhooks.md and docs/vinetrack-developer-platform.md. Validated by scripts/check-developer-docs.ts.",
+  "api_version": "v1",
+  "generated_from": "sql/172_integration_platform_foundation.sql + sql/178_integration_webhook_platform.sql",
+  "events": [
+    {
+      "event": "trip.created",
+      "resource_type": "trip",
+      "required_scope": "trips:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A machine trip has started and is still in progress."
+    },
+    {
+      "event": "trip.updated",
+      "resource_type": "trip",
+      "required_scope": "trips:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A trip was edited (live GPS tracking updates are silent)."
+    },
+    {
+      "event": "trip.completed",
+      "resource_type": "trip",
+      "required_scope": "trips:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A trip gained its end time. Trips synced already-finished emit only this event."
+    },
+    {
+      "event": "spray_job.created",
+      "resource_type": "spray_job",
+      "required_scope": "sprays:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": false,
+      "subscribable": true,
+      "description": "Reserved — not emitted in v1. Spray records represent completed applications, so creation is completion."
+    },
+    {
+      "event": "spray_job.updated",
+      "resource_type": "spray_job",
+      "required_scope": "sprays:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A completed spray application record was edited."
+    },
+    {
+      "event": "spray_job.completed",
+      "resource_type": "spray_job",
+      "required_scope": "sprays:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A spray application record was created (a record is a completed application)."
+    },
+    {
+      "event": "fuel_log.created",
+      "resource_type": "fuel_log",
+      "required_scope": "fuel:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A machine fuel fill was recorded."
+    },
+    {
+      "event": "fuel_log.updated",
+      "resource_type": "fuel_log",
+      "required_scope": "fuel:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A machine fuel fill was edited."
+    },
+    {
+      "event": "fuel_purchase.created",
+      "resource_type": "fuel_purchase",
+      "required_scope": "fuel:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A bulk fuel purchase was recorded (insert-only; there is no updated event)."
+    },
+    {
+      "event": "work_task.created",
+      "resource_type": "work_task",
+      "required_scope": "work_tasks:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A work task was created."
+    },
+    {
+      "event": "work_task.updated",
+      "resource_type": "work_task",
+      "required_scope": "work_tasks:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A work task was edited."
+    },
+    {
+      "event": "work_task.completed",
+      "resource_type": "work_task",
+      "required_scope": "work_tasks:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A work task was finalised (the canonical completion concept)."
+    },
+    {
+      "event": "pruning_activity.created",
+      "resource_type": "pruning_activity",
+      "required_scope": "pruning:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A pruning activity was recorded."
+    },
+    {
+      "event": "pruning_activity.updated",
+      "resource_type": "pruning_activity",
+      "required_scope": "pruning:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A pruning activity was edited (reversals emit nothing)."
+    },
+    {
+      "event": "irrigation_record.created",
+      "resource_type": "irrigation_record",
+      "required_scope": "irrigation:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "An irrigation session was recorded."
+    },
+    {
+      "event": "irrigation_record.updated",
+      "resource_type": "irrigation_record",
+      "required_scope": "irrigation:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "An irrigation session was corrected (reversals emit nothing)."
+    },
+    {
+      "event": "irrigation_record.completed",
+      "resource_type": "irrigation_record",
+      "required_scope": "irrigation:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A planned or running irrigation session transitioned to completed."
+    },
+    {
+      "event": "growth_stage.recorded",
+      "resource_type": "growth_stage",
+      "required_scope": "growth_stages:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A growth-stage observation was recorded (insert-only)."
+    },
+    {
+      "event": "yield_record.created",
+      "resource_type": "yield_record",
+      "required_scope": "yield:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A season yield record was created."
+    },
+    {
+      "event": "yield_record.updated",
+      "resource_type": "yield_record",
+      "required_scope": "yield:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A season yield record was edited."
+    },
+    {
+      "event": "pin.created",
+      "resource_type": "pin",
+      "required_scope": "pins:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "An operational pin was created."
+    },
+    {
+      "event": "pin.updated",
+      "resource_type": "pin",
+      "required_scope": "pins:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "An operational pin was edited."
+    },
+    {
+      "event": "pin.resolved",
+      "resource_type": "pin",
+      "required_scope": "pins:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A pin transitioned to completed/resolved. A reopened pin can resolve again."
+    },
+    {
+      "event": "block.created",
+      "resource_type": "block",
+      "required_scope": "blocks:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A vineyard block was created."
+    },
+    {
+      "event": "block.updated",
+      "resource_type": "block",
+      "required_scope": "blocks:read",
+      "vineyard_scoped": true,
+      "emitted_in_v1": true,
+      "subscribable": true,
+      "description": "A vineyard block was edited."
+    },
+    {
+      "event": "webhook.test",
+      "resource_type": "webhook_endpoint",
+      "required_scope": null,
+      "vineyard_scoped": false,
+      "emitted_in_v1": true,
+      "subscribable": false,
+      "description": "System test event sent on demand to one endpoint. vineyard_id is null. Proves transport and signature, not entitlements."
+    }
+  ]
+}
