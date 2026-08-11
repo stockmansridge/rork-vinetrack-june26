@@ -1025,7 +1025,9 @@ returns jsonb
 language plpgsql
 volatile
 security definer
-set search_path = public
+-- pgcrypto (gen_random_bytes) may live in `extensions` (Supabase default)
+-- or `public`; search_path covers both — same convention as sql/172.
+set search_path = public, extensions
 as $$
 declare
   c public.integration_clients;
@@ -1212,7 +1214,9 @@ returns jsonb
 language plpgsql
 volatile
 security definer
-set search_path = public
+-- pgcrypto (gen_random_bytes) may live in `extensions` (Supabase default)
+-- or `public`; search_path covers both — same convention as sql/172.
+set search_path = public, extensions
 as $$
 declare
   r public.webhook_endpoints;
