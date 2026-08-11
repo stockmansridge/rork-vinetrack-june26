@@ -119,6 +119,45 @@ extension MigratedDataStore {
         onHistoricalYieldRecordDeleted?(record.id)
     }
 
+    // MARK: - PickingRecord (Detailed picking log)
+
+    func addPickingRecord(_ record: PickingRecord) {
+        guard let vineyardId = selectedVineyardId else { return }
+        var item = record
+        item.vineyardId = vineyardId
+        pickingRecords.append(item)
+        yieldRepo.savePickingSlice(pickingRecords, for: vineyardId)
+        onPickingRecordChanged?(item.id)
+    }
+
+    func updatePickingRecord(_ record: PickingRecord) {
+        guard let vineyardId = selectedVineyardId else { return }
+        guard let index = pickingRecords.firstIndex(where: { $0.id == record.id }) else { return }
+        pickingRecords[index] = record
+        yieldRepo.savePickingSlice(pickingRecords, for: vineyardId)
+        onPickingRecordChanged?(record.id)
+    }
+
+    func deletePickingRecord(_ record: PickingRecord) {
+        guard let vineyardId = selectedVineyardId else { return }
+        pickingRecords.removeAll { $0.id == record.id }
+        yieldRepo.savePickingSlice(pickingRecords, for: vineyardId)
+        onPickingRecordDeleted?(record.id)
+    }
+
+    /// Canonical actual-yield precedence for a Block + Variety + Vintage:
+    /// when detailed picking records exist, their summed weight IS the actual
+    /// yield (returns the detailed tonnes); otherwise nil, meaning any Basic
+    /// manually entered actual remains authoritative. Never add the two.
+    func detailedActualYieldTonnes(paddockId: UUID, varietyName: String?, vintage: Int) -> Double? {
+        PickingYieldAggregator.detailedActualTonnes(
+            records: pickingRecords,
+            paddockId: paddockId,
+            varietyName: varietyName,
+            vintage: vintage
+        )
+    }
+
     // MARK: - YieldDeterminationResult (local only)
 
     func saveYieldDeterminationResult(_ result: YieldDeterminationResult) {

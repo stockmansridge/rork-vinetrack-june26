@@ -341,3 +341,30 @@ final class SupabaseHistoricalYieldRecordSyncRepository: HistoricalYieldRecordSy
         try await provider.client.rpc("soft_delete_historical_yield_record", params: OpsSoftDeleteByIdRequest(id: id)).execute()
     }
 }
+
+// MARK: - Picking Records (Detailed picking log, sql/180)
+
+final class SupabasePickingRecordSyncRepository: PickingRecordSyncRepositoryProtocol {
+    private let provider: SupabaseClientProvider
+    init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
+
+    func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendPickingRecord] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let q = provider.client.from("picking_records").select().eq("vineyard_id", value: vineyardId.uuidString)
+        if let since {
+            return try await q.gte("updated_at", value: opsIso(since)).order("updated_at", ascending: true).execute().value
+        }
+        return try await q.order("updated_at", ascending: true).execute().value
+    }
+
+    func upsertMany(_ items: [BackendPickingRecordUpsert]) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        guard !items.isEmpty else { return }
+        try await provider.client.from("picking_records").upsert(items, onConflict: "id").execute()
+    }
+
+    func softDelete(id: UUID) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        try await provider.client.rpc("soft_delete_picking_record", params: OpsSoftDeleteByIdRequest(id: id)).execute()
+    }
+}

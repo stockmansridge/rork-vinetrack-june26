@@ -320,4 +320,37 @@ extension MigratedDataStore {
             yieldRepo.replaceHistorical(all.filter { $0.vineyardId == removed.vineyardId }, for: removed.vineyardId)
         }
     }
+
+    // MARK: - Picking Records (Detailed picking log)
+
+    func applyRemotePickingRecordUpsert(_ record: PickingRecord) {
+        if selectedVineyardId == record.vineyardId {
+            if let idx = pickingRecords.firstIndex(where: { $0.id == record.id }) {
+                pickingRecords[idx] = record
+            } else {
+                pickingRecords.append(record)
+            }
+            yieldRepo.savePickingSlice(pickingRecords, for: record.vineyardId)
+        } else {
+            var all = yieldRepo.loadAllPicking()
+            if let idx = all.firstIndex(where: { $0.id == record.id }) {
+                all[idx] = record
+            } else {
+                all.append(record)
+            }
+            yieldRepo.replacePicking(all.filter { $0.vineyardId == record.vineyardId }, for: record.vineyardId)
+        }
+    }
+
+    func applyRemotePickingRecordDelete(_ id: UUID) {
+        if let vineyardId = selectedVineyardId {
+            pickingRecords.removeAll { $0.id == id }
+            yieldRepo.savePickingSlice(pickingRecords, for: vineyardId)
+        }
+        var all = yieldRepo.loadAllPicking()
+        if let removed = all.first(where: { $0.id == id }) {
+            all.removeAll { $0.id == id }
+            yieldRepo.replacePicking(all.filter { $0.vineyardId == removed.vineyardId }, for: removed.vineyardId)
+        }
+    }
 }

@@ -44,6 +44,7 @@ struct NewMainTabView: View {
     @Environment(YieldEstimationSessionSyncService.self) private var yieldSessionSync
     @Environment(DamageRecordSyncService.self) private var damageRecordSync
     @Environment(HistoricalYieldRecordSyncService.self) private var historicalYieldSync
+    @Environment(PickingRecordSyncService.self) private var pickingRecordSync
     @Environment(PruningSyncService.self) private var pruningSync
     @Environment(FertiliserSyncService.self) private var fertiliserSync
     @Environment(AlertService.self) private var alertService
@@ -135,6 +136,7 @@ struct NewMainTabView: View {
             yieldSessionSync.configure(store: store, auth: auth)
             damageRecordSync.configure(store: store, auth: auth)
             historicalYieldSync.configure(store: store, auth: auth)
+            pickingRecordSync.configure(store: store, auth: auth)
             pruningSync.configure(store: store, auth: auth)
             // Ordered dependency chain: Work Task header -> its block
             // associations -> its labour lines -> the Pruning Activity that
@@ -316,6 +318,7 @@ struct NewMainTabView: View {
         await yieldSessionSync.syncForSelectedVineyard()
         await damageRecordSync.syncForSelectedVineyard()
         await historicalYieldSync.syncForSelectedVineyard()
+        await pickingRecordSync.syncForSelectedVineyard()
         await pruningSync.syncForSelectedVineyard()
         await fertiliserSync.syncForSelectedVineyard()
         // Vineyard-scoped organisation region/unit settings (country, currency,
@@ -512,6 +515,7 @@ struct NewMainTabView: View {
             + yieldSessionSync.pendingUpsertCount
             + damageRecordSync.pendingUpsertCount
             + historicalYieldSync.pendingUpsertCount
+            + pickingRecordSync.pendingUpsertCount
             + pruningSync.pendingUpsertCount
             + fertiliserSync.pendingUpsertCount
     }
@@ -543,6 +547,7 @@ struct NewMainTabView: View {
             + yieldSessionSync.pendingDeleteCount
             + damageRecordSync.pendingDeleteCount
             + historicalYieldSync.pendingDeleteCount
+            + pickingRecordSync.pendingDeleteCount
             + pruningSync.pendingDeleteCount
             + fertiliserSync.pendingDeleteCount
     }
@@ -585,6 +590,7 @@ struct NewMainTabView: View {
             damageRecordSync.errorMessage,
             yieldSessionSync.errorMessage,
             historicalYieldSync.errorMessage,
+            pickingRecordSync.errorMessage,
         ]
         return messages
             .compactMap { $0 }

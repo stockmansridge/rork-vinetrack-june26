@@ -49,6 +49,7 @@ import com.rork.vinetrack.data.RegionSettings
 import com.rork.vinetrack.data.RegionSettingsRepository
 import com.rork.vinetrack.data.RegionSettingsStore
 import com.rork.vinetrack.data.SprayRateAreaUnit
+import com.rork.vinetrack.data.SugarMeasurementUnit
 import com.rork.vinetrack.data.TerminologyRegion
 import com.rork.vinetrack.data.VolumeUnit
 import com.rork.vinetrack.data.auth.SessionStore
@@ -205,6 +206,12 @@ fun RegionUnitsSettingsScreen(
                 RowDividerThin(vine.cardBorder)
                 OptionRow("Spray Rate Area", SprayRateAreaUnit.entries.map { it.raw to it.label }, working.sprayRateAreaUnit, canEdit) {
                     working = working.copy(sprayRateAreaUnit = it)
+                }
+                RowDividerThin(vine.cardBorder)
+                // Shows the resolved unit (explicit preference or regional default);
+                // tapping saves an explicit vineyard-wide preference (sql/180).
+                OptionRow("Grape sugar measurement", SugarMeasurementUnit.entries.map { it.raw to it.label }, working.sugarUnit.raw, canEdit) {
+                    working = working.copy(sugarMeasurementUnit = it)
                 }
             }
 

@@ -94,7 +94,7 @@ final class OperationsSyncMetadata {
     private func save() { persistence.save(state, key: key) }
 }
 
-private func isOperationsMissingRowError(_ error: Error) -> Bool {
+func isOperationsMissingRowError(_ error: Error) -> Bool {
     let m = String(describing: error).lowercased()
     return m.contains("not found") || m.contains("pgrst116") || m.contains("no rows") || m.contains("0 rows")
 }

@@ -5,6 +5,7 @@ struct YieldHubView: View {
     @Environment(DamageRecordSyncService.self) private var damageRecordSync
     @Environment(YieldEstimationSessionSyncService.self) private var yieldSessionSync
     @Environment(HistoricalYieldRecordSyncService.self) private var historicalYieldSync
+    @Environment(PickingRecordSyncService.self) private var pickingRecordSync
     @State private var showRecordActualSheet: Bool = false
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
@@ -61,8 +62,21 @@ struct YieldHubView: View {
                             icon: "square.and.pencil",
                             iconGradient: [.green, VineyardTheme.leafGreen],
                             title: "Record Actual Yield",
-                            subtitle: "Add harvested tonnes by block & season",
+                            subtitle: "Basic actual or detailed picking log",
                             detail: nil
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    NavigationLink {
+                        PickingLogListView()
+                    } label: {
+                        hubOption(
+                            icon: "basket.fill",
+                            iconGradient: [.teal, .green],
+                            title: "Picking Log",
+                            subtitle: "Individual picks by block, variety & vintage",
+                            detail: pickingLogDetail
                         )
                     }
                     .buttonStyle(.plain)
@@ -102,11 +116,13 @@ struct YieldHubView: View {
             await damageRecordSync.syncForSelectedVineyard()
             await yieldSessionSync.syncForSelectedVineyard()
             await historicalYieldSync.syncForSelectedVineyard()
+            await pickingRecordSync.syncForSelectedVineyard()
         }
         .refreshable {
             await damageRecordSync.syncForSelectedVineyard()
             await yieldSessionSync.syncForSelectedVineyard()
             await historicalYieldSync.syncForSelectedVineyard()
+            await pickingRecordSync.syncForSelectedVineyard()
         }
     }
 
@@ -213,6 +229,13 @@ struct YieldHubView: View {
         let count = store.damageRecords.count
         guard count > 0 else { return nil }
         return "\(count) damage record\(count == 1 ? "" : "s")"
+    }
+
+    private var pickingLogDetail: String? {
+        let count = store.pickingRecords.count
+        guard count > 0 else { return nil }
+        let tonnes = store.pickingRecords.reduce(0.0) { $0 + $1.weightKg } / 1000.0
+        return "\(count) pick\(count == 1 ? "" : "s") · \(String(format: "%.2f", tonnes)) t"
     }
 
     private var determinationDetail: String? {

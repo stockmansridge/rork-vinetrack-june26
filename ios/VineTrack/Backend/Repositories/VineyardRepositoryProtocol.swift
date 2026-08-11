@@ -108,6 +108,9 @@ nonisolated struct BackendVineyardRegionSettings: Codable, Sendable {
     let sprayRateAreaUnit: String?
     let dateFormat: String?
     let terminologyRegion: String?
+    /// "brix" | "baume" (sql/180). Nil means "no explicit preference" — the
+    /// client falls back to the regional default (AU/NZ → Baumé, else Brix).
+    let sugarMeasurementUnit: String?
 
     enum CodingKeys: String, CodingKey {
         case vineyardId = "vineyard_id"
@@ -121,13 +124,42 @@ nonisolated struct BackendVineyardRegionSettings: Codable, Sendable {
         case sprayRateAreaUnit = "spray_rate_area_unit"
         case dateFormat = "date_format"
         case terminologyRegion = "terminology_region"
+        case sugarMeasurementUnit = "sugar_measurement_unit"
+    }
+
+    init(
+        vineyardId: UUID,
+        countryCode: String?,
+        currencyCode: String?,
+        timezone: String?,
+        areaUnit: String?,
+        volumeUnit: String?,
+        distanceUnit: String?,
+        fuelUnit: String?,
+        sprayRateAreaUnit: String?,
+        dateFormat: String?,
+        terminologyRegion: String?,
+        sugarMeasurementUnit: String? = nil
+    ) {
+        self.vineyardId = vineyardId
+        self.countryCode = countryCode
+        self.currencyCode = currencyCode
+        self.timezone = timezone
+        self.areaUnit = areaUnit
+        self.volumeUnit = volumeUnit
+        self.distanceUnit = distanceUnit
+        self.fuelUnit = fuelUnit
+        self.sprayRateAreaUnit = sprayRateAreaUnit
+        self.dateFormat = dateFormat
+        self.terminologyRegion = terminologyRegion
+        self.sugarMeasurementUnit = sugarMeasurementUnit
     }
 
     /// True when the server has no region values at all — used to decide
     /// whether a one-time local→server backfill is warranted.
     var isAllNull: Bool {
         [countryCode, currencyCode, timezone, areaUnit, volumeUnit, distanceUnit,
-         fuelUnit, sprayRateAreaUnit, dateFormat, terminologyRegion]
+         fuelUnit, sprayRateAreaUnit, dateFormat, terminologyRegion, sugarMeasurementUnit]
             .allSatisfy { ($0 ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
     }
 }

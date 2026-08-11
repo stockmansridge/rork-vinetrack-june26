@@ -905,6 +905,7 @@ extension MigratedDataStore {
         apply(remote.sprayRateAreaUnit, to: \.sprayRateAreaUnit)
         apply(remote.dateFormat, to: \.dateFormat)
         apply(remote.terminologyRegion, to: \.terminologyRegion)
+        apply(remote.sugarMeasurementUnit, to: \.sugarMeasurementUnit)
 
         if changed {
             s.regionSettings = region

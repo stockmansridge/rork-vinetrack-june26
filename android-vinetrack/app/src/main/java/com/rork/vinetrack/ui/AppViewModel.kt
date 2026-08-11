@@ -94,6 +94,9 @@ import com.rork.vinetrack.data.PinPlacementResult
 import com.rork.vinetrack.data.PinRepository
 import com.rork.vinetrack.data.ProfileRepository
 import com.rork.vinetrack.data.RegionFormatter
+import com.rork.vinetrack.data.PickingRecordCreateSync
+import com.rork.vinetrack.data.PickingRecordDeleteSync
+import com.rork.vinetrack.data.PickingRecordRepository
 import com.rork.vinetrack.data.RegionSettings
 import com.rork.vinetrack.data.RegionSettingsRepository
 import com.rork.vinetrack.data.RegionSettingsStore
@@ -181,6 +184,7 @@ import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
+import com.rork.vinetrack.data.model.PickingRecord
 import com.rork.vinetrack.data.model.AppNotice
 import com.rork.vinetrack.data.model.CustomPinCreateParams
 import com.rork.vinetrack.data.model.CustomPinType
@@ -438,6 +442,8 @@ data class AppUiState(
     val growthButtons: List<LauncherButton> = emptyList(),
     val grapeVarieties: List<GrapeVarietyRow> = emptyList(),
     val yieldRecords: List<HistoricalYieldRecord> = emptyList(),
+    /** Detailed picking-log records (sql/180) for the selected vineyard. */
+    val pickingRecords: List<PickingRecord> = emptyList(),
     val damageRecords: List<DamageRecord> = emptyList(),
     /** Working yield-estimation sessions for the selected vineyard (Stage Q). */
     val yieldSessions: List<YieldEstimationSession> = emptyList(),
@@ -756,6 +762,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val growthRepo = GrowthStageRecordRepository(session)
     private val paddockRepo = PaddockRepository(session)
     private val yieldRepo = YieldRepository(session)
+    private val pickingRepo = PickingRecordRepository(session)
     private val damageRepo = DamageRecordRepository(session)
     private val growthImageRepo = GrowthStageImageRepository(session)
     private val fuelRepo = FuelLogRepository(session)
@@ -1103,6 +1110,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * replay pipeline.
      */
     private val yieldDeleteSync = YieldRecordDeleteSync(yieldRepo, pendingWrites)
+
+    /**
+     * Detailed picking-log replay coordinators (sql/180). PICKING_RECORD /
+     * CREATE and DELETE only — fully separate from the YIELD_RECORD queues.
+     */
+    private val pickingCreateSync = PickingRecordCreateSync(pickingRepo, pendingWrites)
+    private val pickingDeleteSync = PickingRecordDeleteSync(pickingRepo, pendingWrites)
 
     /**
      * Replay coordinator for growth-stage record CREATE only (Android Stage N-1).
@@ -2626,6 +2640,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Replay any queued picking-record creates (sql/180). PICKING_RECORD /
+     * CREATE only. Each synced row is reconciled into state by id so the
+     * server-derived vintage and grape value replace the optimistic mirror.
+     */
+    private fun replayPendingPickingCreates() {
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        viewModelScope.launch {
+            pickingCreateSync.replayAll { record ->
+                _ui.update { st ->
+                    if (st.pickingRecords.any { it.id == record.id }) {
+                        st.copy(pickingRecords = st.pickingRecords.map { if (it.id == record.id) record else it })
+                    } else {
+                        st.copy(pickingRecords = listOf(record) + st.pickingRecords)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Replay any queued picking-record deletes (sql/180). PICKING_RECORD /
+     * DELETE only; dependency-gated behind an unresolved same-record create.
+     */
+    private fun replayPendingPickingDeletes() {
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        viewModelScope.launch {
+            pickingDeleteSync.replayAll { recordId ->
+                _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.filterNot { it.id == recordId }) }
+            }
+        }
+    }
+
+    /**
      * Replay any queued growth-stage record creates (Android Stage N-1).
      * GROWTH_RECORD / CREATE only — never growth update/delete, growth photos, or
      * any other entity. Each synced row is reconciled into state by id (replace
@@ -2862,6 +2909,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingYieldCreates()
         replayPendingYieldUpdates()
         replayPendingYieldDeletes()
+        replayPendingPickingCreates()
+        replayPendingPickingDeletes()
         replayPendingGrowthCreates()
         replayPendingGrowthUpdates()
         replayPendingGrowthDeletes()
@@ -2930,6 +2979,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingYieldCreates()
         replayPendingYieldUpdates()
         replayPendingYieldDeletes()
+        replayPendingPickingCreates()
+        replayPendingPickingDeletes()
         replayPendingGrowthCreates()
         replayPendingGrowthUpdates()
         replayPendingGrowthDeletes()
@@ -2989,6 +3040,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     replayPendingYieldCreates()
                     replayPendingYieldUpdates()
                     replayPendingYieldDeletes()
+                    replayPendingPickingCreates()
+                    replayPendingPickingDeletes()
                     replayPendingGrowthCreates()
                     replayPendingGrowthUpdates()
                     replayPendingGrowthDeletes()
@@ -3261,6 +3314,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingYieldCreates()
         replayPendingYieldUpdates()
         replayPendingYieldDeletes()
+        replayPendingPickingCreates()
+        replayPendingPickingDeletes()
         replayPendingGrowthCreates()
         replayPendingGrowthUpdates()
         replayPendingGrowthDeletes()
@@ -4081,6 +4136,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 replayPendingYieldCreates()
                 replayPendingYieldUpdates()
                 replayPendingYieldDeletes()
+                replayPendingPickingCreates()
+                replayPendingPickingDeletes()
                 replayPendingGrowthCreates()
                 replayPendingGrowthUpdates()
                 replayPendingGrowthDeletes()
@@ -4250,7 +4307,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reportClientTelemetry()
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList()) }
         loadedLogoKey = null
         // Apply the cached region settings instantly so units/currency render
         // correctly on first paint, then refresh from the backend below.
@@ -10758,6 +10815,82 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Log one Detailed picking record (sql/180 — offline/retryable). The
+     * caller mints the record id and the locally-derived vintage; the server
+     * re-derives the authoritative vintage from `picked_at` on insert. Same
+     * optimistic/offline/replay paths as [createYieldRecord].
+     */
+    fun createPickingRecord(record: PickingRecord, onResult: (Boolean) -> Unit) {
+        val now = java.time.Instant.now().toString()
+        _ui.update { it.copy(pickingRecords = listOf(record) + it.pickingRecords, yieldError = null) }
+
+        if (!_ui.value.isOnline) {
+            pickingCreateSync.enqueue(record, now)
+            _ui.update { it.copy(yieldError = "Picking record saved offline — will sync when connection is available.") }
+            onResult(true)
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val created = pickingRepo.insertPickingRecord(record, now)
+                _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.map { if (it.id == created.id) created else it }) }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.filterNot { it.id == record.id }, yieldError = friendlyWriteError(e.code)) }
+                onResult(false)
+            } catch (e: Exception) {
+                pickingCreateSync.enqueue(record, now)
+                _ui.update { it.copy(yieldError = "Picking record saved offline — will sync when connection is available.") }
+                onResult(true)
+            }
+        }
+    }
+
+    /**
+     * Soft-delete a Detailed picking record (sql/180 — offline/retryable). A
+     * record whose CREATE is still queued is cancelled locally so it can never
+     * be resurrected by a later replay; otherwise the optimistic hide is
+     * followed by the RPC (or a queued DELETE marker when offline/transient).
+     */
+    fun deletePickingRecord(id: String, onResult: (Boolean) -> Unit = {}) {
+        if (pickingDeleteSync.cancelLocalCreate(id)) {
+            _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.filterNot { it.id == id }, yieldError = null) }
+            onResult(true)
+            return
+        }
+        val previous = _ui.value.pickingRecords
+        _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.filterNot { it.id == id }, yieldError = null) }
+
+        if (!_ui.value.isOnline) {
+            pickingDeleteSync.enqueue(id)
+            onResult(true)
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                pickingRepo.softDeletePickingRecord(id)
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: BackendError.Server) {
+                if (e.code == 404) {
+                    onResult(true)
+                } else {
+                    _ui.update { it.copy(pickingRecords = previous, yieldError = friendlyWriteError(e.code)) }
+                    onResult(false)
+                }
+            } catch (e: Exception) {
+                pickingDeleteSync.enqueue(id)
+                onResult(true)
+            }
+        }
+    }
+
+    /**
      * Create a sampling-based estimate record (Android Stage L-1 —
      * offline/retryable). Mirrors the iOS estimate flow: the block stores the
      * sampling snapshot plus the computed estimated tonnes, with no actual
@@ -11610,6 +11743,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 domainCache.loadYieldSessions(userId, vineyardId) ?: emptyList()
             }
         }
+        // Detailed picking-log records (sql/180): soft-fail to existing state.
+        // Offline creates queued in the outbox replay automatically and are
+        // reconciled back into state by the PICKING_RECORD coordinators.
+        val pickingRecords = try {
+            pickingRepo.listPickingRecords(vineyardId)
+        } catch (e: Exception) {
+            _ui.value.pickingRecords
+        }
         // Write-through (Stage O-2): persist only genuinely fresh server reads so a
         // good cache is never clobbered by an offline fallback. Written before the
         // O-1 overlay so the cache stays a clean server snapshot (no optimistic
@@ -11703,6 +11844,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 currentUserId = session.userId,
                 grapeVarieties = grapeVarieties,
                 yieldRecords = overlaidYield,
+                pickingRecords = pickingRecords,
                 damageRecords = overlaidDamage,
                 yieldSessions = overlaidYieldSessions,
                 isLoadingVineyardData = false,

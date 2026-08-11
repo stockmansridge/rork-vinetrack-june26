@@ -41,6 +41,7 @@ class RegionSettingsRepository(private val session: SessionStore) {
         @SerialName("p_spray_rate_area_unit") val sprayRateAreaUnit: String?,
         @SerialName("p_date_format") val dateFormat: String?,
         @SerialName("p_terminology_region") val terminologyRegion: String?,
+        @SerialName("p_sugar_measurement_unit") val sugarMeasurementUnit: String?,
     )
 
     @Serializable
@@ -55,6 +56,7 @@ class RegionSettingsRepository(private val session: SessionStore) {
         @SerialName("spray_rate_area_unit") val sprayRateAreaUnit: String? = null,
         @SerialName("date_format") val dateFormat: String? = null,
         @SerialName("terminology_region") val terminologyRegion: String? = null,
+        @SerialName("sugar_measurement_unit") val sugarMeasurementUnit: String? = null,
     )
 
     /** Merge a server row onto the AU defaults, keeping defaults for null/blank. */
@@ -72,6 +74,7 @@ class RegionSettingsRepository(private val session: SessionStore) {
             sprayRateAreaUnit = s(sprayRateAreaUnit, d.sprayRateAreaUnit),
             dateFormat = s(dateFormat, d.dateFormat),
             terminologyRegion = s(terminologyRegion, d.terminologyRegion),
+            sugarMeasurementUnit = sugarMeasurementUnit?.takeIf { it.isNotBlank() } ?: "",
         )
     }
 
@@ -105,6 +108,7 @@ class RegionSettingsRepository(private val session: SessionStore) {
                     sprayRateAreaUnit = s.sprayRateAreaUnit,
                     dateFormat = s.dateFormat,
                     terminologyRegion = s.terminologyRegion,
+                    sugarMeasurementUnit = s.sugarMeasurementUnit.takeIf { it.isNotBlank() },
                 )
             )
         }

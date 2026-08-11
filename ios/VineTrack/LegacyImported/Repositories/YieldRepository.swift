@@ -9,6 +9,7 @@ final class YieldRepository {
     static let damageKey = "vinetrack_damage_records"
     static let historicalKey = "vinetrack_historical_yield_records"
     static let determinationKey = "vinetrack_yield_determination_results"
+    static let pickingKey = "vinetrack_picking_records"
 
     private let persistence: PersistenceStore
 
@@ -119,6 +120,30 @@ final class YieldRepository {
         }
         persistence.save(all, key: Self.historicalKey)
         return all.filter { $0.vineyardId == vineyardId }
+    }
+
+    // MARK: - PickingRecord (Detailed picking log)
+
+    func loadAllPicking() -> [PickingRecord] {
+        persistence.load(key: Self.pickingKey) ?? []
+    }
+
+    func loadPicking(for vineyardId: UUID) -> [PickingRecord] {
+        loadAllPicking().filter { $0.vineyardId == vineyardId }
+    }
+
+    func savePickingSlice(_ items: [PickingRecord], for vineyardId: UUID) {
+        var all = loadAllPicking()
+        all.removeAll { $0.vineyardId == vineyardId }
+        all.append(contentsOf: items)
+        persistence.save(all, key: Self.pickingKey)
+    }
+
+    func replacePicking(_ remote: [PickingRecord], for vineyardId: UUID) {
+        var all = loadAllPicking()
+        all.removeAll { $0.vineyardId == vineyardId }
+        all.append(contentsOf: remote)
+        persistence.save(all, key: Self.pickingKey)
     }
 
     // MARK: - YieldDeterminationResult (local only — sync-ready shape)

@@ -29,6 +29,7 @@ struct RegionUnitsSettingsView: View {
     @State private var sprayRateAreaUnit: SprayRateAreaUnit = .hectare
     @State private var dateFormat: RegionDateFormat = .dayMonthYear
     @State private var terminologyRegion: TerminologyRegion = .auNz
+    @State private var sugarUnit: SugarMeasurementUnit = .baume
 
     @State private var isSaving: Bool = false
     @State private var isRefreshing: Bool = false
@@ -147,6 +148,10 @@ struct RegionUnitsSettingsView: View {
                 Text("Per Hectare (/ha)").tag(SprayRateAreaUnit.hectare)
                 Text("Per Acre (/ac)").tag(SprayRateAreaUnit.acre)
             }
+            Picker("Grape sugar measurement", selection: $sugarUnit) {
+                Text("Brix (°Bx)").tag(SugarMeasurementUnit.brix)
+                Text("Baumé (°Bé)").tag(SugarMeasurementUnit.baume)
+            }
         }
         .disabled(!canEdit)
     }
@@ -220,6 +225,7 @@ struct RegionUnitsSettingsView: View {
         sprayRateAreaUnit = preset.sprayRateAreaUnit
         dateFormat = preset.dateFormat
         terminologyRegion = preset.terminologyRegion
+        sugarUnit = SugarMeasurementUnit.regionalDefault(countryCode: country.rawValue)
         pendingCountry = nil
     }
 
@@ -242,6 +248,7 @@ struct RegionUnitsSettingsView: View {
         sprayRateAreaUnit = region.sprayRateArea
         dateFormat = region.dateStyle
         terminologyRegion = region.terminology
+        sugarUnit = region.sugarUnit
     }
 
     /// Pull the authoritative server values directly when the screen opens, so
@@ -282,7 +289,8 @@ struct RegionUnitsSettingsView: View {
             fuelUnit: fuelUnit.rawValue,
             sprayRateAreaUnit: sprayRateAreaUnit.rawValue,
             dateFormat: dateFormat.rawValue,
-            terminologyRegion: terminologyRegion.rawValue
+            terminologyRegion: terminologyRegion.rawValue,
+            sugarMeasurementUnit: sugarUnit.rawValue
         )
 
         do {

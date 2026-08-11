@@ -226,6 +226,18 @@ object PendingEntityType {
     const val MAINTENANCE_LOG = "maintenance_log"
     const val YIELD_RECORD = "yield_record"
     /**
+     * A single Detailed picking-log record queued offline (sql/180). Backs the
+     * `picking_records` table. CREATE / DELETE are carried on this
+     * discriminator, keyed by the picking-record id ([PendingWrite.clientId] =
+     * pickingRecordId), so the [YIELD_RECORD] queues can never pick up a
+     * picking write and a picking replay never touches an archived yield
+     * record. Vintage is server-derived from `picked_at` on insert, so replay
+     * after a season-setting change can never carry a stale client vintage.
+     * Soft-delete is RLS-restricted (owner/manager/supervisor) so a permission
+     * rejection BLOCKS rather than retrying forever.
+     */
+    const val PICKING_RECORD = "picking_record"
+    /**
      * A single block-damage record queued offline (Android Stage M). Backs the
      * `damage_records` table. CREATE / UPDATE / DELETE are carried on this
      * discriminator, keyed by the damage-record id ([PendingWrite.clientId] =

@@ -165,7 +165,8 @@ final class SupabaseVineyardRepository: VineyardRepositoryProtocol {
             fuelUnit: settings.fuelUnit,
             sprayRateAreaUnit: settings.sprayRateAreaUnit,
             dateFormat: settings.dateFormat,
-            terminologyRegion: settings.terminologyRegion
+            terminologyRegion: settings.terminologyRegion,
+            sugarMeasurementUnit: settings.sugarMeasurementUnit
         )
         let rows: [BackendVineyardRegionSettings] = try await provider.client
             .rpc("set_vineyard_region_settings", params: params)
@@ -284,6 +285,7 @@ nonisolated private struct SetVineyardRegionSettingsRequest: Encodable, Sendable
     let sprayRateAreaUnit: String?
     let dateFormat: String?
     let terminologyRegion: String?
+    let sugarMeasurementUnit: String?
 
     enum CodingKeys: String, CodingKey {
         case vineyardId = "p_vineyard_id"
@@ -297,6 +299,7 @@ nonisolated private struct SetVineyardRegionSettingsRequest: Encodable, Sendable
         case sprayRateAreaUnit = "p_spray_rate_area_unit"
         case dateFormat = "p_date_format"
         case terminologyRegion = "p_terminology_region"
+        case sugarMeasurementUnit = "p_sugar_measurement_unit"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -312,6 +315,7 @@ nonisolated private struct SetVineyardRegionSettingsRequest: Encodable, Sendable
         try c.encode(sprayRateAreaUnit, forKey: .sprayRateAreaUnit)
         try c.encode(dateFormat, forKey: .dateFormat)
         try c.encode(terminologyRegion, forKey: .terminologyRegion)
+        try c.encode(sugarMeasurementUnit, forKey: .sugarMeasurementUnit)
     }
 }
 

@@ -37,6 +37,11 @@ nonisolated struct OrganizationRegionSettings: Codable, Sendable, Equatable {
     /// Terminology region raw value — see `TerminologyRegion`
     /// ("AU_NZ" | "US" | "UK" | "ZA").
     var terminologyRegion: String
+    /// Grape sugar measurement raw value — see `SugarMeasurementUnit`
+    /// ("brix" | "baume"). Empty string means "no explicit preference";
+    /// the resolved unit then falls back to the country default
+    /// (AU/NZ → Baumé, everywhere else → Brix).
+    var sugarMeasurementUnit: String
 
     // MARK: - Australian defaults (current production behaviour)
 
@@ -50,7 +55,8 @@ nonisolated struct OrganizationRegionSettings: Codable, Sendable, Equatable {
         fuelUnit: FuelUnit.litres.rawValue,
         sprayRateAreaUnit: SprayRateAreaUnit.hectare.rawValue,
         dateFormat: RegionDateFormat.dayMonthYear.rawValue,
-        terminologyRegion: TerminologyRegion.auNz.rawValue
+        terminologyRegion: TerminologyRegion.auNz.rawValue,
+        sugarMeasurementUnit: ""
     )
 
     init(
@@ -63,7 +69,8 @@ nonisolated struct OrganizationRegionSettings: Codable, Sendable, Equatable {
         fuelUnit: String = FuelUnit.litres.rawValue,
         sprayRateAreaUnit: String = SprayRateAreaUnit.hectare.rawValue,
         dateFormat: String = RegionDateFormat.dayMonthYear.rawValue,
-        terminologyRegion: String = TerminologyRegion.auNz.rawValue
+        terminologyRegion: String = TerminologyRegion.auNz.rawValue,
+        sugarMeasurementUnit: String = ""
     ) {
         self.countryCode = countryCode
         self.currencyCode = currencyCode
@@ -75,6 +82,7 @@ nonisolated struct OrganizationRegionSettings: Codable, Sendable, Equatable {
         self.sprayRateAreaUnit = sprayRateAreaUnit
         self.dateFormat = dateFormat
         self.terminologyRegion = terminologyRegion
+        self.sugarMeasurementUnit = sugarMeasurementUnit
     }
 
     /// Tolerant decoder: any missing/null field falls back to the AU default,
@@ -92,6 +100,7 @@ nonisolated struct OrganizationRegionSettings: Codable, Sendable, Equatable {
         sprayRateAreaUnit = (try? c.decodeIfPresent(String.self, forKey: .sprayRateAreaUnit))?.flatMap { $0.isEmpty ? nil : $0 } ?? d.sprayRateAreaUnit
         dateFormat = (try? c.decodeIfPresent(String.self, forKey: .dateFormat))?.flatMap { $0.isEmpty ? nil : $0 } ?? d.dateFormat
         terminologyRegion = (try? c.decodeIfPresent(String.self, forKey: .terminologyRegion))?.flatMap { $0.isEmpty ? nil : $0 } ?? d.terminologyRegion
+        sugarMeasurementUnit = (try? c.decodeIfPresent(String.self, forKey: .sugarMeasurementUnit)) ?? ""
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -105,6 +114,7 @@ nonisolated struct OrganizationRegionSettings: Codable, Sendable, Equatable {
         case sprayRateAreaUnit = "spray_rate_area_unit"
         case dateFormat = "date_format"
         case terminologyRegion = "terminology_region"
+        case sugarMeasurementUnit = "sugar_measurement_unit"
     }
 }
 
@@ -118,6 +128,13 @@ nonisolated extension OrganizationRegionSettings {
     var sprayRateArea: SprayRateAreaUnit { SprayRateAreaUnit(rawValue: sprayRateAreaUnit) ?? .hectare }
     var dateStyle: RegionDateFormat { RegionDateFormat(rawValue: dateFormat) ?? .dayMonthYear }
     var terminology: TerminologyRegion { TerminologyRegion(rawValue: terminologyRegion) ?? .auNz }
+
+    /// Resolved grape sugar measurement: the explicit vineyard preference when
+    /// set, otherwise the regional default for the vineyard's country.
+    var sugarUnit: SugarMeasurementUnit {
+        SugarMeasurementUnit(rawValue: sugarMeasurementUnit)
+            ?? SugarMeasurementUnit.regionalDefault(countryCode: countryCode)
+    }
 
     var resolvedTimeZone: TimeZone { TimeZone(identifier: timezone) ?? .current }
 
@@ -188,6 +205,40 @@ nonisolated enum RegionDateFormat: String, Codable, Sendable, CaseIterable {
         case .dayMonthYear: "dd/MM/yyyy"
         case .monthDayYear: "MM/dd/yyyy"
         case .isoYearMonthDay: "yyyy-MM-dd"
+        }
+    }
+}
+
+/// Grape sugar measurement units (sql/180 — `vineyards.sugar_measurement_unit`
+/// and `picking_records.sugar_unit`). Historical picking records always store
+/// the unit alongside the value, so changing the vineyard preference never
+/// reinterprets old data.
+nonisolated enum SugarMeasurementUnit: String, Codable, Sendable, CaseIterable, Identifiable {
+    case brix
+    case baume
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .brix: "Brix (°Bx)"
+        case .baume: "Baumé (°Bé)"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .brix: "°Bx"
+        case .baume: "°Bé"
+        }
+    }
+
+    /// Regional default for vineyards without an explicit saved preference:
+    /// AU/NZ traditionally measure in Baumé, everywhere else in Brix.
+    static func regionalDefault(countryCode: String) -> SugarMeasurementUnit {
+        switch countryCode.uppercased() {
+        case "AU", "NZ": .baume
+        default: .brix
         }
     }
 }

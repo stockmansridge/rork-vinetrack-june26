@@ -47,3 +47,9 @@ protocol HistoricalYieldRecordSyncRepositoryProtocol: Sendable {
     func upsertMany(_ items: [BackendHistoricalYieldRecordUpsert]) async throws
     func softDelete(id: UUID) async throws
 }
+
+protocol PickingRecordSyncRepositoryProtocol: Sendable {
+    func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendPickingRecord]
+    func upsertMany(_ items: [BackendPickingRecordUpsert]) async throws
+    func softDelete(id: UUID) async throws
+}

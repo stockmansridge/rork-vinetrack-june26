@@ -1908,6 +1908,56 @@ data class HistoricalYieldRecord(
 }
 
 /**
+ * One individual picking event — backs `public.picking_records` (sql/180),
+ * the Detailed mode of Record Actual Yield. A Block + Variety + Vintage may
+ * have MANY picking records in the same vintage; the actual yield for that
+ * combination is `SUM(weight_kg) / 1000` tonnes and SUPERSEDES any Basic
+ * actual entered for the same combination (never added on top).
+ *
+ * `vintage` is server-authoritative — a BEFORE trigger derives it from
+ * `picked_at` + the shared season settings (sql/119); the local value mirrors
+ * it via [com.rork.vinetrack.data.VintageResolver] for offline display.
+ * `sugar_unit` (`brix` | `baume`) is ALWAYS stored with `sugar_value` so a
+ * later vineyard-preference change never reinterprets historical records.
+ * `grape_value` is a server-generated column (`tonnes × price_per_tonne` for
+ * sold picks) — never sent on insert. Soft-deleted via the
+ * `soft_delete_picking_record` RPC (owner/manager/supervisor).
+ */
+@Serializable
+data class PickingRecord(
+    val id: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    /** Picking date as a plain `yyyy-MM-dd` string (SQL `date`). */
+    @SerialName("picked_at") val pickedAt: String,
+    val vintage: Int = 0,
+    @SerialName("paddock_id") val paddockId: String,
+    @SerialName("paddock_name") val paddockName: String = "",
+    @SerialName("variety_id") val varietyId: String? = null,
+    @SerialName("variety_key") val varietyKey: String? = null,
+    @SerialName("variety_name") val varietyName: String = "",
+    val clone: String? = null,
+    @SerialName("weight_kg") val weightKg: Double = 0.0,
+    @SerialName("sugar_value") val sugarValue: Double? = null,
+    @SerialName("sugar_unit") val sugarUnit: String? = null,
+    val ph: Double? = null,
+    @SerialName("ta_g_l") val taGPerL: Double? = null,
+    val purpose: String = "",
+    val sold: Boolean = false,
+    @SerialName("sold_to") val soldTo: String? = null,
+    @SerialName("price_per_tonne") val pricePerTonne: Double? = null,
+    /** Server-generated `(weight_kg / 1000) * price_per_tonne` — read-only. */
+    @SerialName("grape_value") val grapeValue: Double? = null,
+    val notes: String = "",
+    @SerialName("deleted_at") val deletedAt: String? = null,
+) {
+    val tonnes: Double get() = weightKg / 1000.0
+
+    /** Grape value mirror for optimistic rows before the server row returns. */
+    val displayGrapeValue: Double?
+        get() = grapeValue ?: pricePerTonne?.takeIf { sold }?.let { tonnes * it }
+}
+
+/**
  * A single diesel fill recorded against a vineyard machine — backs
  * `public.tractor_fuel_logs`. Mirrors the iOS `TractorFuelLog` contract:
  * operators record litres added and the engine hours at the fill, and an

@@ -46,7 +46,11 @@ import androidx.compose.material.icons.filled.TrackChanges
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -65,6 +69,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -83,12 +88,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.SugarMeasurementUnit
+import com.rork.vinetrack.data.VintageResolver
 import com.rork.vinetrack.data.YieldDeterminationInputs
 import com.rork.vinetrack.data.YieldDeterminationPrefsStore
 import com.rork.vinetrack.data.YieldRepository
 import com.rork.vinetrack.data.model.HistoricalBlockResult
 import com.rork.vinetrack.data.model.HistoricalYieldRecord
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.PickingRecord
 import com.rork.vinetrack.data.model.canonicalVarietyName
 import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.ui.AppUiState
@@ -101,9 +109,13 @@ import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
 /**
  * Yield surface — archived seasonal yield records backed by
@@ -113,7 +125,7 @@ import java.util.Locale
  * Mirrors the iOS source-of-truth contract via the shared block_results payload.
  */
 /** Top-level destinations within the Yields surface, mirroring the iOS hub. */
-private enum class YieldDestination { HUB, REPORTS, DETERMINATION, DAMAGE, ESTIMATION, SETTINGS }
+private enum class YieldDestination { HUB, REPORTS, DETERMINATION, DAMAGE, ESTIMATION, SETTINGS, PICKING_LOG }
 
 @Composable
 fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
@@ -121,14 +133,15 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
     var selectedId by remember { mutableStateOf<String?>(null) }
     var selectedVarietyKey by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
+    var creatingDetailed by remember { mutableStateOf(false) }
     var creatingEstimate by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<HistoricalYieldRecord?>(null) }
     var editingEstimate by remember { mutableStateOf<HistoricalYieldRecord?>(null) }
 
     // Vineyard-wide per-variety totals, derived from block results matched back to
     // current paddock allocations. Recomputed only when records/paddocks change.
-    val varietySummaries = remember(state.yieldRecords, state.paddocks) {
-        computeVarietyYieldSummaries(state.yieldRecords, state.paddocks)
+    val varietySummaries = remember(state.yieldRecords, state.paddocks, state.pickingRecords) {
+        computeVarietyYieldSummaries(state.yieldRecords, state.paddocks, state.pickingRecords)
     }
 
     val selected = state.yieldRecords.firstOrNull { it.id == selectedId }
@@ -143,6 +156,7 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
             destination == YieldDestination.DAMAGE -> "damage"
             destination == YieldDestination.ESTIMATION -> "estimation"
             destination == YieldDestination.SETTINGS -> "settings"
+            destination == YieldDestination.PICKING_LOG -> "pickinglog"
             else -> "hub"
         },
         transitionSpec = { fadeIn() togetherWith fadeOut() },
@@ -190,11 +204,18 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
                 state = state,
                 onBack = { destination = YieldDestination.HUB },
             )
+            "pickinglog" -> PickingLogView(
+                vm = vm,
+                state = state,
+                onBack = { destination = YieldDestination.HUB },
+                onAdd = { creatingDetailed = true; creating = true },
+            )
             else -> YieldHubView(
                 state = state,
                 varietySummaries = varietySummaries,
                 onBack = onBack,
-                onRecordActual = { creating = true },
+                onRecordActual = { creatingDetailed = false; creating = true },
+                onPickingLog = { destination = YieldDestination.PICKING_LOG },
                 onEstimate = { destination = YieldDestination.ESTIMATION },
                 onDetermination = { destination = YieldDestination.DETERMINATION },
                 onReports = { destination = YieldDestination.REPORTS },
@@ -208,6 +229,7 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
         RecordYieldSheet(
             vm = vm,
             state = state,
+            initialDetailed = creatingDetailed,
             onDismiss = { creating = false },
             onSaved = { creating = false },
         )
@@ -259,6 +281,7 @@ private fun YieldHubView(
     varietySummaries: List<VarietyYieldSummary>,
     onBack: (() -> Unit)?,
     onRecordActual: () -> Unit,
+    onPickingLog: () -> Unit,
     onEstimate: () -> Unit,
     onDetermination: () -> Unit,
     onReports: () -> Unit,
@@ -336,8 +359,19 @@ private fun YieldHubView(
                 icon = Icons.Filled.EditNote,
                 gradient = listOf(VineColors.LeafGreen, VineColors.DarkGreen),
                 title = "Record Actual Yield",
-                subtitle = "Add harvested tonnes by block & season",
+                subtitle = "Basic actual or detailed picking log",
                 onClick = onRecordActual,
+            )
+            YieldHubOptionRow(
+                icon = Icons.Filled.Spa,
+                gradient = listOf(VineColors.Info, VineColors.LeafGreen),
+                title = "Picking Log",
+                subtitle = "Individual picks by block, variety & vintage",
+                detail = state.pickingRecords.size.takeIf { it > 0 }?.let { count ->
+                    val tonnes = state.pickingRecords.sumOf { it.weightKg } / 1000.0
+                    "$count pick${if (count == 1) "" else "s"} · ${String.format(Locale.getDefault(), "%.2f", tonnes)} t"
+                },
+                onClick = onPickingLog,
             )
             YieldHubOptionRow(
                 icon = Icons.Filled.Assessment,
@@ -367,6 +401,181 @@ private fun YieldHubView(
                 )
             }
         }
+    }
+}
+
+/**
+ * Detailed picking log — individual picking records grouped by vintage with
+ * per Block + Variety actual-yield totals (`SUM(weight_kg) / 1000`). When
+ * picks exist for a Block + Variety + Vintage those totals ARE the actual
+ * yield for that combination, superseding any Basic actual for the same
+ * combination (never added together).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PickingLogView(
+    vm: AppViewModel,
+    state: AppUiState,
+    onBack: () -> Unit,
+    onAdd: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val fmt = state.regionFormatter
+    var pendingDelete by remember { mutableStateOf<PickingRecord?>(null) }
+    val records = state.pickingRecords
+    val vintages = records.map { it.vintage }.distinct().sortedDescending()
+
+    Scaffold(
+        containerColor = vine.appBackground,
+        topBar = {
+            TopAppBar(
+                title = { Text("Picking Log") },
+                navigationIcon = { BackNavIcon(onBack) },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = onAdd, containerColor = VineColors.LeafGreen, contentColor = Color.White) {
+                Icon(Icons.Filled.Add, contentDescription = "Add pick")
+            }
+        },
+    ) { padding ->
+        if (records.isEmpty()) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(padding).padding(32.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(Icons.Filled.Spa, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(40.dp))
+                Spacer(Modifier.height(12.dp))
+                Text("No Picking Records", color = vine.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Use Record Actual Yield → Detailed to log individual picks. Actual yield per block, variety and vintage is the sum of its picks.",
+                    color = vine.textSecondary, fontSize = 13.sp,
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 88.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                vintages.forEach { vintage ->
+                    val inVintage = records.filter { it.vintage == vintage }
+                    item(key = "header-$vintage") {
+                        Column {
+                            Spacer(Modifier.height(6.dp))
+                            SectionHeader("Vintage $vintage", onLight = true)
+                        }
+                    }
+                    // Actual-yield totals per Block + Variety for this vintage.
+                    val totals = inVintage
+                        .groupBy { it.paddockId to canonicalVarietyName(it.varietyName) }
+                        .toList()
+                        .sortedByDescending { (_, picks) -> picks.sumOf { it.weightKg } }
+                    totals.forEach { (groupKey, picks) ->
+                        val first = picks.first()
+                        item(key = "total-$vintage-${groupKey.first}-${groupKey.second}") {
+                            VineyardCard {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(
+                                            if (first.varietyName.isBlank()) first.paddockName
+                                            else "${first.paddockName} · ${first.varietyName}",
+                                            color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                                        )
+                                        Text(
+                                            "${picks.size} pick${if (picks.size == 1) "" else "s"}",
+                                            color = vine.textSecondary, fontSize = 12.sp,
+                                        )
+                                    }
+                                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(
+                                            "${String.format(Locale.getDefault(), "%.2f", picks.sumOf { it.weightKg } / 1000.0)} t",
+                                            color = VineColors.LeafGreen, fontSize = 15.sp, fontWeight = FontWeight.Bold,
+                                        )
+                                        val value = picks.mapNotNull { it.displayGrapeValue }.takeIf { it.isNotEmpty() }?.sum()
+                                        value?.let {
+                                            Text(fmt.formatCurrency(it), color = vine.textSecondary, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    inVintage.sortedByDescending { it.pickedAt }.forEach { record ->
+                        item(key = record.id) {
+                            VineyardCard {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(record.pickedAt, color = vine.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                            Spacer(Modifier.weight(1f))
+                                            Text(
+                                                "${formatPlain(record.weightKg)} kg",
+                                                color = vine.textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                                            )
+                                        }
+                                        Text(
+                                            buildString {
+                                                append(record.paddockName)
+                                                if (record.varietyName.isNotBlank()) append(" · ${record.varietyName}")
+                                                record.clone?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                                            },
+                                            color = vine.textSecondary, fontSize = 12.sp,
+                                        )
+                                        val metrics = buildList {
+                                            record.sugarValue?.let { sugar ->
+                                                val symbol = com.rork.vinetrack.data.SugarMeasurementUnit.from(record.sugarUnit)?.symbol ?: ""
+                                                add("${formatPlain(sugar)} $symbol".trim())
+                                            }
+                                            record.ph?.let { add("pH ${formatPlain(it)}") }
+                                            record.taGPerL?.let { add("TA ${formatPlain(it)} g/L") }
+                                            if (record.sold) {
+                                                add(record.displayGrapeValue?.let { "Sold · ${fmt.formatCurrency(it)}" } ?: "Sold")
+                                            }
+                                            if (record.purpose.isNotBlank()) add(record.purpose)
+                                        }
+                                        if (metrics.isNotEmpty()) {
+                                            Text(metrics.joinToString("  ·  "), color = vine.textSecondary, fontSize = 11.sp)
+                                        }
+                                    }
+                                    IconButton(onClick = { pendingDelete = record }) {
+                                        Icon(Icons.Filled.Delete, contentDescription = "Delete pick", tint = VineColors.Destructive)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    item(key = "footer-$vintage") {
+                        Text(
+                            "${inVintage.size} pick${if (inVintage.size == 1) "" else "s"} · ${String.format(Locale.getDefault(), "%.2f", inVintage.sumOf { it.weightKg } / 1000.0)} t total. These totals are the actual yield for their block, variety and vintage.",
+                            color = vine.textSecondary, fontSize = 11.sp,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    pendingDelete?.let { record ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Delete this picking record?") },
+            text = {
+                Text(
+                    "${record.pickedAt} — ${record.paddockName}${if (record.varietyName.isNotBlank()) " · ${record.varietyName}" else ""} — ${formatPlain(record.weightKg)} kg",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.deletePickingRecord(record.id)
+                    pendingDelete = null
+                }) { Text("Delete", color = VineColors.Destructive) }
+            },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -976,6 +1185,7 @@ private fun YieldBlockRow(block: HistoricalBlockResult, fmt: RegionFormatter) {
 private fun RecordYieldSheet(
     vm: AppViewModel,
     state: AppUiState,
+    initialDetailed: Boolean = false,
     onDismiss: () -> Unit,
     onSaved: () -> Unit,
 ) {
@@ -1015,12 +1225,135 @@ private fun RecordYieldSheet(
         ) { ok -> saving = false; if (ok) onSaved() }
     }
 
+    // ---- Detailed (picking log) state — sql/180 ----
+    var detailed by remember { mutableStateOf(initialDetailed) }
+    var pickedDate by remember { mutableStateOf(LocalDate.now()) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var detailBlock by remember { mutableStateOf(paddocks.firstOrNull()) }
+    var detailBlockMenu by remember { mutableStateOf(false) }
+    var selectedVariety by remember { mutableStateOf<String?>(null) }
+    var varietyMenu by remember { mutableStateOf(false) }
+    var freeVariety by remember { mutableStateOf("") }
+    var selectedClone by remember { mutableStateOf<String?>(null) }
+    var cloneMenu by remember { mutableStateOf(false) }
+    var weightText by remember { mutableStateOf("") }
+    var sugarText by remember { mutableStateOf("") }
+    var sugarUnit by remember { mutableStateOf(state.regionSettings.sugarUnit) }
+    var phText by remember { mutableStateOf("") }
+    var taText by remember { mutableStateOf("") }
+    var purpose by remember { mutableStateOf("") }
+    var sold by remember { mutableStateOf(false) }
+    var soldTo by remember { mutableStateOf("") }
+    var priceText by remember { mutableStateOf("") }
+    var detailNotes by remember { mutableStateOf("") }
+    var lastSavedInfo by remember { mutableStateOf<String?>(null) }
+
+    val allocations = detailBlock?.varietyAllocations.orEmpty().filter { !it.displayName.isNullOrBlank() }
+    val varietyOptions = allocations.mapNotNull { it.displayName }.distinct()
+    val cloneOptions = allocations
+        .filter { it.displayName == selectedVariety && !it.clone.isNullOrBlank() }
+        .mapNotNull { it.clone }
+        .distinct()
+    // Vintage mirrors the authoritative server resolver (sql/119); the server
+    // re-derives it from picked_at on insert.
+    val derivedVintage = VintageResolver.vintageYear(pickedDate, state.seasonStartMonth, state.seasonStartDay)
+    val weight = weightText.trim().toDoubleOrNull()
+    val price = priceText.trim().toDoubleOrNull()
+    val canSaveDetailed = detailBlock != null && weight != null && weight > 0 &&
+        (varietyOptions.isEmpty() || selectedVariety != null) && !saving
+
+    // Auto-select when the block has exactly one configured variety / clone.
+    LaunchedEffect(detailBlock?.id) {
+        val opts = detailBlock?.varietyAllocations.orEmpty()
+            .filter { !it.displayName.isNullOrBlank() }
+            .mapNotNull { it.displayName }
+            .distinct()
+        selectedVariety = if (opts.size == 1) opts.first() else null
+        selectedClone = null
+    }
+    LaunchedEffect(selectedVariety, detailBlock?.id) {
+        if (selectedClone == null && cloneOptions.size == 1) selectedClone = cloneOptions.first()
+    }
+
+    fun saveDetailed() {
+        val chosen = detailBlock ?: return
+        val w = weight ?: return
+        val vineyardId = state.selectedVineyardId ?: return
+        if (saving) return
+        saving = true
+        val varietyName = (selectedVariety ?: freeVariety).trim()
+        val alloc = allocations.firstOrNull { it.displayName == varietyName }
+        val sugar = sugarText.trim().toDoubleOrNull()
+        val record = PickingRecord(
+            id = UUID.randomUUID().toString(),
+            vineyardId = vineyardId,
+            pickedAt = pickedDate.toString(),
+            vintage = derivedVintage,
+            paddockId = chosen.id,
+            paddockName = chosen.name,
+            varietyId = alloc?.varietyId,
+            varietyKey = alloc?.varietyKey,
+            varietyName = varietyName,
+            clone = (selectedClone ?: cloneOptions.singleOrNull())?.trim(),
+            weightKg = w,
+            sugarValue = sugar,
+            sugarUnit = if (sugar != null) sugarUnit.raw else null,
+            ph = phText.trim().toDoubleOrNull(),
+            taGPerL = taText.trim().toDoubleOrNull(),
+            purpose = purpose.trim(),
+            sold = sold,
+            soldTo = if (sold) soldTo.trim().ifBlank { null } else null,
+            pricePerTonne = if (sold) price else null,
+            notes = detailNotes.trim(),
+        )
+        vm.createPickingRecord(record) { ok ->
+            saving = false
+            if (ok) {
+                lastSavedInfo = "Pick saved — ${chosen.name}${if (varietyName.isNotBlank()) " · $varietyName" else ""} · ${formatPlain(w)} kg"
+                // Keep the context fields for fast harvest entry; clear per-pick values.
+                weightText = ""; sugarText = ""; phText = ""; taText = ""; detailNotes = ""
+            }
+        }
+    }
+
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
             modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text("Record actual yield", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+
+            // Basic | Detailed mode. Basic is the original single actual-yield
+            // entry; Detailed logs one picking record per save (sql/180).
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(false to "Basic", true to "Detailed").forEach { (value, label) ->
+                    val isSelected = detailed == value
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isSelected) VineColors.LeafGreen.copy(alpha = 0.15f) else vine.appBackground)
+                            .clickable { detailed = value }
+                            .padding(vertical = 10.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            label,
+                            color = if (isSelected) VineColors.LeafGreen else vine.textSecondary,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                            fontSize = 14.sp,
+                        )
+                    }
+                }
+            }
+            if (detailed) {
+                Text(
+                    "Each save adds one picking record. Actual yield for a block, variety and vintage is the sum of its picking records — it replaces any Basic actual entered for the same combination.",
+                    color = vine.textSecondary, fontSize = 12.sp,
+                )
+            }
+
+            if (!detailed) {
 
             // Season / year.
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1108,6 +1441,252 @@ private fun RecordYieldSheet(
                 if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
                 else Text("Save yield record")
             }
+
+            } else {
+
+            // ---- Detailed picking log entry ----
+            OutlinedTextField(
+                value = pickedDate.toString(),
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Picking date") },
+                trailingIcon = {
+                    IconButton(onClick = { showDatePicker = true }) {
+                        Icon(Icons.Filled.CalendarMonth, contentDescription = "Change picking date")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "Vintage $derivedVintage — calculated from the picking date and the vineyard's shared season settings.",
+                color = vine.textSecondary, fontSize = 12.sp,
+            )
+
+            if (paddocks.isEmpty()) {
+                Text("No blocks available. Add a block first.", color = vine.textSecondary, fontSize = 13.sp)
+            } else {
+                ExposedDropdownMenuBox(expanded = detailBlockMenu, onExpandedChange = { detailBlockMenu = it }) {
+                    OutlinedTextField(
+                        value = detailBlock?.name ?: "Select a block",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Block / paddock") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = detailBlockMenu) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                    )
+                    ExposedDropdownMenu(expanded = detailBlockMenu, onDismissRequest = { detailBlockMenu = false }) {
+                        paddocks.forEach { opt ->
+                            DropdownMenuItem(
+                                text = { Text(opt.name) },
+                                onClick = { detailBlock = opt; detailBlockMenu = false },
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (varietyOptions.isNotEmpty()) {
+                ExposedDropdownMenuBox(expanded = varietyMenu, onExpandedChange = { varietyMenu = it }) {
+                    OutlinedTextField(
+                        value = selectedVariety ?: "Select a variety",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Variety") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = varietyMenu) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                    )
+                    ExposedDropdownMenu(expanded = varietyMenu, onDismissRequest = { varietyMenu = false }) {
+                        varietyOptions.forEach { opt ->
+                            DropdownMenuItem(
+                                text = { Text(opt) },
+                                onClick = { selectedVariety = opt; selectedClone = null; varietyMenu = false },
+                            )
+                        }
+                    }
+                }
+            } else if (detailBlock != null) {
+                OutlinedTextField(
+                    value = freeVariety,
+                    onValueChange = { freeVariety = it },
+                    label = { Text("Variety (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "This block has no configured varieties. Configure them in Block setup to select variety and clone here.",
+                    color = vine.textSecondary, fontSize = 11.sp,
+                )
+            }
+
+            if (cloneOptions.size > 1) {
+                ExposedDropdownMenuBox(expanded = cloneMenu, onExpandedChange = { cloneMenu = it }) {
+                    OutlinedTextField(
+                        value = selectedClone ?: "Not specified",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Clone") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = cloneMenu) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                    )
+                    ExposedDropdownMenu(expanded = cloneMenu, onDismissRequest = { cloneMenu = false }) {
+                        DropdownMenuItem(text = { Text("Not specified") }, onClick = { selectedClone = null; cloneMenu = false })
+                        cloneOptions.forEach { opt ->
+                            DropdownMenuItem(text = { Text(opt) }, onClick = { selectedClone = opt; cloneMenu = false })
+                        }
+                    }
+                }
+            } else if (cloneOptions.size == 1) {
+                Text("Clone: ${cloneOptions.first()}", color = vine.textSecondary, fontSize = 12.sp)
+            }
+
+            OutlinedTextField(
+                value = weightText,
+                onValueChange = { weightText = it.filter { c -> c.isDigit() || c == '.' } },
+                label = { Text("Weight (kg)") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (weight != null && weight > 0 && detailBlock != null) {
+                val varietyForTotal = (selectedVariety ?: freeVariety).trim()
+                val existingKg = state.pickingRecords
+                    .filter {
+                        it.paddockId == detailBlock!!.id && it.vintage == derivedVintage &&
+                            (varietyForTotal.isBlank() || canonicalVarietyName(it.varietyName) == canonicalVarietyName(varietyForTotal))
+                    }
+                    .sumOf { it.weightKg }
+                Text(
+                    "Vintage $derivedVintage total for this block & variety after saving: ${String.format(Locale.getDefault(), "%.2f", (existingKg + weight) / 1000.0)} t",
+                    color = vine.textSecondary, fontSize = 12.sp,
+                )
+            }
+
+            // Fruit analysis — sugar stores BOTH value and the unit used at
+            // entry time so later preference changes never reinterpret history.
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = sugarText,
+                    onValueChange = { sugarText = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Sugar (${sugarUnit.symbol})") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.weight(1f),
+                )
+                SugarMeasurementUnit.entries.forEach { unit ->
+                    val isSelected = sugarUnit == unit
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSelected) VineColors.LeafGreen.copy(alpha = 0.15f) else vine.appBackground)
+                            .clickable { sugarUnit = unit }
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            unit.symbol,
+                            fontSize = 13.sp,
+                            color = if (isSelected) VineColors.LeafGreen else vine.textSecondary,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = phText,
+                    onValueChange = { phText = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("pH") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = taText,
+                    onValueChange = { taText = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("TA (g/L)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            OutlinedTextField(
+                value = purpose,
+                onValueChange = { purpose = it },
+                label = { Text("Purpose (optional)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            // Sold — Sold To and Price per tonne only apply to sold picks.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = sold, onCheckedChange = { sold = it })
+                Text("Sold", color = vine.textPrimary, fontSize = 15.sp)
+            }
+            if (sold) {
+                OutlinedTextField(
+                    value = soldTo,
+                    onValueChange = { soldTo = it },
+                    label = { Text("Sold to") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = priceText,
+                    onValueChange = { priceText = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Price per tonne") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (weight != null && weight > 0 && price != null) {
+                    Text(
+                        "Grape value: ${state.regionFormatter.formatCurrency((weight / 1000.0) * price)} (tonnes × price per tonne)",
+                        color = vine.textSecondary, fontSize = 12.sp,
+                    )
+                }
+            }
+
+            OutlinedTextField(
+                value = detailNotes,
+                onValueChange = { detailNotes = it },
+                label = { Text("Notes (optional)") },
+                modifier = Modifier.fillMaxWidth().height(90.dp),
+            )
+
+            lastSavedInfo?.let { Text(it, color = VineColors.LeafGreen, fontSize = 13.sp) }
+            state.yieldError?.let { Text(it, color = VineColors.Destructive, fontSize = 13.sp) }
+
+            Button(
+                onClick = { saveDetailed() },
+                enabled = canSaveDetailed,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+            ) {
+                if (saving) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color.White)
+                else Text("Save pick")
+            }
+
+            }
+        }
+    }
+
+    if (showDatePicker) {
+        val dpState = rememberDatePickerState(
+            initialSelectedDateMillis = pickedDate.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    dpState.selectedDateMillis?.let {
+                        pickedDate = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()
+                    }
+                    showDatePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } },
+        ) {
+            DatePicker(state = dpState)
         }
     }
 }
@@ -1473,9 +2052,18 @@ private const val UNKNOWN_VARIETY_KEY = "__unknown__"
 fun computeVarietyYieldSummaries(
     records: List<HistoricalYieldRecord>,
     paddocks: List<Paddock>,
+    pickingRecords: List<PickingRecord> = emptyList(),
 ): List<VarietyYieldSummary> {
-    if (records.isEmpty()) return emptyList()
+    if (records.isEmpty() && pickingRecords.isEmpty()) return emptyList()
     val paddockById = paddocks.associateBy { it.id }
+
+    // Detailed-precedence keys (sql/180): when picking records exist for a
+    // Block + Variety + Vintage, their summed weight IS the actual yield for
+    // that combination — a Basic actual for the same combination is superseded
+    // (its estimate still counts), never added on top.
+    val detailedKeys = pickingRecords
+        .map { Triple(it.paddockId, canonicalVarietyName(it.varietyName), it.vintage) }
+        .toHashSet()
 
     data class Acc(
         var displayName: String,
@@ -1519,7 +2107,9 @@ fun computeVarietyYieldSummaries(
                 val area = block.areaHectares * share
                 b.estimated += est
                 b.area += area
-                val actual = block.actualYieldTonnes?.let { it * share }
+                val supersededByDetailed =
+                    Triple(block.paddockId, canonicalVarietyName(name), record.year) in detailedKeys
+                val actual = if (supersededByDetailed) null else block.actualYieldTonnes?.let { it * share }
                 if (actual != null) {
                     b.actual += actual
                     b.hasActual = true
@@ -1537,6 +2127,36 @@ fun computeVarietyYieldSummaries(
                 )
             }
         }
+    }
+
+    // Detailed picking-log contributions: SUM(weight_kg)/1000 per pick into the
+    // matching variety bucket (resolved via the block's allocations when the
+    // pick doesn't carry a stable variety key).
+    pickingRecords.forEach { pick ->
+        val paddock = paddockById[pick.paddockId]
+        val alloc = paddock?.varietyAllocations.orEmpty().firstOrNull {
+            !it.displayName.isNullOrBlank() &&
+                canonicalVarietyName(it.displayName!!) == canonicalVarietyName(pick.varietyName)
+        }
+        val name = pick.varietyName.ifBlank { alloc?.displayName ?: "Unknown variety" }
+        val key = pick.varietyKey?.takeIf { it.isNotBlank() }
+            ?: alloc?.varietyKey?.takeIf { it.isNotBlank() }
+            ?: if (pick.varietyName.isBlank() && alloc == null) UNKNOWN_VARIETY_KEY
+            else "name:${canonicalVarietyName(name)}"
+        val b = bucket(key, name)
+        b.actual += pick.tonnes
+        b.hasActual = true
+        b.contributions.add(
+            VarietyYieldContribution(
+                recordId = pick.id,
+                seasonLabel = "Vintage ${pick.vintage}",
+                blockName = pick.paddockName.ifBlank { paddock?.name ?: "Block" },
+                sharePercent = 100.0,
+                estimatedTonnes = 0.0,
+                actualTonnes = pick.tonnes,
+                areaHectares = 0.0,
+            ),
+        )
     }
 
     return acc.entries

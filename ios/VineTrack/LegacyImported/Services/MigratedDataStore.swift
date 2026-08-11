@@ -45,6 +45,8 @@ final class MigratedDataStore {
     var damageRecords: [DamageRecord] = []
     var historicalYieldRecords: [HistoricalYieldRecord] = []
     var yieldDeterminationResults: [YieldDeterminationResult] = []
+    /// Detailed picking log (sql/180) — many picks per Block + Variety + Vintage.
+    var pickingRecords: [PickingRecord] = []
 
     var maintenanceLogs: [MaintenanceLog] = []
     var workTasks: [WorkTask] = []
@@ -160,6 +162,8 @@ final class MigratedDataStore {
     var onDamageRecordDeleted: ((UUID) -> Void)?
     var onHistoricalYieldRecordChanged: ((UUID) -> Void)?
     var onHistoricalYieldRecordDeleted: ((UUID) -> Void)?
+    var onPickingRecordChanged: ((UUID) -> Void)?
+    var onPickingRecordDeleted: ((UUID) -> Void)?
 
     // Phase 15F: shared photo / image sync hooks.
     /// Fired when an owner/manager saves a custom E-L stage image locally.
@@ -429,6 +433,7 @@ final class MigratedDataStore {
         damageRecords = yieldRepo.loadDamage(for: vineyardId)
         historicalYieldRecords = yieldRepo.loadHistorical(for: vineyardId)
         yieldDeterminationResults = yieldRepo.loadDetermination(for: vineyardId)
+        pickingRecords = yieldRepo.loadPicking(for: vineyardId)
 
         settings = settingsRepo.load(for: vineyardId)
 

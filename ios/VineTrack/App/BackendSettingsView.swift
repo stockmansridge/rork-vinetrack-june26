@@ -1016,6 +1016,7 @@ struct SyncSettingsView: View {
     @Environment(YieldEstimationSessionSyncService.self) private var yieldSessionSync
     @Environment(DamageRecordSyncService.self) private var damageRecordSync
     @Environment(HistoricalYieldRecordSyncService.self) private var historicalYieldSync
+    @Environment(PickingRecordSyncService.self) private var pickingRecordSync
     @Environment(PruningSyncService.self) private var pruningSync
     @Environment(FertiliserSyncService.self) private var fertiliserSync
 
@@ -1223,10 +1224,18 @@ struct SyncSettingsView: View {
                 }
                 .disabled(isSyncingOps(historicalYieldSync.syncStatus))
                 VineyardSyncStatusRow(label: "historical yields", state: opsStateFrom(historicalYieldSync.syncStatus, lastSync: historicalYieldSync.lastSyncDate))
+
+                Button {
+                    Task { await pickingRecordSync.syncForSelectedVineyard() }
+                } label: {
+                    syncButtonLabel(title: "Sync Picking Records", icon: "basket.fill", isSyncing: isSyncingOps(pickingRecordSync.syncStatus))
+                }
+                .disabled(isSyncingOps(pickingRecordSync.syncStatus))
+                VineyardSyncStatusRow(label: "picking records", state: opsStateFrom(pickingRecordSync.syncStatus, lastSync: pickingRecordSync.lastSyncDate))
             } header: {
                 Text("Operations")
             } footer: {
-                Text("Work tasks, maintenance logs, yield sessions, damage records and historical yields sync across vineyard members.")
+                Text("Work tasks, maintenance logs, yield sessions, damage records, historical yields and picking records sync across vineyard members.")
             }
 
             Section {
