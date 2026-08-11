@@ -184,6 +184,7 @@ import com.rork.vinetrack.data.model.VineyardTripFunction
 import com.rork.vinetrack.data.model.builtInTripFunctions
 import com.rork.vinetrack.data.model.slugifyTripFunction
 import com.rork.vinetrack.data.model.tripFunctionDisplayName
+import com.rork.vinetrack.data.CatalogOfflineCache
 import com.rork.vinetrack.data.CloneRootstockRepository
 import com.rork.vinetrack.data.model.CloneCatalogEntry
 import com.rork.vinetrack.data.model.RootstockCatalogEntry
@@ -2875,6 +2876,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         } + row,
                     )
                 }
+                // Keep the offline snapshot current (audit #10) — the server
+                // accepted the row, so the cache mirrors the new custom clone.
+                domainCache.saveVineyardClones(
+                    session.userId,
+                    vineyardId,
+                    _ui.value.vineyardClones.filter { it.vineyardId == vineyardId },
+                )
                 onResult(row)
             } catch (e: Exception) {
                 Log.w("CloneRootstock", "addCustomClone failed: ${e.message}")
@@ -2904,6 +2912,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         } + row,
                     )
                 }
+                // Keep the offline snapshot current (audit #10).
+                domainCache.saveVineyardRootstocks(
+                    session.userId,
+                    vineyardId,
+                    _ui.value.vineyardRootstocks.filter { it.vineyardId == vineyardId },
+                )
                 onResult(row)
             } catch (e: Exception) {
                 Log.w("CloneRootstock", "addCustomRootstock failed: ${e.message}")
@@ -3569,11 +3583,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             // Clone/rootstock catalogues + this vineyard's custom records
             // (sql/182) so remote catalogue additions reach the pickers.
+            // Written through to the offline cache (audit #10) so the last
+            // successful fetch survives an offline cold restart.
             runCatching {
                 val clones = cloneRootstockRepo.getCloneCatalog()
                 val rootstocks = cloneRootstockRepo.getRootstockCatalog()
                 val customClones = cloneRootstockRepo.listVineyardClones(vineyardId)
                 val customRootstocks = cloneRootstockRepo.listVineyardRootstocks(vineyardId)
+                domainCache.saveCloneCatalog(session.userId, clones)
+                domainCache.saveRootstockCatalog(session.userId, rootstocks)
+                domainCache.saveVineyardClones(session.userId, vineyardId, customClones)
+                domainCache.saveVineyardRootstocks(session.userId, vineyardId, customRootstocks)
                 _ui.update {
                     it.copy(
                         cloneCatalog = clones,
@@ -12194,28 +12214,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.value.grapeVarieties
         }
         // Shared clone + rootstock catalogues (sql/182): global reference
-        // lists plus this vineyard's custom records. Read-only here;
-        // soft-fail to the existing state so offline keeps the last copy.
-        val cloneCatalog = try {
-            cloneRootstockRepo.getCloneCatalog()
-        } catch (e: Exception) {
-            _ui.value.cloneCatalog
+        // lists plus this vineyard's custom records. Read-only here. Audit
+        // #10: each list resolves through the pure fallback ladder
+        // `server → in-memory state → persisted cache` so an offline cold
+        // restart hydrates the pickers from the last successful fetch
+        // instead of leaving them empty. Fresh server reads (including
+        // empty ones — Supabase stays authoritative) are written through to
+        // the cache; a fallback never clobbers a previously good snapshot.
+        val cloneCatalogRes = CatalogOfflineCache.resolve(
+            server = try { cloneRootstockRepo.getCloneCatalog() } catch (e: Exception) { null },
+            inMemory = _ui.value.cloneCatalog,
+            cached = domainCache.loadCloneCatalog(userId),
+        )
+        val rootstockCatalogRes = CatalogOfflineCache.resolve(
+            server = try { cloneRootstockRepo.getRootstockCatalog() } catch (e: Exception) { null },
+            inMemory = _ui.value.rootstockCatalog,
+            cached = domainCache.loadRootstockCatalog(userId),
+        )
+        val vineyardClonesRes = CatalogOfflineCache.resolve(
+            server = try { cloneRootstockRepo.listVineyardClones(vineyardId) } catch (e: Exception) { null },
+            inMemory = _ui.value.vineyardClones.filter { it.vineyardId == vineyardId },
+            cached = domainCache.loadVineyardClones(userId, vineyardId),
+        )
+        val vineyardRootstocksRes = CatalogOfflineCache.resolve(
+            server = try { cloneRootstockRepo.listVineyardRootstocks(vineyardId) } catch (e: Exception) { null },
+            inMemory = _ui.value.vineyardRootstocks.filter { it.vineyardId == vineyardId },
+            cached = domainCache.loadVineyardRootstocks(userId, vineyardId),
+        )
+        if (cloneCatalogRes.fromServer) domainCache.saveCloneCatalog(userId, cloneCatalogRes.entries)
+        if (rootstockCatalogRes.fromServer) domainCache.saveRootstockCatalog(userId, rootstockCatalogRes.entries)
+        if (vineyardClonesRes.fromServer) domainCache.saveVineyardClones(userId, vineyardId, vineyardClonesRes.entries)
+        if (vineyardRootstocksRes.fromServer) {
+            domainCache.saveVineyardRootstocks(userId, vineyardId, vineyardRootstocksRes.entries)
         }
-        val rootstockCatalog = try {
-            cloneRootstockRepo.getRootstockCatalog()
-        } catch (e: Exception) {
-            _ui.value.rootstockCatalog
-        }
-        val vineyardClones = try {
-            cloneRootstockRepo.listVineyardClones(vineyardId)
-        } catch (e: Exception) {
-            _ui.value.vineyardClones.filter { it.vineyardId == vineyardId }
-        }
-        val vineyardRootstocks = try {
-            cloneRootstockRepo.listVineyardRootstocks(vineyardId)
-        } catch (e: Exception) {
-            _ui.value.vineyardRootstocks.filter { it.vineyardId == vineyardId }
-        }
+        val cloneCatalog = cloneCatalogRes.entries
+        val rootstockCatalog = rootstockCatalogRes.entries
+        val vineyardClones = vineyardClonesRes.entries
+        val vineyardRootstocks = vineyardRootstocksRes.entries
         // Archived seasonal yield records are an operational list; soft-fail to
         // existing, then to the Stage O-2 server-snapshot cache.
         var yieldFromServer = false

@@ -2,6 +2,7 @@ package com.rork.vinetrack.data
 
 import android.content.Context
 import androidx.core.content.edit
+import com.rork.vinetrack.data.model.CloneCatalogEntry
 import com.rork.vinetrack.data.model.DamageRecord
 import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.HistoricalYieldRecord
@@ -9,10 +10,13 @@ import com.rork.vinetrack.data.model.MaintenanceLog
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PickingRecord
 import com.rork.vinetrack.data.model.Pin
+import com.rork.vinetrack.data.model.RootstockCatalogEntry
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.TractorFuelLog
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
+import com.rork.vinetrack.data.model.VineyardCloneRow
+import com.rork.vinetrack.data.model.VineyardRootstockRow
 import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
@@ -59,6 +63,10 @@ class DomainCacheStore(context: Context) {
     private val tripSerializer = ListSerializer(Trip.serializer())
     private val yieldSessionSerializer = ListSerializer(YieldEstimationSession.serializer())
     private val pickingSerializer = ListSerializer(PickingRecord.serializer())
+    private val cloneCatalogSerializer = ListSerializer(CloneCatalogEntry.serializer())
+    private val rootstockCatalogSerializer = ListSerializer(RootstockCatalogEntry.serializer())
+    private val vineyardCloneSerializer = ListSerializer(VineyardCloneRow.serializer())
+    private val vineyardRootstockSerializer = ListSerializer(VineyardRootstockRow.serializer())
 
     // MARK: - Cache owner
 
@@ -291,6 +299,60 @@ class DomainCacheStore(context: Context) {
 
     fun pickingSyncedAt(vineyardId: String): Long? = readTimestamp(keyPickingAt(vineyardId))
 
+    // MARK: - Clone/rootstock catalogues (sql/182 — audit #10 offline fallback)
+    // Built-in catalogues are global reference data (one snapshot, not
+    // per-vineyard); vineyard custom records are scoped per vineyard.
+    // Encode/decode is delegated to [CatalogOfflineCache] so the exact
+    // persistence contract is unit-testable on the JVM.
+
+    fun loadCloneCatalog(): List<CloneCatalogEntry> =
+        CatalogOfflineCache.decode(cloneCatalogSerializer, prefs.getString(KEY_CLONE_CATALOG, null))
+
+    fun saveCloneCatalog(entries: List<CloneCatalogEntry>, syncedAt: Long) {
+        prefs.edit {
+            putString(KEY_CLONE_CATALOG, CatalogOfflineCache.encode(cloneCatalogSerializer, entries))
+            putLong(KEY_CLONE_CATALOG_AT, syncedAt)
+        }
+    }
+
+    fun cloneCatalogSyncedAt(): Long? = readTimestamp(KEY_CLONE_CATALOG_AT)
+
+    fun loadRootstockCatalog(): List<RootstockCatalogEntry> =
+        CatalogOfflineCache.decode(rootstockCatalogSerializer, prefs.getString(KEY_ROOTSTOCK_CATALOG, null))
+
+    fun saveRootstockCatalog(entries: List<RootstockCatalogEntry>, syncedAt: Long) {
+        prefs.edit {
+            putString(KEY_ROOTSTOCK_CATALOG, CatalogOfflineCache.encode(rootstockCatalogSerializer, entries))
+            putLong(KEY_ROOTSTOCK_CATALOG_AT, syncedAt)
+        }
+    }
+
+    fun rootstockCatalogSyncedAt(): Long? = readTimestamp(KEY_ROOTSTOCK_CATALOG_AT)
+
+    fun loadVineyardClones(vineyardId: String): List<VineyardCloneRow> =
+        CatalogOfflineCache.decode(vineyardCloneSerializer, prefs.getString(keyVineyardClones(vineyardId), null))
+
+    fun saveVineyardClones(vineyardId: String, rows: List<VineyardCloneRow>, syncedAt: Long) {
+        prefs.edit {
+            putString(keyVineyardClones(vineyardId), CatalogOfflineCache.encode(vineyardCloneSerializer, rows))
+            putLong(keyVineyardClonesAt(vineyardId), syncedAt)
+        }
+    }
+
+    fun vineyardClonesSyncedAt(vineyardId: String): Long? = readTimestamp(keyVineyardClonesAt(vineyardId))
+
+    fun loadVineyardRootstocks(vineyardId: String): List<VineyardRootstockRow> =
+        CatalogOfflineCache.decode(vineyardRootstockSerializer, prefs.getString(keyVineyardRootstocks(vineyardId), null))
+
+    fun saveVineyardRootstocks(vineyardId: String, rows: List<VineyardRootstockRow>, syncedAt: Long) {
+        prefs.edit {
+            putString(keyVineyardRootstocks(vineyardId), CatalogOfflineCache.encode(vineyardRootstockSerializer, rows))
+            putLong(keyVineyardRootstocksAt(vineyardId), syncedAt)
+        }
+    }
+
+    fun vineyardRootstocksSyncedAt(vineyardId: String): Long? = readTimestamp(keyVineyardRootstocksAt(vineyardId))
+
     // MARK: - Maintenance
 
     /** Wipe the entire cache (used when the cache owner changes). */
@@ -334,10 +396,18 @@ class DomainCacheStore(context: Context) {
     private fun keyTripsAt(vineyardId: String) = "trips_at_$vineyardId"
     private fun keyPicking(vineyardId: String) = "picking_$vineyardId"
     private fun keyPickingAt(vineyardId: String) = "picking_at_$vineyardId"
+    private fun keyVineyardClones(vineyardId: String) = "vineyard_clones_$vineyardId"
+    private fun keyVineyardClonesAt(vineyardId: String) = "vineyard_clones_at_$vineyardId"
+    private fun keyVineyardRootstocks(vineyardId: String) = "vineyard_rootstocks_$vineyardId"
+    private fun keyVineyardRootstocksAt(vineyardId: String) = "vineyard_rootstocks_at_$vineyardId"
 
     private companion object {
         const val KEY_OWNER = "cache_owner_user_id"
         const val KEY_VINEYARDS = "vineyards_json"
         const val KEY_VINEYARDS_AT = "vineyards_synced_at"
+        const val KEY_CLONE_CATALOG = "clone_catalog_json"
+        const val KEY_CLONE_CATALOG_AT = "clone_catalog_synced_at"
+        const val KEY_ROOTSTOCK_CATALOG = "rootstock_catalog_json"
+        const val KEY_ROOTSTOCK_CATALOG_AT = "rootstock_catalog_synced_at"
     }
 }

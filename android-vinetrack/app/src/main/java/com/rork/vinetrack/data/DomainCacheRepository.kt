@@ -1,6 +1,7 @@
 package com.rork.vinetrack.data
 
 import android.content.Context
+import com.rork.vinetrack.data.model.CloneCatalogEntry
 import com.rork.vinetrack.data.model.DamageRecord
 import com.rork.vinetrack.data.model.GrowthStageRecord
 import com.rork.vinetrack.data.model.HistoricalYieldRecord
@@ -8,10 +9,13 @@ import com.rork.vinetrack.data.model.MaintenanceLog
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PickingRecord
 import com.rork.vinetrack.data.model.Pin
+import com.rork.vinetrack.data.model.RootstockCatalogEntry
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.TractorFuelLog
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.Vineyard
+import com.rork.vinetrack.data.model.VineyardCloneRow
+import com.rork.vinetrack.data.model.VineyardRootstockRow
 import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
@@ -315,6 +319,59 @@ class DomainCacheRepository(context: Context) {
 
     fun pickingSyncedAt(userId: String?, vineyardId: String): Long? =
         if (ownerMatches(userId)) store.pickingSyncedAt(vineyardId) else null
+
+    // MARK: - Clone/rootstock catalogues (sql/182 — audit #10 offline fallback)
+    // Supabase stays authoritative: these are only the last successfully
+    // fetched snapshots so pickers survive an offline cold restart. Built-in
+    // catalogues are global; custom records are scoped per vineyard.
+
+    /** Save the built-in clone catalogue from a successful online fetch. */
+    fun saveCloneCatalog(userId: String?, entries: List<CloneCatalogEntry>) {
+        ensureOwner(userId)
+        store.saveCloneCatalog(entries, System.currentTimeMillis())
+    }
+
+    /** Cached built-in clone catalogue, or null if never synced / owned by someone else. */
+    fun loadCloneCatalog(userId: String?): List<CloneCatalogEntry>? {
+        if (!ownerMatches(userId) || store.cloneCatalogSyncedAt() == null) return null
+        return store.loadCloneCatalog()
+    }
+
+    /** Save the built-in rootstock catalogue from a successful online fetch. */
+    fun saveRootstockCatalog(userId: String?, entries: List<RootstockCatalogEntry>) {
+        ensureOwner(userId)
+        store.saveRootstockCatalog(entries, System.currentTimeMillis())
+    }
+
+    /** Cached built-in rootstock catalogue, or null if never synced / owned by someone else. */
+    fun loadRootstockCatalog(userId: String?): List<RootstockCatalogEntry>? {
+        if (!ownerMatches(userId) || store.rootstockCatalogSyncedAt() == null) return null
+        return store.loadRootstockCatalog()
+    }
+
+    /** Save the vineyard's custom clones from a successful online fetch. */
+    fun saveVineyardClones(userId: String?, vineyardId: String, rows: List<VineyardCloneRow>) {
+        ensureOwner(userId)
+        store.saveVineyardClones(vineyardId, rows, System.currentTimeMillis())
+    }
+
+    /** Cached custom clones for the vineyard, or null if never synced / owned by someone else. */
+    fun loadVineyardClones(userId: String?, vineyardId: String): List<VineyardCloneRow>? {
+        if (!ownerMatches(userId) || store.vineyardClonesSyncedAt(vineyardId) == null) return null
+        return store.loadVineyardClones(vineyardId)
+    }
+
+    /** Save the vineyard's custom rootstocks from a successful online fetch. */
+    fun saveVineyardRootstocks(userId: String?, vineyardId: String, rows: List<VineyardRootstockRow>) {
+        ensureOwner(userId)
+        store.saveVineyardRootstocks(vineyardId, rows, System.currentTimeMillis())
+    }
+
+    /** Cached custom rootstocks for the vineyard, or null if never synced / owned by someone else. */
+    fun loadVineyardRootstocks(userId: String?, vineyardId: String): List<VineyardRootstockRow>? {
+        if (!ownerMatches(userId) || store.vineyardRootstocksSyncedAt(vineyardId) == null) return null
+        return store.loadVineyardRootstocks(vineyardId)
+    }
 
     // MARK: - Maintenance
 
