@@ -1017,6 +1017,7 @@ struct SyncSettingsView: View {
     @Environment(DamageRecordSyncService.self) private var damageRecordSync
     @Environment(HistoricalYieldRecordSyncService.self) private var historicalYieldSync
     @Environment(PickingRecordSyncService.self) private var pickingRecordSync
+    @Environment(PruningYieldSettingsSyncService.self) private var pruningYieldSettingsSync
     @Environment(PruningSyncService.self) private var pruningSync
     @Environment(FertiliserSyncService.self) private var fertiliserSync
 
@@ -1232,10 +1233,18 @@ struct SyncSettingsView: View {
                 }
                 .disabled(isSyncingOps(pickingRecordSync.syncStatus))
                 VineyardSyncStatusRow(label: "picking records", state: opsStateFrom(pickingRecordSync.syncStatus, lastSync: pickingRecordSync.lastSyncDate))
+
+                Button {
+                    Task { await pruningYieldSettingsSync.syncForSelectedVineyard() }
+                } label: {
+                    syncButtonLabel(title: "Sync Pruning Yield Settings", icon: "scalemass.fill", isSyncing: isSyncingOps(pruningYieldSettingsSync.syncStatus))
+                }
+                .disabled(isSyncingOps(pruningYieldSettingsSync.syncStatus))
+                VineyardSyncStatusRow(label: "pruning yield settings", state: opsStateFrom(pruningYieldSettingsSync.syncStatus, lastSync: pruningYieldSettingsSync.lastSyncDate))
             } header: {
                 Text("Operations")
             } footer: {
-                Text("Work tasks, maintenance logs, yield sessions, damage records, historical yields and picking records sync across vineyard members.")
+                Text("Work tasks, maintenance logs, yield sessions, damage records, historical yields, picking records and per-block pruning yield calculator settings sync across vineyard members.")
             }
 
             Section {

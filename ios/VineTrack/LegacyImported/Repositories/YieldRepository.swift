@@ -10,6 +10,7 @@ final class YieldRepository {
     static let historicalKey = "vinetrack_historical_yield_records"
     static let determinationKey = "vinetrack_yield_determination_results"
     static let pickingKey = "vinetrack_picking_records"
+    static let pruningSettingsKey = "vinetrack_pruning_yield_settings"
 
     private let persistence: PersistenceStore
 
@@ -144,6 +145,30 @@ final class YieldRepository {
         all.removeAll { $0.vineyardId == vineyardId }
         all.append(contentsOf: remote)
         persistence.save(all, key: Self.pickingKey)
+    }
+
+    // MARK: - PruningYieldSettings (shared per-block calculator config, sql/181)
+
+    func loadAllPruningSettings() -> [PruningYieldSettings] {
+        persistence.load(key: Self.pruningSettingsKey) ?? []
+    }
+
+    func loadPruningSettings(for vineyardId: UUID) -> [PruningYieldSettings] {
+        loadAllPruningSettings().filter { $0.vineyardId == vineyardId }
+    }
+
+    func savePruningSettingsSlice(_ items: [PruningYieldSettings], for vineyardId: UUID) {
+        var all = loadAllPruningSettings()
+        all.removeAll { $0.vineyardId == vineyardId }
+        all.append(contentsOf: items)
+        persistence.save(all, key: Self.pruningSettingsKey)
+    }
+
+    func replacePruningSettings(_ remote: [PruningYieldSettings], for vineyardId: UUID) {
+        var all = loadAllPruningSettings()
+        all.removeAll { $0.vineyardId == vineyardId }
+        all.append(contentsOf: remote)
+        persistence.save(all, key: Self.pruningSettingsKey)
     }
 
     // MARK: - YieldDeterminationResult (local only — sync-ready shape)

@@ -97,6 +97,10 @@ import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.PickingRecordCreateSync
 import com.rork.vinetrack.data.PickingRecordDeleteSync
 import com.rork.vinetrack.data.PickingRecordRepository
+import com.rork.vinetrack.data.PruningYieldSettingsRepository
+import com.rork.vinetrack.data.PruningYieldSettingsStore
+import com.rork.vinetrack.data.PruningYieldSettingsSync
+import com.rork.vinetrack.data.YieldDeterminationPrefsStore
 import com.rork.vinetrack.data.RegionSettings
 import com.rork.vinetrack.data.RegionSettingsRepository
 import com.rork.vinetrack.data.RegionSettingsStore
@@ -185,6 +189,8 @@ import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import com.rork.vinetrack.data.model.PickingRecord
+import com.rork.vinetrack.data.model.PruningYieldInputFormat
+import com.rork.vinetrack.data.model.PruningYieldSettings
 import com.rork.vinetrack.data.model.AppNotice
 import com.rork.vinetrack.data.model.CustomPinCreateParams
 import com.rork.vinetrack.data.model.CustomPinType
@@ -444,6 +450,8 @@ data class AppUiState(
     val yieldRecords: List<HistoricalYieldRecord> = emptyList(),
     /** Detailed picking-log records (sql/180) for the selected vineyard. */
     val pickingRecords: List<PickingRecord> = emptyList(),
+    /** Shared per-block Pruning Yield Calculator settings (sql/181). */
+    val pruningYieldSettings: List<PruningYieldSettings> = emptyList(),
     val damageRecords: List<DamageRecord> = emptyList(),
     /** Working yield-estimation sessions for the selected vineyard (Stage Q). */
     val yieldSessions: List<YieldEstimationSession> = emptyList(),
@@ -763,6 +771,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val paddockRepo = PaddockRepository(session)
     private val yieldRepo = YieldRepository(session)
     private val pickingRepo = PickingRecordRepository(session)
+    private val pruningYieldSettingsRepo = PruningYieldSettingsRepository(session)
     private val damageRepo = DamageRecordRepository(session)
     private val growthImageRepo = GrowthStageImageRepository(session)
     private val fuelRepo = FuelLogRepository(session)
@@ -1117,6 +1126,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val pickingCreateSync = PickingRecordCreateSync(pickingRepo, pendingWrites)
     private val pickingDeleteSync = PickingRecordDeleteSync(pickingRepo, pendingWrites)
+
+    /**
+     * Shared per-block Pruning Yield Calculator settings (sql/181):
+     * offline cache (Supabase authoritative) + coalesced upsert replay
+     * coordinator (PRUNING_YIELD_SETTINGS / UPDATE, one marker per block).
+     */
+    private val pruningYieldSettingsStore = PruningYieldSettingsStore(app)
+    private val pruningYieldSettingsSync = PruningYieldSettingsSync(pruningYieldSettingsRepo, pendingWrites)
 
     /**
      * Replay coordinator for growth-stage record CREATE only (Android Stage N-1).
@@ -2673,6 +2690,78 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Replay any queued per-block Pruning Yield Calculator saves (sql/181).
+     * PRUNING_YIELD_SETTINGS / UPDATE only — coalesced one marker per block.
+     * Each synced server row replaces that block's record in state (including
+     * the converged row id when another device created the row first).
+     */
+    private fun replayPendingPruningYieldSettings() {
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        viewModelScope.launch {
+            pruningYieldSettingsSync.replayAll { saved -> reconcilePruningYieldSettings(saved) }
+        }
+    }
+
+    /** Fold an authoritative server settings row back into state + cache. */
+    private fun reconcilePruningYieldSettings(saved: PruningYieldSettings) {
+        _ui.update { st ->
+            st.copy(
+                pruningYieldSettings = st.pruningYieldSettings.filterNot {
+                    it.vineyardId == saved.vineyardId && it.paddockId == saved.paddockId
+                } + saved,
+            )
+        }
+        pruningYieldSettingsStore.save(
+            saved.vineyardId,
+            _ui.value.pruningYieldSettings.filter { it.vineyardId == saved.vineyardId },
+        )
+    }
+
+    /**
+     * One-time migration of the legacy pre-sql/181 device-local Pruning Yield
+     * Calculator inputs ([YieldDeterminationPrefsStore]) into the shared
+     * contract. Runs only after a SUCCESSFUL server read, and only for blocks
+     * that have NO shared record — an existing shared configuration always
+     * wins, so a newer value saved by another member is never overwritten.
+     * Queued through the coalesced outbox so the upload survives connectivity
+     * loss; returns the merged list for immediate optimistic display.
+     */
+    private fun migrateLegacyPruningInputs(
+        vineyardId: String,
+        paddocks: List<Paddock>,
+        shared: List<PruningYieldSettings>,
+    ): List<PruningYieldSettings> {
+        val legacyStore = YieldDeterminationPrefsStore(getApplication())
+        val covered = shared.map { it.paddockId }.toSet()
+        val now = java.time.Instant.now().toString()
+        val migrated = mutableListOf<PruningYieldSettings>()
+        for (p in paddocks) {
+            if (p.id in covered) continue
+            val legacy = legacyStore.loadInputs(p.id) ?: continue
+            val settings = PruningYieldSettings(
+                id = java.util.UUID.randomUUID().toString(),
+                vineyardId = vineyardId,
+                paddockId = p.id,
+                pruneMethod = if (legacy.pruneMethod.equals("cane", ignoreCase = true)) "cane" else "spur",
+                bunchesPerBud = PruningYieldInputFormat.parse(legacy.bunchesPerBud),
+                budsPerSpur = PruningYieldInputFormat.parse(legacy.budsPerSpur),
+                spursPerVine = PruningYieldInputFormat.parse(legacy.spursPerVine),
+                budsPerCane = PruningYieldInputFormat.parse(legacy.budsPerCane),
+                canesPerVine = PruningYieldInputFormat.parse(legacy.canesPerVine),
+                vinesPerHa = PruningYieldInputFormat.parseOptional(legacy.vinesPerHa),
+                bunchWeightGrams = PruningYieldInputFormat.parse(legacy.bunchWeight),
+            )
+            pruningYieldSettingsSync.enqueue(settings, now)
+            migrated.add(settings)
+        }
+        if (migrated.isNotEmpty()) {
+            Log.d("PruningYieldSettings", "migrated ${migrated.size} legacy device-local block save(s)")
+            replayPendingPruningYieldSettings()
+        }
+        return shared + migrated
+    }
+
+    /**
      * Replay any queued growth-stage record creates (Android Stage N-1).
      * GROWTH_RECORD / CREATE only — never growth update/delete, growth photos, or
      * any other entity. Each synced row is reconciled into state by id (replace
@@ -2911,6 +3000,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingYieldDeletes()
         replayPendingPickingCreates()
         replayPendingPickingDeletes()
+        replayPendingPruningYieldSettings()
         replayPendingGrowthCreates()
         replayPendingGrowthUpdates()
         replayPendingGrowthDeletes()
@@ -2981,6 +3071,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingYieldDeletes()
         replayPendingPickingCreates()
         replayPendingPickingDeletes()
+        replayPendingPruningYieldSettings()
         replayPendingGrowthCreates()
         replayPendingGrowthUpdates()
         replayPendingGrowthDeletes()
@@ -3042,6 +3133,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     replayPendingYieldDeletes()
                     replayPendingPickingCreates()
                     replayPendingPickingDeletes()
+                    replayPendingPruningYieldSettings()
                     replayPendingGrowthCreates()
                     replayPendingGrowthUpdates()
                     replayPendingGrowthDeletes()
@@ -3316,6 +3408,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingYieldDeletes()
         replayPendingPickingCreates()
         replayPendingPickingDeletes()
+        replayPendingPruningYieldSettings()
         replayPendingGrowthCreates()
         replayPendingGrowthUpdates()
         replayPendingGrowthDeletes()
@@ -4138,6 +4231,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 replayPendingYieldDeletes()
                 replayPendingPickingCreates()
                 replayPendingPickingDeletes()
+                replayPendingPruningYieldSettings()
                 replayPendingGrowthCreates()
                 replayPendingGrowthUpdates()
                 replayPendingGrowthDeletes()
@@ -4307,7 +4401,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reportClientTelemetry()
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList()) }
         loadedLogoKey = null
         // Apply the cached region settings instantly so units/currency render
         // correctly on first paint, then refresh from the backend below.
@@ -10891,6 +10985,50 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Autosave a block's Pruning Yield Calculator configuration (sql/181 —
+     * offline/retryable). ONE record per block: an existing record's id is
+     * reused so the merge-duplicates upsert (on vineyard_id, paddock_id)
+     * converges on the block's single shared row. Optimistic state + cache
+     * write-through; transient failures queue a coalesced
+     * PRUNING_YIELD_SETTINGS marker so only the LATEST values replay.
+     */
+    fun savePruningYieldSettings(settings: PruningYieldSettings) {
+        val existing = _ui.value.pruningYieldSettings.firstOrNull {
+            it.vineyardId == settings.vineyardId && it.paddockId == settings.paddockId
+        }
+        val item = if (existing != null) settings.copy(id = existing.id) else settings
+        val now = java.time.Instant.now().toString()
+
+        val next = _ui.value.pruningYieldSettings.filterNot {
+            it.vineyardId == item.vineyardId && it.paddockId == item.paddockId
+        } + item
+        _ui.update { it.copy(pruningYieldSettings = next) }
+        pruningYieldSettingsStore.save(item.vineyardId, next.filter { it.vineyardId == item.vineyardId })
+
+        if (!_ui.value.isOnline) {
+            pruningYieldSettingsSync.enqueue(item, now)
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val saved = pruningYieldSettingsRepo.upsertSettings(item, now)
+                reconcilePruningYieldSettings(saved)
+            } catch (e: BackendError.Unauthorized) {
+                signOut()
+            } catch (e: BackendError.Server) {
+                if (e.code in 500..599) {
+                    pruningYieldSettingsSync.enqueue(item, now)
+                } else {
+                    _ui.update { it.copy(yieldError = friendlyWriteError(e.code)) }
+                }
+            } catch (e: Exception) {
+                pruningYieldSettingsSync.enqueue(item, now)
+            }
+        }
+    }
+
+    /**
      * Create a sampling-based estimate record (Android Stage L-1 —
      * offline/retryable). Mirrors the iOS estimate flow: the block stores the
      * sampling snapshot plus the computed estimated tonnes, with no actual
@@ -11751,6 +11889,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Exception) {
             _ui.value.pickingRecords
         }
+        // Shared per-block Pruning Yield Calculator settings (sql/181):
+        // Supabase authoritative, soft-fail to the offline cache, then state.
+        var pruningSettingsFromServer = false
+        var pruningYieldSettings = try {
+            pruningYieldSettingsRepo.listSettings(vineyardId).also { pruningSettingsFromServer = true }
+        } catch (e: Exception) {
+            pruningYieldSettingsStore.load(vineyardId).ifEmpty {
+                _ui.value.pruningYieldSettings.filter { it.vineyardId == vineyardId }
+            }
+        }
+        if (pruningSettingsFromServer) {
+            pruningYieldSettingsStore.save(vineyardId, pruningYieldSettings)
+            // One-time migration: adopt legacy device-local calculator saves for
+            // blocks that have NO shared record yet (a shared record always wins,
+            // so a newer shared configuration is never overwritten).
+            pruningYieldSettings = migrateLegacyPruningInputs(vineyardId, paddocks, pruningYieldSettings)
+        }
         // Write-through (Stage O-2): persist only genuinely fresh server reads so a
         // good cache is never clobbered by an offline fallback. Written before the
         // O-1 overlay so the cache stays a clean server snapshot (no optimistic
@@ -11845,6 +12000,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 grapeVarieties = grapeVarieties,
                 yieldRecords = overlaidYield,
                 pickingRecords = pickingRecords,
+                pruningYieldSettings = pruningYieldSettings,
                 damageRecords = overlaidDamage,
                 yieldSessions = overlaidYieldSessions,
                 isLoadingVineyardData = false,

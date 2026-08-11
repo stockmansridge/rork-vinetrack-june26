@@ -13,18 +13,11 @@ struct YieldDeterminationCalculatorView: View {
         var id: String { rawValue }
     }
 
-    private nonisolated struct SavedSettings: Codable {
-        var pruneMethod: String
-        var bunchesPerBud: String
-        var budsPerSpur: String
-        var spursPerVine: String
-        var budsPerCane: String
-        var canesPerVine: String
-        var vinesPerHa: String
-        var bunchWeight: String
-    }
-
     @State private var selectedPaddockId: UUID?
+    /// Baseline of the values most recently loaded/saved for the selected
+    /// block. Autosave skips when nothing actually changed, so loading a
+    /// block (or merely viewing an unsaved one) never writes a record.
+    @State private var loadedSnapshot: PruningYieldSettings?
     @State private var pruneMethod: PruneMethod = .spur
     @State private var bunchesPerBudText: String = "1.5"
 
@@ -258,43 +251,76 @@ struct YieldDeterminationCalculatorView: View {
         .onChange(of: bunchWeightText) { _, _ in saveSettings(for: selectedPaddockId) }
     }
 
-    private func settingsKey(for paddockId: UUID) -> String? {
-        guard let userId = authService.userId?.uuidString else { return nil }
-        return "vinetrack_yield_determination_\(userId)_\(paddockId.uuidString)"
-    }
-
+    /// Load the selected block's saved configuration from the SHARED store
+    /// (sql/181). Falls back to the legacy pre-sql/181 device-local save
+    /// (display only — adopted into the shared store on first edit or first
+    /// sync), then to the canonical defaults. Every field is reset so one
+    /// block's values can never leak into another block.
     private func loadSettings(for paddockId: UUID?) {
-        guard let paddockId, let key = settingsKey(for: paddockId),
-              let data = UserDefaults.standard.data(forKey: key),
-              let saved = try? JSONDecoder().decode(SavedSettings.self, from: data) else {
-            applyPaddockDefaults()
+        guard let paddockId else {
+            applyDefaults(for: nil)
+            loadedSnapshot = nil
             return
         }
-        pruneMethod = PruneMethod(rawValue: saved.pruneMethod) ?? .spur
-        bunchesPerBudText = saved.bunchesPerBud
-        budsPerSpurText = saved.budsPerSpur
-        spursPerVineText = saved.spursPerVine
-        budsPerCaneText = saved.budsPerCane
-        canesPerVineText = saved.canesPerVine
-        vinesPerHaText = saved.vinesPerHa
-        bunchWeightText = saved.bunchWeight
+        if let saved = store.pruningYieldSettings(for: paddockId) {
+            apply(saved)
+            loadedSnapshot = saved
+        } else if let userId = authService.userId?.uuidString,
+                  let legacy = PruningYieldSettings.legacySettings(userId: userId, paddockId: paddockId) {
+            let converted = PruningYieldSettings.fromLegacy(
+                legacy,
+                vineyardId: store.selectedVineyard?.id ?? UUID(),
+                paddockId: paddockId
+            )
+            apply(converted)
+            loadedSnapshot = converted
+        } else {
+            applyDefaults(for: paddockId)
+            loadedSnapshot = currentSettings(for: paddockId)
+        }
     }
 
+    /// Autosave the selected block's values into the shared store. Skipped
+    /// when nothing changed since the last load/save, so programmatic loads
+    /// never create records for blocks the user only looked at.
     private func saveSettings(for paddockId: UUID?) {
-        guard let paddockId, let key = settingsKey(for: paddockId) else { return }
-        let settings = SavedSettings(
-            pruneMethod: pruneMethod.rawValue,
-            bunchesPerBud: bunchesPerBudText,
-            budsPerSpur: budsPerSpurText,
-            spursPerVine: spursPerVineText,
-            budsPerCane: budsPerCaneText,
-            canesPerVine: canesPerVineText,
-            vinesPerHa: vinesPerHaText,
-            bunchWeight: bunchWeightText
-        )
-        if let data = try? JSONEncoder().encode(settings) {
-            UserDefaults.standard.set(data, forKey: key)
+        guard let paddockId, store.selectedVineyard != nil else { return }
+        let current = currentSettings(for: paddockId)
+        if let snapshot = loadedSnapshot, snapshot.paddockId == paddockId, current.inputsEqual(to: snapshot) {
+            return
         }
+        store.savePruningYieldSettings(current)
+        loadedSnapshot = current
+    }
+
+    private func apply(_ settings: PruningYieldSettings) {
+        pruneMethod = settings.pruneMethod == "cane" ? .cane : .spur
+        bunchesPerBudText = PruningYieldInputFormat.text(settings.bunchesPerBud)
+        budsPerSpurText = PruningYieldInputFormat.text(settings.budsPerSpur)
+        spursPerVineText = PruningYieldInputFormat.text(settings.spursPerVine)
+        budsPerCaneText = PruningYieldInputFormat.text(settings.budsPerCane)
+        canesPerVineText = PruningYieldInputFormat.text(settings.canesPerVine)
+        vinesPerHaText = PruningYieldInputFormat.text(settings.vinesPerHa)
+        bunchWeightText = PruningYieldInputFormat.text(settings.bunchWeightGrams)
+    }
+
+    /// The current field values as a shared-contract record for the block.
+    /// When the block already has a saved record its id is reused (the store
+    /// keeps ids stable anyway — one record per block).
+    private func currentSettings(for paddockId: UUID) -> PruningYieldSettings {
+        PruningYieldSettings(
+            id: store.pruningYieldSettings(for: paddockId)?.id ?? UUID(),
+            vineyardId: store.selectedVineyard?.id ?? UUID(),
+            paddockId: paddockId,
+            pruneMethod: pruneMethod == .cane ? "cane" : "spur",
+            bunchesPerBud: bunchesPerBud,
+            budsPerSpur: budsPerSpur,
+            spursPerVine: spursPerVine,
+            budsPerCane: budsPerCane,
+            canesPerVine: canesPerVine,
+            vinesPerHa: PruningYieldInputFormat.parseOptional(vinesPerHaText),
+            bunchWeightGrams: bunchWeightGrams
+        )
     }
 
     private func inputRow(label: String, text: Binding<String>, field: Field) -> some View {
@@ -314,13 +340,22 @@ struct YieldDeterminationCalculatorView: View {
         }
     }
 
-    private func applyPaddockDefaults() {
-        guard let paddock = selectedPaddock else { return }
+    /// Canonical defaults for an unsaved block. EVERY field resets (not just
+    /// Vines/Ha) so the previous block's values never leak into a new block.
+    private func applyDefaults(for paddockId: UUID?) {
+        pruneMethod = .spur
+        bunchesPerBudText = PruningYieldInputFormat.text(PruningYieldDefaults.bunchesPerBud)
+        budsPerSpurText = PruningYieldInputFormat.text(PruningYieldDefaults.budsPerSpur)
+        spursPerVineText = PruningYieldInputFormat.text(PruningYieldDefaults.spursPerVine)
+        budsPerCaneText = PruningYieldInputFormat.text(PruningYieldDefaults.budsPerCane)
+        canesPerVineText = PruningYieldInputFormat.text(PruningYieldDefaults.canesPerVine)
+        bunchWeightText = PruningYieldInputFormat.text(PruningYieldDefaults.bunchWeightGrams)
+        vinesPerHaText = ""
+        guard let paddockId, let paddock = store.paddocks.first(where: { $0.id == paddockId }) else { return }
         let area = paddock.areaHectares
         let vines = Double(paddock.effectiveVineCount)
         if area > 0, vines > 0 {
-            let computed = vines / area
-            vinesPerHaText = String(format: "%.0f", computed)
+            vinesPerHaText = String(format: "%.0f", vines / area)
         }
     }
 

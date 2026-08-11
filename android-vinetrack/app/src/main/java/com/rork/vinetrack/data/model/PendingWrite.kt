@@ -238,6 +238,16 @@ object PendingEntityType {
      */
     const val PICKING_RECORD = "picking_record"
     /**
+     * A per-block Pruning Yield Calculator configuration save queued offline
+     * (sql/181). Backs `pruning_yield_settings`, a merge-duplicates upsert
+     * keyed by the (vineyard_id, paddock_id) unique key. Only an UPDATE op is
+     * ever carried — create and edit both fold into the upsert — coalesced
+     * one-per block ([PendingWrite.clientId] = "vineyardId|paddockId") so the
+     * latest saved values win and an autosave burst never queues one row per
+     * keystroke. No delete op: a block's configuration is only overwritten.
+     */
+    const val PRUNING_YIELD_SETTINGS = "pruning_yield_settings"
+    /**
      * A single block-damage record queued offline (Android Stage M). Backs the
      * `damage_records` table. CREATE / UPDATE / DELETE are carried on this
      * discriminator, keyed by the damage-record id ([PendingWrite.clientId] =

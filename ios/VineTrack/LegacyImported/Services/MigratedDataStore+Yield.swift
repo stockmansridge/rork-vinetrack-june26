@@ -158,6 +158,31 @@ extension MigratedDataStore {
         )
     }
 
+    // MARK: - PruningYieldSettings (shared per-block calculator config, sql/181)
+
+    /// The saved Pruning Yield Calculator configuration for a block, if any.
+    func pruningYieldSettings(for paddockId: UUID) -> PruningYieldSettings? {
+        pruningYieldSettings.first { $0.paddockId == paddockId }
+    }
+
+    /// Upsert the ONE saved configuration for the settings' block. When the
+    /// block already has a record the existing row id is kept (stable identity
+    /// for sync), so editing never duplicates a block's configuration.
+    func savePruningYieldSettings(_ settings: PruningYieldSettings) {
+        guard let vineyardId = selectedVineyardId else { return }
+        var item = settings
+        item.vineyardId = vineyardId
+        item.updatedAt = Date()
+        if let idx = pruningYieldSettings.firstIndex(where: { $0.paddockId == item.paddockId }) {
+            item.id = pruningYieldSettings[idx].id
+            pruningYieldSettings[idx] = item
+        } else {
+            pruningYieldSettings.append(item)
+        }
+        yieldRepo.savePruningSettingsSlice(pruningYieldSettings, for: vineyardId)
+        onPruningYieldSettingsChanged?(item.id)
+    }
+
     // MARK: - YieldDeterminationResult (local only)
 
     func saveYieldDeterminationResult(_ result: YieldDeterminationResult) {

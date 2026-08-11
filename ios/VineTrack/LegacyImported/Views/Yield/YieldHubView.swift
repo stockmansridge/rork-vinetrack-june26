@@ -6,6 +6,7 @@ struct YieldHubView: View {
     @Environment(YieldEstimationSessionSyncService.self) private var yieldSessionSync
     @Environment(HistoricalYieldRecordSyncService.self) private var historicalYieldSync
     @Environment(PickingRecordSyncService.self) private var pickingRecordSync
+    @Environment(PruningYieldSettingsSyncService.self) private var pruningYieldSettingsSync
     @State private var showRecordActualSheet: Bool = false
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
@@ -117,12 +118,14 @@ struct YieldHubView: View {
             await yieldSessionSync.syncForSelectedVineyard()
             await historicalYieldSync.syncForSelectedVineyard()
             await pickingRecordSync.syncForSelectedVineyard()
+            await pruningYieldSettingsSync.syncForSelectedVineyard()
         }
         .refreshable {
             await damageRecordSync.syncForSelectedVineyard()
             await yieldSessionSync.syncForSelectedVineyard()
             await historicalYieldSync.syncForSelectedVineyard()
             await pickingRecordSync.syncForSelectedVineyard()
+            await pruningYieldSettingsSync.syncForSelectedVineyard()
         }
     }
 

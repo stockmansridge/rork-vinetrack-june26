@@ -353,4 +353,42 @@ extension MigratedDataStore {
             yieldRepo.replacePicking(all.filter { $0.vineyardId == removed.vineyardId }, for: removed.vineyardId)
         }
     }
+
+    // MARK: - Pruning Yield Settings (per-block calculator config, sql/181)
+
+    func applyRemotePruningYieldSettingsUpsert(_ settings: PruningYieldSettings) {
+        if selectedVineyardId == settings.vineyardId {
+            // The server keeps ONE row per block — drop any local row for the
+            // same block that carries a different id (two devices minted
+            // different ids before the upsert converged them).
+            pruningYieldSettings.removeAll { $0.paddockId == settings.paddockId && $0.id != settings.id }
+            if let idx = pruningYieldSettings.firstIndex(where: { $0.id == settings.id }) {
+                pruningYieldSettings[idx] = settings
+            } else {
+                pruningYieldSettings.append(settings)
+            }
+            yieldRepo.savePruningSettingsSlice(pruningYieldSettings, for: settings.vineyardId)
+        } else {
+            var all = yieldRepo.loadAllPruningSettings()
+            all.removeAll { $0.vineyardId == settings.vineyardId && $0.paddockId == settings.paddockId && $0.id != settings.id }
+            if let idx = all.firstIndex(where: { $0.id == settings.id }) {
+                all[idx] = settings
+            } else {
+                all.append(settings)
+            }
+            yieldRepo.replacePruningSettings(all.filter { $0.vineyardId == settings.vineyardId }, for: settings.vineyardId)
+        }
+    }
+
+    func applyRemotePruningYieldSettingsDelete(_ id: UUID) {
+        if let vineyardId = selectedVineyardId {
+            pruningYieldSettings.removeAll { $0.id == id }
+            yieldRepo.savePruningSettingsSlice(pruningYieldSettings, for: vineyardId)
+        }
+        var all = yieldRepo.loadAllPruningSettings()
+        if let removed = all.first(where: { $0.id == id }) {
+            all.removeAll { $0.id == id }
+            yieldRepo.replacePruningSettings(all.filter { $0.vineyardId == removed.vineyardId }, for: removed.vineyardId)
+        }
+    }
 }

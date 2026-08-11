@@ -368,3 +368,33 @@ final class SupabasePickingRecordSyncRepository: PickingRecordSyncRepositoryProt
         try await provider.client.rpc("soft_delete_picking_record", params: OpsSoftDeleteByIdRequest(id: id)).execute()
     }
 }
+
+// MARK: - Pruning Yield Settings (per-block calculator configuration, sql/181)
+
+final class SupabasePruningYieldSettingsSyncRepository: PruningYieldSettingsSyncRepositoryProtocol {
+    private let provider: SupabaseClientProvider
+    init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
+
+    func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendPruningYieldSettings] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let q = provider.client.from("pruning_yield_settings").select().eq("vineyard_id", value: vineyardId.uuidString)
+        if let since {
+            return try await q.gte("updated_at", value: opsIso(since)).order("updated_at", ascending: true).execute().value
+        }
+        return try await q.order("updated_at", ascending: true).execute().value
+    }
+
+    func upsertMany(_ items: [BackendPruningYieldSettingsUpsert]) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        guard !items.isEmpty else { return }
+        // ONE saved configuration per block: conflict target is the
+        // (vineyard_id, paddock_id) unique key, NOT the row id, so two devices
+        // that minted different ids for the same block converge on one record.
+        try await provider.client.from("pruning_yield_settings").upsert(items, onConflict: "vineyard_id,paddock_id").execute()
+    }
+
+    func softDelete(id: UUID) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        try await provider.client.rpc("soft_delete_pruning_yield_settings", params: OpsSoftDeleteByIdRequest(id: id)).execute()
+    }
+}

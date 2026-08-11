@@ -53,3 +53,9 @@ protocol PickingRecordSyncRepositoryProtocol: Sendable {
     func upsertMany(_ items: [BackendPickingRecordUpsert]) async throws
     func softDelete(id: UUID) async throws
 }
+
+protocol PruningYieldSettingsSyncRepositoryProtocol: Sendable {
+    func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendPruningYieldSettings]
+    func upsertMany(_ items: [BackendPruningYieldSettingsUpsert]) async throws
+    func softDelete(id: UUID) async throws
+}

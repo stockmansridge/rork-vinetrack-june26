@@ -90,8 +90,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.SugarMeasurementUnit
 import com.rork.vinetrack.data.VintageResolver
-import com.rork.vinetrack.data.YieldDeterminationInputs
 import com.rork.vinetrack.data.YieldDeterminationPrefsStore
+import com.rork.vinetrack.data.model.PruningYieldDefaults
+import com.rork.vinetrack.data.model.PruningYieldFormula
+import com.rork.vinetrack.data.model.PruningYieldInputFormat
+import com.rork.vinetrack.data.model.PruningYieldSettings
 import com.rork.vinetrack.data.YieldRepository
 import com.rork.vinetrack.data.model.HistoricalBlockResult
 import com.rork.vinetrack.data.model.HistoricalYieldRecord
@@ -189,6 +192,7 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
             "determination" -> YieldDeterminationView(
                 state = state,
                 onBack = { destination = YieldDestination.HUB },
+                onSave = { vm.savePruningYieldSettings(it) },
             )
             "damage" -> DamageRecordsScreen(
                 vm = vm,
@@ -611,19 +615,25 @@ private fun YieldHubOptionRow(
 /**
  * Yield Determination calculator, mirroring the iOS
  * `YieldDeterminationCalculatorView`. Computes potential yield from pruning
- * bud-load inputs for a chosen block, persisting per-block inputs and the latest
- * t/ha result on-device so the hub can surface a "Latest" detail.
+ * bud-load inputs for a chosen block. Inputs are the SHARED per-block
+ * `pruning_yield_settings` record (sql/181) — autosaved debounced through
+ * [onSave] so every device and the portal read the same configuration.
+ * Results are always recomputed with [PruningYieldFormula]; only the latest
+ * t/ha convenience detail for the hub stays device-local.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun YieldDeterminationView(
     state: AppUiState,
     onBack: () -> Unit,
+    onSave: (PruningYieldSettings) -> Unit,
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
-    val store = remember { YieldDeterminationPrefsStore(context) }
+    // Legacy pre-sql/181 store: one-time migration source + "Latest t/ha" hub detail.
+    val legacyStore = remember { YieldDeterminationPrefsStore(context) }
     val paddocks = state.paddocks
+    val vineyardId = state.selectedVineyardId
 
     var blockId by remember { mutableStateOf(paddocks.firstOrNull()?.id) }
     var blockMenu by remember { mutableStateOf(false) }
@@ -638,43 +648,139 @@ private fun YieldDeterminationView(
     var vinesPerHa by remember { mutableStateOf("") }
     var bunchWeight by remember { mutableStateOf("120") }
     var savedToast by remember { mutableStateOf(false) }
+    // Baseline of the values last loaded/saved for the selected block —
+    // autosave skips when nothing changed, so loading a block (or merely
+    // viewing an unsaved one) never writes a record.
+    var loadedRef by remember { mutableStateOf<PruningYieldSettings?>(null) }
+    var dirtyTick by remember { mutableStateOf(0) }
 
-    // Load persisted inputs (or seed defaults from the block) when the block changes.
-    androidx.compose.runtime.LaunchedEffect(blockId) {
-        val saved = store.loadInputs(blockId)
-        if (saved != null) {
-            pruneMethod = saved.pruneMethod
-            bunchesPerBud = saved.bunchesPerBud
-            budsPerSpur = saved.budsPerSpur
-            spursPerVine = saved.spursPerVine
-            budsPerCane = saved.budsPerCane
-            canesPerVine = saved.canesPerVine
-            vinesPerHa = saved.vinesPerHa
-            bunchWeight = saved.bunchWeight
-        } else {
-            val b = paddocks.firstOrNull { it.id == blockId }
-            vinesPerHa = if (b != null && b.areaHectares > 0 && b.effectiveVineCount > 0) {
-                (b.effectiveVineCount / b.areaHectares).toInt().toString()
-            } else ""
-        }
-    }
-
-    fun persist() {
-        store.saveInputs(
-            blockId,
-            YieldDeterminationInputs(
-                pruneMethod, bunchesPerBud, budsPerSpur, spursPerVine,
-                budsPerCane, canesPerVine, vinesPerHa, bunchWeight,
-            ),
+    /** Current field values as a shared-contract record for the block. */
+    fun buildSettings(paddockId: String?): PruningYieldSettings? {
+        val pid = paddockId ?: return null
+        val vid = vineyardId ?: return null
+        val existingId = state.pruningYieldSettings.firstOrNull { it.paddockId == pid }?.id
+        return PruningYieldSettings(
+            id = existingId ?: UUID.randomUUID().toString(),
+            vineyardId = vid,
+            paddockId = pid,
+            pruneMethod = if (pruneMethod == "Cane") "cane" else "spur",
+            bunchesPerBud = PruningYieldInputFormat.parse(bunchesPerBud),
+            budsPerSpur = PruningYieldInputFormat.parse(budsPerSpur),
+            spursPerVine = PruningYieldInputFormat.parse(spursPerVine),
+            budsPerCane = PruningYieldInputFormat.parse(budsPerCane),
+            canesPerVine = PruningYieldInputFormat.parse(canesPerVine),
+            vinesPerHa = PruningYieldInputFormat.parseOptional(vinesPerHa),
+            bunchWeightGrams = PruningYieldInputFormat.parse(bunchWeight),
         )
     }
 
-    fun d(s: String): Double = s.replace(',', '.').toDoubleOrNull() ?: 0.0
-    val budsPerVine = if (pruneMethod == "Spur") d(budsPerSpur) * d(spursPerVine) else d(budsPerCane) * d(canesPerVine)
-    val bunchesPerHa = d(bunchesPerBud) * budsPerVine * d(vinesPerHa)
-    val yieldKgPerHa = bunchesPerHa * d(bunchWeight) / 1000.0
-    val yieldTonnesPerHa = yieldKgPerHa / 1000.0
-    val totalYieldTonnes = block?.takeIf { it.areaHectares > 0 }?.let { yieldTonnesPerHa * it.areaHectares }
+    /** Persist the given block's current values, skipping no-op saves. */
+    fun flushSave(paddockId: String? = blockId) {
+        val built = buildSettings(paddockId) ?: return
+        val ref = loadedRef
+        if (ref != null && ref.paddockId == built.paddockId && built.inputsEqual(ref)) return
+        onSave(built)
+        loadedRef = built
+    }
+
+    fun applySettings(s: PruningYieldSettings) {
+        pruneMethod = if (s.pruneMethod == "cane") "Cane" else "Spur"
+        bunchesPerBud = PruningYieldInputFormat.text(s.bunchesPerBud)
+        budsPerSpur = PruningYieldInputFormat.text(s.budsPerSpur)
+        spursPerVine = PruningYieldInputFormat.text(s.spursPerVine)
+        budsPerCane = PruningYieldInputFormat.text(s.budsPerCane)
+        canesPerVine = PruningYieldInputFormat.text(s.canesPerVine)
+        vinesPerHa = PruningYieldInputFormat.text(s.vinesPerHa)
+        bunchWeight = PruningYieldInputFormat.text(s.bunchWeightGrams)
+    }
+
+    /** Canonical defaults — EVERY field resets so blocks never leak values. */
+    fun applyDefaults(pid: String?) {
+        pruneMethod = "Spur"
+        bunchesPerBud = PruningYieldInputFormat.text(PruningYieldDefaults.BUNCHES_PER_BUD)
+        budsPerSpur = PruningYieldInputFormat.text(PruningYieldDefaults.BUDS_PER_SPUR)
+        spursPerVine = PruningYieldInputFormat.text(PruningYieldDefaults.SPURS_PER_VINE)
+        budsPerCane = PruningYieldInputFormat.text(PruningYieldDefaults.BUDS_PER_CANE)
+        canesPerVine = PruningYieldInputFormat.text(PruningYieldDefaults.CANES_PER_VINE)
+        bunchWeight = PruningYieldInputFormat.text(PruningYieldDefaults.BUNCH_WEIGHT_GRAMS)
+        val b = paddocks.firstOrNull { it.id == pid }
+        vinesPerHa = if (b != null && b.areaHectares > 0 && b.effectiveVineCount > 0) {
+            (b.effectiveVineCount / b.areaHectares).toInt().toString()
+        } else ""
+    }
+
+    // Load precedence when the block (or its shared record) changes:
+    // shared record → legacy device-local save (display only; adopted on the
+    // first edit or first online load) → canonical defaults. A late-arriving
+    // shared record applies only while the user hasn't edited the fields.
+    val sharedForBlock = blockId?.let { p -> state.pruningYieldSettings.firstOrNull { it.paddockId == p } }
+    androidx.compose.runtime.LaunchedEffect(blockId, sharedForBlock) {
+        val ref = loadedRef
+        val current = buildSettings(blockId)
+        val userEdited = ref != null && current != null &&
+            ref.paddockId == current.paddockId && !current.inputsEqual(ref)
+        if (sharedForBlock != null) {
+            val alreadyShowing = ref != null && ref.paddockId == sharedForBlock.paddockId &&
+                sharedForBlock.inputsEqual(ref)
+            if (!userEdited && !alreadyShowing) {
+                applySettings(sharedForBlock)
+                loadedRef = sharedForBlock
+            }
+            return@LaunchedEffect
+        }
+        if (ref?.paddockId == blockId) return@LaunchedEffect
+        val pid = blockId
+        val legacy = legacyStore.loadInputs(pid)
+        if (legacy != null && pid != null && vineyardId != null) {
+            val converted = PruningYieldSettings(
+                id = UUID.randomUUID().toString(),
+                vineyardId = vineyardId,
+                paddockId = pid,
+                pruneMethod = if (legacy.pruneMethod.equals("cane", ignoreCase = true)) "cane" else "spur",
+                bunchesPerBud = PruningYieldInputFormat.parse(legacy.bunchesPerBud),
+                budsPerSpur = PruningYieldInputFormat.parse(legacy.budsPerSpur),
+                spursPerVine = PruningYieldInputFormat.parse(legacy.spursPerVine),
+                budsPerCane = PruningYieldInputFormat.parse(legacy.budsPerCane),
+                canesPerVine = PruningYieldInputFormat.parse(legacy.canesPerVine),
+                vinesPerHa = PruningYieldInputFormat.parseOptional(legacy.vinesPerHa),
+                bunchWeightGrams = PruningYieldInputFormat.parse(legacy.bunchWeight),
+            )
+            applySettings(converted)
+            loadedRef = converted
+        } else {
+            applyDefaults(pid)
+            loadedRef = buildSettings(pid)
+        }
+    }
+
+    // Debounced autosave: each edit bumps the tick; the save fires 800 ms
+    // after the LAST edit (restarting the delay cancels the previous one).
+    androidx.compose.runtime.LaunchedEffect(dirtyTick) {
+        if (dirtyTick == 0) return@LaunchedEffect
+        kotlinx.coroutines.delay(800)
+        flushSave()
+    }
+    // Flush any pending edit when leaving the screen.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { flushSave() }
+    }
+
+    fun persist() {
+        dirtyTick++
+    }
+
+    fun d(s: String): Double = PruningYieldInputFormat.parse(s)
+    val budsPerVine = PruningYieldFormula.budsPerVine(
+        pruneMethod = if (pruneMethod == "Cane") "cane" else "spur",
+        budsPerSpur = d(budsPerSpur),
+        spursPerVine = d(spursPerVine),
+        budsPerCane = d(budsPerCane),
+        canesPerVine = d(canesPerVine),
+    )
+    val bunchesPerHa = PruningYieldFormula.bunchesPerHectare(d(bunchesPerBud), budsPerVine, d(vinesPerHa))
+    val yieldKgPerHa = PruningYieldFormula.yieldKgPerHectare(bunchesPerHa, d(bunchWeight))
+    val yieldTonnesPerHa = PruningYieldFormula.yieldTonnesPerHectare(yieldKgPerHa)
+    val totalYieldTonnes = block?.let { PruningYieldFormula.totalYieldTonnes(yieldTonnesPerHa, it.areaHectares) }
 
     Scaffold(
         containerColor = vine.appBackground,
@@ -712,7 +818,12 @@ private fun YieldDeterminationView(
                                 paddocks.forEach { opt ->
                                     DropdownMenuItem(
                                         text = { Text(opt.name) },
-                                        onClick = { blockId = opt.id; blockMenu = false },
+                                        onClick = {
+                                            // Flush the outgoing block's edits before switching.
+                                            flushSave(blockId)
+                                            blockId = opt.id
+                                            blockMenu = false
+                                        },
                                     )
                                 }
                             }
@@ -810,7 +921,8 @@ private fun YieldDeterminationView(
 
                 Button(
                     onClick = {
-                        store.saveLatestResult(yieldTonnesPerHa)
+                        flushSave()
+                        legacyStore.saveLatestResult(yieldTonnesPerHa)
                         savedToast = true
                     },
                     enabled = yieldTonnesPerHa > 0,
@@ -861,7 +973,7 @@ private fun CalcInput(label: String, value: String, onChange: (String) -> Unit) 
         Text(label, color = vine.textPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
         OutlinedTextField(
             value = value,
-            onValueChange = { onChange(it.filter { c -> c.isDigit() || c == '.' }) },
+            onValueChange = { onChange(it.filter { c -> c.isDigit() || c == '.' || c == ',' }) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             modifier = Modifier.width(120.dp),
