@@ -32,8 +32,18 @@ nonisolated struct PickingRecord: Codable, Identifiable, Sendable, Hashable {
     var varietyKey: String?
     /// Point-in-time snapshot of the variety display name.
     var varietyName: String
+    /// Stable id of the `paddocks.variety_allocations[]` entry this pick was
+    /// recorded against (sql/183). Block + Variety + Clone + Rootstock is NOT
+    /// unique — one block can carry two plantings of the same variety with
+    /// identical clone and rootstock — so this id is the only exact planting
+    /// identity. nil = not linked (historical rows are never backfilled by
+    /// guessing; linking only happens through an explicit selection).
+    var varietyAllocationId: UUID?
     /// Reference-only clone designation from the block allocation (e.g. `MV6`).
     var clone: String?
+    /// Reference-only rootstock display snapshot from the block allocation
+    /// (e.g. `Richter 110`). Same point-in-time semantics as `clone`.
+    var rootstock: String?
     var weightKg: Double
     /// Sugar measurement value in the unit recorded at entry time.
     var sugarValue: Double?
@@ -73,7 +83,9 @@ nonisolated struct PickingRecord: Codable, Identifiable, Sendable, Hashable {
         varietyId: UUID? = nil,
         varietyKey: String? = nil,
         varietyName: String = "",
+        varietyAllocationId: UUID? = nil,
         clone: String? = nil,
+        rootstock: String? = nil,
         weightKg: Double,
         sugarValue: Double? = nil,
         sugarUnit: String? = nil,
@@ -94,7 +106,9 @@ nonisolated struct PickingRecord: Codable, Identifiable, Sendable, Hashable {
         self.varietyId = varietyId
         self.varietyKey = varietyKey
         self.varietyName = varietyName
+        self.varietyAllocationId = varietyAllocationId
         self.clone = clone
+        self.rootstock = rootstock
         self.weightKg = weightKg
         self.sugarValue = sugarValue
         self.sugarUnit = sugarUnit

@@ -52,7 +52,8 @@ struct RecordActualYieldSheet: View {
         let trimmedVariety = record.varietyName.trimmingCharacters(in: .whitespacesAndNewlines)
         _selectedVarietyKey = State(initialValue: trimmedVariety.isEmpty ? nil : PickingYieldAggregator.normalisedVariety(trimmedVariety))
         _freeTextVariety = State(initialValue: trimmedVariety)
-        _selectedClone = State(initialValue: record.clone)
+        // The planting selection needs the block's allocations (environment
+        // store) so it is prefilled in onAppear, not here.
         _weightText = State(initialValue: Self.numberText(record.weightKg))
         _sugarText = State(initialValue: Self.numberText(record.sugarValue))
         if let unit = record.sugarMeasurement {
@@ -95,7 +96,7 @@ struct RecordActualYieldSheet: View {
     @State private var pickDate: Date = Date()
     @State private var detailPaddockId: UUID?
     @State private var selectedVarietyKey: String?
-    @State private var selectedClone: String?
+    @State private var selectedPlantingId: String?
     @State private var freeTextVariety: String = ""
     @State private var weightText: String = ""
     @State private var sugarText: String = ""
@@ -186,33 +187,100 @@ struct RecordActualYieldSheet: View {
         return varietyOptions.first(where: { $0.id == key })
     }
 
-    /// Distinct configured clones for the selected variety on the block.
-    private var cloneOptions: [String] {
+    /// One selectable planting per variety allocation on the block (sql/183).
+    /// Block + Variety + Clone + Rootstock is NOT unique — two plantings of
+    /// the same variety can share both — so each option carries the STABLE
+    /// allocation id, which is the only exact planting identity.
+    private struct PlantingOption: Identifiable, Hashable {
+        let id: String            // selection key: allocation uuid or "legacy"
+        let allocationId: UUID?
+        let clone: String?
+        let rootstock: String?
+        let label: String
+        /// True when the option has a clone or rootstock snapshot to show.
+        let hasSnapshot: Bool
+    }
+
+    private static let legacyPlantingOptionId = "legacy"
+
+    private var plantingOptions: [PlantingOption] {
         guard let paddock = detailPaddock, let selected = selectedVarietyOption else { return [] }
-        var seen: Set<String> = []
-        var clones: [String] = []
+        struct Candidate {
+            let allocation: PaddockVarietyAllocation
+            let clone: String?
+            let rootstock: String?
+            let base: String
+        }
+        var candidates: [Candidate] = []
         for allocation in paddock.varietyAllocations {
             let resolved = PaddockVarietyResolver.resolve(allocation: allocation, varieties: store.grapeVarieties)
             guard let name = resolved.displayName,
                   PickingYieldAggregator.normalisedVariety(name) == selected.id else { continue }
-            guard let clone = allocation.clone?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !clone.isEmpty else { continue }
-            if seen.insert(clone.lowercased()).inserted {
-                clones.append(clone)
-            }
+            let clone = allocation.clone?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            let rootstock = allocation.rootstock?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            let base = [clone, rootstock].compactMap { $0 }.joined(separator: " · ")
+            candidates.append(Candidate(allocation: allocation, clone: clone, rootstock: rootstock, base: base))
         }
-        // Editing: keep the record's original clone selectable while the block
-        // and variety still match the record — historical clone snapshots are
-        // preserved even if Block Setup no longer lists them.
+        var baseCounts: [String: Int] = [:]
+        for candidate in candidates {
+            baseCounts[candidate.base.lowercased(), default: 0] += 1
+        }
+        var options: [PlantingOption] = []
+        for (index, candidate) in candidates.enumerated() {
+            let ordinal = index + 1
+            var label = candidate.base
+            if label.isEmpty {
+                label = "Planting \(ordinal)"
+            } else if (baseCounts[candidate.base.lowercased()] ?? 0) > 1 {
+                // Identical clone AND rootstock twice on one block — the
+                // allocation id is the only exact identity, so disambiguate
+                // by planting position (plus percent when configured).
+                if candidate.allocation.percent > 0 {
+                    label += " — Planting \(ordinal) (\(Self.numberText(candidate.allocation.percent))%)"
+                } else {
+                    label += " — Planting \(ordinal)"
+                }
+            }
+            options.append(PlantingOption(
+                id: candidate.allocation.id.uuidString,
+                allocationId: candidate.allocation.id,
+                clone: candidate.clone,
+                rootstock: candidate.rootstock,
+                label: label,
+                hasSnapshot: candidate.clone != nil || candidate.rootstock != nil
+            ))
+        }
+        // Editing: preserve the record's planting snapshot while block and
+        // variety still match. A record linked to a still-existing allocation
+        // selects it directly; anything else gets a legacy option that keeps
+        // the historical snapshot. Unlinked records are NEVER auto-linked —
+        // linking is always an explicit selection.
         if let record = editingRecord,
            record.paddockId == paddock.id,
            PickingYieldAggregator.normalisedVariety(record.varietyName) == selected.id,
-           let clone = record.clone?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !clone.isEmpty,
-           seen.insert(clone.lowercased()).inserted {
-            clones.append(clone)
+           !(record.varietyAllocationId != nil && options.contains(where: { $0.allocationId == record.varietyAllocationId })) {
+            let clone = record.clone?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            let rootstock = record.rootstock?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            if record.varietyAllocationId != nil || clone != nil || rootstock != nil {
+                let base = [clone, rootstock].compactMap { $0 }.joined(separator: " · ")
+                let label = (base.isEmpty ? "Original planting" : base)
+                    + (record.varietyAllocationId == nil ? " (not linked)" : "")
+                options.append(PlantingOption(
+                    id: Self.legacyPlantingOptionId,
+                    allocationId: record.varietyAllocationId,
+                    clone: clone,
+                    rootstock: rootstock,
+                    label: label,
+                    hasSnapshot: clone != nil || rootstock != nil
+                ))
+            }
         }
-        return clones
+        return options
+    }
+
+    private var selectedPlantingOption: PlantingOption? {
+        guard let key = selectedPlantingId else { return nil }
+        return plantingOptions.first(where: { $0.id == key })
     }
 
     /// Vintage derived from the picking date + shared season settings
@@ -333,16 +401,21 @@ struct RecordActualYieldSheet: View {
                 if editingRecord?.sugarMeasurement == nil {
                     sugarUnit = store.settings.regionSettings.sugarUnit
                 }
+                // Editing: select the record's planting once the block's
+                // allocations are available from the environment store.
+                if isEditing, selectedPlantingId == nil {
+                    selectedPlantingId = initialPlantingSelectionId()
+                }
                 if mode == .basic { yieldFocused = true }
             }
             .onChange(of: detailPaddockId) { _, _ in
                 selectedVarietyKey = nil
-                selectedClone = nil
+                selectedPlantingId = nil
                 autoSelectVariety()
             }
             .onChange(of: selectedVarietyKey) { _, _ in
-                selectedClone = nil
-                autoSelectClone()
+                selectedPlantingId = nil
+                autoSelectPlanting()
             }
         }
     }
@@ -456,25 +529,25 @@ struct RecordActualYieldSheet: View {
                 TextField("Variety (optional)", text: $freeTextVariety)
             }
 
-            if cloneOptions.count > 1 || (isEditing && !cloneOptions.isEmpty) {
-                Picker("Clone", selection: $selectedClone) {
+            if plantingOptions.count > 1 || (isEditing && !plantingOptions.isEmpty) {
+                Picker("Planting", selection: $selectedPlantingId) {
                     Text("Not specified").tag(String?.none)
-                    ForEach(cloneOptions, id: \.self) { clone in
-                        Text(clone).tag(String?.some(clone))
+                    ForEach(plantingOptions) { option in
+                        Text(option.label).tag(String?.some(option.id))
                     }
                 }
-            } else if let clone = cloneOptions.first {
-                LabeledContent("Clone") {
-                    Text(clone).foregroundStyle(.secondary)
+            } else if let option = plantingOptions.first, option.hasSnapshot {
+                LabeledContent("Planting") {
+                    Text(option.label).foregroundStyle(.secondary)
                 }
             }
         } header: {
-            Text("Block, Variety & Clone")
+            Text("Block, Variety & Planting")
         } footer: {
             if varietyOptions.isEmpty, detailPaddock != nil {
-                Text("This block has no configured varieties. Configure them in Block setup to select variety and clone here.")
+                Text("This block has no configured varieties. Configure them in Block setup to select variety, clone and rootstock here.")
             } else if isEditing {
-                Text("Changing the block resets the variety and clone; changing the variety resets the clone.")
+                Text("Changing the block resets the variety and planting; changing the variety resets the planting. Each planting is the block's exact variety allocation (clone · rootstock).")
             }
         }
 
@@ -568,14 +641,28 @@ struct RecordActualYieldSheet: View {
         if options.count == 1 {
             selectedVarietyKey = options[0].id
         }
-        autoSelectClone()
+        autoSelectPlanting()
     }
 
-    private func autoSelectClone() {
-        let clones = cloneOptions
-        if clones.count == 1 {
-            selectedClone = clones[0]
+    private func autoSelectPlanting() {
+        let options = plantingOptions
+        if options.count == 1 {
+            selectedPlantingId = options[0].id
         }
+    }
+
+    /// Initial planting selection when editing: the record's allocation when
+    /// it still exists on the block, otherwise the legacy snapshot option.
+    /// An unlinked record is never auto-matched to an allocation — with two
+    /// identical plantings a snapshot match would be a guess.
+    private func initialPlantingSelectionId() -> String? {
+        guard let record = editingRecord else { return nil }
+        let options = plantingOptions
+        if let allocationId = record.varietyAllocationId,
+           let match = options.first(where: { $0.allocationId == allocationId }) {
+            return match.id
+        }
+        return options.first(where: { $0.id == Self.legacyPlantingOptionId })?.id
     }
 
     // MARK: - Save
@@ -633,6 +720,7 @@ struct RecordActualYieldSheet: View {
               let weight = parsedWeight, weight > 0 else { return }
 
         let sugarValue = parsedSugar
+        let planting = selectedPlantingOption ?? (plantingOptions.count == 1 ? plantingOptions.first : nil)
         let record = PickingRecord(
             vineyardId: vid,
             pickedAt: pickDate,
@@ -642,7 +730,9 @@ struct RecordActualYieldSheet: View {
             varietyId: selectedVarietyOption?.varietyId,
             varietyKey: selectedVarietyOption?.varietyKey,
             varietyName: resolvedDetailVarietyName,
-            clone: (selectedClone ?? cloneOptions.first)?.trimmingCharacters(in: .whitespaces),
+            varietyAllocationId: planting?.allocationId,
+            clone: planting?.clone,
+            rootstock: planting?.rootstock,
             weightKg: weight,
             sugarValue: sugarValue,
             sugarUnit: sugarValue != nil ? sugarUnit.rawValue : nil,
@@ -686,8 +776,10 @@ struct RecordActualYieldSheet: View {
         updated.varietyId = selectedVarietyOption?.varietyId
         updated.varietyKey = selectedVarietyOption?.varietyKey
         updated.varietyName = resolvedDetailVarietyName
-        let trimmedClone = selectedClone?.trimmingCharacters(in: .whitespacesAndNewlines)
-        updated.clone = (trimmedClone?.isEmpty ?? true) ? nil : trimmedClone
+        let planting = selectedPlantingOption
+        updated.varietyAllocationId = planting?.allocationId
+        updated.clone = planting?.clone
+        updated.rootstock = planting?.rootstock
         updated.weightKg = weight
         updated.sugarValue = sugarValue
         updated.sugarUnit = sugarValue != nil ? sugarUnit.rawValue : nil

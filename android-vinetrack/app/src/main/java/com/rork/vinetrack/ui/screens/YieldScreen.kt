@@ -543,6 +543,7 @@ private fun PickingLogView(
                                                 append(record.paddockName)
                                                 if (record.varietyName.isNotBlank()) append(" · ${record.varietyName}")
                                                 record.clone?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                                                record.rootstock?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
                                             },
                                             color = vine.textSecondary, fontSize = 12.sp,
                                         )
@@ -1373,20 +1374,26 @@ private fun RecordYieldSheet(
     var showDatePicker by remember { mutableStateOf(false) }
     var detailBlock by remember { mutableStateOf(initialDetailBlock) }
     var detailBlockMenu by remember { mutableStateOf(false) }
-    var selectedVariety by remember {
-        mutableStateOf(
-            editing?.varietyName?.takeIf { it.isNotBlank() }?.let { vn ->
-                // Prefer the exact configured option string so clone filtering matches.
-                initialDetailBlock?.varietyAllocations.orEmpty()
-                    .mapNotNull { it.displayName }
-                    .firstOrNull { canonicalVarietyName(it) == canonicalVarietyName(vn) } ?: vn
-            },
-        )
+    val initialSelectedVariety = remember {
+        editing?.varietyName?.takeIf { it.isNotBlank() }?.let { vn ->
+            // Prefer the exact configured option string so planting filtering matches.
+            initialDetailBlock?.varietyAllocations.orEmpty()
+                .mapNotNull { it.displayName }
+                .firstOrNull { canonicalVarietyName(it) == canonicalVarietyName(vn) } ?: vn
+        }
     }
+    var selectedVariety by remember { mutableStateOf(initialSelectedVariety) }
     var varietyMenu by remember { mutableStateOf(false) }
     var freeVariety by remember { mutableStateOf(editing?.varietyName.orEmpty()) }
-    var selectedClone by remember { mutableStateOf(editing?.clone) }
-    var cloneMenu by remember { mutableStateOf(false) }
+    // Planting = the block's exact variety allocation (sql/183). The stable
+    // allocation id is the only exact identity — Block + Variety + Clone +
+    // Rootstock can repeat on one block. Editing preselects the record's
+    // allocation when it still exists, else its legacy snapshot; an unlinked
+    // record is never auto-linked (linking is always an explicit selection).
+    var selectedPlantingKey by remember {
+        mutableStateOf(initialPlantingKey(initialDetailBlock, initialSelectedVariety, editing))
+    }
+    var plantingMenu by remember { mutableStateOf(false) }
     var weightText by remember { mutableStateOf(editing?.weightKg?.let { formatPlain(it) } ?: "") }
     var sugarText by remember { mutableStateOf(editing?.sugarValue?.let { formatPlain(it) } ?: "") }
     // Editing preserves the record's historical sugar unit; only a fresh
@@ -1412,18 +1419,7 @@ private fun RecordYieldSheet(
         ?.takeIf { vn -> vn.isNotBlank() && detailBlock?.id == editing.paddockId }
         ?.takeIf { vn -> baseVarietyOptions.none { canonicalVarietyName(it) == canonicalVarietyName(vn) } }
     val varietyOptions = baseVarietyOptions + listOfNotNull(legacyVarietyOption)
-    val baseCloneOptions = allocations
-        .filter { it.displayName == selectedVariety && !it.clone.isNullOrBlank() }
-        .mapNotNull { it.clone }
-        .distinct()
-    // Editing: keep the record's original clone selectable while block and
-    // variety still match the record — historical clone snapshots are
-    // preserved even if Block Setup no longer lists them.
-    val legacyCloneOption = editing?.clone
-        ?.takeIf { c -> c.isNotBlank() && detailBlock?.id == editing.paddockId }
-        ?.takeIf { canonicalVarietyName(selectedVariety ?: freeVariety) == canonicalVarietyName(editing.varietyName) }
-        ?.takeIf { c -> baseCloneOptions.none { it.equals(c, ignoreCase = true) } }
-    val cloneOptions = baseCloneOptions + listOfNotNull(legacyCloneOption)
+    val plantingOptions = buildPlantingOptions(detailBlock, selectedVariety, editing)
     // Vintage mirrors the authoritative server resolver (sql/119); the server
     // re-derives it from picked_at on insert AND update.
     val derivedVintage = VintageResolver.vintageYear(pickedDate, state.seasonStartMonth, state.seasonStartDay)
@@ -1445,15 +1441,15 @@ private fun RecordYieldSheet(
             .mapNotNull { it.displayName }
             .distinct()
         selectedVariety = if (opts.size == 1) opts.first() else null
-        selectedClone = null
+        selectedPlantingKey = null
     }
-    var suppressCloneAutoSelect by remember { mutableStateOf(editing != null) }
+    var suppressPlantingAutoSelect by remember { mutableStateOf(editing != null) }
     LaunchedEffect(selectedVariety, detailBlock?.id) {
-        if (suppressCloneAutoSelect) {
-            suppressCloneAutoSelect = false
+        if (suppressPlantingAutoSelect) {
+            suppressPlantingAutoSelect = false
             return@LaunchedEffect
         }
-        if (selectedClone == null && cloneOptions.size == 1) selectedClone = cloneOptions.first()
+        if (selectedPlantingKey == null && plantingOptions.size == 1) selectedPlantingKey = plantingOptions.first().key
     }
 
     fun saveDetailed() {
@@ -1468,6 +1464,11 @@ private fun RecordYieldSheet(
         // variety ids even if the allocation is no longer configured.
         val varietyUnchanged = editing != null &&
             canonicalVarietyName(editing.varietyName) == canonicalVarietyName(varietyName)
+        // Editing takes the explicit selection only; creating falls back to a
+        // block's single planting (mirrors the auto-select). No fallback ever
+        // GUESSES between multiple plantings.
+        val planting = plantingOptions.firstOrNull { it.key == selectedPlantingKey }
+            ?: if (editing == null) plantingOptions.singleOrNull() else null
         val sugar = sugarText.trim().toDoubleOrNull()
         val record = PickingRecord(
             id = editing?.id ?: UUID.randomUUID().toString(),
@@ -1479,11 +1480,9 @@ private fun RecordYieldSheet(
             varietyId = alloc?.varietyId ?: editing?.varietyId?.takeIf { varietyUnchanged },
             varietyKey = alloc?.varietyKey ?: editing?.varietyKey?.takeIf { varietyUnchanged },
             varietyName = varietyName,
-            clone = if (editing != null) {
-                selectedClone?.trim()?.ifBlank { null }
-            } else {
-                (selectedClone ?: cloneOptions.singleOrNull())?.trim()
-            },
+            varietyAllocationId = planting?.allocationId,
+            clone = planting?.clone,
+            rootstock = planting?.rootstock,
             weightKg = w,
             sugarValue = sugar,
             sugarUnit = if (sugar != null) sugarUnit.raw else null,
@@ -1550,7 +1549,7 @@ private fun RecordYieldSheet(
             }
             if (editing != null) {
                 Text(
-                    "Changing the block resets the variety and clone; changing the variety resets the clone. The vintage recalculates from the picking date, and totals and yield reports update automatically.",
+                    "Changing the block resets the variety and planting; changing the variety resets the planting. Each planting is the block's exact variety allocation (clone · rootstock). The vintage recalculates from the picking date, and totals and yield reports update automatically.",
                     color = vine.textSecondary, fontSize = 12.sp,
                 )
             } else if (detailed) {
@@ -1706,7 +1705,7 @@ private fun RecordYieldSheet(
                         varietyOptions.forEach { opt ->
                             DropdownMenuItem(
                                 text = { Text(opt) },
-                                onClick = { selectedVariety = opt; selectedClone = null; varietyMenu = false },
+                                onClick = { selectedVariety = opt; selectedPlantingKey = null; varietyMenu = false },
                             )
                         }
                     }
@@ -1725,25 +1724,25 @@ private fun RecordYieldSheet(
                 )
             }
 
-            if (cloneOptions.size > 1 || (editing != null && cloneOptions.isNotEmpty())) {
-                ExposedDropdownMenuBox(expanded = cloneMenu, onExpandedChange = { cloneMenu = it }) {
+            if (plantingOptions.size > 1 || (editing != null && plantingOptions.isNotEmpty())) {
+                ExposedDropdownMenuBox(expanded = plantingMenu, onExpandedChange = { plantingMenu = it }) {
                     OutlinedTextField(
-                        value = selectedClone ?: "Not specified",
+                        value = plantingOptions.firstOrNull { it.key == selectedPlantingKey }?.label ?: "Not specified",
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Clone") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = cloneMenu) },
+                        label = { Text("Planting") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = plantingMenu) },
                         modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
                     )
-                    ExposedDropdownMenu(expanded = cloneMenu, onDismissRequest = { cloneMenu = false }) {
-                        DropdownMenuItem(text = { Text("Not specified") }, onClick = { selectedClone = null; cloneMenu = false })
-                        cloneOptions.forEach { opt ->
-                            DropdownMenuItem(text = { Text(opt) }, onClick = { selectedClone = opt; cloneMenu = false })
+                    ExposedDropdownMenu(expanded = plantingMenu, onDismissRequest = { plantingMenu = false }) {
+                        DropdownMenuItem(text = { Text("Not specified") }, onClick = { selectedPlantingKey = null; plantingMenu = false })
+                        plantingOptions.forEach { opt ->
+                            DropdownMenuItem(text = { Text(opt.label) }, onClick = { selectedPlantingKey = opt.key; plantingMenu = false })
                         }
                     }
                 }
-            } else if (cloneOptions.size == 1) {
-                Text("Clone: ${cloneOptions.first()}", color = vine.textSecondary, fontSize = 12.sp)
+            } else if (plantingOptions.size == 1 && plantingOptions.first().hasSnapshot) {
+                Text("Planting: ${plantingOptions.first().label}", color = vine.textSecondary, fontSize = 12.sp)
             }
 
             OutlinedTextField(
@@ -2494,6 +2493,120 @@ private fun accuracyColor(percent: Double): Color = when {
     percent >= 90 -> VineColors.LeafGreen
     percent >= 75 -> VineColors.Orange
     else -> VineColors.Destructive
+}
+
+/**
+ * One selectable planting (variety allocation) for the Detailed picking form
+ * (sql/183). [key] is the selection identity: the stable allocation id when
+ * present, a positional fallback for id-less legacy allocations, or
+ * [LEGACY_PLANTING_KEY] for the edited record's preserved snapshot.
+ */
+private data class PlantingOption(
+    val key: String,
+    val allocationId: String?,
+    val clone: String?,
+    val rootstock: String?,
+    val label: String,
+    val hasSnapshot: Boolean,
+)
+
+private const val LEGACY_PLANTING_KEY = "legacy"
+
+/**
+ * Build the planting options for a block + selected variety, mirroring the
+ * iOS `RecordActualYieldSheet.plantingOptions` algorithm exactly: one option
+ * per matching allocation labelled `clone · rootstock`; duplicates (identical
+ * clone AND rootstock twice on one block) are disambiguated by planting
+ * position plus percent; editing appends a legacy option that preserves the
+ * record's snapshot when its allocation is gone or was never linked.
+ */
+private fun buildPlantingOptions(
+    block: Paddock?,
+    selectedVarietyName: String?,
+    editing: PickingRecord?,
+): List<PlantingOption> {
+    if (block == null || selectedVarietyName.isNullOrBlank()) return emptyList()
+    data class Candidate(
+        val allocationId: String?,
+        val clone: String?,
+        val rootstock: String?,
+        val base: String,
+        val percent: Double?,
+    )
+    val candidates = block.varietyAllocations.orEmpty()
+        .filter { it.displayName == selectedVarietyName }
+        .map { alloc ->
+            val clone = alloc.clone?.trim()?.ifBlank { null }
+            val rootstock = alloc.rootstock?.trim()?.ifBlank { null }
+            Candidate(alloc.id, clone, rootstock, listOfNotNull(clone, rootstock).joinToString(" · "), alloc.displayPercent)
+        }
+    val baseCounts = candidates.groupingBy { it.base.lowercase() }.eachCount()
+    val options = candidates.mapIndexed { index, c ->
+        val ordinal = index + 1
+        val label = when {
+            c.base.isEmpty() -> "Planting $ordinal"
+            (baseCounts[c.base.lowercase()] ?: 0) > 1 -> {
+                val pct = c.percent
+                if (pct != null && pct > 0) "${c.base} — Planting $ordinal (${formatPlain(pct)}%)"
+                else "${c.base} — Planting $ordinal"
+            }
+            else -> c.base
+        }
+        PlantingOption(
+            key = c.allocationId ?: "pos:$index",
+            allocationId = c.allocationId,
+            clone = c.clone,
+            rootstock = c.rootstock,
+            label = label,
+            hasSnapshot = c.clone != null || c.rootstock != null,
+        )
+    }.toMutableList()
+    // Editing: preserve the record's planting snapshot while block and variety
+    // still match. A record linked to a still-existing allocation selects it
+    // directly; anything else gets a legacy option. Unlinked records are NEVER
+    // auto-linked — linking is always an explicit selection.
+    if (editing != null && block.id == editing.paddockId &&
+        canonicalVarietyName(selectedVarietyName) == canonicalVarietyName(editing.varietyName) &&
+        !(editing.varietyAllocationId != null && options.any { it.allocationId == editing.varietyAllocationId })
+    ) {
+        val clone = editing.clone?.trim()?.ifBlank { null }
+        val rootstock = editing.rootstock?.trim()?.ifBlank { null }
+        if (editing.varietyAllocationId != null || clone != null || rootstock != null) {
+            val base = listOfNotNull(clone, rootstock).joinToString(" · ")
+            val label = base.ifEmpty { "Original planting" } +
+                if (editing.varietyAllocationId == null) " (not linked)" else ""
+            options.add(
+                PlantingOption(
+                    key = LEGACY_PLANTING_KEY,
+                    allocationId = editing.varietyAllocationId,
+                    clone = clone,
+                    rootstock = rootstock,
+                    label = label,
+                    hasSnapshot = clone != null || rootstock != null,
+                ),
+            )
+        }
+    }
+    return options
+}
+
+/**
+ * Initial planting selection when editing: the record's allocation when it
+ * still exists on the block, otherwise its legacy snapshot option. An
+ * unlinked record is never auto-matched to an allocation — with two identical
+ * plantings a snapshot match would be a guess.
+ */
+private fun initialPlantingKey(
+    block: Paddock?,
+    selectedVarietyName: String?,
+    editing: PickingRecord?,
+): String? {
+    if (editing == null) return null
+    val options = buildPlantingOptions(block, selectedVarietyName, editing)
+    editing.varietyAllocationId?.let { allocId ->
+        options.firstOrNull { it.key != LEGACY_PLANTING_KEY && it.allocationId == allocId }?.let { return it.key }
+    }
+    return options.firstOrNull { it.key == LEGACY_PLANTING_KEY }?.key
 }
 
 private fun formatPlain(value: Double): String =

@@ -118,6 +118,14 @@ data class PaddockRow(
  */
 @Serializable
 data class PaddockVarietyAllocation(
+    /**
+     * Stable allocation id (uuid string). iOS mints one for every allocation
+     * and Android now mints one on creation too — it is the ONLY exact
+     * planting identity (sql/183): a block can carry two allocations of the
+     * same variety with identical clone AND rootstock. Preserved verbatim on
+     * every round-trip; never regenerate an existing id.
+     */
+    val id: String? = null,
     val varietyKey: String? = null,
     val varietyId: String? = null,
     val name: String? = null,
@@ -1940,7 +1948,15 @@ data class PickingRecord(
     @SerialName("variety_id") val varietyId: String? = null,
     @SerialName("variety_key") val varietyKey: String? = null,
     @SerialName("variety_name") val varietyName: String = "",
+    /**
+     * Stable `paddocks.variety_allocations[].id` link (sql/183) — the exact
+     * planting identity. Null = not linked (historical rows are never
+     * backfilled by guessing; linking is always an explicit selection).
+     */
+    @SerialName("variety_allocation_id") val varietyAllocationId: String? = null,
     val clone: String? = null,
+    /** Rootstock display snapshot from the allocation (sql/183), like [clone]. */
+    val rootstock: String? = null,
     @SerialName("weight_kg") val weightKg: Double = 0.0,
     @SerialName("sugar_value") val sugarValue: Double? = null,
     @SerialName("sugar_unit") val sugarUnit: String? = null,

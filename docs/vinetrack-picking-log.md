@@ -5,7 +5,7 @@ workflow. Defined and implemented first in this repository (iOS + Android +
 Supabase); the Lovable Portal consumes this contract as-is and must NOT create
 portal-specific data structures or modify the schema independently.
 
-- Migration: `sql/180_picking_records.sql`
+- Migrations: `sql/180_picking_records.sql`, `sql/183_picking_record_allocation_identity.sql` (planting identity)
 - Tests: `sql/tests/180_picking_records_tests.sql` (rollback-only)
 - iOS: `PickingRecord` / `BackendPickingRecord` / `PickingRecordSyncService`
 - Android: `PickingRecord` / `PickingRecordRepository` / `PickingRecordCreateSync` / `PickingRecordUpdateSync` / `PickingRecordDeleteSync`
@@ -34,7 +34,9 @@ Only one mode is used for an individual save action.
 | `variety_id` | `uuid` NULL | From the block's `variety_allocations` when resolvable. |
 | `variety_key` | `text` NULL | Stable catalog key from the allocation (trusted across id drift). |
 | `variety_name` | `text` NOT NULL default `''` | Display-name snapshot. Populated from block config; user selects when a block has multiple varieties. |
+| `variety_allocation_id` | `uuid` NULL *(sql/183)* | **Exact planting identity**: the stable `paddocks.variety_allocations[].id` this pick was recorded against. Block + Variety + Clone + Rootstock is NOT unique (e.g. Stockman's Ridge has two Pinot Noir allocations, both Clone 777 · Richter 110) — this id is the only exact link. Point-in-time link, no FK. `NULL` = unlinked: all pre-183 rows (**never backfilled by guessing**), free-text varieties, and explicit "Not specified" selections. |
 | `clone` | `text` NULL | Display string from the allocation (`PaddockVarietyAllocation.clone`). Since sql/182 clones ARE catalogue entities (`grape_clone_catalog` / `vineyard_grape_clones`) and allocations also carry a stable `cloneKey`; the picking log deliberately keeps storing the display SNAPSHOT so historical records never change when catalogues evolve. See `docs/vinetrack-clone-rootstock-catalogue.md`. |
+| `rootstock` | `text` NULL *(sql/183)* | Rootstock display snapshot from the allocation (e.g. `Richter 110`). Same point-in-time semantics as `clone`. |
 | `weight_kg` | `double precision` NOT NULL, CHECK `> 0` | Mandatory user field. |
 | `sugar_value` | `double precision` NULL | CHECK: requires `sugar_unit` when set. |
 | `sugar_unit` | `text` NULL, CHECK in (`'brix'`,`'baume'`) | **Unit used AT ENTRY TIME** — stored with the value so a later vineyard-preference change never reinterprets history. Normalised lower/trim by trigger; cleared when `sugar_value` is null. |
@@ -117,6 +119,31 @@ the Portal ready-made totals. Variety identity for matching is the
 case/whitespace-insensitive `variety_name` (clients pick names from block
 config, so names are consistent).
 
+### Per-planting totals (sql/183)
+
+When a block carries two plantings of the same variety (possibly with the
+same clone AND rootstock), variety-level totals can't split them. The
+allocation-level view does:
+
+```
+public.picking_yield_allocation_totals
+  (vineyard_id, vintage, paddock_id, variety_allocation_id,
+   unlinked_variety_key, paddock_name, variety_name, clone, rootstock,
+   pick_count, total_weight_kg, actual_yield_tonnes,
+   first_picked_at, last_picked_at, total_grape_value)
+```
+
+- Linked rows group **per `variety_allocation_id`** — the id IS the identity;
+  `variety_name`/`clone`/`rootstock` are `max()` display snapshots.
+- Unlinked rows (`variety_allocation_id IS NULL`) keep the sql/180 identity
+  and split per `unlinked_variety_key` (lower/trimmed variety name), so
+  historical picks stay visible without being attributed to a planting.
+- `GET /rest/v1/picking_yield_allocation_totals?vineyard_id=eq.{id}&vintage=eq.2026`.
+- The sql/180 `picking_yield_totals` view is UNCHANGED and remains the
+  canonical actual-yield contract for the supersede rule above. Display the
+  allocation resolved against the block's current `variety_allocations` when
+  it still exists; fall back to the stored snapshots when it doesn't.
+
 ## 5a. Edit / update workflow (canonical, all clients)
 
 Editing an existing picking record is a first-class operation on iOS,
@@ -127,9 +154,11 @@ record and saves an update-in-place. The Portal must match these semantics.
 ### Editable fields
 
 Date (`picked_at`), Block (`paddock_id` + `paddock_name` snapshot), Variety
-(`variety_id` / `variety_key` / `variety_name` snapshot), Clone (`clone`
-snapshot), `weight_kg`, `sugar_value` + `sugar_unit`, `ph`, `ta_g_l`,
-`purpose`, `sold`, `sold_to`, `price_per_tonne`, `notes`.
+(`variety_id` / `variety_key` / `variety_name` snapshot), Planting
+(`variety_allocation_id` + `clone` + `rootstock` snapshots — selected as ONE
+unit from the block's `variety_allocations`), `weight_kg`, `sugar_value` +
+`sugar_unit`, `ph`, `ta_g_l`, `purpose`, `sold`, `sold_to`,
+`price_per_tonne`, `notes`.
 
 ### Server-authoritative fields — NEVER write on update
 
@@ -160,12 +189,23 @@ snapshot), `weight_kg`, `sugar_value` + `sugar_unit`, `ph`, `ta_g_l`,
 
 - **Date changed** → the displayed vintage recomputes locally (mirror only);
   the server re-derives the authoritative value on save.
-- **Block changed** → Variety and Clone reset (they belonged to the old
+- **Block changed** → Variety and Planting reset (they belonged to the old
   block) and re-resolve from the new block's `variety_allocations`.
-- **Variety changed** → Clone resets (clones belong to a variety).
-- **Block and Variety unchanged** → the record's original variety/clone stay
-  selectable even if Block Setup no longer lists them, so an edit never
-  silently loses historical snapshots.
+- **Variety changed** → Planting resets (plantings belong to a variety).
+- **Block and Variety unchanged** → the record's original variety/planting
+  snapshot stays selectable even if Block Setup no longer lists it, so an
+  edit never silently loses historical snapshots.
+- **Planting selection (sql/183)**: the form lists ONE option per matching
+  allocation labelled `clone · rootstock`; when two options are identical
+  (the Stockman's Ridge case) they are disambiguated by planting position
+  and percent (e.g. `777 · Richter 110 — Planting 2 (45%)`). Selecting an
+  option writes `variety_allocation_id` + both snapshots atomically;
+  "Not specified" writes explicit nulls for all three.
+- **Never auto-link**: editing an unlinked (pre-183) record preselects its
+  preserved snapshot option with `variety_allocation_id = null`; the record
+  is linked only when the user explicitly picks a planting. Clients and the
+  Portal must NOT guess a link from snapshot equality — with duplicate
+  plantings a snapshot match is ambiguous by construction.
 - **Sugar unit is preserved**: the form prefills the record's own
   `sugar_unit` (never today's vineyard preference). The preference is only
   the default for records without sugar data.
@@ -211,18 +251,24 @@ revenue-side aggregate for future commercial reporting.
 - Model `PickingRecord` + `PickingYieldAggregator` (`LegacyImported/Models/PickingRecord.swift`)
 - DTOs `BackendPickingRecord[Upsert]` (`Backend/Models/BackendPickingRecord.swift`) — `picked_at` encoded as local-calendar `yyyy-MM-dd`
 - Sync `PickingRecordSyncService` (push→pull, last-write-wins, offline queue) wired into the full sweep and manual sync screen — creates AND edits ride the same dirty-mark → upsert path
-- UI: `RecordActualYieldSheet` (`Basic | Detailed` segmented control; Detailed keeps the sheet open for fast harvest entry; `init(editing:)` reuses the same form for edit-in-place), `PickingLogListView` (vintage-grouped log + totals; tap a record to edit, swipe to delete), sugar preference in `RegionUnitsSettingsView`
+- UI: `RecordActualYieldSheet` (`Basic | Detailed` segmented control; Detailed keeps the sheet open for fast harvest entry; `init(editing:)` reuses the same form for edit-in-place; the Planting picker lists one option per variety allocation and writes `variety_allocation_id` + `clone` + `rootstock` atomically), `PickingLogListView` (vintage-grouped log + totals; tap a record to edit, swipe to delete), sugar preference in `RegionUnitsSettingsView`
 
 ### Android
 - Model `PickingRecord` (`data/model/Models.kt`), repository `PickingRecordRepository`
 - Offline outbox: `PICKING_RECORD` entity type, `PickingRecordCreateSync` / `PickingRecordUpdateSync` / `PickingRecordDeleteSync` (idempotent by client-minted id, coalesced per record, replayed in every replay pipeline)
-- UI: `RecordYieldSheet` mode toggle + detailed form (an `editing` record locks it to Detailed and saves update-in-place), `PickingLogView` (hub → Picking Log; tap a record to edit), sugar preference in `RegionUnitsSettingsScreen`
+- UI: `RecordYieldSheet` mode toggle + detailed form (an `editing` record locks it to Detailed and saves update-in-place; `buildPlantingOptions` mirrors the iOS planting picker exactly), `PickingLogView` (hub → Picking Log; tap a record to edit), sugar preference in `RegionUnitsSettingsScreen`
+- Allocation ids: `PaddockVarietyAllocation.id` is now decoded/preserved on every round-trip and minted (`UUID.randomUUID()`) when Android creates a new allocation — never regenerated for existing entries
 - Aggregation: `computeVarietyYieldSummaries(records, paddocks, pickingRecords)` applies the supersede rule per (paddock, variety, vintage)
 
 ## 9. What the Portal must NOT do
 
 - Do not send `vintage`, `grape_value`, `created_at`, `updated_at`,
   `updated_by`, `sync_version` on writes.
+- Do not backfill or infer `variety_allocation_id` for existing rows —
+  historical picks remain unlinked unless a person explicitly selects the
+  planting while editing. Snapshot equality is NOT an identity match.
+- Do not group allocation-level reporting by clone/rootstock strings — use
+  `variety_allocation_id` (see `picking_yield_allocation_totals`).
 - Do not store sugar values without the unit used.
 - Do not add Basic and Detailed actuals together for the same
   Block + Variety + Vintage.

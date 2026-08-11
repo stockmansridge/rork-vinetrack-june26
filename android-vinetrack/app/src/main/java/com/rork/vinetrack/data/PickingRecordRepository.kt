@@ -42,7 +42,9 @@ class PickingRecordRepository(private val session: SessionStore) {
         @SerialName("variety_id") val varietyId: String?,
         @SerialName("variety_key") val varietyKey: String?,
         @SerialName("variety_name") val varietyName: String,
+        @SerialName("variety_allocation_id") val varietyAllocationId: String?,
         val clone: String?,
+        val rootstock: String?,
         @SerialName("weight_kg") val weightKg: Double,
         @SerialName("sugar_value") val sugarValue: Double?,
         @SerialName("sugar_unit") val sugarUnit: String?,
@@ -81,7 +83,9 @@ class PickingRecordRepository(private val session: SessionStore) {
             varietyId = record.varietyId,
             varietyKey = record.varietyKey,
             varietyName = record.varietyName,
+            varietyAllocationId = record.varietyAllocationId,
             clone = record.clone,
+            rootstock = record.rootstock,
             weightKg = record.weightKg,
             sugarValue = record.sugarValue,
             sugarUnit = record.sugarUnit,
@@ -127,7 +131,9 @@ class PickingRecordRepository(private val session: SessionStore) {
             put("variety_id", record.varietyId)
             put("variety_key", record.varietyKey)
             put("variety_name", record.varietyName)
+            put("variety_allocation_id", record.varietyAllocationId)
             put("clone", record.clone)
+            put("rootstock", record.rootstock)
             put("weight_kg", record.weightKg)
             put("sugar_value", record.sugarValue)
             put("sugar_unit", record.sugarUnit)

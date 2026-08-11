@@ -38,7 +38,12 @@ nonisolated struct BackendPickingRecord: Codable, Sendable, Identifiable {
     let varietyId: UUID?
     let varietyKey: String?
     let varietyName: String?
+    /// Stable `paddocks.variety_allocations[].id` link (sql/183) — the exact
+    /// planting identity. NULL = unlinked (pre-183 rows are never backfilled).
+    let varietyAllocationId: UUID?
     let clone: String?
+    /// Rootstock display snapshot from the allocation (sql/183).
+    let rootstock: String?
     let weightKg: Double?
     let sugarValue: Double?
     let sugarUnit: String?
@@ -67,7 +72,9 @@ nonisolated struct BackendPickingRecord: Codable, Sendable, Identifiable {
         case varietyId = "variety_id"
         case varietyKey = "variety_key"
         case varietyName = "variety_name"
+        case varietyAllocationId = "variety_allocation_id"
         case clone
+        case rootstock
         case weightKg = "weight_kg"
         case sugarValue = "sugar_value"
         case sugarUnit = "sugar_unit"
@@ -101,7 +108,9 @@ nonisolated struct BackendPickingRecordUpsert: Encodable, Sendable {
     let varietyId: UUID?
     let varietyKey: String?
     let varietyName: String
+    let varietyAllocationId: UUID?
     let clone: String?
+    let rootstock: String?
     let weightKg: Double
     let sugarValue: Double?
     let sugarUnit: String?
@@ -124,7 +133,9 @@ nonisolated struct BackendPickingRecordUpsert: Encodable, Sendable {
         case varietyId = "variety_id"
         case varietyKey = "variety_key"
         case varietyName = "variety_name"
+        case varietyAllocationId = "variety_allocation_id"
         case clone
+        case rootstock
         case weightKg = "weight_kg"
         case sugarValue = "sugar_value"
         case sugarUnit = "sugar_unit"
@@ -151,7 +162,9 @@ nonisolated struct BackendPickingRecordUpsert: Encodable, Sendable {
         try c.encode(varietyId, forKey: .varietyId)
         try c.encode(varietyKey, forKey: .varietyKey)
         try c.encode(varietyName, forKey: .varietyName)
+        try c.encode(varietyAllocationId, forKey: .varietyAllocationId)
         try c.encode(clone, forKey: .clone)
+        try c.encode(rootstock, forKey: .rootstock)
         try c.encode(weightKg, forKey: .weightKg)
         try c.encode(sugarValue, forKey: .sugarValue)
         try c.encode(sugarUnit, forKey: .sugarUnit)
@@ -178,7 +191,9 @@ extension BackendPickingRecord {
             varietyId: record.varietyId,
             varietyKey: record.varietyKey,
             varietyName: record.varietyName,
+            varietyAllocationId: record.varietyAllocationId,
             clone: record.clone,
+            rootstock: record.rootstock,
             weightKg: record.weightKg,
             sugarValue: record.sugarValue,
             sugarUnit: record.sugarUnit,
@@ -205,7 +220,9 @@ extension BackendPickingRecord {
             varietyId: varietyId,
             varietyKey: varietyKey,
             varietyName: varietyName ?? "",
+            varietyAllocationId: varietyAllocationId,
             clone: clone,
+            rootstock: rootstock,
             weightKg: weightKg ?? 0,
             sugarValue: sugarValue,
             sugarUnit: sugarUnit,

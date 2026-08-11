@@ -149,6 +149,9 @@ struct PickingLogListView: View {
                 if let clone = record.clone, !clone.isEmpty {
                     Text("· \(clone)")
                 }
+                if let rootstock = record.rootstock, !rootstock.isEmpty {
+                    Text("· \(rootstock)")
+                }
             }
             .font(.caption)
             .foregroundStyle(.secondary)

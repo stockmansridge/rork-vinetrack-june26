@@ -13,9 +13,13 @@ import Testing
 ///    columns are cleared too (e.g. un-selling a pick),
 ///  * the historical sugar unit is preserved unless the sugar value itself
 ///    is re-entered,
-///  * the local vintage mirror recomputes when the picked date changes, and
+///  * the local vintage mirror recomputes when the picked date changes,
 ///  * Block + Variety + Vintage totals (the actual yield) recompute after
-///    an edit.
+///    an edit, and
+///  * the planting identity (`variety_allocation_id` + rootstock snapshot,
+///    sql/183) round-trips exactly — two plantings with identical clone AND
+///    rootstock stay distinct by allocation id, and unlinked records stay
+///    unlinked (never guessed).
 struct PickingRecordEditTests {
 
     private let vineyard = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
@@ -37,7 +41,9 @@ struct PickingRecordEditTests {
         vintage: Int = 2027,
         paddockId: UUID? = nil,
         varietyName: String = "Shiraz",
+        varietyAllocationId: UUID? = nil,
         clone: String? = "PT23",
+        rootstock: String? = nil,
         weightKg: Double = 850,
         sold: Bool = true
     ) -> PickingRecord {
@@ -51,7 +57,9 @@ struct PickingRecordEditTests {
             varietyId: UUID(),
             varietyKey: "shiraz",
             varietyName: varietyName,
+            varietyAllocationId: varietyAllocationId,
             clone: clone,
+            rootstock: rootstock,
             weightKg: weightKg,
             sugarValue: 13.2,
             sugarUnit: "baume",
@@ -184,6 +192,75 @@ struct PickingRecordEditTests {
         )
         #expect(blockATotal == 0.8)
         #expect(blockBTotal == 0.2)
+    }
+
+    // MARK: - Planting identity (sql/183)
+
+    @Test func upsertPayloadCarriesPlantingIdentity() throws {
+        let allocationId = UUID(uuidString: "77777777-7777-4777-8777-777777777777")!
+        let record = makeRecord(
+            varietyName: "Pinot Noir",
+            varietyAllocationId: allocationId,
+            clone: "777",
+            rootstock: "Richter 110"
+        )
+        let payload = BackendPickingRecord.upsert(from: record, createdBy: nil, clientUpdatedAt: Date())
+        let json = try jsonObject(for: payload)
+
+        #expect((json["variety_allocation_id"] as? String)?.lowercased() == allocationId.uuidString.lowercased())
+        #expect((json["clone"] as? String) == "777")
+        #expect((json["rootstock"] as? String) == "Richter 110")
+    }
+
+    @Test func clearingPlantingSendsExplicitNulls() throws {
+        // Un-linking a pick ("Not specified") must clear all three planting
+        // columns server-side, not leave them stale.
+        var edited = makeRecord(
+            varietyAllocationId: UUID(),
+            clone: "777",
+            rootstock: "Richter 110"
+        )
+        edited.varietyAllocationId = nil
+        edited.clone = nil
+        edited.rootstock = nil
+
+        let payload = BackendPickingRecord.upsert(from: edited, createdBy: nil, clientUpdatedAt: Date())
+        let json = try jsonObject(for: payload)
+
+        #expect(json["variety_allocation_id"] is NSNull)
+        #expect(json["clone"] is NSNull)
+        #expect(json["rootstock"] is NSNull)
+    }
+
+    @Test func identicalCloneRootstockPlantingsStayDistinctByAllocationId() throws {
+        // The motivating case: one block, two Pinot Noir plantings, BOTH
+        // Clone 777 · Richter 110. Block + variety + clone + rootstock is
+        // identical — only the allocation id separates the picks.
+        let allocationOne = UUID(uuidString: "11111111-2222-4333-8444-555555555555")!
+        let allocationTwo = UUID(uuidString: "66666666-7777-4888-8999-AAAAAAAAAAAA")!
+        let pickOne = makeRecord(varietyName: "Pinot Noir", varietyAllocationId: allocationOne, clone: "777", rootstock: "Richter 110")
+        let pickTwo = makeRecord(varietyName: "Pinot Noir", varietyAllocationId: allocationTwo, clone: "777", rootstock: "Richter 110")
+
+        #expect(pickOne.clone == pickTwo.clone)
+        #expect(pickOne.rootstock == pickTwo.rootstock)
+        #expect(pickOne.varietyAllocationId != pickTwo.varietyAllocationId)
+
+        let jsonOne = try jsonObject(for: BackendPickingRecord.upsert(from: pickOne, createdBy: nil, clientUpdatedAt: Date()))
+        let jsonTwo = try jsonObject(for: BackendPickingRecord.upsert(from: pickTwo, createdBy: nil, clientUpdatedAt: Date()))
+        #expect((jsonOne["variety_allocation_id"] as? String) != (jsonTwo["variety_allocation_id"] as? String))
+    }
+
+    @Test func unlinkedHistoricalRecordStaysUnlinkedThroughUnrelatedEdits() throws {
+        // Pre-183 rows have no allocation link. An unrelated edit (weight fix)
+        // must keep them unlinked — never auto-matched/guessed.
+        var edited = makeRecord(clone: "777", rootstock: nil)
+        #expect(edited.varietyAllocationId == nil)
+        edited.weightKg = 990
+
+        let payload = BackendPickingRecord.upsert(from: edited, createdBy: nil, clientUpdatedAt: Date())
+        let json = try jsonObject(for: payload)
+        #expect(json["variety_allocation_id"] is NSNull)
+        #expect((json["clone"] as? String) == "777")
     }
 
     @Test func grapeValueStaysDerivedNeverStored() {
