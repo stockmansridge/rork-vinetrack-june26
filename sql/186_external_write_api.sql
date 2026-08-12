@@ -164,6 +164,9 @@ end$$;
 alter table public.irrigation_sessions add constraint irrigation_sessions_source_type_check
   check (source_type in ('manual_ios', 'manual_android', 'manual_portal',
                          'csv_import', 'controller_api', 'system_generated',
+                         -- sql/142 controller import value — live rows exist
+                         'galcon_gsi_import',
+                         -- Stage 8 external write API
                          'external_api'));
 
 -- Machine writes have no auth.uid(); the irrigation audit trail keeps full
@@ -174,6 +177,28 @@ alter table public.irrigation_audit alter column user_id drop not null;
 -- ===========================================================================
 -- D. Durable idempotency store.
 -- ===========================================================================
+-- sql/172 shipped a placeholder version of this table (method/path columns,
+-- explicitly documented "Unused in Stage 2" — no RPC or client ever had a
+-- write path to it). Replace the placeholder with the Stage 8 shape. Guarded
+-- on the missing `operation` column so re-runs never touch the real table,
+-- and hard-stop if the placeholder unexpectedly holds data.
+do $$
+declare v_rows bigint;
+begin
+  if to_regclass('public.integration_idempotency_keys') is not null
+     and not exists (
+       select 1 from information_schema.columns
+       where table_schema = 'public'
+         and table_name = 'integration_idempotency_keys'
+         and column_name = 'operation') then
+    execute 'select count(*) from public.integration_idempotency_keys' into v_rows;
+    if v_rows > 0 then
+      raise exception 'integration_idempotency_keys placeholder unexpectedly has % rows — investigate before migrating', v_rows;
+    end if;
+    drop table public.integration_idempotency_keys;
+  end if;
+end$$;
+
 create table if not exists public.integration_idempotency_keys (
   id                    uuid primary key default gen_random_uuid(),
   integration_client_id uuid not null references public.integration_clients(id) on delete cascade,
