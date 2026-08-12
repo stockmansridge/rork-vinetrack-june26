@@ -390,19 +390,20 @@ begin
   -- ---- T10. Fuel records --------------------------------------------------------------
   -- Cost fields are NOT part of the write surface.
   r2 := public.integration_api_create_fuel_record(k1, v1, 'idem-fuel-bad-1', jsonb_build_object(
-    'date', '2027-01-15T07:30:00Z', 'volume_l', 55.5, 'cost_per_litre', 1.85));
+    'date', '2026-01-15T07:30:00Z', 'volume_l', 55.5, 'cost_per_litre', 1.85));
   if (r2->>'ok')::boolean or r2->>'error' <> 'validation_failed' then
     raise exception 'T10: cost field accepted on fuel write';
   end if;
   -- Cross-vineyard equipment refused.
   r2 := public.integration_api_create_fuel_record(k1, v1, 'idem-fuel-bad-2', jsonb_build_object(
-    'date', '2027-01-15T07:30:00Z', 'volume_l', 55.5, 'equipment_id', m2));
+    'date', '2026-01-15T07:30:00Z', 'volume_l', 55.5, 'equipment_id', m2));
   if (r2->>'ok')::boolean or r2->>'error' <> 'validation_failed' then
     raise exception 'T10: cross-vineyard equipment accepted';
   end if;
   -- Valid create.
+  -- Fuel dates must not be in the future (unlike scheduled work tasks) — use a past date.
   r := public.integration_api_create_fuel_record(k1, v1, 'idem-fuel-1', jsonb_build_object(
-    'date', '2027-01-15T07:30:00Z', 'volume_l', 55.5, 'equipment_id', m1,
+    'date', '2026-01-15T07:30:00Z', 'volume_l', 55.5, 'equipment_id', m1,
     'engine_hours', 1204.5, 'filled_to_full', true, 'notes', 'Stage 8 fuel test',
     'external_id', 'fms-fuel-1'));
   if not (r->>'ok')::boolean or (r->>'status')::int <> 201 then
@@ -479,8 +480,9 @@ begin
   if (r2->>'ok')::boolean or r2->>'error' <> 'validation_failed' then
     raise exception 'T12: unsupported E-L code accepted';
   end if;
+  -- observed_at must not be in the future — use a past date.
   r := public.integration_api_create_growth_stage(k1, v1, 'idem-gs-1', jsonb_build_object(
-    'stage_code', 'el4', 'observed_at', '2026-09-20T08:00:00Z', 'block_id', b1,
+    'stage_code', 'el4', 'observed_at', '2026-06-20T08:00:00Z', 'block_id', b1,
     'variety', 'Shiraz', 'notes', 'Stage 8 growth test', 'external_id', 'sensor-obs-9'));
   if not (r->>'ok')::boolean or (r->>'status')::int <> 201 then
     raise exception 'T12: growth stage create failed: %', r;
