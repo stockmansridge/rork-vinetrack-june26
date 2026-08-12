@@ -132,8 +132,8 @@ begin
 
   select grape_value into num from public.get_picking_record_financials(v_vy)
   where picking_record_id = p1;
-  if num is distinct from 3.0 then
-    raise exception 'T2: RPC grape_value expected 3.0 (2 t x 1500), got %', num;
+  if num is distinct from 3000::double precision then
+    raise exception 'T2: RPC grape_value expected 3000 (2 t x 1500), got %', num;
   end if;
   raise notice 'T2 passed';
 
@@ -197,7 +197,7 @@ begin
   select price_per_tonne, grape_value into r
   from public.get_picking_record_financials(v_vy)
   where picking_record_id = p1;
-  if r.price_per_tonne <> 1750 or r.grape_value is distinct from 3.5 then
+  if r.price_per_tonne <> 1750 or r.grape_value is distinct from 3500::double precision then
     raise exception 'T6: price update not routed (%, %)', r.price_per_tonne, r.grape_value;
   end if;
   raise notice 'T6 passed';
@@ -230,8 +230,8 @@ begin
   if r.total_weight_kg <> 3000 then
     raise exception 'T8: manager totals weight expected 3000, got %', r.total_weight_kg;
   end if;
-  if r.total_grape_value is distinct from 3.0 then
-    raise exception 'T8: manager total_grape_value expected 3.0, got %', r.total_grape_value;
+  if r.total_grape_value is distinct from 3000::double precision then
+    raise exception 'T8: manager total_grape_value expected 3000, got %', r.total_grape_value;
   end if;
 
   perform set_config('request.jwt.claims',
