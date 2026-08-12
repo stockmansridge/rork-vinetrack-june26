@@ -108,6 +108,11 @@ final class PickingRecordSyncService {
         // correction already used by the labour/machine-line sync services.
         // `lastSync` is kept solely to detect the one-time initial seed below.
         let remote = try await repository.fetch(vineyardId: vineyardId, since: nil)
+        // Owner/manager commercial projection (sql/187): the base columns read
+        // back NULL for every role, so money is merged from the gated RPC.
+        // Lower roles fail the RPC (42501) — swallowed, masked NULLs kept.
+        let financials = (try? await repository.fetchFinancials(vineyardId: vineyardId)) ?? []
+        let financialsById = Dictionary(financials.map { ($0.pickingRecordId, $0) }, uniquingKeysWith: { a, _ in a })
         if lastSync == nil {
             let remoteIds = Set(remote.map { $0.id })
             let local = store.pickingRecords.filter { $0.vineyardId == vineyardId }
@@ -138,7 +143,12 @@ final class PickingRecordSyncService {
                 let remoteAt = item.clientUpdatedAt ?? item.updatedAt ?? .distantPast
                 if pendingAt > remoteAt { continue }
             }
-            store.applyRemotePickingRecordUpsert(item.toPickingRecord())
+            var record = item.toPickingRecord()
+            if let row = financialsById[record.id] {
+                record.soldTo = row.soldTo
+                record.pricePerTonne = row.pricePerTonne
+            }
+            store.applyRemotePickingRecordUpsert(record)
             metadata.clearDirty([item.id])
         }
     }

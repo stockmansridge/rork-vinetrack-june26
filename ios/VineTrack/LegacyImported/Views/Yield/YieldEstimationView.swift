@@ -20,6 +20,10 @@ struct YieldEstimationView: View {
     @State private var showSampling: Bool = false
     @State private var showSampleList: Bool = false
     @State private var showDeleteEstimationConfirm: Bool = false
+    /// Whether a trip (draft or completed history view) is open. False shows
+    /// the Bunch Count Trip home (start / resume / history).
+    @State private var tripStarted: Bool = false
+    private let samplingSettingsRepo = SupabaseYieldSamplingSettingsRepository()
 
     private var paddocks: [Paddock] {
         store.orderedPaddocks.filter { $0.polygonPoints.count >= 3 }
@@ -41,6 +45,172 @@ struct YieldEstimationView: View {
     }
 
     var body: some View {
+        Group {
+            if tripStarted {
+                tripContent
+            } else {
+                introContent
+            }
+        }
+        .task { await syncSamplingDefault() }
+    }
+
+    // MARK: - Bunch Count Trip home (start / resume / history)
+
+    private var activeDraft: YieldEstimationSession? {
+        BunchCountTripLogic.activeDraft(sessions: store.yieldSessions, vineyardId: store.selectedVineyardId)
+    }
+
+    private var completedTrips: [YieldEstimationSession] {
+        BunchCountTripLogic.completedTrips(sessions: store.yieldSessions, vineyardId: store.selectedVineyardId)
+    }
+
+    private var introContent: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Bunch Count Trip", systemImage: "figure.walk")
+                        .font(.headline)
+                    Text("Perform a bunch count trip to update the current yield estimate. Walk the sampling route, count bunches at each sample site, then confirm bunch weights to produce the estimate for each block.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Text("Repeat trips through the season — the latest completed trip drives the current Yield Estimate for its blocks; earlier trips stay in history.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
+
+                if let draft = activeDraft {
+                    Button {
+                        resumeTrip(draft)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "play.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(.blue)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Resume trip in progress")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                Text(draft.sampleSites.isEmpty
+                                    ? "Blocks and route not confirmed yet"
+                                    : "\(draft.sampleSites.filter(\.isRecorded).count) of \(draft.sampleSites.count) sample sites recorded")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(12)
+                        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button {
+                    startTrip()
+                } label: {
+                    Label("Start Bunch Count Trip", systemImage: "plus.circle.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(VineyardTheme.leafGreen)
+                .disabled(paddocks.isEmpty)
+
+                if paddocks.isEmpty {
+                    Text("Map at least one block boundary in Blocks before starting a bunch count trip.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                if !completedTrips.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Completed trips", systemImage: "clock.arrow.circlepath")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(completedTrips) { trip in
+                            Button {
+                                resumeTrip(trip)
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(fmt.formatDate(trip.completedAt ?? trip.createdAt))
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(.primary)
+                                        Text("\(trip.selectedPaddockIds.count) block\(trip.selectedPaddockIds.count == 1 ? "" : "s") · \(trip.sampleSites.filter(\.isRecorded).count) sites")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text(String(format: "%.1f t", completedTripTonnes(trip)))
+                                        .font(.subheadline.weight(.bold))
+                                        .foregroundStyle(VineyardTheme.leafGreen)
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(12)
+                                .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 32)
+        }
+        .navigationTitle("Bunch Count Trips")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// Display tonnes for a completed trip in history (respects its damage flag).
+    private func completedTripTonnes(_ trip: YieldEstimationSession) -> Double {
+        paddocks
+            .filter { p in trip.selectedPaddockIds.contains(p.id) }
+            .compactMap { paddock -> Double? in
+                guard let base = YieldVintageReport.baseEstimate(session: trip, paddock: paddock) else { return nil }
+                let factor = trip.applyDamage ? store.damageFactor(for: paddock.id) : 1.0
+                return base.tonnes * factor
+            }
+            .reduce(0, +)
+    }
+
+    private func startTrip() {
+        viewModel.startNewTrip()
+        withAnimation(.smooth(duration: 0.25)) { tripStarted = true }
+        fitMap()
+    }
+
+    private func resumeTrip(_ session: YieldEstimationSession) {
+        viewModel.loadSession(session)
+        applyDefaultBunchWeights()
+        withAnimation(.smooth(duration: 0.25)) { tripStarted = true }
+        fitMapToSites()
+    }
+
+    /// Pull the shared vineyard sampling default (sql/187) into local settings
+    /// so the next trip starts from the vineyard-wide value.
+    private func syncSamplingDefault() async {
+        guard let vid = store.selectedVineyardId else { return }
+        if let n = try? await samplingSettingsRepo.fetchDefault(vineyardId: vid),
+           n > 0, n != store.settings.samplesPerHectare {
+            var s = store.settings
+            s.samplesPerHectare = n
+            store.updateSettings(s)
+        }
+    }
+
+    // MARK: - Trip content
+
+    private var tripContent: some View {
         ScrollView {
             VStack(spacing: 20) {
                 mapSection
@@ -91,7 +261,7 @@ struct YieldEstimationView: View {
             .padding(.horizontal)
             .padding(.bottom, 32)
         }
-        .navigationTitle("Yield Estimation")
+        .navigationTitle("Bunch Count Trip")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showBunchCountSheet) {
             if let site = viewModel.selectedSite {
@@ -138,10 +308,9 @@ struct YieldEstimationView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Delete this yield estimation? This will remove sample sites and bunch counts for this job. This cannot be undone.")
+            Text("Delete this bunch count trip? This removes its route, bunch counts and estimate. If it is the latest trip, the previous trip becomes the current estimate. This cannot be undone.")
         }
         .onAppear {
-            loadExistingSession()
             fitMap()
         }
     }
@@ -687,15 +856,15 @@ struct YieldEstimationView: View {
     // MARK: - Delete Estimation
 
     private var hasExistingSession: Bool {
-        guard let vid = store.selectedVineyardId else { return false }
-        return store.yieldSessions.contains(where: { $0.vineyardId == vid })
+        guard let sid = viewModel.sessionId else { return false }
+        return store.yieldSessions.contains(where: { $0.id == sid })
     }
 
     private var deleteEstimationButton: some View {
         Button(role: .destructive) {
             showDeleteEstimationConfirm = true
         } label: {
-            Label("Delete Estimation", systemImage: "trash")
+            Label("Delete Trip", systemImage: "trash")
                 .font(.subheadline.weight(.semibold))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
@@ -704,20 +873,58 @@ struct YieldEstimationView: View {
         .tint(.red)
     }
 
+    /// Deletes ONLY the open trip — other trips (drafts or history) are never
+    /// touched. If the deleted trip was the latest completed one, the previous
+    /// trip becomes the current estimate again.
     private func deleteCurrentEstimation() {
-        guard let vid = store.selectedVineyardId else { return }
-        if let existing = store.yieldSessions.first(where: { $0.vineyardId == vid }) {
+        if let sid = viewModel.sessionId,
+           let existing = store.yieldSessions.first(where: { $0.id == sid }) {
             store.deleteYieldSession(existing)
         }
         withAnimation(.smooth(duration: 0.3)) {
             viewModel.resetForNewEstimation()
+            tripStarted = false
         }
     }
 
     // MARK: - Generate Button
 
+    /// Existing routes covering the current block selection, from earlier
+    /// trips (site identity preserved). nil once a route is generated or when
+    /// no prior trip covers any selected block — no meaningless prompt.
+    private var reusableRouteCandidate: BunchCountTripLogic.ReusableRoute? {
+        guard !viewModel.isGenerated, !viewModel.selectedPaddockIds.isEmpty else { return nil }
+        return BunchCountTripLogic.reusableRoute(
+            sessions: store.yieldSessions,
+            selectedPaddockIds: Array(viewModel.selectedPaddockIds),
+            excludeSessionId: viewModel.sessionId
+        )
+    }
+
     private var generateButton: some View {
         VStack(spacing: 8) {
+            if let route = reusableRouteCandidate, !viewModel.isCompleted {
+                Text("A previous trip already has a route for \(viewModel.selectedPaddockIds.count == 1 ? "this block" : "these blocks"). Reusing it revisits the same sample locations for comparable counts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button {
+                    withAnimation(.smooth(duration: 0.3)) {
+                        viewModel.adoptRoute(route)
+                        applyDefaultBunchWeights()
+                        viewModel.generatePath(paddocks: paddocks)
+                    }
+                    fitMapToSites()
+                    saveSession()
+                } label: {
+                    Label("Use Existing Route (\(route.sites.count) sites)", systemImage: "arrow.triangle.branch")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
+            }
+
             Button {
                 withAnimation(.smooth(duration: 0.3)) {
                     viewModel.generateSampleSites(paddocks: paddocks, samplesPerHectare: samplesPerHa)
@@ -728,7 +935,9 @@ struct YieldEstimationView: View {
                 saveSession()
             } label: {
                 Label(
-                    viewModel.isGenerated ? "Regenerate Sample Sites" : "Generate Sample Sites",
+                    viewModel.isGenerated
+                        ? "Regenerate Sample Sites"
+                        : (reusableRouteCandidate != nil ? "Generate New Route" : "Generate Sample Sites"),
                     systemImage: viewModel.isGenerated ? "arrow.clockwise" : "mappin.and.ellipse"
                 )
                 .font(.headline)
@@ -739,17 +948,21 @@ struct YieldEstimationView: View {
             .tint(VineyardTheme.leafGreen)
             .disabled(viewModel.selectedPaddockIds.isEmpty || viewModel.isCompleted)
 
+            if viewModel.isGenerated, viewModel.routeSourceSessionId != nil {
+                Text("Route reused from an earlier trip — sample locations match for comparable counts.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
             if viewModel.isCompleted {
                 Button {
+                    // Completed trips are preserved history — a new trip is a
+                    // NEW dated observation, never an overwrite.
                     withAnimation(.smooth(duration: 0.3)) {
-                        viewModel.resetForNewEstimation()
-                    }
-                    if let vid = store.selectedVineyardId,
-                       let existing = store.yieldSessions.first(where: { $0.vineyardId == vid }) {
-                        store.deleteYieldSession(existing)
+                        viewModel.startNewTrip()
                     }
                 } label: {
-                    Label("Start New Estimation", systemImage: "plus.circle.fill")
+                    Label("Start New Bunch Count Trip", systemImage: "plus.circle.fill")
                         .font(.subheadline.weight(.semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
@@ -879,7 +1092,7 @@ struct YieldEstimationView: View {
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.white)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Job Completed")
+                Text("Bunch Count Trip Completed")
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.white)
                 if let completedAt = viewModel.completedAt {
@@ -900,28 +1113,87 @@ struct YieldEstimationView: View {
     // MARK: - Complete Job Button
 
     private var completeJobButton: some View {
-        Button {
-            showCompleteConfirmation = true
-        } label: {
-            Label("Complete Job", systemImage: "checkmark.seal.fill")
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Complete Estimation", systemImage: "checkmark.seal.fill")
                 .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(.green)
-        .confirmationDialog(
-            "Complete Yield Estimation?",
-            isPresented: $showCompleteConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Complete & Lock") {
-                viewModel.markCompleted()
-                saveSession()
+
+            // Per-block summary from the recorded samples — the BASE estimate
+            // is always shown; damage only changes the displayed figure.
+            let baseEstimates = viewModel.calculateYieldEstimates(paddocks: paddocks)
+            ForEach(baseEstimates.filter { $0.samplesRecorded > 0 }, id: \.paddockId) { est in
+                let factor = store.damageFactor(for: est.paddockId)
+                let display = viewModel.applyDamage ? est.estimatedYieldTonnes * factor : est.estimatedYieldTonnes
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text(est.paddockName)
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text(String(format: "%.1f t", display))
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(VineyardTheme.leafGreen)
+                    }
+                    Text(YieldVintageReport.varietyLabel(paddocks.first { $0.id == est.paddockId }))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("\(est.samplesRecorded)/\(est.samplesTotal) samples · \(String(format: "%.1f", est.averageBunchesPerVine)) bunches/vine · \(String(format: "%.0f g", est.averageBunchWeightKg * 1000))/bunch")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if est.areaHectares > 0 {
+                        Text(fmt.formatYieldPerArea(perHectare: display / est.areaHectares))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if viewModel.applyDamage, factor < 1.0 {
+                        Text(String(format: "Base %.1f t → damage adjusted %.1f t", est.estimatedYieldTonnes, est.estimatedYieldTonnes * factor))
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .padding(10)
+                .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will lock all values for this yield estimation job. Bunch counts and weights can no longer be edited.")
+
+            // Damage adjustment is presentation-time — the base bunch-count
+            // estimate is always preserved and recoverable.
+            Toggle(isOn: Binding(
+                get: { viewModel.applyDamage },
+                set: { viewModel.applyDamage = $0; saveSession() }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Apply recorded damage")
+                        .font(.subheadline.weight(.medium))
+                    Text("Adjusts the displayed estimate by current damage records. The base bunch-count estimate is always kept.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(10)
+            .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
+
+            Button {
+                showCompleteConfirmation = true
+            } label: {
+                Label("Save Bunch Count Trip", systemImage: "checkmark.seal.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.green)
+            .confirmationDialog(
+                "Save Bunch Count Trip?",
+                isPresented: $showCompleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Save Trip") {
+                    viewModel.markCompleted()
+                    saveSession()
+                    withAnimation(.smooth(duration: 0.3)) { tripStarted = false }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This completes the trip as a dated observation. It becomes the latest estimate for its blocks; earlier trips stay in history. Counts and weights can no longer be edited.")
+            }
         }
     }
 
@@ -1126,7 +1398,7 @@ struct YieldEstimationView: View {
                 } header: {
                     Text("Samples per Hectare")
                 } footer: {
-                    Text("Number of vine sample sites to generate per hectare. This value is saved in Settings and used for all future yield estimations.")
+                    Text("Number of vine sample sites to generate per hectare. Saved as the shared default for the next Bunch Count Trip on every device.")
                 }
 
                 if let n = Int(samplesPerHaText), n > 0, !viewModel.selectedPaddockIds.isEmpty {
@@ -1160,6 +1432,11 @@ struct YieldEstimationView: View {
                             var s = store.settings
                             s.samplesPerHectare = n
                             store.updateSettings(s)
+                            // Persist as the vineyard-wide default (sql/187)
+                            // so the next trip on any device starts from it.
+                            if let vid = store.selectedVineyardId {
+                                Task { try? await samplingSettingsRepo.saveDefault(vineyardId: vid, samplesPerHectare: n) }
+                            }
                         }
                         showSamplesPerHaEditor = false
                     }
@@ -1179,14 +1456,6 @@ struct YieldEstimationView: View {
         guard let vid = store.selectedVineyardId else { return }
         let session = viewModel.toSession(vineyardId: vid, samplesPerHectare: samplesPerHa)
         store.saveYieldSession(session)
-    }
-
-    private func loadExistingSession() {
-        guard let vid = store.selectedVineyardId else { return }
-        if let session = store.yieldSessions.first(where: { $0.vineyardId == vid }) {
-            viewModel.loadSession(session)
-            applyDefaultBunchWeights()
-        }
     }
 
     private func applyDefaultBunchWeights() {

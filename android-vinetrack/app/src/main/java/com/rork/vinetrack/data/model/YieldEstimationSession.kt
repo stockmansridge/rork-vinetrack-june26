@@ -119,6 +119,21 @@ data class YieldEstimationSession(
     val pathWaypoints: List<CoordinatePoint> = emptyList(),
     val isCompleted: Boolean = false,
     val completedAt: String? = null,
+    /**
+     * Whether the CURRENT effective damage adjustment is applied to this
+     * trip's displayed Yield Estimate. Additive (post-sql/187 clients);
+     * defaults to true so historical sessions keep their damage-adjusted
+     * numbers unchanged. The base (unadjusted) estimate is always
+     * recoverable — damage never mutates the recorded bunch counts.
+     */
+    val applyDamage: Boolean = true,
+    /**
+     * Id of the earlier session whose route/sample sites were reused for
+     * this Bunch Count Trip (site ids are carried over so repeated counts
+     * through the season revisit comparable locations). Additive; null for
+     * freshly generated routes and all pre-187 sessions.
+     */
+    val routeSourceSessionId: String? = null,
 ) {
     fun bunchWeightKg(paddockId: String): Double =
         blockBunchWeightsKg.entries.firstOrNull { it.key.equals(paddockId, ignoreCase = true) }?.value

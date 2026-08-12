@@ -22,6 +22,7 @@ struct RecordActualYieldSheet: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(HistoricalYieldRecordSyncService.self) private var historicalYieldSync
     @Environment(PickingRecordSyncService.self) private var pickingRecordSync
+    @Environment(\.accessControl) private var accessControl
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
 
@@ -610,27 +611,42 @@ struct RecordActualYieldSheet: View {
             Text("Purpose (optional)")
         }
 
-        Section {
-            Toggle("Sold", isOn: $sold)
-            if sold {
-                TextField("Sold to", text: $soldTo)
-                HStack {
-                    TextField("Price per tonne", text: $priceText)
-                        .keyboardType(.decimalPad)
-                    Text("/t").foregroundStyle(.secondary)
-                }
-                if let value = calculatedGrapeValue {
-                    LabeledContent("Grape value") {
-                        Text(fmt.formatCurrency(value))
-                            .foregroundStyle(.secondary)
+        // Commercial sale fields are owner/manager-only (sql/187). Hidden
+        // inputs keep their prefilled state, so a lower role's edit never
+        // flips a record's sold flag; the server routes/strips financial
+        // columns regardless of what any client sends.
+        if accessControl?.canViewFinancials ?? false {
+            Section {
+                Toggle("Sold", isOn: $sold)
+                if sold {
+                    TextField("Sold to", text: $soldTo)
+                    HStack {
+                        TextField("Price per tonne", text: $priceText)
+                            .keyboardType(.decimalPad)
+                        Text("/t").foregroundStyle(.secondary)
+                    }
+                    if let value = calculatedGrapeValue {
+                        LabeledContent("Grape value") {
+                            Text(fmt.formatCurrency(value))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
+            } header: {
+                Text("Sale")
+            } footer: {
+                if sold {
+                    Text("Grape value is calculated as tonnes × price per tonne.")
+                }
             }
-        } header: {
-            Text("Sale")
-        } footer: {
-            if sold {
-                Text("Grape value is calculated as tonnes × price per tonne.")
+        } else if sold {
+            Section {
+                LabeledContent("Sold") {
+                    Text("Sale details are managed by owners and managers.")
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Sale")
             }
         }
 

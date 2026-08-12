@@ -9,12 +9,19 @@ import SwiftUI
 struct PickingLogListView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(PickingRecordSyncService.self) private var pickingRecordSync
+    @Environment(\.accessControl) private var accessControl
 
     @State private var showRecordSheet: Bool = false
     @State private var recordPendingDeletion: PickingRecord?
     @State private var recordToEdit: PickingRecord?
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
+
+    /// Commercial sale data (sold to, price, grape value) is owner/manager
+    /// only — sql/187 enforces this server-side; lower roles receive masked
+    /// NULLs and the UI never renders money for them. `sold` itself stays
+    /// visible as operational status.
+    private var canViewFinancials: Bool { accessControl?.canViewFinancials ?? false }
 
     private var records: [PickingRecord] {
         store.pickingRecords.sorted { $0.pickedAt > $1.pickedAt }
@@ -139,7 +146,7 @@ struct PickingLogListView: View {
                     Text("\(total.actualYieldTonnes, format: .number.precision(.fractionLength(2))) t")
                         .font(.subheadline.weight(.bold).monospacedDigit())
                         .foregroundStyle(VineyardTheme.leafGreen)
-                    if let value = total.totalGrapeValue {
+                    if canViewFinancials, let value = total.totalGrapeValue {
                         Text(fmt.formatCurrency(value))
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -273,7 +280,7 @@ struct PickingLogListView: View {
         HStack(spacing: 3) {
             Image(systemName: "dollarsign.circle.fill")
                 .font(.caption2)
-            if let value = record.grapeValue {
+            if canViewFinancials, let value = record.grapeValue {
                 Text(fmt.formatCurrency(value))
             } else {
                 Text("Sold")

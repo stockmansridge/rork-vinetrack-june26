@@ -1,6 +1,7 @@
 package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.data.model.PickingFinancialRow
 import com.rork.vinetrack.data.model.PickingRecord
 import io.ktor.client.call.body
 import io.ktor.client.request.get
@@ -65,6 +66,9 @@ class PickingRecordRepository(private val session: SessionStore) {
 
     @Serializable
     private data class SoftDeleteArgs(@SerialName("p_id") val id: String)
+
+    @Serializable
+    private data class FinancialsArgs(@SerialName("p_vineyard_id") val vineyardId: String)
 
     /**
      * Insert a fully-formed picking record. Shared by the online create flow
@@ -184,6 +188,30 @@ class PickingRecordRepository(private val session: SessionStore) {
             when {
                 response.status.isSuccess() -> response.body()
                 response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+                else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            }
+        }
+
+    /**
+     * Commercial sale fields for the vineyard's picking records via the
+     * owner/manager-gated `get_picking_record_financials` RPC (sql/187). The
+     * base table columns read back NULL for every role since 187 — this is
+     * the ONLY way money values reach a client. Throws
+     * [BackendError.Unauthorized]-style 403 wrapped as [BackendError.Server]
+     * for lower roles; callers treat that as "no financial access".
+     */
+    suspend fun listPickingFinancials(vineyardId: String): List<PickingFinancialRow> =
+        withContext(Dispatchers.IO) {
+            requireConfig()
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("get_picking_record_financials")) {
+                authHeaders(token)
+                contentType(ContentType.Application.Json)
+                setBody(FinancialsArgs(vineyardId))
+            }
+            when {
+                response.status.isSuccess() -> response.body()
+                response.status.value == 401 -> throw BackendError.Unauthorized
                 else -> throw BackendError.Server(response.status.value, response.bodyAsText())
             }
         }

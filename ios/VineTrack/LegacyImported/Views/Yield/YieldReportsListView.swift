@@ -10,6 +10,8 @@ struct YieldReportsListView: View {
     @State private var historicalSortBy: HistoricalSort = .newest
     @State private var historicalFilterPaddock: UUID?
     @State private var showStartEstimateSheet: Bool = false
+    /// Selected Vintage for the production report (nil = current vintage).
+    @State private var selectedVintage: Int?
 
     private var canDelete: Bool { accessControl?.canDelete ?? false }
     private var fmt: RegionFormatter { store.settings.regionFormatter }
@@ -22,13 +24,226 @@ struct YieldReportsListView: View {
         store.yieldSessions.sorted { $0.createdAt > $1.createdAt }
     }
 
+    private var currentVintage: Int {
+        VintageResolver.vintageYear(
+            for: Date(),
+            seasonStartMonth: store.settings.seasonStartMonth,
+            seasonStartDay: store.settings.seasonStartDay
+        )
+    }
+
+    private var reportVintage: Int { selectedVintage ?? currentVintage }
+
+    private var availableVintages: [Int] {
+        YieldVintageReport.availableVintages(
+            currentVintage: currentVintage,
+            sessions: store.yieldSessions,
+            yieldRecords: store.historicalYieldRecords,
+            pickingRecords: store.pickingRecords,
+            seasonStartMonth: store.settings.seasonStartMonth,
+            seasonStartDay: store.settings.seasonStartDay
+        )
+    }
+
+    private var vintageEstimateRows: [YieldVintageReport.EstimateRow] {
+        YieldVintageReport.estimateRows(
+            sessions: store.yieldSessions,
+            paddocks: store.paddocks,
+            damageFactor: { store.damageFactor(for: $0) },
+            vintage: reportVintage,
+            seasonStartMonth: store.settings.seasonStartMonth,
+            seasonStartDay: store.settings.seasonStartDay
+        )
+    }
+
+    private var vintageActualRows: [YieldVintageReport.ActualRow] {
+        YieldVintageReport.actualRows(
+            vintage: reportVintage,
+            paddocks: store.paddocks,
+            yieldRecords: store.historicalYieldRecords,
+            pickingRecords: store.pickingRecords
+        )
+    }
+
+    // MARK: - Vintage production report
+
+    /// Vintage-driven production report: the current vintage shows the latest
+    /// Yield Estimate per block (from completed Bunch Count Trips, optionally
+    /// damage-adjusted); past vintages show Actual Yield with Detailed Picking
+    /// Log totals superseding Basic actuals per Block + Variety.
+    private var vintageReportSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Vintage", systemImage: "calendar")
+                .font(.headline)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(availableVintages, id: \.self) { vintage in
+                        let isSelected = vintage == reportVintage
+                        Button {
+                            selectedVintage = vintage == currentVintage ? nil : vintage
+                        } label: {
+                            Text(vintage == currentVintage ? "\(String(vintage)) · Current" : String(vintage))
+                                .font(.caption.weight(isSelected ? .semibold : .regular))
+                                .foregroundStyle(isSelected ? .white : .secondary)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 7)
+                                .background(isSelected ? VineyardTheme.leafGreen : Color(.tertiarySystemFill), in: .capsule)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            if reportVintage == currentVintage {
+                Text("Estimated Yield · Vintage \(String(reportVintage))")
+                    .font(.subheadline.weight(.semibold))
+                if vintageEstimateRows.isEmpty {
+                    Text("No completed Bunch Count Trip for this vintage yet. Complete a trip to see the estimated yield per block.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
+                } else {
+                    ForEach(vintageEstimateRows) { row in
+                        estimateRowCard(row)
+                    }
+                    Text("Total estimated: \(String(format: "%.1f", vintageEstimateRows.reduce(0) { $0 + $1.displayTonnes })) t · latest completed trip per block")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                // Picking already underway this vintage — shown alongside,
+                // never silently replacing the estimate.
+                let picked = vintageActualRows.filter(\.fromDetailed)
+                if !picked.isEmpty {
+                    Text("Picked so far")
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(picked) { row in
+                        actualRowCard(row)
+                    }
+                }
+            } else {
+                Text("Actual Yield · Vintage \(String(reportVintage))")
+                    .font(.subheadline.weight(.semibold))
+                if vintageActualRows.isEmpty && vintageEstimateRows.isEmpty {
+                    Text("No production recorded for Vintage \(String(reportVintage)).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
+                } else if vintageActualRows.isEmpty {
+                    Text("No actual yield recorded — showing the vintage's estimates.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(vintageEstimateRows) { row in
+                        estimateRowCard(row)
+                    }
+                } else {
+                    ForEach(vintageActualRows) { row in
+                        actualRowCard(row)
+                    }
+                    Text("Total actual: \(String(format: "%.1f", vintageActualRows.reduce(0) { $0 + $1.tonnes })) t · detailed picking totals supersede basic actuals")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func estimateRowCard(_ row: YieldVintageReport.EstimateRow) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.blockName)
+                    .font(.subheadline.weight(.semibold))
+                Text(row.varietyLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    if row.areaHectares > 0 {
+                        Text(fmt.formatArea(hectares: row.areaHectares))
+                    }
+                    if let perHa = row.tonnesPerHectare {
+                        Text(fmt.formatYieldPerArea(perHectare: perHa))
+                    }
+                    Text("\(row.samplesRecorded) samples")
+                    if row.applyDamage, row.damageFactor < 1.0 {
+                        Text("damage adj.")
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(String(format: "%.1f t", row.displayTonnes))
+                    .font(.subheadline.weight(.bold).monospacedDigit())
+                Text("Estimated")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(VineyardTheme.leafGreen)
+            }
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
+    }
+
+    private func actualRowCard(_ row: YieldVintageReport.ActualRow) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.varietyName.isEmpty ? row.blockName : "\(row.blockName) · \(row.varietyName)")
+                    .font(.subheadline.weight(.semibold))
+                HStack(spacing: 6) {
+                    if row.areaHectares > 0 {
+                        Text(fmt.formatArea(hectares: row.areaHectares))
+                    }
+                    if let perHa = row.tonnesPerHectare {
+                        Text(fmt.formatYieldPerArea(perHectare: perHa))
+                    }
+                    Text(row.fromDetailed ? "Picking log" : "Basic actual")
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                if let est = row.estimatedTonnes, let variance = row.varianceTonnes {
+                    Text(String(format: "est. %.1f t · %@%.1f t vs est.", est, variance >= 0 ? "+" : "", variance))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(String(format: "%.1f t", row.tonnes))
+                    .font(.subheadline.weight(.bold).monospacedDigit())
+                Text("Actual")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.blue)
+            }
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
+    }
+
     private var blockSummaries: [BlockSummary] {
         var summaries: [BlockSummary] = []
 
         for paddock in paddocks {
-            guard let session = store.yieldSessions.first(where: {
-                $0.selectedPaddockIds.contains(paddock.id)
-            }) else { continue }
+            // Current Yield Estimate rule: the LATEST COMPLETED Bunch Count
+            // Trip for this block drives the estimate; an in-progress draft
+            // previews only while no completed trip exists.
+            let session = YieldVintageReport.latestCompletedSessionForBlock(
+                sessions: store.yieldSessions,
+                paddockId: paddock.id,
+                vintage: currentVintage,
+                seasonStartMonth: store.settings.seasonStartMonth,
+                seasonStartDay: store.settings.seasonStartDay
+            ) ?? BunchCountTripLogic.activeDraft(
+                sessions: store.yieldSessions,
+                vineyardId: store.selectedVineyardId
+            ).flatMap { draft in
+                draft.selectedPaddockIds.contains(paddock.id) ? draft : nil
+            }
+            guard let session else { continue }
 
             let sites = session.sampleSites.filter { $0.paddockId == paddock.id }
             let recorded = sites.filter { $0.isRecorded }
@@ -51,7 +266,9 @@ struct YieldReportsListView: View {
             let avgBunchesRounded = (avgBunches * 100).rounded() / 100
             let totalVines = paddock.effectiveVineCount
             let totalBunches = Double(totalVines) * avgBunchesRounded
-            let damageFactor = store.damageFactor(for: paddock.id)
+            // Damage adjustment respects the trip's applyDamage flag; the
+            // base bunch-count observation is never mutated.
+            let damageFactor = session.applyDamage ? store.damageFactor(for: paddock.id) : 1.0
             let yieldKg = totalBunches * session.bunchWeightKg(for: paddock.id) * damageFactor
             let yieldTonnes = yieldKg / 1000.0
 
@@ -123,6 +340,8 @@ struct YieldReportsListView: View {
         ScrollView {
             VStack(spacing: 20) {
                 yieldOverviewSection
+
+                vintageReportSection
 
                 sessionListSection
 

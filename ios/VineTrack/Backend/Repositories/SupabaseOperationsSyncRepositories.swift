@@ -357,6 +357,14 @@ final class SupabasePickingRecordSyncRepository: PickingRecordSyncRepositoryProt
         return try await q.order("updated_at", ascending: true).execute().value
     }
 
+    func fetchFinancials(vineyardId: UUID) async throws -> [PickingFinancialRow] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        return try await provider.client
+            .rpc("get_picking_record_financials", params: OpsVineyardIdRequest(vineyardId: vineyardId))
+            .execute()
+            .value
+    }
+
     func upsertMany(_ items: [BackendPickingRecordUpsert]) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         guard !items.isEmpty else { return }
@@ -366,6 +374,61 @@ final class SupabasePickingRecordSyncRepository: PickingRecordSyncRepositoryProt
     func softDelete(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         try await provider.client.rpc("soft_delete_picking_record", params: OpsSoftDeleteByIdRequest(id: id)).execute()
+    }
+}
+
+nonisolated struct OpsVineyardIdRequest: Encodable, Sendable {
+    let vineyardId: UUID
+    nonisolated enum CodingKeys: String, CodingKey {
+        case vineyardId = "p_vineyard_id"
+    }
+}
+
+// MARK: - Bunch Count Trip sampling default (vineyards.yield_samples_per_hectare, sql/187)
+
+/// Shared sample-density default for Bunch Count Trips. Members read; every
+/// trip-capable role may write — a changed density becomes the default for
+/// the NEXT trip on every device.
+final class SupabaseYieldSamplingSettingsRepository: Sendable {
+    private let provider: SupabaseClientProvider
+    init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
+
+    private nonisolated struct Row: Decodable, Sendable {
+        let samplesPerHectare: Int
+        nonisolated enum CodingKeys: String, CodingKey {
+            case samplesPerHectare = "samples_per_hectare"
+        }
+    }
+
+    private nonisolated struct SetRequest: Encodable, Sendable {
+        let vineyardId: UUID
+        let samplesPerHectare: Int
+        nonisolated enum CodingKeys: String, CodingKey {
+            case vineyardId = "p_vineyard_id"
+            case samplesPerHectare = "p_samples_per_hectare"
+        }
+    }
+
+    func fetchDefault(vineyardId: UUID) async throws -> Int {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let rows: [Row] = try await provider.client
+            .rpc("get_vineyard_yield_sampling_settings", params: OpsVineyardIdRequest(vineyardId: vineyardId))
+            .execute()
+            .value
+        return rows.first?.samplesPerHectare ?? 20
+    }
+
+    @discardableResult
+    func saveDefault(vineyardId: UUID, samplesPerHectare: Int) async throws -> Int {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let rows: [Row] = try await provider.client
+            .rpc(
+                "set_vineyard_yield_sampling_settings",
+                params: SetRequest(vineyardId: vineyardId, samplesPerHectare: min(max(samplesPerHectare, 1), 100))
+            )
+            .execute()
+            .value
+        return rows.first?.samplesPerHectare ?? samplesPerHectare
     }
 }
 

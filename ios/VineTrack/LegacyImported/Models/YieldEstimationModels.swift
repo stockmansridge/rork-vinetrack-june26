@@ -68,6 +68,17 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
     var pathWaypoints: [CoordinatePoint]
     var isCompleted: Bool
     var completedAt: Date?
+    /// Whether the CURRENT effective damage adjustment is applied to this
+    /// trip's displayed Yield Estimate. Additive (post-sql/187 clients);
+    /// defaults to true so historical sessions keep their damage-adjusted
+    /// numbers unchanged. The base (unadjusted) estimate is always
+    /// recoverable — damage never mutates the recorded bunch counts.
+    var applyDamage: Bool
+    /// Id of the earlier session whose route/sample sites were reused for
+    /// this Bunch Count Trip (site ids carry over so repeated counts through
+    /// the season revisit comparable locations). Additive; nil for freshly
+    /// generated routes and all pre-187 sessions.
+    var routeSourceSessionId: UUID?
 
     var averageBunchWeightKg: Double {
         guard !blockBunchWeightsKg.isEmpty else { return 0.15 }
@@ -89,7 +100,9 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         previousBunchWeights: [BunchWeightRecord] = [],
         pathWaypoints: [CoordinatePoint] = [],
         isCompleted: Bool = false,
-        completedAt: Date? = nil
+        completedAt: Date? = nil,
+        applyDamage: Bool = true,
+        routeSourceSessionId: UUID? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -102,12 +115,15 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         self.pathWaypoints = pathWaypoints
         self.isCompleted = isCompleted
         self.completedAt = completedAt
+        self.applyDamage = applyDamage
+        self.routeSourceSessionId = routeSourceSessionId
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
         case id, vineyardId, createdAt, selectedPaddockIds, samplesPerHectare
         case sampleSites, blockBunchWeightsKg, averageBunchWeightKg
         case previousBunchWeights, pathWaypoints, isCompleted, completedAt
+        case applyDamage, routeSourceSessionId
     }
 
     init(from decoder: Decoder) throws {
@@ -122,6 +138,8 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         pathWaypoints = try container.decodeIfPresent([CoordinatePoint].self, forKey: .pathWaypoints) ?? []
         isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
         completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+        applyDamage = try container.decodeIfPresent(Bool.self, forKey: .applyDamage) ?? true
+        routeSourceSessionId = try container.decodeIfPresent(UUID.self, forKey: .routeSourceSessionId)
 
         if let perBlock = try? container.decode([UUID: Double].self, forKey: .blockBunchWeightsKg) {
             blockBunchWeightsKg = perBlock
@@ -149,6 +167,8 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         try container.encode(pathWaypoints, forKey: .pathWaypoints)
         try container.encode(isCompleted, forKey: .isCompleted)
         try container.encodeIfPresent(completedAt, forKey: .completedAt)
+        try container.encode(applyDamage, forKey: .applyDamage)
+        try container.encodeIfPresent(routeSourceSessionId, forKey: .routeSourceSessionId)
     }
 }
 

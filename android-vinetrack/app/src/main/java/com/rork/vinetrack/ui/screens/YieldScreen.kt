@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -88,8 +89,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.BunchCountTripLogic
 import com.rork.vinetrack.data.SugarMeasurementUnit
 import com.rork.vinetrack.data.VintageResolver
+import com.rork.vinetrack.data.YieldVintageReport
+import com.rork.vinetrack.data.model.TeamRole
 import com.rork.vinetrack.data.YieldDeterminationPrefsStore
 import com.rork.vinetrack.data.model.PruningYieldDefaults
 import com.rork.vinetrack.data.model.PruningYieldFormula
@@ -349,7 +353,13 @@ private fun YieldHubView(
             // Summary header.
             VineyardCard {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    YieldStat("Sessions", estimateRecords.size.toString(), Icons.Filled.Assessment, VineColors.Purple, Modifier.weight(1f))
+                    YieldStat(
+                        "Trips",
+                        BunchCountTripLogic.completedTrips(state.yieldSessions, state.selectedVineyardId).size.toString(),
+                        Icons.Filled.Assessment,
+                        VineColors.Purple,
+                        Modifier.weight(1f),
+                    )
                     YieldStat("Blocks Est.", blocksEstimated.toString(), Icons.Filled.SquareFoot, VineColors.Indigo, Modifier.weight(1f))
                     YieldStat("Damage", state.damageRecords.size.toString(), Icons.Filled.Warning, VineColors.Destructive, Modifier.weight(1f))
                 }
@@ -374,9 +384,10 @@ private fun YieldHubView(
             YieldHubOptionRow(
                 icon = Icons.Filled.Agriculture,
                 gradient = listOf(VineColors.Orange, VineColors.Destructive),
-                title = "Yield Estimation",
-                subtitle = "Sample sites & bunch counts",
-                detail = estimateRecords.size.takeIf { it > 0 }?.let { "$it estimate${if (it == 1) "" else "s"} recorded" },
+                title = "Bunch Count Trip",
+                subtitle = "Count bunches in the field to update the Yield Estimate",
+                detail = BunchCountTripLogic.completedTrips(state.yieldSessions, state.selectedVineyardId)
+                    .size.takeIf { it > 0 }?.let { "$it completed trip${if (it == 1) "" else "s"}" },
                 onClick = onEstimate,
             )
             YieldHubOptionRow(
@@ -446,6 +457,11 @@ private fun PickingLogView(
 ) {
     val vine = LocalVineColors.current
     val fmt = state.regionFormatter
+    // Commercial sale data (sold to, price, grape value) is owner/manager-only
+    // — sql/187 enforces this server-side; lower roles receive masked NULLs
+    // and the UI never renders money for them. `sold` itself stays visible as
+    // operational status.
+    val canViewFinancials = TeamRole.from(state.currentRole).canViewCosting
     var pendingDelete by remember { mutableStateOf<PickingRecord?>(null) }
     val records = state.pickingRecords
     val vintages = records.map { it.vintage }.distinct().sortedDescending()
@@ -532,9 +548,11 @@ private fun PickingLogView(
                                                 "${String.format(Locale.getDefault(), "%.2f", picks.sumOf { it.weightKg } / 1000.0)} t",
                                                 color = VineColors.LeafGreen, fontSize = 15.sp, fontWeight = FontWeight.Bold,
                                             )
-                                            val value = picks.mapNotNull { it.displayGrapeValue }.takeIf { it.isNotEmpty() }?.sum()
-                                            value?.let {
-                                                Text(fmt.formatCurrency(it), color = vine.textSecondary, fontSize = 12.sp)
+                                            if (canViewFinancials) {
+                                                val value = picks.mapNotNull { it.displayGrapeValue }.takeIf { it.isNotEmpty() }?.sum()
+                                                value?.let {
+                                                    Text(fmt.formatCurrency(it), color = vine.textSecondary, fontSize = 12.sp)
+                                                }
                                             }
                                         }
                                     }
@@ -582,7 +600,11 @@ private fun PickingLogView(
                                             record.ph?.let { add("pH ${formatPlain(it)}") }
                                             record.taGPerL?.let { add("TA ${formatPlain(it)} g/L") }
                                             if (record.sold) {
-                                                add(record.displayGrapeValue?.let { "Sold · ${fmt.formatCurrency(it)}" } ?: "Sold")
+                                                if (canViewFinancials) {
+                                                    add(record.displayGrapeValue?.let { "Sold · ${fmt.formatCurrency(it)}" } ?: "Sold")
+                                                } else {
+                                                    add("Sold")
+                                                }
                                             }
                                             if (record.purpose.isNotBlank()) add(record.purpose)
                                         }
@@ -1044,6 +1066,37 @@ private fun YieldListView(
     }
     val grouped = remember(records) { records.groupBy { it.year }.toSortedMap(compareByDescending { it }) }
 
+    // ---- Vintage-driven production report (parity with the Portal) ----
+    // Current vintage → latest completed Bunch Count Trip per block (optionally
+    // damage-adjusted). Past vintages → Actual Yield with Detailed Picking Log
+    // superseding Basic actuals per Block + Variety.
+    val currentVintage = remember(state.seasonStartMonth, state.seasonStartDay) {
+        VintageResolver.vintageYear(LocalDate.now(), state.seasonStartMonth, state.seasonStartDay)
+    }
+    val vintages = remember(
+        currentVintage, state.yieldSessions, state.yieldRecords, state.pickingRecords,
+        state.seasonStartMonth, state.seasonStartDay,
+    ) {
+        YieldVintageReport.availableVintages(
+            currentVintage, state.yieldSessions, state.yieldRecords, state.pickingRecords,
+            state.seasonStartMonth, state.seasonStartDay,
+        )
+    }
+    var selectedVintage by rememberSaveable { mutableIntStateOf(currentVintage) }
+    val estimateRows = remember(
+        selectedVintage, state.yieldSessions, state.paddocks, state.damageRecords,
+        state.seasonStartMonth, state.seasonStartDay,
+    ) {
+        YieldVintageReport.estimateRows(
+            state.yieldSessions, state.paddocks, state.damageRecords,
+            selectedVintage, state.seasonStartMonth, state.seasonStartDay,
+        )
+    }
+    val actualRows = remember(selectedVintage, state.paddocks, state.yieldRecords, state.pickingRecords) {
+        YieldVintageReport.actualRows(selectedVintage, state.paddocks, state.yieldRecords, state.pickingRecords)
+    }
+    val isCurrentVintage = selectedVintage == currentVintage
+
     val totalActual = records.sumOf { it.totalActualYieldTonnes ?: 0.0 }
     val totalEstimated = records.sumOf { it.totalYieldTonnes }
     val totalArea = records.sumOf { it.totalAreaHectares }
@@ -1081,7 +1134,7 @@ private fun YieldListView(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (records.isEmpty()) {
+            if (records.isEmpty() && state.pickingRecords.isEmpty() && state.yieldSessions.none { it.isCompleted }) {
                 Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
                     if (!state.isOnline) {
                         EmptyState(
@@ -1110,6 +1163,106 @@ private fun YieldListView(
                         item { Text(err, color = VineColors.Destructive, fontSize = 13.sp) }
                     }
 
+                    // ---- Vintage selector ----
+                    item(key = "vintage-picker") {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SectionHeader("Vintage", onLight = true)
+                            Row(
+                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                vintages.forEach { vintage ->
+                                    val isSelected = vintage == selectedVintage
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(if (isSelected) VineColors.LeafGreen else vine.cardBackground)
+                                            .clickable { selectedVintage = vintage }
+                                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                                    ) {
+                                        Text(
+                                            if (vintage == currentVintage) "$vintage · Current" else "$vintage",
+                                            color = if (isSelected) Color.White else vine.textSecondary,
+                                            fontSize = 13.sp,
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ---- Vintage production section ----
+                    if (isCurrentVintage) {
+                        item(key = "vintage-est-hdr") {
+                            SectionHeader("Estimated Yield · Vintage $selectedVintage", onLight = true)
+                        }
+                        if (estimateRows.isEmpty()) {
+                            item(key = "vintage-est-empty") {
+                                VineyardCard {
+                                    Text(
+                                        "No completed Bunch Count Trip for this vintage yet. Complete a trip in Bunch Count Trip to see the estimated yield per block.",
+                                        color = vine.textSecondary, fontSize = 13.sp,
+                                    )
+                                }
+                            }
+                        } else {
+                            items(estimateRows.size, key = { "est-${estimateRows[it].paddockId}" }) { idx ->
+                                VintageEstimateCard(estimateRows[idx], state.regionFormatter)
+                            }
+                            item(key = "vintage-est-total") {
+                                Text(
+                                    "Total estimated: ${formatTonnes(estimateRows.sumOf { it.displayTonnes })} t · latest completed trip per block" +
+                                        if (estimateRows.any { it.applyDamage && it.damageFactor < 1.0 }) " · damage adjusted" else "",
+                                    color = vine.textSecondary, fontSize = 11.sp,
+                                )
+                            }
+                        }
+                        // Picking already underway this vintage — shown alongside,
+                        // never silently replacing the estimate.
+                        if (actualRows.any { it.fromDetailed }) {
+                            item(key = "vintage-picked-hdr") { SectionHeader("Picked so far", onLight = true) }
+                            val picked = actualRows.filter { it.fromDetailed }
+                            items(picked.size, key = { "picked-${picked[it].paddockId}-${picked[it].varietyName}" }) { idx ->
+                                VintageActualCard(picked[idx], state.regionFormatter)
+                            }
+                        }
+                    } else {
+                        item(key = "vintage-act-hdr") {
+                            SectionHeader("Actual Yield · Vintage $selectedVintage", onLight = true)
+                        }
+                        if (actualRows.isEmpty() && estimateRows.isEmpty()) {
+                            item(key = "vintage-act-empty") {
+                                VineyardCard {
+                                    Text(
+                                        "No production recorded for Vintage $selectedVintage.",
+                                        color = vine.textSecondary, fontSize = 13.sp,
+                                    )
+                                }
+                            }
+                        } else if (actualRows.isEmpty()) {
+                            item(key = "vintage-act-est-only") {
+                                Text(
+                                    "No actual yield recorded — showing the vintage's estimates.",
+                                    color = vine.textSecondary, fontSize = 12.sp,
+                                )
+                            }
+                            items(estimateRows.size, key = { "pest-${estimateRows[it].paddockId}" }) { idx ->
+                                VintageEstimateCard(estimateRows[idx], state.regionFormatter)
+                            }
+                        } else {
+                            items(actualRows.size, key = { "act-${actualRows[it].paddockId}-${actualRows[it].varietyName}" }) { idx ->
+                                VintageActualCard(actualRows[idx], state.regionFormatter)
+                            }
+                            item(key = "vintage-act-total") {
+                                Text(
+                                    "Total actual: ${formatTonnes(actualRows.sumOf { it.tonnes })} t · detailed picking totals supersede basic actuals",
+                                    color = vine.textSecondary, fontSize = 11.sp,
+                                )
+                            }
+                        }
+                    }
+
                     item {
                         VineyardCard {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1122,7 +1275,7 @@ private fun YieldListView(
 
                     grouped.forEach { (year, yearRecords) ->
                         item(key = "hdr-$year") {
-                            SectionHeader("$year · ${yearRecords.size} record${if (yearRecords.size == 1) "" else "s"}", onLight = true)
+                            SectionHeader("Vintage $year · ${yearRecords.size} record${if (yearRecords.size == 1) "" else "s"}", onLight = true)
                         }
                         items(yearRecords.size, key = { yearRecords[it].id }) { idx ->
                             YieldRecordCard(record = yearRecords[idx], fmt = state.regionFormatter, onClick = { onOpen(yearRecords[idx]) })
@@ -1350,6 +1503,10 @@ private fun RecordYieldSheet(
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val paddocks = state.paddocks
+    // Commercial sale fields are owner/manager-only (sql/187). Hidden inputs
+    // keep their prefilled values, so a lower role's edit never flips a
+    // record's sold state.
+    val canViewFinancials = TeamRole.from(state.currentRole).canViewCosting
 
     var year by remember { mutableIntStateOf(Calendar.getInstance().get(Calendar.YEAR)) }
     var season by remember { mutableStateOf("") }
@@ -1852,33 +2009,41 @@ private fun RecordYieldSheet(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            // Sold — Sold To and Price per tonne only apply to sold picks.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = sold, onCheckedChange = { sold = it })
-                Text("Sold", color = vine.textPrimary, fontSize = 15.sp)
-            }
-            if (sold) {
-                OutlinedTextField(
-                    value = soldTo,
-                    onValueChange = { soldTo = it },
-                    label = { Text("Sold to") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = priceText,
-                    onValueChange = { priceText = it.filter { c -> c.isDigit() || c == '.' } },
-                    label = { Text("Price per tonne") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                if (weight != null && weight > 0 && price != null) {
-                    Text(
-                        "Grape value: ${state.regionFormatter.formatCurrency((weight / 1000.0) * price)} (tonnes × price per tonne)",
-                        color = vine.textSecondary, fontSize = 12.sp,
-                    )
+            // Sold — commercial fields (Sold To / Price / value) are
+            // owner/manager-only (sql/187). Lower roles keep the sold FLAG
+            // untouched on edit (state initialises from the record and the
+            // hidden inputs are never rendered), and the server routes/strips
+            // financial columns regardless of what any client sends.
+            if (canViewFinancials) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = sold, onCheckedChange = { sold = it })
+                    Text("Sold", color = vine.textPrimary, fontSize = 15.sp)
                 }
+                if (sold) {
+                    OutlinedTextField(
+                        value = soldTo,
+                        onValueChange = { soldTo = it },
+                        label = { Text("Sold to") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = priceText,
+                        onValueChange = { priceText = it.filter { c -> c.isDigit() || c == '.' } },
+                        label = { Text("Price per tonne") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (weight != null && weight > 0 && price != null) {
+                        Text(
+                            "Grape value: ${state.regionFormatter.formatCurrency((weight / 1000.0) * price)} (tonnes × price per tonne)",
+                            color = vine.textSecondary, fontSize = 12.sp,
+                        )
+                    }
+                }
+            } else if (editing?.sold == true) {
+                Text("Sold — sale details are managed by owners and managers.", color = vine.textSecondary, fontSize = 12.sp)
             }
 
             OutlinedTextField(
@@ -2411,6 +2576,65 @@ fun computeVarietyYieldSummaries(
             compareBy<VarietyYieldSummary> { it.key == UNKNOWN_VARIETY_KEY }
                 .thenByDescending { it.actualTonnes ?: it.estimatedTonnes },
         )
+}
+
+/** Current-vintage estimate row — latest completed Bunch Count Trip per block. */
+@Composable
+private fun VintageEstimateCard(row: YieldVintageReport.EstimateRow, fmt: RegionFormatter) {
+    val vine = LocalVineColors.current
+    VineyardCard {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(row.blockName, color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(row.varietyLabel, color = vine.textSecondary, fontSize = 12.sp, maxLines = 1)
+                val parts = buildList {
+                    if (row.areaHectares > 0) add("${formatHaY(row.areaHectares)} ha")
+                    row.tonnesPerHectare?.let { add(fmt.formatYieldPerArea(it)) }
+                    add("${row.samplesRecorded} samples")
+                    if (row.applyDamage && row.damageFactor < 1.0) add("damage adj.")
+                }
+                Text(parts.joinToString(" · "), color = vine.textSecondary, fontSize = 11.sp, maxLines = 1)
+            }
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Text("${formatTonnes(row.displayTonnes)} t", color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text("Estimated", color = VineColors.LeafGreen, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+/** Past-vintage actual row — detailed picking totals supersede basic actuals. */
+@Composable
+private fun VintageActualCard(row: YieldVintageReport.ActualRow, fmt: RegionFormatter) {
+    val vine = LocalVineColors.current
+    VineyardCard {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    if (row.varietyName.isBlank()) row.blockName else "${row.blockName} · ${row.varietyName}",
+                    color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
+                )
+                val parts = buildList {
+                    if (row.areaHectares > 0) add("${formatHaY(row.areaHectares)} ha")
+                    row.tonnesPerHectare?.let { add(fmt.formatYieldPerArea(it)) }
+                    add(if (row.fromDetailed) "Picking log" else "Basic actual")
+                }
+                Text(parts.joinToString(" · "), color = vine.textSecondary, fontSize = 11.sp, maxLines = 1)
+                row.estimatedTonnes?.let { est ->
+                    val variance = row.varianceTonnes ?: 0.0
+                    val sign = if (variance >= 0) "+" else ""
+                    Text(
+                        "est. ${formatTonnes(est)} t · $sign${formatTonnes(variance)} t vs est.",
+                        color = vine.textSecondary, fontSize = 11.sp,
+                    )
+                }
+            }
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Text("${formatTonnes(row.tonnes)} t", color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text("Actual", color = VineColors.Info, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
 }
 
 @Composable

@@ -49,8 +49,8 @@ struct YieldHubView: View {
                         hubOption(
                             icon: "chart.bar.doc.horizontal",
                             iconGradient: [.orange, .red],
-                            title: "Yield Estimation",
-                            subtitle: "Sample sites & bunch counts",
+                            title: "Bunch Count Trip",
+                            subtitle: "Count bunches in the field to update the Yield Estimate",
                             detail: yieldEstimationDetail
                         )
                     }

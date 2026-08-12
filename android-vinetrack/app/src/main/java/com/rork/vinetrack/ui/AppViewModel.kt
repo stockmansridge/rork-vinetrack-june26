@@ -99,6 +99,9 @@ import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.PickingRecordCreateSync
 import com.rork.vinetrack.data.PickingRecordDeleteSync
 import com.rork.vinetrack.data.PickingRecordRepository
+import com.rork.vinetrack.data.YieldSamplingSettingsRepository
+import com.rork.vinetrack.data.model.PickingFinancialRow
+import com.rork.vinetrack.data.model.mergePickingFinancials
 import com.rork.vinetrack.data.PickingRecordUpdateSync
 import com.rork.vinetrack.data.PruningYieldSettingsRepository
 import com.rork.vinetrack.data.PruningYieldSettingsStore
@@ -481,6 +484,12 @@ data class AppUiState(
     val yieldSessions: List<YieldEstimationSession> = emptyList(),
     val yieldSessionBusy: Boolean = false,
     val yieldSessionError: String? = null,
+    /**
+     * Shared Bunch Count Trip sampling default
+     * (`vineyards.yield_samples_per_hectare`, sql/187). A changed value is
+     * persisted vineyard-wide so the next trip on any device starts from it.
+     */
+    val yieldSamplesPerHectareDefault: Int = 20,
     val isLoadingVineyardData: Boolean = false,
     val paddockError: String? = null,
     /** Transient error surfaced by block create/edit/delete writes. */
@@ -795,6 +804,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val paddockRepo = PaddockRepository(session)
     private val yieldRepo = YieldRepository(session)
     private val pickingRepo = PickingRecordRepository(session)
+    private val yieldSamplingRepo = YieldSamplingSettingsRepository(session)
     private val pruningYieldSettingsRepo = PruningYieldSettingsRepository(session)
     private val cloneRootstockRepo = CloneRootstockRepository(session)
     private val damageRepo = DamageRecordRepository(session)
@@ -3617,7 +3627,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // pending overlay so a queued local edit is never visually
             // reverted by the pull (audit #2).
             runCatching {
-                val fresh = pickingRepo.listPickingRecords(vineyardId)
+                val fresh = fetchPickingRecordsWithFinancials(vineyardId)
                 domainCache.savePicking(session.userId, vineyardId, fresh)
                 val overlaid = PendingWriteOverlay.overlayPicking(
                     fresh, pendingWrites.list(), vineyardId, ::derivePickingVintage,
@@ -3667,6 +3677,46 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // store reconcile — dashboards re-read the store (audit #11).
             runCatching { refreshPruning(vineyardId) }
             runCatching { refreshPruningActivities(vineyardId) }
+            // Shared Bunch Count Trip sampling default (sql/187).
+            runCatching {
+                val samples = yieldSamplingRepo.getSamplingDefault(vineyardId)
+                if (_ui.value.selectedVineyardId == vineyardId) {
+                    _ui.update { it.copy(yieldSamplesPerHectareDefault = samples) }
+                }
+            }
+        }
+    }
+
+    /**
+     * Picking records with commercial fields merged from the owner/manager
+     * financial projection (sql/187). The RPC is ALWAYS attempted and any
+     * permission failure is swallowed — lower roles simply keep the masked
+     * NULL money fields, so no role-load ordering can leak or hide data
+     * incorrectly.
+     */
+    private suspend fun fetchPickingRecordsWithFinancials(vineyardId: String): List<PickingRecord> {
+        val records = pickingRepo.listPickingRecords(vineyardId)
+        val financials = try {
+            pickingRepo.listPickingFinancials(vineyardId)
+        } catch (e: Exception) {
+            emptyList<PickingFinancialRow>()
+        }
+        return mergePickingFinancials(records, financials)
+    }
+
+    /**
+     * Persist a changed Bunch Count Trip sample density as the vineyard-wide
+     * default (sql/187). Optimistic; a network failure keeps the optimistic
+     * value for this session and the next successful refresh reconciles.
+     */
+    fun saveYieldSamplingDefault(samplesPerHectare: Int) {
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        val clamped = samplesPerHectare.coerceIn(1, 100)
+        if (clamped == _ui.value.yieldSamplesPerHectareDefault) return
+        _ui.update { it.copy(yieldSamplesPerHectareDefault = clamped) }
+        if (!_ui.value.isOnline) return
+        viewModelScope.launch {
+            runCatching { yieldSamplingRepo.setSamplingDefault(vineyardId, clamped) }
         }
     }
 
@@ -12333,7 +12383,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // automatically through the PICKING_RECORD coordinators.
         var pickingFromServer = false
         val pickingRecords = try {
-            pickingRepo.listPickingRecords(vineyardId).also { pickingFromServer = true }
+            fetchPickingRecordsWithFinancials(vineyardId).also { pickingFromServer = true }
         } catch (e: Exception) {
             _ui.value.pickingRecords.ifEmpty {
                 domainCache.loadPicking(userId, vineyardId) ?: emptyList()

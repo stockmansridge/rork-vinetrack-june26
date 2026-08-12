@@ -15,6 +15,15 @@ class YieldEstimationViewModel {
     var sessionId: UUID?
     var isCompleted: Bool = false
     var completedAt: Date?
+    /// Original creation time of the loaded trip — preserved across saves so
+    /// a resumed trip keeps its date identity.
+    var sessionCreatedAt: Date?
+    /// Whether the current effective damage adjustment is applied to the
+    /// displayed Yield Estimate (payload `applyDamage`, sql/187 additive).
+    /// The base bunch-count estimate is always preserved.
+    var applyDamage: Bool = true
+    /// Earlier session whose route was reused for this trip, if any.
+    var routeSourceSessionId: UUID?
 
     func togglePaddock(_ paddockId: UUID) {
         if selectedPaddockIds.contains(paddockId) {
@@ -70,7 +79,21 @@ class YieldEstimationViewModel {
         isGenerated = true
         pathWaypoints = []
         isPathGenerated = false
-        sessionId = UUID()
+        if sessionId == nil { sessionId = UUID() }
+        if sessionCreatedAt == nil { sessionCreatedAt = Date() }
+        routeSourceSessionId = nil
+    }
+
+    /// Adopt an earlier trip's route (site identity preserved, counts already
+    /// stripped) so repeated counts revisit comparable sample locations.
+    func adoptRoute(_ route: BunchCountTripLogic.ReusableRoute) {
+        sampleSites = route.sites
+        isGenerated = true
+        pathWaypoints = []
+        isPathGenerated = false
+        if sessionId == nil { sessionId = UUID() }
+        if sessionCreatedAt == nil { sessionCreatedAt = Date() }
+        routeSourceSessionId = route.sourceSessionId
     }
 
     func recordBunchCount(siteId: UUID, bunchesPerVine: Double, recordedBy: String) {
@@ -352,12 +375,16 @@ class YieldEstimationViewModel {
         previousBunchWeights = session.previousBunchWeights
         isCompleted = session.isCompleted
         completedAt = session.completedAt
+        sessionCreatedAt = session.createdAt
+        applyDamage = session.applyDamage
+        routeSourceSessionId = session.routeSourceSessionId
     }
 
     func toSession(vineyardId: UUID, samplesPerHectare: Int) -> YieldEstimationSession {
         YieldEstimationSession(
             id: sessionId ?? UUID(),
             vineyardId: vineyardId,
+            createdAt: sessionCreatedAt ?? Date(),
             selectedPaddockIds: Array(selectedPaddockIds),
             samplesPerHectare: samplesPerHectare,
             sampleSites: sampleSites,
@@ -365,7 +392,9 @@ class YieldEstimationViewModel {
             previousBunchWeights: previousBunchWeights,
             pathWaypoints: pathWaypoints,
             isCompleted: isCompleted,
-            completedAt: completedAt
+            completedAt: completedAt,
+            applyDamage: applyDamage,
+            routeSourceSessionId: routeSourceSessionId
         )
     }
 
@@ -385,6 +414,17 @@ class YieldEstimationViewModel {
         selectedSite = nil
         isCompleted = false
         completedAt = nil
+        sessionCreatedAt = nil
+        applyDamage = true
+        routeSourceSessionId = nil
+    }
+
+    /// Begin a brand-new Bunch Count Trip — every trip is its own dated
+    /// observation; completed trips are never reused or overwritten.
+    func startNewTrip() {
+        resetForNewEstimation()
+        sessionId = UUID()
+        sessionCreatedAt = Date()
     }
 
     // MARK: - Sample Generation

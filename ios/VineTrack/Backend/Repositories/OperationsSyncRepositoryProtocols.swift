@@ -50,6 +50,9 @@ protocol HistoricalYieldRecordSyncRepositoryProtocol: Sendable {
 
 protocol PickingRecordSyncRepositoryProtocol: Sendable {
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendPickingRecord]
+    /// Owner/manager-only commercial projection (sql/187). Raises for lower
+    /// roles — callers swallow the failure and keep masked NULLs.
+    func fetchFinancials(vineyardId: UUID) async throws -> [PickingFinancialRow]
     func upsertMany(_ items: [BackendPickingRecordUpsert]) async throws
     func softDelete(id: UUID) async throws
 }
