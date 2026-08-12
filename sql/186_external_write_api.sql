@@ -98,12 +98,20 @@ end$$;
 
 alter table public.integration_audit_log add constraint integration_audit_log_action_check
   check (action in (
+    -- SQL 172 originals
     'integration.created', 'integration.updated',
     'integration.paused', 'integration.reactivated',
     'integration.revoked',
     'api_key.created', 'api_key.revoked', 'api_key.rotated',
     'vineyard_access.granted', 'vineyard_access.revoked',
     'scope.granted', 'scope.revoked',
+    -- Stage 5A webhook actions (SQL 178/179 — must be preserved: live rows exist)
+    'webhook_endpoint.created', 'webhook_endpoint.updated',
+    'webhook_endpoint.paused', 'webhook_endpoint.reactivated',
+    'webhook_endpoint.disabled', 'webhook_endpoint.deleted',
+    'webhook_secret.rotated',
+    'webhook_subscription.created', 'webhook_subscription.deleted',
+    'webhook.test_sent', 'webhook.replayed',
     -- Stage 8: successful external API mutations (metadata carries
     -- resource_type / resource_id / changed_fields — never bodies/secrets)
     'api.write.created', 'api.write.updated'));
