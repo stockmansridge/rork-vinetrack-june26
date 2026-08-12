@@ -496,6 +496,26 @@ final class CloneRootstockCatalogStore {
         return row
     }
 
+    /// Soft-archive a custom clone (`archive_vineyard_grape_clone`,
+    /// owner/manager only) and drop it from the local mirror. Historical
+    /// block allocations keep resolving by key.
+    @discardableResult
+    func archiveCustomClone(id: UUID, vineyardId: UUID) async throws -> VineyardGrapeCloneRow {
+        let row = try await repository.archiveVineyardClone(id: id)
+        customClones.removeAll { $0.id == id }
+        persistCustom(vineyardId: vineyardId)
+        return row
+    }
+
+    /// Rootstock counterpart of `archiveCustomClone` (`archive_vineyard_rootstock`).
+    @discardableResult
+    func archiveCustomRootstock(id: UUID, vineyardId: UUID) async throws -> VineyardRootstockRow {
+        let row = try await repository.archiveVineyardRootstock(id: id)
+        customRootstocks.removeAll { $0.id == id }
+        persistCustom(vineyardId: vineyardId)
+        return row
+    }
+
     // MARK: Persistence
 
     private func customFileURL(vineyardId: UUID) -> URL {

@@ -69,6 +69,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -375,6 +376,11 @@ private fun VarietiesCatalogView(
     val canManage = state.currentRole == "owner" || state.currentRole == "manager"
     var creating by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<com.rork.vinetrack.data.model.GrapeVarietyRow?>(null) }
+    // Sub-tabs of the varieties setup area: Varieties (default) | Clones |
+    // Rootstocks. Clones/rootstocks browse the shared sql/182 catalogues.
+    var catalogTab by rememberSaveable { mutableStateOf(VarietyCatalogTab.Varieties) }
+    var addingClone by remember { mutableStateOf(false) }
+    var addingRootstock by remember { mutableStateOf(false) }
     val varieties = remember(state.grapeVarieties) {
         state.grapeVarieties
             .filter { it.isActive }
@@ -410,8 +416,22 @@ private fun VarietiesCatalogView(
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 actions = {
                     if (canManage) {
-                        IconButton(onClick = { creating = true }) {
-                            Icon(Icons.Filled.Add, contentDescription = "Add variety", tint = VineColors.LeafGreen)
+                        IconButton(onClick = {
+                            when (catalogTab) {
+                                VarietyCatalogTab.Varieties -> creating = true
+                                VarietyCatalogTab.Clones -> addingClone = true
+                                VarietyCatalogTab.Rootstocks -> addingRootstock = true
+                            }
+                        }) {
+                            Icon(
+                                Icons.Filled.Add,
+                                contentDescription = when (catalogTab) {
+                                    VarietyCatalogTab.Varieties -> "Add variety"
+                                    VarietyCatalogTab.Clones -> "Add custom clone"
+                                    VarietyCatalogTab.Rootstocks -> "Add custom rootstock"
+                                },
+                                tint = VineColors.LeafGreen,
+                            )
                         }
                     }
                 },
@@ -421,6 +441,30 @@ private fun VarietiesCatalogView(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             GrowthTabRow(tab = tab, onTabChange = onTabChange)
+            VarietyCatalogTabRow(tab = catalogTab, onTabChange = { catalogTab = it })
+            when (catalogTab) {
+                VarietyCatalogTab.Clones -> {
+                    ClonesCatalogContent(
+                        vm = vm,
+                        state = state,
+                        canManage = canManage,
+                        adding = addingClone,
+                        onDismissAdd = { addingClone = false },
+                    )
+                    return@Column
+                }
+                VarietyCatalogTab.Rootstocks -> {
+                    RootstocksCatalogContent(
+                        vm = vm,
+                        state = state,
+                        canManage = canManage,
+                        adding = addingRootstock,
+                        onDismissAdd = { addingRootstock = false },
+                    )
+                    return@Column
+                }
+                VarietyCatalogTab.Varieties -> Unit
+            }
             if (varieties.isEmpty()) {
                 Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
                     EmptyState(
@@ -646,6 +690,29 @@ private fun EditGrapeVarietySheet(
             text = { Text(infoMessage ?: "") },
             confirmButton = { TextButton(onClick = { infoMessage = null }) { Text("OK") } },
         )
+    }
+}
+
+/** Sub-tabs of the varieties setup area (mirrors the iOS segmented control). */
+private enum class VarietyCatalogTab(val label: String) {
+    Varieties("Varieties"),
+    Clones("Clones"),
+    Rootstocks("Rootstocks"),
+}
+
+@Composable
+private fun VarietyCatalogTabRow(tab: VarietyCatalogTab, onTabChange: (VarietyCatalogTab) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        VarietyCatalogTab.entries.forEach { entry ->
+            FilterChip(
+                selected = tab == entry,
+                onClick = { onTabChange(entry) },
+                label = { Text(entry.label) },
+            )
+        }
     }
 }
 

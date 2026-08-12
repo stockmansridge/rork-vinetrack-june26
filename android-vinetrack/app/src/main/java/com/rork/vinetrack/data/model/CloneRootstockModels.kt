@@ -178,3 +178,108 @@ object CloneRootstockOptions {
         return !inSystem && !inCustom
     }
 }
+
+/**
+ * Pure helpers for the Grape Varieties settings CATALOGUE BROWSER
+ * (Varieties | Clones | Rootstocks). Unlike [CloneRootstockOptions] — which
+ * powers the per-allocation pickers and therefore always scopes clones to one
+ * variety — the browser can list across ALL varieties (`varietyKey == null`).
+ *
+ * Also owns allocation-usage matching: an allocation "uses" a catalogue record
+ * when its stable key matches, or (legacy rows only, key absent) when its
+ * free-text snapshot canonically equals one of the record's names/aliases.
+ * Reserved sentinels (`mass_selection`, `own_roots`) are allocation-level
+ * conventions, never catalogue rows, so they can never match a record.
+ *
+ * Mirrored exactly by iOS `CloneRootstockBrowse`; behaviour is pinned by
+ * `CloneRootstockBrowseTest.kt` / `CloneRootstockBrowseTests.swift`.
+ */
+object CloneRootstockBrowse {
+
+    /** Built-in clones, optionally scoped to one variety (`null` = all). */
+    fun systemClones(
+        catalog: List<CloneCatalogEntry>,
+        varietyKey: String?,
+        query: String = "",
+    ): List<CloneCatalogEntry> {
+        val q = query.trim()
+        return catalog.filter { entry ->
+            entry.isActive &&
+                (varietyKey == null || entry.varietyKey == varietyKey) &&
+                (
+                    q.isEmpty() ||
+                        entry.displayName.contains(q, ignoreCase = true) ||
+                        entry.cloneCode.contains(q, ignoreCase = true) ||
+                        entry.aliases.any { it.contains(q, ignoreCase = true) }
+                    )
+        }
+    }
+
+    /** Vineyard custom clones, optionally scoped to one variety (`null` = all). */
+    fun customClones(
+        custom: List<VineyardCloneRow>,
+        varietyKey: String?,
+        query: String = "",
+    ): List<VineyardCloneRow> {
+        val q = query.trim()
+        return custom.filter { row ->
+            row.isActive &&
+                (varietyKey == null || row.varietyKey == varietyKey) &&
+                (q.isEmpty() || row.displayName.contains(q, ignoreCase = true))
+        }
+    }
+
+    /** Built-in rootstocks (rootstocks are independent of scion variety). */
+    fun systemRootstocks(
+        catalog: List<RootstockCatalogEntry>,
+        query: String = "",
+    ): List<RootstockCatalogEntry> = CloneRootstockOptions.systemRootstocks(catalog, query)
+
+    /** Vineyard custom rootstocks. */
+    fun customRootstocks(
+        custom: List<VineyardRootstockRow>,
+        query: String = "",
+    ): List<VineyardRootstockRow> = CloneRootstockOptions.customRootstocks(custom, query)
+
+    /** Names a built-in clone can be matched against (legacy free text). */
+    fun cloneMatchNames(entry: CloneCatalogEntry): List<String> =
+        listOf(entry.displayName, entry.cloneCode) + entry.aliases
+
+    /** Names a built-in rootstock can be matched against (legacy free text). */
+    fun rootstockMatchNames(entry: RootstockCatalogEntry): List<String> =
+        listOf(entry.displayName, entry.canonicalName) + entry.aliases
+
+    /**
+     * True when a block allocation uses the clone identified by [entryKey].
+     * Stable-key match wins; legacy free-text (no key) matches canonically
+     * against [matchNames]. An allocation carrying a DIFFERENT key (including
+     * the `mass_selection` sentinel) never matches, even if its display text
+     * happens to collide.
+     */
+    fun allocationUsesClone(
+        allocationCloneKey: String?,
+        allocationCloneText: String?,
+        entryKey: String,
+        matchNames: List<String>,
+    ): Boolean {
+        if (allocationCloneKey == entryKey) return true
+        if (allocationCloneKey != null) return false
+        val canonical = allocationCloneText?.let { canonicalVarietyName(it) } ?: return false
+        if (canonical.isEmpty()) return false
+        return matchNames.any { canonicalVarietyName(it) == canonical }
+    }
+
+    /** Rootstock counterpart of [allocationUsesClone]. */
+    fun allocationUsesRootstock(
+        allocationRootstockKey: String?,
+        allocationRootstockText: String?,
+        entryKey: String,
+        matchNames: List<String>,
+    ): Boolean {
+        if (allocationRootstockKey == entryKey) return true
+        if (allocationRootstockKey != null) return false
+        val canonical = allocationRootstockText?.let { canonicalVarietyName(it) } ?: return false
+        if (canonical.isEmpty()) return false
+        return matchNames.any { canonicalVarietyName(it) == canonical }
+    }
+}

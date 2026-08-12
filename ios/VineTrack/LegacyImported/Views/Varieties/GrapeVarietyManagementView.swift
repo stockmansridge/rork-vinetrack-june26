@@ -1,9 +1,22 @@
 import SwiftUI
 
+/// Sub-tabs of the Grape Varieties settings area. Varieties stays the
+/// default view; Clones and Rootstocks browse the shared sql/182 catalogues.
+private enum GrapeCatalogTab: String, CaseIterable, Identifiable {
+    case varieties = "Varieties"
+    case clones = "Clones"
+    case rootstocks = "Rootstocks"
+
+    var id: String { rawValue }
+}
+
 struct GrapeVarietyManagementView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.accessControl) private var accessControl
+    @State private var tab: GrapeCatalogTab = .varieties
     @State private var showAddSheet: Bool = false
+    @State private var showAddCloneSheet: Bool = false
+    @State private var showAddRootstockSheet: Bool = false
     @State private var editingVariety: GrapeVariety?
     @State private var pendingDelete: GrapeVariety?
     @State private var pendingArchive: GrapeVariety?
@@ -14,8 +27,17 @@ struct GrapeVarietyManagementView: View {
 
     private var canManageSetup: Bool { accessControl?.canManageSetup ?? false }
 
+    /// Varieties for the CURRENT vineyard only. The in-memory store keeps
+    /// rows for every vineyard the device has seeded (built-ins are seeded
+    /// per vineyard with per-vineyard deterministic ids), so listing the
+    /// array unfiltered repeated each built-in once per vineyard — the
+    /// duplicate Aglianico/Albariño/Arneis rows. Scoping to the selected
+    /// vineyard shows each variety exactly once.
     private var sortedVarieties: [GrapeVariety] {
-        store.grapeVarieties.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let vid = store.selectedVineyardId
+        return store.grapeVarieties
+            .filter { vid == nil || $0.vineyardId == vid }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     /// Custom = vineyard-scoped row with a `custom:` key. Only these may be
@@ -30,6 +52,45 @@ struct GrapeVarietyManagementView: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            Picker("Section", selection: $tab) {
+                ForEach(GrapeCatalogTab.allCases) { option in
+                    Text(option.rawValue).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+
+            switch tab {
+            case .varieties:
+                varietiesList
+            case .clones:
+                CloneCatalogueListView(canManage: canManageSetup, showAddSheet: $showAddCloneSheet)
+            case .rootstocks:
+                RootstockCatalogueListView(canManage: canManageSetup, showAddSheet: $showAddRootstockSheet)
+            }
+        }
+        .navigationTitle("Grape Varieties")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if canManageSetup {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        switch tab {
+                        case .varieties: showAddSheet = true
+                        case .clones: showAddCloneSheet = true
+                        case .rootstocks: showAddRootstockSheet = true
+                        }
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                }
+            }
+        }
+    }
+
+    private var varietiesList: some View {
         List {
             Section {
                 ForEach(sortedVarieties) { variety in
@@ -58,19 +119,6 @@ struct GrapeVarietyManagementView: View {
                     Text("Optimal GDD (base 10°C) is the heat units typically needed for a variety to reach harvest ripeness. Built-in varieties cannot be deleted. Custom varieties can be permanently deleted only when not used by any vineyard records.")
                 } else {
                     Text("Setup data is managed by vineyard owners and managers.")
-                }
-            }
-        }
-        .navigationTitle("Grape Varieties")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if canManageSetup {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showAddSheet = true
-                    } label: {
-                        Image(systemName: "plus")
-                    }
                 }
             }
         }

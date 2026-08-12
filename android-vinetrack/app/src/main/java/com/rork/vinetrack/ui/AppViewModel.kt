@@ -2927,6 +2927,51 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Soft-archives a vineyard CUSTOM clone (sql/182 `archive_vineyard_grape_clone`,
+     * owner/manager only). Historical block allocations keep resolving by key;
+     * the record just hides from pickers and the catalogue browser. The row is
+     * removed from state and the offline snapshot on success.
+     */
+    fun archiveCustomClone(id: String, onResult: (Boolean) -> Unit) {
+        val vineyardId = _ui.value.selectedVineyardId ?: return onResult(false)
+        viewModelScope.launch {
+            try {
+                cloneRootstockRepo.archiveVineyardClone(id)
+                _ui.update { st -> st.copy(vineyardClones = st.vineyardClones.filterNot { it.id == id }) }
+                domainCache.saveVineyardClones(
+                    session.userId,
+                    vineyardId,
+                    _ui.value.vineyardClones.filter { it.vineyardId == vineyardId },
+                )
+                onResult(true)
+            } catch (e: Exception) {
+                Log.w("CloneRootstock", "archiveCustomClone failed: ${e.message}")
+                onResult(false)
+            }
+        }
+    }
+
+    /** Rootstock counterpart of [archiveCustomClone] (`archive_vineyard_rootstock`). */
+    fun archiveCustomRootstock(id: String, onResult: (Boolean) -> Unit) {
+        val vineyardId = _ui.value.selectedVineyardId ?: return onResult(false)
+        viewModelScope.launch {
+            try {
+                cloneRootstockRepo.archiveVineyardRootstock(id)
+                _ui.update { st -> st.copy(vineyardRootstocks = st.vineyardRootstocks.filterNot { it.id == id }) }
+                domainCache.saveVineyardRootstocks(
+                    session.userId,
+                    vineyardId,
+                    _ui.value.vineyardRootstocks.filter { it.vineyardId == vineyardId },
+                )
+                onResult(true)
+            } catch (e: Exception) {
+                Log.w("CloneRootstock", "archiveCustomRootstock failed: ${e.message}")
+                onResult(false)
+            }
+        }
+    }
+
+    /**
      * Replay any queued growth-stage record creates (Android Stage N-1).
      * GROWTH_RECORD / CREATE only — never growth update/delete, growth photos, or
      * any other entity. Each synced row is reconciled into state by id (replace
