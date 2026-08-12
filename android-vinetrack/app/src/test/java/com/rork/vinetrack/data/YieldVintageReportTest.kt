@@ -355,4 +355,66 @@ class BunchCountTripLogicTest {
         assertNull(BunchCountTripLogic.reusableRoute(listOf(draft), listOf(blockA), excludeSessionId = "current"))
         assertNull(BunchCountTripLogic.reusableRoute(emptyList(), listOf(blockA)))
     }
+
+    // ------------------------------------------------------------------
+    // Route preview (pre-start confirmation) — the simplified screen shows
+    // the map plus Start Sampling only, with a single Regenerate Path for
+    // newly generated routes. Mirrors the iOS route-preview tests exactly.
+    // ------------------------------------------------------------------
+
+    @Test
+    fun existingRoutePreviewShowsOnlyMapAndStartSampling() {
+        val c = BunchCountTripLogic.routePreviewControls(
+            isRouteReused = true, recordedSiteCount = 0, isCompleted = false,
+        )
+        assertTrue(c.showsStartSampling)
+        assertFalse(c.startSamplingIsContinue)
+        assertTrue(c.showsReuseIndicator) // subtle "Using previous sampling route"
+        assertFalse(c.showsRegeneratePath) // no regeneration actions for reused routes
+        assertFalse(c.showsProgress) // 0/X progress is noise before starting
+        assertFalse(c.showsCompleteAction)
+        assertFalse(c.showsBunchWeights) // bunch weight belongs to completion
+        assertFalse(c.showsSampleSiteList) // sites are represented on the map
+        assertFalse(c.deleteIsPrimaryAction) // delete lives in the overflow menu
+    }
+
+    @Test
+    fun newRoutePreviewShowsSingleRegeneratePathAndStartSampling() {
+        val c = BunchCountTripLogic.routePreviewControls(
+            isRouteReused = false, recordedSiteCount = 0, isCompleted = false,
+        )
+        assertTrue(c.showsStartSampling)
+        assertTrue(c.showsRegeneratePath) // the ONE regeneration action
+        assertFalse(c.showsReuseIndicator)
+        assertFalse(c.showsProgress)
+        assertFalse(c.showsCompleteAction)
+        assertFalse(c.showsBunchWeights)
+        assertFalse(c.showsSampleSiteList)
+        assertFalse(c.deleteIsPrimaryAction)
+    }
+
+    @Test
+    fun activeSamplingShowsProgressAndCompletionButNoRegeneration() {
+        val c = BunchCountTripLogic.routePreviewControls(
+            isRouteReused = false, recordedSiteCount = 3, isCompleted = false,
+        )
+        assertTrue(c.showsStartSampling)
+        assertTrue(c.startSamplingIsContinue) // "Continue Sampling"
+        assertFalse(c.showsRegeneratePath) // route locked once counts exist
+        assertTrue(c.showsProgress)
+        assertTrue(c.showsCompleteAction)
+        assertFalse(c.deleteIsPrimaryAction)
+    }
+
+    @Test
+    fun completedTripPreviewHidesAllActions() {
+        val c = BunchCountTripLogic.routePreviewControls(
+            isRouteReused = true, recordedSiteCount = 5, isCompleted = true,
+        )
+        assertFalse(c.showsStartSampling)
+        assertFalse(c.showsRegeneratePath)
+        assertTrue(c.showsProgress) // final tally is meaningful history
+        assertFalse(c.showsCompleteAction)
+        assertFalse(c.deleteIsPrimaryAction)
+    }
 }

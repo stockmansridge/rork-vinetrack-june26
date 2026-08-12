@@ -398,4 +398,61 @@ final class YieldVintageReportTests: XCTestCase {
         XCTAssertTrue(legacy.applyDamage)
         XCTAssertNil(legacy.routeSourceSessionId)
     }
+
+    // MARK: - Route preview (pre-start confirmation) controls
+    // The simplified screen shows the map plus Start Sampling only, with a
+    // single Regenerate Path for newly generated routes. Mirrors the Android
+    // route-preview tests exactly.
+
+    func testExistingRoutePreviewShowsOnlyMapAndStartSampling() {
+        let c = BunchCountTripLogic.routePreviewControls(
+            isRouteReused: true, recordedSiteCount: 0, isCompleted: false
+        )
+        XCTAssertTrue(c.showsStartSampling)
+        XCTAssertFalse(c.startSamplingIsContinue)
+        XCTAssertTrue(c.showsReuseIndicator) // subtle "Using previous sampling route"
+        XCTAssertFalse(c.showsRegeneratePath) // no regeneration actions for reused routes
+        XCTAssertFalse(c.showsProgress) // 0/X progress is noise before starting
+        XCTAssertFalse(c.showsCompleteAction)
+        XCTAssertFalse(c.showsBunchWeights) // bunch weight belongs to completion
+        XCTAssertFalse(c.showsSampleSiteList) // sites are represented on the map
+        XCTAssertFalse(c.deleteIsPrimaryAction) // delete lives in the overflow menu
+    }
+
+    func testNewRoutePreviewShowsSingleRegeneratePathAndStartSampling() {
+        let c = BunchCountTripLogic.routePreviewControls(
+            isRouteReused: false, recordedSiteCount: 0, isCompleted: false
+        )
+        XCTAssertTrue(c.showsStartSampling)
+        XCTAssertTrue(c.showsRegeneratePath) // the ONE regeneration action
+        XCTAssertFalse(c.showsReuseIndicator)
+        XCTAssertFalse(c.showsProgress)
+        XCTAssertFalse(c.showsCompleteAction)
+        XCTAssertFalse(c.showsBunchWeights)
+        XCTAssertFalse(c.showsSampleSiteList)
+        XCTAssertFalse(c.deleteIsPrimaryAction)
+    }
+
+    func testActiveSamplingShowsProgressAndCompletionButNoRegeneration() {
+        let c = BunchCountTripLogic.routePreviewControls(
+            isRouteReused: false, recordedSiteCount: 3, isCompleted: false
+        )
+        XCTAssertTrue(c.showsStartSampling)
+        XCTAssertTrue(c.startSamplingIsContinue) // "Continue Sampling"
+        XCTAssertFalse(c.showsRegeneratePath) // route locked once counts exist
+        XCTAssertTrue(c.showsProgress)
+        XCTAssertTrue(c.showsCompleteAction)
+        XCTAssertFalse(c.deleteIsPrimaryAction)
+    }
+
+    func testCompletedTripPreviewHidesAllActions() {
+        let c = BunchCountTripLogic.routePreviewControls(
+            isRouteReused: true, recordedSiteCount: 5, isCompleted: true
+        )
+        XCTAssertFalse(c.showsStartSampling)
+        XCTAssertFalse(c.showsRegeneratePath)
+        XCTAssertTrue(c.showsProgress) // final tally is meaningful history
+        XCTAssertFalse(c.showsCompleteAction)
+        XCTAssertFalse(c.deleteIsPrimaryAction)
+    }
 }

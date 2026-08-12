@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Remove
@@ -38,6 +40,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -407,8 +411,17 @@ private fun TripSetupScreen(
 
     var selectedSite by remember { mutableStateOf<SampleSite?>(null) }
     var showDiscardConfirm by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
 
     val selectedBlocks = blocks.filter { session.isPaddockSelected(it.id) }
+    // Shared, tested visibility contract for the simplified route preview
+    // (mirrors iOS — map dominant, Start Sampling primary, single Regenerate
+    // Path for newly generated routes only).
+    val controls = BunchCountTripLogic.routePreviewControls(
+        isRouteReused = session.routeSourceSessionId != null,
+        recordedSiteCount = session.recordedSiteCount,
+        isCompleted = session.isCompleted,
+    )
     // Existing routes for the current block selection (excluding this trip).
     val reusable = remember(state.yieldSessions, session.selectedPaddockIds, session.id) {
         BunchCountTripLogic.reusableRoute(state.yieldSessions, session.selectedPaddockIds, session.id)
@@ -458,10 +471,49 @@ private fun TripSetupScreen(
             TopAppBar(
                 title = { Text("Bunch Count Trip") },
                 navigationIcon = { BackNavIcon(onBack) },
+                actions = {
+                    // Secondary trip actions — deliberately kept out of the
+                    // route preview so Start Sampling stays the single
+                    // primary action.
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Trip options", tint = vine.textPrimary)
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        if (session.totalSiteCount > 0 && !session.isCompleted) {
+                            DropdownMenuItem(
+                                text = { Text("Change Route") },
+                                onClick = {
+                                    menuOpen = false
+                                    onApply(session.copy(sampleSites = emptyList(), pathWaypoints = emptyList(), routeSourceSessionId = null))
+                                },
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Discard Trip", color = VineColors.Destructive) },
+                            onClick = {
+                                menuOpen = false
+                                showDiscardConfirm = true
+                            },
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
     ) { padding ->
+        if (session.totalSiteCount > 0) {
+            // Route confirmation — the map is the dominant content.
+            TripRoutePreview(
+                padding = padding,
+                blocks = selectedBlocks,
+                session = session,
+                controls = controls,
+                onSiteTap = { selectedSite = it },
+                onRegenerate = { generateNewRoute() },
+                onStartSampling = onStartSampling,
+                onCompleteTrip = onCompleteTrip,
+            )
+        } else {
         Column(
             modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp).padding(bottom = 32.dp),
@@ -587,62 +639,8 @@ private fun TripSetupScreen(
                         }
                     }
                 }
-            } else {
-                // Route preview + start.
-                SamplePreviewMap(
-                    blocks = selectedBlocks,
-                    session = session,
-                    onSiteTap = { selectedSite = it },
-                )
-                if (session.routeSourceSessionId != null) {
-                    Text(
-                        "Route reused from an earlier trip — sample locations match for comparable counts.",
-                        color = vine.textSecondary, fontSize = 12.sp,
-                    )
-                }
-                Button(
-                    onClick = onStartSampling,
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.Info),
-                ) {
-                    Icon(Icons.Filled.Explore, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (session.recordedSiteCount > 0) "Continue Sampling" else "Start Estimation", fontSize = 16.sp)
-                }
-                if (session.recordedSiteCount > 0) {
-                    LinearProgressIndicator(
-                        progress = { session.recordedSiteCount.toFloat() / session.totalSiteCount },
-                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                        color = VineColors.LeafGreen,
-                        trackColor = vine.cardBackground,
-                    )
-                    Text(
-                        "Sample ${session.recordedSiteCount} of ${session.totalSiteCount} recorded",
-                        color = vine.textSecondary, fontSize = 12.sp,
-                    )
-                    Button(
-                        onClick = onCompleteTrip,
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.DarkGreen),
-                    ) {
-                        Icon(Icons.Filled.DoneAll, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Complete Estimation")
-                    }
-                }
-                OutlinedButton(
-                    onClick = { onApply(session.copy(sampleSites = emptyList(), pathWaypoints = emptyList(), routeSourceSessionId = null)) },
-                    modifier = Modifier.fillMaxWidth().height(44.dp),
-                ) {
-                    Text("Change Route")
-                }
             }
-
-            TextButton(onClick = { showDiscardConfirm = true }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Discard Trip", color = VineColors.Destructive)
-            }
+        }
         }
     }
 
@@ -670,6 +668,96 @@ private fun TripSetupScreen(
             },
             dismissButton = { TextButton(onClick = { showDiscardConfirm = false }) { Text("Cancel") } },
         )
+    }
+}
+
+/**
+ * Simplified pre-start route confirmation — the map dominates the screen;
+ * the only actions are Start Sampling (plus a single Regenerate Path for
+ * newly generated routes). Bunch weights stay at the completion stage;
+ * progress and Complete Estimation appear only once sampling has started;
+ * delete/change-route live in the top-bar overflow menu. Mirrors iOS.
+ */
+@Composable
+private fun TripRoutePreview(
+    padding: PaddingValues,
+    blocks: List<Paddock>,
+    session: YieldEstimationSession,
+    controls: BunchCountTripLogic.RoutePreviewControls,
+    onSiteTap: (SampleSite) -> Unit,
+    onRegenerate: () -> Unit,
+    onStartSampling: () -> Unit,
+    onCompleteTrip: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Column(
+        modifier = Modifier.fillMaxSize().padding(padding)
+            .padding(horizontal = 16.dp).padding(bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        SamplePreviewMap(
+            blocks = blocks,
+            session = session,
+            onSiteTap = onSiteTap,
+            modifier = Modifier.weight(1f),
+        )
+        if (controls.showsReuseIndicator) {
+            Text(
+                "Using previous sampling route",
+                color = vine.textSecondary,
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (controls.showsRegeneratePath) {
+            OutlinedButton(
+                onClick = onRegenerate,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) {
+                Icon(Icons.Filled.AutoGraph, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Regenerate Path")
+            }
+        }
+        if (controls.showsStartSampling) {
+            Button(
+                onClick = onStartSampling,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Info),
+            ) {
+                Icon(Icons.Filled.Explore, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (controls.startSamplingIsContinue) "Continue Sampling" else "Start Sampling",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        if (controls.showsProgress) {
+            LinearProgressIndicator(
+                progress = { session.recordedSiteCount.toFloat() / session.totalSiteCount },
+                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                color = VineColors.LeafGreen,
+                trackColor = vine.cardBackground,
+            )
+            Text(
+                "Sample ${session.recordedSiteCount} of ${session.totalSiteCount} recorded",
+                color = vine.textSecondary, fontSize = 12.sp,
+            )
+        }
+        if (controls.showsCompleteAction) {
+            Button(
+                onClick = onCompleteTrip,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.DarkGreen),
+            ) {
+                Icon(Icons.Filled.DoneAll, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Complete Estimation")
+            }
+        }
     }
 }
 
@@ -1014,6 +1102,7 @@ private fun SamplePreviewMap(
     blocks: List<Paddock>,
     session: YieldEstimationSession,
     onSiteTap: (SampleSite) -> Unit,
+    modifier: Modifier = Modifier.height(300.dp),
 ) {
     val camera = rememberCameraPositionState()
     val allPoints = remember(blocks, session.sampleSites) {
@@ -1026,7 +1115,7 @@ private fun SamplePreviewMap(
         if (!mapLoaded) return@LaunchedEffect
         camera.fitToContent(points = allPoints, paddingPx = 120)
     }
-    Box(modifier = Modifier.fillMaxWidth().height(300.dp).clip(RoundedCornerShape(14.dp))) {
+    Box(modifier = modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))) {
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
             cameraPositionState = camera,

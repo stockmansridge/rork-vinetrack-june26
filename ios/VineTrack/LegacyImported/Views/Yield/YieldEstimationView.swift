@@ -9,7 +9,6 @@ struct YieldEstimationView: View {
     @State private var mapPosition: MapCameraPosition = .automatic
     @State private var showBunchCountSheet: Bool = false
     @State private var showBunchWeightEditor: Bool = false
-    @State private var showReport: Bool = false
     @State private var bunchWeightText: String = "150"
     @State private var editingBunchWeightPaddockId: UUID?
     @State private var showFullScreenMap: Bool = false
@@ -18,7 +17,6 @@ struct YieldEstimationView: View {
     @State private var showSamplesPerHaEditor: Bool = false
     @State private var samplesPerHaText: String = ""
     @State private var showSampling: Bool = false
-    @State private var showSampleList: Bool = false
     @State private var showDeleteEstimationConfirm: Bool = false
     /// Whether a trip (draft or completed history view) is open. False shows
     /// the Bunch Count Trip home (start / resume / history).
@@ -211,58 +209,22 @@ struct YieldEstimationView: View {
     // MARK: - Trip content
 
     private var tripContent: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                mapSection
-                blockSelectionSection
-                summarySection
-                generateButton
-
-                if viewModel.isGenerated {
-                    if viewModel.isCompleted {
-                        completedBanner
-                    }
-
-                    if (accessControl?.canDelete ?? false) && hasExistingSession {
-                        deleteEstimationButton
-                    }
-
-                    if !viewModel.isCompleted {
-                        startSamplingButton
-                    }
-
-                    bunchWeightButton
-
-                    if !viewModel.isCompleted && viewModel.recordedSiteCount > 0 {
-                        completeJobButton
-                    }
-
-                    progressSection
-
-                    if !viewModel.isCompleted {
-                        pathButton
-                    }
-
-                    if viewModel.isPathGenerated {
-                        pathMapSection
-                    }
-
-                    DisclosureGroup(isExpanded: $showSampleList) {
-                        sampleListSection
-                            .padding(.top, 8)
-                    } label: {
-                        Label("All Sample Sites (\(viewModel.sampleSites.count))", systemImage: "list.number")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                    .padding(12)
-                    .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
-                }
+        Group {
+            if viewModel.isGenerated {
+                routePreviewContent
+            } else {
+                setupContent
             }
-            .padding(.horizontal)
-            .padding(.bottom, 32)
         }
         .navigationTitle("Bunch Count Trip")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if showsTripMenu {
+                ToolbarItem(placement: .topBarTrailing) {
+                    tripOptionsMenu
+                }
+            }
+        }
         .sheet(isPresented: $showBunchCountSheet) {
             if let site = viewModel.selectedSite {
                 BunchCountEntrySheet(site: site) { count, name in
@@ -296,13 +258,10 @@ struct YieldEstimationView: View {
             samplesPerHaSheet
                 .presentationDetents([.medium])
         }
-        .navigationDestination(isPresented: $showReport) {
-            YieldReportView(viewModel: viewModel)
-        }
         .navigationDestination(isPresented: $showSampling) {
             YieldSamplingNavigationView(viewModel: viewModel)
         }
-        .alert("Delete Estimation?", isPresented: $showDeleteEstimationConfirm) {
+        .alert("Delete Trip?", isPresented: $showDeleteEstimationConfirm) {
             Button("Delete", role: .destructive) {
                 deleteCurrentEstimation()
             }
@@ -315,9 +274,91 @@ struct YieldEstimationView: View {
         }
     }
 
+    // MARK: - Setup (blocks + route choice)
+
+    private var setupContent: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                mapSection(height: 320)
+                blockSelectionSection
+                summarySection
+                generateButton
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 32)
+        }
+    }
+
+    // MARK: - Route preview (pre-start confirmation)
+
+    /// Simplified route confirmation — the map dominates the screen; the only
+    /// actions are Start Sampling (plus a single Regenerate Path for newly
+    /// generated routes). Bunch weights, progress and completion appear only
+    /// once sampling has started; delete/change-route live in the overflow
+    /// menu. Visibility rules come from the shared, tested
+    /// `BunchCountTripLogic.routePreviewControls` contract (Android parity).
+    private var routePreviewContent: some View {
+        let controls = BunchCountTripLogic.routePreviewControls(
+            isRouteReused: viewModel.routeSourceSessionId != nil,
+            recordedSiteCount: viewModel.recordedSiteCount,
+            isCompleted: viewModel.isCompleted
+        )
+        return ScrollView {
+            VStack(spacing: 12) {
+                if viewModel.isCompleted {
+                    completedBanner
+                }
+
+                mapSection(height: 440)
+                    .overlay(alignment: .topTrailing) {
+                        Button {
+                            showFullScreenMap = true
+                        } label: {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 32, height: 32)
+                                .background(.black.opacity(0.45), in: .rect(cornerRadius: 8))
+                        }
+                        .padding(10)
+                    }
+
+                if controls.showsReuseIndicator {
+                    Label("Using previous sampling route", systemImage: "arrow.triangle.branch")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                }
+
+                if controls.showsRegeneratePath {
+                    regeneratePathButton
+                }
+
+                if controls.showsStartSampling {
+                    startSamplingButton(isContinue: controls.startSamplingIsContinue)
+                }
+
+                if controls.showsProgress {
+                    progressSection
+                }
+
+                if controls.showsCompleteAction {
+                    completeJobButton
+                }
+
+                if viewModel.isCompleted {
+                    completedSummary
+                    startNewTripButton
+                }
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 32)
+        }
+    }
+
     // MARK: - Map
 
-    private var mapSection: some View {
+    private func mapSection(height: CGFloat) -> some View {
         Group {
             if network.isOnline {
                 hybridMapSection
@@ -325,7 +366,7 @@ struct YieldEstimationView: View {
                 offlineMapSection
             }
         }
-        .frame(height: 320)
+        .frame(height: height)
         .clipShape(.rect(cornerRadius: 14))
     }
 
@@ -454,258 +495,6 @@ struct YieldEstimationView: View {
             }
         }
         .mapStyle(.hybrid)
-    }
-
-    // MARK: - Path Map
-
-    private var pathMapSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Label("Sample Path", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    showFullScreenMap = true
-                } label: {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(VineyardTheme.leafGreen, in: .rect(cornerRadius: 6))
-                }
-                HStack(spacing: 12) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "flag.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.green)
-                        Text("Start")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack(spacing: 4) {
-                        Image(systemName: "flag.checkered")
-                            .font(.caption2)
-                            .foregroundStyle(.red)
-                        Text("End")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            Group {
-                if network.isOnline {
-                    hybridPathMap
-                } else {
-                    offlinePathMap
-                }
-            }
-
-            HStack(spacing: 16) {
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(.orange)
-                        .frame(width: 8, height: 8)
-                    Text("\(viewModel.pathWaypoints.count) waypoints")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                HStack(spacing: 4) {
-                    Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                    Text(String(format: "%.0f m total", pathTotalDistanceMetres))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    private var offlinePathMap: some View {
-        OfflineVineyardMapView(
-            paddocks: paddocks
-                .filter { viewModel.selectedPaddockIds.contains($0.id) }
-                .map { paddock in
-                    let color = colorFor(paddock)
-                    return OfflineVineyardMapView.Paddock(
-                        id: paddock.id,
-                        polygon: paddock.polygonPoints.map(\.coordinate),
-                        rows: paddock.rows.map { [$0.startPoint.coordinate, $0.endPoint.coordinate] },
-                        strokeColor: color.opacity(0.5),
-                        fillColor: color.opacity(0.15),
-                        name: paddock.name
-                    )
-                },
-            trails: viewModel.pathWaypoints.count >= 2
-                ? [OfflineVineyardMapView.Trail(
-                    id: 0,
-                    coordinates: viewModel.pathWaypoints.map(\.coordinate),
-                    color: .orange,
-                    lineWidth: 3
-                  )]
-                : [],
-            pins: viewModel.sampleSites.map { site in
-                let paddock = paddocks.first { $0.id == site.paddockId }
-                let color = paddock.map { colorFor($0) } ?? .red
-                return OfflineVineyardMapView.Pin(
-                    id: site.id,
-                    coordinate: site.coordinate,
-                    color: site.isRecorded ? .green : color,
-                    isCompleted: site.isRecorded,
-                    name: "\(site.siteIndex)"
-                )
-            }
-        )
-    }
-
-    private var hybridPathMap: some View {
-        Map(initialPosition: pathMapPosition) {
-            ForEach(paddocks.filter { viewModel.selectedPaddockIds.contains($0.id) }) { paddock in
-                let color = colorFor(paddock)
-
-                MapPolygon(coordinates: paddock.polygonPoints.map(\.coordinate))
-                    .foregroundStyle(color.opacity(0.15))
-                    .stroke(color.opacity(0.5), lineWidth: 1.5)
-
-                ForEach(paddock.rows) { row in
-                    MapPolyline(coordinates: [row.startPoint.coordinate, row.endPoint.coordinate])
-                        .stroke(color.opacity(0.15), lineWidth: 0.5)
-                }
-            }
-
-            MapPolyline(coordinates: viewModel.pathWaypoints.map(\.coordinate))
-                .stroke(
-                    .linearGradient(
-                        colors: [.orange, .red],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ),
-                    lineWidth: 3
-                )
-
-            ForEach(viewModel.sampleSites) { site in
-                let paddock = paddocks.first { $0.id == site.paddockId }
-                let color = paddock.map { colorFor($0) } ?? .red
-                let isRecorded = site.isRecorded
-
-                Annotation("", coordinate: site.coordinate) {
-                    ZStack {
-                        Circle()
-                            .fill(isRecorded ? .green : color)
-                            .frame(width: 20, height: 20)
-                        Circle()
-                            .fill(.white)
-                            .frame(width: 13, height: 13)
-                        Text("\(site.siteIndex)")
-                            .font(.system(size: 6, weight: .heavy))
-                            .foregroundStyle(isRecorded ? .green : color)
-                    }
-                    .allowsHitTesting(false)
-                }
-            }
-
-            if viewModel.pathWaypoints.count >= 2 {
-                Annotation("Start", coordinate: viewModel.pathWaypoints[0].coordinate) {
-                    Image(systemName: "flag.fill")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.green)
-                        .padding(3)
-                        .background(.white, in: Circle())
-                        .shadow(color: .black.opacity(0.2), radius: 2)
-                }
-                Annotation("End", coordinate: viewModel.pathWaypoints[viewModel.pathWaypoints.count - 1].coordinate) {
-                    Image(systemName: "flag.checkered")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.red)
-                        .padding(3)
-                        .background(.white, in: Circle())
-                        .shadow(color: .black.opacity(0.2), radius: 2)
-                }
-            }
-
-            ForEach(pathArrowAnnotations, id: \.id) { arrow in
-                Annotation("", coordinate: arrow.coordinate) {
-                    Image(systemName: "arrowtriangle.forward.fill")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.orange)
-                        .rotationEffect(.degrees(arrow.bearing))
-                        .allowsHitTesting(false)
-                }
-            }
-        }
-        .mapStyle(.hybrid)
-    }
-
-    private var pathMapPosition: MapCameraPosition {
-        let selectedPaddockPoints = paddocks
-            .filter { viewModel.selectedPaddockIds.contains($0.id) }
-            .flatMap(\.polygonPoints)
-
-        let allLats = selectedPaddockPoints.map(\.latitude) + viewModel.sampleSites.map(\.latitude)
-        let allLons = selectedPaddockPoints.map(\.longitude) + viewModel.sampleSites.map(\.longitude)
-
-        guard let minLat = allLats.min(), let maxLat = allLats.max(),
-              let minLon = allLons.min(), let maxLon = allLons.max() else {
-            return .automatic
-        }
-
-        let center = CLLocationCoordinate2D(
-            latitude: (minLat + maxLat) / 2,
-            longitude: (minLon + maxLon) / 2
-        )
-        let span = MKCoordinateSpan(
-            latitudeDelta: (maxLat - minLat) * 1.4 + 0.001,
-            longitudeDelta: (maxLon - minLon) * 1.4 + 0.001
-        )
-        return .region(MKCoordinateRegion(center: center, span: span))
-    }
-
-    private struct ArrowAnnotation: Identifiable {
-        let id: Int
-        let coordinate: CLLocationCoordinate2D
-        let bearing: Double
-    }
-
-    private var pathArrowAnnotations: [ArrowAnnotation] {
-        let waypoints = viewModel.pathWaypoints
-        guard waypoints.count >= 2 else { return [] }
-
-        var arrows: [ArrowAnnotation] = []
-        let step = max(1, waypoints.count / 15)
-
-        for i in stride(from: step, to: waypoints.count, by: step) {
-            let prev = waypoints[i - 1]
-            let curr = waypoints[i]
-            let dLat = curr.latitude - prev.latitude
-            let dLon = curr.longitude - prev.longitude
-            guard abs(dLat) > 1e-10 || abs(dLon) > 1e-10 else { continue }
-
-            let bearing = atan2(dLon, dLat) * 180 / .pi
-            let midLat = (prev.latitude + curr.latitude) / 2
-            let midLon = (prev.longitude + curr.longitude) / 2
-
-            arrows.append(ArrowAnnotation(
-                id: i,
-                coordinate: CLLocationCoordinate2D(latitude: midLat, longitude: midLon),
-                bearing: bearing
-            ))
-        }
-
-        return arrows
-    }
-
-    private var pathTotalDistanceMetres: Double {
-        let waypoints = viewModel.pathWaypoints
-        guard waypoints.count >= 2 else { return 0 }
-
-        var total: Double = 0
-        for i in 1..<waypoints.count {
-            let loc1 = CLLocation(latitude: waypoints[i - 1].latitude, longitude: waypoints[i - 1].longitude)
-            let loc2 = CLLocation(latitude: waypoints[i].latitude, longitude: waypoints[i].longitude)
-            total += loc1.distance(from: loc2)
-        }
-        return total
     }
 
     // MARK: - Block Selection
@@ -853,24 +642,45 @@ struct YieldEstimationView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Delete Estimation
+    // MARK: - Trip options (overflow menu)
 
     private var hasExistingSession: Bool {
         guard let sid = viewModel.sessionId else { return false }
         return store.yieldSessions.contains(where: { $0.id == sid })
     }
 
-    private var deleteEstimationButton: some View {
-        Button(role: .destructive) {
-            showDeleteEstimationConfirm = true
+    private var canDeleteTrip: Bool {
+        (accessControl?.canDelete ?? false) && hasExistingSession
+    }
+
+    private var showsTripMenu: Bool {
+        (viewModel.isGenerated && !viewModel.isCompleted) || canDeleteTrip
+    }
+
+    /// Secondary trip actions — deliberately kept out of the route preview so
+    /// Start Sampling stays the single primary action.
+    private var tripOptionsMenu: some View {
+        Menu {
+            if viewModel.isGenerated && !viewModel.isCompleted {
+                Button {
+                    withAnimation(.smooth(duration: 0.3)) {
+                        viewModel.clearRoute()
+                    }
+                    saveSession()
+                } label: {
+                    Label("Change Route", systemImage: "arrow.triangle.2.circlepath")
+                }
+            }
+            if canDeleteTrip {
+                Button(role: .destructive) {
+                    showDeleteEstimationConfirm = true
+                } label: {
+                    Label("Delete Trip", systemImage: "trash")
+                }
+            }
         } label: {
-            Label("Delete Trip", systemImage: "trash")
-                .font(.subheadline.weight(.semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
+            Image(systemName: "ellipsis.circle")
         }
-        .buttonStyle(.bordered)
-        .tint(.red)
     }
 
     /// Deletes ONLY the open trip — other trips (drafts or history) are never
@@ -887,7 +697,7 @@ struct YieldEstimationView: View {
         }
     }
 
-    // MARK: - Generate Button
+    // MARK: - Generate Button (setup phase)
 
     /// Existing routes covering the current block selection, from earlier
     /// trips (site identity preserved). nil once a route is generated or when
@@ -903,7 +713,7 @@ struct YieldEstimationView: View {
 
     private var generateButton: some View {
         VStack(spacing: 8) {
-            if let route = reusableRouteCandidate, !viewModel.isCompleted {
+            if let route = reusableRouteCandidate {
                 Text("A previous trip already has a route for \(viewModel.selectedPaddockIds.count == 1 ? "this block" : "these blocks"). Reusing it revisits the same sample locations for comparable counts.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -935,10 +745,8 @@ struct YieldEstimationView: View {
                 saveSession()
             } label: {
                 Label(
-                    viewModel.isGenerated
-                        ? "Regenerate Sample Sites"
-                        : (reusableRouteCandidate != nil ? "Generate New Route" : "Generate Sample Sites"),
-                    systemImage: viewModel.isGenerated ? "arrow.clockwise" : "mappin.and.ellipse"
+                    reusableRouteCandidate != nil ? "Generate New Route" : "Generate Route",
+                    systemImage: "mappin.and.ellipse"
                 )
                 .font(.headline)
                 .frame(maxWidth: .infinity)
@@ -946,31 +754,10 @@ struct YieldEstimationView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(VineyardTheme.leafGreen)
-            .disabled(viewModel.selectedPaddockIds.isEmpty || viewModel.isCompleted)
+            .disabled(viewModel.selectedPaddockIds.isEmpty)
 
-            if viewModel.isGenerated, viewModel.routeSourceSessionId != nil {
-                Text("Route reused from an earlier trip — sample locations match for comparable counts.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            if viewModel.isCompleted {
-                Button {
-                    // Completed trips are preserved history — a new trip is a
-                    // NEW dated observation, never an overwrite.
-                    withAnimation(.smooth(duration: 0.3)) {
-                        viewModel.startNewTrip()
-                    }
-                } label: {
-                    Label("Start New Bunch Count Trip", systemImage: "plus.circle.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                }
-                .buttonStyle(.bordered)
-                .tint(VineyardTheme.leafGreen)
-            } else if viewModel.selectedPaddockIds.isEmpty {
-                Text("Select one or more blocks above to generate sample sites.")
+            if viewModel.selectedPaddockIds.isEmpty {
+                Text("Select one or more blocks above to generate the sampling route.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -979,60 +766,69 @@ struct YieldEstimationView: View {
         }
     }
 
-    // MARK: - Start Sampling Button
+    // MARK: - Route preview actions
 
-    private var startSamplingButton: some View {
-        VStack(spacing: 8) {
-            Button {
-                showSampling = true
-            } label: {
-                Label(
-                    viewModel.recordedSiteCount > 0 ? "Continue Sampling" : "Start Sampling",
-                    systemImage: "location.north.line.fill"
-                )
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.blue)
-
-            Text("Guided field workflow with map and bunch-count entry.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity)
-        }
-    }
-
-    // MARK: - Path Button
-
-    private var pathButton: some View {
+    private func startSamplingButton(isContinue: Bool) -> some View {
         Button {
-            withAnimation(.smooth(duration: 0.3)) {
-                viewModel.generatePath(paddocks: paddocks)
-            }
-            fitMapToSites()
-            saveSession()
+            showSampling = true
         } label: {
             Label(
-                viewModel.isPathGenerated ? "Regenerate Path" : "Generate Path",
-                systemImage: viewModel.isPathGenerated ? "arrow.triangle.turn.up.right.circle" : "point.topleft.down.to.point.bottomright.curvepath"
+                isContinue ? "Continue Sampling" : "Start Sampling",
+                systemImage: "location.north.line.fill"
             )
             .font(.headline)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
         }
         .buttonStyle(.borderedProminent)
+        .tint(.blue)
+    }
+
+    /// The single regeneration action for newly generated routes — regenerates
+    /// the sample locations and walking path with the existing generation
+    /// logic. Never shown for reused routes (their value is site identity).
+    private var regeneratePathButton: some View {
+        Button {
+            withAnimation(.smooth(duration: 0.3)) {
+                viewModel.generateSampleSites(paddocks: paddocks, samplesPerHectare: samplesPerHa)
+                applyDefaultBunchWeights()
+                viewModel.generatePath(paddocks: paddocks)
+            }
+            fitMapToSites()
+            saveSession()
+        } label: {
+            Label("Regenerate Path", systemImage: "arrow.clockwise")
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+        }
+        .buttonStyle(.bordered)
         .tint(.orange)
     }
 
-    // MARK: - Bunch Weight
+    private var startNewTripButton: some View {
+        Button {
+            // Completed trips are preserved history — a new trip is a NEW
+            // dated observation, never an overwrite.
+            withAnimation(.smooth(duration: 0.3)) {
+                viewModel.startNewTrip()
+            }
+        } label: {
+            Label("Start New Bunch Count Trip", systemImage: "plus.circle.fill")
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+        }
+        .buttonStyle(.bordered)
+        .tint(VineyardTheme.leafGreen)
+    }
 
-    private var bunchWeightButton: some View {
+    // MARK: - Bunch Weight (completion stage only)
+
+    /// Editable per-block bunch weight rows — shown at the Complete
+    /// Estimation stage, never on the pre-start route preview.
+    private var bunchWeightRows: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Bunch Weight per Block", systemImage: "scalemass.fill")
-                .font(.headline)
-
             let selectedPaddocksList = paddocks.filter { viewModel.selectedPaddockIds.contains($0.id) }
 
             ForEach(selectedPaddocksList) { paddock in
@@ -1069,21 +865,6 @@ struct YieldEstimationView: View {
         }
     }
 
-    // MARK: - Report Button
-
-    private var reportButton: some View {
-        Button {
-            showReport = true
-        } label: {
-            Label("View Yield Report", systemImage: "chart.bar.doc.horizontal.fill")
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(.purple)
-    }
-
     // MARK: - Completed Banner
 
     private var completedBanner: some View {
@@ -1110,12 +891,55 @@ struct YieldEstimationView: View {
         .background(VineyardTheme.leafGreen.gradient, in: .rect(cornerRadius: 12))
     }
 
-    // MARK: - Complete Job Button
+    // MARK: - Completed summary (read-only history)
+
+    private var completedSummary: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            let baseEstimates = viewModel.calculateYieldEstimates(paddocks: paddocks)
+            ForEach(baseEstimates.filter { $0.samplesRecorded > 0 }, id: \.paddockId) { est in
+                let factor = store.damageFactor(for: est.paddockId)
+                let display = viewModel.applyDamage ? est.estimatedYieldTonnes * factor : est.estimatedYieldTonnes
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text(est.paddockName)
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text(String(format: "%.1f t", display))
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(VineyardTheme.leafGreen)
+                    }
+                    Text(YieldVintageReport.varietyLabel(paddocks.first { $0.id == est.paddockId }))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("\(est.samplesRecorded)/\(est.samplesTotal) samples · \(String(format: "%.1f", est.averageBunchesPerVine)) bunches/vine · \(String(format: "%.0f g", est.averageBunchWeightKg * 1000))/bunch")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if viewModel.applyDamage, factor < 1.0 {
+                        Text(String(format: "Base %.1f t → damage adjusted %.1f t", est.estimatedYieldTonnes, est.estimatedYieldTonnes * factor))
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .padding(10)
+                .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
+            }
+        }
+    }
+
+    // MARK: - Complete Job Button (completion stage)
 
     private var completeJobButton: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Complete Estimation", systemImage: "checkmark.seal.fill")
                 .font(.headline)
+
+            // Bunch weight belongs here — AFTER the field count, never before
+            // the trip starts.
+            Text("Confirm the average bunch weight for each block, then save the trip.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            bunchWeightRows
 
             // Per-block summary from the recorded samples — the BASE estimate
             // is always shown; damage only changes the displayed figure.
@@ -1197,7 +1021,7 @@ struct YieldEstimationView: View {
         }
     }
 
-    // MARK: - Progress
+    // MARK: - Progress (shown only once sampling has started)
 
     private var progressSection: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1213,90 +1037,6 @@ struct YieldEstimationView: View {
             if viewModel.totalSiteCount > 0 {
                 ProgressView(value: Double(viewModel.recordedSiteCount), total: Double(viewModel.totalSiteCount))
                     .tint(viewModel.recordedSiteCount == viewModel.totalSiteCount ? .green : .orange)
-            }
-        }
-    }
-
-    // MARK: - Sample List
-
-    private var sampleListSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("\(viewModel.sampleSites.count) Sample Sites", systemImage: "list.number")
-                    .font(.headline)
-                Spacer()
-            }
-
-            let grouped = Dictionary(grouping: viewModel.sampleSites, by: \.paddockId)
-            let sortedKeys = paddocks.filter { grouped[$0.id] != nil }
-
-            ForEach(sortedKeys) { paddock in
-                let sites = grouped[paddock.id] ?? []
-                let color = colorFor(paddock)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(color)
-                            .frame(width: 8, height: 8)
-                        Text(paddock.name)
-                            .font(.subheadline.weight(.semibold))
-                        Text("(\(sites.count) sites)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    ForEach(sites) { site in
-                        Button {
-                            if !viewModel.isCompleted {
-                                viewModel.selectedSite = site
-                                showBunchCountSheet = true
-                            }
-                        } label: {
-                            HStack(spacing: 10) {
-                                Text("#\(site.siteIndex)")
-                                    .font(.caption.weight(.bold).monospacedDigit())
-                                    .foregroundStyle(color)
-                                    .frame(width: 30, alignment: .trailing)
-
-                                Text("Row \(site.rowNumber)")
-                                    .font(.caption)
-                                    .foregroundStyle(.primary)
-
-                                if let entry = site.bunchCountEntry {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .font(.caption2)
-                                            .foregroundStyle(.green)
-                                        Text(String(format: "%.1f bunches", entry.bunchesPerVine))
-                                            .font(.caption2.weight(.medium))
-                                            .foregroundStyle(.green)
-                                    }
-                                }
-
-                                Spacer()
-
-                                if site.isRecorded {
-                                    if let entry = site.bunchCountEntry {
-                                        Text(entry.recordedBy)
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                } else {
-                                    Text("Tap to record")
-                                        .font(.caption2)
-                                        .foregroundStyle(.orange)
-                                }
-                            }
-                            .padding(.vertical, 4)
-                            .padding(.horizontal, 8)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(10)
-                .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
             }
         }
     }

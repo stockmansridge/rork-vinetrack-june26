@@ -361,4 +361,44 @@ object BunchCountTripLogic {
         val reindexed = collected.mapIndexed { idx, site -> site.copy(siteIndex = idx + 1) }
         return ReusableRoute(sites = reindexed, sourceSessionId = sourceId)
     }
+
+    /**
+     * Visibility contract for the simplified pre-start route confirmation
+     * screen ("Bunch Count Trip" preview). The map is the dominant content;
+     * the only actions are Start Sampling plus a single Regenerate Path for
+     * newly generated routes. Bunch weights, the full sample-site list and
+     * delete/discard never appear here — they belong to the completion
+     * stage, the map itself, and the overflow menu respectively. Mirrored on
+     * iOS (`BunchCountTripLogic.routePreviewControls`).
+     */
+    data class RoutePreviewControls(
+        val showsStartSampling: Boolean,
+        val startSamplingIsContinue: Boolean,
+        val showsRegeneratePath: Boolean,
+        val showsReuseIndicator: Boolean,
+        val showsProgress: Boolean,
+        val showsCompleteAction: Boolean,
+        val showsBunchWeights: Boolean,
+        val showsSampleSiteList: Boolean,
+        val deleteIsPrimaryAction: Boolean,
+    )
+
+    fun routePreviewControls(
+        isRouteReused: Boolean,
+        recordedSiteCount: Int,
+        isCompleted: Boolean,
+    ): RoutePreviewControls {
+        val started = recordedSiteCount > 0
+        return RoutePreviewControls(
+            showsStartSampling = !isCompleted,
+            startSamplingIsContinue = started,
+            showsRegeneratePath = !isCompleted && !isRouteReused && !started,
+            showsReuseIndicator = isRouteReused,
+            showsProgress = started,
+            showsCompleteAction = started && !isCompleted,
+            showsBunchWeights = false,
+            showsSampleSiteList = false,
+            deleteIsPrimaryAction = false,
+        )
+    }
 }

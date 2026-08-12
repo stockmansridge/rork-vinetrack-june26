@@ -419,6 +419,16 @@ class YieldEstimationViewModel {
         routeSourceSessionId = nil
     }
 
+    /// Return to block/route setup — clears the generated route (and any
+    /// counts recorded against it) without touching the session identity.
+    func clearRoute() {
+        sampleSites = []
+        isGenerated = false
+        pathWaypoints = []
+        isPathGenerated = false
+        routeSourceSessionId = nil
+    }
+
     /// Begin a brand-new Bunch Count Trip — every trip is its own dated
     /// observation; completed trips are never reused or overwritten.
     func startNewTrip() {

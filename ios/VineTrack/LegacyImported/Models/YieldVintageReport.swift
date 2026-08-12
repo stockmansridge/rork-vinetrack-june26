@@ -375,6 +375,44 @@ nonisolated enum BunchCountTripLogic {
         }
         return ReusableRoute(sites: reindexed, sourceSessionId: sourceId)
     }
+
+    /// Visibility contract for the simplified pre-start route confirmation
+    /// screen ("Bunch Count Trip" preview). The map is the dominant content;
+    /// the only actions are Start Sampling plus a single Regenerate Path for
+    /// newly generated routes. Bunch weights, the full sample-site list and
+    /// delete/discard never appear here — they belong to the completion
+    /// stage, the map itself, and the overflow menu respectively. Mirrored
+    /// on Android (`BunchCountTripLogic.routePreviewControls`).
+    nonisolated struct RoutePreviewControls: Sendable, Equatable {
+        let showsStartSampling: Bool
+        let startSamplingIsContinue: Bool
+        let showsRegeneratePath: Bool
+        let showsReuseIndicator: Bool
+        let showsProgress: Bool
+        let showsCompleteAction: Bool
+        let showsBunchWeights: Bool
+        let showsSampleSiteList: Bool
+        let deleteIsPrimaryAction: Bool
+    }
+
+    static func routePreviewControls(
+        isRouteReused: Bool,
+        recordedSiteCount: Int,
+        isCompleted: Bool
+    ) -> RoutePreviewControls {
+        let started = recordedSiteCount > 0
+        return RoutePreviewControls(
+            showsStartSampling: !isCompleted,
+            startSamplingIsContinue: started,
+            showsRegeneratePath: !isCompleted && !isRouteReused && !started,
+            showsReuseIndicator: isRouteReused,
+            showsProgress: started,
+            showsCompleteAction: started && !isCompleted,
+            showsBunchWeights: false,
+            showsSampleSiteList: false,
+            deleteIsPrimaryAction: false
+        )
+    }
 }
 
 /// One row of the owner/manager-only `get_picking_record_financials` RPC
