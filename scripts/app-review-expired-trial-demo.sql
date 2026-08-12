@@ -5,10 +5,12 @@
 -- EXPIRED so Apple App Review lands on the subscription paywall immediately
 -- after login (Guideline 2.1(b) information request, Aug 11).
 --
--- HOW TO RUN:
---   1. Edit v_password below (this is the password you will give Apple).
---   2. Run the whole script in the Supabase SQL editor. It is idempotent:
---      re-running updates the password and re-verifies the expired state.
+-- HOW TO RUN: run the whole script in the Supabase SQL editor as-is.
+-- Idempotent: re-running resets the password and re-verifies the expired state.
+--
+-- CREDENTIALS FOR APPLE (App Review Information -> Sign-in required):
+--   Email:    appreview@vinetrack.com.au
+--   Password: VineDemo-2026-Rvw!
 --
 -- What it does:
 --   1. Creates the auth user (email/password, pre-confirmed) if missing;
@@ -35,17 +37,13 @@
 do $$
 declare
   v_email       text := 'appreview@vinetrack.com.au';
-  v_password    text := 'CHANGE-ME-BEFORE-RUNNING';   -- <<< EDIT: password for Apple
+  v_password    text := 'VineDemo-2026-Rvw!';   -- password to give Apple (change if you prefer, then re-run)
   v_uid         uuid;
   v_created     timestamptz;
   v_trial       record;
   v_vineyard_id uuid;
   v_count       bigint := 0;
 begin
-  if v_password = 'CHANGE-ME-BEFORE-RUNNING' then
-    raise exception 'Edit v_password at the top of this script first (this is the password you will give Apple).';
-  end if;
-
   -- ---- 0. Create or update the auth user --------------------------------------
   select u.id into v_uid
   from auth.users u
