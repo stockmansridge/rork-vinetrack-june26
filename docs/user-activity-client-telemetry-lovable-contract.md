@@ -9,6 +9,24 @@ This contract covers two portal responsibilities:
 
 RevenueCat purchase platform remains billing information only. Never derive device activity from where the customer paid.
 
+## 0. How the mobile apps report (reference for display)
+
+Both mobile apps send the same heartbeat RPC (Section 1) at these lifecycle points only — successful sign-in / authenticated app launch, return to foreground (throttled to 15 minutes), and vineyard switch. There is no per-screen analytics traffic.
+
+Canonical values per client:
+
+| field | iOS app | Android app | Portal |
+|---|---|---|---|
+| `app_type` | `ios` | `android` | `portal-web` |
+| `platform` | `ios` | `android` | `web` |
+| `device_family` | `iPhone` / `iPad` | `Phone` / `Tablet` | `Desktop` / `Tablet` / `Mobile` |
+| `device_model` | Marketing name, e.g. `iPhone 17 Pro`, `iPad Pro 11-inch (M4)`; unknown future models fall back to the raw identifier (e.g. `iPhone19,1`); simulators report `<model> (Simulator)` | `Manufacturer Model`, e.g. `Samsung SM-S938B`, `Google Pixel 9 Pro` | browser-safe category, e.g. `Desktop` |
+| `os_name` + `os_version` | `iOS` + e.g. `19.1` | `Android` + e.g. `16` | parsed OS or `Other` |
+| `app_version` | bundle marketing version, e.g. `2.8.9` | `versionName`, e.g. `2.6.4` | portal release |
+| `app_build` | bundle build number, e.g. `35` | `longVersionCode`, e.g. `264` | null ok |
+
+Note: iOS builds released before this change sent the raw hardware identifier (e.g. `iPhone16,2`) as `device_model`, and Android builds sent a lowercase manufacturer (e.g. `samsung SM-S938B`). Rows self-heal on the user's next heartbeat from an updated app — display stored values as-is, no client-side re-mapping.
+
 ---
 
 ## 1. Heartbeat RPC (portal reporting)
@@ -92,7 +110,7 @@ Return columns — the first 14 are **unchanged** from the previous version:
 | **`last_app_type`** | `ios` / `android` / `portal-web`, or null |
 | **`last_platform`** | `ios` / `android` / `web`, or null |
 | **`last_device_family`** | `iPhone` / `iPad` / `Phone` / `Tablet` / `Desktop` / `Mobile` |
-| **`last_device_model`** | e.g. `iPhone16,2`, `Samsung SM-S928B`, `Desktop` |
+| **`last_device_model`** | e.g. `iPhone 17 Pro`, `Samsung SM-S938B`, `Desktop` (older app builds: raw identifiers like `iPhone16,2`) |
 | **`last_os_name`**, **`last_os_version`** | e.g. `iOS` + `18.6` |
 | **`last_app_version`**, **`last_app_build`** | most recent client's app version |
 | **`last_client_seen_at`** | timestamptz of the most recent heartbeat |
@@ -101,6 +119,12 @@ Return columns — the first 14 are **unchanged** from the previous version:
 ### Null semantics — "Not recorded"
 
 All `last_*` fields are null (and `client_count = 0`) for users who have not yet sent a heartbeat. Display **Not recorded** — never "Unknown", and never substitute the purchase platform.
+
+Why most existing mobile users start as null: the heartbeat only ships in updated apps, and the legacy `app_platform`/`device_model` columns (first 14) are populated **only** when a user files a support request. Historical values are never fabricated; each user's row fills in on their first authenticated session after upgrading.
+
+### Latest device vs multiple devices
+
+The list RPC's `last_*` columns show the **most recently active client only** — correct for the User Activity table. Multi-device usage is already stored: up to 10 clients per user (e.g. iPhone + Android tablet + Portal), retrievable via `admin_user_client_activity(p_user_id)` (Section 3). Use `client_count` in the list to show a "+N devices" affordance that opens the per-user history.
 
 ### Recommended display mapping
 

@@ -12,8 +12,9 @@ import Supabase
 /// * `client_instance_id` is a random UUID generated once per installation
 ///   and stored in `UserDefaults`. It is NOT a hardware identifier and is
 ///   never derived from IMEI/serial/MAC/advertising ID.
-/// * Only bundle version/build, model identifier, iOS version and device
-///   family are reported. No location, no IP, no personal device name.
+/// * Only bundle version/build, marketing model name (static lookup over
+///   the public model identifier), iOS version and device family are
+///   reported. No location, no IP, no personal device name.
 /// * Telemetry is best-effort: failures are swallowed and never block
 ///   login or normal app use. Throttled to once per 15 minutes unless the
 ///   metadata signature (version, vineyard, OS) materially changes.
@@ -76,7 +77,7 @@ final class ClientTelemetryService {
             appType: "ios",
             platform: "ios",
             deviceFamily: family,
-            deviceModel: AppBuildInfo.deviceModel,
+            deviceModel: DeviceMarketingName.resolve(AppBuildInfo.deviceModel),
             osName: UIDevice.current.systemName,
             osVersion: AppBuildInfo.iosVersion,
             appVersion: AppBuildInfo.version,
@@ -108,7 +109,10 @@ final class ClientTelemetryService {
     }
 }
 
-nonisolated private struct ClientActivityParams: Encodable, Sendable {
+/// RPC parameter envelope for `record_my_client_activity` (SQL 154).
+/// Internal (not private) so the contract tests can assert the exact
+/// parameter names and canonical app/platform values.
+nonisolated struct ClientActivityParams: Encodable, Sendable {
     let clientInstanceId: UUID
     let appType: String
     let platform: String

@@ -13,8 +13,6 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import java.util.UUID
 
 /**
@@ -83,24 +81,19 @@ class ClientTelemetryRepository(app: Application, private val session: SessionSt
         if (signature == lastSignature && now - lastSentAt < MIN_INTERVAL_MS) return@withContext
 
         val isTablet = appContext.resources.configuration.smallestScreenWidthDp >= 600
-        val model = sanitise(
-            listOf(Build.MANUFACTURER, Build.MODEL)
-                .filter { !it.isNullOrBlank() }
-                .joinToString(" ")
-        )
+        // "Samsung SM-S938B" / "Google Pixel 9 Pro" — manufacturer title-cased,
+        // deduped when the model already includes it (contract-tested helper).
+        val model = ClientDeviceMetadata.formatModel(Build.MANUFACTURER, Build.MODEL)
 
-        val body = buildJsonObject {
-            put("p_client_instance_id", clientInstanceId)
-            put("p_app_type", "android")
-            put("p_platform", "android")
-            put("p_device_family", if (isTablet) "Tablet" else "Phone")
-            put("p_device_model", model)
-            put("p_os_name", "Android")
-            put("p_os_version", osVersion)
-            put("p_app_version", versionName)
-            put("p_app_build", buildCode)
-            if (vineyardId != null) put("p_vineyard_id", vineyardId)
-        }
+        val body = ClientDeviceMetadata.buildHeartbeatPayload(
+            clientInstanceId = clientInstanceId,
+            deviceFamily = if (isTablet) "Tablet" else "Phone",
+            deviceModel = model,
+            osVersion = osVersion,
+            appVersion = versionName,
+            appBuild = buildCode,
+            vineyardId = vineyardId,
+        )
 
         val response = SupabaseClient.http.post(
             SupabaseClient.rpcUrl("record_my_client_activity")
@@ -130,9 +123,6 @@ class ClientTelemetryRepository(app: Application, private val session: SessionSt
             .remove(KEY_LAST_SENT_AT)
             .apply()
     }
-
-    private fun sanitise(value: String, max: Int = 80): String =
-        value.replace(Regex("\\p{Cntrl}+"), " ").trim().take(max)
 
     private companion object {
         const val KEY_CLIENT_ID = "telemetry_client_instance_id"
