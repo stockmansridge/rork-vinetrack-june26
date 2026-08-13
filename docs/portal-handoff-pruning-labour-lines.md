@@ -1,7 +1,8 @@
 # Portal handoff — Pruning Activity labour lines (SQL 190)
 
 **Status:** shared contract final and UNCHANGED. Migration applied, tests green,
-iOS + Android shipped, `vinetrack-api` updated. Ready for the portal to adopt.
+iOS + Android shipped, `vinetrack-api` **deployed to production (version 11,
+ACTIVE, 2026-08-13)**. Ready for the portal to adopt.
 **Source of truth:** Rork/VineTrack mobile. Lovable CONSUMES this contract and
 must not create or modify any of the objects below.
 
@@ -175,7 +176,7 @@ exactly as now. Offer "convert to labour lines" as an explicit action.
 
 1. ~~Apply `sql/190_pruning_activity_labour_lines.sql` (needs 166, 188, 189).~~ **Done.**
 2. ~~Run `sql/tests/190_pruning_activity_labour_lines_tests.sql`.~~ **Done — all passed.**
-3. ~~Redeploy `supabase/functions/vinetrack-api`.~~ **Code updated — needs deploying.**
+3. ~~Redeploy `supabase/functions/vinetrack-api`.~~ **Done — production version 11.**
 4. ~~Mobile ships the Labour lines editor on iOS and Android.~~ **Done.**
 5. **Portal adopts this contract.** ← you are here
 
@@ -197,6 +198,32 @@ Added, additive only — every pre-190 key keeps its name, type and value:
 - `vines_per_labour_hour` is now derived from `total_labour_hours`, so an
   activity is measured on the same hours it is costed on.
 
+Two behaviours worth coding against explicitly:
+
+- **Scope-gated keys are ABSENT, not empty.** Without `labour:read` the
+  `labour_lines` and `crew` keys do not appear at all — do not read a missing
+  `labour_lines` as "this activity has no labour". Use `labour_line_count`,
+  which is always present, to distinguish "none" from "not permitted". Likewise
+  `hourly_rate` and `total_cost` are absent from each line without `costs:read`.
+- **Unrated lines stop the chain — they never fall through.** An activity that
+  owns labour lines but has priced none of them reports `labour_cost: null` and
+  `labour_cost_source: null`. It does NOT fall back to a linked task's lines or
+  the legacy scalar pair: those lines ARE its labour record, so falling through
+  would report someone else's money. Render this as "not specified", never
+  `$0.00`. Its `total_labour_hours` is still populated.
+
+## 11. Shared regression fixtures
+
+Both mobile suites and the SQL suite assert these exact numbers:
+
+- one line: 2 × 8 h @ $30 → **16 h, $480**
+- multiple lines: 16 h + 6 h → **22 h, $690**
+- three-block activity with the same lines → still **22 h, $690** (never $2,070)
+- linked hourly task reports the SAME **$480**, never $960
+- linked piece-rate task 250 × $0.55 → **$137.50**, never $617.50
+- unrated line: hours count, cost is **NULL**, never $0.00
+- legacy activity 7.5 h × $32 → **$240**, unchanged
+
 ## 12. Mobile implementation notes (for reference, not obligations)
 
 Both clients now treat labour as pruning-owned, which is what the portal should
@@ -217,15 +244,3 @@ do too:
 - Both suites assert the section 11 fixtures:
   `ios/VineTrackTests/PruningActivityLabourLineTests.swift` and
   `android-vinetrack/.../data/PruningActivityLabourLineTest.kt`.
-
-## 11. Shared regression fixtures
-
-Both mobile suites and the SQL suite assert these exact numbers:
-
-- one line: 2 × 8 h @ $30 → **16 h, $480**
-- multiple lines: 16 h + 6 h → **22 h, $690**
-- three-block activity with the same lines → still **22 h, $690** (never $2,070)
-- linked hourly task reports the SAME **$480**, never $960
-- linked piece-rate task 250 × $0.55 → **$137.50**, never $617.50
-- unrated line: hours count, cost is **NULL**, never $0.00
-- legacy activity 7.5 h × $32 → **$240**, unchanged
