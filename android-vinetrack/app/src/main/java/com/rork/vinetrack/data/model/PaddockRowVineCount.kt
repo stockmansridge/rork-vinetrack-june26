@@ -108,12 +108,19 @@ object PaddockRowVineCount {
     /**
      * Rounds a raw vines-per-row quotient to whole vines, half away from zero
      * — the SAME rule as the Swift twin, so the two platforms can never report
-     * a different vine. Kotlin's `round` is half-UP, which disagrees with
-     * Swift on negatives, so the sign is mirrored explicitly.
+     * a different vine.
+     *
+     * Deliberately NOT `kotlin.math.round`: that delegates to `Math.rint`,
+     * which breaks ties to the EVEN integer, so a 249.75 m row at 1.5 m
+     * spacing (exactly 166.5) would report 166 vines on Android and 167 on
+     * iOS. `floor(magnitude + 0.5)` with the sign mirrored back on is the
+     * exact equivalent of Swift's `.toNearestOrAwayFromZero`.
      */
     fun roundVines(raw: Double): Int {
         if (!raw.isFinite()) return 0
-        return if (raw < 0) -kotlin.math.round(-raw).toInt() else kotlin.math.round(raw).toInt()
+        val magnitude = kotlin.math.floor(kotlin.math.abs(raw) + 0.5)
+        val whole = magnitude.coerceAtMost(Int.MAX_VALUE.toDouble()).toInt()
+        return if (raw < 0) -whole else whole
     }
 
     /**
