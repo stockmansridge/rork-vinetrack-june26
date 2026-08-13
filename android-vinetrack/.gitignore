@@ -14,6 +14,10 @@ app.json
 build/
 local.properties
 
+# AGP preferences/analytics root + generated debug keystore (see
+# settings.gradle.kts). Build-local so it is always writable; never committed.
+.android-home/
+
 # Android
 *.apk
 *.aab

@@ -139,12 +139,24 @@ androidComponents {
     // machine's constrained/cold lint classpath (missing VariantInputs class).
     // Disabling release unit tests removes that whole task chain.
     //
-    // Safe cast: any exception thrown inside this callback surfaces during
-    // AGP's afterEvaluate, where the export machine can't even load AGP's
-    // crash reporter (PluginCrashReporter) — producing a masked
-    // "Failed to notify project evaluation listener" configuration failure.
+    // AGP routes every exception thrown from a project-evaluation callback
+    // through its own crash reporter (CrashReporting$afterEvaluate). When the
+    // export machine cannot load that reporter class, the REAL exception is
+    // discarded and replaced by a bare
+    // `NoClassDefFoundError: com/android/build/gradle/internal/crash/PluginCrashReporter`,
+    // leaving nothing to debug. So this callback is written to be incapable of
+    // throwing: the cast is safe, and any surprise (e.g. this AGP version
+    // renaming the unit-test builder interface) degrades to a warning and the
+    // release unit-test variant simply stays enabled.
     beforeVariants(selector().withBuildType("release")) { variantBuilder ->
-        (variantBuilder as? HasUnitTestBuilder)?.enableUnitTest = false
+        runCatching {
+            (variantBuilder as? HasUnitTestBuilder)?.enableUnitTest = false
+        }.onFailure { error ->
+            logger.warn(
+                "VineTrack: could not disable the release unit-test variant " +
+                    "(${error.javaClass.simpleName}: ${error.message}). Continuing with it enabled.",
+            )
+        }
     }
 }
 
@@ -154,20 +166,23 @@ androidComponents {
 // bytecode, full coverage, and none of the release lint-model task chain that
 // broke the export machine.
 //
-// Registered in afterEvaluate WITH an existence check: AGP creates its own
-// variant tasks during ITS afterEvaluate (which runs first because the plugin
-// is applied before this script body). An eager top-level register of the same
-// name collides with AGP's registration whenever the variant disabling above
-// does not apply, and that collision throws inside project evaluation — the
-// exact masked configuration failure seen on the AAB export machine.
-afterEvaluate {
-    if (tasks.findByName("testReleaseUnitTest") == null) {
-        tasks.register("testReleaseUnitTest") {
-            group = "verification"
-            description =
-                "Alias: runs the unit tests against the debug variant (release unit tests are disabled)."
-            dependsOn("testDebugUnitTest")
-        }
+// Deliberately NOT inside `afterEvaluate`:
+//   * `tasks.findByName(...)` forces EAGER realization of every task in the
+//     project just to test for one name. On the memory-constrained export
+//     machine that full realization is exactly the kind of work that throws
+//     during evaluation — and an exception there is the masked
+//     PluginCrashReporter failure with the real cause destroyed.
+//   * `tasks.names` answers the same question lazily, without realizing any
+//     task, and `register` stays lazy too, so nothing is configured unless the
+//     alias is actually requested.
+// The name check still guards against colliding with AGP's own task for the
+// case where the variant disabling above did not apply.
+if ("testReleaseUnitTest" !in tasks.names) {
+    tasks.register("testReleaseUnitTest") {
+        group = "verification"
+        description =
+            "Alias: runs the unit tests against the debug variant (release unit tests are disabled)."
+        dependsOn("testDebugUnitTest")
     }
 }
 
