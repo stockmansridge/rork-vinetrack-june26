@@ -7,6 +7,14 @@
 -- Everything runs inside ONE transaction that is ROLLED BACK at the end.
 -- No production row is created, changed or deleted.
 --
+-- SESSION SIMULATION
+-- The SQL editor runs with no JWT, so auth.uid() is NULL and any RPC that
+-- checks it fails with "Authentication required". The fixtures below therefore
+-- set request.jwt.claims to the test manager, exactly as the SQL 177/181/182/
+-- 187 suites do. The `role` is deliberately left as postgres so the fixture
+-- inserts bypass RLS; only auth.uid() is simulated, which is all the RPC and
+-- has_vineyard_role actually read.
+--
 -- Test map
 --   T1  Objects: table, indexes, RLS, helpers and RPCs all exist, and the
 --       labour columns MIRROR work_task_labour_lines (SQL 050) exactly
@@ -73,6 +81,7 @@ declare
   a_pce uuid := gen_random_uuid();  -- linked to a piece-rate work task
   a_unr uuid := gen_random_uuid();  -- unrated lines only
   a_rep uuid := gen_random_uuid();  -- offline replay
+  a_oth uuid := gen_random_uuid();  -- activity in the OTHER vineyard
   l_1   uuid := gen_random_uuid();
   l_2   uuid := gen_random_uuid();
   l_3   uuid := gen_random_uuid();
@@ -102,6 +111,13 @@ begin
     (v_vy,  u_mgr, 'manager'),
     (v_vy2, u_mgr, 'manager');
 
+  -- Simulate an authenticated session so auth.uid() resolves inside the RPCs.
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', u_mgr::text, 'role', 'authenticated')::text, true);
+  if auth.uid() is distinct from u_mgr then
+    raise exception 'Fixture: auth.uid() did not resolve to the test manager (got %). The RPC tests cannot run without a simulated session.', auth.uid();
+  end if;
+
   insert into public.paddocks (id, vineyard_id, name) values
     (b_1, v_vy, 'T190 Block 1'),
     (b_2, v_vy, 'T190 Block 2'),
@@ -124,24 +140,24 @@ begin
     (t_pce, v_vy, b_1, 'T190 Block 1', now(), 'Pruning', 0,
      'piece_rate', 250, 0.5500, u_mgr, u_mgr);
 
-  -- Activities. The legacy one keeps the SQL 166 scalar shape on purpose.
+  -- Activities. The legacy scalars and the Work Task links are applied AFTER
+  -- the allocations below, NOT here: the SQL 166 mirror trigger
+  -- (pruning_entry_activity_sync) projects a single allocation's own values UP
+  -- onto its parent, so anything set now would be silently overwritten by the
+  -- pruning_entries insert — the legacy activity would lose its 7.5 h / $32 and
+  -- the linked activities would lose their work_task_id.
   insert into public.pruning_activities
     (id, vineyard_id, entry_date, worker_or_crew, pruning_method,
-     labour_hours, hourly_rate, season_year, vintage_year, created_by)
+     season_year, vintage_year, created_by)
   values
-    (a_one, v_vy, date '2026-08-03', 'Crew A', 'spur', null,  null, 2026, 2027, u_mgr),
-    (a_mny, v_vy, date '2026-08-03', 'Crew A', 'spur', null,  null, 2026, 2027, u_mgr),
-    (a_leg, v_vy, date '2026-08-03', 'Dave + 2 casuals', 'spur', 7.5, 32, 2026, 2027, u_mgr),
-    (a_mul, v_vy, date '2026-08-04', 'Crew B', 'spur', null,  null, 2026, 2027, u_mgr),
-    (a_unr, v_vy, date '2026-08-05', 'Crew C', 'spur', null,  null, 2026, 2027, u_mgr),
-    (a_rep, v_vy, date '2026-08-06', 'Crew D', 'spur', null,  null, 2026, 2027, u_mgr);
-
-  insert into public.pruning_activities
-    (id, vineyard_id, entry_date, worker_or_crew, pruning_method,
-     labour_hours, hourly_rate, work_task_id, season_year, vintage_year, created_by)
-  values
-    (a_lnk, v_vy, date '2026-08-07', 'Crew E', 'spur', null, null, t_hrs, 2026, 2027, u_mgr),
-    (a_pce, v_vy, date '2026-08-08', 'Crew F', 'spur', 6,    null, t_pce, 2026, 2027, u_mgr);
+    (a_one, v_vy, date '2026-08-03', 'Crew A', 'spur', 2026, 2027, u_mgr),
+    (a_mny, v_vy, date '2026-08-03', 'Crew A', 'spur', 2026, 2027, u_mgr),
+    (a_leg, v_vy, date '2026-08-03', 'Dave + 2 casuals', 'spur', 2026, 2027, u_mgr),
+    (a_mul, v_vy, date '2026-08-04', 'Crew B', 'spur', 2026, 2027, u_mgr),
+    (a_unr, v_vy, date '2026-08-05', 'Crew C', 'spur', 2026, 2027, u_mgr),
+    (a_rep, v_vy, date '2026-08-06', 'Crew D', 'spur', 2026, 2027, u_mgr),
+    (a_lnk, v_vy, date '2026-08-07', 'Crew E', 'spur', 2026, 2027, u_mgr),
+    (a_pce, v_vy, date '2026-08-08', 'Crew F', 'spur', 2026, 2027, u_mgr);
 
   -- Allocations. a_mul spans THREE blocks, which is the multi-block case.
   insert into public.pruning_entries
@@ -158,12 +174,37 @@ begin
     (gen_random_uuid(), v_vy, s_1, b_1, date '2026-08-07', 'Crew E', a_lnk, 0, 5, 500, u_mgr),
     (gen_random_uuid(), v_vy, s_1, b_1, date '2026-08-08', 'Crew F', a_pce, 0, 2, 250, u_mgr);
 
+  -- Activity-level values, with the mirror trigger suppressed exactly as the
+  -- SQL 166 RPCs do, so the legacy scalars and the task links survive.
+  perform set_config('vinetrack.pruning_activity_lock', '1', true);
+
+  update public.pruning_activities
+     set worker_or_crew = 'Dave + 2 casuals', labour_hours = 7.5, hourly_rate = 32
+   where id = a_leg;
+  update public.pruning_activities set work_task_id = t_hrs where id = a_lnk;
+  -- Hours recorded on a piece-rate job: operational history, never a cost.
+  update public.pruning_activities set work_task_id = t_pce, labour_hours = 6
+   where id = a_pce;
+
   perform public.sync_pruning_activity_rollup(a_one);
   perform public.sync_pruning_activity_rollup(a_mny);
   perform public.sync_pruning_activity_rollup(a_leg);
   perform public.sync_pruning_activity_rollup(a_mul);
   perform public.sync_pruning_activity_rollup(a_lnk);
   perform public.sync_pruning_activity_rollup(a_pce);
+
+  perform set_config('vinetrack.pruning_activity_lock', '', true);
+
+  -- Fixture preconditions: prove the trigger did NOT clobber the values the
+  -- later assertions depend on, so a failure below is a real contract failure.
+  if (select labour_hours from public.pruning_activities where id = a_leg) is distinct from 7.5
+     or (select hourly_rate from public.pruning_activities where id = a_leg) is distinct from 32 then
+    raise exception 'Fixture: the legacy activity lost its labour scalars';
+  end if;
+  if (select work_task_id from public.pruning_activities where id = a_lnk) is distinct from t_hrs
+     or (select work_task_id from public.pruning_activities where id = a_pce) is distinct from t_pce then
+    raise exception 'Fixture: a linked activity lost its work_task_id';
+  end if;
 
   -- ---- T1. Objects and SQL 050 mirroring -----------------------------------
   if to_regprocedure('public.pruning_activity_labour_line_cost(uuid)') is null
@@ -568,29 +609,34 @@ begin
   raise notice 'T16 passed';
 
   -- ---- T17. Vineyard scoping ------------------------------------------------
-  begin
-    insert into public.pruning_activity_labour_lines
-      (id, pruning_activity_id, vineyard_id, work_date, worker_type,
-       worker_count, hours_per_worker, hourly_rate, created_by)
-    values
-      (gen_random_uuid(), a_mny, v_vy2, date '2026-08-03', 'Pruner', 1, 1, 10, u_mgr);
-    -- The FK allows the row, so the resolver must still scope by activity.
-    select public.pruning_activity_effective_labour_cost(a_mny) into num;
-  exception when others then
-    num := null;
-  end;
-  select count(distinct vineyard_id) into n
-    from public.pruning_activity_labour_lines l
-    join public.pruning_activities a on a.id = l.pruning_activity_id
-   where l.pruning_activity_id = a_mny and l.vineyard_id <> a.vineyard_id
-     and l.deleted_at is null;
-  if n > 0 then
-    -- Clean the deliberately mis-scoped probe row so later assertions are clean.
-    delete from public.pruning_activity_labour_lines l
-     using public.pruning_activities a
-     where a.id = l.pruning_activity_id and l.vineyard_id <> a.vineyard_id;
+  -- A different vineyard's pruning labour must never leak into this vineyard's
+  -- figures, and each activity must resolve its OWN lines.
+  insert into public.pruning_activities
+    (id, vineyard_id, entry_date, worker_or_crew, pruning_method,
+     season_year, vintage_year, created_by)
+  values
+    (a_oth, v_vy2, date '2026-08-03', 'Other Crew', 'spur', 2026, 2027, u_mgr);
+
+  insert into public.pruning_activity_labour_lines
+    (id, pruning_activity_id, vineyard_id, work_date, worker_type,
+     worker_count, hours_per_worker, hourly_rate, created_by)
+  values
+    (gen_random_uuid(), a_oth, v_vy2, date '2026-08-03', 'Pruner', 5, 10, 99, u_mgr);
+
+  select public.pruning_activity_effective_labour_cost(a_oth) into num;
+  if num <> 4950 then
+    raise exception 'T17: the other vineyard expected 4950 (5 x 10 x 99), got %', num;
   end if;
-  -- The RPC always stamps the ACTIVITY's vineyard, so it cannot mis-scope.
+  select public.pruning_activity_effective_labour_cost(a_mny) into num;
+  if num <> 690 then
+    raise exception 'T17: another vineyard''s labour leaked in — expected 690, got %', num;
+  end if;
+  select public.pruning_activity_labour_line_count(a_mny) into n;
+  if n <> 2 then
+    raise exception 'T17: expected 2 in-scope lines, got %', n;
+  end if;
+
+  -- The RPC always stamps the ACTIVITY's vineyard, so a client cannot mis-scope.
   select public.save_pruning_activity_labour_lines(
     a_rep,
     jsonb_build_array(jsonb_build_object('id', l_rep::text, 'worker_type', 'Pruner',
