@@ -42,6 +42,7 @@ struct WorkTaskLabourLinesSection: View {
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
     private var canViewFinancials: Bool { accessControl?.canViewFinancials ?? false }
+    private var canEnterPricing: Bool { accessControl?.canEnterPricing ?? false }
 
     /// Live labour lines of THIS task, oldest first.
     var lines: [WorkTaskLabourLine] {
@@ -149,8 +150,15 @@ struct WorkTaskLabourLinesSection: View {
                             .foregroundStyle(VineyardTheme.leafGreen)
                     }
                 }
-                if let vines = resolved.vineCount, let rate = resolved.ratePerVine {
+                // The agreed rate is a commercial term: reviewing it after the
+                // fact is owner/manager work, so a supervisor sees only the
+                // operational quantity they worked.
+                if canViewFinancials, let vines = resolved.vineCount, let rate = resolved.ratePerVine {
                     Text("\(PieceRateCosting.vineCountLabel(vines)) vines × \(PieceRateCosting.rateLabel(rate)) per vine")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } else if let vines = resolved.vineCount, vines > 0 {
+                    Text("\(PieceRateCosting.vineCountLabel(vines)) vines priced per vine")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

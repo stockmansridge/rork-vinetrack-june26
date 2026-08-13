@@ -77,6 +77,8 @@ struct AddEditWorkTaskLabourLineView: View {
     private var isEditing: Bool { existingLine != nil }
     private var canDelete: Bool { accessControl?.canDelete ?? false }
     private var canViewFinancials: Bool { accessControl?.canViewFinancials ?? false }
+    /// Supervisors and above — may agree a rate in the field.
+    private var canEnterPricing: Bool { accessControl?.canEnterPricing ?? false }
     private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     private var categories: [OperatorCategory] {
@@ -117,14 +119,35 @@ struct AddEditWorkTaskLabourLineView: View {
 
     // MARK: Piece rate (sql/188)
 
-    /// The choice is offered only when the host supplies a costing context AND
-    /// the user may see money — a rate per vine is a commercial term.
+    /// Offered when the host supplies a costing context and the user may agree a
+    /// price — supervisors included, because they are the ones settling the rate
+    /// with the crew at the vine.
     private var supportsPieceRate: Bool {
-        costingContext != nil && canViewFinancials
+        costingContext != nil && canEnterPricing
     }
 
     private var isPieceRate: Bool {
         supportsPieceRate && costingMethod == .pieceRate
+    }
+
+    /// True once this job carries an agreed price. Entering a price and
+    /// REVISITING one are different authorities.
+    private var isAlreadyPriced: Bool {
+        (linkedTask?.pieceRatePerVine ?? 0) > 0
+    }
+
+    /// A supervisor may set the price once; reviewing or changing it afterwards
+    /// is owner/manager work, so the figures are withheld rather than shown
+    /// read-only — an amount on screen is exactly what "review" means.
+    private var isPricingLocked: Bool {
+        isAlreadyPriced && !canViewFinancials
+    }
+
+    /// Who may see a money amount for THIS job: managers always, and the
+    /// supervisor who is agreeing the price right now, so they can sanity-check
+    /// the total before committing to it.
+    private var canSeePieceCost: Bool {
+        canViewFinancials || (isPieceRate && !isPricingLocked)
     }
 
     private var linkedTask: WorkTask? {
@@ -291,12 +314,17 @@ struct AddEditWorkTaskLabourLineView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .disabled(isPricingLocked)
         } header: {
             Text("How is this job paid?")
         } footer: {
-            Text(isPieceRate
-                 ? "Paid per vine. The rate you agree is multiplied by the vines in the rows selected for this job — hours never change a piece-rate cost."
-                 : "Paid per hour. People × hours per person × hourly rate.")
+            if isPricingLocked {
+                Text("This job has already been priced. Ask an owner or manager to review or change how it is paid.")
+            } else {
+                Text(isPieceRate
+                     ? "Paid per vine. The rate you agree is multiplied by the vines in the rows selected for this job — hours never change a piece-rate cost."
+                     : "Paid per hour. People × hours per person × hourly rate.")
+            }
         }
     }
 
@@ -305,6 +333,31 @@ struct AddEditWorkTaskLabourLineView: View {
     /// number rather than counting one.
     @ViewBuilder
     private var pieceRateSection: some View {
+        if isPricingLocked {
+            lockedPricingSection
+        } else {
+            pieceRateEntrySection
+        }
+    }
+
+    /// Shown to a supervisor reopening a job they already priced. The agreed
+    /// figures are withheld deliberately — reviewing a price is owner/manager
+    /// work, and showing the amount read-only would BE the review.
+    @ViewBuilder
+    private var lockedPricingSection: some View {
+        Section {
+            Label("Priced per vine", systemImage: "lock.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(VineyardTheme.leafGreen)
+        } header: {
+            Text("Piece rate")
+        } footer: {
+            Text("The agreed rate is locked. Ask an owner or manager to review or change it. You can still record hours below.")
+        }
+    }
+
+    @ViewBuilder
+    private var pieceRateEntrySection: some View {
         Section {
             HStack {
                 Text("Rate per vine")
@@ -322,7 +375,7 @@ struct AddEditWorkTaskLabourLineView: View {
                     .multilineTextAlignment(.trailing)
                     .frame(width: 90)
             }
-            if let suggested = costingContext?.suggestedVineCount, suggested > 0, vineCount != suggested {
+            if let suggested = costingContext?.suggestedVineCount, suggested > 0, vineCount != suggested, !isPricingLocked {
                 Button {
                     vineCountText = String(suggested)
                 } label: {
@@ -405,7 +458,7 @@ struct AddEditWorkTaskLabourLineView: View {
                     .fontWeight(.semibold)
                     .monospacedDigit()
             }
-            if canViewFinancials {
+            if isPieceRate ? canSeePieceCost : canViewFinancials {
                 LabeledContent(isPieceRate ? "Piece-rate cost" : "Line cost") {
                     Text((isPieceRate ? pieceCost : lineCost).map { fmt.formatCurrency($0) } ?? "Not specified")
                         .fontWeight(.semibold)
@@ -416,8 +469,10 @@ struct AddEditWorkTaskLabourLineView: View {
         } header: {
             Text("Calculated")
         } footer: {
-            if isPieceRate {
+            if isPieceRate, canSeePieceCost {
                 Text("\(PieceRateCosting.vineCountLabel(vineCount ?? 0)) vines × \(PieceRateCosting.rateLabel(ratePerVine ?? 0)) per vine = \(pieceCost.map { fmt.formatCurrency($0) } ?? "not specified"). Hours above are recorded but do not affect this.")
+            } else if isPieceRate {
+                Text("Hours are recorded as operational history — they do not affect what this job costs.")
             } else {
                 Text("\(workerCount ?? 0) people × \(Self.decimal(hoursPerWorker ?? 0)) h = \(Self.hours(personHours)) person-hours.")
             }
@@ -439,11 +494,15 @@ struct AddEditWorkTaskLabourLineView: View {
         // silently defaulting back to hourly.
         if let task = linkedTask {
             costingMethod = task.costingMethod
-            if let rate = task.pieceRatePerVine {
-                ratePerVineText = Self.decimal(rate)
-            }
-            if let vines = task.pieceVineCount ?? costingContext?.suggestedVineCount, vines > 0 {
-                vineCountText = String(vines)
+            // A role that may not review the price never receives it, not even
+            // into a field it cannot edit.
+            if !isPricingLocked {
+                if let rate = task.pieceRatePerVine {
+                    ratePerVineText = Self.decimal(rate)
+                }
+                if let vines = task.pieceVineCount ?? costingContext?.suggestedVineCount, vines > 0 {
+                    vineCountText = String(vines)
+                }
             }
         }
         guard let line = existingLine else {
@@ -461,7 +520,15 @@ struct AddEditWorkTaskLabourLineView: View {
 
     private func save() {
         showIssues = true
-        if isPieceRate {
+        if isPricingLocked {
+            // The agreement is untouchable for this role — only the optional
+            // hours are written, and the task's costing basis is left alone.
+            guard recordsOptionalHours, let workerCount, let hoursPerWorker else {
+                dismiss()
+                return
+            }
+            persistLine(workerCount: workerCount, hoursPerWorker: hoursPerWorker, rate: nil)
+        } else if isPieceRate {
             guard pieceIssues.isEmpty else { return }
             savePieceRate()
         } else {
@@ -485,7 +552,7 @@ struct AddEditWorkTaskLabourLineView: View {
     /// Writes the task's costing basis. No-op without a costing context, which
     /// is what keeps every existing caller — and every legacy task — hourly.
     private func applyCostingMethod(_ method: WorkTaskCostingMethod) {
-        guard var task = linkedTask else { return }
+        guard var task = linkedTask, !isPricingLocked else { return }
         let ratePerVine = method == .pieceRate ? self.ratePerVine : task.pieceRatePerVine
         let vineCount = method == .pieceRate ? self.vineCount : task.pieceVineCount
         guard task.costingMethod != method

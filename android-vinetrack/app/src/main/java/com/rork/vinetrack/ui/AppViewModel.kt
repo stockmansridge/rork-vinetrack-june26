@@ -198,6 +198,7 @@ import com.rork.vinetrack.data.WorkTaskPieceRateRowRepository
 import com.rork.vinetrack.data.model.PaddockRow
 import com.rork.vinetrack.data.model.PaddockRowRegeneration
 import com.rork.vinetrack.data.model.PaddockVarietyAllocation
+import com.rork.vinetrack.data.model.PieceRateCosting
 import com.rork.vinetrack.data.model.WorkTaskCostingMethod
 import com.rork.vinetrack.data.model.WorkTaskPieceRateRow
 import com.rork.vinetrack.data.model.PendingEntityType
@@ -7518,6 +7519,98 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 workTaskUpdateSync.enqueue(taskId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, isFinalized, current?.finalizedAt, current?.finalizedBy, clientUpdatedAt)
                 _ui.update { it.copy(workTaskError = "Work task edit saved offline — will sync when connection is available.") }
                 onResult(true)
+            }
+        }
+    }
+
+    /**
+     * Sets an EXISTING task's costing basis (sql/188).
+     *
+     * The agreement lives on the task — `costing_method`, `piece_rate_per_vine`,
+     * `piece_vine_count` — so a completed job keeps the quantity it was priced
+     * on even after the block's rows are edited later.
+     *
+     * Switching back to HOURLY clears the piece-rate columns server-side, which
+     * stops a stale agreement being resurrected by a later read. Because the two
+     * methods are never summed, the surviving hourly lines immediately become
+     * the task's whole cost.
+     *
+     * Online-only: a price is a commercial agreement, so it is never silently
+     * queued and replayed later against a quantity that has since moved.
+     */
+    fun setWorkTaskCosting(
+        taskId: String,
+        method: WorkTaskCostingMethod,
+        ratePerVine: Double? = null,
+        vineCount: Int? = null,
+        onResult: (Boolean) -> Unit = {},
+    ) {
+        val previous = _ui.value.workTasks
+        if (previous.none { it.id == taskId }) { onResult(false); return }
+        val isPiece = method == WorkTaskCostingMethod.PIECE_RATE
+        if (isPiece && !PieceRateCosting.isValid(ratePerVine, vineCount)) {
+            onResult(false)
+            return
+        }
+        if (!_ui.value.isOnline) {
+            _ui.update { it.copy(workTaskError = "Pricing needs a connection so the agreed rate is recorded once, for everyone.") }
+            onResult(false)
+            return
+        }
+        val clientUpdatedAt = Instant.now().toString()
+        _ui.update { st ->
+            st.copy(
+                workTasks = st.workTasks.map {
+                    if (it.id == taskId) {
+                        it.copy(
+                            costingMethod = method.storedValue,
+                            pieceRatePerVine = if (isPiece) ratePerVine else null,
+                            pieceVineCount = if (isPiece) vineCount else null,
+                        )
+                    } else {
+                        it
+                    }
+                },
+                workTaskError = null,
+            )
+        }
+        viewModelScope.launch {
+            _ui.update { it.copy(workTaskBusy = true) }
+            try {
+                val updated = if (isPiece) {
+                    workTaskRepo.setPieceRateCosting(
+                        id = taskId,
+                        ratePerVine = ratePerVine ?: 0.0,
+                        vineCount = vineCount ?: 0,
+                        clientUpdatedAt = clientUpdatedAt,
+                    )
+                } else {
+                    workTaskRepo.clearPieceRateCosting(id = taskId, clientUpdatedAt = clientUpdatedAt)
+                }
+                _ui.update { st ->
+                    st.copy(
+                        workTasks = st.workTasks.map { if (it.id == taskId) updated else it },
+                        workTaskBusy = false,
+                    )
+                }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: Exception) {
+                // Pricing is never left optimistically applied on failure — a
+                // rate the server did not accept must not look agreed.
+                _ui.update {
+                    it.copy(
+                        workTasks = previous,
+                        workTaskBusy = false,
+                        workTaskError = if (e is BackendError.Server) {
+                            friendlyWriteError(e.code)
+                        } else {
+                            "Could not save the pricing — check your connection and try again."
+                        },
+                    )
+                }
+                onResult(false)
             }
         }
     }

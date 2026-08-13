@@ -67,6 +67,7 @@ import com.rork.vinetrack.data.PruningActivityTaskLink
 import com.rork.vinetrack.data.PruningWorkTaskLinkDraft
 import com.rork.vinetrack.data.WorkTaskLabourCosting
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.PieceRateCosting
 import com.rork.vinetrack.data.model.PruningActivityDraft
 import com.rork.vinetrack.data.model.PruningActivityListing
 import com.rork.vinetrack.data.model.PruningActivityReconciliation
@@ -145,8 +146,11 @@ fun PruningActivityEditorScreen(
      * THE standard Work Task labour editor, injected by the caller. Rendered
      * inside the Work Task card so labour is edited with the same component the
      * Work Task screen uses — never a pruning-specific reimplementation.
+     *
+     * `suggestedVineCount` is the vines under the rows selected above, so a
+     * piece rate can be costed without re-entering a number the app knows.
      */
-    labourSection: (@Composable (taskId: String) -> Unit)? = null,
+    labourSection: (@Composable (taskId: String, suggestedVineCount: Int) -> Unit)? = null,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -259,25 +263,10 @@ fun PruningActivityEditorScreen(
                 )
             }
 
-            // Work Task — ALSO activity level. One link on the parent, never
-            // one per block; create, link, open and unlink all live here.
-            item(key = "work-task") {
-                PruningActivityWorkTaskCard(
-                    draft = draft,
-                    workTasks = workTasks,
-                    labourLines = labourLines,
-                    canViewCosting = canViewCosting,
-                    canCreate = onCreateWorkTask != null,
-                    canOpen = workTaskDetail != null,
-                    onLinkExisting = { showTaskPicker = true },
-                    onCreate = { taskCreateDraft = PruningActivityTaskLink.createDraft(draft) },
-                    onOpen = { openTaskId = draft.workTaskId },
-                    onUnlink = { draft = PruningActivityTaskLink.unlink(draft) },
-                    labourSection = labourSection,
-                )
-            }
-
-            // Which blocks are in this activity.
+            // Which blocks are in this activity. Blocks and rows come BEFORE
+            // labour: the piece-rate vine count is derived from this selection,
+            // so a job can only be costed once the operator has chosen what was
+            // worked.
             item(key = "blocks") {
                 PruningActivityBlockStrip(
                     draft = draft,
@@ -394,6 +383,25 @@ fun PruningActivityEditorScreen(
                         )
                     }
                 }
+            }
+
+            // Labour & Work Task — ALSO activity level. One link on the parent,
+            // never one per block. Placed AFTER the blocks so the piece-rate
+            // quantity can be derived from the rows already chosen.
+            item(key = "work-task") {
+                PruningActivityWorkTaskCard(
+                    draft = draft,
+                    workTasks = workTasks,
+                    labourLines = labourLines,
+                    canViewCosting = canViewCosting,
+                    canCreate = onCreateWorkTask != null,
+                    onLinkExisting = { showTaskPicker = true },
+                    onCreate = { taskCreateDraft = PruningActivityTaskLink.createDraft(draft) },
+                    onOpen = { openTaskId = draft.workTaskId },
+                    canOpen = workTaskDetail != null,
+                    onUnlink = { draft = PruningActivityTaskLink.unlink(draft) },
+                    labourSection = labourSection,
+                )
             }
 
             // Combined summary — every block in this activity, before Save.
@@ -736,7 +744,7 @@ private fun PruningActivityWorkTaskCard(
     onCreate: () -> Unit,
     onOpen: () -> Unit,
     onUnlink: () -> Unit,
-    labourSection: (@Composable (taskId: String) -> Unit)?,
+    labourSection: (@Composable (taskId: String, suggestedVineCount: Int) -> Unit)?,
 ) {
     val vine = LocalVineColors.current
     val linked = PruningActivityTaskLink.linkedTask(draft, workTasks)
@@ -749,7 +757,7 @@ private fun PruningActivityWorkTaskCard(
     PruningCard {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Work Task", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                Text("Labour & Work Task", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                 Spacer(Modifier.weight(1f))
                 if (linked != null || unresolvable) {
                     Icon(
@@ -761,7 +769,14 @@ private fun PruningActivityWorkTaskCard(
                 }
             }
             Text(
-                "Linked once for the whole activity. Labour type, rate, people and hours per person live on the Work Task — never per block.",
+                when {
+                    linked == null -> "Entered once here for the whole activity, never per block."
+                    draft.totalEstimatedVines > 0 ->
+                        "Add labour to choose Hourly or Piece Rate. " +
+                            "${PieceRateCosting.vineCountLabel(draft.totalEstimatedVines)} vines are selected, " +
+                            "ready to cost at a rate per vine."
+                    else -> "Select rows above to cost this job at a rate per vine."
+                },
                 fontSize = 11.sp,
                 color = vine.textSecondary,
             )
@@ -791,66 +806,62 @@ private fun PruningActivityWorkTaskCard(
                             fontSize = 12.sp,
                             color = vine.textSecondary,
                         )
-                        // Task labour totals — the authoritative figures.
-                        Text(
-                            listOfNotNull(
-                                "${formatLabourHours(totals.personHours)} total person-hours",
-                                totals.cost
-                                    ?.takeIf { canViewCosting }
-                                    ?.let { "labour cost ${formatLabourCurrency(it)}" },
-                                "${totals.lineCount} labour line${if (totals.lineCount == 1) "" else "s"}",
-                            ).joinToString(" · "),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (totals.isEmpty) VineColors.Warning else vine.textPrimary,
-                        )
-                        if (totals.isEmpty) {
+                        // The task's labour summary, under its chosen costing
+                        // method — piece-rate and hourly figures are never
+                        // combined into one total.
+                        if (linked.isPieceRate) {
                             Text(
-                                "No labour lines yet — add labour type, people and hours per person below.",
-                                fontSize = 11.sp,
-                                color = VineColors.Warning,
+                                pieceRateSummaryLabel(linked, totals.personHours, canViewCosting),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = vine.textPrimary,
                             )
-                        }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (canOpen) {
-                            OutlinedButton(onClick = onOpen) {
-                                Icon(
-                                    Icons.Filled.OpenInNew,
-                                    contentDescription = null,
-                                    tint = VineColors.Primary,
-                                    modifier = Modifier.size(15.dp),
-                                )
-                                Spacer(Modifier.width(5.dp))
+                        } else {
+                            Text(
+                                listOfNotNull(
+                                    "${formatLabourHours(totals.personHours)} total person-hours",
+                                    totals.cost
+                                        ?.takeIf { canViewCosting }
+                                        ?.let { "labour cost ${formatLabourCurrency(it)}" },
+                                    "${totals.lineCount} labour line${if (totals.lineCount == 1) "" else "s"}",
+                                ).joinToString(" · "),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (totals.isEmpty) VineColors.Warning else vine.textPrimary,
+                            )
+                            if (totals.isEmpty) {
                                 Text(
-                                    "Open task",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = VineColors.Primary,
+                                    "No labour recorded yet — add it below and choose hourly or piece rate.",
+                                    fontSize = 11.sp,
+                                    color = VineColors.Warning,
                                 )
                             }
                         }
+                    }
+                    // THE ONE labour surface for this activity. There is
+                    // deliberately no "Open task" shortcut: the Work Task editor
+                    // carries its own labour section, and offering both made it
+                    // look as though labour had to be entered twice.
+                    val section = labourSection
+                    val linkedId = draft.workTaskId
+                    if (section != null && linkedId != null) {
+                        HorizontalDivider(color = vine.cardBorder)
+                        section(linkedId, draft.totalEstimatedVines)
+                        HorizontalDivider(color = vine.cardBorder)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = onLinkExisting) {
-                            Text("Change", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
+                            Text("Change task", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
                         }
                         TextButton(onClick = onUnlink) {
                             Text("Unlink", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Destructive)
                         }
                     }
                     Text(
-                        "Unlinking leaves the Work Task and its labour lines intact — only this activity's link is removed.",
+                        "Unlinking leaves the Work Task and its labour intact — only this activity's link is removed.",
                         fontSize = 11.sp,
                         color = vine.textSecondary,
                     )
-                    // THE standard labour editor, in place: linking an existing
-                    // task shows ITS lines and never overwrites or duplicates
-                    // them, and every pruning allocation is untouched.
-                    val section = labourSection
-                    val linkedId = draft.workTaskId
-                    if (section != null && linkedId != null) {
-                        HorizontalDivider(color = vine.cardBorder)
-                        section(linkedId)
-                    }
                 }
 
                 unresolvable -> {
@@ -911,6 +922,33 @@ private fun PruningActivityWorkTaskCard(
                 }
             }
         }
+    }
+}
+
+/**
+ * One-line summary of a PIECE-RATE job. The agreed rate is a commercial term,
+ * so it is shown only to roles that may review pricing; everyone else sees the
+ * operational quantity and hours.
+ */
+private fun pieceRateSummaryLabel(
+    task: WorkTask,
+    personHours: Double,
+    canViewCosting: Boolean,
+): String {
+    val vines = task.pieceVineCount
+    val rate = task.pieceRatePerVine
+    val parts = mutableListOf<String>()
+    if (canViewCosting && vines != null && rate != null) {
+        parts += "${PieceRateCosting.vineCountLabel(vines)} vines × ${PieceRateCosting.rateLabel(rate)}"
+        task.pieceRateCost?.let { parts += PieceRateCosting.currencyLabel(it) }
+    } else if (vines != null && vines > 0) {
+        parts += "${PieceRateCosting.vineCountLabel(vines)} vines priced per vine"
+    }
+    if (personHours > 0) parts += "${formatLabourHours(personHours)} recorded"
+    return if (parts.isEmpty()) {
+        "Piece rate · add the agreed rate per vine below."
+    } else {
+        "Piece rate · " + parts.joinToString(" · ")
     }
 }
 

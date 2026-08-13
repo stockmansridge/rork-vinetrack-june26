@@ -106,6 +106,7 @@ import com.rork.vinetrack.data.model.PruningSeasonIds
 import com.rork.vinetrack.data.model.PruningSeasonSelection
 import com.rork.vinetrack.data.model.PruningSegment
 import com.rork.vinetrack.data.model.PruningStatus
+import com.rork.vinetrack.data.model.TeamRole
 import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskCostingMethod
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
@@ -115,6 +116,7 @@ import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.PendingSyncItem
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.components.WorkTaskCostingContext
 import com.rork.vinetrack.ui.components.WorkTaskLabourLineSheet
 import com.rork.vinetrack.ui.components.WorkTaskLabourLinesSection
 import com.rork.vinetrack.ui.theme.LocalVineColors
@@ -359,12 +361,13 @@ fun PruningTrackerScreen(
             // THE standard Work Task labour editor — the same composable the
             // Work Task screen renders, so labour is never edited through a
             // pruning-specific implementation.
-            labourSection = { taskId ->
+            labourSection = { taskId, suggestedVineCount ->
                 PruningLinkedTaskLabourSection(
                     vm = vm,
                     state = state,
                     taskId = taskId,
                     canViewCosting = canViewCosting,
+                    suggestedVineCount = suggestedVineCount,
                 )
             },
             onBack = { editorDraft = null },
@@ -3697,9 +3700,27 @@ private fun PruningLinkedTaskLabourSection(
     state: AppUiState,
     taskId: String,
     canViewCosting: Boolean,
+    /** Vines under the rows selected above — the default piece-rate quantity. */
+    suggestedVineCount: Int = 0,
 ) {
     var addingLabour by remember(taskId) { mutableStateOf(false) }
     var editLabour by remember(taskId) { mutableStateOf<WorkTaskLabourLine?>(null) }
+
+    // Pricing authority is deliberately split: supervisors and above may AGREE a
+    // rate in the field, but only owners/managers may review or change one.
+    val role = remember(state.currentRole) { TeamRole.from(state.currentRole) }
+    val linkedTask = state.workTasks.firstOrNull { it.id == taskId }
+    val costingContext = remember(linkedTask, suggestedVineCount, role, taskId) {
+        WorkTaskCostingContext(
+            taskId = taskId,
+            method = linkedTask?.resolvedCostingMethod ?: WorkTaskCostingMethod.HOURLY,
+            suggestedVineCount = suggestedVineCount.takeIf { it > 0 },
+            savedRatePerVine = linkedTask?.pieceRatePerVine,
+            savedVineCount = linkedTask?.pieceVineCount,
+            canEnterPricing = role.canEnterPricing,
+            canReviewPricing = role.canViewCosting,
+        )
+    }
 
     // Pull the linked task's canonical lines (never the pruning draft's).
     LaunchedEffect(taskId) { vm.loadTaskLines(taskId) }
@@ -3726,6 +3747,7 @@ private fun PruningLinkedTaskLabourSection(
         isLoading = state.taskLinesLoading && state.taskLinesTaskId == taskId,
         onAdd = { addingLabour = true },
         onEdit = { editLabour = it },
+        costingContext = costingContext,
     )
 
     if (addingLabour || editLabour != null) {
@@ -3752,6 +3774,17 @@ private fun PruningLinkedTaskLabourSection(
                 vm.deleteLabourLine(lineId) { ok -> if (ok) { addingLabour = false; editLabour = null } }
             },
             onDismiss = { addingLabour = false; editLabour = null },
+            costingContext = costingContext,
+            // The agreement lives on the TASK, so a completed job keeps the
+            // quantity it was priced on even after the block's rows change.
+            onSaveCosting = { method, ratePerVine, vineCount ->
+                vm.setWorkTaskCosting(
+                    taskId = taskId,
+                    method = method,
+                    ratePerVine = ratePerVine,
+                    vineCount = vineCount,
+                ) { ok -> if (ok) { addingLabour = false; editLabour = null } }
+            },
         )
     }
 }

@@ -21,6 +21,25 @@ nonisolated enum BackendRole: String, Codable, CaseIterable, Sendable {
     /// every costing surface — UI, exports, debug views — to keep rates private.
     var canViewCosting: Bool { canViewFinancials }
 
+    /// Whether this role may AGREE a price in the field — today, the piece rate
+    /// per vine on a job that has not been priced yet — and see the resulting
+    /// total while entering it.
+    ///
+    /// Deliberately WIDER than `canViewFinancials`: supervisors run the crew and
+    /// settle the rate at the vine, so blocking them would push pricing onto
+    /// paper. It is deliberately NARROWER than review authority: entering a
+    /// price is not permission to revisit or change one. Once a job is priced,
+    /// only `canViewFinancials` roles may see or amend that figure, and no
+    /// aggregate total or report is ever exposed by this flag.
+    var canEnterPricing: Bool {
+        switch self {
+        case .owner, .manager, .supervisor:
+            true
+        case .operator:
+            false
+        }
+    }
+
     var canChangeSettings: Bool {
         switch self {
         case .owner, .manager:

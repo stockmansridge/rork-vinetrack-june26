@@ -14,6 +14,11 @@ struct LegacyAccessControl {
     /// `canViewFinancials` — kept as a distinct flag so future costing
     /// surfaces can be gated independently if needed.
     var canViewCosting: Bool = false
+    /// May agree a price in the field (piece rate per vine on an unpriced job)
+    /// and see that one job's total while entering it. Owners, managers AND
+    /// supervisors. Never grants review of an already-priced job, and never
+    /// exposes a total, summary or report — those stay on `canViewCosting`.
+    var canEnterPricing: Bool = false
     var canFinalizeRecords: Bool = false
     var canReopenRecords: Bool = false
     /// Owner/manager only — controls who can create, edit, or delete shared

@@ -47,12 +47,26 @@ enum class TeamRole(val raw: String, val displayName: String) {
     /** Owners and managers may see costing data (operator categories/rates). */
     val canViewCosting: Boolean get() = this == Owner || this == Manager
 
+    /**
+     * May AGREE a price in the field — today, the piece rate per vine on a job
+     * that has not been priced yet — and see the resulting total while entering
+     * it. Mirrors the iOS `BackendRole.canEnterPricing`.
+     *
+     * Deliberately WIDER than [canViewCosting]: supervisors run the crew and
+     * settle the rate at the vine, so blocking them would push pricing onto
+     * paper. It is deliberately NARROWER than review authority: entering a price
+     * is not permission to revisit or change one. Once a job is priced, only
+     * [canViewCosting] roles may see or amend that figure, and no aggregate
+     * total or report is ever exposed by this flag.
+     */
+    val canEnterPricing: Boolean get() = this == Owner || this == Manager || this == Supervisor
+
     /** Short description of what this role can do, shown in Roles & Permissions. */
     val permissionSummary: String
         get() = when (this) {
             Owner -> "Full access"
             Manager -> "Financials & settings"
-            Supervisor -> "Edit & delete records"
+            Supervisor -> "Edit & delete records, price jobs in the field"
             Operator -> "Field operations only"
         }
 

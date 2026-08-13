@@ -27,6 +27,9 @@ final class BackendAccessControl {
     /// Costing visibility (labour/fuel/chemical/total). Owners + managers only.
     /// Alias of `canViewFinancials` so all costing UI funnels through one helper.
     var canViewCosting: Bool { currentRole?.canViewCosting ?? false }
+    /// Field pricing (piece rate per vine on an unpriced job). Supervisors and
+    /// above. Reviewing or changing an existing price stays on `canViewCosting`.
+    var canEnterPricing: Bool { currentRole?.canEnterPricing ?? false }
     var canChangeSettings: Bool { currentRole?.canChangeSettings ?? false }
     var canDeleteOperationalRecords: Bool { currentRole?.canDeleteOperationalRecords ?? false }
     var canInviteMembers: Bool { currentRole?.canInviteMembers ?? false }
@@ -48,6 +51,7 @@ final class BackendAccessControl {
             canExportFinancialPDF: canExportFinancialReports,
             canViewFinancials: canViewFinancials,
             canViewCosting: canViewCosting,
+            canEnterPricing: canEnterPricing,
             canFinalizeRecords: canDeleteOperationalRecords,
             canReopenRecords: canDeleteOperationalRecords,
             canManageSetup: canChangeSettings
