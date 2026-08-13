@@ -487,7 +487,7 @@ nonisolated enum PruningCalculator {
                     label: "\(row.number)",
                     lengthMetres: lengths[index] > 0 ? lengths[index] : nil,
                     vines: usesManualCounts
-                        ? Double(paddock.effectiveVineCount(for: row))
+                        ? Double(paddock.effectiveVineCount(for: row) ?? 0)
                         : (totalWeight > 0 ? totalVines * weights[index] / totalWeight : 0),
                     isFallback: false
                 )

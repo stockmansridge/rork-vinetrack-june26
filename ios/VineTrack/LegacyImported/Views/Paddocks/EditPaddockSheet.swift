@@ -128,7 +128,7 @@ struct EditPaddockSheet: View {
             .sheet(item: $rowVineCountEditorTarget) { target in
                 RowVineCountEditorSheet(
                     rowNumber: target.number,
-                    calculated: target.calculated,
+                    calculation: target.calculation,
                     currentOverride: rowVineCountOverrides[target.number]
                 ) { newValue in
                     if let newValue {
@@ -1637,11 +1637,14 @@ struct EditPaddockSheet: View {
     /// calculated estimate, and the manual count when one is set.
     private struct RowVineCountEntry: Identifiable {
         let number: Int
-        let calculated: Int
+        /// The AUTOMATIC calculation for this row, carrying its reason when the
+        /// block can't produce a number yet.
+        let calculation: PaddockRowVineCount.Calculation
         let override: Int?
         var id: Int { number }
+        var calculated: Int? { calculation.value }
         /// The count actually in use — manual wins, else calculated.
-        var effective: Int { override ?? calculated }
+        var effective: Int? { override ?? calculation.value }
         var isManual: Bool { override != nil }
     }
 
@@ -1673,7 +1676,7 @@ struct EditPaddockSheet: View {
             }
             return RowVineCountEntry(
                 number: number,
-                calculated: PaddockRowVineCount.calculated(
+                calculation: PaddockRowVineCount.calculation(
                     rowLengthMetres: length,
                     vineSpacing: vineSpacing
                 ),
@@ -1686,14 +1689,18 @@ struct EditPaddockSheet: View {
     private var rowVineCountsSection: some View {
         let entries = rowVineCountEntries
         let manualCount = entries.filter(\.isManual).count
-        let total = entries.reduce(0) { $0 + $1.effective }
+        let total = entries.reduce(0) { $0 + ($1.effective ?? 0) }
+        // Only ONE hint is worth showing, and it is the same for every row:
+        // the block-level thing that has to be fixed first.
+        let blockHint = entries.compactMap { $0.calculation.unavailable }
+            .first { $0 == .missingVineSpacing }?.message
 
         return Section {
             ForEach(entries) { entry in
                 Button {
                     rowVineCountEditorTarget = RowVineCountTarget(
                         number: entry.number,
-                        calculated: entry.calculated
+                        calculation: entry.calculation
                     )
                 } label: {
                     HStack(spacing: 10) {
@@ -1701,7 +1708,7 @@ struct EditPaddockSheet: View {
                             .font(.subheadline)
                             .foregroundStyle(.primary)
                         Spacer()
-                        Text("\(entry.effective) vines")
+                        Text(entry.effective.map { "\($0) vines" } ?? "—")
                             .font(.system(.subheadline, design: .monospaced).weight(.semibold))
                             .foregroundStyle(entry.isManual ? VineyardTheme.earthBrown : .secondary)
                         if entry.isManual {
@@ -1718,7 +1725,7 @@ struct EditPaddockSheet: View {
                     }
                 }
                 .accessibilityLabel(
-                    "Row \(entry.number), \(entry.effective) vines\(entry.isManual ? ", manual" : "")"
+                    "Row \(entry.number), \(entry.effective.map { "\($0) vines" } ?? "no calculated vine count")\(entry.isManual ? ", manual" : "")"
                 )
             }
 
@@ -1737,8 +1744,13 @@ struct EditPaddockSheet: View {
             }
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Total from rows: \(total) vines" + (manualCount > 0 ? " \u{00B7} \(manualCount) manual" : ""))
-                Text("Tap a row to set its real vine count. Manual counts are used by piece-rate pruning costing; the Block Summary vine count above is unchanged and still drives water, spray and yield estimates.")
+                if let blockHint {
+                    Label(blockHint, systemImage: "info.circle")
+                        .foregroundStyle(VineyardTheme.info)
+                } else {
+                    Text("Total from rows: \(total) vines" + (manualCount > 0 ? " \u{00B7} \(manualCount) manual" : ""))
+                }
+                Text("Every row's vines are calculated automatically from its own length and the block's vine spacing. Tap a row only to record a different real count. Manual counts are used by piece-rate pruning costing; the Block Summary vine count above is unchanged and still drives water, spray and yield estimates.")
             }
         }
     }

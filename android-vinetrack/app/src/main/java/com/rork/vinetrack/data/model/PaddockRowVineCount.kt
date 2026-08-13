@@ -72,18 +72,88 @@ object PaddockRowVineCount {
         }
     }
 
+    // ---- The automatic calculation ----
+
     /**
-     * The AUTOMATIC per-row estimate: row length ÷ vine spacing, truncated —
-     * the identical rule `Paddock.estimatedVineCount` applies at block level.
+     * Why a row has no calculated vine count. There are exactly two reasons,
+     * and each one names the single thing the grower must fix.
      */
-    fun calculated(rowLengthMetres: Double, vineSpacing: Double?): Int {
-        val spacing = vineSpacing ?: return 0
-        if (spacing <= 0 || !rowLengthMetres.isFinite() || rowLengthMetres <= 0) return 0
-        return (rowLengthMetres / spacing).toInt()
+    enum class Unavailable(val message: String) {
+        /** The block has no usable vine spacing. */
+        MISSING_VINE_SPACING("Set vine spacing in block details to calculate vines."),
+
+        /** The row has no usable length (unmapped or zero-length geometry). */
+        INVALID_GEOMETRY("Map this row on the block boundary to calculate vines."),
     }
 
-    /** THE rule: manual override wins, otherwise the calculated estimate. */
-    fun effective(override: Int?, rowLengthMetres: Double, vineSpacing: Double?): Int {
+    /**
+     * The outcome of the automatic calculation. Modelled explicitly so "we
+     * cannot calculate this" can never be confused with "this row has no
+     * vines" — a `0` would be a lie about the vineyard.
+     */
+    sealed interface Calculation {
+        data class Available(val vines: Int) : Calculation
+        data class Missing(val reason: Unavailable) : Calculation
+
+        /** The vine count when one could be calculated, else null. */
+        val value: Int? get() = (this as? Available)?.vines
+
+        /** The reason there is no number, else null. */
+        val unavailable: Unavailable? get() = (this as? Missing)?.reason
+
+        /** The subtle hint to show beside a "—", else null. */
+        val message: String? get() = unavailable?.message
+    }
+
+    /**
+     * Rounds a raw vines-per-row quotient to whole vines, half away from zero
+     * — the SAME rule as the Swift twin, so the two platforms can never report
+     * a different vine. Kotlin's `round` is half-UP, which disagrees with
+     * Swift on negatives, so the sign is mirrored explicitly.
+     */
+    fun roundVines(raw: Double): Int {
+        if (!raw.isFinite()) return 0
+        return if (raw < 0) -kotlin.math.round(-raw).toInt() else kotlin.math.round(raw).toInt()
+    }
+
+    /**
+     * THE automatic per-row estimate, with its reason when it cannot be made:
+     *
+     * ```text
+     * calculatedVineCount = round(row length in metres / vine spacing in metres)
+     *     250 m / 1.5 m = 166.67 -> 167 vines
+     * ```
+     *
+     * Both inputs come from data the app already holds — the row's own
+     * start/end geometry and the BLOCK's vine spacing — so a grower never has
+     * to type anything to get a vine count.
+     *
+     * Note this is the ROW rule. The block-level `Paddock.estimatedVineCount`
+     * keeps its own long-standing truncation of the block's total row length;
+     * the two are deliberately independent (see sql/188).
+     */
+    fun calculation(rowLengthMetres: Double, vineSpacing: Double?): Calculation {
+        if (vineSpacing == null || !vineSpacing.isFinite() || vineSpacing <= 0) {
+            return Calculation.Missing(Unavailable.MISSING_VINE_SPACING)
+        }
+        if (!rowLengthMetres.isFinite() || rowLengthMetres <= 0) {
+            return Calculation.Missing(Unavailable.INVALID_GEOMETRY)
+        }
+        return Calculation.Available(roundVines(rowLengthMetres / vineSpacing))
+    }
+
+    /**
+     * The automatic per-row estimate, or null when it genuinely cannot be
+     * calculated. NEVER returns 0 as a stand-in for "unknown".
+     */
+    fun calculated(rowLengthMetres: Double, vineSpacing: Double?): Int? =
+        calculation(rowLengthMetres, vineSpacing).value
+
+    /**
+     * THE rule: manual override wins, otherwise the calculated estimate.
+     * Null only when there is no override AND no calculable estimate.
+     */
+    fun effective(override: Int?, rowLengthMetres: Double, vineSpacing: Double?): Int? {
         sanitiseOverride(override)?.let { return it }
         return calculated(rowLengthMetres, vineSpacing)
     }

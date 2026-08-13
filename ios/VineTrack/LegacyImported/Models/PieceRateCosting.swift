@@ -170,7 +170,7 @@ nonisolated enum PieceRateCosting {
                     paddockId: paddock.id,
                     paddockRowId: row.id,
                     rowNumber: row.number,
-                    vineCount: paddock.effectiveVineCount(for: row)
+                    vineCount: paddock.effectiveVineCount(for: row) ?? 0
                 )
             }
     }

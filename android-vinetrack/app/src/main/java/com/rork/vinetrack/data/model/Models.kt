@@ -285,26 +285,35 @@ data class Paddock(
     }
 
     /**
-     * The AUTOMATICALLY calculated vine count for one row: this row's own
-     * length ÷ the block's vine spacing. Never reads any override.
+     * The AUTOMATIC calculation for one row, carrying its reason when the
+     * block can't produce a number yet. Never reads any override.
      */
-    fun calculatedVineCount(row: PaddockRow): Int =
-        PaddockRowVineCount.calculated(rowLengthMetres(row), vineSpacing)
+    fun vineCountCalculation(row: PaddockRow): PaddockRowVineCount.Calculation =
+        PaddockRowVineCount.calculation(rowLengthMetres(row), vineSpacing)
+
+    /**
+     * The AUTOMATICALLY calculated vine count for one row: this row's own
+     * length ÷ the block's vine spacing, rounded. Null when the block has no
+     * usable vine spacing or the row has no usable geometry — never 0.
+     */
+    fun calculatedVineCount(row: PaddockRow): Int? = vineCountCalculation(row).value
 
     /**
      * THE vine count to use for this row: the manual override when set,
-     * otherwise the calculated estimate (sql/188).
+     * otherwise the calculated estimate (sql/188). Null only when neither
+     * exists.
      */
-    fun effectiveVineCount(row: PaddockRow): Int =
+    fun effectiveVineCount(row: PaddockRow): Int? =
         PaddockRowVineCount.effective(row.vineCountOverride, rowLengthMetres(row), vineSpacing)
 
     /**
      * Σ of every row's effective vine count. This is the row-driven total used
      * by piece-rate costing — NOT a replacement for the block-level
      * [vineCountOverride], which keeps its existing meaning and consumers.
+     * Rows with no calculable count contribute nothing rather than a guess.
      */
     val rowsEffectiveVineCount: Int
-        get() = rows.orEmpty().sumOf { effectiveVineCount(it) }
+        get() = rows.orEmpty().sumOf { effectiveVineCount(it) ?: 0 }
 
     /** True when at least one row carries a manual per-row count. */
     val hasRowVineCountOverrides: Boolean

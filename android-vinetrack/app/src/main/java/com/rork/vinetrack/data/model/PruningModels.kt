@@ -554,7 +554,7 @@ object PruningCalculator {
                     label = row.number.toString(),
                     lengthMetres = lengths[index].takeIf { it > 0 },
                     vines = when {
-                        usesManualCounts -> paddock.effectiveVineCount(row).toDouble()
+                        usesManualCounts -> (paddock.effectiveVineCount(row) ?: 0).toDouble()
                         totalWeight > 0 -> totalVines * weights[index] / totalWeight
                         else -> 0.0
                     },

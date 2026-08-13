@@ -217,18 +217,26 @@ extension Paddock {
         return (dLat * dLat + dLon * dLon).squareRoot()
     }
 
-    /// The AUTOMATICALLY calculated vine count for one row: this row's own
-    /// length ÷ the block's vine spacing. Never reads any override.
-    func calculatedVineCount(for row: PaddockRow) -> Int {
-        PaddockRowVineCount.calculated(
+    /// The AUTOMATIC calculation for one row, carrying its reason when the
+    /// block can't produce a number yet. Never reads any override.
+    func vineCountCalculation(for row: PaddockRow) -> PaddockRowVineCount.Calculation {
+        PaddockRowVineCount.calculation(
             rowLengthMetres: rowLengthMetres(row),
             vineSpacing: vineSpacing
         )
     }
 
+    /// The AUTOMATICALLY calculated vine count for one row: this row's own
+    /// length ÷ the block's vine spacing, rounded. Nil when the block has no
+    /// usable vine spacing or the row has no usable geometry — never 0.
+    func calculatedVineCount(for row: PaddockRow) -> Int? {
+        vineCountCalculation(for: row).value
+    }
+
     /// THE vine count to use for this row: the manual override when set,
-    /// otherwise the calculated estimate (sql/188).
-    func effectiveVineCount(for row: PaddockRow) -> Int {
+    /// otherwise the calculated estimate (sql/188). Nil only when neither
+    /// exists.
+    func effectiveVineCount(for row: PaddockRow) -> Int? {
         PaddockRowVineCount.effective(
             override: row.vineCountOverride,
             rowLengthMetres: rowLengthMetres(row),
@@ -239,8 +247,9 @@ extension Paddock {
     /// Σ of every row's effective vine count. This is the row-driven total used
     /// by piece-rate costing — NOT a replacement for the block-level
     /// `vineCountOverride`, which keeps its existing meaning and consumers.
+    /// Rows with no calculable count contribute nothing rather than a guess.
     var rowsEffectiveVineCount: Int {
-        rows.reduce(0) { $0 + effectiveVineCount(for: $1) }
+        rows.reduce(0) { $0 + (effectiveVineCount(for: $1) ?? 0) }
     }
 
     /// True when at least one row carries a manual per-row count.

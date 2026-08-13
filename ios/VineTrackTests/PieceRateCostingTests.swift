@@ -110,17 +110,18 @@ struct PieceRateCostingTests {
     }
 
     @Test func aRowsManualCountOverridesTheCalculatedEstimate() {
-        // 300 m at 1.8 m spacing = 166 whole vines (truncated, never rounded up
-        // — a part-vine is not a vine), but the operator counted 150.
-        #expect(PaddockRowVineCount.calculated(rowLengthMetres: 300, vineSpacing: 1.8) == 166)
-        #expect(PaddockRowVineCount.effective(override: nil, rowLengthMetres: 300, vineSpacing: 1.8) == 166)
+        // 300 m at 1.8 m spacing = 166.67 → 167 whole vines, but the operator
+        // counted 150. See `RowVineCountTests` for the full rule.
+        #expect(PaddockRowVineCount.calculated(rowLengthMetres: 300, vineSpacing: 1.8) == 167)
+        #expect(PaddockRowVineCount.effective(override: nil, rowLengthMetres: 300, vineSpacing: 1.8) == 167)
         #expect(PaddockRowVineCount.effective(override: 150, rowLengthMetres: 300, vineSpacing: 1.8) == 150)
         // A zero/negative override is not an override at all.
-        #expect(PaddockRowVineCount.effective(override: 0, rowLengthMetres: 300, vineSpacing: 1.8) == 166)
-        #expect(PaddockRowVineCount.effective(override: -5, rowLengthMetres: 300, vineSpacing: 1.8) == 166)
-        // No usable geometry means no estimate — never a guess.
-        #expect(PaddockRowVineCount.calculated(rowLengthMetres: 300, vineSpacing: 0) == 0)
-        #expect(PaddockRowVineCount.calculated(rowLengthMetres: 0, vineSpacing: 1.8) == 0)
+        #expect(PaddockRowVineCount.effective(override: 0, rowLengthMetres: 300, vineSpacing: 1.8) == 167)
+        #expect(PaddockRowVineCount.effective(override: -5, rowLengthMetres: 300, vineSpacing: 1.8) == 167)
+        // No usable spacing or geometry means NO estimate — nil, never 0,
+        // because 0 would be a claim that the row has no vines.
+        #expect(PaddockRowVineCount.calculated(rowLengthMetres: 300, vineSpacing: 0) == nil)
+        #expect(PaddockRowVineCount.calculated(rowLengthMetres: 0, vineSpacing: 1.8) == nil)
     }
 
     // MARK: - Exactly one cost source

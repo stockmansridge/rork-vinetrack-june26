@@ -135,17 +135,18 @@ class PieceRateCostingTest {
 
     @Test
     fun `a rows manual count overrides the calculated estimate`() {
-        // 300 m at 1.8 m spacing = 166 whole vines (truncated, never rounded
-        // up — a part-vine is not a vine), but the operator counted 150.
-        assertEquals(166, PaddockRowVineCount.calculated(300.0, 1.8))
-        assertEquals(166, PaddockRowVineCount.effective(null, 300.0, 1.8))
+        // 300 m at 1.8 m spacing = 166.67 -> 167 whole vines, but the operator
+        // counted 150. See `RowVineCountTest` for the full rule.
+        assertEquals(167, PaddockRowVineCount.calculated(300.0, 1.8))
+        assertEquals(167, PaddockRowVineCount.effective(null, 300.0, 1.8))
         assertEquals(150, PaddockRowVineCount.effective(150, 300.0, 1.8))
         // A zero/negative override is not an override at all.
-        assertEquals(166, PaddockRowVineCount.effective(0, 300.0, 1.8))
-        assertEquals(166, PaddockRowVineCount.effective(-5, 300.0, 1.8))
-        // No usable geometry means no estimate — never a guess.
-        assertEquals(0, PaddockRowVineCount.calculated(300.0, 0.0))
-        assertEquals(0, PaddockRowVineCount.calculated(0.0, 1.8))
+        assertEquals(167, PaddockRowVineCount.effective(0, 300.0, 1.8))
+        assertEquals(167, PaddockRowVineCount.effective(-5, 300.0, 1.8))
+        // No usable spacing or geometry means NO estimate — null, never 0,
+        // because 0 would be a claim that the row has no vines.
+        assertNull(PaddockRowVineCount.calculated(300.0, 0.0))
+        assertNull(PaddockRowVineCount.calculated(0.0, 1.8))
     }
 
     // -----------------------------------------------------------------

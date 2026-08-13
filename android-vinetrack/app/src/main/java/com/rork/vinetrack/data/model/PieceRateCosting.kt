@@ -160,7 +160,7 @@ object PieceRateCosting {
                 paddockId = paddock.id,
                 paddockRowId = row.stableId,
                 rowNumber = row.number,
-                vineCount = paddock.effectiveVineCount(row),
+                vineCount = paddock.effectiveVineCount(row) ?: 0,
             )
         }
     }

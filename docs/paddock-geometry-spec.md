@@ -259,20 +259,43 @@ estimatedVineCount = floor(effectiveTotalRowLength / vineSpacing)   (vineSpacing
 effectiveVineCount = vineCountOverride ?? estimatedVineCount
 ```
 
-**Per-row vine count (SQL 188)** — the same rule applied one row at a time. It
-is the quantity a piece-rate job is priced on, so both platforms must agree to
-the vine:
+**Per-row vine count (SQL 188)** — the same idea applied one row at a time,
+but with its OWN rounding rule (see below). It is the quantity a piece-rate job
+is priced on, so both platforms must agree to the vine:
 
 ```
-rowEstimatedVineCount = floor(rowLengthMetres / vineSpacing)   (vineSpacing > 0, else 0)
-rowEffectiveVineCount = rows[].vineCountOverride ?? rowEstimatedVineCount
+rowLengthMetres       = distance(row.startPoint, row.endPoint)         (§5.2, per row)
+rowCalculatedVines    = round(rowLengthMetres / vineSpacing)           (half away from zero)
+rowEffectiveVineCount = rows[].vineCountOverride ?? rowCalculatedVines
 ```
 
-Always **truncated**, never rounded up — a part-vine is not a vine. A
-`vineCountOverride` of `0` or a negative value is not an override at all and
-falls back to the estimate. Block-level and row-level counts are independent:
-`vine_count_override` stays the block total used for water/spray/fertiliser/yield
-estimates, and is never derived from Σ of the row overrides.
+Worked example: a 250 m row at 1.5 m vine spacing is `250 / 1.5 = 166.67`,
+which calculates as **167 vines**.
+
+Rules:
+
+- Each row is measured from **its own** `startPoint`/`endPoint`. Never use the
+  block average, `totalRowLengthMetres / rows.length`, or the row width —
+  irregular boundaries give every row a different length, and a piece-rate
+  invoice is priced on the real one.
+- The row rule **rounds** (half away from zero); the BLOCK rule in this same
+  section still **truncates** its total. The two are deliberately independent
+  and neither derives from the other.
+- `vineSpacing` is the block's existing vine spacing. There is no separate
+  per-row spacing field.
+- When `vineSpacing` is missing or ≤ 0, or the row has no usable length, the
+  calculated count is **unavailable** — rendered as `—`, never `0`. `0` would
+  be a claim that the row genuinely has no vines.
+- A `vineCountOverride` of `0` or a negative value is not an override at all and
+  falls back to the calculated value.
+- Block-level and row-level counts stay independent: `vine_count_override`
+  remains the block total used for water/spray/fertiliser/yield estimates, and
+  is never derived from Σ of the row overrides.
+
+Canonical implementations — keep these two in lockstep:
+`ios/VineTrack/LegacyImported/Utilities/PaddockRowVineCount.swift` and
+`android-vinetrack/.../data/model/PaddockRowVineCount.kt`, both exercised by the
+same fixtures in `RowVineCountTests.swift` / `RowVineCountTest.kt`.
 
 ### 5.4 Intermediate posts — `intermediatePostCount`
 

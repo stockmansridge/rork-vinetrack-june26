@@ -1352,7 +1352,16 @@ private fun FullMapEditorButton(hasBoundary: Boolean, onClick: () -> Unit) {
 // ---------------------------------------------------------------------------
 
 /** Identifies the row currently open in the per-row vine-count editor. */
-data class RowVineCountTarget(val number: Int, val calculated: Int)
+data class RowVineCountTarget(
+    val number: Int,
+    /**
+     * The AUTOMATIC calculation for this row, carrying its reason when the
+     * block can't produce a number yet.
+     */
+    val calculation: PaddockRowVineCount.Calculation,
+) {
+    val calculated: Int? get() = calculation.value
+}
 
 /**
  * One row of the compact vine-count list: its number, the automatically
@@ -1360,17 +1369,20 @@ data class RowVineCountTarget(val number: Int, val calculated: Int)
  */
 data class RowVineCountEntry(
     val number: Int,
-    val calculated: Int,
+    val calculation: PaddockRowVineCount.Calculation,
     val override: Int?,
 ) {
+    val calculated: Int? get() = calculation.value
+
     /** The count actually in use — manual wins, else calculated. */
-    val effective: Int get() = override ?: calculated
+    val effective: Int? get() = override ?: calculation.value
     val isManual: Boolean get() = override != null
 }
 
 /**
  * Builds the live per-row list from the CURRENT draft geometry, so the numbers
- * update as the layout is edited. Matches the iOS `rowVineCountEntries`.
+ * update as the layout is edited — no save and no database round trip.
+ * Matches the iOS `rowVineCountEntries`.
  */
 private fun rowVineCountEntries(
     layout: BlockRowLayout,
@@ -1388,7 +1400,7 @@ private fun rowVineCountEntries(
         val length = kotlin.math.sqrt(dLat * dLat + dLon * dLon)
         RowVineCountEntry(
             number = row.number,
-            calculated = PaddockRowVineCount.calculated(length, vineSpacing),
+            calculation = PaddockRowVineCount.calculation(length, vineSpacing),
             override = overrides[row.number],
         )
     }.sortedBy { it.number }
@@ -1402,7 +1414,14 @@ private fun RowVineCountsCard(
 ) {
     val vine = LocalVineColors.current
     val manualCount = entries.count { it.isManual }
-    val total = entries.sumOf { it.effective }
+    val total = entries.sumOf { it.effective ?: 0 }
+    // Only ONE hint is worth showing, and it is the same for every row: the
+    // block-level thing that has to be fixed first.
+    val blockHint = entries.firstNotNullOfOrNull { entry ->
+        entry.calculation.unavailable
+            ?.takeIf { it == PaddockRowVineCount.Unavailable.MISSING_VINE_SPACING }
+            ?.message
+    }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SectionHeader("Vines Per Row", onLight = true)
         VineyardCard {
@@ -1415,7 +1434,7 @@ private fun RowVineCountsCard(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
                             .clickable {
-                                onEditRow(RowVineCountTarget(entry.number, entry.calculated))
+                                onEditRow(RowVineCountTarget(entry.number, entry.calculation))
                             }
                             .padding(vertical = 10.dp, horizontal = 4.dp),
                     ) {
@@ -1426,7 +1445,7 @@ private fun RowVineCountsCard(
                             modifier = Modifier.weight(1f),
                         )
                         Text(
-                            "%,d vines".format(entry.effective),
+                            entry.effective?.let { "%,d vines".format(it) } ?: "—",
                             color = if (entry.isManual) VineColors.LeafGreen else vine.textSecondary,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 14.sp,
@@ -1452,16 +1471,22 @@ private fun RowVineCountsCard(
                     }
                 }
                 Spacer(Modifier.height(6.dp))
+                if (blockHint != null) {
+                    Text(blockHint, color = VineColors.Info, fontSize = 12.sp)
+                } else {
+                    Text(
+                        "Total from rows: %,d vines".format(total) +
+                            if (manualCount > 0) " \u00b7 $manualCount manual" else "",
+                        color = vine.textSecondary,
+                        fontSize = 12.sp,
+                    )
+                }
                 Text(
-                    "Total from rows: %,d vines".format(total) +
-                        if (manualCount > 0) " \u00b7 $manualCount manual" else "",
-                    color = vine.textSecondary,
-                    fontSize = 12.sp,
-                )
-                Text(
-                    "Tap a row to set its real vine count. Manual counts are used by " +
-                        "piece-rate pruning costing; the Block Summary vine count above is " +
-                        "unchanged and still drives water, spray and yield estimates.",
+                    "Every row's vines are calculated automatically from its own length " +
+                        "and the block's vine spacing. Tap a row only to record a different " +
+                        "real count. Manual counts are used by piece-rate pruning costing; " +
+                        "the Block Summary vine count above is unchanged and still drives " +
+                        "water, spray and yield estimates.",
                     color = vine.textSecondary,
                     fontSize = 12.sp,
                 )
@@ -1478,8 +1503,11 @@ private fun RowVineCountsCard(
  *
  * Deliberately minimal — this is not a row-management workflow. It shows the
  * three numbers a grower needs and nothing else: the calculated estimate, the
- * optional manual override, and the count actually being used. Clearing the
- * field immediately returns to the calculated value.
+ * optional manual override, and the count actually being used.
+ *
+ * The calculated value is ALWAYS derived automatically from this row's own
+ * length and the block's vine spacing — the grower never has to type anything
+ * to get a vine count. Clearing the field immediately returns to it.
  */
 @Composable
 private fun RowVineCountDialog(
@@ -1498,13 +1526,16 @@ private fun RowVineCountDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Calculated", color = vine.textSecondary, fontSize = 14.sp)
+                    Text("Calculated vines", color = vine.textSecondary, fontSize = 14.sp)
                     Text(
-                        "%,d vines".format(target.calculated),
+                        target.calculated?.let { "%,d".format(it) } ?: "—",
                         color = vine.textSecondary,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 14.sp,
                     )
+                }
+                target.calculation.message?.let {
+                    Text(it, color = VineColors.Info, fontSize = 12.sp)
                 }
                 NumberField("Manual override", text, KeyboardType.Number) { text = it }
                 parsed.message?.let {
@@ -1513,7 +1544,7 @@ private fun RowVineCountDialog(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Using", color = vine.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                     Text(
-                        "%,d vines".format(effective),
+                        effective?.let { "%,d vines".format(it) } ?: "—",
                         color = VineColors.LeafGreen,
                         fontWeight = FontWeight.Bold,
                         fontSize = 18.sp,

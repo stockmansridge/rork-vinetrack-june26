@@ -96,18 +96,30 @@ operator never selects rows twice and never types a total the app already knows.
 
 ## Where the vine count comes from
 
-Per row, using each row's manual count where one is set (see
+Every row calculates its own vine count automatically from data the app already
+holds — the row's mapped `startPoint`/`endPoint` and the BLOCK's vine spacing.
+Nobody types a quantity to get a piece-rate cost (see
 `docs/paddock-geometry-spec.md` §2 and §5.3):
 
 ```
-rowEffectiveVineCount = rows[].vineCountOverride ?? floor(rowLengthMetres / vineSpacing)
+rowLengthMetres       = distance(row.startPoint, row.endPoint)   per row, never the block average
+rowCalculatedVines    = round(rowLengthMetres / vineSpacing)     half away from zero
+rowEffectiveVineCount = rows[].vineCountOverride ?? rowCalculatedVines
 piece_vine_count      = Σ rowEffectiveVineCount over the selected rows
 ```
 
-Truncated, never rounded up. `vineCountOverride` of `0` or negative is not an
-override and falls back to the estimate. This is independent of the block-level
-`paddocks.vine_count_override`, which remains the block total used for
-water/spray/fertiliser/yield estimates.
+A 250 m row at 1.5 m spacing is `166.67` → **167 vines**.
+
+- The manual override is OPTIONAL and only ever means "the calculated number is
+  wrong for this row". `0` or negative is not an override and falls back to the
+  calculated value.
+- No vine spacing, or no usable row geometry → the count is **unavailable**
+  (`—`), never `0`.
+- Independent of the block-level `paddocks.vine_count_override`, which remains
+  the block total used for water/spray/fertiliser/yield estimates.
+
+So the operator's whole job is: select the rows, choose Piece Rate, enter the
+agreed rate per vine.
 
 ## Schema
 
@@ -178,6 +190,8 @@ boundaries themselves (1,000 / 10,000,000) are acceptable values.
 | --- | --- | --- |
 | costing core | `ios/VineTrack/LegacyImported/Models/PieceRateCosting.swift` | `.../data/model/PieceRateCosting.kt` |
 | per-row vine count | `.../Utilities/PaddockRowVineCount.swift` | `.../data/model/PaddockRowVineCount.kt` |
+| row vine-count UI | Edit Block → "Vines Per Row" + `RowVineCountEditorSheet.swift` | Edit Block → "Vines Per Row" card + row dialog |
+| row-count parity tests | `ios/VineTrackTests/RowVineCountTests.swift` | `.../data/RowVineCountTest.kt` |
 | snapshot repository | `.../Repositories/WorkTaskPieceRateRowRepository.swift` | `.../data/` work task repository |
 | tracker UI | Record Pruning sheet | `.../ui/screens/PruningTrackerScreen.kt` |
 | parity tests | `ios/VineTrackTests/PieceRateCostingTests.swift` | `.../data/PieceRateCostingTest.kt` |

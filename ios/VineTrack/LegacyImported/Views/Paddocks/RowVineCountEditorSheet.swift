@@ -4,10 +4,14 @@ import SwiftUI
 struct RowVineCountTarget: Identifiable {
     /// Real-world row number — the stable key the editor works in.
     let number: Int
-    /// The automatically calculated estimate for this row.
-    let calculated: Int
+    /// The automatic calculation for this row, including WHY there is no
+    /// number when the block can't produce one yet.
+    let calculation: PaddockRowVineCount.Calculation
 
     var id: Int { number }
+
+    /// The calculated estimate, or nil when it can't be calculated.
+    var calculated: Int? { calculation.value }
 }
 
 /// The single-row vine-count editor (sql/188).
@@ -18,18 +22,21 @@ struct RowVineCountTarget: Identifiable {
 /// ```text
 /// Row 12
 ///
-/// Calculated: 187 vines
+/// Calculated vines: 187
 /// Manual override: [182]
 ///
 /// Using: 182 vines
 /// ```
 ///
-/// Clearing the field immediately returns to the calculated value.
+/// The calculated value is ALWAYS derived automatically from this row's own
+/// length and the block's vine spacing — the grower never has to type anything
+/// to get a vine count. Clearing the field immediately returns to it.
 struct RowVineCountEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let rowNumber: Int
-    let calculated: Int
+    /// The automatic calculation, carrying its reason when unavailable.
+    let calculation: PaddockRowVineCount.Calculation
     let currentOverride: Int?
     /// Called with the new manual count, or nil to clear it.
     let onSave: (Int?) -> Void
@@ -37,12 +44,15 @@ struct RowVineCountEditorSheet: View {
     @State private var text: String = ""
     @FocusState private var isFieldFocused: Bool
 
+    private var calculated: Int? { calculation.value }
+
     private var parsed: PaddockRowVineCount.OverrideInput {
         PaddockRowVineCount.parseOverride(text)
     }
 
-    /// The count that will actually be used once saved.
-    private var effective: Int {
+    /// The count that will actually be used once saved. Nil only when there is
+    /// neither an override nor a calculable estimate.
+    private var effective: Int? {
         parsed.value ?? calculated
     }
 
@@ -52,16 +62,22 @@ struct RowVineCountEditorSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("Calculated") {
-                        Text("\(calculated) vines")
+                    LabeledContent("Calculated vines") {
+                        Text(calculated.map { "\($0)" } ?? "—")
                             .font(.system(.body, design: .monospaced).weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let message = calculation.message {
+                        Label(message, systemImage: "info.circle")
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
 
                     HStack {
                         Text("Manual override")
                         Spacer()
-                        TextField("\(calculated)", text: $text)
+                        TextField(calculated.map { "\($0)" } ?? "—", text: $text)
                             .keyboardType(.numberPad)
                             .multilineTextAlignment(.trailing)
                             .frame(width: 110)
@@ -85,20 +101,18 @@ struct RowVineCountEditorSheet: View {
                         Text("Using")
                             .font(.headline)
                         Spacer()
-                        Text("\(effective) vines")
+                        Text(effective.map { "\($0) vines" } ?? "—")
                             .font(.system(.title3, design: .monospaced).weight(.bold))
                             .foregroundStyle(VineyardTheme.earthBrown)
                     }
                     if parsed.value != nil {
-                        Button("Use calculated (\(calculated) vines)") {
+                        Button(calculated.map { "Use calculated (\($0) vines)" } ?? "Clear manual count") {
                             text = ""
                         }
                         .font(.footnote)
                     }
                 } footer: {
-                    Text(parsed.value == nil
-                        ? "This row is using its calculated estimate."
-                        : "This manual count replaces the calculated estimate everywhere this row's vines are counted, including piece-rate pruning costing.")
+                    Text(usingFooter)
                 }
             }
             .navigationTitle("Row \(rowNumber)")
@@ -117,10 +131,22 @@ struct RowVineCountEditorSheet: View {
                 }
             }
             .onAppear {
+                // The calculated value is already on screen; this only
+                // restores any manual count the row already carries.
                 if let currentOverride { text = "\(currentOverride)" }
                 isFieldFocused = true
             }
         }
         .presentationDetents([.medium])
+    }
+
+    private var usingFooter: String {
+        if parsed.value != nil {
+            return "This manual count replaces the calculated estimate everywhere this row's vines are counted, including piece-rate pruning costing."
+        }
+        if let message = calculation.message {
+            return message
+        }
+        return "This row is using its calculated estimate."
     }
 }
