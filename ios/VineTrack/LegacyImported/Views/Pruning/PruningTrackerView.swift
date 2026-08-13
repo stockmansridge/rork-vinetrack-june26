@@ -51,6 +51,9 @@ struct PruningTrackerView: View {
     @Environment(PruningSyncService.self) private var pruningSync
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(NewBackendAuthService.self) private var auth
+    @Environment(WorkTaskSyncService.self) private var workTaskSync
+    @Environment(WorkTaskLabourLineSyncService.self) private var labourLineSync
+    @Environment(WorkTaskPieceRateRowSyncService.self) private var pieceRateRowSync
     @AppStorage("pruningBlockSort") private var blockSortRaw: String = PruningBlockSort.alphabetical.rawValue
     private var pruningStore: PruningStore { .shared }
 
@@ -187,6 +190,7 @@ struct PruningTrackerView: View {
         let blocks = paddocks.filter { blockIds.contains($0.id) }
         let userName = auth.userName ?? ""
         let creator = userName.isEmpty ? nil : userName
+        let isPieceRate = taskDraft.isPieceRate
         var task = WorkTask(
             vineyardId: vineyardId,
             date: activity.date,
@@ -200,7 +204,12 @@ struct PruningTrackerView: View {
             finalizedAt: taskDraft.markCompleted ? Date() : nil,
             finalizedBy: taskDraft.markCompleted ? creator : nil,
             taskDescription: "Pruning — \(activity.blockSummary)",
-            status: taskDraft.markCompleted ? "Completed" : nil
+            status: taskDraft.markCompleted ? "Completed" : nil,
+            // sql/188. The costing basis is written WITH the task, so the job is
+            // never briefly persisted as an unpriced hourly record.
+            costingMethodRaw: taskDraft.costingMethod.rawValue,
+            pieceRatePerVine: isPieceRate ? taskDraft.ratePerVine : nil,
+            pieceVineCount: isPieceRate ? taskDraft.vineCount : nil
         )
         let area = blocks.reduce(0.0) { $0 + $1.areaHectares }
         if area > 0 { task.areaHa = area }
@@ -213,6 +222,50 @@ struct PruningTrackerView: View {
                 paddockId: block.id,
                 areaHa: block.areaHectares > 0 ? block.areaHectares : nil
             ))
+        }
+
+        if isPieceRate {
+            // The HISTORICAL per-row breakdown behind the agreed quantity,
+            // derived from the quarters actually selected. Written at creation
+            // only, so later edits to these rows can never re-cost the job.
+            let rowsByPaddock = Dictionary(uniqueKeysWithValues: blocks.map { block in
+                (block.id, PruningCalculator.rowRefs(paddock: block, setup: pruningStore.setup(for: block.id)))
+            })
+            let snapshot = PruningWorkTaskLink.pieceRateRows(
+                activity: activity,
+                workTaskId: task.id,
+                vineyardId: vineyardId,
+                rowsByPaddock: rowsByPaddock
+            )
+            if !snapshot.isEmpty {
+                store.replaceWorkTaskPieceRateRows(snapshot, forWorkTask: task.id)
+            }
+        }
+
+        // Hourly labour is recorded as an ORDINARY labour line — the same record
+        // the Work Task editor writes — so there is only ever one hourly
+        // calculation in the app. On a piece-rate job the crew's hours are kept
+        // too, as operational history that never drives the cost.
+        if taskDraft.recordsHourlyLabour {
+            store.addWorkTaskLabourLine(WorkTaskLabourLine(
+                workTaskId: task.id,
+                vineyardId: vineyardId,
+                workDate: activity.date,
+                operatorCategoryId: taskDraft.operatorCategoryId,
+                workerType: taskDraft.workerType.trimmingCharacters(in: .whitespacesAndNewlines),
+                workerCount: taskDraft.workerCount,
+                hoursPerWorker: taskDraft.hoursPerWorker ?? 0,
+                hourlyRate: isPieceRate ? nil : taskDraft.hourlyRate
+            ))
+        }
+
+        // Push in dependency order: the task header first (its id is a real
+        // foreign key), then the children. Each service is idempotent on the
+        // client-minted ids, so a retry upserts rather than duplicating.
+        Task {
+            await workTaskSync.syncForSelectedVineyard()
+            await labourLineSync.syncForSelectedVineyard()
+            await pieceRateRowSync.syncForSelectedVineyard()
         }
         return task.id
     }

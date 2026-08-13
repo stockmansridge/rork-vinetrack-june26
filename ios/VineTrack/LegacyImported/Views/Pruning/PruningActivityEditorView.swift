@@ -79,14 +79,42 @@ struct PruningActivityEditorView: View {
         Dictionary(uniqueKeysWithValues: paddocks.map { ($0.id, $0) })
     }
 
+    /// Work Tasks resolved LIVE from the store, merged with the snapshot this
+    /// screen was pushed with.
+    ///
+    /// The injected `workTasks` array is a VALUE captured when this screen was
+    /// pushed, so a task created from inside this editor would never appear in
+    /// it — which is exactly what made a freshly created task look unsynced.
+    /// Reading the observable store here means a task created on THIS device
+    /// resolves immediately, and the orange warning is left for what it
+    /// actually means: a link this device genuinely has not pulled yet.
+    private var liveWorkTasks: [WorkTask] {
+        let live = store.workTasks.filter { $0.vineyardId == draft.vineyardId }
+        var known = Set(live.map(\.id))
+        var merged = live
+        for task in workTasks where !known.contains(task.id) {
+            merged.append(task)
+            known.insert(task.id)
+        }
+        return merged
+    }
+
     /// The linked Work Task, when this device has it cached.
     private var linkedTask: WorkTask? {
-        PruningWorkTaskLink.linkedTask(draft, tasks: workTasks)
+        PruningWorkTaskLink.linkedTask(draft, tasks: liveWorkTasks)
     }
 
     /// A link this device cannot resolve yet — warned about, never cleared.
     private var hasUnresolvableLink: Bool {
-        PruningWorkTaskLink.hasUnresolvableLink(draft, tasks: workTasks)
+        PruningWorkTaskLink.hasUnresolvableLink(draft, tasks: liveWorkTasks)
+    }
+
+    /// Hectares under this activity's blocks — the denominator for cost/ha.
+    private var activityHectares: Double? {
+        let total = PruningWorkTaskLink.paddockIds(draft)
+            .compactMap { blocksById[$0]?.areaHectares }
+            .reduce(0, +)
+        return total > 0 ? total : nil
     }
 
     private func varietyName(of paddockId: UUID) -> String? {
@@ -225,7 +253,7 @@ struct PruningActivityEditorView: View {
             }
         }
         .sheet(isPresented: $showTaskPicker) {
-            PruningWorkTaskPicker(tasks: workTasks, linkedId: draft.workTaskId) { task in
+            PruningWorkTaskPicker(tasks: liveWorkTasks, linkedId: draft.workTaskId) { task in
                 // Only the parent's link changes — every allocation is carried
                 // through untouched.
                 draft = PruningWorkTaskLink.link(draft, taskId: task.id)
@@ -235,6 +263,7 @@ struct PruningActivityEditorView: View {
             PruningWorkTaskCreateSheet(
                 activity: draft,
                 task: pending,
+                hectares: activityHectares,
                 onCreate: { confirmed in
                     // The LIVE draft is passed, so the task's date, hours and
                     // blocks match what the operator is actually recording.
@@ -471,7 +500,7 @@ struct PruningActivityEditorView: View {
         guard !totals.isEmpty else {
             return "No labour recorded yet — add it below and choose hourly or piece rate."
         }
-        var parts: [String] = [Self.number(totals.personHours, digits: 1) + " total person-hours"]
+        var parts: [String] = ["Hourly", Self.number(totals.personHours, digits: 1) + " total person-hours"]
         if canViewCosting, let cost = totals.cost {
             parts.append("labour cost " + Self.number(cost))
         }
@@ -999,47 +1028,82 @@ struct PruningWorkTaskPicker: View {
 /// blocks come from the activity itself, so the shared labour is recorded once
 /// and never apportioned per block.
 struct PruningWorkTaskCreateSheet: View {
+    @Environment(MigratedDataStore.self) private var store
+    @Environment(\.accessControl) private var accessControl
+
     let activity: PruningActivityDraft
+    /// Hectares under this activity's blocks, for cost/ha. Nil when unknown.
+    let hectares: Double?
     let onCreate: (PruningWorkTaskLinkDraft) -> Void
     let onCancel: () -> Void
 
     @State private var task: PruningWorkTaskLinkDraft
+    @State private var hoursText: String = ""
+    @State private var rateText: String = ""
+    @State private var ratePerVineText: String = ""
+    @State private var showIssues: Bool = false
 
     init(
         activity: PruningActivityDraft,
         task: PruningWorkTaskLinkDraft,
+        hectares: Double? = nil,
         onCreate: @escaping (PruningWorkTaskLinkDraft) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.activity = activity
+        self.hectares = hectares
         self._task = State(initialValue: task)
         self.onCreate = onCreate
         self.onCancel = onCancel
+        self._hoursText = State(initialValue: task.hoursPerWorker.map { Self.decimal($0) } ?? "")
+    }
+
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+    private var canViewFinancials: Bool { accessControl?.canViewFinancials ?? false }
+    /// Supervisors and above — may agree a rate in the field.
+    private var canEnterPricing: Bool { accessControl?.canEnterPricing ?? false }
+
+    private var categories: [OperatorCategory] {
+        store.operatorCategories
+            .filter { $0.vineyardId == activity.vineyardId }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    private var pieceIssues: [PieceRateCosting.PieceRateIssue] {
+        PieceRateCosting.validate(ratePerVine: task.ratePerVine, vineCount: task.vineCount)
+    }
+
+    private func pieceIssue(_ field: PieceRateCosting.PieceRateField) -> String? {
+        guard showIssues else { return nil }
+        return PieceRateCosting.message(pieceIssues, for: field)
+    }
+
+    private var costPerHectare: Double? {
+        PieceRateCosting.costPerHectare(cost: task.estimatedCost, hectares: hectares)
     }
 
     /// What the created task will record — all of it taken from the activity, so
     /// the shared labour is stored once and never apportioned per block.
     private var activitySummary: String {
         let dateText = activity.date.formatted(date: .abbreviated, time: .omitted)
-        let hours = PruningWorkTaskLink.durationHours(activity)
-        let hoursText = hours.formatted(.number.precision(.fractionLength(0...1)))
         let blocks: String = activity.blockSummary.isEmpty ? "no blocks yet" : activity.blockSummary
-        let head = "One task for this whole activity: \(dateText) · \(hoursText) h · \(blocks)."
+        let head = "One task for this whole activity: \(dateText) · \(blocks)."
         return head + " Linked to this activity with a stable id, so an offline retry can never create a second task."
     }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    TextField("Work type", text: $task.taskType)
-                    TextField("Task notes", text: $task.notes, axis: .vertical)
-                    Toggle("Mark completed", isOn: $task.markCompleted)
-                } header: {
-                    Text("New Work Task")
-                } footer: {
-                    Text(activitySummary)
+                detailsSection
+                if canEnterPricing {
+                    costingMethodSection
                 }
+                if task.isPieceRate {
+                    pieceRateSection
+                } else {
+                    hourlySection
+                }
+                previewSection
             }
             .navigationTitle("Create Work Task")
             .navigationBarTitleDisplayMode(.inline)
@@ -1048,12 +1112,203 @@ struct PruningWorkTaskCreateSheet: View {
                     Button("Cancel", action: onCancel)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Create") { onCreate(task) }
-                        .font(.body.weight(.semibold))
-                        .disabled(!task.isValid)
+                    Button("Create") {
+                        showIssues = true
+                        guard task.isValid else { return }
+                        onCreate(task)
+                    }
+                    .font(.body.weight(.semibold))
+                    .disabled(task.trimmedType.isEmpty)
                 }
             }
         }
+    }
+
+    // MARK: Sections
+
+    @ViewBuilder
+    private var detailsSection: some View {
+        Section {
+            TextField("Work type", text: $task.taskType)
+            TextField("Task notes", text: $task.notes, axis: .vertical)
+            Toggle("Mark completed", isOn: $task.markCompleted)
+        } header: {
+            Text("New Work Task")
+        } footer: {
+            Text(activitySummary)
+        }
+    }
+
+    /// THE single switch between the two costing methods (sql/188), offered
+    /// BEFORE any figure is entered so nobody fills in the wrong basis.
+    @ViewBuilder
+    private var costingMethodSection: some View {
+        Section {
+            Picker("Costing method", selection: $task.costingMethod) {
+                ForEach(WorkTaskCostingMethod.allCases) { method in
+                    Text(method.label).tag(method)
+                }
+            }
+            .pickerStyle(.segmented)
+        } header: {
+            Text("How is this job paid?")
+        } footer: {
+            Text(task.isPieceRate
+                 ? "Paid per vine. The agreed rate is multiplied by the vines in the quarters selected for this activity — hours never change a piece-rate cost."
+                 : "Paid per hour. People × hours per person × hourly rate.")
+        }
+    }
+
+    /// The STANDARD hourly labour inputs — the same fields, defaults and
+    /// arithmetic as an ordinary Work Task labour line, so this flow writes a
+    /// real labour line rather than inventing a second hourly calculation.
+    @ViewBuilder
+    private var hourlySection: some View {
+        Section {
+            Picker("Labour type", selection: $task.operatorCategoryId) {
+                Text("Choose labour type").tag(UUID?.none)
+                ForEach(categories) { category in
+                    Text(labourTypeLabel(category)).tag(UUID?.some(category.id))
+                }
+            }
+            .onChange(of: task.operatorCategoryId) { _, newValue in
+                guard let newValue,
+                      let category = categories.first(where: { $0.id == newValue }) else { return }
+                task.workerType = category.name
+                // The labour type's saved rate is the DEFAULT; an explicit edit
+                // is never overwritten.
+                if let rate = WorkTaskLabourCosting.defaultRate(category), rateText.isEmpty {
+                    rateText = Self.decimal(rate)
+                    task.hourlyRate = rate
+                }
+            }
+            Stepper(value: $task.workerCount, in: 0...500) {
+                LabeledContent("Number of people", value: "\(task.workerCount)")
+            }
+            HStack {
+                Text("Hours per person")
+                Spacer()
+                TextField("0", text: $hoursText)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 90)
+                    .onChange(of: hoursText) { _, value in
+                        task.hoursPerWorker = Self.parsed(value)
+                    }
+            }
+            if canViewFinancials {
+                HStack {
+                    Text("Hourly rate")
+                    Spacer()
+                    TextField("0", text: $rateText)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 90)
+                        .onChange(of: rateText) { _, value in
+                            task.hourlyRate = Self.parsed(value)
+                        }
+                }
+            }
+        } header: {
+            Text("Hourly labour")
+        } footer: {
+            Text("Hours per person — not the whole crew's combined total. Leave the hours blank to create the task now and record the crew's hours later.")
+        }
+    }
+
+    /// The agreed piece rate and the quantity it applies to. The quantity is the
+    /// activity's OWN vine total, so the operator confirms a number rather than
+    /// counting one.
+    @ViewBuilder
+    private var pieceRateSection: some View {
+        Section {
+            HStack {
+                Text("Rate per vine")
+                Spacer()
+                Text("$").foregroundStyle(.secondary)
+                TextField("0.00", text: $ratePerVineText)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 80)
+                    .onChange(of: ratePerVineText) { _, value in
+                        task.ratePerVine = Self.parsed(value)
+                    }
+            }
+            LabeledContent("Rows selected") {
+                Text("\(activity.blockCount) block(s) · \(activity.totalQuarters) quarters")
+                    .monospacedDigit()
+            }
+            LabeledContent("Vines in this job") {
+                Text(PieceRateCosting.vineCountLabel(task.vineCount))
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+            }
+        } header: {
+            Text("Piece rate")
+        } footer: {
+            let messages = [pieceIssue(.ratePerVine), pieceIssue(.vineCount)].compactMap { $0 }
+            if messages.isEmpty {
+                Text("Counted automatically from the quarters selected above — each row's own vine count, or your manual count where you set one. A row with two of its four quarters selected counts half its vines.")
+            } else {
+                Text(messages.joined(separator: "\n")).foregroundStyle(.red)
+            }
+        }
+    }
+
+    /// The calculated cost, BEFORE Create. Nobody should have to create a task to
+    /// discover what it costs.
+    @ViewBuilder
+    private var previewSection: some View {
+        Section {
+            if task.isPieceRate {
+                LabeledContent("Calculation") {
+                    Text("\(PieceRateCosting.vineCountLabel(task.vineCount)) × \(PieceRateCosting.rateLabel(task.ratePerVine ?? 0))")
+                        .monospacedDigit()
+                }
+            } else {
+                LabeledContent("Person-hours") {
+                    Text(Self.decimal(task.personHours) + " h")
+                        .monospacedDigit()
+                }
+            }
+            LabeledContent("Estimated labour cost") {
+                Text(task.estimatedCost.map { fmt.formatCurrency($0) } ?? "Not specified")
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(task.estimatedCost == nil ? Color.secondary : VineyardTheme.leafGreen)
+            }
+            if let perHectare = costPerHectare {
+                LabeledContent("Cost per hectare") {
+                    Text(fmt.formatCurrency(perHectare) + "/ha")
+                        .monospacedDigit()
+                }
+            }
+        } header: {
+            Text("Estimated cost")
+        } footer: {
+            Text(task.isPieceRate
+                 ? "Saved with the task as the quantity it was priced on, so later edits to this block's rows can never re-cost it."
+                 : "Recorded as an ordinary labour line on the new task.")
+        }
+    }
+
+    private func labourTypeLabel(_ category: OperatorCategory) -> String {
+        guard canViewFinancials, let rate = WorkTaskLabourCosting.defaultRate(category) else {
+            return category.name
+        }
+        return "\(category.name) · \(fmt.formatCurrency(rate))/h"
+    }
+
+    private static func parsed(_ text: String) -> Double? {
+        let trimmed = text
+            .trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: ",", with: ".")
+        guard !trimmed.isEmpty, let value = Double(trimmed), value.isFinite else { return nil }
+        return value
+    }
+
+    private static func decimal(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...2)))
     }
 }
 

@@ -4,8 +4,14 @@ import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
+import com.rork.vinetrack.data.model.PieceRateCosting
 import com.rork.vinetrack.data.model.PruningActivityDraft
+import com.rork.vinetrack.data.model.PruningRowRef
 import com.rork.vinetrack.data.model.WorkTask
+import com.rork.vinetrack.data.model.WorkTaskCostingMethod
+import com.rork.vinetrack.data.model.WorkTaskPieceRateRow
+import kotlin.math.abs
+import kotlin.math.floor
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -23,13 +29,86 @@ data class PruningWorkTaskLinkDraft(
     val notes: String = "",
     /** Completed tasks are the norm: the pruning already happened. */
     val markCompleted: Boolean = true,
+    // ---------------------------------------------------------------------
+    // Costing (sql/188)
+    //
+    // The task is created COMPLETE: its costing basis is agreed HERE, in the
+    // same flow, rather than left to a second edit somewhere else. HOURLY is
+    // the default, so a user who ignores this section creates exactly the task
+    // this flow has always created.
+    // ---------------------------------------------------------------------
+    val costingMethod: WorkTaskCostingMethod = WorkTaskCostingMethod.HOURLY,
+    // Hourly basis — the SAME inputs as a standard Work Task labour line, so
+    // creating from pruning writes an ordinary labour line and never a
+    // pruning-specific cost record.
+    val operatorCategoryId: String? = null,
+    val workerType: String = "",
+    val workerCount: Int = 1,
+    val hoursPerWorker: Double? = null,
+    val hourlyRate: Double? = null,
+    // Piece-rate basis — the agreed rate and the quantity it applies to.
+    val ratePerVine: Double? = null,
+    val vineCount: Int = 0,
 ) {
     val trimmedType: String get() = taskType.trim()
     val trimmedNotes: String get() = notes.trim()
 
-    /** A task needs a work type; everything else is optional. */
-    val isValid: Boolean get() = trimmedType.isNotEmpty()
+    val isPieceRate: Boolean get() = costingMethod == WorkTaskCostingMethod.PIECE_RATE
+
+    /**
+     * True when enough was entered to write a real labour line. Hourly labour
+     * stays OPTIONAL at creation: a task may legitimately be created before the
+     * crew's hours are known.
+     */
+    val recordsHourlyLabour: Boolean
+        get() = workerCount > 0 && (hoursPerWorker ?: 0.0) > 0.0
+
+    /**
+     * The cost this job will be created with, under its chosen method ONLY —
+     * the two bases are never summed.
+     */
+    val estimatedCost: Double?
+        get() = when {
+            isPieceRate -> PieceRateCosting.cost(vineCount, ratePerVine)
+            !recordsHourlyLabour -> null
+            else -> WorkTaskLabourCosting.lineCost(workerCount, hoursPerWorker ?: 0.0, hourlyRate)
+        }
+
+    /**
+     * Person-hours this job will be created with. Present for BOTH methods —
+     * hours on a piece-rate job are operational history and never drive cost.
+     */
+    val personHours: Double
+        get() = WorkTaskLabourCosting.personHours(workerCount, hoursPerWorker ?: 0.0)
+
+    /**
+     * A task needs a work type. A PIECE-RATE task additionally needs a complete
+     * agreement, because its cost has no other source — an hourly task can be
+     * created now and costed later from its labour lines.
+     */
+    val isValid: Boolean
+        get() = when {
+            trimmedType.isEmpty() -> false
+            !isPieceRate -> true
+            else -> PieceRateCosting.isValid(ratePerVine, vineCount)
+        }
 }
+
+/**
+ * The hourly labour line a newly created Work Task should be born with.
+ *
+ * Carried INTO the create call rather than written afterwards, so the labour
+ * line is only ever inserted once its parent task exists —
+ * `work_task_labour_lines.work_task_id` is a real foreign key.
+ */
+data class WorkTaskLabourSeed(
+    val workDate: String,
+    val operatorCategoryId: String?,
+    val workerType: String,
+    val workerCount: Int,
+    val hoursPerWorker: Double,
+    val hourlyRate: Double?,
+)
 
 /**
  * ACTIVITY-LEVEL Work Task linkage for the multi-block pruning editor
@@ -117,7 +196,101 @@ object PruningActivityTaskLink {
         PruningWorkTaskLinkDraft(
             taskType = DEFAULT_TASK_TYPE,
             notes = composedNotes(draft),
+            hoursPerWorker = draft.labourHours?.takeIf { it > 0 },
+            // The piece-rate quantity is seeded from the activity's OWN vine
+            // total — the same `499 vines` the Activity Summary shows — so
+            // choosing Piece Rate never asks the operator to re-enter a
+            // quantity the app already derived from the selected quarters.
+            vineCount = vineCount(draft),
         )
+
+    /**
+     * THE piece-rate quantity for an activity: exactly the vine total the
+     * Activity Summary displays.
+     *
+     * Quarter-aware by construction — each allocation's `estimatedVines` was
+     * derived from its SELECTED QUARTERS through `PruningCalculator.vines`, so
+     * selecting 8 quarters across 2 rows prices 8 quarters, never 2 whole rows.
+     */
+    fun vineCount(draft: PruningActivityDraft): Int = draft.totalEstimatedVines
+
+    /**
+     * The labour line a task created from this draft should be born with, or
+     * null when no hours were entered.
+     *
+     * On a PIECE-RATE job the hourly rate is deliberately dropped: the hours are
+     * kept as operational history, and letting a rate ride along would give the
+     * job a second, competing cost basis.
+     */
+    fun labourSeed(task: PruningWorkTaskLinkDraft, date: String): WorkTaskLabourSeed? {
+        if (!task.recordsHourlyLabour) return null
+        return WorkTaskLabourSeed(
+            workDate = date,
+            operatorCategoryId = task.operatorCategoryId,
+            workerType = task.workerType.trim(),
+            workerCount = task.workerCount,
+            hoursPerWorker = task.hoursPerWorker ?: 0.0,
+            hourlyRate = if (task.isPieceRate) null else task.hourlyRate,
+        )
+    }
+
+    /**
+     * Rounds a vine quantity half away from zero — the same rule the per-row
+     * vine-count calculation uses, so no platform reports a vine another does
+     * not. (`kotlin.math.round` delegates to `Math.rint`, which is ties-to-even
+     * and would disagree with Swift on exact halves.)
+     */
+    fun roundVines(value: Double): Int {
+        if (!value.isFinite()) return 0
+        val magnitude = floor(abs(value) + 0.5).toInt()
+        return if (value < 0) -magnitude else magnitude
+    }
+
+    /**
+     * Builds the HISTORICAL per-row snapshot behind a piece-rate job (sql/188)
+     * from the quarters actually selected in each block.
+     *
+     * A row with 2 of its 4 quarters selected contributes HALF its vines, so
+     * the breakdown matches what was really pruned. These rows are supporting
+     * audit detail: the authoritative priced quantity is the task's own
+     * `piece_vine_count`, which is why per-row rounding here may differ from
+     * the total by a vine or two without changing what anyone is paid.
+     *
+     * @param rowsByPaddock each block's rows, already resolved through
+     *   `PruningCalculator.rowRefs` so the grid, the vine estimate and this
+     *   snapshot all agree.
+     * @param newId supplies a fresh client-generated row id.
+     */
+    fun pieceRateRows(
+        activity: PruningActivityDraft,
+        workTaskId: String,
+        vineyardId: String,
+        rowsByPaddock: Map<String, List<PruningRowRef>>,
+        newId: () -> String,
+    ): List<WorkTaskPieceRateRow> {
+        val snapshot = mutableListOf<WorkTaskPieceRateRow>()
+        for (allocation in activity.activeAllocations) {
+            val rows = rowsByPaddock[allocation.paddockId] ?: continue
+            val quartersByRowKey = HashMap<String, Int>()
+            for (segment in allocation.segments) {
+                quartersByRowKey[segment.rowKey] = (quartersByRowKey[segment.rowKey] ?: 0) + 1
+            }
+            for (row in rows) {
+                val quarters = quartersByRowKey[row.key] ?: continue
+                if (quarters <= 0) continue
+                snapshot += WorkTaskPieceRateRow(
+                    id = newId(),
+                    workTaskId = workTaskId,
+                    vineyardId = vineyardId,
+                    paddockId = allocation.paddockId,
+                    paddockRowId = row.rowId,
+                    rowNumber = row.number,
+                    vineCount = roundVines(row.vines * quarters / 4.0),
+                )
+            }
+        }
+        return snapshot
+    }
 
     fun composedNotes(draft: PruningActivityDraft): String {
         val blocks = draft.blockSummary.takeIf { it.isNotBlank() }

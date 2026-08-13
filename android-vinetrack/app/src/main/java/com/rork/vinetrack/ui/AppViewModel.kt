@@ -155,6 +155,7 @@ import com.rork.vinetrack.data.AccountDeletionRequestResult
 import com.rork.vinetrack.data.WorkTaskCreateSync
 import com.rork.vinetrack.data.WorkTaskUpdateSync
 import com.rork.vinetrack.data.WorkTaskDeleteSync
+import com.rork.vinetrack.data.WorkTaskLabourSeed
 import com.rork.vinetrack.data.WorkTaskLabourSync
 import com.rork.vinetrack.data.WorkTaskMachineSync
 import com.rork.vinetrack.data.WorkTaskPaddockRepository
@@ -7209,6 +7210,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
          * the task so later edits to the block's rows can never re-cost it.
          */
         pieceRateRows: List<WorkTaskPieceRateRow> = emptyList(),
+        /**
+         * Hourly labour the task is born with. Carried IN rather than written
+         * afterwards, so the line is only ever inserted once its parent task
+         * exists — `work_task_labour_lines.work_task_id` is a real foreign key.
+         */
+        labourSeed: WorkTaskLabourSeed? = null,
         onResult: (Boolean) -> Unit,
     ): String? {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return null }
@@ -7243,6 +7250,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt, isFinalized = markCompleted)
             // Join rows queue too — gated behind the header create until it syncs.
             reconcileWorkTaskPaddocks(id, vineyardId, paddockIds)
+            // The labour line queues behind the header for the same reason.
+            labourSeed?.let { seedLabourLine(id, it) }
             _ui.update { it.copy(workTaskError = "Work task saved offline — will sync when connection is available.") }
             onResult(true)
             return id
@@ -7292,6 +7301,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         android.util.Log.w("AppViewModel", "piece-rate row snapshot failed: ${e.message}")
                     }
                 }
+                // ... and the hourly labour line, now that its parent exists.
+                labourSeed?.let { seedLabourLine(id, it) }
                 // Work created from the Pruning Tracker has already occurred —
                 // finalize it now that the header exists server-side.
                 if (markCompleted) {
@@ -7312,11 +7323,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt, isFinalized = markCompleted)
                 // Join rows queue behind the now-pending header create.
                 reconcileWorkTaskPaddocks(id, vineyardId, paddockIds)
+                labourSeed?.let { seedLabourLine(id, it) }
                 _ui.update { it.copy(workTaskBusy = false, workTaskError = "Work task saved offline — will sync when connection is available.") }
                 onResult(true)
             }
         }
         return id
+    }
+
+    /**
+     * Writes the labour line a freshly created Work Task was born with, through
+     * THE standard labour path — so a line created from pruning is byte-for-byte
+     * the line the Work Task editor would have written.
+     */
+    private fun seedLabourLine(taskId: String, seed: WorkTaskLabourSeed) {
+        saveLabourLine(
+            lineId = null,
+            taskId = taskId,
+            workDate = seed.workDate,
+            operatorCategoryId = seed.operatorCategoryId,
+            workerType = seed.workerType,
+            workerCount = seed.workerCount,
+            hoursPerWorker = seed.hoursPerWorker,
+            hourlyRate = seed.hourlyRate,
+            notes = null,
+        ) { }
     }
 
     /** Resolve a selection of paddock ids to their loaded [Paddock]s, order preserved. */

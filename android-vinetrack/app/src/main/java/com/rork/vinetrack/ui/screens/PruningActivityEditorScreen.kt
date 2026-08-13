@@ -17,7 +17,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -42,6 +44,9 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -66,6 +71,7 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.PruningActivityTaskLink
 import com.rork.vinetrack.data.PruningWorkTaskLinkDraft
 import com.rork.vinetrack.data.WorkTaskLabourCosting
+import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PieceRateCosting
 import com.rork.vinetrack.data.model.PruningActivityDraft
@@ -80,6 +86,7 @@ import com.rork.vinetrack.data.model.PruningRowRef
 import com.rork.vinetrack.data.model.PruningSeasonSelection
 import com.rork.vinetrack.data.model.PruningSegment
 import com.rork.vinetrack.data.model.WorkTask
+import com.rork.vinetrack.data.model.WorkTaskCostingMethod
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.formatLabourCurrency
@@ -125,6 +132,13 @@ fun PruningActivityEditorScreen(
      */
     labourLines: List<WorkTaskLabourLine>,
     canViewCosting: Boolean,
+    /**
+     * Labour types of this vineyard, so the create flow offers the SAME saved
+     * worker types and rates the Work Task editor does.
+     */
+    operatorCategories: List<OperatorCategory> = emptyList(),
+    /** Supervisors and above — may agree a piece rate in the field. */
+    canEnterPricing: Boolean = false,
     initialDraft: PruningActivityDraft,
     isEditing: Boolean,
     /** Set when the last server answer refused quarters in this activity. */
@@ -467,9 +481,20 @@ fun PruningActivityEditorScreen(
         }
 
         taskCreateDraft?.let { pending ->
+            // Hectares under this activity's blocks — the denominator for cost/ha.
+            val activityHectares = remember(draft, blocksById) {
+                PruningActivityTaskLink.paddockIds(draft)
+                    .mapNotNull { blocksById[it]?.areaHectares }
+                    .sum()
+                    .takeIf { it > 0.0 }
+            }
             PruningWorkTaskCreateDialog(
                 draft = draft,
                 task = pending,
+                operatorCategories = operatorCategories,
+                canViewCosting = canViewCosting,
+                canEnterPricing = canEnterPricing,
+                hectares = activityHectares,
                 onChange = { taskCreateDraft = it },
                 onDismiss = { taskCreateDraft = null },
                 onConfirm = {
@@ -1034,28 +1059,61 @@ private fun PruningWorkTaskPickerSheet(
 }
 
 /**
- * Creates ONE completed Work Task for the whole activity. Date, duration and
- * blocks come from the activity itself, so the shared labour is recorded once
- * and never apportioned per block.
+ * Creates ONE COMPLETE Work Task for the whole activity — INCLUDING how it is
+ * paid.
+ *
+ * Date, duration and blocks come from the activity itself, so the shared labour
+ * is recorded once and never apportioned per block. The costing basis is agreed
+ * HERE, in this one flow: the user chooses Hourly or Piece Rate, enters the
+ * figures, sees the calculated cost, and only then creates the task. Nothing is
+ * left to a second edit on another screen.
+ *
+ * The Kotlin twin of the Swift `PruningWorkTaskCreateSheet`.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PruningWorkTaskCreateDialog(
     draft: PruningActivityDraft,
     task: PruningWorkTaskLinkDraft,
+    operatorCategories: List<OperatorCategory>,
+    canViewCosting: Boolean,
+    canEnterPricing: Boolean,
+    hectares: Double?,
     onChange: (PruningWorkTaskLinkDraft) -> Unit,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
     val vine = LocalVineColors.current
+    var showIssues by remember { mutableStateOf(false) }
+    var hoursText by remember { mutableStateOf(task.hoursPerWorker?.let { fmt(it, 2) } ?: "") }
+    var rateText by remember { mutableStateOf(task.hourlyRate?.let { fmt(it, 2) } ?: "") }
+    var ratePerVineText by remember { mutableStateOf(task.ratePerVine?.let { fmt(it, 2) } ?: "") }
+    var typeMenuOpen by remember { mutableStateOf(false) }
+
+    val categories = remember(operatorCategories) {
+        operatorCategories.filter { it.deletedAt == null }.sortedBy { it.displayName.lowercase() }
+    }
+    val pieceIssues = PieceRateCosting.validate(task.ratePerVine, task.vineCount)
+    val rateIssue = if (showIssues) {
+        PieceRateCosting.message(pieceIssues, PieceRateCosting.PieceRateField.RATE_PER_VINE)
+    } else {
+        null
+    }
+    val cost = task.estimatedCost
+    val costPerHa = PieceRateCosting.costPerHectare(cost, hectares)
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Create a Work Task") },
+        title = { Text("Create Work Task") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            ) {
                 Text(
                     "One task for this whole activity: ${draft.date} · " +
-                        "${fmt(PruningActivityTaskLink.durationHours(draft), 1)} h · " +
-                        draft.blockSummary.ifBlank { "no blocks yet" },
+                        draft.blockSummary.ifBlank { "no blocks yet" } +
+                        ". Linked with a stable id, so an offline retry can never create a second task.",
                     fontSize = 12.sp,
                     color = vine.textSecondary,
                 )
@@ -1072,18 +1130,204 @@ private fun PruningWorkTaskCreateDialog(
                     label = { Text("Task notes") },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Text(
-                    "Marked completed, linked to this activity, and queued offline with the same id — a retry can never create a second task.",
-                    fontSize = 11.sp,
-                    color = vine.textSecondary,
+
+                // THE single switch between the two costing methods (sql/188),
+                // offered BEFORE any figure is entered so nobody fills in the
+                // wrong basis.
+                if (canEnterPricing) {
+                    Text(
+                        "How is this job paid?",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary,
+                    )
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        WorkTaskCostingMethod.entries.forEachIndexed { index, method ->
+                            SegmentedButton(
+                                selected = task.costingMethod == method,
+                                onClick = { onChange(task.copy(costingMethod = method)) },
+                                shape = SegmentedButtonDefaults.itemShape(
+                                    index = index,
+                                    count = WorkTaskCostingMethod.entries.size,
+                                ),
+                            ) {
+                                Text(method.label, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                    Text(
+                        if (task.isPieceRate) {
+                            "Paid per vine. The agreed rate is multiplied by the vines in the quarters selected for this activity — hours never change a piece-rate cost."
+                        } else {
+                            "Paid per hour. People × hours per person × hourly rate."
+                        },
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
+                }
+
+                if (task.isPieceRate) {
+                    // The agreed rate, and the quantity it applies to — the
+                    // activity's OWN vine total, so the operator confirms a
+                    // number rather than counting one.
+                    OutlinedTextField(
+                        value = ratePerVineText,
+                        onValueChange = {
+                            ratePerVineText = it
+                            onChange(task.copy(ratePerVine = parsePruningDecimal(it)))
+                        },
+                        label = { Text("Rate per vine") },
+                        prefix = { Text("$") },
+                        singleLine = true,
+                        isError = rateIssue != null,
+                        supportingText = rateIssue?.let { { Text(it, color = VineColors.Destructive) } },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    PruningCostingRow(
+                        "Rows selected",
+                        "${draft.blockCount} block(s) · ${draft.totalQuarters} quarters",
+                    )
+                    PruningCostingRow(
+                        "Vines in this job",
+                        PieceRateCosting.vineCountLabel(task.vineCount),
+                        emphasise = true,
+                    )
+                    Text(
+                        "Counted automatically from the quarters selected above — each row's own vine count, or your manual count where you set one. A row with two of its four quarters selected counts half its vines.",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
+                } else {
+                    // The STANDARD hourly labour inputs — the same fields,
+                    // defaults and arithmetic as an ordinary Work Task labour
+                    // line, so this flow writes a real labour line rather than
+                    // inventing a second hourly calculation.
+                    Box {
+                        OutlinedButton(
+                            onClick = { typeMenuOpen = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                task.workerType.ifBlank { "Choose labour type" },
+                                fontSize = 13.sp,
+                                color = if (task.workerType.isBlank()) vine.textSecondary else vine.textPrimary,
+                            )
+                        }
+                        DropdownMenu(expanded = typeMenuOpen, onDismissRequest = { typeMenuOpen = false }) {
+                            categories.forEach { category ->
+                                val savedRate = WorkTaskLabourCosting.defaultRate(category)
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            if (canViewCosting && savedRate != null) {
+                                                "${category.displayName} · ${PieceRateCosting.rateLabel(savedRate)}/h"
+                                            } else {
+                                                category.displayName
+                                            },
+                                        )
+                                    },
+                                    onClick = {
+                                        typeMenuOpen = false
+                                        // The labour type's saved rate is the
+                                        // DEFAULT; an explicit edit is never
+                                        // overwritten.
+                                        val applyRate = savedRate != null && rateText.isBlank()
+                                        if (applyRate) rateText = fmt(savedRate, 2)
+                                        onChange(
+                                            task.copy(
+                                                operatorCategoryId = category.id,
+                                                workerType = category.displayName,
+                                                hourlyRate = if (applyRate) savedRate else task.hourlyRate,
+                                            ),
+                                        )
+                                    },
+                                )
+                            }
+                            if (categories.isEmpty()) {
+                                DropdownMenuItem(
+                                    text = { Text("Add labour types in Settings → Worker Types") },
+                                    onClick = { typeMenuOpen = false },
+                                )
+                            }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = task.workerCount.toString(),
+                        onValueChange = {
+                            onChange(task.copy(workerCount = it.filter { c -> c.isDigit() }.toIntOrNull() ?: 0))
+                        },
+                        label = { Text("Number of people") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = hoursText,
+                        onValueChange = {
+                            hoursText = it
+                            onChange(task.copy(hoursPerWorker = parsePruningDecimal(it)))
+                        },
+                        label = { Text("Hours per person") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (canViewCosting) {
+                        OutlinedTextField(
+                            value = rateText,
+                            onValueChange = {
+                                rateText = it
+                                onChange(task.copy(hourlyRate = parsePruningDecimal(it)))
+                            },
+                            label = { Text("Hourly rate") },
+                            prefix = { Text("$") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    Text(
+                        "Hours per person — not the whole crew's combined total. Leave the hours blank to create the task now and record the crew's hours later.",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
+                }
+
+                // The calculated cost, BEFORE Create. Nobody should have to
+                // create a task to discover what it costs.
+                HorizontalDivider(color = vine.cardBorder)
+                if (task.isPieceRate) {
+                    PruningCostingRow(
+                        "Calculation",
+                        "${PieceRateCosting.vineCountLabel(task.vineCount)} × " +
+                            PieceRateCosting.rateLabel(task.ratePerVine ?: 0.0),
+                    )
+                } else {
+                    PruningCostingRow("Person-hours", "${fmt(task.personHours, 1)} h")
+                }
+                PruningCostingRow(
+                    "Estimated labour cost",
+                    cost?.let { PieceRateCosting.currencyLabel(it) } ?: "Not specified",
+                    emphasise = true,
+                    tint = if (cost == null) vine.textSecondary else VineColors.LeafGreen,
                 )
+                if (costPerHa != null) {
+                    PruningCostingRow("Cost per hectare", PieceRateCosting.currencyLabel(costPerHa) + "/ha")
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm, enabled = task.isValid) {
+            TextButton(
+                onClick = {
+                    showIssues = true
+                    if (task.isValid) onConfirm()
+                },
+                enabled = task.trimmedType.isNotEmpty(),
+            ) {
                 Text(
                     "Create and link",
-                    color = if (task.isValid) VineColors.Primary else vine.textSecondary,
+                    color = if (task.trimmedType.isNotEmpty()) VineColors.Primary else vine.textSecondary,
                 )
             }
         },
@@ -1092,6 +1336,30 @@ private fun PruningWorkTaskCreateDialog(
         },
     )
 }
+
+/** One label/value line in the create dialog's costing preview. */
+@Composable
+private fun PruningCostingRow(
+    label: String,
+    value: String,
+    emphasise: Boolean = false,
+    tint: Color? = null,
+) {
+    val vine = LocalVineColors.current
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text(label, fontSize = 12.sp, color = vine.textSecondary, modifier = Modifier.weight(1f))
+        Text(
+            value,
+            fontSize = if (emphasise) 14.sp else 12.sp,
+            fontWeight = if (emphasise) FontWeight.Bold else FontWeight.SemiBold,
+            color = tint ?: vine.textPrimary,
+        )
+    }
+}
+
+/** Lenient decimal parse — accepts a comma decimal mark, rejects nonsense. */
+private fun parsePruningDecimal(text: String): Double? =
+    text.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() }
 
 // MARK: - Included blocks
 

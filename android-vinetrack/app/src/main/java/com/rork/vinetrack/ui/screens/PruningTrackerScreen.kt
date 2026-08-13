@@ -323,6 +323,10 @@ fun PruningTrackerScreen(
             workTasks = state.workTasks,
             labourLines = editorLabourLines,
             canViewCosting = canViewCosting,
+            operatorCategories = state.operatorCategories,
+            // Pricing authority is split: supervisors and above may AGREE a rate
+            // in the field, but only owners/managers may review or change one.
+            canEnterPricing = TeamRole.from(state.currentRole).canEnterPricing,
             initialDraft = openDraft,
             isEditing = activities.any { it.id == openDraft.id } || openDraft.serverAcknowledged,
             reconciliation = state.pruningActivityReconciliation,
@@ -339,7 +343,33 @@ fun PruningTrackerScreen(
             // work-task path: client-minted id, optimistic local row, offline
             // queue. The activity push waits for that task to land rather than
             // dropping the link (PruningSyncCoordinator).
+            // The task is created COMPLETE: costing basis, the HISTORICAL
+            // per-row snapshot behind a piece rate, and the hourly labour line
+            // all travel with the create call, so the job is never briefly
+            // persisted as an unpriced hourly record.
             onCreateWorkTask = { activityDraft, taskDraft ->
+                val isPieceRate = taskDraft.isPieceRate
+                val snapshotRows = if (isPieceRate) {
+                    val blocksById = paddocks.associateBy { it.id }
+                    val rowsByPaddock = PruningActivityTaskLink.paddockIds(activityDraft)
+                        .mapNotNull { blocksById[it] }
+                        .associate { block ->
+                            block.id to PruningCalculator.rowRefs(
+                                block,
+                                PruningSeasonSelection.setupFor(setups, block.id),
+                            )
+                        }
+                    PruningActivityTaskLink.pieceRateRows(
+                        activity = activityDraft,
+                        // Re-stamped with the real task id inside createWorkTask.
+                        workTaskId = "",
+                        vineyardId = vineyardId,
+                        rowsByPaddock = rowsByPaddock,
+                        newId = { UUID.randomUUID().toString() },
+                    )
+                } else {
+                    emptyList()
+                }
                 vm.createWorkTask(
                     taskType = taskDraft.trimmedType,
                     paddockIds = PruningActivityTaskLink.paddockIds(activityDraft),
@@ -347,6 +377,11 @@ fun PruningTrackerScreen(
                     durationHours = PruningActivityTaskLink.durationHours(activityDraft),
                     notes = taskDraft.trimmedNotes,
                     markCompleted = taskDraft.markCompleted,
+                    costingMethod = taskDraft.costingMethod,
+                    pieceRatePerVine = taskDraft.ratePerVine,
+                    pieceVineCount = taskDraft.vineCount,
+                    pieceRateRows = snapshotRows,
+                    labourSeed = PruningActivityTaskLink.labourSeed(taskDraft, activityDraft.date),
                 ) { }
             },
             // Opens the linked task IN PLACE, so the draft's block and quarter
