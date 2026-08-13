@@ -20,6 +20,8 @@ struct WorkTaskLabourLinesSection: View {
     let defaultWorkDate: Date
     /// false renders read-only (no add, rows not tappable).
     let canEdit: Bool
+    /// Non-nil lets the ONE add/edit sheet choose Hourly or Piece Rate.
+    let costingContext: WorkTaskCostingContext?
 
     @State private var showAddLine: Bool = false
     @State private var editingLine: WorkTaskLabourLine?
@@ -28,12 +30,14 @@ struct WorkTaskLabourLinesSection: View {
         workTaskId: UUID,
         vineyardId: UUID,
         defaultWorkDate: Date = Date(),
-        canEdit: Bool = true
+        canEdit: Bool = true,
+        costingContext: WorkTaskCostingContext? = nil
     ) {
         self.workTaskId = workTaskId
         self.vineyardId = vineyardId
         self.defaultWorkDate = defaultWorkDate
         self.canEdit = canEdit
+        self.costingContext = costingContext
     }
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
@@ -48,12 +52,23 @@ struct WorkTaskLabourLinesSection: View {
         WorkTaskLabourCosting.totals(lines)
     }
 
+    /// The task this section costs, when the host supplied one.
+    private var task: WorkTask? {
+        guard let costingContext else { return nil }
+        return store.workTasks.first { $0.id == costingContext.taskId }
+    }
+
+    /// True when the linked task is priced per vine — its cost comes from the
+    /// piece-rate agreement, NOT from these lines.
+    private var isPieceRate: Bool { task?.isPieceRate ?? false }
+
     var body: some View {
         Group {
+            if isPieceRate {
+                pieceRateSummary
+            }
             if lines.isEmpty {
-                Text(canEdit
-                     ? "No labour lines yet. Add labour type, people and hours per person to record the cost."
-                     : "No labour lines recorded on this task.")
+                Text(emptyMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
@@ -75,7 +90,7 @@ struct WorkTaskLabourLinesSection: View {
                 Button {
                     showAddLine = true
                 } label: {
-                    Label("Add labour line", systemImage: "plus.circle.fill")
+                    Label(addButtonTitle, systemImage: "plus.circle.fill")
                         .font(.subheadline.weight(.semibold))
                 }
             }
@@ -84,7 +99,8 @@ struct WorkTaskLabourLinesSection: View {
             AddEditWorkTaskLabourLineView(
                 workTaskId: workTaskId,
                 vineyardId: vineyardId,
-                defaultWorkDate: defaultWorkDate
+                defaultWorkDate: defaultWorkDate,
+                costingContext: costingContext
             )
         }
         .sheet(item: $editingLine) { line in
@@ -92,8 +108,59 @@ struct WorkTaskLabourLinesSection: View {
                 workTaskId: line.workTaskId,
                 vineyardId: line.vineyardId,
                 existingLine: line,
-                defaultWorkDate: line.workDate
+                defaultWorkDate: line.workDate,
+                costingContext: costingContext
             )
+        }
+    }
+
+    /// The empty state must not read as an error on a piece-rate job, where
+    /// having no hourly lines is the normal, correct outcome.
+    private var emptyMessage: String {
+        if isPieceRate {
+            return "No hours recorded. This job is paid per vine, so hours are optional."
+        }
+        return canEdit
+            ? "No labour lines yet. Add labour type, people and hours per person to record the cost."
+            : "No labour lines recorded on this task."
+    }
+
+    private var addButtonTitle: String {
+        guard costingContext != nil else { return "Add labour line" }
+        return lines.isEmpty && !isPieceRate ? "Add labour" : "Add labour line"
+    }
+
+    /// THE piece-rate cost of this job, shown in place of an hourly total so the
+    /// two are never presented as if they add up.
+    @ViewBuilder
+    private var pieceRateSummary: some View {
+        if let task {
+            let resolved = PieceRateCosting.resolve(task: task, labourLines: lines)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Label("Piece rate", systemImage: "scissors")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(VineyardTheme.leafGreen)
+                    Spacer()
+                    if canViewFinancials {
+                        Text(resolved.cost.map { fmt.formatCurrency($0) } ?? "Not specified")
+                            .font(.headline)
+                            .monospacedDigit()
+                            .foregroundStyle(VineyardTheme.leafGreen)
+                    }
+                }
+                if let vines = resolved.vineCount, let rate = resolved.ratePerVine {
+                    Text("\(PieceRateCosting.vineCountLabel(vines)) vines × \(PieceRateCosting.rateLabel(rate)) per vine")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if resolved.hoursAreOperationalOnly {
+                    Text("\(Self.hours(resolved.hours)) recorded for history — hours do not change this cost.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 2)
         }
     }
 
@@ -136,6 +203,8 @@ struct WorkTaskLabourLinesSection: View {
 
     @ViewBuilder
     private var totalsRow: some View {
+        // On a piece-rate job the money total belongs to the agreement above, so
+        // only the hours are summarised here.
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(totals.lineCount) labour line\(totals.lineCount == 1 ? "" : "s") · \(totals.workers) people")
@@ -146,7 +215,7 @@ struct WorkTaskLabourLinesSection: View {
                     .monospacedDigit()
             }
             Spacer()
-            if canViewFinancials {
+            if canViewFinancials, !isPieceRate {
                 Text(totals.cost.map { fmt.formatCurrency($0) } ?? "Not specified")
                     .font(.headline)
                     .monospacedDigit()

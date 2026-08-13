@@ -47,7 +47,6 @@ struct PruningActivityEditorView: View {
     @State private var rangeTo: Int = 0
     @State private var showTaskPicker: Bool = false
     @State private var taskCreateDraft: PruningWorkTaskLinkDraft?
-    @State private var openTask: WorkTask?
 
     private let original: PruningActivityDraft
 
@@ -189,11 +188,14 @@ struct PruningActivityEditorView: View {
             }
 
             activitySection
-            workTaskSection
+            // Blocks and rows come FIRST: the piece-rate vine count is derived
+            // from the selection, so labour can only be costed once the operator
+            // has chosen what was worked.
             blocksSection
             if let focusedPaddock {
                 focusedBlockSection(focusedPaddock)
             }
+            workTaskSection
             summarySection
             saveSection
         }
@@ -243,11 +245,6 @@ struct PruningActivityEditorView: View {
                 },
                 onCancel: { taskCreateDraft = nil }
             )
-        }
-        // The linked task opens in a sheet, so the draft — every block and
-        // quarter selection — survives the round trip untouched.
-        .sheet(item: $openTask) { task in
-            AddEditWorkTaskView(existingTask: task)
         }
         .alert("Remove block?", isPresented: Binding(
             get: { removeCandidate != nil },
@@ -389,26 +386,25 @@ struct PruningActivityEditorView: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(linkedLabourLines.isEmpty ? .orange : .secondary)
                 }
-                Button {
-                    openTask = linkedTask
-                } label: {
-                    Label("Open task", systemImage: "arrow.up.forward.square")
-                        .font(.subheadline.weight(.semibold))
-                }
+                // THE ONE labour surface for this activity. There is deliberately
+                // no "Open task" shortcut here: the Work Task editor carries its
+                // own labour section, and offering both made it look as though
+                // labour had to be entered twice.
+                WorkTaskLabourLinesSection(
+                    workTaskId: linkedTask.id,
+                    vineyardId: draft.vineyardId,
+                    defaultWorkDate: draft.date,
+                    costingContext: WorkTaskCostingContext(
+                        taskId: linkedTask.id,
+                        suggestedVineCount: draft.totalEstimatedVines
+                    )
+                )
                 Button("Change linked task") { showTaskPicker = true }
                     .font(.subheadline)
                 Button("Unlink task", role: .destructive) {
                     draft = PruningWorkTaskLink.unlink(draft)
                 }
                 .font(.subheadline)
-                // THE standard labour editor, in place. Linking an existing task
-                // shows ITS lines and never seeds, overwrites or duplicates them,
-                // and no pruning allocation is touched.
-                WorkTaskLabourLinesSection(
-                    workTaskId: linkedTask.id,
-                    vineyardId: draft.vineyardId,
-                    defaultWorkDate: draft.date
-                )
             } else if hasUnresolvableLink {
                 // NEVER cleared silently: the link is real server state this
                 // device simply hasn't pulled yet.
@@ -437,17 +433,43 @@ struct PruningActivityEditorView: View {
                     .font(.subheadline)
             }
         } header: {
-            Text("Work Task")
+            Text("Labour & Work Task")
         } footer: {
-            Text("Linked once for the whole activity. Labour type, rate, people and hours per person live on the Work Task — never per block. Unlinking leaves the Work Task and its labour lines intact.")
+            Text(labourSectionFooter)
         }
     }
 
-    /// The linked task's authoritative labour totals.
+    /// Explains where labour is entered, and — once rows are selected — that a
+    /// piece rate can be costed from them.
+    private var labourSectionFooter: String {
+        let base = "Entered once here for the whole activity, never per block. Unlinking leaves the Work Task and its labour intact."
+        guard linkedTask != nil else { return base }
+        if draft.totalEstimatedVines > 0 {
+            return "Add labour to choose Hourly or Piece Rate. \(PieceRateCosting.vineCountLabel(draft.totalEstimatedVines)) vines are selected, ready to cost at a rate per vine. " + base
+        }
+        return "Select rows above to cost this job at a rate per vine. " + base
+    }
+
+    /// The linked task's authoritative labour totals, under its chosen costing
+    /// method — piece-rate and hourly figures are never combined.
     private var taskLabourSummary: String {
+        if let linkedTask, linkedTask.isPieceRate {
+            let resolved = PieceRateCosting.resolve(task: linkedTask, labourLines: linkedLabourLines)
+            guard let cost = resolved.cost else {
+                return "Piece rate started — add the agreed rate per vine below."
+            }
+            var parts: [String] = []
+            if let vines = resolved.vineCount, let rate = resolved.ratePerVine {
+                parts.append("\(PieceRateCosting.vineCountLabel(vines)) vines × \(PieceRateCosting.rateLabel(rate))")
+            }
+            if canViewCosting {
+                parts.append(PieceRateCosting.currencyLabel(cost))
+            }
+            return parts.isEmpty ? "Paid per vine." : "Piece rate · " + parts.joined(separator: " · ")
+        }
         let totals = WorkTaskLabourCosting.totals(linkedLabourLines)
         guard !totals.isEmpty else {
-            return "No labour lines yet — add labour type, people and hours per person below."
+            return "No labour recorded yet — add it below and choose hourly or piece rate."
         }
         var parts: [String] = [Self.number(totals.personHours, digits: 1) + " total person-hours"]
         if canViewCosting, let cost = totals.cost {
@@ -522,29 +544,39 @@ struct PruningActivityEditorView: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             } else {
-                HStack(spacing: 8) {
-                    Text("Rows")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Picker("From", selection: $rangeFrom) {
-                        ForEach(blockRows.indices, id: \.self) { index in
-                            Text(blockRows[index].label).tag(index)
+                // Laid out as label + pickers on one line and the action
+                // beneath. Menu labels are hidden and the pickers are no longer
+                // fixed-size, so nothing is forced to wrap a character at a
+                // time on a narrow phone.
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text("Rows")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize()
+                        Picker("From", selection: $rangeFrom) {
+                            ForEach(blockRows.indices, id: \.self) { index in
+                                Text(blockRows[index].label).tag(index)
+                            }
                         }
-                    }
-                    .pickerStyle(.menu)
-                    .fixedSize()
-                    Text("to")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Picker("To", selection: $rangeTo) {
-                        ForEach(blockRows.indices, id: \.self) { index in
-                            Text(blockRows[index].label).tag(index)
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        Text("to")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize()
+                        Picker("To", selection: $rangeTo) {
+                            ForEach(blockRows.indices, id: \.self) { index in
+                                Text(blockRows[index].label).tag(index)
+                            }
                         }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        Spacer(minLength: 0)
                     }
-                    .pickerStyle(.menu)
-                    .fixedSize()
-                    Spacer(minLength: 4)
-                    Button("Select range") {
+                    Button {
                         let a = blockRows[min(rangeFrom, blockRows.count - 1)].number
                         let b = blockRows[min(rangeTo, blockRows.count - 1)].number
                         let range = min(a, b)...max(a, b)
@@ -560,8 +592,12 @@ struct PruningActivityEditorView: View {
                                 blockName: paddock.name
                             )
                         }
+                    } label: {
+                        Text("Select range")
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity)
                     }
-                    .font(.caption.weight(.semibold))
                     .buttonStyle(.bordered)
                 }
 
