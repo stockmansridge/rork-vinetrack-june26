@@ -887,6 +887,179 @@ final class WorkTaskPaddockSyncService {
     }
 }
 
+// MARK: - WorkTaskPieceRateRowSyncService (sql/188)
+
+/// Syncs the HISTORICAL per-row vine-count snapshots behind piece-rate jobs.
+///
+/// These rows are frozen commercial history: once a job is agreed they are
+/// pushed and pulled like any other operational record, but nothing in the app
+/// ever recalculates them from today's `paddocks.rows`.
+@Observable
+@MainActor
+final class WorkTaskPieceRateRowSyncService {
+    typealias Status = OperationsSyncStatus
+
+    var syncStatus: Status = .idle
+    var lastSyncDate: Date?
+    var errorMessage: String?
+
+    var pendingUpsertCount: Int { metadata.pendingUpserts.count }
+    var pendingDeleteCount: Int { metadata.pendingDeletes.count }
+
+    private weak var store: MigratedDataStore?
+    private weak var auth: NewBackendAuthService?
+    private let repository: any WorkTaskPieceRateRowSyncRepositoryProtocol
+    private let metadata: OperationsSyncMetadata
+    private var isConfigured: Bool = false
+    private var eagerPushTask: Task<Void, Never>?
+
+    /// True while ANY snapshot row of `workTaskId` still has an unacknowledged
+    /// local write — the piece-rate link in the pruning push dependency chain.
+    func isPendingUpsert(forWorkTask workTaskId: UUID) -> Bool {
+        guard let store else { return false }
+        let rowIds = Set(
+            store.workTaskPieceRateRows
+                .filter { $0.workTaskId == workTaskId }
+                .map(\.id)
+        )
+        guard !rowIds.isEmpty else { return false }
+        return metadata.pendingUpserts.keys.contains { rowIds.contains($0) }
+    }
+
+    private func scheduleEagerPush() {
+        eagerPushTask?.cancel()
+        eagerPushTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(800))
+            if Task.isCancelled { return }
+            await self?.syncForSelectedVineyard()
+        }
+    }
+
+    init(repository: (any WorkTaskPieceRateRowSyncRepositoryProtocol)? = nil) {
+        self.repository = repository ?? SupabaseWorkTaskPieceRateRowSyncRepository()
+        self.metadata = OperationsSyncMetadata(key: "vinetrack_work_task_piece_rate_row_sync_metadata")
+    }
+
+    func configure(store: MigratedDataStore, auth: NewBackendAuthService) {
+        self.store = store
+        self.auth = auth
+        guard !isConfigured else { return }
+        isConfigured = true
+        store.onWorkTaskPieceRateRowChanged = { [weak self] id in
+            self?.metadata.markDirty(id, at: Date()); self?.scheduleEagerPush()
+        }
+        store.onWorkTaskPieceRateRowDeleted = { [weak self] id in
+            self?.metadata.markDeleted(id, at: Date()); self?.scheduleEagerPush()
+        }
+    }
+
+    func syncForSelectedVineyard() async {
+        guard let store, let auth, auth.isSignedIn,
+              let vineyardId = store.selectedVineyardId else { return }
+        await sync(vineyardId: vineyardId)
+    }
+
+    func sync(vineyardId: UUID) async {
+        guard SupabaseClientProvider.shared.isConfigured else {
+            errorMessage = "Supabase not configured"; syncStatus = .failure("Supabase not configured"); return
+        }
+        syncStatus = .syncing; errorMessage = nil
+        do {
+            try await push(vineyardId: vineyardId)
+            try await pull(vineyardId: vineyardId)
+            metadata.setLastSync(Date(), for: vineyardId)
+            lastSyncDate = Date()
+            syncStatus = .success
+        } catch {
+            errorMessage = error.localizedDescription
+            syncStatus = .failure(error.localizedDescription)
+        }
+    }
+
+    private func push(vineyardId: UUID) async throws {
+        guard let store else { return }
+        let userId = auth?.userId
+        let dirty = metadata.pendingUpserts
+        if !dirty.isEmpty {
+            let byId = Dictionary(store.workTaskPieceRateRows.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            var payloads: [BackendWorkTaskPieceRateRowUpsert] = []
+            var pushed: [UUID] = []
+            var orphans: [UUID] = []
+            for (id, ts) in dirty {
+                guard let item = byId[id] else { orphans.append(id); continue }
+                payloads.append(BackendWorkTaskPieceRateRow.upsert(
+                    from: item, createdBy: userId, clientUpdatedAt: ts
+                ))
+                pushed.append(id)
+            }
+            metadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
+            let result = await SyncQueuePush.run(
+                entity: "Piece Rate Rows",
+                ids: pushed,
+                payloads: payloads,
+                queuedAt: dirty,
+                vineyardId: vineyardId
+            ) { try await repository.upsertMany($0) }
+            metadata.clearDirty(result.uploaded)
+            SyncIssueCenter.shared.notePending(entity: "Piece Rate Rows", count: metadata.pendingUpserts.count)
+            if let error = result.firstRetryableError { throw error }
+        }
+        var firstDeleteError: Error?
+        for (id, _) in metadata.pendingDeletes {
+            do {
+                try await repository.softDelete(id: id)
+                metadata.clearDeleted([id])
+            } catch {
+                if isOperationsMissingRowError(error) {
+                    metadata.clearDeleted([id])
+                } else if firstDeleteError == nil {
+                    firstDeleteError = error
+                }
+            }
+        }
+        if let firstDeleteError { throw firstDeleteError }
+    }
+
+    private func pull(vineyardId: UUID) async throws {
+        guard let store else { return }
+        let lastSync = metadata.lastSync(for: vineyardId)
+        let remote = try await repository.fetch(vineyardId: vineyardId, since: lastSync)
+        if lastSync == nil {
+            let remoteIds = Set(remote.map { $0.id })
+            let missing = store.workTaskPieceRateRows
+                .filter { $0.vineyardId == vineyardId && !remoteIds.contains($0.id) }
+            if !missing.isEmpty {
+                let now = Date()
+                let userId = auth?.userId
+                let payloads = missing.map {
+                    BackendWorkTaskPieceRateRow.upsert(from: $0, createdBy: userId, clientUpdatedAt: now)
+                }
+                do {
+                    try await repository.upsertMany(payloads)
+                } catch {
+                    #if DEBUG
+                    print("[WorkTaskPieceRateRowSync] initial seed push failed: \(error.localizedDescription)")
+                    #endif
+                }
+            }
+            if remote.isEmpty { return }
+        }
+        for item in remote {
+            if item.deletedAt != nil {
+                store.applyRemoteWorkTaskPieceRateRowDelete(item.id)
+                metadata.clearDirty([item.id]); metadata.clearDeleted([item.id]); continue
+            }
+            if let pendingAt = metadata.pendingUpserts[item.id] {
+                let remoteAt = item.clientUpdatedAt ?? item.updatedAt ?? .distantPast
+                if pendingAt > remoteAt { continue }
+            }
+            store.applyRemoteWorkTaskPieceRateRowUpsert(item.toPieceRateRow())
+            metadata.clearDirty([item.id])
+        }
+    }
+}
+
 // MARK: - MaintenanceLogSyncService
 
 @Observable

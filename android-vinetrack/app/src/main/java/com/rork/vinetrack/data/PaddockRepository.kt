@@ -4,6 +4,7 @@ import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PaddockRow
+import com.rork.vinetrack.data.model.PaddockRowVineCount
 import com.rork.vinetrack.data.model.PaddockVarietyAllocation
 import io.ktor.client.call.body
 import io.ktor.client.request.headers
@@ -244,6 +245,12 @@ class PaddockRepository(private val session: SessionStore) {
                 put("number", JsonPrimitive(row.number))
                 put("startPoint", coordinateObject(row.startPoint))
                 put("endPoint", coordinateObject(row.endPoint))
+                // sql/188: the OPTIONAL manual per-row vine count. Written only
+                // when set, so rows the operator never overrode keep the exact
+                // JSON shape older clients and the portal already parse.
+                PaddockRowVineCount.sanitiseOverride(row.vineCountOverride)?.let {
+                    put("vineCountOverride", JsonPrimitive(it))
+                }
             })
         }
     }

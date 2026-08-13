@@ -40,6 +40,7 @@ struct NewMainTabView: View {
     @Environment(WorkTaskLabourLineSyncService.self) private var workTaskLabourLineSync
     @Environment(WorkTaskMachineLineSyncService.self) private var workTaskMachineLineSync
     @Environment(WorkTaskPaddockSyncService.self) private var workTaskPaddockSync
+    @Environment(WorkTaskPieceRateRowSyncService.self) private var workTaskPieceRateRowSync
     @Environment(MaintenanceLogSyncService.self) private var maintenanceLogSync
     @Environment(YieldEstimationSessionSyncService.self) private var yieldSessionSync
     @Environment(DamageRecordSyncService.self) private var damageRecordSync
@@ -133,6 +134,7 @@ struct NewMainTabView: View {
             workTaskLabourLineSync.configure(store: store, auth: auth)
             workTaskMachineLineSync.configure(store: store, auth: auth)
             workTaskPaddockSync.configure(store: store, auth: auth)
+            workTaskPieceRateRowSync.configure(store: store, auth: auth)
             maintenanceLogSync.configure(store: store, auth: auth)
             yieldSessionSync.configure(store: store, auth: auth)
             damageRecordSync.configure(store: store, auth: auth)
@@ -316,6 +318,7 @@ struct NewMainTabView: View {
         await workTaskLabourLineSync.syncForSelectedVineyard()
         await workTaskMachineLineSync.syncForSelectedVineyard()
         await workTaskPaddockSync.syncForSelectedVineyard()
+        await workTaskPieceRateRowSync.syncForSelectedVineyard()
         await maintenanceLogSync.syncForSelectedVineyard()
         await yieldSessionSync.syncForSelectedVineyard()
         await damageRecordSync.syncForSelectedVineyard()

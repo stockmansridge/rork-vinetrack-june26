@@ -43,6 +43,8 @@ struct VineTrackApp: App {
     @State private var workTaskLabourLineSyncService = WorkTaskLabourLineSyncService()
     @State private var workTaskMachineLineSyncService = WorkTaskMachineLineSyncService()
     @State private var workTaskPaddockSyncService = WorkTaskPaddockSyncService()
+    /// Historical piece-rate row snapshots (sql/188).
+    @State private var workTaskPieceRateRowSyncService = WorkTaskPieceRateRowSyncService()
     @State private var maintenanceLogSyncService = MaintenanceLogSyncService()
     @State private var yieldEstimationSessionSyncService = YieldEstimationSessionSyncService()
     @State private var damageRecordSyncService = DamageRecordSyncService()
@@ -122,6 +124,7 @@ struct VineTrackApp: App {
                         .environment(workTaskLabourLineSyncService)
                         .environment(workTaskMachineLineSyncService)
                         .environment(workTaskPaddockSyncService)
+                        .environment(workTaskPieceRateRowSyncService)
                         .environment(maintenanceLogSyncService)
                         .environment(yieldEstimationSessionSyncService)
                         .environment(damageRecordSyncService)

@@ -55,6 +55,9 @@ final class MigratedDataStore {
     var workTaskLabourLines: [WorkTaskLabourLine] = []
     var workTaskMachineLines: [WorkTaskMachineLine] = []
     var workTaskPaddocks: [WorkTaskPaddock] = []
+    /// Historical per-row vine-count snapshots behind piece-rate jobs (sql/188).
+    /// Frozen commercial history — never recalculated from today's block rows.
+    var workTaskPieceRateRows: [WorkTaskPieceRateRow] = []
 
     var grapeVarieties: [GrapeVariety] = []
 
@@ -156,6 +159,8 @@ final class MigratedDataStore {
     var onWorkTaskMachineLineDeleted: ((UUID) -> Void)?
     var onWorkTaskPaddockChanged: ((UUID) -> Void)?
     var onWorkTaskPaddockDeleted: ((UUID) -> Void)?
+    var onWorkTaskPieceRateRowChanged: ((UUID) -> Void)?
+    var onWorkTaskPieceRateRowDeleted: ((UUID) -> Void)?
     var onMaintenanceLogChanged: ((UUID) -> Void)?
     var onMaintenanceLogDeleted: ((UUID) -> Void)?
     var onYieldSessionChanged: ((UUID) -> Void)?
@@ -185,6 +190,7 @@ final class MigratedDataStore {
     let workTaskLabourLineRepo: WorkTaskLabourLineRepository
     let workTaskMachineLineRepo: WorkTaskMachineLineRepository
     let workTaskPaddockRepo: WorkTaskPaddockRepository
+    let workTaskPieceRateRowRepo: WorkTaskPieceRateRowRepository
     let workTaskTypeRepo: WorkTaskTypeRepository
     let equipmentItemRepo: EquipmentItemRepository
     let maintenanceLogRepo: MaintenanceLogRepository
@@ -227,6 +233,7 @@ final class MigratedDataStore {
         self.workTaskLabourLineRepo = WorkTaskLabourLineRepository(persistence: persistence)
         self.workTaskMachineLineRepo = WorkTaskMachineLineRepository(persistence: persistence)
         self.workTaskPaddockRepo = WorkTaskPaddockRepository(persistence: persistence)
+        self.workTaskPieceRateRowRepo = WorkTaskPieceRateRowRepository(persistence: persistence)
         self.workTaskTypeRepo = WorkTaskTypeRepository(persistence: persistence)
         self.equipmentItemRepo = EquipmentItemRepository(persistence: persistence)
         self.maintenanceLogRepo = MaintenanceLogRepository(persistence: persistence)
@@ -409,6 +416,7 @@ final class MigratedDataStore {
             workTaskLabourLines = []
             workTaskMachineLines = []
             workTaskPaddocks = []
+            workTaskPieceRateRows = []
             workTaskTypes = []
             equipmentItems = []
             settings = AppSettings()
@@ -421,6 +429,7 @@ final class MigratedDataStore {
         workTaskLabourLines = workTaskLabourLineRepo.load(for: vineyardId)
         workTaskMachineLines = workTaskMachineLineRepo.load(for: vineyardId)
         workTaskPaddocks = workTaskPaddockRepo.load(for: vineyardId)
+        workTaskPieceRateRows = workTaskPieceRateRowRepo.load(for: vineyardId)
         workTaskTypes = workTaskTypeRepo.load(for: vineyardId)
         equipmentItems = equipmentItemRepo.load(for: vineyardId)
         maintenanceLogs = maintenanceLogRepo.load(for: vineyardId)
@@ -486,6 +495,7 @@ final class MigratedDataStore {
         workTaskLabourLines = []
         workTaskMachineLines = []
         workTaskPaddocks = []
+        workTaskPieceRateRows = []
         workTaskTypes = []
         equipmentItems = []
         grapeVarieties = []
@@ -1287,6 +1297,64 @@ final class MigratedDataStore {
         workTaskPaddocks.removeAll { $0.id == paddockRowId }
         workTaskPaddockRepo.saveSlice(workTaskPaddocks, for: vineyardId)
         onWorkTaskPaddockDeleted?(paddockRowId)
+    }
+
+    // MARK: - WorkTaskPieceRateRow CRUD (sql/188)
+
+    /// Every historical row snapshot of one piece-rate job, in row order.
+    func pieceRateRows(forWorkTask workTaskId: UUID) -> [WorkTaskPieceRateRow] {
+        workTaskPieceRateRows
+            .filter { $0.workTaskId == workTaskId }
+            .sorted { ($0.rowNumber ?? 0) < ($1.rowNumber ?? 0) }
+    }
+
+    func addWorkTaskPieceRateRow(_ row: WorkTaskPieceRateRow) {
+        guard let vineyardId = selectedVineyardId else { return }
+        var item = row
+        item.vineyardId = vineyardId
+        workTaskPieceRateRows.append(item)
+        workTaskPieceRateRowRepo.saveSlice(workTaskPieceRateRows, for: vineyardId)
+        onWorkTaskPieceRateRowChanged?(item.id)
+    }
+
+    func updateWorkTaskPieceRateRow(_ row: WorkTaskPieceRateRow) {
+        guard let vineyardId = selectedVineyardId else { return }
+        guard let index = workTaskPieceRateRows.firstIndex(where: { $0.id == row.id }) else { return }
+        workTaskPieceRateRows[index] = row
+        workTaskPieceRateRowRepo.saveSlice(workTaskPieceRateRows, for: vineyardId)
+        onWorkTaskPieceRateRowChanged?(row.id)
+    }
+
+    func deleteWorkTaskPieceRateRow(_ rowId: UUID) {
+        guard let vineyardId = selectedVineyardId else { return }
+        workTaskPieceRateRows.removeAll { $0.id == rowId }
+        workTaskPieceRateRowRepo.saveSlice(workTaskPieceRateRows, for: vineyardId)
+        onWorkTaskPieceRateRowDeleted?(rowId)
+    }
+
+    /// Replaces a job's ENTIRE row snapshot in one operation.
+    ///
+    /// Called only when the job's piece-rate basis is being created or
+    /// deliberately re-agreed. Snapshots for rows that are no longer part of
+    /// the job are soft-deleted; the rest are upserted by their stable id, so a
+    /// retry can never duplicate the history.
+    func replaceWorkTaskPieceRateRows(_ rows: [WorkTaskPieceRateRow], forWorkTask workTaskId: UUID) {
+        guard let vineyardId = selectedVineyardId else { return }
+        let existing = workTaskPieceRateRows.filter { $0.workTaskId == workTaskId }
+        let keptIds = Set(rows.map(\.id))
+        for removed in existing where !keptIds.contains(removed.id) {
+            deleteWorkTaskPieceRateRow(removed.id)
+        }
+        for row in rows {
+            var item = row
+            item.vineyardId = vineyardId
+            item.workTaskId = workTaskId
+            if workTaskPieceRateRows.contains(where: { $0.id == item.id }) {
+                updateWorkTaskPieceRateRow(item)
+            } else {
+                addWorkTaskPieceRateRow(item)
+            }
+        }
     }
 
     // MARK: - Settings

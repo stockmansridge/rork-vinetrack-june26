@@ -24,6 +24,10 @@ nonisolated struct BackendWorkTask: Codable, Sendable, Identifiable {
     let areaHa: Double?
     let taskDescription: String?
     let status: String?
+    // sql/188 additive piece-rate costing fields.
+    let costingMethod: String?
+    let pieceRatePerVine: Double?
+    let pieceVineCount: Int?
     let createdBy: UUID?
     let createdAt: Date?
     let updatedAt: Date?
@@ -51,6 +55,9 @@ nonisolated struct BackendWorkTask: Codable, Sendable, Identifiable {
         case areaHa = "area_ha"
         case taskDescription = "description"
         case status
+        case costingMethod = "costing_method"
+        case pieceRatePerVine = "piece_rate_per_vine"
+        case pieceVineCount = "piece_vine_count"
         case createdBy = "created_by"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
@@ -82,6 +89,12 @@ nonisolated struct BackendWorkTaskUpsert: Encodable, Sendable {
     let areaHa: Double?
     let taskDescription: String?
     let status: String?
+    // sql/188. `costingMethod` is always written so switching a task BACK to
+    // hourly actually clears the piece-rate basis; the two money fields are
+    // written even when nil so clearing an agreement is not silently ignored.
+    let costingMethod: String
+    let pieceRatePerVine: Double?
+    let pieceVineCount: Int?
     let createdBy: UUID?
     let clientUpdatedAt: Date
 
@@ -106,6 +119,9 @@ nonisolated struct BackendWorkTaskUpsert: Encodable, Sendable {
         case areaHa = "area_ha"
         case taskDescription = "description"
         case status
+        case costingMethod = "costing_method"
+        case pieceRatePerVine = "piece_rate_per_vine"
+        case pieceVineCount = "piece_vine_count"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
     }
@@ -132,6 +148,9 @@ nonisolated struct BackendWorkTaskUpsert: Encodable, Sendable {
         try c.encodeIfPresent(areaHa, forKey: .areaHa)
         try c.encodeIfPresent(taskDescription, forKey: .taskDescription)
         try c.encodeIfPresent(status, forKey: .status)
+        try c.encode(costingMethod, forKey: .costingMethod)
+        try c.encode(pieceRatePerVine, forKey: .pieceRatePerVine)
+        try c.encode(pieceVineCount, forKey: .pieceVineCount)
         try c.encodeIfPresent(createdBy, forKey: .createdBy)
         try c.encode(clientUpdatedAt, forKey: .clientUpdatedAt)
     }
@@ -160,6 +179,11 @@ extension BackendWorkTask {
             areaHa: t.areaHa,
             taskDescription: t.taskDescription,
             status: t.status,
+            costingMethod: t.costingMethod.rawValue,
+            // Only a piece-rate task carries a piece-rate basis. Switching back
+            // to hourly writes NULLs so no stale agreement can be resurrected.
+            pieceRatePerVine: t.isPieceRate ? t.pieceRatePerVine : nil,
+            pieceVineCount: t.isPieceRate ? t.pieceVineCount : nil,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
         )
@@ -187,7 +211,100 @@ extension BackendWorkTask {
             endDate: endDate,
             areaHa: areaHa,
             taskDescription: taskDescription,
-            status: status
+            status: status,
+            costingMethodRaw: costingMethod,
+            pieceRatePerVine: pieceRatePerVine,
+            pieceVineCount: pieceVineCount
+        )
+    }
+}
+
+// MARK: - Work Task Piece Rate Rows (sql/188)
+
+/// One row's HISTORICAL vine-count snapshot behind a piece-rate work task.
+/// Mirrors `public.work_task_piece_rate_rows`.
+nonisolated struct BackendWorkTaskPieceRateRow: Codable, Sendable, Identifiable {
+    let id: UUID
+    let workTaskId: UUID
+    let vineyardId: UUID
+    let paddockId: UUID
+    let paddockRowId: UUID?
+    let rowNumber: Int?
+    let vineCount: Int?
+    let createdBy: UUID?
+    let createdAt: Date?
+    let updatedAt: Date?
+    let deletedAt: Date?
+    let clientUpdatedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case workTaskId = "work_task_id"
+        case vineyardId = "vineyard_id"
+        case paddockId = "paddock_id"
+        case paddockRowId = "paddock_row_id"
+        case rowNumber = "row_number"
+        case vineCount = "vine_count"
+        case createdBy = "created_by"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case deletedAt = "deleted_at"
+        case clientUpdatedAt = "client_updated_at"
+    }
+}
+
+nonisolated struct BackendWorkTaskPieceRateRowUpsert: Encodable, Sendable {
+    let id: UUID
+    let workTaskId: UUID
+    let vineyardId: UUID
+    let paddockId: UUID
+    let paddockRowId: UUID?
+    let rowNumber: Int?
+    let vineCount: Int
+    let createdBy: UUID?
+    let clientUpdatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case workTaskId = "work_task_id"
+        case vineyardId = "vineyard_id"
+        case paddockId = "paddock_id"
+        case paddockRowId = "paddock_row_id"
+        case rowNumber = "row_number"
+        case vineCount = "vine_count"
+        case createdBy = "created_by"
+        case clientUpdatedAt = "client_updated_at"
+    }
+}
+
+extension BackendWorkTaskPieceRateRow {
+    static func upsert(
+        from row: WorkTaskPieceRateRow,
+        createdBy: UUID?,
+        clientUpdatedAt: Date
+    ) -> BackendWorkTaskPieceRateRowUpsert {
+        BackendWorkTaskPieceRateRowUpsert(
+            id: row.id,
+            workTaskId: row.workTaskId,
+            vineyardId: row.vineyardId,
+            paddockId: row.paddockId,
+            paddockRowId: row.paddockRowId,
+            rowNumber: row.rowNumber,
+            vineCount: max(row.vineCount, 0),
+            createdBy: createdBy,
+            clientUpdatedAt: clientUpdatedAt
+        )
+    }
+
+    func toPieceRateRow() -> WorkTaskPieceRateRow {
+        WorkTaskPieceRateRow(
+            id: id,
+            workTaskId: workTaskId,
+            vineyardId: vineyardId,
+            paddockId: paddockId,
+            paddockRowId: paddockRowId,
+            rowNumber: rowNumber,
+            vineCount: vineCount ?? 0
         )
     }
 }

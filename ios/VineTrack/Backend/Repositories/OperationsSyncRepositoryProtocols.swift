@@ -24,6 +24,13 @@ protocol WorkTaskPaddockSyncRepositoryProtocol: Sendable {
     func softDelete(id: UUID) async throws
 }
 
+/// Historical per-row vine-count snapshots behind piece-rate jobs (sql/188).
+protocol WorkTaskPieceRateRowSyncRepositoryProtocol: Sendable {
+    func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendWorkTaskPieceRateRow]
+    func upsertMany(_ items: [BackendWorkTaskPieceRateRowUpsert]) async throws
+    func softDelete(id: UUID) async throws
+}
+
 protocol MaintenanceLogSyncRepositoryProtocol: Sendable {
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendMaintenanceLog]
     func upsertMany(_ items: [BackendMaintenanceLogUpsert]) async throws

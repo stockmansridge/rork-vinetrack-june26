@@ -2,6 +2,7 @@ package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.WorkTask
+import com.rork.vinetrack.data.model.WorkTaskCostingMethod
 import io.ktor.client.call.body
 import io.ktor.client.request.headers
 import io.ktor.client.request.patch
@@ -15,6 +16,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import java.time.Instant
 import java.util.UUID
 
@@ -46,6 +51,11 @@ class WorkTaskRepository(private val session: SessionStore) {
         @SerialName("finalized_at") val finalizedAt: String? = null,
         @SerialName("finalized_by") val finalizedBy: String? = null,
         @SerialName("created_by") val createdBy: String? = null,
+        // sql/188 piece-rate costing. Defaults keep every existing caller an
+        // HOURLY job with no piece-rate basis, exactly as before.
+        @SerialName("costing_method") val costingMethod: String = "hourly",
+        @SerialName("piece_rate_per_vine") val pieceRatePerVine: Double? = null,
+        @SerialName("piece_vine_count") val pieceVineCount: Int? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
@@ -58,6 +68,23 @@ class WorkTaskRepository(private val session: SessionStore) {
         @SerialName("task_type") val taskType: String,
         @SerialName("duration_hours") val durationHours: Double,
         val notes: String,
+        @SerialName("client_updated_at") val clientUpdatedAt: String,
+    )
+
+    /**
+     * Piece-rate costing patch (sql/188). Sent ONLY when the costing basis is
+     * being set or re-agreed, so a plain metadata edit can never disturb a
+     * job's historical commercial figures.
+     *
+     * Switching back to hourly writes explicit NULLs so no stale agreement can
+     * be resurrected. `explicitNulls = false` on the shared client would drop
+     * them, so those clears go through [WorkTaskCostingClearPatch].
+     */
+    @Serializable
+    private data class WorkTaskCostingPatch(
+        @SerialName("costing_method") val costingMethod: String,
+        @SerialName("piece_rate_per_vine") val pieceRatePerVine: Double,
+        @SerialName("piece_vine_count") val pieceVineCount: Int,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
@@ -118,6 +145,10 @@ class WorkTaskRepository(private val session: SessionStore) {
         id: String? = null,
         clientUpdatedAt: String? = null,
         isFinalized: Boolean = false,
+        // sql/188. Defaults preserve the existing hourly behaviour exactly.
+        costingMethod: WorkTaskCostingMethod = WorkTaskCostingMethod.HOURLY,
+        pieceRatePerVine: Double? = null,
+        pieceVineCount: Int? = null,
     ): WorkTask = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -135,6 +166,13 @@ class WorkTaskRepository(private val session: SessionStore) {
             finalizedAt = if (isFinalized) stamp else null,
             finalizedBy = if (isFinalized) session.userId else null,
             createdBy = session.userId,
+            costingMethod = costingMethod.storedValue,
+            pieceRatePerVine = pieceRatePerVine.takeIf {
+                costingMethod == WorkTaskCostingMethod.PIECE_RATE
+            },
+            pieceVineCount = pieceVineCount.takeIf {
+                costingMethod == WorkTaskCostingMethod.PIECE_RATE
+            },
             clientUpdatedAt = stamp,
         )
         val response = SupabaseClient.http.post(SupabaseClient.restUrl("work_tasks")) {
@@ -168,6 +206,53 @@ class WorkTaskRepository(private val session: SessionStore) {
             clientUpdatedAt = clientUpdatedAt ?: nowIso(),
         )
         patchTask(id, patch, token)
+    }
+
+    /**
+     * Sets a task's PIECE RATE costing basis (sql/188): the agreed rate per
+     * vine and the SNAPSHOTTED vine quantity the job was priced on.
+     *
+     * Called only when the basis is created or deliberately re-agreed. Ordinary
+     * metadata edits never touch these columns, so a completed job's commercial
+     * figures cannot drift.
+     */
+    suspend fun setPieceRateCosting(
+        id: String,
+        ratePerVine: Double,
+        vineCount: Int,
+        clientUpdatedAt: String? = null,
+    ): WorkTask = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val patch = WorkTaskCostingPatch(
+            costingMethod = WorkTaskCostingMethod.PIECE_RATE.storedValue,
+            pieceRatePerVine = ratePerVine,
+            pieceVineCount = vineCount,
+            clientUpdatedAt = clientUpdatedAt ?: nowIso(),
+        )
+        patchTask(id, patch, token)
+    }
+
+    /**
+     * Returns a task to HOURLY costing and clears its piece-rate basis.
+     *
+     * The shared client uses `explicitNulls = false`, so the NULLs are sent as
+     * a hand-built JSON body — otherwise they would be dropped and a stale
+     * agreement could be resurrected.
+     */
+    suspend fun clearPieceRateCosting(
+        id: String,
+        clientUpdatedAt: String? = null,
+    ): WorkTask = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val body = buildJsonObject {
+            put("costing_method", JsonPrimitive(WorkTaskCostingMethod.HOURLY.storedValue))
+            put("piece_rate_per_vine", JsonNull)
+            put("piece_vine_count", JsonNull)
+            put("client_updated_at", JsonPrimitive(clientUpdatedAt ?: nowIso()))
+        }
+        patchTask(id, body, token)
     }
 
     /** Mark complete (finalize) or reopen a work task. */

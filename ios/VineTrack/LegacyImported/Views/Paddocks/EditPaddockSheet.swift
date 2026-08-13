@@ -22,6 +22,13 @@ struct EditPaddockSheet: View {
     @State private var vineSpacing: Double = 1.0
     @State private var vineCountOverride: String = ""
     @State private var rowLengthOverride: String = ""
+    /// Manual PER-ROW vine counts (sql/188), keyed by ROW NUMBER — the one
+    /// identifier that stays stable while the editor regenerates geometry.
+    /// Empty means "no manual counts"; a row missing from the map uses its
+    /// calculated estimate.
+    @State private var rowVineCountOverrides: [Int: Int] = [:]
+    /// The row currently open in the per-row vine-count editor.
+    @State private var rowVineCountEditorTarget: RowVineCountTarget?
     @State private var flowPerEmitterText: String = ""
     @State private var emitterSpacingText: String = ""
     @State private var intermediatePostSpacingText: String = ""
@@ -91,6 +98,7 @@ struct EditPaddockSheet: View {
                 soilSection
                 if polygonPoints.count > 2 && rowCount > 0 {
                     blockSummarySection
+                    rowVineCountsSection
                 }
                 if isEditing && accessControl.canDeleteOperationalRecords {
                     dangerZoneSection
@@ -116,6 +124,19 @@ struct EditPaddockSheet: View {
             }
             .sheet(isPresented: $showAddVariety) {
                 addVarietyPickerSheet
+            }
+            .sheet(item: $rowVineCountEditorTarget) { target in
+                RowVineCountEditorSheet(
+                    rowNumber: target.number,
+                    calculated: target.calculated,
+                    currentOverride: rowVineCountOverrides[target.number]
+                ) { newValue in
+                    if let newValue {
+                        rowVineCountOverrides[target.number] = newValue
+                    } else {
+                        rowVineCountOverrides.removeValue(forKey: target.number)
+                    }
+                }
             }
             .sheet(item: $clonePickerTarget) { target in
                 ClonePickerSheet(
@@ -213,6 +234,7 @@ struct EditPaddockSheet: View {
                         rowNumberAscending = lastRow.number >= firstRow.number
                         rowStartNumber = min(firstRow.number, lastRow.number)
                     }
+                    rowVineCountOverrides = PaddockRowRegeneration.overrides(from: paddock.rows)
                     Task { await loadSoilProfile() }
                     Task { await loadReferenceCounts() }
                 }
@@ -1609,6 +1631,118 @@ struct EditPaddockSheet: View {
         }
     }
 
+    // MARK: - Per-row vine counts (sql/188)
+
+    /// One row of the compact vine-count list: its number, the automatically
+    /// calculated estimate, and the manual count when one is set.
+    private struct RowVineCountEntry: Identifiable {
+        let number: Int
+        let calculated: Int
+        let override: Int?
+        var id: Int { number }
+        /// The count actually in use — manual wins, else calculated.
+        var effective: Int { override ?? calculated }
+        var isManual: Bool { override != nil }
+    }
+
+    /// The live per-row list, built from the CURRENT draft geometry so the
+    /// numbers update as the layout is edited.
+    private var rowVineCountEntries: [RowVineCountEntry] {
+        let polygonCoords = polygonPoints.map { $0.coordinate }
+        let lines = calculateRowLines(
+            polygonCoords: polygonCoords,
+            direction: rowDirection,
+            count: max(rowCount, 0),
+            width: rowWidth,
+            offset: rowOffset
+        )
+        let mPerDegLat = 111_320.0
+        let centroidLat = polygonPoints.isEmpty
+            ? 0
+            : polygonPoints.map(\.latitude).reduce(0, +) / Double(polygonPoints.count)
+        let mPerDegLon = 111_320.0 * cos(centroidLat * .pi / 180.0)
+        return (0..<max(rowCount, 0)).map { index in
+            let number = rowNumberAscending
+                ? rowStartNumber + index
+                : rowStartNumber + (rowCount - 1 - index)
+            var length = 0.0
+            if index < lines.count {
+                let dLat = (lines[index].end.latitude - lines[index].start.latitude) * mPerDegLat
+                let dLon = (lines[index].end.longitude - lines[index].start.longitude) * mPerDegLon
+                length = (dLat * dLat + dLon * dLon).squareRoot()
+            }
+            return RowVineCountEntry(
+                number: number,
+                calculated: PaddockRowVineCount.calculated(
+                    rowLengthMetres: length,
+                    vineSpacing: vineSpacing
+                ),
+                override: rowVineCountOverrides[number]
+            )
+        }
+        .sorted { $0.number < $1.number }
+    }
+
+    private var rowVineCountsSection: some View {
+        let entries = rowVineCountEntries
+        let manualCount = entries.filter(\.isManual).count
+        let total = entries.reduce(0) { $0 + $1.effective }
+
+        return Section {
+            ForEach(entries) { entry in
+                Button {
+                    rowVineCountEditorTarget = RowVineCountTarget(
+                        number: entry.number,
+                        calculated: entry.calculated
+                    )
+                } label: {
+                    HStack(spacing: 10) {
+                        Text("Row \(entry.number)")
+                            .font(.subheadline)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text("\(entry.effective) vines")
+                            .font(.system(.subheadline, design: .monospaced).weight(.semibold))
+                            .foregroundStyle(entry.isManual ? VineyardTheme.earthBrown : .secondary)
+                        if entry.isManual {
+                            Text("Manual")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.16), in: Capsule())
+                                .foregroundStyle(.orange)
+                        }
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .accessibilityLabel(
+                    "Row \(entry.number), \(entry.effective) vines\(entry.isManual ? ", manual" : "")"
+                )
+            }
+
+            if manualCount > 0 {
+                Button("Clear all manual counts", role: .destructive) {
+                    rowVineCountOverrides.removeAll()
+                }
+                .font(.footnote)
+            }
+        } header: {
+            HStack(spacing: 6) {
+                Image(systemName: "list.number")
+                    .foregroundStyle(VineyardTheme.info)
+                    .font(.caption)
+                Text("Vines Per Row")
+            }
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Total from rows: \(total) vines" + (manualCount > 0 ? " \u{00B7} \(manualCount) manual" : ""))
+                Text("Tap a row to set its real vine count. Manual counts are used by piece-rate pruning costing; the Block Summary vine count above is unchanged and still drives water, spray and yield estimates.")
+            }
+        }
+    }
+
     // MARK: - Row-regeneration safety
 
     /// Number of historical pins on this block that hold row-attachment data
@@ -1668,7 +1802,7 @@ struct EditPaddockSheet: View {
             offset: rowOffset
         )
 
-        let rows: [PaddockRow] = (0..<max(rowCount, 0)).map { index in
+        let regenerated: [PaddockRow] = (0..<max(rowCount, 0)).map { index in
             let number: Int = rowNumberAscending ? rowStartNumber + index : rowStartNumber + (rowCount - 1 - index)
             let startCoord: CoordinatePoint
             let endCoord: CoordinatePoint
@@ -1685,6 +1819,21 @@ struct EditPaddockSheet: View {
                 endPoint: endCoord
             )
         }
+
+        // Rebuilding the geometry used to mint a BRAND NEW row id every save,
+        // silently detaching everything keyed on row identity (pruning progress
+        // via pruning_row_segments.paddock_row_id, sql/112) and — from sql/188 —
+        // the row's manual vine count. Rows that still exist under the same
+        // real-world number keep their stable id and manual count; genuinely new
+        // rows keep their fresh id.
+        let identityPreserved = PaddockRowRegeneration.preserveIdentity(
+            regenerated: regenerated,
+            existing: paddock?.rows ?? []
+        )
+        // The editor's map is keyed by row NUMBER, so it survives regeneration
+        // and is applied last — an override cleared in this session is cleared
+        // on the saved row too.
+        let rows = PaddockRowRegeneration.applyOverrides(rowVineCountOverrides, to: identityPreserved)
 
         // Backfill name snapshots so allocations remain resolvable on
         // devices/portals where the managed grape-variety id list differs.

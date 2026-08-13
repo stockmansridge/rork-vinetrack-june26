@@ -290,11 +290,18 @@ extension WorkTask {
         totalPeople + labourLines(in: store).reduce(0) { $0 + $1.workerCount }
     }
 
-    /// Labour cost for display: legacy resource costing plus canonical
-    /// labour-line costs (stored rate snapshots — never recalculated from a
-    /// worker type's current rate).
+    /// Labour cost for display.
+    ///
+    /// sql/188: the task's `costing_method` decides which SINGLE source applies.
+    /// * `piece_rate` — the job's own SNAPSHOT (vine count × rate per vine).
+    ///   Hourly lines on the same task are operational history and are never
+    ///   added to it.
+    /// * `hourly` — the pre-existing behaviour, unchanged: legacy resource
+    ///   costing plus canonical labour-line costs (stored rate snapshots, never
+    ///   recalculated from a worker type's current rate).
     func displayLabourCost(in store: MigratedDataStore) -> Double {
-        totalCost + labourLines(in: store).reduce(0.0) { $0 + $1.totalCost }
+        if isPieceRate { return pieceRateCost ?? 0 }
+        return totalCost + labourLines(in: store).reduce(0.0) { $0 + $1.totalCost }
     }
 
     /// List-friendly block label: “No block”, the single block name, or

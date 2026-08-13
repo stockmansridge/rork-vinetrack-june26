@@ -89,6 +89,7 @@ import com.rork.vinetrack.data.PruningStore
 import com.rork.vinetrack.data.PruningSyncStatus
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.PieceRateCosting
 import com.rork.vinetrack.data.model.PruningActivityDraft
 import com.rork.vinetrack.data.model.PruningActivityListing
 import com.rork.vinetrack.data.model.PruningAllocationEditor
@@ -106,7 +107,9 @@ import com.rork.vinetrack.data.model.PruningSeasonSelection
 import com.rork.vinetrack.data.model.PruningSegment
 import com.rork.vinetrack.data.model.PruningStatus
 import com.rork.vinetrack.data.model.WorkTask
+import com.rork.vinetrack.data.model.WorkTaskCostingMethod
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
+import com.rork.vinetrack.data.model.WorkTaskPieceRateRow
 import com.rork.vinetrack.data.model.builtInWorkTaskTypes
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -473,6 +476,12 @@ fun PruningTrackerScreen(
                         durationHours = if (personHours > 0) personHours else entry.labourHours ?: 0.0,
                         notes = taskDraft.notes,
                         markCompleted = true,
+                        // sql/188 — HOW this job is costed, plus the historical
+                        // quantity snapshot it was priced on.
+                        costingMethod = taskDraft.costingMethod,
+                        pieceRatePerVine = taskDraft.pieceRatePerVine,
+                        pieceVineCount = taskDraft.pieceVineCount,
+                        pieceRateRows = taskDraft.pieceRateRows,
                     ) { }
                     if (taskId != null) {
                         linked = linked.copy(workTaskId = taskId)
@@ -545,6 +554,10 @@ fun PruningTrackerScreen(
                             durationHours = if (personHours > 0) personHours else entry.labourHours ?: 0.0,
                             notes = action.draft.notes,
                             markCompleted = true,
+                            costingMethod = action.draft.costingMethod,
+                            pieceRatePerVine = action.draft.pieceRatePerVine,
+                            pieceVineCount = action.draft.pieceVineCount,
+                            pieceRateRows = action.draft.pieceRateRows,
                         ) { }
                         if (taskId != null) {
                             updated = updated.copy(
@@ -2312,6 +2325,17 @@ data class PruningWorkTaskDraft(
     val taskType: String,
     val notes: String,
     val labour: List<PruningLabourDraft>,
+    /**
+     * sql/188 — HOW this job's labour is costed. Defaults to Hourly, the
+     * behaviour every existing record has always had.
+     */
+    val costingMethod: WorkTaskCostingMethod = WorkTaskCostingMethod.HOURLY,
+    /** Agreed dollars per vine (piece rate only). */
+    val pieceRatePerVine: Double? = null,
+    /** HISTORICAL SNAPSHOT of the vine quantity this job is costed on. */
+    val pieceVineCount: Int? = null,
+    /** HISTORICAL per-row breakdown behind [pieceVineCount]. */
+    val pieceRateRows: List<WorkTaskPieceRateRow> = emptyList(),
 )
 
 /** One validated Work Task labour line captured in the Record Pruning sheet. */
@@ -2529,6 +2553,50 @@ private fun PruningEntrySheet(
     val labourTotalCost = labourRows.sumOf { it.totalCost ?: 0.0 }
     val hasRatedLine = labourRows.any { it.hourlyRate != null }
     val labourValid = labourRows.isNotEmpty() && labourRows.all { it.isValid }
+
+    // ---- Piece rate (sql/188) ----
+    // HOW this job is costed. Hourly is the default and keeps every existing
+    // rule byte for byte; Piece Rate switches the cost basis to vines × rate.
+    var costingMethod by remember { mutableStateOf(WorkTaskCostingMethod.HOURLY) }
+    var pieceRateText by remember { mutableStateOf("") }
+    val isPieceRate = costingMethod == WorkTaskCostingMethod.PIECE_RATE
+    val pieceRatePerVine = pieceRateText.replace(',', '.').toDoubleOrNull()
+    // Rows this record touches — taken straight from the quarters already
+    // selected on the progress grid. Rows are never selected a second time.
+    val selectedRowIds = segments.mapNotNull { it.rowId }.toSet()
+    val selectedRowCount = if (selectedRowIds.isNotEmpty()) {
+        selectedRowIds.size
+    } else {
+        segments.map { it.row }.distinct().size
+    }
+    val pieceRateSnapshotRows = remember(selectedRowIds, paddock) {
+        if (selectedRowIds.isEmpty()) {
+            emptyList()
+        } else {
+            PieceRateCosting.snapshotRows(
+                workTaskId = "",
+                vineyardId = vineyardId,
+                paddock = paddock,
+                selectedRowIds = selectedRowIds,
+                newId = { UUID.randomUUID().toString() },
+            )
+        }
+    }
+    // The vine quantity this job is priced on. Falls back to the tracker's own
+    // weighted estimate for blocks whose rows have no stable ids, so a
+    // piece-rate job is never blocked by legacy row data.
+    val pieceVineCount = PieceRateCosting.vineCountForSelectedRows(pieceRateSnapshotRows)
+        .takeIf { it > 0 }
+        ?: PruningCalculator.vines(segments, rows)
+    val pieceRateCost = PieceRateCosting.cost(pieceVineCount, pieceRatePerVine)
+    val pieceRateAreaHa = PruningCalculator.areaHectares(segments, rows, paddock)
+        .takeIf { it > 0 }
+        ?: paddock.areaHectares.takeIf { it > 0 }
+    val pieceRateCostPerHa = PieceRateCosting.costPerHectare(pieceRateCost, pieceRateAreaHa)
+    val pieceRateIssues = PieceRateCosting.validate(pieceRatePerVine, pieceVineCount)
+    val pieceRateValid = pieceRateIssues.isEmpty()
+    // Hourly keeps its existing rule EXACTLY; piece rate applies its own.
+    val costingValid = if (isPieceRate) pieceRateValid else labourValid
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = vine.appBackground) {
         Column(
@@ -2752,7 +2820,61 @@ private fun PruningEntrySheet(
                 }
             }
             if (showsTaskFields) {
-                Text("Labour lines", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                // ---- Costing method (sql/188) ----
+                // HOW this job is paid. Hourly is the default and keeps the
+                // pre-existing behaviour byte for byte.
+                Text("Costing method", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    WorkTaskCostingMethod.entries.forEach { option ->
+                        val active = option == costingMethod
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (active) VineColors.Primary else vine.cardBackground)
+                                .clickable { costingMethod = option }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                option.label,
+                                color = if (active) Color.White else vine.textPrimary,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                            )
+                        }
+                    }
+                }
+                Text(
+                    if (isPieceRate) {
+                        "Priced per vine. The vine count comes from the rows already selected above, using each row's manual count where one is set."
+                    } else {
+                        "Priced per hour from the labour lines below."
+                    },
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
+
+                if (isPieceRate) {
+                    PruningPieceRateCard(
+                        rateText = pieceRateText,
+                        onRateChange = { text -> pieceRateText = text.filter { it.isDigit() || it == '.' || it == ',' } },
+                        rowCount = selectedRowCount,
+                        vineCount = pieceVineCount,
+                        cost = pieceRateCost,
+                        costPerHa = pieceRateCostPerHa,
+                        rateMessage = PieceRateCosting.message(pieceRateIssues, PieceRateCosting.PieceRateField.RATE_PER_VINE),
+                        vineMessage = PieceRateCosting.message(pieceRateIssues, PieceRateCosting.PieceRateField.VINE_COUNT),
+                        vine = vine,
+                    )
+                }
+
+                Text(
+                    if (isPieceRate) "Hours worked (optional)" else "Labour lines",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = vine.textPrimary,
+                )
                 labourRows.forEachIndexed { index, row ->
                     PruningLabourRowEditor(
                         row = row,
@@ -2773,7 +2895,21 @@ private fun PruningEntrySheet(
                     Icon(Icons.Filled.Add, contentDescription = null, tint = VineColors.Primary)
                     Text("  Add worker", color = VineColors.Primary, fontWeight = FontWeight.SemiBold)
                 }
-                if (labourValid) {
+                if (isPieceRate) {
+                    // Hours remain recordable as operational history, but they
+                    // NEVER drive a piece-rate job's cost.
+                    Text(
+                        "Total: ${fmt(labourPersonHours)} h person-hours",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textSecondary,
+                    )
+                    Text(
+                        "Hours are kept for operational history only — this job's labour cost is the piece rate above.",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                    )
+                } else if (labourValid) {
                     Text(
                         "Total: ${fmt(labourPersonHours)} h person-hours" +
                             if (hasRatedLine) " · ${fmtCurrency(labourTotalCost)} labour cost" else "",
@@ -2936,9 +3072,15 @@ private fun PruningEntrySheet(
                                         workerType = row.workerType.trim(),
                                         workerCount = row.workerCount,
                                         hoursPerWorker = row.hoursPerWorker,
-                                        hourlyRate = row.hourlyRate,
+                                        // On a piece-rate job an hourly rate would be a
+                                        // second, contradictory cost — so it is dropped.
+                                        hourlyRate = if (isPieceRate) null else row.hourlyRate,
                                     )
                                 },
+                                costingMethod = costingMethod,
+                                pieceRatePerVine = pieceRatePerVine.takeIf { isPieceRate },
+                                pieceVineCount = pieceVineCount.takeIf { isPieceRate },
+                                pieceRateRows = if (isPieceRate) pieceRateSnapshotRows else emptyList(),
                             )
                         } else {
                             null
@@ -2955,9 +3097,9 @@ private fun PruningEntrySheet(
                     if (markSkipped) showSkipConfirm = true else performSave()
                 },
                 enabled = if (isEditing) {
-                    !showsTaskFields || labourValid
+                    !showsTaskFields || costingValid
                 } else {
-                    segments.isNotEmpty() && (!createTask || labourValid)
+                    segments.isNotEmpty() && (!createTask || costingValid)
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                 modifier = Modifier.fillMaxWidth(),
@@ -3091,6 +3233,103 @@ private fun EditSummaryRow(label: String, value: String) {
         Text(label, fontSize = 13.sp, color = vine.textSecondary)
         Spacer(Modifier.weight(1f))
         Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+    }
+}
+
+/**
+ * Piece-rate costing card for the Record Pruning sheet (sql/188).
+ *
+ * The vine count is DERIVED from the rows already selected on the progress
+ * grid — the operator never selects rows twice and never types a total the app
+ * already knows. Only the agreed rate is entered.
+ */
+@Composable
+private fun PruningPieceRateCard(
+    rateText: String,
+    onRateChange: (String) -> Unit,
+    rowCount: Int,
+    vineCount: Int,
+    cost: Double?,
+    costPerHa: Double?,
+    rateMessage: String?,
+    vineMessage: String?,
+    vine: com.rork.vinetrack.ui.theme.VineExtraColors,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(vine.cardBackground)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Rate per vine", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+        OutlinedTextField(
+            value = rateText,
+            onValueChange = onRateChange,
+            placeholder = { Text("0.00") },
+            prefix = { Text("$") },
+            singleLine = true,
+            isError = rateMessage != null,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        rateMessage?.let { Text(it, fontSize = 12.sp, color = VineColors.Destructive) }
+
+        HorizontalDivider(color = vine.cardBorder)
+
+        // Everything below is CALCULATED — never typed.
+        PieceRateSummaryLine(
+            label = "Rows selected",
+            value = "$rowCount",
+            vine = vine,
+        )
+        PieceRateSummaryLine(
+            label = "Vines",
+            value = PieceRateCosting.vineCountLabel(vineCount),
+            vine = vine,
+        )
+        vineMessage?.let { Text(it, fontSize = 12.sp, color = VineColors.Destructive) }
+        PieceRateSummaryLine(
+            label = "Labour cost",
+            value = cost?.let { PieceRateCosting.currencyLabel(it) } ?: "Not specified",
+            emphasised = true,
+            vine = vine,
+        )
+        costPerHa?.let {
+            PieceRateSummaryLine(
+                label = "Cost per hectare",
+                value = PieceRateCosting.currencyLabel(it),
+                vine = vine,
+            )
+        }
+        Text(
+            "Vines are counted from the selected rows, using each row's manual count where one is set. This quantity is saved with the job, so later changes to the block never re-price completed work.",
+            fontSize = 11.sp,
+            color = vine.textSecondary,
+        )
+    }
+}
+
+@Composable
+private fun PieceRateSummaryLine(
+    label: String,
+    value: String,
+    vine: com.rork.vinetrack.ui.theme.VineExtraColors,
+    emphasised: Boolean = false,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, fontSize = 13.sp, color = vine.textSecondary)
+        Text(
+            value,
+            fontSize = if (emphasised) 16.sp else 13.sp,
+            fontWeight = if (emphasised) FontWeight.Bold else FontWeight.SemiBold,
+            color = if (emphasised) VineColors.Primary else vine.textPrimary,
+        )
     }
 }
 

@@ -530,6 +530,12 @@ object PruningCalculator {
      * when nothing is mapped), and the block's effective vine count is split
      * across those weights — so a quarter contributes 25% of THAT row's vines
      * and totals always reconcile with the block vine count.
+     *
+     * EXCEPTION (sql/188): when ANY row carries a MANUAL per-row vine count,
+     * the grower has told us the real numbers, so each row uses its own
+     * effective count verbatim instead of a share of the block total. Blocks
+     * with no manual counts — the overwhelming majority — behave exactly as
+     * before, byte for byte.
      */
     fun rowRefs(paddock: Paddock, setup: PruningBlockSetup?): List<PruningRowRef> {
         val totalVines = paddock.effectiveVineCount.toDouble()
@@ -540,13 +546,18 @@ object PruningCalculator {
             val averageLength = if (positive.isEmpty()) 0.0 else positive.sum() / positive.size
             val weights = lengths.map { if (it > 0) it else (if (averageLength > 0) averageLength else 1.0) }
             val totalWeight = weights.sum()
+            val usesManualCounts = paddock.hasRowVineCountOverrides
             return configured.mapIndexed { index, row ->
                 PruningRowRef(
                     rowId = row.stableId,
                     number = row.number,
                     label = row.number.toString(),
                     lengthMetres = lengths[index].takeIf { it > 0 },
-                    vines = if (totalWeight > 0) totalVines * weights[index] / totalWeight else 0.0,
+                    vines = when {
+                        usesManualCounts -> paddock.effectiveVineCount(row).toDouble()
+                        totalWeight > 0 -> totalVines * weights[index] / totalWeight
+                        else -> 0.0
+                    },
                     isFallback = false,
                 )
             }

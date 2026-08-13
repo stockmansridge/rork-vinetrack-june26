@@ -61,6 +61,18 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
     var taskDescription: String?
     var status: String?
 
+    // sql/188 additive piece-rate costing fields. All optional — every task
+    // written before this existed decodes as an HOURLY job and costs exactly
+    // as it always did.
+
+    /// Raw `work_tasks.costing_method`. Read through `costingMethod`.
+    var costingMethodRaw: String?
+    /// Agreed dollars per vine (piece rate only). HISTORICAL: never rewritten
+    /// by later vineyard edits.
+    var pieceRatePerVine: Double?
+    /// HISTORICAL SNAPSHOT of the vine quantity this job was costed on.
+    var pieceVineCount: Int?
+
     init(
         id: UUID = UUID(),
         vineyardId: UUID = UUID(),
@@ -82,7 +94,10 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         endDate: Date? = nil,
         areaHa: Double? = nil,
         taskDescription: String? = nil,
-        status: String? = nil
+        status: String? = nil,
+        costingMethodRaw: String? = nil,
+        pieceRatePerVine: Double? = nil,
+        pieceVineCount: Int? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -105,6 +120,27 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         self.areaHa = areaHa
         self.taskDescription = taskDescription
         self.status = status
+        self.costingMethodRaw = costingMethodRaw
+        self.pieceRatePerVine = pieceRatePerVine
+        self.pieceVineCount = pieceVineCount
+    }
+
+    /// How this task's labour cost is calculated (sql/188). Anything missing or
+    /// unrecognised resolves to `.hourly` — the behaviour every existing record
+    /// has always had.
+    var costingMethod: WorkTaskCostingMethod {
+        get { WorkTaskCostingMethod.resolve(costingMethodRaw) }
+        set { costingMethodRaw = newValue.rawValue }
+    }
+
+    /// True when this task is costed per vine rather than per hour.
+    var isPieceRate: Bool { costingMethod == .pieceRate }
+
+    /// The piece-rate labour cost from this task's OWN snapshot — never from
+    /// today's row data. Nil for hourly jobs and for incomplete agreements.
+    var pieceRateCost: Double? {
+        guard isPieceRate else { return nil }
+        return PieceRateCosting.cost(vineCount: pieceVineCount, ratePerVine: pieceRatePerVine)
     }
 
     var totalPeople: Int { resources.reduce(0) { $0 + $1.count } }
@@ -125,6 +161,7 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         case id, vineyardId, date, taskType, paddockId, paddockName, durationHours, resources, notes, createdBy
         case isArchived, archivedAt, archivedBy, isFinalized, finalizedAt, finalizedBy
         case startDate, endDate, areaHa, taskDescription, status
+        case costingMethodRaw, pieceRatePerVine, pieceVineCount
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -150,6 +187,11 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         areaHa = try c.decodeIfPresent(Double.self, forKey: .areaHa)
         taskDescription = try c.decodeIfPresent(String.self, forKey: .taskDescription)
         status = try c.decodeIfPresent(String.self, forKey: .status)
+        // Optional so a cache written before sql/188 still decodes instead of
+        // wiping every locally stored task.
+        costingMethodRaw = try c.decodeIfPresent(String.self, forKey: .costingMethodRaw)
+        pieceRatePerVine = try c.decodeIfPresent(Double.self, forKey: .pieceRatePerVine)
+        pieceVineCount = try c.decodeIfPresent(Int.self, forKey: .pieceVineCount)
     }
 }
 

@@ -464,6 +464,12 @@ nonisolated enum PruningCalculator {
     /// when nothing is mapped), and the block's effective vine count is
     /// split across those weights — so a quarter contributes 25% of THAT
     /// row's vines and totals always reconcile with the block vine count.
+    ///
+    /// EXCEPTION (sql/188): when ANY row carries a MANUAL per-row vine count,
+    /// the grower has told us the real numbers, so each row uses its own
+    /// effective count verbatim instead of a share of the block total. Blocks
+    /// with no manual counts — the overwhelming majority — behave exactly as
+    /// before, byte for byte.
     static func rowRefs(paddock: Paddock, setup: PruningBlockSetup?) -> [PruningRowRef] {
         let totalVines = Double(paddock.effectiveVineCount)
         let configured = paddock.rows.sorted { $0.number < $1.number }
@@ -473,13 +479,16 @@ nonisolated enum PruningCalculator {
             let averageLength = positive.isEmpty ? 0 : positive.reduce(0, +) / Double(positive.count)
             let weights = lengths.map { $0 > 0 ? $0 : (averageLength > 0 ? averageLength : 1) }
             let totalWeight = weights.reduce(0, +)
+            let usesManualCounts = paddock.hasRowVineCountOverrides
             return configured.enumerated().map { index, row in
                 PruningRowRef(
                     rowId: row.id,
                     number: row.number,
                     label: "\(row.number)",
                     lengthMetres: lengths[index] > 0 ? lengths[index] : nil,
-                    vines: totalWeight > 0 ? totalVines * weights[index] / totalWeight : 0,
+                    vines: usesManualCounts
+                        ? Double(paddock.effectiveVineCount(for: row))
+                        : (totalWeight > 0 ? totalVines * weights[index] / totalWeight : 0),
                     isFallback: false
                 )
             }

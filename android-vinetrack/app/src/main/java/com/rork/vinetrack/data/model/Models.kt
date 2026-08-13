@@ -87,6 +87,16 @@ data class PaddockRow(
     val number: Int = 0,
     val startPoint: CoordinatePoint? = null,
     val endPoint: CoordinatePoint? = null,
+    /**
+     * MANUAL vine count for THIS row (sql/188). Optional by contract: rows
+     * written before the field existed, and rows the operator never overrode,
+     * simply omit the key and keep using the calculated estimate.
+     *
+     * Independent of the BLOCK-level [Paddock.vineCountOverride], which stays
+     * the block total used by water / spray / fertiliser / yield estimates.
+     * Read this through [Paddock.effectiveVineCount], never directly.
+     */
+    val vineCountOverride: Int? = null,
 ) {
     /**
      * Stable row identity: the stored id when present, else a DETERMINISTIC
@@ -255,6 +265,50 @@ data class Paddock(
 
     /** Vine count: explicit override if set, otherwise derived from rows × spacing. */
     val effectiveVineCount: Int get() = vineCountOverride ?: estimatedVineCount
+
+    // ---- Per-row vine counts (sql/188) ----
+
+    /**
+     * Length of ONE row in metres, using the same equirectangular
+     * approximation as [totalRowLengthMetres].
+     */
+    fun rowLengthMetres(row: PaddockRow): Double {
+        val start = row.startPoint ?: return 0.0
+        val end = row.endPoint ?: return 0.0
+        val pts = polygonPoints ?: emptyList()
+        val centroidLat = if (pts.isEmpty()) start.latitude else pts.sumOf { it.latitude } / pts.size
+        val mPerDegLat = 111_320.0
+        val mPerDegLon = 111_320.0 * cos(centroidLat * Math.PI / 180.0)
+        val dLat = (end.latitude - start.latitude) * mPerDegLat
+        val dLon = (end.longitude - start.longitude) * mPerDegLon
+        return sqrt(dLat * dLat + dLon * dLon)
+    }
+
+    /**
+     * The AUTOMATICALLY calculated vine count for one row: this row's own
+     * length ÷ the block's vine spacing. Never reads any override.
+     */
+    fun calculatedVineCount(row: PaddockRow): Int =
+        PaddockRowVineCount.calculated(rowLengthMetres(row), vineSpacing)
+
+    /**
+     * THE vine count to use for this row: the manual override when set,
+     * otherwise the calculated estimate (sql/188).
+     */
+    fun effectiveVineCount(row: PaddockRow): Int =
+        PaddockRowVineCount.effective(row.vineCountOverride, rowLengthMetres(row), vineSpacing)
+
+    /**
+     * Σ of every row's effective vine count. This is the row-driven total used
+     * by piece-rate costing — NOT a replacement for the block-level
+     * [vineCountOverride], which keeps its existing meaning and consumers.
+     */
+    val rowsEffectiveVineCount: Int
+        get() = rows.orEmpty().sumOf { effectiveVineCount(it) }
+
+    /** True when at least one row carries a manual per-row count. */
+    val hasRowVineCountOverrides: Boolean
+        get() = rows.orEmpty().any { it.vineCountOverride != null }
 
     /** Litres per hectare per hour for the configured drip setup, or null. */
     val litresPerHaPerHour: Double?
@@ -917,10 +971,40 @@ data class WorkTask(
     @SerialName("is_finalized") val isFinalized: Boolean = false,
     @SerialName("finalized_at") val finalizedAt: String? = null,
     @SerialName("finalized_by") val finalizedBy: String? = null,
+    // sql/188 additive piece-rate costing fields. All optional — every task
+    // written before this existed decodes as an HOURLY job and costs exactly
+    // as it always did.
+    /** Raw `work_tasks.costing_method`. Read through [resolvedCostingMethod]. */
+    @SerialName("costing_method") val costingMethod: String? = null,
+    /**
+     * Agreed dollars per vine (piece rate only). HISTORICAL: never rewritten
+     * by later vineyard edits.
+     */
+    @SerialName("piece_rate_per_vine") val pieceRatePerVine: Double? = null,
+    /** HISTORICAL SNAPSHOT of the vine quantity this job was costed on. */
+    @SerialName("piece_vine_count") val pieceVineCount: Int? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     val startEpochMs: Long? get() = parseIsoToEpochMs(date)
     val finalizedEpochMs: Long? get() = parseIsoToEpochMs(finalizedAt)
+
+    /**
+     * How this task's labour cost is calculated (sql/188). Anything missing or
+     * unrecognised resolves to Hourly — the behaviour every existing record
+     * has always had.
+     */
+    val resolvedCostingMethod: WorkTaskCostingMethod
+        get() = WorkTaskCostingMethod.resolve(costingMethod)
+
+    /** True when this task is costed per vine rather than per hour. */
+    val isPieceRate: Boolean get() = resolvedCostingMethod == WorkTaskCostingMethod.PIECE_RATE
+
+    /**
+     * The piece-rate labour cost from this task's OWN snapshot — never from
+     * today's row data. Null for hourly jobs and incomplete agreements.
+     */
+    val pieceRateCost: Double?
+        get() = if (!isPieceRate) null else PieceRateCosting.cost(pieceVineCount, pieceRatePerVine)
 
     /** Completion state — mirrors the iOS `isFinalized` convention. */
     val isComplete: Boolean get() = isFinalized

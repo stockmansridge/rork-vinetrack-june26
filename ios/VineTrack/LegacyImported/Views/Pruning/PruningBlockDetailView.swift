@@ -855,6 +855,12 @@ private struct PruningEntrySheet: View {
     @State private var createWorkTask: Bool = false
     @State private var workTaskType: String = "Pruning"
     @State private var labourLines: [PruningLabourLineDraft] = []
+    /// HOW this job's labour is costed (sql/188). Defaults to Hourly — the
+    /// behaviour every existing record has always had — and only changes when
+    /// the user explicitly chooses Piece Rate.
+    @State private var costingMethod: WorkTaskCostingMethod = .hourly
+    /// The agreed dollars per vine, as typed.
+    @State private var pieceRateText: String = ""
     @State private var updateLinkedTask: Bool = true
     @State private var originalLineIds: Set<UUID> = []
     @State private var showUnlinkDialog: Bool = false
@@ -888,6 +894,82 @@ private struct PruningEntrySheet: View {
 
     private var hasRatedLine: Bool {
         labourLines.contains { $0.hourlyRate != nil }
+    }
+
+    // MARK: Piece rate (sql/188)
+
+    private var isPieceRate: Bool { costingMethod == .pieceRate }
+
+    /// The agreed rate per vine, parsed locale-safely.
+    private var pieceRatePerVine: Double? {
+        Double(pieceRateText.replacingOccurrences(of: ",", with: "."))
+    }
+
+    /// Stable ids of the rows this record touches — taken straight from the
+    /// quarters already selected on the progress grid. The operator never
+    /// selects rows a second time just to be costed.
+    private var selectedRowIds: Set<UUID> {
+        Set(segments.compactMap(\.rowId))
+    }
+
+    /// Distinct rows covered by this job.
+    private var selectedRowCount: Int {
+        let ids = selectedRowIds
+        if !ids.isEmpty { return ids.count }
+        // Fallback rows carry no id — count their numbers instead.
+        return Set(segments.map(\.row)).count
+    }
+
+    /// THE historical snapshot rows for this job, derived from the block's
+    /// CURRENT effective row counts at the moment of saving.
+    private var pieceRateSnapshotRows: [WorkTaskPieceRateRow] {
+        guard !selectedRowIds.isEmpty else { return [] }
+        return PieceRateCosting.snapshotRows(
+            workTaskId: UUID(), // replaced with the real task id at save time
+            vineyardId: vineyardId,
+            paddock: paddock,
+            selectedRowIds: selectedRowIds
+        )
+    }
+
+    /// The vine quantity this job is priced on, derived automatically from the
+    /// selected rows' effective vine counts (manual per-row overrides win).
+    ///
+    /// Falls back to the pruning tracker's own weighted vine estimate for
+    /// blocks whose rows have no stable ids (manual fallback rows), so a
+    /// piece-rate job is never blocked by legacy row data.
+    private var pieceVineCount: Int {
+        let fromRows = PieceRateCosting.vineCount(forSelectedRows: pieceRateSnapshotRows)
+        if fromRows > 0 { return fromRows }
+        return PruningCalculator.vines(for: segments, rows: rows)
+    }
+
+    /// vine count × rate per vine.
+    private var pieceRateCost: Double? {
+        PieceRateCosting.cost(vineCount: pieceVineCount, ratePerVine: pieceRatePerVine)
+    }
+
+    /// Hectares actually covered by this record's quarters — the only honest
+    /// denominator for cost per hectare on a partial-block job.
+    private var pieceRateAreaHa: Double? {
+        let area = PruningCalculator.areaHectares(for: segments, rows: rows, paddock: paddock)
+        return area > 0 ? area : (paddock.areaHectares > 0 ? paddock.areaHectares : nil)
+    }
+
+    private var pieceRateCostPerHa: Double? {
+        PieceRateCosting.costPerHectare(cost: pieceRateCost, hectares: pieceRateAreaHa)
+    }
+
+    private var pieceRateIssues: [PieceRateCosting.PieceRateIssue] {
+        PieceRateCosting.validate(ratePerVine: pieceRatePerVine, vineCount: pieceVineCount)
+    }
+
+    private var pieceRateValid: Bool { pieceRateIssues.isEmpty }
+
+    /// Whether the costing inputs are complete enough to save. Hourly keeps its
+    /// existing rule EXACTLY; piece rate applies its own.
+    private var costingValid: Bool {
+        isPieceRate ? pieceRateValid : labourLinesValid
     }
 
     /// Every labour line needs hours > 0 before the task can be created.
@@ -1096,6 +1178,8 @@ private struct PruningEntrySheet: View {
                 }
 
                 if showsTaskFields {
+                    costingMethodSection
+                    if isPieceRate { pieceRateSection }
                     Section {
                         ForEach($labourLines) { $line in
                             labourLineEditor($line)
@@ -1107,16 +1191,22 @@ private struct PruningEntrySheet: View {
                         }
                         .buttonStyle(.borderless)
                     } header: {
-                        Text("Labour Lines")
+                        Text(isPieceRate ? "Hours Worked (optional)" : "Labour Lines")
                     } footer: {
                         VStack(alignment: .leading, spacing: 4) {
-                            if labourLinesValid {
+                            if isPieceRate {
+                                // Hours stay recordable as operational history,
+                                // but they never drive a piece-rate job's cost.
+                                Text("Total: \(hoursLabel(labourPersonHours)) person-hours")
+                                Text("Hours are kept for operational history only. This job's labour cost is the piece rate above \u{2014} hours never change it.")
+                            } else if labourLinesValid {
                                 Text("Total: \(hoursLabel(labourPersonHours)) person-hours" + (hasRatedLine ? " \u{00B7} \(currencyLabel(labourTotalCost)) labour cost" : ""))
+                                Text("One costing line per worker or crew \u{2014} different hours and rates per worker are supported. Rates left blank show as \u{201C}Not specified\u{201D} in the Work Task.")
                             } else {
                                 Text("Each labour line needs hours greater than zero.")
                                     .foregroundStyle(.red)
+                                Text("One costing line per worker or crew \u{2014} different hours and rates per worker are supported. Rates left blank show as \u{201C}Not specified\u{201D} in the Work Task.")
                             }
-                            Text("One costing line per worker or crew \u{2014} different hours and rates per worker are supported. Rates left blank show as \u{201C}Not specified\u{201D} in the Work Task.")
                         }
                     }
                 }
@@ -1143,7 +1233,7 @@ private struct PruningEntrySheet: View {
                         }
                     }
                     .fontWeight(.semibold)
-                    .disabled((!isEditing && segments.isEmpty) || (showsTaskFields && !labourLinesValid))
+                    .disabled((!isEditing && segments.isEmpty) || (showsTaskFields && !costingValid))
                     .accessibilityLabel(
                         markSkipped
                             ? "Mark the selected sections as skipped"
@@ -1209,6 +1299,12 @@ private struct PruningEntrySheet: View {
         notes = entry.notes
         guard let task = linkedTask else { return }
         workTaskType = task.taskType
+        // sql/188: an existing task keeps the method it was saved with. Legacy
+        // tasks resolve to Hourly, so nothing about them changes.
+        costingMethod = task.costingMethod
+        if let rate = task.pieceRatePerVine {
+            pieceRateText = rate.formatted(.number.precision(.fractionLength(0...4)))
+        }
         let lines = dataStore.workTaskLabourLines.filter { $0.workTaskId == task.id }
         if lines.isEmpty {
             var first = PruningLabourLineDraft()
@@ -1343,23 +1439,126 @@ private struct PruningEntrySheet: View {
                     .keyboardType(.numberPad)
                 TextField("Hrs / worker", text: line.hoursText)
                     .keyboardType(.decimalPad)
-                TextField("Rate $/h", text: line.rateText)
-                    .keyboardType(.decimalPad)
+                // The hourly rate IS the costing input — on a piece-rate job it
+                // would be a second, contradictory cost, so it is hidden.
+                if !isPieceRate {
+                    TextField("Rate $/h", text: line.rateText)
+                        .keyboardType(.decimalPad)
+                }
             }
             .font(.subheadline)
             HStack {
                 Text(hoursLabel(line.wrappedValue.totalHours))
-                Text("\u{00B7}")
-                if let cost = line.wrappedValue.totalCost {
-                    Text(currencyLabel(cost))
-                } else {
-                    Text("Cost not specified")
+                if !isPieceRate {
+                    Text("\u{00B7}")
+                    if let cost = line.wrappedValue.totalCost {
+                        Text(currencyLabel(cost))
+                    } else {
+                        Text("Cost not specified")
+                    }
                 }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
+    }
+
+    // MARK: Costing method + piece rate UI (sql/188)
+
+    private var costingMethodSection: some View {
+        Section {
+            Picker("Costing method", selection: $costingMethod) {
+                ForEach(WorkTaskCostingMethod.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+        } header: {
+            Text("Costing Method")
+        } footer: {
+            Text(costingMethod == .pieceRate
+                ? "Priced per vine. The vine count comes from the rows selected above, using each row's manual count where one is set."
+                : "Priced per hour from the labour lines below \u{2014} the existing VineTrack costing.")
+        }
+    }
+
+    private var pieceRateSection: some View {
+        let issues = pieceRateIssues
+        return Section {
+            HStack {
+                Text("Rate / vine")
+                Spacer()
+                Text("$")
+                    .foregroundStyle(.secondary)
+                TextField("0.00", text: $pieceRateText)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 90)
+                    .font(.system(.body, design: .monospaced).weight(.semibold))
+            }
+            if let message = PieceRateCosting.message(issues, for: .ratePerVine) {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+
+            LabeledContent("Rows", value: "\(selectedRowCount)")
+            LabeledContent("Vines", value: PieceRateCosting.vineCountLabel(pieceVineCount))
+            if let message = PieceRateCosting.message(issues, for: .vineCount) {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Text("Estimated cost")
+                    .font(.headline)
+                Spacer()
+                Text(pieceRateCost.map { PieceRateCosting.currencyLabel($0) } ?? "\u{2014}")
+                    .font(.system(.title3, design: .monospaced).weight(.bold))
+                    .foregroundStyle(VineyardTheme.earthBrown)
+            }
+            if let perHa = pieceRateCostPerHa {
+                LabeledContent("Cost / ha", value: PieceRateCosting.currencyLabel(perHa))
+            }
+        } header: {
+            Text("Piece Rate")
+        } footer: {
+            Text("The vine count is worked out from the selected rows and saved with this job. Later edits to the block's rows never change what this job cost.")
+        }
+    }
+
+    /// Writes the piece-rate agreement and its historical row snapshot onto a
+    /// task. Called for BOTH create and update so a job re-agreed before it is
+    /// finalised keeps one consistent basis.
+    ///
+    /// Switching a task back to Hourly clears the piece-rate basis and removes
+    /// its snapshot rows, so no stale agreement can be resurrected.
+    private func applyCosting(to task: inout WorkTask) {
+        task.costingMethod = costingMethod
+        guard isPieceRate else {
+            task.pieceRatePerVine = nil
+            task.pieceVineCount = nil
+            return
+        }
+        task.pieceRatePerVine = pieceRatePerVine
+        task.pieceVineCount = pieceVineCount
+    }
+
+    /// Persists the per-row historical snapshot for a piece-rate job.
+    private func persistPieceRateRows(for taskId: UUID) {
+        guard isPieceRate else {
+            dataStore.replaceWorkTaskPieceRateRows([], forWorkTask: taskId)
+            return
+        }
+        let snapshot = PieceRateCosting.snapshotRows(
+            workTaskId: taskId,
+            vineyardId: vineyardId,
+            paddock: paddock,
+            selectedRowIds: selectedRowIds
+        )
+        dataStore.replaceWorkTaskPieceRateRows(snapshot, forWorkTask: taskId)
     }
 
     /// Creates the linked, completed Work Task AND its labour costing lines
@@ -1388,7 +1587,11 @@ private struct PruningEntrySheet: View {
         if paddock.areaHectares > 0 {
             task.areaHa = paddock.areaHectares
         }
+        // sql/188: the costing method and, for piece rate, the agreed rate plus
+        // the SNAPSHOTTED vine quantity are written with the task itself.
+        applyCosting(to: &task)
         dataStore.addWorkTask(task)
+        persistPieceRateRows(for: task.id)
         dataStore.addWorkTaskPaddock(WorkTaskPaddock(
             workTaskId: task.id,
             vineyardId: vineyardId,
@@ -1399,6 +1602,10 @@ private struct PruningEntrySheet: View {
         // work_task_labour_lines records the Work Task editor and portal use.
         // Draft ids were minted when the rows were added, so a re-run of the
         // offline queue upserts by id instead of duplicating.
+        //
+        // On a PIECE RATE job these lines still record hours as operational
+        // history; the hourly rate is dropped so the task can never carry two
+        // competing labour costs.
         for draft in labourLines where draft.isValid {
             dataStore.addWorkTaskLabourLine(WorkTaskLabourLine(
                 id: draft.id,
@@ -1409,7 +1616,7 @@ private struct PruningEntrySheet: View {
                 workerType: draft.workerType.trimmingCharacters(in: .whitespaces),
                 workerCount: draft.workerCount,
                 hoursPerWorker: draft.hoursPerWorker,
-                hourlyRate: draft.hourlyRate,
+                hourlyRate: isPieceRate ? nil : draft.hourlyRate,
                 notes: ""
             ))
         }
@@ -1550,7 +1757,9 @@ private struct PruningEntrySheet: View {
             task.taskType = workTaskType
             task.durationHours = labourPersonHours
             task.notes = composedTaskNotes
+            applyCosting(to: &task)
             dataStore.updateWorkTask(task)
+            persistPieceRateRows(for: task.id)
             // Labour-line diff: stable ids update the canonical rows, new
             // lines carry their minted ids, removed lines soft-delete.
             for draft in labourLines where draft.isValid {
@@ -1563,7 +1772,7 @@ private struct PruningEntrySheet: View {
                     workerType: draft.workerType.trimmingCharacters(in: .whitespaces),
                     workerCount: draft.workerCount,
                     hoursPerWorker: draft.hoursPerWorker,
-                    hourlyRate: draft.hourlyRate,
+                    hourlyRate: isPieceRate ? nil : draft.hourlyRate,
                     notes: ""
                 )
                 if originalLineIds.contains(draft.id) {

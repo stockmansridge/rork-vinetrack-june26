@@ -44,6 +44,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -73,6 +74,8 @@ import com.rork.vinetrack.data.model.CloneRootstockOptions
 import com.rork.vinetrack.data.model.CloneRootstockSentinels
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.PaddockRowRegeneration
+import com.rork.vinetrack.data.model.PaddockRowVineCount
 import com.rork.vinetrack.data.model.PaddockVarietyAllocation
 import com.rork.vinetrack.data.model.VineyardCloneRow
 import com.rork.vinetrack.data.model.VineyardRootstockRow
@@ -139,6 +142,15 @@ fun EditBlockScreen(
     var emitterSpacing by remember { mutableStateOf(existing?.emitterSpacing?.let { formatNum(it) } ?: "") }
     var vineCountOverride by remember { mutableStateOf(existing?.vineCountOverride?.toString() ?: "") }
     var rowLengthOverride by remember { mutableStateOf(existing?.rowLengthOverride?.let { formatNum(it) } ?: "") }
+    // MANUAL per-row vine counts (sql/188), keyed by ROW NUMBER — the one
+    // identifier that stays stable while the editor regenerates geometry.
+    val rowVineCountOverrides = remember(existing?.id) {
+        mutableStateMapOf<Int, Int>().apply {
+            putAll(PaddockRowRegeneration.overrides(existing?.rows.orEmpty()))
+        }
+    }
+    // The row currently open in the per-row vine-count editor.
+    var rowVineCountTarget by remember { mutableStateOf<RowVineCountTarget?>(null) }
     var plantingYear by remember { mutableStateOf(existing?.plantingYear?.toString() ?: "") }
     var calcMode by remember { mutableStateOf(existing?.calculationModeOverride) }
     var resetMode by remember { mutableStateOf(existing?.resetModeOverride) }
@@ -246,6 +258,7 @@ fun EditBlockScreen(
                                 floweringDate = flowering,
                                 veraisonDate = veraison,
                                 harvestDate = harvest,
+                                rowVineCountOverrides = rowVineCountOverrides.toMap(),
                             ) { ok ->
                                 saving = false
                                 if (ok) onDone()
@@ -324,6 +337,20 @@ fun EditBlockScreen(
                         vineCount = summaryVines,
                     )
                 }
+            }
+
+            // Vines per row (sql/188) — compact list, tap a row to set its real
+            // vine count. Mirrors the iOS "Vines Per Row" section exactly.
+            if (rowCount > 0) {
+                RowVineCountsCard(
+                    entries = rowVineCountEntries(
+                        layout = previewLayout,
+                        vineSpacing = vineSpacing,
+                        overrides = rowVineCountOverrides,
+                    ),
+                    onEditRow = { rowVineCountTarget = it },
+                    onClearAll = { rowVineCountOverrides.clear() },
+                )
             }
 
             // Vine & spacing
@@ -454,6 +481,21 @@ fun EditBlockScreen(
 
             Spacer(Modifier.height(12.dp))
         }
+    }
+
+    rowVineCountTarget?.let { target ->
+        RowVineCountDialog(
+            target = target,
+            currentOverride = rowVineCountOverrides[target.number],
+            onDismiss = { rowVineCountTarget = null },
+            onSave = { value ->
+                if (value != null) {
+                    rowVineCountOverrides[target.number] = value
+                } else {
+                    rowVineCountOverrides.remove(target.number)
+                }
+            },
+        )
     }
 
     if (showSoilEditor && existing != null) {
@@ -1302,6 +1344,200 @@ private fun FullMapEditorButton(hasBoundary: Boolean, onClick: () -> Unit) {
         }
         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color.White)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Vines per row (sql/188) — the Android twin of the iOS "Vines Per Row"
+// section and RowVineCountEditorSheet.
+// ---------------------------------------------------------------------------
+
+/** Identifies the row currently open in the per-row vine-count editor. */
+data class RowVineCountTarget(val number: Int, val calculated: Int)
+
+/**
+ * One row of the compact vine-count list: its number, the automatically
+ * calculated estimate, and the manual count when one is set.
+ */
+data class RowVineCountEntry(
+    val number: Int,
+    val calculated: Int,
+    val override: Int?,
+) {
+    /** The count actually in use — manual wins, else calculated. */
+    val effective: Int get() = override ?: calculated
+    val isManual: Boolean get() = override != null
+}
+
+/**
+ * Builds the live per-row list from the CURRENT draft geometry, so the numbers
+ * update as the layout is edited. Matches the iOS `rowVineCountEntries`.
+ */
+private fun rowVineCountEntries(
+    layout: BlockRowLayout,
+    vineSpacing: Double,
+    overrides: Map<Int, Int>,
+): List<RowVineCountEntry> {
+    val rows = layout.rows
+    if (rows.isEmpty()) return emptyList()
+    val centroidLat = rows.sumOf { (it.line.start.latitude + it.line.end.latitude) / 2.0 } / rows.size
+    val mPerDegLat = 111_320.0
+    val mPerDegLon = 111_320.0 * kotlin.math.cos(centroidLat * Math.PI / 180.0)
+    return rows.map { row ->
+        val dLat = (row.line.end.latitude - row.line.start.latitude) * mPerDegLat
+        val dLon = (row.line.end.longitude - row.line.start.longitude) * mPerDegLon
+        val length = kotlin.math.sqrt(dLat * dLat + dLon * dLon)
+        RowVineCountEntry(
+            number = row.number,
+            calculated = PaddockRowVineCount.calculated(length, vineSpacing),
+            override = overrides[row.number],
+        )
+    }.sortedBy { it.number }
+}
+
+@Composable
+private fun RowVineCountsCard(
+    entries: List<RowVineCountEntry>,
+    onEditRow: (RowVineCountTarget) -> Unit,
+    onClearAll: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val manualCount = entries.count { it.isManual }
+    val total = entries.sumOf { it.effective }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader("Vines Per Row", onLight = true)
+        VineyardCard {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                entries.forEach { entry ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                onEditRow(RowVineCountTarget(entry.number, entry.calculated))
+                            }
+                            .padding(vertical = 10.dp, horizontal = 4.dp),
+                    ) {
+                        Text(
+                            "Row ${entry.number}",
+                            color = vine.textPrimary,
+                            fontSize = 14.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            "%,d vines".format(entry.effective),
+                            color = if (entry.isManual) VineColors.LeafGreen else vine.textSecondary,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp,
+                        )
+                        if (entry.isManual) {
+                            Text(
+                                "Manual",
+                                color = VineColors.LeafGreen,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 11.sp,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(VineColors.LeafGreen.copy(alpha = 0.14f))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                            )
+                        }
+                        Icon(
+                            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = vine.textSecondary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Total from rows: %,d vines".format(total) +
+                        if (manualCount > 0) " \u00b7 $manualCount manual" else "",
+                    color = vine.textSecondary,
+                    fontSize = 12.sp,
+                )
+                Text(
+                    "Tap a row to set its real vine count. Manual counts are used by " +
+                        "piece-rate pruning costing; the Block Summary vine count above is " +
+                        "unchanged and still drives water, spray and yield estimates.",
+                    color = vine.textSecondary,
+                    fontSize = 12.sp,
+                )
+                if (manualCount > 0) {
+                    TextButton(onClick = onClearAll) { Text("Clear all manual counts") }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The single-row vine-count editor (sql/188).
+ *
+ * Deliberately minimal — this is not a row-management workflow. It shows the
+ * three numbers a grower needs and nothing else: the calculated estimate, the
+ * optional manual override, and the count actually being used. Clearing the
+ * field immediately returns to the calculated value.
+ */
+@Composable
+private fun RowVineCountDialog(
+    target: RowVineCountTarget,
+    currentOverride: Int?,
+    onDismiss: () -> Unit,
+    onSave: (Int?) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    var text by remember(target.number) { mutableStateOf(currentOverride?.toString() ?: "") }
+    val parsed = PaddockRowVineCount.parseOverride(text)
+    val effective = parsed.value ?: target.calculated
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Row ${target.number}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Calculated", color = vine.textSecondary, fontSize = 14.sp)
+                    Text(
+                        "%,d vines".format(target.calculated),
+                        color = vine.textSecondary,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                    )
+                }
+                NumberField("Manual override", text, KeyboardType.Number) { text = it }
+                parsed.message?.let {
+                    Text(it, color = VineColors.Destructive, fontSize = 12.sp)
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Using", color = vine.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                    Text(
+                        "%,d vines".format(effective),
+                        color = VineColors.LeafGreen,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                    )
+                }
+                Text(
+                    "Leave blank to use the calculated estimate from this row's length " +
+                        "and the block's vine spacing. Whole vines only.",
+                    color = vine.textSecondary,
+                    fontSize = 12.sp,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !parsed.isInvalid,
+                onClick = {
+                    onSave(parsed.value)
+                    onDismiss()
+                },
+            ) { Text("Done", fontWeight = FontWeight.SemiBold) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable

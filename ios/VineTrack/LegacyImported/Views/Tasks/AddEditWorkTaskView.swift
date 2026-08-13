@@ -163,11 +163,23 @@ struct AddEditWorkTaskView: View {
         labourLines.isEmpty ? totalPeople : labourLinePeople
     }
 
-    /// Labour cost shown in the summary. Labour-line costs are AUTHORITATIVE;
-    /// the legacy resource costing is a fallback for tasks with no lines. Never
-    /// both, so nothing is double-counted.
+    /// True when this task is costed per vine rather than per hour (sql/188).
+    private var isPieceRateTask: Bool { existingTask?.isPieceRate ?? false }
+
+    /// The task's HISTORICAL piece-rate cost (snapshot vine count × agreed
+    /// rate). Never recalculated from today's block rows.
+    private var pieceRateCost: Double? { existingTask?.pieceRateCost }
+
+    /// Labour cost shown in the summary.
+    ///
+    /// sql/188: exactly ONE source applies, chosen by the task's costing
+    /// method. A piece-rate job uses its own snapshot; an hourly job keeps the
+    /// existing rule (labour-line costs are AUTHORITATIVE, legacy resource
+    /// costing is the fallback for tasks with no lines). The two are never
+    /// summed, so nothing is double-counted.
     private var displayLabourCost: Double {
-        labourLines.isEmpty ? totalCost : labourLineCost
+        if isPieceRateTask { return pieceRateCost ?? 0 }
+        return labourLines.isEmpty ? totalCost : labourLineCost
     }
 
     private var displayCostPerPerson: Double {

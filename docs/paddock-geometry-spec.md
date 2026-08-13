@@ -70,6 +70,7 @@ two-point line segments (start → end), NOT polylines.
 | `number` | integer | Yes | The user-visible row number (e.g. 1..N). May start at any positive integer (`rowStartNumber`, default `1`) and may run ascending OR descending across the field — see §4. |
 | `startPoint` | object (`CoordinatePoint`) | Yes | `{ id, latitude, longitude }` — same shape as §1. |
 | `endPoint` | object (`CoordinatePoint`) | Yes | Same shape. |
+| `vineCountOverride` | integer | No | **SQL 188.** MANUAL vine count for THIS row, superseding the calculated `rowLength / vineSpacing` estimate. Must be a positive integer. **Absent means "use the calculated estimate" — never write `0` or `null` to mean "cleared", omit the key.** Independent of the block-level `paddocks.vine_count_override`. |
 
 ```json
 [
@@ -77,7 +78,8 @@ two-point line segments (start → end), NOT polylines.
     "id": "F0A2…",
     "number": 1,
     "startPoint": { "id": "…", "latitude": -34.5121, "longitude": 138.7128 },
-    "endPoint":   { "id": "…", "latitude": -34.5126, "longitude": 138.7131 }
+    "endPoint":   { "id": "…", "latitude": -34.5126, "longitude": 138.7131 },
+    "vineCountOverride": 746
   }
 ]
 ```
@@ -92,6 +94,13 @@ two-point line segments (start → end), NOT polylines.
   are not currently supported by the data model.
 - Row length is always **derived** from `startPoint` / `endPoint` (see §5).
 - Row count is `rows.length`. There is no separate `rowCount` column.
+- **Row identity (`id`) MUST be preserved across geometry regeneration.** The
+  block editor rebuilds every row from the boundary + direction + count on each
+  save; re-minting ids silently detaches everything keyed on row identity —
+  per-row `vineCountOverride`, pruning progress (`pruning_row_segments.paddock_row_id`,
+  SQL 112) and piece-rate snapshots (SQL 188). Re-attach regenerated rows to the
+  existing rows by their real-world `number` before assigning any new id
+  (iOS `PaddockRowRegeneration.preserveIdentity`, Kotlin twin of the same name).
 
 ---
 
@@ -249,6 +258,21 @@ hectares   = areaSqM / 10000
 estimatedVineCount = floor(effectiveTotalRowLength / vineSpacing)   (vineSpacing > 0)
 effectiveVineCount = vineCountOverride ?? estimatedVineCount
 ```
+
+**Per-row vine count (SQL 188)** — the same rule applied one row at a time. It
+is the quantity a piece-rate job is priced on, so both platforms must agree to
+the vine:
+
+```
+rowEstimatedVineCount = floor(rowLengthMetres / vineSpacing)   (vineSpacing > 0, else 0)
+rowEffectiveVineCount = rows[].vineCountOverride ?? rowEstimatedVineCount
+```
+
+Always **truncated**, never rounded up — a part-vine is not a vine. A
+`vineCountOverride` of `0` or a negative value is not an override at all and
+falls back to the estimate. Block-level and row-level counts are independent:
+`vine_count_override` stays the block total used for water/spray/fertiliser/yield
+estimates, and is never derived from Σ of the row overrides.
 
 ### 5.4 Intermediate posts — `intermediatePostCount`
 

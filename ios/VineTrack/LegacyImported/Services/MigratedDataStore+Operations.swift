@@ -162,6 +162,39 @@ extension MigratedDataStore {
         }
     }
 
+    // MARK: - Work Task Piece Rate Rows (sql/188)
+
+    func applyRemoteWorkTaskPieceRateRowUpsert(_ row: WorkTaskPieceRateRow) {
+        if selectedVineyardId == row.vineyardId {
+            if let idx = workTaskPieceRateRows.firstIndex(where: { $0.id == row.id }) {
+                workTaskPieceRateRows[idx] = row
+            } else {
+                workTaskPieceRateRows.append(row)
+            }
+            workTaskPieceRateRowRepo.saveSlice(workTaskPieceRateRows, for: row.vineyardId)
+        } else {
+            var all = workTaskPieceRateRowRepo.loadAll()
+            if let idx = all.firstIndex(where: { $0.id == row.id }) {
+                all[idx] = row
+            } else {
+                all.append(row)
+            }
+            workTaskPieceRateRowRepo.replace(all.filter { $0.vineyardId == row.vineyardId }, for: row.vineyardId)
+        }
+    }
+
+    func applyRemoteWorkTaskPieceRateRowDelete(_ id: UUID) {
+        if let vineyardId = selectedVineyardId {
+            workTaskPieceRateRows.removeAll { $0.id == id }
+            workTaskPieceRateRowRepo.saveSlice(workTaskPieceRateRows, for: vineyardId)
+        }
+        var all = workTaskPieceRateRowRepo.loadAll()
+        if let removed = all.first(where: { $0.id == id }) {
+            all.removeAll { $0.id == id }
+            workTaskPieceRateRowRepo.replace(all.filter { $0.vineyardId == removed.vineyardId }, for: removed.vineyardId)
+        }
+    }
+
     // MARK: - Maintenance Logs
 
     func applyRemoteMaintenanceLogUpsert(_ log: MaintenanceLog) {

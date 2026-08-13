@@ -202,6 +202,52 @@ extension Paddock {
         vineCountOverride ?? estimatedVineCount
     }
 
+    // MARK: - Per-row vine counts (sql/188)
+
+    /// Length of ONE row in metres, using the same equirectangular
+    /// approximation as `totalRowLengthMetres`.
+    func rowLengthMetres(_ row: PaddockRow) -> Double {
+        let mPerDegLat = 111_320.0
+        let centroidLat = polygonPoints.isEmpty
+            ? row.startPoint.latitude
+            : polygonPoints.map(\.latitude).reduce(0, +) / Double(polygonPoints.count)
+        let mPerDegLon = 111_320.0 * cos(centroidLat * .pi / 180.0)
+        let dLat = (row.endPoint.latitude - row.startPoint.latitude) * mPerDegLat
+        let dLon = (row.endPoint.longitude - row.startPoint.longitude) * mPerDegLon
+        return (dLat * dLat + dLon * dLon).squareRoot()
+    }
+
+    /// The AUTOMATICALLY calculated vine count for one row: this row's own
+    /// length ÷ the block's vine spacing. Never reads any override.
+    func calculatedVineCount(for row: PaddockRow) -> Int {
+        PaddockRowVineCount.calculated(
+            rowLengthMetres: rowLengthMetres(row),
+            vineSpacing: vineSpacing
+        )
+    }
+
+    /// THE vine count to use for this row: the manual override when set,
+    /// otherwise the calculated estimate (sql/188).
+    func effectiveVineCount(for row: PaddockRow) -> Int {
+        PaddockRowVineCount.effective(
+            override: row.vineCountOverride,
+            rowLengthMetres: rowLengthMetres(row),
+            vineSpacing: vineSpacing
+        )
+    }
+
+    /// Σ of every row's effective vine count. This is the row-driven total used
+    /// by piece-rate costing — NOT a replacement for the block-level
+    /// `vineCountOverride`, which keeps its existing meaning and consumers.
+    var rowsEffectiveVineCount: Int {
+        rows.reduce(0) { $0 + effectiveVineCount(for: $1) }
+    }
+
+    /// True when at least one row carries a manual per-row count.
+    var hasRowVineCountOverrides: Bool {
+        rows.contains { $0.vineCountOverride != nil }
+    }
+
     var emittersPerHectare: Double? {
         guard let emitterSpacing, emitterSpacing > 0, rowWidth > 0 else { return nil }
         return 10_000.0 / (rowWidth * emitterSpacing)
@@ -255,20 +301,30 @@ nonisolated struct PaddockRow: Codable, Identifiable, Sendable, Hashable {
     var number: Int
     var startPoint: CoordinatePoint
     var endPoint: CoordinatePoint
+    /// MANUAL vine count for THIS row (sql/188). Optional by contract: rows
+    /// written before the field existed, and rows the operator never overrode,
+    /// simply omit the key and keep using the calculated estimate.
+    ///
+    /// Independent of the BLOCK-level `Paddock.vineCountOverride`, which stays
+    /// the block total used by water / spray / fertiliser / yield estimates.
+    /// Read this through `Paddock.effectiveVineCount(for:)`, never directly.
+    var vineCountOverride: Int?
 
     init(
         id: UUID = UUID(),
         number: Int,
         startPoint: CoordinatePoint,
-        endPoint: CoordinatePoint
+        endPoint: CoordinatePoint,
+        vineCountOverride: Int? = nil
     ) {
         self.id = id
         self.number = number
         self.startPoint = startPoint
         self.endPoint = endPoint
+        self.vineCountOverride = vineCountOverride
     }
 
-    enum CodingKeys: String, CodingKey { case id, number, startPoint, endPoint }
+    enum CodingKeys: String, CodingKey { case id, number, startPoint, endPoint, vineCountOverride }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -281,6 +337,22 @@ nonisolated struct PaddockRow: Codable, Identifiable, Sendable, Hashable {
         // pruning progress keyed on it stays consistent across platforms.
         id = (try? c.decodeIfPresent(UUID.self, forKey: .id))
             ?? PaddockRowIdentity.derive(number: number, startPoint: startPoint, endPoint: endPoint)
+        // Only a whole POSITIVE count is a real override — 0, negatives and
+        // junk decode as "no override" rather than poisoning the estimate.
+        vineCountOverride = PaddockRowVineCount.sanitiseOverride(
+            try? c.decodeIfPresent(Int.self, forKey: .vineCountOverride)
+        )
+    }
+
+    /// Encodes the override ONLY when set, so untouched rows keep the exact
+    /// JSON shape older clients and the portal already parse.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(number, forKey: .number)
+        try c.encode(startPoint, forKey: .startPoint)
+        try c.encode(endPoint, forKey: .endPoint)
+        try c.encodeIfPresent(vineCountOverride, forKey: .vineCountOverride)
     }
 }
 

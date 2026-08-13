@@ -201,6 +201,58 @@ final class SupabaseWorkTaskPaddockSyncRepository: WorkTaskPaddockSyncRepository
     }
 }
 
+// MARK: - Work Task Piece Rate Rows (sql/188)
+
+final class SupabaseWorkTaskPieceRateRowSyncRepository: WorkTaskPieceRateRowSyncRepositoryProtocol {
+    private let provider: SupabaseClientProvider
+    init(provider: SupabaseClientProvider = .shared) { self.provider = provider }
+
+    func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendWorkTaskPieceRateRow] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let q = provider.client.from("work_task_piece_rate_rows").select().eq("vineyard_id", value: vineyardId.uuidString)
+        let data: Data
+        if let since {
+            data = try await q.gte("updated_at", value: opsIso(since)).order("updated_at", ascending: true).execute().data
+        } else {
+            data = try await q.order("updated_at", ascending: true).execute().data
+        }
+        // Per-row resilient decode — one malformed snapshot must never stop the
+        // rest of a vineyard's piece-rate history from loading.
+        let decoder = JSONDecoder()
+        guard let array = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            if let since {
+                return try await q.gte("updated_at", value: opsIso(since)).order("updated_at", ascending: true).execute().value
+            }
+            return try await q.order("updated_at", ascending: true).execute().value
+        }
+        var rows: [BackendWorkTaskPieceRateRow] = []
+        rows.reserveCapacity(array.count)
+        for row in array {
+            let id = (row["id"] as? String) ?? "<unknown-id>"
+            do {
+                let rowData = try JSONSerialization.data(withJSONObject: row)
+                rows.append(try decoder.decode(BackendWorkTaskPieceRateRow.self, from: rowData))
+            } catch {
+                #if DEBUG
+                print("[WorkTaskPieceRateRowSync] decode failed id=\(id) error=\(error)")
+                #endif
+            }
+        }
+        return rows
+    }
+
+    func upsertMany(_ items: [BackendWorkTaskPieceRateRowUpsert]) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        guard !items.isEmpty else { return }
+        try await provider.client.from("work_task_piece_rate_rows").upsert(items, onConflict: "id").execute()
+    }
+
+    func softDelete(id: UUID) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        try await provider.client.rpc("soft_delete_work_task_piece_rate_row", params: OpsSoftDeleteByIdRequest(id: id)).execute()
+    }
+}
+
 // MARK: - Maintenance Logs
 
 final class SupabaseMaintenanceLogSyncRepository: MaintenanceLogSyncRepositoryProtocol {

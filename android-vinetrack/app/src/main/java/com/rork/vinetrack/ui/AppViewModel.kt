@@ -194,8 +194,12 @@ import com.rork.vinetrack.data.model.RootstockCatalogEntry
 import com.rork.vinetrack.data.model.VineyardCloneRow
 import com.rork.vinetrack.data.model.VineyardRootstockRow
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.WorkTaskPieceRateRowRepository
 import com.rork.vinetrack.data.model.PaddockRow
+import com.rork.vinetrack.data.model.PaddockRowRegeneration
 import com.rork.vinetrack.data.model.PaddockVarietyAllocation
+import com.rork.vinetrack.data.model.WorkTaskCostingMethod
+import com.rork.vinetrack.data.model.WorkTaskPieceRateRow
 import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
@@ -787,6 +791,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val tripRepo = TripRepository(session)
     private val workTaskRepo = WorkTaskRepository(session)
     private val workTaskLineRepo = WorkTaskLineRepository(session)
+    /** HISTORICAL per-row piece-rate snapshots (sql/188). */
+    private val pieceRateRowRepo = WorkTaskPieceRateRowRepository(session)
     private val sprayRepo = SprayRecordRepository(session)
     private val sprayJobTemplateRepo = SprayJobTemplateRepository(session)
     private val savedChemicalRepo = SavedChemicalRepository(session)
@@ -7150,6 +7156,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         durationHours: Double,
         notes: String?,
         markCompleted: Boolean = false,
+        /**
+         * sql/188 piece-rate costing. Defaults preserve the existing hourly
+         * behaviour exactly — every caller that does not opt in creates the
+         * same HOURLY task it always did.
+         */
+        costingMethod: WorkTaskCostingMethod = WorkTaskCostingMethod.HOURLY,
+        pieceRatePerVine: Double? = null,
+        pieceVineCount: Int? = null,
+        /**
+         * HISTORICAL per-row snapshot behind a piece-rate job. Persisted with
+         * the task so later edits to the block's rows can never re-cost it.
+         */
+        pieceRateRows: List<WorkTaskPieceRateRow> = emptyList(),
         onResult: (Boolean) -> Unit,
     ): String? {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return null }
@@ -7172,6 +7191,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             isFinalized = markCompleted,
             finalizedAt = if (markCompleted) clientUpdatedAt else null,
             finalizedBy = if (markCompleted) session.userId else null,
+            costingMethod = costingMethod.storedValue,
+            pieceRatePerVine = pieceRatePerVine.takeIf { costingMethod == WorkTaskCostingMethod.PIECE_RATE },
+            pieceVineCount = pieceVineCount.takeIf { costingMethod == WorkTaskCostingMethod.PIECE_RATE },
         )
         // Optimistic insert at the top — the operator sees the task straight away.
         _ui.update { it.copy(workTasks = listOf(optimistic) + it.workTasks, workTaskError = null) }
@@ -7199,6 +7221,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     notes = trimmedNotes,
                     id = id,
                     clientUpdatedAt = clientUpdatedAt,
+                    costingMethod = costingMethod,
+                    pieceRatePerVine = pieceRatePerVine,
+                    pieceVineCount = pieceVineCount,
                 )
                 // Preserve the completed flag on the reconciled row (the create
                 // endpoint inserts un-finalized; the finalize lands right after).
@@ -7216,6 +7241,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 // Header now exists server-side — write the join rows online.
                 reconcileWorkTaskPaddocks(id, vineyardId, paddockIds)
+                // ... and the HISTORICAL piece-rate row snapshot behind it.
+                if (costingMethod == WorkTaskCostingMethod.PIECE_RATE && pieceRateRows.isNotEmpty()) {
+                    try {
+                        pieceRateRowRepo.replaceForWorkTask(id, pieceRateRows.map { it.copy(workTaskId = id) })
+                    } catch (e: Exception) {
+                        // The task and its agreed total are already saved; the
+                        // per-row breakdown is supporting detail, so a failure
+                        // here must never roll back the job.
+                        android.util.Log.w("AppViewModel", "piece-rate row snapshot failed: ${e.message}")
+                    }
+                }
                 // Work created from the Pruning Tracker has already occurred —
                 // finalize it now that the header exists server-side.
                 if (markCompleted) {
@@ -11052,6 +11088,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         floweringDate: String?,
         veraisonDate: String?,
         harvestDate: String?,
+        /**
+         * MANUAL per-row vine counts keyed by ROW NUMBER (sql/188) — the one
+         * identifier that stays stable while the editor regenerates geometry.
+         * Empty means no manual counts; a number missing from the map clears
+         * that row's override.
+         */
+        rowVineCountOverrides: Map<Int, Int> = emptyMap(),
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId
@@ -11061,7 +11104,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val lines = calculateRowLines(polygonPoints, rowDirection, maxOf(rowCount, 0), rowWidth, rowOffset)
-        val rows: List<PaddockRow> = (0 until maxOf(rowCount, 0)).map { index ->
+        val regenerated: List<PaddockRow> = (0 until maxOf(rowCount, 0)).map { index ->
             val number = if (rowNumberAscending) rowStartNumber + index else rowStartNumber + (rowCount - 1 - index)
             val line = lines.getOrNull(index)
             PaddockRow(
@@ -11070,6 +11113,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 endPoint = line?.end ?: CoordinatePoint(0.0, 0.0),
             )
         }
+        // Rebuilding the geometry used to mint a BRAND NEW row id every save,
+        // silently detaching everything keyed on row identity (pruning progress
+        // via pruning_row_segments.paddock_row_id, sql/112) and — from sql/188 —
+        // the row's manual vine count. Rows that still exist under the same
+        // real-world number keep their stable id and manual count; genuinely
+        // new rows keep their freshly derived id.
+        val identityPreserved = PaddockRowRegeneration.preserveIdentity(
+            regenerated = regenerated,
+            existing = existing?.rows.orEmpty(),
+        )
+        // The editor's map is keyed by row NUMBER, so it survives regeneration
+        // and is applied last — an override cleared in this session is cleared
+        // on the saved row too.
+        val rows = PaddockRowRegeneration.applyOverrides(rowVineCountOverrides, identityPreserved)
         val candidate = (existing ?: Paddock(id = java.util.UUID.randomUUID().toString(), vineyardId = vineyardId, name = name)).copy(
             vineyardId = vineyardId,
             name = name,
