@@ -1,5 +1,6 @@
 package com.rork.vinetrack.data.model
 
+import com.rork.vinetrack.data.WorkTaskLabourCosting
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.math.BigDecimal
@@ -224,6 +225,123 @@ object PieceRateCosting {
         pieceVineCount = task.pieceVineCount,
         pieceRatePerVine = task.pieceRatePerVine,
     )
+
+    // ---------------------------------------------------------------------
+    // THE canonical Work Task labour cost
+    // ---------------------------------------------------------------------
+
+    /**
+     * **THE** answer to "what is the labour cost of this Work Task?".
+     *
+     * Every screen, report, export and allocation that means that question MUST
+     * come through here rather than summing `work_task_labour_lines`, because a
+     * piece-rate job legitimately has NO labour lines:
+     *
+     * ```text
+     * costing method  piece_rate
+     * vines           250
+     * rate            $0.55 / vine
+     * labour lines    none
+     * labour cost     $137.50   <- still a real cost
+     * ```
+     *
+     * Null means "not specified" — never `$0.00`. Anything whose costing method
+     * is not explicitly `piece_rate` (including every legacy record) keeps the
+     * pre-existing labour-line behaviour, unchanged.
+     */
+    fun effectiveLabourCost(task: WorkTask?, labourLines: List<WorkTaskLabourLine>): Double? {
+        if (task == null) return WorkTaskLabourCosting.totalCost(labourLines.filter { it.deletedAt == null })
+        return resolve(task, labourLines).cost
+    }
+
+    /**
+     * Per-task EFFECTIVE labour cost map for reports, built in ONE pass — the
+     * piece-rate-aware replacement for [WorkTaskLabourCosting.costsByWorkTask].
+     *
+     * A piece-rate task appears here from its own snapshot even with zero labour
+     * lines; an hourly task appears only when its lines carry a cost, exactly as
+     * before, so a row with neither still falls back to its legacy activity
+     * value.
+     */
+    fun effectiveCostsByWorkTask(
+        tasks: List<WorkTask>,
+        labourLines: List<WorkTaskLabourLine>,
+        includeCost: Boolean = true,
+    ): Map<String, Double> {
+        if (!includeCost) return emptyMap()
+        val linesByTask = labourLines.filter { it.deletedAt == null }.groupBy { it.workTaskId }
+        val costs = mutableMapOf<String, Double>()
+        for (task in tasks) {
+            resolve(task.resolvedCostingMethod, linesByTask[task.id].orEmpty(), task.pieceVineCount, task.pieceRatePerVine)
+                .cost
+                ?.let { costs[task.id] = it }
+        }
+        // Labour lines whose parent task has not been pulled into this device's
+        // cache keep their existing hourly behaviour rather than disappearing.
+        val known = tasks.map { it.id }.toSet()
+        for ((taskId, lines) in linesByTask) {
+            if (taskId in known) continue
+            WorkTaskLabourCosting.totalCost(lines)?.let { costs[taskId] = it }
+        }
+        return costs
+    }
+
+    /**
+     * Per-task SNAPSHOT vine quantity for piece-rate jobs — the historical
+     * denominator behind cost per vine. Today's vineyard geometry is never
+     * consulted.
+     */
+    fun snapshotVinesByWorkTask(tasks: List<WorkTask>): Map<String, Int> = tasks
+        .filter { it.isPieceRate }
+        .mapNotNull { task -> task.pieceVineCount?.takeIf { it > 0 }?.let { task.id to it } }
+        .toMap()
+
+    /**
+     * Cost per vine from an effective labour cost and a SNAPSHOT quantity. For a
+     * piece-rate job this reproduces the agreed rate (`$137.50 / 250 = $0.55`).
+     * Null when either side is unknown.
+     */
+    fun costPerVine(cost: Double?, vineCount: Int?): Double? {
+        if (cost == null || vineCount == null || vineCount <= 0) return null
+        return cost / vineCount.toDouble()
+    }
+
+    // ---------------------------------------------------------------------
+    // Activity-level labour resolution
+    // ---------------------------------------------------------------------
+
+    /**
+     * Resolves ONE pruning activity's labour with the costing method applied
+     * FIRST — the piece-rate-aware wrapper around
+     * [WorkTaskLabourCosting.resolveLabour].
+     *
+     * Order of authority:
+     *  1. a linked **piece-rate** task — its snapshot IS the labour record,
+     *  2. the linked task's **labour lines**,
+     *  3. the activity's own **legacy** hours × rate.
+     *
+     * Exactly one contributes. Hours are always returned, because a piece-rate
+     * job may still record them for productivity — they simply never move the
+     * cost.
+     */
+    fun resolveActivityLabour(
+        task: WorkTask?,
+        lines: List<WorkTaskLabourLine>,
+        legacyHours: Double?,
+        legacyRate: Double?,
+        includeCost: Boolean = true,
+    ): WorkTaskLabourCosting.ResolvedLabour {
+        if (task == null || !task.isPieceRate) {
+            return WorkTaskLabourCosting.resolveLabour(lines, legacyHours, legacyRate, includeCost)
+        }
+        val resolved = resolve(task, lines)
+        return WorkTaskLabourCosting.ResolvedLabour(
+            source = WorkTaskLabourCosting.LabourSource.PIECE_RATE,
+            hours = resolved.hours.takeIf { it > 0 } ?: legacyHours?.takeIf { it.isFinite() && it > 0 },
+            cost = if (includeCost) resolved.cost else null,
+            isLegacy = false,
+        )
+    }
 
     // ---------------------------------------------------------------------
     // Validation

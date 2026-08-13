@@ -424,6 +424,7 @@ fun PruningActivityEditorScreen(
                     draft = draft,
                     blockNameOf = { blocksById[it]?.name ?: "Block" },
                     varietyOf = { blocksById[it]?.primaryVarietyName },
+                    workTasks = workTasks,
                     labourLines = labourLines,
                     canViewCosting = canViewCosting,
                 )
@@ -1713,18 +1714,32 @@ private fun PruningActivitySummaryCard(
     draft: PruningActivityDraft,
     blockNameOf: (String) -> String,
     varietyOf: (String) -> String?,
+    workTasks: List<WorkTask>,
     labourLines: List<WorkTaskLabourLine>,
     canViewCosting: Boolean,
 ) {
     val vine = LocalVineColors.current
-    // Labour is resolved from the linked Work Task's lines, with the historical
-    // activity value used ONLY for legacy records that have no lines. The two
-    // are mutually exclusive, so nothing can be counted twice.
-    val labour = remember(labourLines, draft.workTaskId, draft.labourHours, draft.hourlyRate, canViewCosting) {
+    val linkedTask = remember(workTasks, draft.workTaskId) {
+        PruningActivityTaskLink.linkedTask(draft, workTasks)
+    }
+    // Labour is resolved with the task's COSTING METHOD applied first: a
+    // piece-rate job is costed from its own snapshot (even with no labour lines
+    // at all), an hourly job from its lines, and the historical activity value
+    // is used ONLY for legacy records. They are mutually exclusive, so nothing
+    // can be counted twice.
+    val labour = remember(
+        labourLines,
+        linkedTask,
+        draft.workTaskId,
+        draft.labourHours,
+        draft.hourlyRate,
+        canViewCosting,
+    ) {
         val taskLines = draft.workTaskId
             ?.let { id -> labourLines.filter { it.workTaskId == id && it.deletedAt == null } }
             .orEmpty()
-        WorkTaskLabourCosting.resolveLabour(
+        PieceRateCosting.resolveActivityLabour(
+            task = linkedTask,
             lines = taskLines,
             legacyHours = draft.labourHours,
             legacyRate = draft.hourlyRate,
@@ -1797,6 +1812,23 @@ private fun PruningActivitySummaryCard(
             )
             Text(
                 when (labour.source) {
+                    // The piece-rate record IS the labour-cost record. Hours,
+                    // when present, are operational only and never move it.
+                    WorkTaskLabourCosting.LabourSource.PIECE_RATE -> listOfNotNull(
+                        linkedTask?.pieceVineCount?.let { vines ->
+                            linkedTask.pieceRatePerVine?.let { rate ->
+                                "${PieceRateCosting.vineCountLabel(vines)} vines × " +
+                                    "${PieceRateCosting.rateLabel(rate)} per vine"
+                            }
+                        },
+                        labour.cost?.let { "labour cost ${PieceRateCosting.currencyLabel(it)}" },
+                        labour.hours?.takeIf { it > 0 }?.let {
+                            "${formatLabourHours(it)} person-hours recorded for productivity only"
+                        },
+                    ).joinToString(" · ").ifEmpty {
+                        "Paid per vine — add the agreed rate per vine to cost this job."
+                    }.let { if (it.startsWith("Paid")) it else "Piece rate · $it" }
+
                     WorkTaskLabourCosting.LabourSource.WORK_TASK_LINES -> listOfNotNull(
                         labour.hours?.let { "${formatLabourHours(it)} person-hours from the Work Task" },
                         labour.cost?.let { "labour cost ${formatLabourCurrency(it)}" },

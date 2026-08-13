@@ -240,6 +240,129 @@ nonisolated enum PieceRateCosting {
         )
     }
 
+    // MARK: - THE canonical Work Task labour cost
+
+    /// **THE** answer to "what is the labour cost of this Work Task?".
+    ///
+    /// Every screen, report, export and allocation that means that question
+    /// MUST come through here rather than summing `work_task_labour_lines`,
+    /// because a piece-rate job legitimately has NO labour lines:
+    ///
+    /// ```text
+    /// costing method  piece_rate
+    /// vines           250
+    /// rate            $0.55 / vine
+    /// labour lines    none
+    /// labour cost     $137.50   ← still a real cost
+    /// ```
+    ///
+    /// Nil means "not specified" — never `$0.00`. Anything whose costing method
+    /// is not explicitly `piece_rate` (including every legacy record) keeps the
+    /// pre-existing labour-line behaviour, unchanged.
+    static func effectiveLabourCost(task: WorkTask?, labourLines: [WorkTaskLabourLine]) -> Double? {
+        guard let task else { return WorkTaskLabourCosting.totalCost(labourLines) }
+        return resolve(task: task, labourLines: labourLines).cost
+    }
+
+    /// Per-task effective labour cost map for reports, built in ONE pass — the
+    /// piece-rate-aware replacement for
+    /// `WorkTaskLabourCosting.costsByWorkTask(_:includeCost:)`.
+    ///
+    /// A piece-rate task appears here from its own snapshot even with zero
+    /// labour lines; an hourly task appears only when its lines carry a cost,
+    /// exactly as before, so a row with neither still falls back to its legacy
+    /// activity value.
+    static func effectiveCostsByWorkTask(
+        tasks: [WorkTask],
+        labourLines: [WorkTaskLabourLine],
+        includeCost: Bool = true
+    ) -> [UUID: Double] {
+        guard includeCost else { return [:] }
+
+        var linesByTask: [UUID: [WorkTaskLabourLine]] = [:]
+        for line in labourLines { linesByTask[line.workTaskId, default: []].append(line) }
+
+        var costs: [UUID: Double] = [:]
+        var seen: Set<UUID> = []
+        for task in tasks {
+            seen.insert(task.id)
+            if let cost = resolve(task: task, labourLines: linesByTask[task.id] ?? []).cost {
+                costs[task.id] = cost
+            }
+        }
+        // Labour lines whose parent task has not been pulled into this device's
+        // cache keep their existing hourly behaviour rather than disappearing.
+        for (taskId, lines) in linesByTask where !seen.contains(taskId) {
+            if let cost = WorkTaskLabourCosting.totalCost(lines) { costs[taskId] = cost }
+        }
+        return costs
+    }
+
+    /// Per-task SNAPSHOT vine quantity for piece-rate jobs — the historical
+    /// denominator behind cost per vine. Today's vineyard geometry is never
+    /// consulted.
+    static func snapshotVinesByWorkTask(_ tasks: [WorkTask]) -> [UUID: Int] {
+        var vines: [UUID: Int] = [:]
+        for task in tasks where task.isPieceRate {
+            if let count = task.pieceVineCount, count > 0 { vines[task.id] = count }
+        }
+        return vines
+    }
+
+    /// Cost per vine from an effective labour cost and a SNAPSHOT quantity.
+    /// For a piece-rate job this reproduces the agreed rate
+    /// (`$137.50 / 250 = $0.55`). Nil when either side is unknown.
+    static func costPerVine(cost: Double?, vineCount: Int?) -> Double? {
+        guard let cost, let vineCount, vineCount > 0 else { return nil }
+        return cost / Double(vineCount)
+    }
+
+    /// Cost per hectare from an effective labour cost — the SAME rule for both
+    /// costing methods, so a report never divides an hourly total one way and a
+    /// piece-rate total another.
+    static func costPerHectare(effectiveCost: Double?, hectares: Double?) -> Double? {
+        costPerHectare(cost: effectiveCost, hectares: hectares)
+    }
+
+    // MARK: - Activity-level labour resolution
+
+    /// Resolves ONE pruning activity's labour with the costing method applied
+    /// FIRST — the piece-rate-aware wrapper around
+    /// `WorkTaskLabourCosting.resolveLabour(...)`.
+    ///
+    /// Order of authority:
+    /// 1. a linked **piece-rate** task — its snapshot IS the labour record,
+    /// 2. the linked task's **labour lines**,
+    /// 3. the activity's own **legacy** hours × rate.
+    ///
+    /// Exactly one contributes. Hours are always returned, because a piece-rate
+    /// job may still record them for productivity — they simply never move the
+    /// cost.
+    static func resolveActivityLabour(
+        task: WorkTask?,
+        lines: [WorkTaskLabourLine],
+        legacyHours: Double?,
+        legacyRate: Double?,
+        includeCost: Bool = true
+    ) -> WorkTaskLabourCosting.ResolvedLabour {
+        guard let task, task.isPieceRate else {
+            return WorkTaskLabourCosting.resolveLabour(
+                lines: lines,
+                legacyHours: legacyHours,
+                legacyRate: legacyRate,
+                includeCost: includeCost
+            )
+        }
+        let resolved = resolve(task: task, labourLines: lines)
+        let hours = resolved.hours > 0 ? resolved.hours : legacyHours.flatMap { $0 > 0 ? $0 : nil }
+        return WorkTaskLabourCosting.ResolvedLabour(
+            source: .pieceRate,
+            hours: hours,
+            cost: includeCost ? resolved.cost : nil,
+            isLegacy: false
+        )
+    }
+
     // MARK: - Validation
 
     nonisolated enum PieceRateField: String, Sendable, Hashable {

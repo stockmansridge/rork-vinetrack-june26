@@ -290,18 +290,31 @@ extension WorkTask {
         totalPeople + labourLines(in: store).reduce(0) { $0 + $1.workerCount }
     }
 
-    /// Labour cost for display.
+    /// Labour cost for display — THE effective cost of this task.
     ///
     /// sql/188: the task's `costing_method` decides which SINGLE source applies.
-    /// * `piece_rate` — the job's own SNAPSHOT (vine count × rate per vine).
+    /// * `piece_rate` — the job's own SNAPSHOT (vine count × rate per vine),
+    ///   which is a real cost even with ZERO labour lines and zero hours.
     ///   Hourly lines on the same task are operational history and are never
     ///   added to it.
     /// * `hourly` — the pre-existing behaviour, unchanged: legacy resource
     ///   costing plus canonical labour-line costs (stored rate snapshots, never
     ///   recalculated from a worker type's current rate).
     func displayLabourCost(in store: MigratedDataStore) -> Double {
-        if isPieceRate { return pieceRateCost ?? 0 }
+        if isPieceRate {
+            return PieceRateCosting.effectiveLabourCost(task: self, labourLines: labourLines(in: store)) ?? 0
+        }
         return totalCost + labourLines(in: store).reduce(0.0) { $0 + $1.totalCost }
+    }
+
+    /// Cost per vine — present only for a piece-rate job, computed from its
+    /// HISTORICAL snapshot quantity rather than today's vineyard geometry.
+    func displayCostPerVine(in store: MigratedDataStore) -> Double? {
+        guard isPieceRate else { return nil }
+        return PieceRateCosting.costPerVine(
+            cost: PieceRateCosting.effectiveLabourCost(task: self, labourLines: labourLines(in: store)),
+            vineCount: pieceVineCount
+        )
     }
 
     /// List-friendly block label: “No block”, the single block name, or

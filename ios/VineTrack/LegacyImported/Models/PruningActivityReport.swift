@@ -107,9 +107,13 @@ nonisolated struct PruningActivityRow: Identifiable, Sendable, Equatable {
     /// Finish − start, in hours.
     let durationHours: Double?
     let vinesPerHour: Double?
-    /// Labour cost of the linked Work Task; nil when no rate was recorded or
-    /// costing is not visible to this user.
+    /// EFFECTIVE labour cost of the linked Work Task — the piece-rate snapshot
+    /// total for a per-vine job, the labour-line total for an hourly one. Nil
+    /// when nothing was recorded or costing is not visible to this user.
     let labourCost: Double?
+    /// SNAPSHOT vine quantity the linked piece-rate job was priced on. Nil for
+    /// hourly and legacy records. Never today's vineyard geometry.
+    let pieceRateVines: Int?
     let workTaskTitle: String?
     let workTaskStatus: String?
     let notes: String?
@@ -140,6 +144,13 @@ nonisolated struct PruningActivityRow: Identifiable, Sendable, Equatable {
     var quartersLabel: String? {
         guard quarters > 0 else { return nil }
         return "\(quarters)"
+    }
+
+    /// Cost per vine for a piece-rate job, from the HISTORICAL snapshot
+    /// quantity — `$137.50 / 250 = $0.55`, which reproduces the agreed rate.
+    /// Nil for hourly and legacy records.
+    var costPerVine: Double? {
+        PieceRateCosting.costPerVine(cost: labourCost, vineCount: pieceRateVines)
     }
 }
 
@@ -333,10 +344,13 @@ nonisolated enum PruningActivityReport {
     /// blocks, Work Tasks, labour costs and account names ONCE, so building a
     /// large history never performs a per-record lookup.
     ///
-    /// LABOUR AUTHORITY: `labourHours` / `labourCosts` come from the linked Work
-    /// Task's labour lines and win outright. The entry's own
-    /// `labourHours`/legacy rate are used ONLY when the task has no lines, so a
-    /// row never mixes the two sources and no total can count labour twice.
+    /// LABOUR AUTHORITY: `labourCosts` is the linked Work Task's EFFECTIVE
+    /// labour cost — built by
+    /// `PieceRateCosting.effectiveCostsByWorkTask(tasks:labourLines:includeCost:)`,
+    /// so a piece-rate job contributes its snapshot total even with zero labour
+    /// lines. `labourHours` come from the task's labour lines. The entry's own
+    /// `labourHours`/legacy rate are used ONLY when the task supplies neither, so
+    /// a row never mixes sources and no total can count labour twice.
     static func rows(
         entries: [PruningEntry],
         blocks: [UUID: PruningActivityBlockContext],
@@ -344,6 +358,7 @@ nonisolated enum PruningActivityReport {
         workTaskStatuses: [UUID: String] = [:],
         labourCosts: [UUID: Double],
         labourHours: [UUID: Double] = [:],
+        pieceRateVines: [UUID: Int] = [:],
         accountNames: [UUID: String],
         calendar: Calendar = .current
     ) -> [PruningActivityRow] {
@@ -388,6 +403,7 @@ nonisolated enum PruningActivityReport {
                 durationHours: entry.durationHours,
                 vinesPerHour: vinesPerHour,
                 labourCost: entry.workTaskId.flatMap { labourCosts[$0] },
+                pieceRateVines: entry.workTaskId.flatMap { pieceRateVines[$0] },
                 workTaskTitle: entry.workTaskId.flatMap { workTaskTitles[$0] },
                 workTaskStatus: entry.workTaskId.flatMap { workTaskStatuses[$0] },
                 notes: notes.isEmpty ? nil : notes,

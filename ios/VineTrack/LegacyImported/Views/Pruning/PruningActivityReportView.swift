@@ -62,15 +62,27 @@ struct PruningActivityReportView: View {
         return map
     }
 
-    /// One pass over the labour lines — never one lookup per record.
+    /// One pass over the tasks and their labour lines — never one lookup per
+    /// record.
     ///
-    /// Work Task labour lines are the AUTHORITATIVE source of labour cost
-    /// (`WorkTaskLabourCosting`). Only tasks with at least one costed line appear
-    /// here, so a record with no labour lines falls back to its own legacy
-    /// activity value in `PruningActivityReport.rows(...)` — never both, so a
-    /// total can't count the same labour twice.
+    /// Each task's cost comes from its EFFECTIVE labour cost
+    /// (`PieceRateCosting.effectiveLabourCost`), so a piece-rate job reports its
+    /// snapshot total even with zero labour lines, while an hourly job keeps the
+    /// unchanged labour-line behaviour. A record with neither still falls back
+    /// to its own legacy activity value in `PruningActivityReport.rows(...)` —
+    /// never both, so a total can't count the same labour twice.
     private var labourCosts: [UUID: Double] {
-        WorkTaskLabourCosting.costsByWorkTask(store.workTaskLabourLines, includeCost: canViewCosting)
+        PieceRateCosting.effectiveCostsByWorkTask(
+            tasks: store.workTasks,
+            labourLines: store.workTaskLabourLines,
+            includeCost: canViewCosting
+        )
+    }
+
+    /// SNAPSHOT vine quantities of the piece-rate jobs — the historical
+    /// denominator behind each row's cost per vine.
+    private var pieceRateVines: [UUID: Int] {
+        PieceRateCosting.snapshotVinesByWorkTask(store.workTasks)
     }
 
     /// Per-task person-hours — the authoritative labour hours for report rows
@@ -115,6 +127,7 @@ struct PruningActivityReportView: View {
             workTaskStatuses: workTaskStatuses,
             labourCosts: labourCosts,
             labourHours: labourHours,
+            pieceRateVines: pieceRateVines,
             accountNames: accountNames
         )
     }

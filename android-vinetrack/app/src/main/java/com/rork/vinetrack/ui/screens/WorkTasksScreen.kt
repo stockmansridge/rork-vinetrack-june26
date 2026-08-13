@@ -99,6 +99,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.text.KeyboardOptions
 import com.rork.vinetrack.data.WorkTaskDeepLink
 import com.rork.vinetrack.data.WorkTaskDeepLinkState
+import com.rork.vinetrack.data.model.PieceRateCosting
 import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
@@ -900,7 +901,17 @@ private fun WorkTaskDetailView(
     // Canonical labour totals — the same shared contract iOS uses, so the two
     // platforms can never disagree about person-hours or cost.
     val labourTotals = remember(labourLines) { WorkTaskLabourCosting.totals(labourLines) }
-    val labourTotal = labourTotals.cost ?: 0.0
+    // THE task's labour cost, from its costing method (sql/188). A piece-rate
+    // job is costed from its own vine snapshot and is a real cost even with zero
+    // labour lines and zero hours; an hourly job keeps the labour-line total.
+    // The two are never summed.
+    val effectiveLabour = remember(task, labourLines) {
+        PieceRateCosting.effectiveLabourCost(task, labourLines)
+    }
+    val labourTotal = effectiveLabour ?: 0.0
+    val pieceRateCostPerVine = remember(task, effectiveLabour) {
+        if (task.isPieceRate) PieceRateCosting.costPerVine(effectiveLabour, task.pieceVineCount) else null
+    }
     val machineTotal = remember(machineLines) { machineLines.sumOf { it.resolvedCost } }
     val overallTotal = labourTotal + machineTotal
     val areaHa = remember(state.paddocks, task.paddockId) {
@@ -990,6 +1001,48 @@ private fun WorkTaskDetailView(
                         Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator(modifier = Modifier.size(22.dp), color = VineColors.LeafGreen)
                         }
+                    } else if (task.isPieceRate) {
+                        // A piece-rate job's cost record IS its vine snapshot, so
+                        // "no labour lines" must never read as "no cost".
+                        CostRow(
+                            "Vines",
+                            PieceRateCosting.vineCountLabel(task.pieceVineCount ?: 0),
+                            vine.textSecondary,
+                            vine.textPrimary,
+                        )
+                        DividerWT(vine.cardBorder)
+                        CostRow(
+                            "Rate per vine",
+                            task.pieceRatePerVine?.let { PieceRateCosting.rateLabel(it) } ?: "Not specified",
+                            vine.textSecondary,
+                            vine.textPrimary,
+                        )
+                        DividerWT(vine.cardBorder)
+                        CostRow(
+                            "Labour cost",
+                            effectiveLabour?.let { PieceRateCosting.currencyLabel(it) } ?: "Not specified",
+                            vine.textSecondary,
+                            VineColors.PrimaryAccent,
+                            emphasise = true,
+                        )
+                        if (labourTotals.personHours > 0) {
+                            DividerWT(vine.cardBorder)
+                            CostRow(
+                                "Hours recorded",
+                                "${formatHours(labourTotals.personHours)} · productivity only",
+                                vine.textSecondary,
+                                vine.textPrimary,
+                            )
+                        }
+                        labourLines.forEach { line ->
+                            DividerWT(vine.cardBorder)
+                            WorkTaskLabourLineRow(
+                                line = line,
+                                categoryName = state.operatorCategories.firstOrNull { it.id == line.operatorCategoryId }?.displayName,
+                                canViewCosting = false,
+                                onClick = { editLabour = line },
+                            )
+                        }
                     } else if (labourLines.isEmpty()) {
                         Text("No labour resources added", color = vine.textSecondary, fontSize = 14.sp, modifier = Modifier.padding(vertical = 6.dp))
                     } else {
@@ -1045,11 +1098,20 @@ private fun WorkTaskDetailView(
             }
 
             // Cost roll-up.
-            if (overallTotal > 0 || labourLines.isNotEmpty() || machineLines.isNotEmpty()) {
+            if (overallTotal > 0 || labourLines.isNotEmpty() || machineLines.isNotEmpty() || task.isPieceRate) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     SectionHeader("Cost summary", onLight = true)
                     VineyardCard {
                         CostRow("Labour", formatCurrency(labourTotal), vine.textSecondary, vine.textPrimary)
+                        if (pieceRateCostPerVine != null) {
+                            DividerWT(vine.cardBorder)
+                            CostRow(
+                                "Cost / vine",
+                                PieceRateCosting.rateLabel(pieceRateCostPerVine),
+                                vine.textSecondary,
+                                vine.textPrimary,
+                            )
+                        }
                         DividerWT(vine.cardBorder)
                         CostRow("Machinery", formatCurrency(machineTotal), vine.textSecondary, vine.textPrimary)
                         DividerWT(vine.cardBorder)

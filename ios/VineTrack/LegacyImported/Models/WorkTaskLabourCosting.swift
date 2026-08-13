@@ -122,14 +122,19 @@ nonisolated enum WorkTaskLabourCosting {
 
     /// Which source a pruning report must use for one activity's labour.
     ///
+    /// * `pieceRate` — the linked task is costed per vine (sql/188). Its own
+    ///   snapshot IS the labour-cost record, so it wins outright and labour
+    ///   lines on the same task are operational history only.
     /// * `workTaskLines` — the linked task has labour lines. Authoritative.
     /// * `legacyActivity` — no labour lines exist; the activity's own historical
     ///   `labour_hours` / `hourly_rate` are shown as legacy data.
     /// * `none` — nothing recorded.
     ///
-    /// The two value sources are mutually exclusive by construction, which is
-    /// what stops a report summing an activity rate AND its task's lines.
+    /// The value sources are mutually exclusive by construction, which is what
+    /// stops a report summing an activity rate AND its task's lines — or a
+    /// piece-rate total AND an hourly one.
     nonisolated enum LabourSource: String, Sendable {
+        case pieceRate
         case workTaskLines
         case legacyActivity
         case none
@@ -182,9 +187,13 @@ nonisolated enum WorkTaskLabourCosting {
         return ResolvedLabour(source: .legacyActivity, hours: hours, cost: cost, isLegacy: true)
     }
 
-    /// Per-task labour cost map for the Activity Report, built in ONE pass.
-    /// Only tasks with at least one costed line appear, so a report row without
-    /// labour lines correctly falls back to its legacy value.
+    /// Per-task labour cost map from labour lines ONLY.
+    ///
+    /// - Warning: this answers "what do this task's labour lines cost?", NOT
+    ///   "what is this task's labour cost?". A piece-rate task legitimately has
+    ///   no labour lines, so any caller that means the latter must use
+    ///   `PieceRateCosting.effectiveCostsByWorkTask(tasks:labourLines:includeCost:)`,
+    ///   which applies the `costing_method` switch first.
     static func costsByWorkTask(_ lines: [WorkTaskLabourLine], includeCost: Bool = true) -> [UUID: Double] {
         guard includeCost else { return [:] }
         var grouped: [UUID: [WorkTaskLabourLine]] = [:]

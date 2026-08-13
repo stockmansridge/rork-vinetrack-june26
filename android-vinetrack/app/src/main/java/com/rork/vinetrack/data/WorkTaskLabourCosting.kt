@@ -125,15 +125,19 @@ object WorkTaskLabourCosting {
     /**
      * Which source a pruning report must use for one activity's labour.
      *
+     *  * [PIECE_RATE] — the linked task is costed per vine (sql/188). Its own
+     *    snapshot IS the labour-cost record, so it wins outright and labour
+     *    lines on the same task are operational history only.
      *  * [WORK_TASK_LINES] — the linked task has labour lines. Authoritative.
      *  * [LEGACY_ACTIVITY] — no labour lines exist; the activity's own historical
      *    `labour_hours` / `hourly_rate` are shown as legacy data.
      *  * [NONE] — nothing recorded.
      *
-     * The two value sources are mutually exclusive by construction, which is
-     * what stops a report summing an activity rate AND its task's lines.
+     * The value sources are mutually exclusive by construction, which is what
+     * stops a report summing an activity rate AND its task's lines — or a
+     * piece-rate total AND an hourly one.
      */
-    enum class LabourSource { WORK_TASK_LINES, LEGACY_ACTIVITY, NONE }
+    enum class LabourSource { PIECE_RATE, WORK_TASK_LINES, LEGACY_ACTIVITY, NONE }
 
     data class LabourTotals(
         val lineCount: Int,
@@ -197,9 +201,13 @@ object WorkTaskLabourCosting {
     }
 
     /**
-     * Per-task labour cost map for the Activity Report, built in ONE pass.
-     * Only tasks with at least one costed line appear, so a report row without
-     * labour lines correctly falls back to its legacy value.
+     * Per-task labour cost map from labour lines ONLY.
+     *
+     * This answers "what do this task's labour lines cost?", NOT "what is this
+     * task's labour cost?". A piece-rate task legitimately has no labour lines,
+     * so any caller that means the latter must use
+     * [com.rork.vinetrack.data.model.PieceRateCosting.effectiveCostsByWorkTask],
+     * which applies the `costing_method` switch first.
      */
     fun costsByWorkTask(
         lines: List<WorkTaskLabourLine>,

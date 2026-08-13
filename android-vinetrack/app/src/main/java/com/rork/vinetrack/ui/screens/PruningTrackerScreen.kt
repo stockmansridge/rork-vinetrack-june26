@@ -2982,7 +2982,16 @@ private fun PruningEntrySheet(
                     } else {
                         hoursText.replace(',', '.').toDoubleOrNull()
                     },
-                    labourCost = if (showsTaskFields && hasRatedLine) labourTotalCost else null,
+                    // THE effective labour cost of what is about to be saved.
+                    // A piece-rate job's cost is its vine snapshot × rate and is
+                    // real even with no rated labour line; the two bases are
+                    // never summed.
+                    labourCost = when {
+                        !showsTaskFields -> null
+                        isPieceRate -> pieceRateCost
+                        hasRatedLine -> labourTotalCost
+                        else -> null
+                    },
                     vintage = VintageResolver.vintageYear(date, seasonStartMonth, seasonStartDay),
                 )
             }

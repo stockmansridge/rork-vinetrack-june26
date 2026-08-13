@@ -110,10 +110,16 @@ data class PruningActivityRow(
     val durationHours: Double?,
     val vinesPerHour: Double?,
     /**
-     * Labour cost of the linked Work Task; null when no rate was recorded or
-     * costing is not visible to this user.
+     * EFFECTIVE labour cost of the linked Work Task — the piece-rate snapshot
+     * total for a per-vine job, the labour-line total for an hourly one. Null
+     * when nothing was recorded or costing is not visible to this user.
      */
     val labourCost: Double?,
+    /**
+     * SNAPSHOT vine quantity the linked piece-rate job was priced on. Null for
+     * hourly and legacy records. Never today's vineyard geometry.
+     */
+    val pieceRateVines: Int? = null,
     val workTaskTitle: String?,
     val workTaskStatus: String? = null,
     val notes: String?,
@@ -145,6 +151,13 @@ data class PruningActivityRow(
         }
 
     val quartersLabel: String? get() = if (quarters > 0) "$quarters" else null
+
+    /**
+     * Cost per vine for a piece-rate job, from the HISTORICAL snapshot quantity
+     * — `$137.50 / 250 = $0.55`, which reproduces the agreed rate. Null for
+     * hourly and legacy records.
+     */
+    val costPerVine: Double? get() = PieceRateCosting.costPerVine(labourCost, pieceRateVines)
 
     /** Minutes since midnight — times sort as times, never as strings. */
     val startMinutes: Int? get() = minutesOf(startTime)
@@ -311,10 +324,12 @@ object PruningActivityReport {
      * blocks, Work Tasks, labour costs and account names ONCE, so building a
      * large history never performs a per-record lookup.
      *
-     * LABOUR AUTHORITY: [labourHours] / [labourCosts] come from the linked Work
-     * Task's labour lines and win outright. The entry's own `labourHours` /
-     * legacy rate are used ONLY when the task has no lines, so a row never mixes
-     * the two sources and no total can count labour twice.
+     * LABOUR AUTHORITY: [labourCosts] is the linked Work Task's EFFECTIVE labour
+     * cost — built by [PieceRateCosting.effectiveCostsByWorkTask], so a
+     * piece-rate job contributes its snapshot total even with zero labour lines.
+     * [labourHours] come from the task's labour lines. The entry's own
+     * `labourHours` / legacy rate are used ONLY when the task supplies neither,
+     * so a row never mixes sources and no total can count labour twice.
      */
     fun rows(
         entries: List<PruningEntry>,
@@ -323,6 +338,7 @@ object PruningActivityReport {
         workTaskStatuses: Map<String, String> = emptyMap(),
         labourCosts: Map<String, Double> = emptyMap(),
         labourHours: Map<String, Double> = emptyMap(),
+        pieceRateVines: Map<String, Int> = emptyMap(),
         accountNames: Map<String, String> = emptyMap(),
     ): List<PruningActivityRow> = entries.map { entry ->
         val context = blocks[entry.paddockId]
@@ -359,6 +375,7 @@ object PruningActivityReport {
             durationHours = entry.durationHours,
             vinesPerHour = if (vines != null && hours != null && hours > 0) vines / hours else null,
             labourCost = entry.workTaskId?.let { labourCosts[it] },
+            pieceRateVines = entry.workTaskId?.let { pieceRateVines[it] },
             workTaskTitle = entry.workTaskId?.let { workTaskTitles[it] },
             workTaskStatus = entry.workTaskId?.let { workTaskStatuses[it] },
             notes = notes.takeIf { it.isNotEmpty() },

@@ -74,6 +74,7 @@ import com.rork.vinetrack.data.PruningActivityExportService
 import com.rork.vinetrack.data.PruningReportNavigation
 import com.rork.vinetrack.data.WorkTaskLabourCosting
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.PieceRateCosting
 import com.rork.vinetrack.data.model.PruningActivityBlockContext
 import com.rork.vinetrack.data.model.PruningActivityColumn
 import com.rork.vinetrack.data.model.PruningActivityFilter
@@ -156,17 +157,24 @@ fun PruningActivityReportScreen(
             task.status?.trim()?.takeIf { it.isNotEmpty() }?.let { task.id to workTaskStatusLabel(it) }
         }.toMap()
     }
-    // ONE pass over the labour lines — never one lookup per record.
+    // ONE pass over the tasks and their labour lines — never one lookup per
+    // record.
     //
-    // Work Task labour lines are the AUTHORITATIVE source of labour hours and
-    // cost. Only tasks with lines appear in these maps, so a record without them
-    // falls back to its own legacy activity value inside
-    // [PruningActivityReport.rows] — never both, so no total double-counts.
-    val labourCosts = remember(labourLines, canViewCosting) {
-        WorkTaskLabourCosting.costsByWorkTask(labourLines, includeCost = canViewCosting)
+    // Each task's cost is its EFFECTIVE labour cost, so a piece-rate job reports
+    // its snapshot total even with zero labour lines while an hourly job keeps
+    // the unchanged labour-line behaviour. A record with neither falls back to
+    // its own legacy activity value inside [PruningActivityReport.rows] — never
+    // both, so no total double-counts.
+    val labourCosts = remember(workTasks, labourLines, canViewCosting) {
+        PieceRateCosting.effectiveCostsByWorkTask(workTasks, labourLines, includeCost = canViewCosting)
     }
     val labourHours = remember(labourLines) {
         WorkTaskLabourCosting.hoursByWorkTask(labourLines)
+    }
+    // SNAPSHOT vine quantities of the piece-rate jobs — the historical
+    // denominator behind each row's cost per vine.
+    val pieceRateVines = remember(workTasks) {
+        PieceRateCosting.snapshotVinesByWorkTask(workTasks)
     }
     val accountNames = remember(members) { members.associate { it.userId to it.name } }
 
@@ -177,6 +185,7 @@ fun PruningActivityReportScreen(
         workTaskStatuses,
         labourCosts,
         labourHours,
+        pieceRateVines,
         accountNames,
     ) {
         PruningActivityReport.rows(
@@ -186,6 +195,7 @@ fun PruningActivityReportScreen(
             workTaskStatuses = workTaskStatuses,
             labourCosts = labourCosts,
             labourHours = labourHours,
+            pieceRateVines = pieceRateVines,
             accountNames = accountNames,
         )
     }

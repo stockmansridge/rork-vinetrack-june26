@@ -146,10 +146,13 @@ struct PruningActivityEditorView: View {
         return WorkTaskLabourCosting.lines(store.workTaskLabourLines, for: taskId)
     }
 
-    /// Labour resolved for this activity: the task's lines when they exist, the
-    /// historical activity values ONLY for legacy records. Never both.
+    /// Labour resolved for this activity, with the task's costing method applied
+    /// FIRST: a piece-rate job is costed from its own snapshot (even with no
+    /// labour lines at all), an hourly job from its lines, and the historical
+    /// activity values are used ONLY for legacy records. Never more than one.
     private var resolvedLabour: WorkTaskLabourCosting.ResolvedLabour {
-        WorkTaskLabourCosting.resolveLabour(
+        PieceRateCosting.resolveActivityLabour(
+            task: linkedTask,
             lines: linkedLabourLines,
             legacyHours: draft.labourHours,
             legacyRate: draft.hourlyRate,
@@ -831,6 +834,22 @@ struct PruningActivityEditorView: View {
     private var labourSummaryLine: String {
         let labour = resolvedLabour
         switch labour.source {
+        case .pieceRate:
+            // The piece-rate record IS the labour-cost record. Hours, when
+            // present, are operational only and never move this number.
+            var parts: [String] = []
+            if let task = linkedTask, let vines = task.pieceVineCount, let rate = task.pieceRatePerVine {
+                parts.append("\(PieceRateCosting.vineCountLabel(vines)) vines × \(PieceRateCosting.rateLabel(rate)) per vine")
+            }
+            if let cost = labour.cost {
+                parts.append("labour cost \(PieceRateCosting.currencyLabel(cost))")
+            }
+            if let hours = labour.hours, hours > 0 {
+                parts.append("\(Self.number(hours, digits: 1)) person-hours recorded for productivity only")
+            }
+            return parts.isEmpty
+                ? "Paid per vine — add the agreed rate per vine to cost this job."
+                : "Piece rate · " + parts.joined(separator: " · ")
         case .workTaskLines:
             var parts: [String] = []
             if let hours = labour.hours {
