@@ -55,11 +55,13 @@ import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.rork.vinetrack.data.MapDefaults
+import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.MapStyle
 import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.ui.AppUiState
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.estimatedCameraPosition
 import com.rork.vinetrack.ui.components.fitToContent
@@ -490,9 +492,10 @@ fun VineyardMapContent(
         }
 }
 
-private fun blockSubtitle(block: Paddock): String? {
+private fun blockSubtitle(block: Paddock, fmt: RegionFormatter): String? {
     val parts = mutableListOf<String>()
-    if (block.areaHectares > 0) parts.add("${"%.2f".format(block.areaHectares)} ha")
+    // Marker snippets are display-only: convert to the vineyard's area unit.
+    if (block.areaHectares > 0) parts.add(fmt.formatArea(block.areaHectares))
     if (block.rowCount > 0) parts.add("${block.rowCount} rows")
     return parts.joinToString(" · ").takeIf { it.isNotBlank() }
 }
@@ -509,7 +512,7 @@ private fun BlockLabelMarker(block: Paddock, position: LatLng) {
         keys = arrayOf(block.id, block.name, block.rowCount.toString()),
         state = markerState,
         title = block.name,
-        snippet = blockSubtitle(block),
+        snippet = blockSubtitle(block, LocalRegionFormatter.current),
         anchor = Offset(0.5f, 0.5f),
         zIndex = 1f,
     ) {

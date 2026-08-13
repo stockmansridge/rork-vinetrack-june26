@@ -53,6 +53,22 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
     fun formatArea(hectares: Double, fractionDigits: Int = 2): String =
         "${number(areaValue(hectares), fractionDigits)} $areaUnitAbbreviation"
 
+    /**
+     * Compact area for dense rows and stat tiles: converts to the vineyard's
+     * unit, then drops the decimals once the converted value reaches 10
+     * (e.g. "12 ha", "4.5 ha", "30 ac").
+     *
+     * This reproduces the trimming the screens previously did inline with
+     * hardcoded " ha" suffixes, so AU/NZ output is byte-for-byte unchanged
+     * while other regions now convert. Thresholding on the CONVERTED value
+     * keeps the precision rule about what the user actually sees.
+     */
+    fun formatAreaCompact(hectares: Double): String =
+        "${compactNumber(areaValue(hectares))} $areaUnitAbbreviation"
+
+    /** Compact area value with no unit suffix, for "12 ha"-style split labels. */
+    fun areaCompactValue(hectares: Double): String = compactNumber(areaValue(hectares))
+
     // MARK: - Volume (input: litres)
 
     fun volumeValue(litres: Double): Double = when (volume) {
@@ -171,6 +187,22 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
     fun formatSprayRate(perHectare: Double, unitLabel: String, fractionDigits: Int = 2): String =
         "${number(sprayRateValue(perHectare), fractionDigits)} $unitLabel/$sprayRateAreaAbbreviation"
 
+    /** The spray/application rate unit label only, e.g. "L/ha" or "gal/ac". */
+    val volumePerAreaUnit: String get() = "$volumeUnitAbbreviation/$sprayRateAreaAbbreviation"
+
+    /**
+     * A canonical litres-per-hectare rate in the vineyard's units, converting
+     * BOTH dimensions (volume and area) e.g. "1,200 L/ha" → "128 gal/ac".
+     */
+    fun formatVolumePerArea(litresPerHectare: Double, fractionDigits: Int = 0): String =
+        "${number(sprayRateValue(volumeValue(litresPerHectare)), fractionDigits)} $volumePerAreaUnit"
+
+    /** As [formatVolumePerArea] but per hour, e.g. "1,200 L/ha/h" → "128 gal/ac/h". */
+    fun formatVolumePerAreaPerHour(litresPerHectarePerHour: Double): String {
+        val v = sprayRateValue(volumeValue(litresPerHectarePerHour))
+        return "${String.format(Locale.US, "%,.0f", v)} $volumePerAreaUnit/h"
+    }
+
     // MARK: - Yield per area (input: per hectare)
 
     fun perAreaValue(perHectare: Double): Double = when (area) {
@@ -200,6 +232,24 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
         return SimpleDateFormat(template, currencyLocale).format(Date(epochMs))
     }
 
+    // MARK: - Temperature
+    //
+    // Temperature is deliberately NOT region-converted. The Region & Units
+    // contract (sql/099) has no temperature unit, and iOS `RegionFormatter`
+    // has no temperature conversion either — GDD/BEDD models, disease-risk
+    // thresholds and spray records are all defined in Celsius. Converting on
+    // Android alone would make the same vineyard read differently on the two
+    // platforms, which is the very bug this layer exists to prevent.
+    //
+    // Celsius is therefore canonical AND displayed. If Fahrenheit display is
+    // ever wanted it must be added to the shared backend contract and to iOS
+    // first; `RegionFormatterTest` pins the current behaviour so an accidental
+    // one-sided change fails the build.
+
+    /** Canonical Celsius display, identical in every region (see note above). */
+    fun formatTemperature(celsius: Double, fractionDigits: Int = 1): String =
+        "${number(celsius, fractionDigits)}°C"
+
     // MARK: - Terminology
 
     val blockTerm: String get() = "block"
@@ -209,6 +259,10 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
 
     private fun number(value: Double, fractionDigits: Int): String =
         String.format(Locale.US, "%.${fractionDigits}f", value)
+
+    /** Whole numbers at >= 10, otherwise one decimal. Locale-independent. */
+    private fun compactNumber(value: Double): String =
+        if (value >= 10) value.toInt().toString() else String.format(Locale.US, "%.1f", value)
 
     companion object {
         private const val ACRES_PER_HECTARE = 2.471053814672

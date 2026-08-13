@@ -91,6 +91,7 @@ import com.rork.vinetrack.ui.components.SATELLITE_IMAGERY_ATTRIBUTION
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.time.Instant
@@ -1574,8 +1575,11 @@ private fun RowVineCountDialog(
 @Composable
 private fun BlockSummaryCard(areaHa: Double, rowCount: Int, totalRowLengthM: Double, vineCount: Int) {
     val vine = LocalVineColors.current
+    // Geometry is stored in canonical hectares/metres; only the DISPLAY unit
+    // follows the vineyard's Region & Units.
+    val fmt = LocalRegionFormatter.current
     val cells = listOf(
-        "Area" to (if (areaHa > 0) "%.2f ha".format(areaHa) else "—"),
+        "Area" to (if (areaHa > 0) fmt.formatArea(areaHa) else "—"),
         "Rows" to (if (rowCount > 0) rowCount.toString() else "—"),
         "Row length" to (if (totalRowLengthM > 0) "%,.0f m".format(totalRowLengthM) else "—"),
         "Vines" to (if (vineCount > 0) "%,d".format(vineCount) else "—"),

@@ -61,6 +61,7 @@ import com.rork.vinetrack.data.PaddockReferenceCounts
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.PaddockVarietyAllocation
 import com.rork.vinetrack.ui.AppUiState
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -212,7 +213,10 @@ private fun ArchiveBlockDialog(
 
 @Composable
 private fun KeyStatsGrid(block: Paddock) {
-    val ha = if (block.areaHectares > 0) "%.2f ha".format(block.areaHectares) else "—"
+    // Area is STORED canonically in hectares and DISPLAYED in the vineyard's
+    // configured unit — never a hardcoded "ha".
+    val fmt = LocalRegionFormatter.current
+    val ha = if (block.areaHectares > 0) fmt.formatArea(block.areaHectares) else "—"
     val vines = if (block.effectiveVineCount > 0) "%,d".format(block.effectiveVineCount) else "—"
     val cards = listOf(
         StatCard("Area", ha, Icons.Filled.Map, VineColors.LeafGreen),
@@ -449,6 +453,7 @@ private fun GeometrySection(block: Paddock) {
 @Composable
 private fun IrrigationSection(block: Paddock) {
     val vine = LocalVineColors.current
+    val fmt = LocalRegionFormatter.current
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SectionHeader("Irrigation", onLight = true)
         VineyardCard {
@@ -467,7 +472,7 @@ private fun IrrigationSection(block: Paddock) {
                 }
                 block.litresPerHaPerHour?.let {
                     DividerLine()
-                    DetailRow("Application rate", "${"%,.0f".format(it)} L/ha/h")
+                    DetailRow("Application rate", fmt.formatVolumePerAreaPerHour(it))
                 }
                 block.mmPerHour?.let {
                     DividerLine()

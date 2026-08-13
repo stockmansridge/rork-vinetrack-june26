@@ -98,6 +98,7 @@ import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.components.fitToContent
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import kotlinx.coroutines.launch
@@ -408,6 +409,9 @@ private fun TripSetupScreen(
     val context = LocalContext.current
     val bunchWeightStore = remember { com.rork.vinetrack.data.BunchWeightDefaultsStore(context) }
     val blocks = remember(state.paddocks) { state.paddocks.filter { it.hasGeometry } }
+    // Block areas are stored in canonical hectares; display follows the
+    // vineyard's Region & Units.
+    val blockAreaFmt = LocalRegionFormatter.current
 
     var selectedSite by remember { mutableStateOf<SampleSite?>(null) }
     var showDiscardConfirm by remember { mutableStateOf(false) }
@@ -564,7 +568,7 @@ private fun TripSetupScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(block.name, color = vine.textPrimary, fontWeight = FontWeight.Medium)
                                 Text(
-                                    "${YieldVintageReport.varietyLabel(block)} · ${formatArea(block.areaHectares)} ha · ${block.effectiveVineCount} vines",
+                                    "${YieldVintageReport.varietyLabel(block)} · ${blockAreaFmt.formatArea(block.areaHectares)} · ${block.effectiveVineCount} vines",
                                     color = vine.textSecondary,
                                     fontSize = 12.sp,
                                 )
@@ -596,7 +600,7 @@ private fun TripSetupScreen(
                             blocks, session.selectedPaddockIds, session.samplesPerHectare,
                         )
                         Text(
-                            "${formatArea(YieldSampleGenerator.totalSelectedArea(blocks, session.selectedPaddockIds))} ha selected · ~$expected sample sites",
+                            "${blockAreaFmt.formatArea(YieldSampleGenerator.totalSelectedArea(blocks, session.selectedPaddockIds))} selected · ~$expected sample sites",
                             color = vine.textSecondary,
                             fontSize = 12.sp,
                         )
@@ -1412,7 +1416,6 @@ private fun metresBetween(lat1: Double, lon1: Double, lat2: Double, lon2: Double
 }
 
 private fun formatTonnes(t: Double): String = if (t >= 100) t.roundToInt().toString() else String.format("%.1f", t)
-private fun formatArea(ha: Double): String = String.format("%.2f", ha)
 private fun formatGrams(kg: Double): String = (kg * 1000).roundToInt().toString()
 private fun formatBunches(b: Double): String = String.format("%.1f", b)
 private fun trimNumber(d: Double): String = if (d == d.toLong().toDouble()) d.toLong().toString() else d.toString()

@@ -67,6 +67,11 @@ fun RootScreen() {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // Publish the selected vineyard's Region & Units as the app-wide formatting
+    // context. Wrapping the whole route table (not just Main) means sheets,
+    // dialogs and every nested composable format against the SAME vineyard
+    // settings, and a save or vineyard switch recomposes them all at once.
+    ProvideRegionFormatter(state.regionSettings) {
     when (state.route) {
         AppRoute.Restoring -> SplashScreen()
         AppRoute.Login -> LoginScreen(
@@ -124,6 +129,7 @@ fun RootScreen() {
         AppRoute.Main ->
             if (!state.onboardingCompleted) OnboardingScreen(onComplete = vm::completeOnboarding)
             else MainScaffold(vm, state)
+    }
     }
 }
 

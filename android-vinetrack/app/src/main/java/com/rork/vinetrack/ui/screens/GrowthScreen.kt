@@ -102,6 +102,7 @@ import com.rork.vinetrack.ui.components.OverviewStat
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.text.SimpleDateFormat
@@ -727,6 +728,7 @@ private fun VarietyCatalogCard(
     onEdit: () -> Unit = {},
 ) {
     val vine = LocalVineColors.current
+    val fmt = LocalRegionFormatter.current
     VineyardCard(modifier = Modifier.clickable { onClick() }) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Box(
@@ -744,7 +746,7 @@ private fun VarietyCatalogCard(
                     variety.optimalGddOverride?.let { add("Optimal ${it.toInt()} GDD") }
                     if (usage.blocks > 0) {
                         add("${usage.blocks} block${if (usage.blocks == 1) "" else "s"}")
-                        if (usage.areaHectares > 0) add("${formatHa(usage.areaHectares)} ha")
+                        if (usage.areaHectares > 0) add(fmt.formatAreaCompact(usage.areaHectares))
                     } else {
                         add("No blocks")
                     }
@@ -786,6 +788,7 @@ private fun VarietyDetailView(
     onBack: () -> Unit,
 ) {
     val vine = LocalVineColors.current
+    val fmt = LocalRegionFormatter.current
     val canonical = variety.canonicalName
     val blocks = remember(variety, state.paddocks) {
         state.paddocks.mapNotNull { paddock ->
@@ -830,7 +833,7 @@ private fun VarietyDetailView(
                     DetailRowG(Icons.Filled.Map, "Linked blocks", "${blocks.size}", VineColors.LeafGreen)
                     if (totalArea > 0) {
                         DividerG(vine.cardBorder)
-                        DetailRowG(Icons.Filled.Map, "Planted area", "${formatHa(totalArea)} ha", VineColors.Indigo)
+                        DetailRowG(Icons.Filled.Map, "Planted area", fmt.formatAreaCompact(totalArea), VineColors.Indigo)
                     }
                 }
 
@@ -862,6 +865,7 @@ private fun VarietyDetailView(
 @Composable
 private fun VarietyBlockCard(usage: VarietyBlockUsage, latestObservation: GrowthStageRecord?) {
     val vine = LocalVineColors.current
+    val fmt = LocalRegionFormatter.current
     val block = usage.paddock
     val alloc = usage.allocation
     VineyardCard {
@@ -871,7 +875,7 @@ private fun VarietyBlockCard(usage: VarietyBlockUsage, latestObservation: Growth
                 alloc.displayPercent?.let { StatusBadge("${it.toInt()}%", VineColors.LeafGreen) }
             }
             val meta = buildList {
-                if (usage.allocatedHectares > 0) add("${formatHa(usage.allocatedHectares)} ha")
+                if (usage.allocatedHectares > 0) add(fmt.formatAreaCompact(usage.allocatedHectares))
                 alloc.clone?.takeIf { it.isNotBlank() }?.let { add("Clone $it") }
                 alloc.rootstock?.takeIf { it.isNotBlank() }?.let { add("Rootstock $it") }
                 block.plantingYear?.let { add("Planted $it") }
@@ -902,9 +906,6 @@ private fun VarietyBlockCard(usage: VarietyBlockUsage, latestObservation: Growth
         }
     }
 }
-
-private fun formatHa(value: Double): String =
-    if (value >= 10) value.toInt().toString() else String.format(Locale.getDefault(), "%.1f", value)
 
 @Composable
 private fun PhenologyBlockRow(block: Paddock, onEdit: () -> Unit) {
