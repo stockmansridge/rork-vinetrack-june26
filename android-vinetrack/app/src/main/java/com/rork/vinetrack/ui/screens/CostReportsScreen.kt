@@ -265,7 +265,7 @@ fun CostReportsScreen(
                             VineyardCard {
                                 SummaryRow("Total estimated cost", fmt.formatCurrency(totalCost), emphasise = true)
                                 DividerC(vine.cardBorder)
-                                SummaryRow("Treated area", "${formatHaC(fmt.areaValue(totalArea))} ${fmt.areaUnitAbbreviation}")
+                                SummaryRow("Treated area", fmt.formatAreaCompact(totalArea))
                                 DividerC(vine.cardBorder)
                                 SummaryRow("Cost / ${fmt.areaUnitAbbreviation}", costPerHa?.let { "${fmt.formatCurrency(fmt.perAreaValue(it))}/${fmt.areaUnitAbbreviation}" } ?: "—")
                                 DividerC(vine.cardBorder)
@@ -396,7 +396,7 @@ private fun BreakdownCard(group: CostGroup, fmt: RegionFormatter, yieldTonnes: D
                     val meta = buildList {
                         add(group.variety)
                         group.tripFunction?.let { add(opLabel(it)) }
-                        if (group.area > 0) add("${formatHaC(fmt.areaValue(group.area))} ${fmt.areaUnitAbbreviation}")
+                        if (group.area > 0) add(fmt.formatAreaCompact(group.area))
                         if (yieldTonnes > 0) add("${formatTonnesC(yieldTonnes)} t")
                         add("$tripCount trip${if (tripCount == 1) "" else "s"}")
                     }
@@ -441,7 +441,7 @@ private fun GroupDetailView(
                 DividerC(vine.cardBorder)
                 SummaryRow("Chemical", fmt.formatCurrency(group.chemical))
                 DividerC(vine.cardBorder)
-                SummaryRow("Treated area", "${formatHaC(fmt.areaValue(group.area))} ${fmt.areaUnitAbbreviation}")
+                SummaryRow("Treated area", fmt.formatAreaCompact(group.area))
             }
         }
         item { SectionHeader("Contributing trips · ${group.rows.map { it.tripId }.distinct().size}", onLight = true) }
@@ -459,9 +459,9 @@ private fun GroupDetailView(
                         Text(fmt.formatCurrency(row.totalCost), color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     }
                     val meta = buildList {
-                        formatCostDate(row.tripDateEpochMs)?.let { add(it) }
+                        formatCostDate(row.tripDateEpochMs, fmt)?.let { add(it) }
                         row.tripFunction?.let { add(opLabel(it)) }
-                        if (row.areaHa > 0) add("${formatHaC(fmt.areaValue(row.areaHa))} ${fmt.areaUnitAbbreviation}")
+                        if (row.areaHa > 0) add(fmt.formatAreaCompact(row.areaHa))
                     }
                     if (meta.isNotEmpty()) Text(meta.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp)
                     row.warnings.forEach { w ->
@@ -529,15 +529,19 @@ private fun DividerC(color: androidx.compose.ui.graphics.Color) {
 private fun opLabel(raw: String): String =
     tripFunctionDisplayName(raw) ?: raw.replaceFirstChar { it.uppercase() }
 
-private fun formatHaC(value: Double): String =
-    if (value >= 10) value.toInt().toString() else String.format(Locale.getDefault(), "%.1f", value)
+// `formatHaC` was deleted: compact areas now come from
+// `RegionFormatter.formatAreaCompact`, which converts the VALUE as well as the
+// label. The old helper only trimmed decimals, so it had to be paired with a
+// separate `fmt.areaValue(...)` call at every site — easy to forget, and the
+// exact shape of the original bug.
 
 private fun formatTonnesC(value: Double): String =
-    if (value % 1.0 == 0.0) value.toInt().toString() else String.format(Locale.getDefault(), "%.1f", value)
+    if (value % 1.0 == 0.0) value.toInt().toString() else String.format(Locale.US, "%.1f", value)
 
-private fun formatCostDate(epochMs: Long?): String? {
+/** Vineyard-formatted trip date. Takes the formatter so it can never fall back to the device locale. */
+private fun formatCostDate(epochMs: Long?, fmt: RegionFormatter): String? {
     epochMs ?: return null
-    return SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(epochMs))
+    return fmt.formatDateMedium(epochMs)
 }
 
 // MARK: - Costing setup wizard

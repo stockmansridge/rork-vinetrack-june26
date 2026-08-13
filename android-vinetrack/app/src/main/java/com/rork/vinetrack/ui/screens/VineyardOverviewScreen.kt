@@ -466,9 +466,10 @@ private fun BlockDetailSheetContent(block: Paddock, fmt: RegionFormatter, state:
 
         if (block.hasIrrigationSetup) {
             DetailSection("Irrigation") {
-                block.flowPerEmitter?.let { DetailRow("Emitter Rate", "${"%.1f".format(it)} L/hr") }
+                block.flowPerEmitter?.let { DetailRow("Emitter Rate", "${fmt.formatVolume(it)}/hr") }
                 block.emitterSpacing?.let { DetailRow("Emitter Spacing", "${"%.1f".format(it)} m") }
-                block.litresPerHaPerHour?.let { DetailRow("L/ha/hr", "%.0f".format(it)) }
+                // Derived irrigation rate — label and value both follow the vineyard.
+                block.litresPerHaPerHour?.let { DetailRow("Water Rate", fmt.formatVolumePerAreaPerHour(it)) }
             }
         }
 

@@ -404,7 +404,7 @@ private fun YieldHubView(
                 subtitle = "Individual picks by block, variety & vintage",
                 detail = state.pickingRecords.size.takeIf { it > 0 }?.let { count ->
                     val tonnes = state.pickingRecords.sumOf { it.weightKg } / 1000.0
-                    "$count pick${if (count == 1) "" else "s"} · ${String.format(Locale.getDefault(), "%.2f", tonnes)} t"
+                    "$count pick${if (count == 1) "" else "s"} · ${String.format(Locale.US, "%.2f", tonnes)} t"
                 },
                 onClick = onPickingLog,
             )
@@ -545,7 +545,7 @@ private fun PickingLogView(
                                         }
                                         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                             Text(
-                                                "${String.format(Locale.getDefault(), "%.2f", picks.sumOf { it.weightKg } / 1000.0)} t",
+                                                "${String.format(Locale.US, "%.2f", picks.sumOf { it.weightKg } / 1000.0)} t",
                                                 color = VineColors.LeafGreen, fontSize = 15.sp, fontWeight = FontWeight.Bold,
                                             )
                                             if (canViewFinancials) {
@@ -621,7 +621,7 @@ private fun PickingLogView(
                     }
                     item(key = "footer-$vintage") {
                         Text(
-                            "${inVintage.size} pick${if (inVintage.size == 1) "" else "s"} · ${String.format(Locale.getDefault(), "%.2f", inVintage.sumOf { it.weightKg } / 1000.0)} t total. These totals are the actual yield for their block, variety and vintage.",
+                            "${inVintage.size} pick${if (inVintage.size == 1) "" else "s"} · ${String.format(Locale.US, "%.2f", inVintage.sumOf { it.weightKg } / 1000.0)} t total. These totals are the actual yield for their block, variety and vintage.",
                             color = vine.textSecondary, fontSize = 11.sp,
                         )
                     }
@@ -897,7 +897,7 @@ private fun YieldDeterminationView(
                         }
                         block?.let {
                             Spacer(Modifier.height(10.dp))
-                            CalcLine("Area", "${formatHaY(it.areaHectares)} ha")
+                            CalcLine("Area", state.regionFormatter.formatAreaCompact(it.areaHectares))
                             CalcLine("Vines", it.effectiveVineCount.toString())
                         }
                     }
@@ -957,9 +957,9 @@ private fun YieldDeterminationView(
                 SectionHeader("Calculated", onLight = true)
                 VineyardCard {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        CalcLine("Buds / Vine", String.format(Locale.getDefault(), "%.0f", budsPerVine))
-                        CalcLine("Bunches / Ha", String.format(Locale.getDefault(), "%.0f", bunchesPerHa))
-                        CalcLine("Yield / Ha (kg)", String.format(Locale.getDefault(), "%.1f", yieldKgPerHa))
+                        CalcLine("Buds / Vine", String.format(Locale.US, "%.0f", budsPerVine))
+                        CalcLine("Bunches / Ha", String.format(Locale.US, "%.0f", bunchesPerHa))
+                        CalcLine("Yield / Ha (kg)", String.format(Locale.US, "%.1f", yieldKgPerHa))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Yield / Ha (t)", color = vine.textPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
                             Text(
@@ -971,7 +971,7 @@ private fun YieldDeterminationView(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("Block Total", color = vine.textPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
                                 Text(
-                                    String.format(Locale.getDefault(), "%.1f t", it),
+                                    String.format(Locale.US, "%.1f t", it),
                                     color = VineColors.LeafGreen, fontSize = 17.sp, fontWeight = FontWeight.Bold,
                                 )
                             }
@@ -1268,7 +1268,7 @@ private fun YieldListView(
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 YieldStat("Actual", formatTonnes(totalActual), Icons.Filled.Scale, VineColors.Info, Modifier.weight(1f))
                                 YieldStat("Estimated", formatTonnes(totalEstimated), Icons.Filled.Agriculture, VineColors.LeafGreen, Modifier.weight(1f))
-                                YieldStat("Area", "${formatHaY(totalArea)} ha", Icons.Filled.SquareFoot, VineColors.Orange, Modifier.weight(1f))
+                                YieldStat("Area", state.regionFormatter.formatAreaCompact(totalArea), Icons.Filled.SquareFoot, VineColors.Orange, Modifier.weight(1f))
                             }
                         }
                     }
@@ -1328,7 +1328,7 @@ private fun YieldRecordCard(record: HistoricalYieldRecord, fmt: RegionFormatter,
                 }
                 val parts = buildList {
                     add(blockSummary)
-                    if (record.totalAreaHectares > 0) add("${formatHaY(record.totalAreaHectares)} ha")
+                    if (record.totalAreaHectares > 0) add(fmt.formatAreaCompact(record.totalAreaHectares))
                     if (record.yieldPerHectare > 0) add(fmt.formatYieldPerArea(record.yieldPerHectare))
                 }
                 Text(parts.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp, maxLines = 1)
@@ -1391,7 +1391,7 @@ private fun YieldDetailView(
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         YieldStat("Est. ${state.regionFormatter.yieldPerAreaUnit()}", if (record.yieldPerHectare > 0) formatTonnes(state.regionFormatter.perAreaValue(record.yieldPerHectare)) else "—", Icons.Filled.SquareFoot, VineColors.Orange, Modifier.weight(1f))
-                        YieldStat("Area", "${formatHaY(record.totalAreaHectares)} ha", Icons.Filled.SquareFoot, VineColors.EarthBrown, Modifier.weight(1f))
+                        YieldStat("Area", state.regionFormatter.formatAreaCompact(record.totalAreaHectares), Icons.Filled.SquareFoot, VineColors.EarthBrown, Modifier.weight(1f))
                     }
                     record.estimateAccuracyPercent?.let { accuracy ->
                         Spacer(Modifier.height(12.dp))
@@ -1406,7 +1406,7 @@ private fun YieldDetailView(
                                 Text("Estimate Accuracy", color = vine.textSecondary, fontSize = 12.sp)
                                 Text("how close your estimate was to harvest", color = vine.textSecondary, fontSize = 11.sp)
                             }
-                            Text(String.format(Locale.getDefault(), "%.1f%%", accuracy), color = accuracyColor(accuracy), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            Text(String.format(Locale.US, "%.1f%%", accuracy), color = accuracyColor(accuracy), fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1464,7 +1464,7 @@ private fun YieldBlockRow(block: HistoricalBlockResult, fmt: RegionFormatter) {
             Text("${formatTonnes(block.actualYieldTonnes ?: block.yieldTonnes)} t", color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         }
         val parts = buildList {
-            if (block.areaHectares > 0) add("${formatHaY(block.areaHectares)} ha")
+            if (block.areaHectares > 0) add(fmt.formatAreaCompact(block.areaHectares))
             val perHa = block.actualYieldPerHectare ?: block.yieldPerHectare.takeIf { it > 0 }
             perHa?.let { add(fmt.formatYieldPerArea(it)) }
             if (block.actualYieldTonnes != null) {
@@ -1482,7 +1482,7 @@ private fun YieldBlockRow(block: HistoricalBlockResult, fmt: RegionFormatter) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Icon(Icons.Filled.TrackChanges, contentDescription = null, tint = accuracyColor(accuracy), modifier = Modifier.size(13.dp))
                 Text(
-                    String.format(Locale.getDefault(), "%.0f%% accurate", accuracy),
+                    String.format(Locale.US, "%.0f%% accurate", accuracy),
                     color = accuracyColor(accuracy), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
                 )
             }
@@ -1792,7 +1792,7 @@ private fun RecordYieldSheet(
             }
 
             block?.takeIf { it.areaHectares > 0 }?.let {
-                Text("Area: ${formatHaY(it.areaHectares)} ha", color = vine.textSecondary, fontSize = 12.sp)
+                Text("Area: ${state.regionFormatter.formatAreaCompact(it.areaHectares)}", color = vine.textSecondary, fontSize = 12.sp)
             }
 
             OutlinedTextField(
@@ -1948,7 +1948,7 @@ private fun RecordYieldSheet(
                     }
                     .sumOf { it.weightKg }
                 Text(
-                    "Vintage $derivedVintage total for this block & variety after saving: ${String.format(Locale.getDefault(), "%.2f", (existingKg + weight) / 1000.0)} t",
+                    "Vintage $derivedVintage total for this block & variety after saving: ${String.format(Locale.US, "%.2f", (existingKg + weight) / 1000.0)} t",
                     color = vine.textSecondary, fontSize = 12.sp,
                 )
             }
@@ -2225,7 +2225,7 @@ private fun EstimateYieldSheet(
             }
 
             block?.takeIf { it.areaHectares > 0 }?.let {
-                Text("Area: ${formatHaY(it.areaHectares)} ha", color = vine.textSecondary, fontSize = 12.sp)
+                Text("Area: ${state.regionFormatter.formatAreaCompact(it.areaHectares)}", color = vine.textSecondary, fontSize = 12.sp)
             }
 
             OutlinedTextField(
@@ -2375,7 +2375,7 @@ private fun EditYieldActualsSheet(
                             Text("$vSign${formatTonnes(variance)} t", color = vColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                             if (parsed > 0) {
                                 val accuracy = ((1 - kotlin.math.abs(parsed - block.yieldTonnes) / parsed) * 100).coerceAtLeast(0.0)
-                                Text(String.format(Locale.getDefault(), "%.0f%% accurate", accuracy), color = accuracyColor(accuracy), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                Text(String.format(Locale.US, "%.0f%% accurate", accuracy), color = accuracyColor(accuracy), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     } else {
@@ -2588,7 +2588,7 @@ private fun VintageEstimateCard(row: YieldVintageReport.EstimateRow, fmt: Region
                 Text(row.blockName, color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 Text(row.varietyLabel, color = vine.textSecondary, fontSize = 12.sp, maxLines = 1)
                 val parts = buildList {
-                    if (row.areaHectares > 0) add("${formatHaY(row.areaHectares)} ha")
+                    if (row.areaHectares > 0) add(fmt.formatAreaCompact(row.areaHectares))
                     row.tonnesPerHectare?.let { add(fmt.formatYieldPerArea(it)) }
                     add("${row.samplesRecorded} samples")
                     if (row.applyDamage && row.damageFactor < 1.0) add("damage adj.")
@@ -2615,7 +2615,7 @@ private fun VintageActualCard(row: YieldVintageReport.ActualRow, fmt: RegionForm
                     color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
                 )
                 val parts = buildList {
-                    if (row.areaHectares > 0) add("${formatHaY(row.areaHectares)} ha")
+                    if (row.areaHectares > 0) add(fmt.formatAreaCompact(row.areaHectares))
                     row.tonnesPerHectare?.let { add(fmt.formatYieldPerArea(it)) }
                     add(if (row.fromDetailed) "Picking log" else "Basic actual")
                 }
@@ -2653,7 +2653,7 @@ private fun VarietyYieldCard(summary: VarietyYieldSummary, fmt: RegionFormatter,
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(summary.displayName, color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                 val parts = buildList {
-                    if (summary.areaHectares > 0) add("${formatHaY(summary.areaHectares)} ha")
+                    if (summary.areaHectares > 0) add(fmt.formatAreaCompact(summary.areaHectares))
                     summary.tonnesPerHectare?.let { add(fmt.formatYieldPerArea(it)) }
                     val blocks = summary.contributions.map { it.blockName }.distinct().size
                     add("$blocks block${if (blocks == 1) "" else "s"}")
@@ -2703,7 +2703,7 @@ private fun VarietyYieldDetailView(summary: VarietyYieldSummary, fmt: RegionForm
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         YieldStat(fmt.yieldPerAreaUnit(), summary.tonnesPerHectare?.let { formatTonnes(fmt.perAreaValue(it)) } ?: "—", Icons.Filled.SquareFoot, VineColors.Orange, Modifier.weight(1f))
-                        YieldStat("Area", "${formatHaY(summary.areaHectares)} ha", Icons.Filled.SquareFoot, VineColors.EarthBrown, Modifier.weight(1f))
+                        YieldStat("Area", fmt.formatAreaCompact(summary.areaHectares), Icons.Filled.SquareFoot, VineColors.EarthBrown, Modifier.weight(1f))
                     }
                 }
 
@@ -2718,7 +2718,7 @@ private fun VarietyYieldDetailView(summary: VarietyYieldSummary, fmt: RegionForm
                             val parts = buildList {
                                 add(c.seasonLabel)
                                 if (c.sharePercent < 99.5) add("${c.sharePercent.toInt()}% of block")
-                                if (c.areaHectares > 0) add("${formatHaY(c.areaHectares)} ha")
+                                if (c.areaHectares > 0) add(fmt.formatAreaCompact(c.areaHectares))
                                 if (c.actualTonnes != null) add("est. ${formatTonnes(c.estimatedTonnes)} t")
                             }
                             Text(parts.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp)
@@ -2739,7 +2739,7 @@ private fun VarietyYieldDetailView(summary: VarietyYieldSummary, fmt: RegionForm
 }
 
 private fun formatTonnes(value: Double): String =
-    String.format(Locale.getDefault(), "%.2f", value)
+    String.format(Locale.US, "%.2f", value)
 
 /** Color grading for estimate-accuracy %, mirroring iOS (≥90 green, ≥75 orange, else red). */
 private fun accuracyColor(percent: Double): Color = when {
@@ -2910,7 +2910,7 @@ private fun PlantingGroupTotalRow(
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(
-                "${String.format(Locale.getDefault(), "%.2f", group.actualYieldTonnes)} t",
+                "${String.format(Locale.US, "%.2f", group.actualYieldTonnes)} t",
                 color = if (linked) VineColors.LeafGreen else vine.textSecondary,
                 fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
             )
@@ -2947,13 +2947,9 @@ private fun plantingGroupConfig(block: Paddock?): Map<String, Pair<Double, Int>>
 
 private fun formatPlain(value: Double): String =
     if (value == value.toLong().toDouble()) value.toLong().toString()
-    else String.format(Locale.getDefault(), "%.2f", value)
+    else String.format(Locale.US, "%.2f", value)
 
-private fun formatHaY(value: Double): String =
-    if (value >= 10) value.toInt().toString() else String.format(Locale.getDefault(), "%.1f", value)
-
-@Suppress("unused")
-private fun formatYieldDate(epochMs: Long?): String? {
-    epochMs ?: return null
-    return SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(epochMs))
-}
+// `formatHaY` and `formatYieldDate` were deleted deliberately: compact areas now
+// come from `RegionFormatter.formatAreaCompact` and dates from the shared
+// formatter, so this screen holds no private formatting helper that could drift
+// from the vineyard's Region & Units settings.

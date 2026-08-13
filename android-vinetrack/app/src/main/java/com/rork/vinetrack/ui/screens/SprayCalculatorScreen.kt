@@ -115,6 +115,7 @@ import com.rork.vinetrack.ui.SprayJobRowPlan
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.time.Instant
@@ -758,7 +759,7 @@ fun SprayCalculatorScreen(
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text("Volume", fontSize = 12.sp, color = vine.textSecondary)
-                            Text("${fmtNum(recommendedRate, 0)} L/ha", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = VineColors.DarkGreen)
+                            Text(LocalRegionFormatter.current.formatVolumePerArea(recommendedRate), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = VineColors.DarkGreen)
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text("Per 100m row", fontSize = 12.sp, color = vine.textSecondary)
@@ -1018,7 +1019,7 @@ private fun BlocksSummaryCard(
             } else {
                 val n = selectedPaddocks.size
                 Text(
-                    "$n block${if (n == 1) "" else "s"} · ${fmtNum(totalArea, 2)} ha · $totalRows row${if (totalRows == 1) "" else "s"} · ${rowRangeSummary(selectedPaddocks)}",
+                    "$n block${if (n == 1) "" else "s"} · ${LocalRegionFormatter.current.formatArea(totalArea)} · $totalRows row${if (totalRows == 1) "" else "s"} · ${rowRangeSummary(selectedPaddocks)}",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = vine.textPrimary,
@@ -1526,7 +1527,14 @@ private fun CalcChemicalLineCard(
                         )
                         haRates.forEach { rate ->
                             DropdownMenuItem(
-                                text = { Text("${rate.label.ifBlank { "Rate" }}: ${fmtRate(chemicalUnitFromBase(chem.unit, rate.value))} ${chem.unit}/ha", fontSize = 13.sp) },
+                                text = {
+                                    // Product pack unit stays canonical; the area denominator follows the vineyard.
+                                    val region = LocalRegionFormatter.current
+                                    Text(
+                                        "${rate.label.ifBlank { "Rate" }}: ${fmtRate(region.sprayRateValue(chemicalUnitFromBase(chem.unit, rate.value)))} ${chem.unit}/${region.sprayRateAreaAbbreviation}",
+                                        fontSize = 13.sp,
+                                    )
+                                },
                                 onClick = {
                                     line.selectedRateId = rate.id
                                     line.basis = SprayCalculator.RateBasis.PER_HECTARE
@@ -1709,7 +1717,7 @@ private fun SprayTankMixReview(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        MixStatTile("Total Area", "${fmtNum(result.totalAreaHectares, 2)} ha", VineColors.Olive, Modifier.weight(1f))
+                        MixStatTile("Total Area", LocalRegionFormatter.current.formatArea(result.totalAreaHectares), VineColors.Olive, Modifier.weight(1f))
                         MixStatTile("Total Water", "${fmtNum(result.totalWaterLitres, 0)} L", VineColors.Indigo, Modifier.weight(1f))
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2091,7 +2099,9 @@ private fun CostingCard(r: SprayCalculator.Result) {
                 Text("$${fmtNum(total, 2)}", fontWeight = FontWeight.Bold, color = VineColors.DarkGreen, fontSize = 14.sp)
             }
             r.costPerHectare?.let { perHa ->
-                SummaryRow("Cost per hectare", "$${fmtNum(perHa, 2)}/ha")
+                // Canonical per-hectare cost, re-based over the vineyard's area unit.
+                val region = LocalRegionFormatter.current
+                SummaryRow("Cost per ${region.areaUnitAbbreviation}", region.formatCostPerArea(perHa))
             }
         }
     }

@@ -226,6 +226,7 @@ import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.fitToContent
 import com.rork.vinetrack.ui.components.StatusBadge
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import kotlinx.coroutines.delay
@@ -341,7 +342,7 @@ private enum class TripSortOption(val label: String, val icon: ImageVector) {
 private enum class TripTypeFilter { ALL, SPRAY, MAINTENANCE }
 
 private fun monthName(month: Int): String =
-    DateFormatSymbols(Locale.getDefault()).months.getOrNull(month - 1)?.takeIf { it.isNotBlank() } ?: month.toString()
+    DateFormatSymbols(Locale.US).months.getOrNull(month - 1)?.takeIf { it.isNotBlank() } ?: month.toString()
 
 private fun tripFunctionIcon(raw: String): ImageVector = when (raw) {
     "spraying", "irrigationCheck" -> Icons.Filled.WaterDrop
@@ -1388,8 +1389,13 @@ private fun TripDetailView(
                             }
                             lines.forEachIndexed { index, line ->
                                 if (index > 0 || details.sowingDepthCm != null) Divider(vine.cardBorder)
+                                val region = LocalRegionFormatter.current
                                 val parts = buildList {
-                                    line.kgPerHa?.let { add("${formatLitres(it)} kg/ha") }
+                                    line.kgPerHa?.let {
+                                        // Seed/fertiliser mass stays canonical (no mass unit in the
+                                        // contract); only the area denominator converts.
+                                        add("${formatLitres(region.sprayRateValue(it))} ${region.massPerAreaUnit()}")
+                                    }
                                     line.seedBox?.takeIf { it.isNotBlank() }?.let { add(it) }
                                 }.joinToString(" \u00b7 ")
                                 DetailRow(
@@ -1438,7 +1444,7 @@ private fun TripDetailView(
                             Icons.Filled.LocalGasStation,
                             "Fuel",
                             fuel.fuelCost?.let { c ->
-                                fuel.litres?.let { l -> "${formatFuelCurrency(c)} · ${formatLitres(l)} L" } ?: formatFuelCurrency(c)
+                                fuel.litres?.let { l -> "${formatFuelCurrency(c)} · ${LocalRegionFormatter.current.formatFuel(l)}" } ?: formatFuelCurrency(c)
                             } ?: "—",
                             VineColors.Orange,
                         )
@@ -1471,14 +1477,14 @@ private fun TripDetailView(
                         DetailRow(
                             Icons.Filled.Straighten,
                             "Treated area",
-                            cost.treatedAreaHa?.let { "${formatLitres(it)} ha" } ?: "—",
+                            cost.treatedAreaHa?.let { LocalRegionFormatter.current.formatAreaCompact(it) } ?: "—",
                             VineColors.LeafGreen,
                         )
                         Divider(vine.cardBorder)
                         DetailRow(
                             Icons.Filled.Paid,
-                            "Cost / ha",
-                            cost.costPerHa?.let { formatFuelCurrency(it) } ?: "—",
+                            "Cost / ${LocalRegionFormatter.current.areaUnitAbbreviation}",
+                            cost.costPerHa?.let { LocalRegionFormatter.current.formatCostPerArea(it) } ?: "—",
                             VineColors.DarkGreen,
                         )
                         Divider(vine.cardBorder)
@@ -1506,8 +1512,8 @@ private fun TripDetailView(
                             Divider(vine.cardBorder)
                             DetailRow(
                                 Icons.Filled.LocalGasStation,
-                                "Cost / litre",
-                                formatFuelCurrency(perL),
+                                "Cost / ${LocalRegionFormatter.current.volumeUnitAbbreviation}",
+                                LocalRegionFormatter.current.formatCostPerVolume(perL),
                                 VineColors.Orange,
                             )
                         }
@@ -5095,18 +5101,23 @@ private fun formatFillElapsed(seconds: Long): String {
     return "%d:%02d".format(m, sec)
 }
 
+/** Trip distance in the vineyard's distance system (km/m, or mi/ft for imperial). */
+@Composable
 private fun formatDistance(metres: Double?): String? {
+    val fmt = LocalRegionFormatter.current
     if (metres == null || metres <= 0) return null
-    return if (metres >= 1000) "${"%.2f".format(metres / 1000)} km" else "${metres.toInt()} m"
+    return fmt.formatShortDistance(metres)
 }
 
 /** Driving path label: whole paths show as integers, mid-rows as X.5. */
 private fun formatPath(path: Double): String =
     if (path % 1.0 == 0.0) path.toInt().toString() else "%.1f".format(path)
 
+@Composable
 private fun formatTripDate(epochMs: Long?): String? {
+    val fmt = LocalRegionFormatter.current
     epochMs ?: return null
-    return SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(epochMs))
+    return fmt.formatDateMedium(epochMs)
 }
 
 /**
@@ -5114,16 +5125,18 @@ private fun formatTripDate(epochMs: Long?): String? {
  * ("22 Jun 2026 at 9:47"). Uses the device locale's short time so it follows
  * the 12/24-hour setting like iOS does.
  */
+@Composable
 private fun formatTripRowDateTime(epochMs: Long?): String? {
+    val fmt = LocalRegionFormatter.current
     epochMs ?: return null
-    val date = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(epochMs))
-    val time = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT, Locale.getDefault()).format(Date(epochMs))
-    return "$date at $time"
+    return "${fmt.formatDateMedium(epochMs)} at ${fmt.formatTime(epochMs)}"
 }
 
+@Composable
 private fun formatTripDateTime(epochMs: Long?): String? {
+    val fmt = LocalRegionFormatter.current
     epochMs ?: return null
-    return SimpleDateFormat("d MMM yyyy, h:mm a", Locale.getDefault()).format(Date(epochMs))
+    return fmt.formatDateTimeMedium(epochMs)
 }
 
 /** Litres formatted to at most one decimal, dropping a trailing .0. */

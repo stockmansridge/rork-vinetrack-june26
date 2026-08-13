@@ -6,6 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.time.Instant
+import java.util.Locale
 import java.util.TimeZone
 
 /**
@@ -176,10 +177,155 @@ class RegionFormatterTest {
     private val march5 = Instant.parse("2026-03-05T12:00:00Z").toEpochMilli()
 
     @Test
-    fun `date format follows the vineyard setting`() {
-        assertEquals("5 Mar 2026", RegionFormatter(au).formatDate(march5))
-        assertEquals("Mar 5, 2026", RegionFormatter(us).formatDate(march5))
+    fun `numeric date renders the saved vineyard template literally`() {
+        // Exact iOS parity: iOS `RegionFormatter.formatDate` renders the numeric
+        // `dateFormatTemplate`, so a vineyard set to MM/DD/YYYY must never show a
+        // day-first date on Android.
+        assertEquals("05/03/2026", RegionFormatter(au).formatDate(march5))
+        assertEquals("03/05/2026", RegionFormatter(us).formatDate(march5))
         assertEquals("2026-03-05", RegionFormatter(ca).formatDate(march5))
+    }
+
+    @Test
+    fun `each supported date format renders the SAME stored instant`() {
+        // One canonical instant, three vineyard configurations: the stored value is
+        // untouched and only presentation differs.
+        val dmy = au.copy(dateFormat = RegionDateFormat.DayMonthYear.raw)
+        val mdy = au.copy(dateFormat = RegionDateFormat.MonthDayYear.raw)
+        val iso = au.copy(dateFormat = RegionDateFormat.IsoYearMonthDay.raw)
+        assertEquals("05/03/2026", RegionFormatter(dmy).formatDate(march5))
+        assertEquals("03/05/2026", RegionFormatter(mdy).formatDate(march5))
+        assertEquals("2026-03-05", RegionFormatter(iso).formatDate(march5))
+    }
+
+    @Test
+    fun `medium date keeps month names but follows the vineyard field order`() {
+        assertEquals("5 Mar 2026", RegionFormatter(au).formatDateMedium(march5))
+        assertEquals("Mar 5, 2026", RegionFormatter(us).formatDateMedium(march5))
+        // en-CA abbreviates March as "Mar." (with a period), so the expectation is
+        // built from the vineyard locale's own symbol rather than hardcoding one
+        // region's spelling. What is being asserted is the FIELD ORDER.
+        val caMonth = RegionFormatter(ca).monthAbbreviation(3)
+        assertEquals("2026 $caMonth 5", RegionFormatter(ca).formatDateMedium(march5))
+        assertTrue("ISO vineyards must lead with the year", RegionFormatter(ca).formatDateMedium(march5).startsWith("2026"))
+    }
+
+    @Test
+    fun `date time appends a 24h clock to the vineyard template`() {
+        assertEquals("05/03/2026 12:00", RegionFormatter(au).formatDateTime(march5))
+        assertEquals("03/05/2026 12:00", RegionFormatter(us).formatDateTime(march5))
+        assertEquals("05/03/2026 12:00:00", RegionFormatter(au).formatDateTime(march5, includeSeconds = true))
+    }
+
+    @Test
+    fun `month names come from the vineyard locale not the device`() {
+        // The device default is forced to French to prove the formatter ignores it:
+        // the vineyard is en_AU, so the month name must stay English.
+        val previous = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("fr-FR"))
+            assertEquals("5 Mar 2026", RegionFormatter(au).formatDateMedium(march5))
+            assertEquals("Mar", RegionFormatter(au).monthAbbreviation(3))
+        } finally {
+            Locale.setDefault(previous)
+        }
+    }
+
+    @Test
+    fun `decimal separator ignores the device locale`() {
+        // A comma-decimal device locale must not turn "12.50 ha" into "12,50 ha".
+        val previous = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.GERMANY)
+            assertEquals("12.50 ha", RegionFormatter(au).formatArea(12.5))
+            assertEquals("30.89 ac", RegionFormatter(us).formatArea(12.5))
+        } finally {
+            Locale.setDefault(previous)
+        }
+    }
+
+    @Test
+    fun `vineyard timezone decides the calendar day, not the device zone`() {
+        // 2026-03-05T20:00Z is already 6 March in Adelaide, so a vineyard pinned to
+        // Adelaide must show the 6th even while the phone is on UTC.
+        val evening = Instant.parse("2026-03-05T20:00:00Z").toEpochMilli()
+        assertEquals("05/03/2026", RegionFormatter(au).formatDate(evening))
+        val adelaide = au.copy(timezone = "Australia/Adelaide")
+        assertEquals("06/03/2026", RegionFormatter(adelaide).formatDate(evening))
+    }
+
+    @Test
+    fun `an unknown timezone falls back instead of throwing`() {
+        val broken = au.copy(timezone = "Mars/Olympus_Mons")
+        assertEquals("05/03/2026", RegionFormatter(broken).formatDate(march5))
+    }
+
+    // ------------------------------------------------------- cost per unit
+
+    @Test
+    fun `cost per area re-bases the money over the displayed area unit`() {
+        // $500/ha is $202.34/ac. Relabelling without dividing would overstate an
+        // acre vineyard's cost by 2.47x.
+        assertTrue(RegionFormatter(au).formatCostPerArea(500.0).endsWith("/ha"))
+        assertTrue(RegionFormatter(us).formatCostPerArea(500.0).endsWith("/ac"))
+        assertTrue(RegionFormatter(us).formatCostPerArea(500.0).contains("202.3"))
+        assertEquals("ha", RegionFormatter(au).costPerAreaUnit)
+        assertEquals("ac", RegionFormatter(us).costPerAreaUnit)
+    }
+
+    @Test
+    fun `cost per volume converts per litre to per gallon`() {
+        assertTrue(RegionFormatter(au).formatCostPerVolume(2.0).endsWith("/L"))
+        val perGallon = RegionFormatter(us).formatCostPerVolume(2.0)
+        assertTrue(perGallon.endsWith("/gal"))
+        // $2.00/L x 3.785 L per US gallon = $7.57/gal
+        assertTrue(perGallon.contains("7.5"))
+    }
+
+    @Test
+    fun `mass per area converts only the denominator`() {
+        // The contract has no mass unit and iOS converts none, so kg stays kg while
+        // the area denominator follows the vineyard.
+        assertEquals("kg/ha", RegionFormatter(au).massPerAreaUnit())
+        assertEquals("kg/ac", RegionFormatter(us).massPerAreaUnit())
+        assertEquals("100.00 kg/ha", RegionFormatter(au).formatSprayRate(100.0, "kg"))
+        assertEquals("40.47 kg/ac", RegionFormatter(us).formatSprayRate(100.0, "kg"))
+    }
+
+    // --------------------------------------- editable round trip (no corruption)
+
+    @Test
+    fun `area round trips canonical to display to canonical`() {
+        val fmt = RegionFormatter(us)
+        val storedHa = 12.5
+        val shown = fmt.areaValue(storedHa)
+        assertEquals(30.888, shown, 0.001)
+        // Untouched value must save back byte-identical.
+        assertEquals(storedHa, fmt.areaToCanonical(shown), 1e-9)
+        // User edits 30.89 -> 31.00 ac, which is 12.545 ha.
+        assertEquals(12.545, fmt.areaToCanonical(31.0), 0.001)
+    }
+
+    @Test
+    fun `every inverse converter is an exact mirror of its forward converter`() {
+        // Guards the corruption case: display conversion working while the save
+        // path writes the displayed number straight into a canonical column.
+        listOf(us, uk, ca, au).forEach { settings ->
+            val fmt = RegionFormatter(settings)
+            val v = 37.25
+            assertEquals(v, fmt.areaToCanonical(fmt.areaValue(v)), 1e-9)
+            assertEquals(v, fmt.volumeToCanonical(fmt.volumeValue(v)), 1e-9)
+            assertEquals(v, fmt.fuelToCanonical(fmt.fuelValue(v)), 1e-9)
+            assertEquals(v, fmt.sprayRateToCanonical(fmt.sprayRateValue(v)), 1e-9)
+            assertEquals(v, fmt.perAreaToCanonical(fmt.perAreaValue(v)), 1e-9)
+        }
+    }
+
+    @Test
+    fun `australian round trip is a pure identity`() {
+        val fmt = RegionFormatter(au)
+        assertEquals(9.75, fmt.areaToCanonical(9.75), 1e-9)
+        assertEquals(9.75, fmt.sprayRateToCanonical(9.75), 1e-9)
     }
 
     // ------------------------------------------------------- temperature
@@ -260,6 +406,6 @@ class RegionFormatterTest {
         val fmt = RegionFormatter(junk)
         assertEquals("12.50 ha", fmt.formatArea(12.5))
         assertEquals("1.50 km", fmt.formatDistance(1500.0))
-        assertEquals("5 Mar 2026", fmt.formatDate(march5))
+        assertEquals("05/03/2026", fmt.formatDate(march5))
     }
 }

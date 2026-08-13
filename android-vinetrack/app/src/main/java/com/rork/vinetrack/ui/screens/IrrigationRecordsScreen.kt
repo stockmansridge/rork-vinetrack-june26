@@ -155,16 +155,18 @@ private fun formatTimeOfDay(minutesOfDay: Int): String {
     val cal = Calendar.getInstance()
     cal.set(Calendar.HOUR_OF_DAY, minutesOfDay / 60)
     cal.set(Calendar.MINUTE, minutesOfDay % 60)
-    return SimpleDateFormat("h:mm a", Locale.getDefault()).format(cal.time).lowercase(Locale.getDefault())
+    // Locale.US, not the device locale: irrigation times must read identically for
+    // every user of the vineyard rather than following each phone's settings.
+    return SimpleDateFormat("h:mm a", Locale.US).format(cal.time).lowercase(Locale.US)
 }
 
 /** "8:30 am–11:45 am" (with " next day" for overnight), or start alone. */
 private fun irrigationTimeRange(startedAt: String?, finishedAt: String?): String? {
     val start = startedAt?.let { parseIrrigationTimestamp(it) } ?: return null
-    val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
-    val startText = timeFormat.format(start).lowercase(Locale.getDefault())
+    val timeFormat = SimpleDateFormat("h:mm a", Locale.US)
+    val startText = timeFormat.format(start).lowercase(Locale.US)
     val finish = finishedAt?.let { parseIrrigationTimestamp(it) } ?: return startText
-    val finishText = timeFormat.format(finish).lowercase(Locale.getDefault())
+    val finishText = timeFormat.format(finish).lowercase(Locale.US)
     val calStart = Calendar.getInstance().apply { time = start }
     val calFinish = Calendar.getInstance().apply { time = finish }
     val sameDay = calStart.get(Calendar.YEAR) == calFinish.get(Calendar.YEAR) &&

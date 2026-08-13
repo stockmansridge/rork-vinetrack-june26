@@ -54,6 +54,7 @@ import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 
@@ -174,12 +175,16 @@ private fun SprayPresetRow(
     onDelete: () -> Unit,
 ) {
     val vine = LocalVineColors.current
+    val fmt = LocalRegionFormatter.current
     VineyardCard(modifier = if (canManage) Modifier.clickable { onEdit() } else Modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(preset.displayName, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, fontSize = 16.sp)
                 Text(
-                    "${trimPreset(preset.waterVolume)} L · ${trimPreset(preset.sprayRatePerHa)} L/ha · CF ${"%.1f".format(preset.concentrationFactor)}",
+                    // Read-only summary, so both the tank volume and the water rate
+                    // convert. The editor's own inputs stay canonical L / L\u00a0ha⁻¹,
+                    // matching iOS, so saving can never reinterpret the number.
+                    "${fmt.formatVolume(preset.waterVolume, 0)} · ${fmt.formatVolumePerArea(preset.sprayRatePerHa)} · CF ${"%.1f".format(preset.concentrationFactor)}",
                     fontSize = 13.sp,
                     color = PresetTint,
                     fontWeight = FontWeight.Medium,

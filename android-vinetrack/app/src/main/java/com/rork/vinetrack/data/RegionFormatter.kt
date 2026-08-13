@@ -1,10 +1,12 @@
 package com.rork.vinetrack.data
 
+import java.text.DateFormatSymbols
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Currency
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.roundToInt
 
 /**
@@ -69,6 +71,21 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
     /** Compact area value with no unit suffix, for "12 ha"-style split labels. */
     fun areaCompactValue(hectares: Double): String = compactNumber(areaValue(hectares))
 
+    /**
+     * Inverse of [areaValue]: converts a value the user typed **in the displayed
+     * unit** back to canonical hectares for storage.
+     *
+     * Editable regionalised fields must round-trip
+     * `canonical → display → user edit → canonical`. Displaying acres while
+     * saving the typed number as hectares would silently corrupt the record, so
+     * every editable area field pairs [areaValue] on the way in with this on the
+     * way out.
+     */
+    fun areaToCanonical(displayValue: Double): Double = when (area) {
+        AreaUnit.Hectares -> displayValue
+        AreaUnit.Acres -> displayValue / ACRES_PER_HECTARE
+    }
+
     // MARK: - Volume (input: litres)
 
     fun volumeValue(litres: Double): Double = when (volume) {
@@ -84,6 +101,12 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
     fun formatVolume(litres: Double, fractionDigits: Int = 1): String =
         "${number(volumeValue(litres), fractionDigits)} $volumeUnitAbbreviation"
 
+    /** Inverse of [volumeValue]: displayed volume → canonical litres. */
+    fun volumeToCanonical(displayValue: Double): Double = when (volume) {
+        VolumeUnit.Litres -> displayValue
+        VolumeUnit.Gallons -> displayValue / gallonsPerLitre
+    }
+
     // MARK: - Fuel (input: litres)
 
     fun fuelValue(litres: Double): Double = when (fuel) {
@@ -98,6 +121,12 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
 
     fun formatFuel(litres: Double, fractionDigits: Int = 1): String =
         "${number(fuelValue(litres), fractionDigits)} $fuelUnitAbbreviation"
+
+    /** Inverse of [fuelValue]: displayed fuel volume → canonical litres. */
+    fun fuelToCanonical(displayValue: Double): Double = when (fuel) {
+        FuelUnit.Litres -> displayValue
+        FuelUnit.Gallons -> displayValue / gallonsPerLitre
+    }
 
     /**
      * Fuel cost per fuel unit. Input is canonical cost **per litre**; converted
@@ -187,6 +216,20 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
     fun formatSprayRate(perHectare: Double, unitLabel: String, fractionDigits: Int = 2): String =
         "${number(sprayRateValue(perHectare), fractionDigits)} $unitLabel/$sprayRateAreaAbbreviation"
 
+    /** Inverse of [sprayRateValue]: displayed per-area rate → canonical per hectare. */
+    fun sprayRateToCanonical(displayValue: Double): Double = when (sprayRateArea) {
+        SprayRateAreaUnit.Hectare -> displayValue
+        SprayRateAreaUnit.Acre -> displayValue * ACRES_PER_HECTARE
+    }
+
+    /**
+     * An application rate whose numerator is a **mass** (kg/ha, t/ha) or any
+     * other unit that the Region & Units contract keeps canonical. Only the area
+     * denominator converts, matching how iOS uses `formatSprayRate` with a
+     * caller-supplied numerator label.
+     */
+    fun massPerAreaUnit(unitLabel: String = "kg"): String = "$unitLabel/$sprayRateAreaAbbreviation"
+
     /** The spray/application rate unit label only, e.g. "L/ha" or "gal/ac". */
     val volumePerAreaUnit: String get() = "$volumeUnitAbbreviation/$sprayRateAreaAbbreviation"
 
@@ -217,20 +260,125 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
     /** The yield-per-area unit label only, e.g. "t/ha" (AU) or "t/ac" (US). */
     fun yieldPerAreaUnit(unitLabel: String = "t"): String = "$unitLabel/$areaUnitAbbreviation"
 
+    /** Inverse of [perAreaValue]: displayed per-area quantity → canonical per hectare. */
+    fun perAreaToCanonical(displayValue: Double): Double = when (area) {
+        AreaUnit.Hectares -> displayValue
+        AreaUnit.Acres -> displayValue * ACRES_PER_HECTARE
+    }
+
+    // MARK: - Cost per unit
+
+    /** Cost-per-area unit label, e.g. "Cost / ha" → "Cost / ac". */
+    val costPerAreaUnit: String get() = areaUnitAbbreviation
+
+    /**
+     * A canonical cost **per hectare** rendered per the vineyard's area unit.
+     * The money is only re-based over a smaller area, so an acre market sees a
+     * proportionally smaller figure for the same total spend.
+     */
+    fun formatCostPerArea(costPerHectare: Double): String =
+        "${formatCurrency(perAreaValue(costPerHectare))}/$areaUnitAbbreviation"
+
+    /** A canonical cost **per litre** rendered per the vineyard's volume unit. */
+    fun formatCostPerVolume(costPerLitre: Double): String {
+        val perUnit = when (volume) {
+            VolumeUnit.Litres -> costPerLitre
+            VolumeUnit.Gallons -> costPerLitre / gallonsPerLitre
+        }
+        return "${formatCurrency(perUnit)}/$volumeUnitAbbreviation"
+    }
+
     // MARK: - Dates
 
     /**
-     * Region-aware medium date, the Android twin of iOS `RegionFormatter.formatDate`.
-     * e.g. "5 Mar 2026" (AU/NZ/UK/ZA), "Mar 5, 2026" (US) or "2026-03-05" (CA/ISO).
+     * The vineyard's timezone (sql/099 `vineyards.timezone`), falling back to the
+     * device zone exactly as iOS `resolvedTimeZone` does. Used for every
+     * user-visible date so a vineyard's records read consistently regardless of
+     * where the phone happens to be.
      */
-    fun formatDate(epochMs: Long): String {
+    private val resolvedTimeZone: TimeZone
+        get() = settings.timezone?.takeIf { it.isNotBlank() }
+            ?.let { id -> TimeZone.getAvailableIDs().firstOrNull { it == id }?.let(TimeZone::getTimeZone) }
+            ?: TimeZone.getDefault()
+
+    /** Builds a formatter bound to the vineyard's locale and timezone, never the device's. */
+    private fun dateFormatter(template: String): SimpleDateFormat =
+        SimpleDateFormat(template, currencyLocale).apply { timeZone = resolvedTimeZone }
+
+    /** The vineyard's numeric date template, identical to iOS `dateFormatTemplate`. */
+    private val dateTemplate: String
+        get() = when (RegionDateFormat.from(settings.dateFormat)) {
+            RegionDateFormat.DayMonthYear -> "dd/MM/yyyy"
+            RegionDateFormat.MonthDayYear -> "MM/dd/yyyy"
+            RegionDateFormat.IsoYearMonthDay -> "yyyy-MM-dd"
+        }
+
+    /**
+     * Region-aware numeric date — the exact Android twin of iOS
+     * `RegionFormatter.formatDate`: "05/03/2026" (DD/MM/YYYY), "03/05/2026"
+     * (MM/DD/YYYY) or "2026-03-05" (YYYY-MM-DD).
+     *
+     * This is the literal rendering of the vineyard's saved `dateFormat`, so a
+     * vineyard set to MM/DD/YYYY never shows a day-first date.
+     */
+    fun formatDate(epochMs: Long): String = dateFormatter(dateTemplate).format(Date(epochMs))
+
+    /**
+     * Month-name date whose field ORDER still follows the vineyard's saved
+     * `dateFormat`: "5 Mar 2026" (DD/MM/YYYY), "Mar 5, 2026" (MM/DD/YYYY) or
+     * "2026 Mar 5" (YYYY-MM-DD).
+     *
+     * Used where a month name is materially easier to scan than digits (record
+     * list rows, activity timelines). It is a presentation variant of the same
+     * setting — never a second source of truth — so a US vineyard still reads
+     * month-first here just as it does in [formatDate].
+     */
+    fun formatDateMedium(epochMs: Long): String {
         val template = when (RegionDateFormat.from(settings.dateFormat)) {
             RegionDateFormat.DayMonthYear -> "d MMM yyyy"
             RegionDateFormat.MonthDayYear -> "MMM d, yyyy"
-            RegionDateFormat.IsoYearMonthDay -> "yyyy-MM-dd"
+            RegionDateFormat.IsoYearMonthDay -> "yyyy MMM d"
         }
-        return SimpleDateFormat(template, currencyLocale).format(Date(epochMs))
+        return dateFormatter(template).format(Date(epochMs))
     }
+
+    /** Region-aware numeric date + 24h time, matching iOS `formatDateTime`. */
+    fun formatDateTime(epochMs: Long, includeSeconds: Boolean = false): String {
+        val time = if (includeSeconds) "HH:mm:ss" else "HH:mm"
+        return dateFormatter("$dateTemplate $time").format(Date(epochMs))
+    }
+
+    /** Month-name date + locale-appropriate clock time, e.g. "5 Mar 2026, 3:04 pm". */
+    fun formatDateTimeMedium(epochMs: Long): String =
+        "${formatDateMedium(epochMs)}, ${formatTime(epochMs)}"
+
+    /** Clock time in the vineyard's locale and timezone (12h or 24h per region). */
+    fun formatTime(epochMs: Long): String {
+        val is12Hour = currencyLocale.country in TWELVE_HOUR_COUNTRIES
+        return dateFormatter(if (is12Hour) "h:mm a" else "HH:mm").format(Date(epochMs))
+    }
+
+    /** Weekday + month-name date without a year, e.g. "Thu 5 Mar" / "Thu, Mar 5". */
+    fun formatDayAndMonth(epochMs: Long): String {
+        val template = when (RegionDateFormat.from(settings.dateFormat)) {
+            RegionDateFormat.MonthDayYear -> "EEE, MMM d"
+            else -> "EEE d MMM"
+        }
+        return dateFormatter(template).format(Date(epochMs))
+    }
+
+    /** Month + year only, e.g. "March 2026", in the vineyard's locale. */
+    fun formatMonthYear(epochMs: Long): String = dateFormatter("MMMM yyyy").format(Date(epochMs))
+
+    /** Short month name for a 1-based month number, in the vineyard's locale. */
+    fun monthAbbreviation(month: Int): String =
+        DateFormatSymbols(currencyLocale).shortMonths.getOrNull(month - 1)
+            ?.takeIf { it.isNotBlank() } ?: month.toString()
+
+    /** Full month name for a 1-based month number, in the vineyard's locale. */
+    fun monthName(month: Int): String =
+        DateFormatSymbols(currencyLocale).months.getOrNull(month - 1)
+            ?.takeIf { it.isNotBlank() } ?: month.toString()
 
     // MARK: - Temperature
     //
@@ -265,6 +413,13 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
         if (value >= 10) value.toInt().toString() else String.format(Locale.US, "%.1f", value)
 
     companion object {
+        /**
+         * Markets that read a 12-hour clock. Derived from the vineyard's country
+         * code, not the device clock setting, so a record's timestamp reads the
+         * same for every user of that vineyard.
+         */
+        private val TWELVE_HOUR_COUNTRIES = setOf("AU", "NZ", "US", "CA", "ZA", "IN", "PH")
+
         private const val ACRES_PER_HECTARE = 2.471053814672
         private const val US_GALLONS_PER_LITRE = 0.264172052
         private const val IMPERIAL_GALLONS_PER_LITRE = 0.219969157

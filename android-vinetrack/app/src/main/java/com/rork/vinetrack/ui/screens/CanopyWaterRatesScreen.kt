@@ -37,6 +37,7 @@ import com.rork.vinetrack.data.CanopyWaterRatesStore
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.util.Locale
@@ -54,6 +55,8 @@ import java.util.Locale
 @Composable
 fun CanopyWaterRatesScreen(modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
     val vine = LocalVineColors.current
+    // Named `region` because this file already has a private `fmt(...)` number helper.
+    val region = LocalRegionFormatter.current
     val context = LocalContext.current
     val store = remember { CanopyWaterRatesStore(context) }
 
@@ -160,7 +163,9 @@ fun CanopyWaterRatesScreen(modifier: Modifier = Modifier, onBack: (() -> Unit)? 
                         Column(horizontalAlignment = Alignment.End) {
                             Text("@ 2.8m row spacing", fontSize = 12.sp, color = vine.textSecondary)
                             Text(
-                                "${fmt(perHa)} L/ha",
+                                // Derived water rate: both the volume and the area
+                                // denominator follow the vineyard's units.
+                                region.formatVolumePerArea(perHa),
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = VineColors.DarkGreen,

@@ -114,6 +114,8 @@ import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.components.WorkTaskLabourLineRow
 import com.rork.vinetrack.ui.components.WorkTaskLabourLineSheet
 import com.rork.vinetrack.data.WorkTaskLabourCosting
+import com.rork.vinetrack.data.RegionFormatter
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.text.SimpleDateFormat
@@ -393,7 +395,7 @@ private fun WorkTasksHub(
                                 color = VineColors.LeafGreen,
                             )
                             Text(
-                                "From " + SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(seasonStartMs)),
+                                "From " + LocalRegionFormatter.current.formatDateMedium(seasonStartMs),
                                 fontSize = 10.sp,
                                 color = vine.textSecondary,
                             )
@@ -869,6 +871,7 @@ private fun WorkTaskDetailView(
     onEdit: (WorkTask) -> Unit,
 ) {
     val vine = LocalVineColors.current
+    val fmt = LocalRegionFormatter.current
     val task = state.workTasks.firstOrNull { it.id == taskId }
     var confirmDelete by remember { mutableStateOf(false) }
     var editLabour by remember { mutableStateOf<WorkTaskLabourLine?>(null) }
@@ -1118,7 +1121,15 @@ private fun WorkTaskDetailView(
                         CostRow("Total", formatCurrency(overallTotal), vine.textPrimary, VineColors.PrimaryAccent, emphasise = true)
                         if (areaHa != null) {
                             DividerWT(vine.cardBorder)
-                            CostRow("Cost / ha", "${formatCurrency(overallTotal / areaHa)} · ${trimHours(areaHa)} ha", vine.textSecondary, vine.textPrimary)
+                            // Both halves are regionalised: the cost is re-based over the
+                            // vineyard's area unit and the area itself is converted, so an
+                            // acre vineyard never reads a per-hectare figure labelled /ac.
+                            CostRow(
+                                "Cost / ${fmt.areaUnitAbbreviation}",
+                                "${fmt.formatCostPerArea(overallTotal / areaHa)} · ${fmt.formatAreaCompact(areaHa)}",
+                                vine.textSecondary,
+                                vine.textPrimary,
+                            )
                         }
                     }
                 }
@@ -1488,21 +1499,42 @@ private fun DividerWT(color: Color) {
     Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(color))
 }
 
+/**
+ * Vineyard-formatted task date. Reads the shared formatter from the composition
+ * so the vineyard's saved `dateFormat` — not the phone's locale — decides field
+ * order.
+ */
+@Composable
 private fun formatTaskDate(epochMs: Long?): String? {
+    val fmt = LocalRegionFormatter.current
     epochMs ?: return null
-    return SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(epochMs))
+    return fmt.formatDateMedium(epochMs)
 }
 
-/** Day + abbreviated month (e.g. "5 Jun"), used in list rows. */
+/** Day + abbreviated month (e.g. "5 Jun" / "Jun 5"), used in list rows. */
+@Composable
 private fun formatTaskDayMonth(epochMs: Long?): String {
+    val fmt = LocalRegionFormatter.current
     epochMs ?: return "—"
-    return SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(epochMs))
+    // Month-name order follows the vineyard's date format, and the month name
+    // itself comes from the vineyard's locale rather than the device's.
+    return if (fmt.settings.dateFormat == "MM/DD/YYYY") {
+        "${fmt.monthAbbreviation(monthOf(epochMs))} ${dayOf(epochMs)}"
+    } else {
+        "${dayOf(epochMs)} ${fmt.monthAbbreviation(monthOf(epochMs))}"
+    }
 }
 
 private fun formatTaskYear(epochMs: Long?): String? {
     epochMs ?: return null
-    return SimpleDateFormat("yyyy", Locale.getDefault()).format(Date(epochMs))
+    return SimpleDateFormat("yyyy", Locale.US).format(Date(epochMs))
 }
+
+/** 1-based month for [epochMs]. Year numbers are locale-invariant, so only the month needs the vineyard's locale. */
+private fun monthOf(epochMs: Long): Int =
+    SimpleDateFormat("M", Locale.US).format(Date(epochMs)).toIntOrNull() ?: 1
+
+private fun dayOf(epochMs: Long): String = SimpleDateFormat("d", Locale.US).format(Date(epochMs))
 
 /** Whole-hour-aware duration label (e.g. "2 h", "1.5 h"). */
 private fun formatHours(hours: Double): String = "${trimHours(hours)} h"
@@ -1511,10 +1543,13 @@ private fun trimHours(hours: Double): String =
     if (hours % 1.0 == 0.0) hours.toInt().toString() else "%.1f".format(hours)
 
 /** Compact currency label (e.g. "$1,250", "$42.50"). Matches the iOS formatter intent. */
-private fun formatCurrency(value: Double): String {
-    val rounded = if (value % 1.0 == 0.0) "%,d".format(value.toLong()) else "%,.2f".format(value)
-    return "$$rounded"
-}
+/**
+ * Region-aware money label. Previously hardcoded a "$" prefix, so a GBP vineyard
+ * saw dollar amounts; it now uses the vineyard's currency symbol.
+ */
+@Composable
+private fun formatCurrency(value: Double): String =
+    LocalRegionFormatter.current.formatCompactCurrency(value)
 
 @Composable
 private fun MachineLineRow(line: WorkTaskMachineLine, equipmentName: String, onClick: () -> Unit) {

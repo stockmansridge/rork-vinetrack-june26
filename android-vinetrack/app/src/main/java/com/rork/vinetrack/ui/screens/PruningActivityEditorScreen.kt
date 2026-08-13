@@ -91,6 +91,7 @@ import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.formatLabourCurrency
 import com.rork.vinetrack.ui.components.formatLabourHours
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.time.Instant
@@ -1116,6 +1117,8 @@ private fun PruningWorkTaskCreateDialog(
     onConfirm: () -> Unit,
 ) {
     val vine = LocalVineColors.current
+    // Named `region` because this file already has a private `fmt(value, decimals)` helper.
+    val region = LocalRegionFormatter.current
     var showIssues by remember { mutableStateOf(false) }
     var hoursText by remember { mutableStateOf(task.hoursPerWorker?.let { fmt(it, 2) } ?: "") }
     var rateText by remember { mutableStateOf(task.hourlyRate?.let { fmt(it, 2) } ?: "") }
@@ -1345,7 +1348,12 @@ private fun PruningWorkTaskCreateDialog(
                     tint = if (cost == null) vine.textSecondary else VineColors.LeafGreen,
                 )
                 if (costPerHa != null) {
-                    PruningCostingRow("Cost per hectare", PieceRateCosting.currencyLabel(costPerHa) + "/ha")
+                    // `costPerHectare` is canonical per-hectare, so an acre vineyard
+                    // must see the cost re-based, not a per-hectare figure relabelled.
+                    PruningCostingRow(
+                        "Cost per ${region.areaUnitAbbreviation}",
+                        region.formatCostPerArea(costPerHa),
+                    )
                 }
             }
         },

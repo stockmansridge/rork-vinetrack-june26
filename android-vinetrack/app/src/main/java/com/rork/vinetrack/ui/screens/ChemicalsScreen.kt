@@ -84,6 +84,7 @@ import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 
@@ -303,6 +304,7 @@ private fun ChemicalRow(
     onDelete: () -> Unit,
 ) {
     val vine = LocalVineColors.current
+    val fmt = LocalRegionFormatter.current
     VineyardCard(modifier = if (canManage) Modifier.clickable { onEdit() } else Modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -330,7 +332,11 @@ private fun ChemicalRow(
                 }
                 // Dual rate basis lines.
                 val rateLines = buildList {
-                    chemical.ratePerHaDisplay?.takeIf { it > 0 }?.let { add("${trimNum(it)} ${chemical.unit}/ha") }
+                    // The product's own pack unit (L/kg/mL/g) is canonical — it is a
+                    // label attribute, not a Region & Units value — so only the area
+                    // denominator converts, exactly as iOS does.
+                    chemical.ratePerHaDisplay?.takeIf { it > 0 }
+                        ?.let { add("${trimNum(fmt.sprayRateValue(it))} ${chemical.unit}/${fmt.sprayRateAreaAbbreviation}") }
                     chemical.ratePer100LDisplay?.takeIf { it > 0 }?.let { add("${trimNum(it)} ${chemical.unit}/100L") }
                 }
                 if (rateLines.isNotEmpty()) {

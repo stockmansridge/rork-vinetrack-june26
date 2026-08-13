@@ -64,6 +64,7 @@ import com.rork.vinetrack.data.model.isFertiliserProduct
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.time.LocalDate
@@ -91,6 +92,7 @@ fun FertiliserCalculatorScreen(
     onOpenProducts: (() -> Unit)? = null,
 ) {
     val vine = LocalVineColors.current
+    val region = LocalRegionFormatter.current
     val vineyardId = state.selectedVineyardId
 
     var records by remember(vineyardId) {
@@ -151,7 +153,12 @@ private fun fertFmt(value: Double, decimals: Int = 2): String {
     return "%.${decimals}f".format(value).trimEnd('0').trimEnd('.')
 }
 
-private fun money(value: Double): String = "$%.2f".format(value)
+/**
+ * Region-aware money label. Previously hardcoded "$", so a GBP or EUR vineyard
+ * saw dollar amounts regardless of its Region & Units currency.
+ */
+@Composable
+private fun money(value: Double): String = LocalRegionFormatter.current.formatCurrency(value)
 
 private val fertDisplayDate: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM")
 
@@ -210,6 +217,7 @@ private fun FertCalculatorTab(
     onSaveRecord: (FertiliserRecord) -> Unit,
 ) {
     val vine = LocalVineColors.current
+    val region = LocalRegionFormatter.current
 
     var mode by rememberSaveable { mutableStateOf("perHectare") }
     var selectedPaddockIds by remember { mutableStateOf(setOf<String>()) }
@@ -500,7 +508,15 @@ private fun FertCalculatorTab(
                         }
                         if (cost != null) {
                             FertResultRow("Product cost", money(cost))
-                            if (area > 0) FertResultRow("Cost / ha", money(cost / area))
+                            // `area` is entered in hectares (canonical, matching the
+                            // iOS "Treated area (ha)" field), so cost/area is a
+                            // per-hectare figure that must be re-based for acre markets.
+                            if (area > 0) {
+                                FertResultRow(
+                                    "Cost / ${region.areaUnitAbbreviation}",
+                                    region.formatCostPerArea(cost / area),
+                                )
+                            }
                             if (vines > 0) FertResultRow("Cost / vine", money(cost / vines))
                             if (labour != null) {
                                 FertResultRow("Labour & machinery", money(labour))

@@ -139,6 +139,7 @@ import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.ui.LocalRegionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.text.SimpleDateFormat
@@ -1016,12 +1017,12 @@ private fun SprayDetailView(
                                 }
                                 Text("Tank ${tank.tankNumber}", fontWeight = FontWeight.SemiBold, color = vine.textPrimary, modifier = Modifier.weight(1f))
                                 if (tank.areaPerTank > 0) {
-                                    Text("${trimNum(tank.areaPerTank)} ha/tank", fontSize = 12.sp, color = vine.textSecondary)
+                                    Text("${state.regionFormatter.formatAreaCompact(tank.areaPerTank)}/tank", fontSize = 12.sp, color = vine.textSecondary)
                                 }
                             }
                             val specs = buildList {
-                                if (tank.waterVolume > 0) add("${trimNum(tank.waterVolume)} L water")
-                                if (tank.sprayRatePerHa > 0) add("${trimNum(tank.sprayRatePerHa)} L/ha")
+                                if (tank.waterVolume > 0) add("${state.regionFormatter.formatVolume(tank.waterVolume, 0)} water")
+                                if (tank.sprayRatePerHa > 0) add(state.regionFormatter.formatVolumePerArea(tank.sprayRatePerHa))
                                 if (tank.concentrationFactor > 0 && tank.concentrationFactor != 1.0) add("${trimNum(tank.concentrationFactor)}× conc.")
                             }
                             if (specs.isNotEmpty()) {
@@ -1038,7 +1039,9 @@ private fun SprayDetailView(
                                     Icon(Icons.Filled.Science, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(16.dp))
                                     Text(chem.name.takeIf { it.isNotBlank() } ?: "Chemical", color = vine.textPrimary, fontSize = 14.sp, modifier = Modifier.weight(1f), maxLines = 1)
                                     val cdesc = buildList {
-                                        if (chem.ratePerHa > 0) add("${trimNum(chem.ratePerHa)}/ha")
+                                        if (chem.ratePerHa > 0) {
+                                            add("${trimNum(state.regionFormatter.sprayRateValue(chem.ratePerHa))}/${state.regionFormatter.sprayRateAreaAbbreviation}")
+                                        }
                                         if (chem.volumePerTank > 0) add("${trimNum(chem.volumePerTank)}/tank")
                                     }.joinToString(" · ")
                                     Column(horizontalAlignment = Alignment.End) {
@@ -1089,8 +1092,8 @@ private fun SprayDetailView(
                             DividerSP(vine.cardBorder)
                             DetailRowSP(
                                 Icons.Filled.Agriculture,
-                                "Cost / ha",
-                                "${formatSprayCurrency(perHa, state.regionFormatter)} · ${trimNum(record.totalSprayArea)} ha",
+                                "Cost / ${state.regionFormatter.areaUnitAbbreviation}",
+                                "${state.regionFormatter.formatCostPerArea(perHa)} · ${state.regionFormatter.formatAreaCompact(record.totalSprayArea)}",
                                 VineColors.LeafGreen,
                             )
                         }
@@ -1180,7 +1183,7 @@ private fun SprayDetailView(
                                     DetailRowSP(
                                         Icons.Filled.LocalGasStation,
                                         "Fuel",
-                                        fuel.litres?.let { "${formatSprayCurrency(fc, state.regionFormatter)} · ${trimNum(it)} L" } ?: formatSprayCurrency(fc, state.regionFormatter),
+                                        fuel.litres?.let { "${formatSprayCurrency(fc, state.regionFormatter)} · ${state.regionFormatter.formatFuel(it)}" } ?: formatSprayCurrency(fc, state.regionFormatter),
                                         VineColors.Orange,
                                     )
                                 }
@@ -1190,7 +1193,7 @@ private fun SprayDetailView(
                                 }
                                 cost.costPerHa?.let { perHa ->
                                     DividerSP(vine.cardBorder)
-                                    DetailRowSP(Icons.Filled.Paid, "Cost / ha", formatSprayCurrency(perHa, state.regionFormatter), VineColors.DarkGreen)
+                                    DetailRowSP(Icons.Filled.Paid, "Cost / ${state.regionFormatter.areaUnitAbbreviation}", state.regionFormatter.formatCostPerArea(perHa), VineColors.DarkGreen)
                                 }
                             } else if (linkedTrip.machineId != null || linkedTrip.tractorId != null) {
                                 cost.warnings.firstOrNull()?.let { warning ->
@@ -1734,7 +1737,10 @@ private fun ChemicalNameField(
                     DropdownMenuItem(
                         text = {
                             val sub = buildList {
-                                if (saved.ratePerHa > 0) add("${trimNum(saved.ratePerHa)} ${saved.unit}/ha")
+                                if (saved.ratePerHa > 0) {
+                                    val region = LocalRegionFormatter.current
+                                    add("${trimNum(region.sprayRateValue(saved.ratePerHa))} ${saved.unit}/${region.sprayRateAreaAbbreviation}")
+                                }
                                 if (canEditCost) saved.costPerUnit?.takeIf { it > 0 }?.let { add("${formatSprayCurrency(it, fmt)}/${saved.unit}") }
                             }.joinToString(" · ")
                             Column {
@@ -1800,7 +1806,7 @@ private fun TankEditor(
                                     Column {
                                         Text(preset.displayName)
                                         Text(
-                                            "${trimNum(preset.waterVolume)} L · ${trimNum(preset.sprayRatePerHa)} L/ha · CF ${"%.1f".format(preset.concentrationFactor)}",
+                                            "${LocalRegionFormatter.current.formatVolume(preset.waterVolume, 0)} · ${LocalRegionFormatter.current.formatVolumePerArea(preset.sprayRatePerHa)} · CF ${"%.1f".format(preset.concentrationFactor)}",
                                             fontSize = 12.sp,
                                             color = vine.textSecondary,
                                         )
