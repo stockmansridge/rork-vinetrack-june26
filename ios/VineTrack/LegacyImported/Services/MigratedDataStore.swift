@@ -53,6 +53,10 @@ final class MigratedDataStore {
     var maintenanceLogs: [MaintenanceLog] = []
     var workTasks: [WorkTask] = []
     var workTaskLabourLines: [WorkTaskLabourLine] = []
+    /// Labour lines owned by PRUNING ACTIVITIES (sql/190). Labour is
+    /// pruning-owned: a linked Work Task never holds a copy, it reads THROUGH to
+    /// these rows, so the two modules can never report the same money twice.
+    var pruningActivityLabourLines: [PruningActivityLabourLine] = []
     var workTaskMachineLines: [WorkTaskMachineLine] = []
     var workTaskPaddocks: [WorkTaskPaddock] = []
     /// Historical per-row vine-count snapshots behind piece-rate jobs (sql/188).
@@ -155,6 +159,11 @@ final class MigratedDataStore {
     var onWorkTaskDeleted: ((UUID) -> Void)?
     var onWorkTaskLabourLineChanged: ((UUID) -> Void)?
     var onWorkTaskLabourLineDeleted: ((UUID) -> Void)?
+    /// Fired with the ACTIVITY id, never a line id: `save_pruning_activity_labour_lines`
+    /// is a DESIRED-STATE save of the activity's whole set, so the unit of sync
+    /// work is the activity. Adding, editing and removing a line all mark the
+    /// same activity dirty, which is what makes an offline replay idempotent.
+    var onPruningActivityLabourLinesChanged: ((UUID) -> Void)?
     var onWorkTaskMachineLineChanged: ((UUID) -> Void)?
     var onWorkTaskMachineLineDeleted: ((UUID) -> Void)?
     var onWorkTaskPaddockChanged: ((UUID) -> Void)?
@@ -188,6 +197,7 @@ final class MigratedDataStore {
     let tripRepo: TripRepository
     let workTaskRepo: WorkTaskRepository
     let workTaskLabourLineRepo: WorkTaskLabourLineRepository
+    let pruningActivityLabourLineRepo: PruningActivityLabourLineRepository
     let workTaskMachineLineRepo: WorkTaskMachineLineRepository
     let workTaskPaddockRepo: WorkTaskPaddockRepository
     let workTaskPieceRateRowRepo: WorkTaskPieceRateRowRepository
@@ -231,6 +241,7 @@ final class MigratedDataStore {
         self.tripRepo = TripRepository(persistence: persistence)
         self.workTaskRepo = WorkTaskRepository(persistence: persistence)
         self.workTaskLabourLineRepo = WorkTaskLabourLineRepository(persistence: persistence)
+        self.pruningActivityLabourLineRepo = PruningActivityLabourLineRepository(persistence: persistence)
         self.workTaskMachineLineRepo = WorkTaskMachineLineRepository(persistence: persistence)
         self.workTaskPaddockRepo = WorkTaskPaddockRepository(persistence: persistence)
         self.workTaskPieceRateRowRepo = WorkTaskPieceRateRowRepository(persistence: persistence)
@@ -414,6 +425,7 @@ final class MigratedDataStore {
             maintenanceLogs = []
             workTasks = []
             workTaskLabourLines = []
+            pruningActivityLabourLines = []
             workTaskMachineLines = []
             workTaskPaddocks = []
             workTaskPieceRateRows = []
@@ -427,6 +439,7 @@ final class MigratedDataStore {
         trips = tripRepo.load(for: vineyardId)
         workTasks = workTaskRepo.load(for: vineyardId)
         workTaskLabourLines = workTaskLabourLineRepo.load(for: vineyardId)
+        pruningActivityLabourLines = pruningActivityLabourLineRepo.load(for: vineyardId)
         workTaskMachineLines = workTaskMachineLineRepo.load(for: vineyardId)
         workTaskPaddocks = workTaskPaddockRepo.load(for: vineyardId)
         workTaskPieceRateRows = workTaskPieceRateRowRepo.load(for: vineyardId)
@@ -493,6 +506,7 @@ final class MigratedDataStore {
         maintenanceLogs = []
         workTasks = []
         workTaskLabourLines = []
+        pruningActivityLabourLines = []
         workTaskMachineLines = []
         workTaskPaddocks = []
         workTaskPieceRateRows = []
@@ -515,6 +529,7 @@ final class MigratedDataStore {
             TripRepository.storageKey,
             WorkTaskRepository.storageKey,
             WorkTaskLabourLineRepository.storageKey,
+            PruningActivityLabourLineRepository.storageKey,
             WorkTaskMachineLineRepository.storageKey,
             WorkTaskPaddockRepository.storageKey,
             WorkTaskTypeRepository.storageKey,
@@ -1245,6 +1260,88 @@ final class MigratedDataStore {
         workTaskLabourLines.removeAll { $0.id == lineId }
         workTaskLabourLineRepo.saveSlice(workTaskLabourLines, for: vineyardId)
         onWorkTaskLabourLineDeleted?(lineId)
+    }
+
+    // MARK: - PruningActivityLabourLine CRUD (sql/190)
+
+    /// Every mutation below marks the parent ACTIVITY dirty rather than the line,
+    /// because the server contract is a DESIRED-STATE save of the activity's
+    /// whole set. A removal is therefore expressed as "this line is no longer in
+    /// the set", which is what lets a replay be idempotent instead of
+    /// resurrecting a line another device deleted.
+
+    /// The live labour lines of ONE activity, in stable display order.
+    func labourLines(forPruningActivity activityId: UUID) -> [PruningActivityLabourLine] {
+        PruningActivityLabourCosting.lines(pruningActivityLabourLines, for: activityId)
+    }
+
+    func addPruningActivityLabourLine(_ line: PruningActivityLabourLine) {
+        guard let vineyardId = selectedVineyardId else { return }
+        var item = line
+        item.vineyardId = vineyardId
+        pruningActivityLabourLines.append(item)
+        pruningActivityLabourLineRepo.saveSlice(pruningActivityLabourLines, for: vineyardId)
+        onPruningActivityLabourLinesChanged?(item.pruningActivityId)
+    }
+
+    func updatePruningActivityLabourLine(_ line: PruningActivityLabourLine) {
+        guard let vineyardId = selectedVineyardId else { return }
+        guard let index = pruningActivityLabourLines.firstIndex(where: { $0.id == line.id }) else { return }
+        pruningActivityLabourLines[index] = line
+        pruningActivityLabourLineRepo.saveSlice(pruningActivityLabourLines, for: vineyardId)
+        onPruningActivityLabourLinesChanged?(line.pruningActivityId)
+    }
+
+    func deletePruningActivityLabourLine(_ lineId: UUID) {
+        guard let vineyardId = selectedVineyardId else { return }
+        guard let removed = pruningActivityLabourLines.first(where: { $0.id == lineId }) else { return }
+        pruningActivityLabourLines.removeAll { $0.id == lineId }
+        pruningActivityLabourLineRepo.saveSlice(pruningActivityLabourLines, for: vineyardId)
+        onPruningActivityLabourLinesChanged?(removed.pruningActivityId)
+    }
+
+    /// Replaces ONE activity's whole set — the local twin of the RPC contract.
+    /// `line_index` is renumbered from the given order so the stored display
+    /// order is the order the operator actually sees.
+    func replacePruningActivityLabourLines(
+        _ lines: [PruningActivityLabourLine],
+        forPruningActivity activityId: UUID
+    ) {
+        guard let vineyardId = selectedVineyardId else { return }
+        pruningActivityLabourLines.removeAll { $0.pruningActivityId == activityId }
+        for (index, line) in lines.enumerated() {
+            var item = line
+            item.vineyardId = vineyardId
+            item.pruningActivityId = activityId
+            item.lineIndex = index
+            pruningActivityLabourLines.append(item)
+        }
+        pruningActivityLabourLineRepo.saveSlice(pruningActivityLabourLines, for: vineyardId)
+        onPruningActivityLabourLinesChanged?(activityId)
+    }
+
+    /// Adopts the CANONICAL server set for one activity after a successful
+    /// `save_pruning_activity_labour_lines` or pull. Deliberately silent: the
+    /// server has just acknowledged this state, so re-marking it dirty would
+    /// push the same rows back forever.
+    func applyRemotePruningActivityLabourLines(
+        _ lines: [PruningActivityLabourLine],
+        forPruningActivity activityId: UUID,
+        vineyardId: UUID
+    ) {
+        if selectedVineyardId == vineyardId {
+            pruningActivityLabourLines.removeAll { $0.pruningActivityId == activityId }
+            pruningActivityLabourLines.append(contentsOf: lines)
+            pruningActivityLabourLineRepo.saveSlice(pruningActivityLabourLines, for: vineyardId)
+        } else {
+            var all = pruningActivityLabourLineRepo.loadAll()
+            all.removeAll { $0.pruningActivityId == activityId }
+            all.append(contentsOf: lines)
+            pruningActivityLabourLineRepo.replace(
+                all.filter { $0.vineyardId == vineyardId },
+                for: vineyardId
+            )
+        }
     }
 
     // MARK: - WorkTaskMachineLine CRUD

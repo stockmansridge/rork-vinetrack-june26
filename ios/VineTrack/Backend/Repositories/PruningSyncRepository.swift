@@ -46,6 +46,16 @@ protocol PruningSyncRepositoryProtocol: Sendable {
     /// Fetches the authoritative SQL 115 vineyard summary for the online
     /// parity check. Offline callers must treat failures as "no check".
     func fetchVineyardSummary(vineyardId: UUID) async throws -> BackendPruningVineyardSummary
+    /// DESIRED-STATE save of ALL labour lines of one pruning activity (sql/190).
+    /// Lines present are upserted on their CLIENT id, lines absent are
+    /// soft-deleted, and a re-sent soft-deleted line is restored — which is what
+    /// makes replaying a queued offline edit idempotent.
+    func saveActivityLabourLines(
+        _ params: SavePruningActivityLabourLinesParams
+    ) async throws -> SavePruningActivityLabourLinesResult
+    /// Every pruning labour line of the vineyard, soft-deleted rows included so
+    /// a delete made on another device is applied locally too.
+    func fetchActivityLabourLines(vineyardId: UUID) async throws -> [BackendPruningActivityLabourLine]
 }
 
 private nonisolated struct PruningIdRequest: Encodable, Sendable {
@@ -186,5 +196,49 @@ final class SupabasePruningSyncRepository: PruningSyncRepositoryProtocol {
             .rpc("get_pruning_vineyard_summary", params: PruningSummaryRequest(vineyardId: vineyardId))
             .execute()
             .value
+    }
+
+    func saveActivityLabourLines(
+        _ params: SavePruningActivityLabourLinesParams
+    ) async throws -> SavePruningActivityLabourLinesResult {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        return try await provider.client
+            .rpc("save_pruning_activity_labour_lines", params: params)
+            .execute()
+            .value
+    }
+
+    func fetchActivityLabourLines(vineyardId: UUID) async throws -> [BackendPruningActivityLabourLine] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        // The FULL vineyard slice, never an incremental cursor. Labour lines are
+        // also written by the portal, per-vineyard volume is small, and the
+        // local apply is a wholesale per-activity replace — so a full fetch is
+        // both safe and self-healing.
+        let data = try await provider.client
+            .from("pruning_activity_labour_lines")
+            .select()
+            .eq("vineyard_id", value: vineyardId.uuidString)
+            .order("line_index", ascending: true)
+            .execute()
+            .data
+        // Per-row resilient decode — one malformed row must not break sync for
+        // the rest of the vineyard's pruning labour.
+        guard let array = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+        let decoder = JSONDecoder()
+        var rows: [BackendPruningActivityLabourLine] = []
+        rows.reserveCapacity(array.count)
+        for row in array {
+            do {
+                let rowData = try JSONSerialization.data(withJSONObject: row)
+                rows.append(try decoder.decode(BackendPruningActivityLabourLine.self, from: rowData))
+            } catch {
+                #if DEBUG
+                print("[PruningLabourSync] decode failed id=\((row["id"] as? String) ?? "<unknown>") error=\(error)")
+                #endif
+            }
+        }
+        return rows
     }
 }

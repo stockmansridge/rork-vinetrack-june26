@@ -40,6 +40,7 @@ final class PruningSyncService {
         seasonMetadata.pendingUpserts.count + entryMetadata.pendingUpserts.count
             + editMetadata.pendingUpserts.count + activityMetadata.pendingUpserts.count
             + activityEditMetadata.pendingUpserts.count
+            + activityLabourMetadata.pendingUpserts.count
     }
     var pendingDeleteCount: Int {
         seasonMetadata.pendingDeletes.count + entryMetadata.pendingDeletes.count
@@ -64,6 +65,16 @@ final class PruningSyncService {
     /// already-acknowledged activity (adds/removes a block, changes quarters,
     /// changes the date, or changes labour without touching allocations).
     private let activityEditMetadata: ManagementSyncMetadata
+    /// Queued `save_pruning_activity_labour_lines` pushes (sql/190), keyed by
+    /// the ACTIVITY id rather than the line id.
+    ///
+    /// The RPC is a DESIRED-STATE save of an activity's whole set, so the unit
+    /// of work is the activity: adding, editing and removing lines all collapse
+    /// into ONE queued push carrying the final set. That is what makes an
+    /// offline replay idempotent — replaying the same payload produces the same
+    /// rows, and a queued edit cannot resurrect a line deleted on another
+    /// device afterwards.
+    private let activityLabourMetadata: ManagementSyncMetadata
     private var isConfigured: Bool = false
     private var eagerPushTask: Task<Void, Never>?
     /// Resolves whether a Work Task still has an unacknowledged local write.
@@ -81,6 +92,7 @@ final class PruningSyncService {
         self.editMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_edit_sync_metadata")
         self.activityMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_activity_sync_metadata")
         self.activityEditMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_activity_edit_sync_metadata")
+        self.activityLabourMetadata = ManagementSyncMetadata(key: "vinetrack_pruning_activity_labour_sync_metadata")
     }
 
     /// Wires the Work Task dependency used to order the activity push. Injected
@@ -154,6 +166,15 @@ final class PruningSyncService {
             self?.activityMetadata.markDeleted(id, at: Date())
             self?.activityMetadata.clearDirty([id])
             self?.activityEditMetadata.clearDirty([id])
+            // Labour lines cascade with the activity server-side, so a queued
+            // labour push for a reversed activity is obsolete rather than lost.
+            self?.activityLabourMetadata.clearDirty([id])
+            self?.scheduleEagerPush()
+        }
+        // Fired with the ACTIVITY id: one queued push carries the activity's
+        // final desired set, however many lines were added, edited or removed.
+        store.onPruningActivityLabourLinesChanged = { [weak self] activityId in
+            self?.activityLabourMetadata.markDirty(activityId, at: Date())
             self?.scheduleEagerPush()
         }
     }
@@ -245,6 +266,17 @@ final class PruningSyncService {
             print("[PruningSync] activity push failed: \(error)")
         }
 
+        // Labour lines push AFTER the activities: `save_pruning_activity_labour_lines`
+        // resolves the parent first, so an activity created offline must exist
+        // server-side before its labour can be attached. A failure here leaves
+        // the set queued with its lines intact and never blocks the pulls.
+        do {
+            try await pushActivityLabourLines(vineyardId: vineyardId)
+        } catch {
+            if pushError == nil { pushError = error }
+            print("[PruningSync] activity labour push failed: \(error)")
+        }
+
         do {
             try await pullEntriesAndSegments(vineyardId: vineyardId)
             entryMetadata.setLastSync(Date(), for: vineyardId)
@@ -253,6 +285,15 @@ final class PruningSyncService {
             errorMessage = error.localizedDescription
             syncStatus = .failure(error.localizedDescription)
             return
+        }
+
+        // Labour lines pull last: they depend on nothing else, and a failure
+        // must not cost the caller the entry/segment work already applied.
+        do {
+            try await pullActivityLabourLines(vineyardId: vineyardId)
+            activityLabourMetadata.setLastSync(Date(), for: vineyardId)
+        } catch {
+            print("[PruningSync] activity labour pull failed: \(error)")
         }
 
         lastSyncDate = Date()
@@ -749,7 +790,134 @@ final class PruningSyncService {
         )
     }
 
+    // MARK: Push — pruning-owned labour lines (sql/190)
+
+    /// Replays queued labour-line writes through `save_pruning_activity_labour_lines`.
+    ///
+    /// The payload is the activity's COMPLETE desired set, so this one call
+    /// covers creates, edits and removals together. An EMPTY set is a legitimate
+    /// payload meaning "this activity has no labour lines" — it is what clears
+    /// the last line — so it is never skipped as a no-op.
+    private func pushActivityLabourLines(vineyardId: UUID) async throws {
+        guard let store else { return }
+        let dirty = activityLabourMetadata.pendingUpserts
+        guard !dirty.isEmpty else { return }
+        var firstError: Error?
+
+        for (activityId, ts) in dirty {
+            guard let draft = pruningStore.activity(id: activityId) else {
+                // No local activity: nothing this queue entry can ever describe.
+                activityLabourMetadata.clearDirty([activityId])
+                continue
+            }
+            guard draft.vineyardId == vineyardId else { continue }
+
+            // ORDERED DEPENDENCY: the parent activity must exist server-side, or
+            // the RPC raises "Pruning activity not found". The labour stays
+            // queued (with every line intact) and retries on the next pass.
+            if activityMetadata.pendingUpserts[activityId] != nil {
+                print("[PruningSync] labour for activity \(activityId) held: the activity has not synced yet")
+                if firstError == nil {
+                    firstError = NSError(
+                        domain: "PruningSync",
+                        code: 4,
+                        userInfo: [NSLocalizedDescriptionKey: "Pruning labour is waiting for its activity to reach the server — it will retry automatically."]
+                    )
+                }
+                continue
+            }
+
+            let lines = store.labourLines(forPruningActivity: activityId)
+            let payload = lines.enumerated().map { index, line in
+                BackendPruningActivityLabourLinePayload(from: line, lineIndex: index)
+            }
+            do {
+                let result = try await repository.saveActivityLabourLines(
+                    SavePruningActivityLabourLinesParams(
+                        activityId: activityId,
+                        lines: payload,
+                        clientUpdatedAt: ts
+                    )
+                )
+                adoptCanonicalLabourLines(
+                    activityId: activityId,
+                    vineyardId: draft.vineyardId,
+                    result: result
+                )
+                activityLabourMetadata.clearDirty([activityId])
+            } catch {
+                print("[PruningSync] save_pruning_activity_labour_lines failed for \(activityId): \(error)")
+                if firstError == nil { firstError = error }
+            }
+        }
+        SyncIssueCenter.shared.notePending(
+            entity: "Pruning Labour",
+            count: activityLabourMetadata.pendingUpserts.count
+        )
+        if let firstError { throw firstError }
+    }
+
+    /// Adopts the canonical set the server returned, replacing the activity's
+    /// whole local set. The server has just acknowledged this state, so the
+    /// apply is deliberately silent — re-marking it dirty would push the same
+    /// rows back forever.
+    private func adoptCanonicalLabourLines(
+        activityId: UUID,
+        vineyardId: UUID,
+        result: SavePruningActivityLabourLinesResult
+    ) {
+        guard let store, let remote = result.labourLines else { return }
+        store.applyRemotePruningActivityLabourLines(
+            remote.filter { $0.deletedAt == nil }.map { $0.toLabourLine() },
+            forPruningActivity: activityId,
+            vineyardId: vineyardId
+        )
+        #if DEBUG
+        print("""
+        [PruningLabourSync] activity=\(activityId) saved=\(result.saved ?? 0) \
+        removed=\(result.removed ?? 0) hours=\(result.totalLabourHours.map { "\($0)" } ?? "-") \
+        cost=\(result.labourCost.map { "\($0)" } ?? "not specified") \
+        source=\(result.labourCostSource ?? "-")
+        """)
+        #endif
+    }
+
     // MARK: Pull
+
+    /// Pulls every pruning labour line of the vineyard and applies them one
+    /// ACTIVITY at a time.
+    ///
+    /// The apply is a wholesale per-activity replace, matching the desired-state
+    /// write contract: an activity the server reports with no live lines really
+    /// has none, so a line deleted on another device disappears here too.
+    /// Activities with an unresolved queued write keep their optimistic local
+    /// set — a pull must never overwrite work that has not been pushed yet.
+    private func pullActivityLabourLines(vineyardId: UUID) async throws {
+        guard let store else { return }
+        let remote = try await repository.fetchActivityLabourLines(vineyardId: vineyardId)
+        let queued = Set(activityLabourMetadata.pendingUpserts.keys)
+
+        var byActivity: [UUID: [PruningActivityLabourLine]] = [:]
+        for row in remote where row.deletedAt == nil {
+            byActivity[row.pruningActivityId, default: []].append(row.toLabourLine())
+        }
+        // Every activity the server mentioned at all, so one whose last line was
+        // soft-deleted remotely is cleared locally instead of lingering.
+        let touched = Set(remote.map(\.pruningActivityId))
+
+        var applied = 0
+        for activityId in touched where !queued.contains(activityId) {
+            store.applyRemotePruningActivityLabourLines(
+                (byActivity[activityId] ?? []).sorted { $0.lineIndex < $1.lineIndex },
+                forPruningActivity: activityId,
+                vineyardId: vineyardId
+            )
+            applied += 1
+        }
+        #if DEBUG
+        print("[PruningLabourSync] pull: \(remote.count) row(s) across \(applied) activity(ies), \(queued.count) held for push")
+        #endif
+    }
 
     private func pullSeasons(vineyardId: UUID) async throws {
         let lastSync = seasonMetadata.lastSync(for: vineyardId)

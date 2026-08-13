@@ -165,6 +165,18 @@ fun PruningActivityEditorScreen(
      * piece rate can be costed without re-entering a number the app knows.
      */
     labourSection: (@Composable (taskId: String, suggestedVineCount: Int) -> Unit)? = null,
+    /**
+     * THE labour surface of this ACTIVITY (sql/190), injected by the caller.
+     *
+     * Labour is PRUNING-OWNED: it belongs to the activity and is counted ONCE
+     * however many blocks the activity covers. A linked Work Task never gets a
+     * copy — it reads through to the same rows — so this is the only place
+     * labour is entered for a pruning job.
+     *
+     * `suggestedVineCount` is the vines under the rows selected above, so a
+     * piece rate can be costed without re-entering a number the app knows.
+     */
+    pruningLabourSection: (@Composable (suggestedVineCount: Int) -> Unit)? = null,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -416,6 +428,25 @@ fun PruningActivityEditorScreen(
                     onUnlink = { draft = PruningActivityTaskLink.unlink(draft) },
                     labourSection = labourSection,
                 )
+            }
+
+            // Labour — ALSO activity level, and the ONE place labour is
+            // entered for this job. Placed AFTER the Work Task card so the
+            // piece-rate choice on the labour sheet can see which task it is
+            // pricing, and after the blocks so the vine count is already known.
+            val pruningLabour = pruningLabourSection
+            if (pruningLabour != null) {
+                item(key = "activity-labour") {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(vine.cardBackground)
+                            .padding(16.dp),
+                    ) {
+                        pruningLabour(draft.totalEstimatedVines)
+                    }
+                }
             }
 
             // Combined summary — every block in this activity, before Save.

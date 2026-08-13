@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import com.rork.vinetrack.data.model.PruningActivityCanonical
 import com.rork.vinetrack.data.model.PruningActivityDraft
+import com.rork.vinetrack.data.model.PruningActivityLabourLine
 import com.rork.vinetrack.data.model.PruningActivityReconciliation
 import com.rork.vinetrack.data.model.PruningAllocationEditor
 import com.rork.vinetrack.data.model.PruningBlockSetup
@@ -200,6 +201,69 @@ class PruningSyncCoordinator(
         )
         scope.launch { replayAll() }
         return updated
+    }
+
+    // MARK: Pruning-owned labour lines (sql/190)
+
+    /** Every labour line this device holds for the vineyard's activities. */
+    fun labourLines(vineyardId: String): List<PruningActivityLabourLine> =
+        store.loadLabourLines(vineyardId)
+
+    /** The live lines of ONE activity, in stable display order. */
+    fun labourLines(vineyardId: String, activityId: String): List<PruningActivityLabourLine> =
+        store.labourLines(vineyardId, activityId)
+
+    /**
+     * DESIRED-STATE save of ONE activity's whole labour set (sql/190).
+     *
+     * The local cache is updated first so the editor stays responsive, then the
+     * COMPLETE set is pushed: lines present are upserted on their client id,
+     * lines absent are soft-deleted. Because the payload is the whole set and
+     * every id is client-minted, replaying it is idempotent — which is exactly
+     * what makes an offline replay deterministic.
+     *
+     * Offline (or on a transient failure) the local set stands and the next
+     * successful pass re-sends it, so nothing is lost and nothing duplicates.
+     */
+    suspend fun saveLabourLines(
+        vineyardId: String,
+        activityId: String,
+        lines: List<PruningActivityLabourLine>,
+    ): List<PruningActivityLabourLine> {
+        store.replaceLabourLines(vineyardId, activityId, lines)
+        if (!canSync()) return store.labourLines(vineyardId, activityId)
+        val desired = store.labourLines(vineyardId, activityId)
+        val result = runCatching {
+            repo.saveActivityLabourLines(activityId, desired)
+        }.getOrNull() ?: return desired
+        // Adopt the CANONICAL set: whatever the server did not return for this
+        // activity no longer exists, so a line deleted on another device cannot
+        // survive locally.
+        store.replaceLabourLines(
+            vineyardId,
+            activityId,
+            result.labourLines.filter { it.deletedAt == null }.sortedBy { it.lineIndex },
+        )
+        return store.labourLines(vineyardId, activityId)
+    }
+
+    /**
+     * Pulls every pruning labour line of the vineyard and applies them one
+     * ACTIVITY at a time.
+     *
+     * The apply is a wholesale per-activity replace, matching the desired-state
+     * write contract: an activity the server reports with no live lines really
+     * has none. Offline this is a no-op and the local set stands.
+     */
+    suspend fun refreshLabourLines(vineyardId: String): List<PruningActivityLabourLine> {
+        if (!canSync()) return store.loadLabourLines(vineyardId)
+        val remote = runCatching { repo.fetchActivityLabourLines(vineyardId) }.getOrNull()
+            ?: return store.loadLabourLines(vineyardId)
+        val live = remote.filter { it.deletedAt == null }.sortedBy { it.lineIndex }
+        // Rewriting the whole vineyard slice is what lets a remote soft-delete
+        // clear the last line of an activity instead of leaving it behind.
+        store.saveLabourLines(vineyardId, live)
+        return live
     }
 
     // MARK: Multi-block activities (sql/166)

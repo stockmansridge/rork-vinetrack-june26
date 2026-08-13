@@ -3,6 +3,7 @@ package com.rork.vinetrack.data
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.PruningActivityCanonical
 import com.rork.vinetrack.data.model.PruningActivityDraft
+import com.rork.vinetrack.data.model.PruningActivityLabourLine
 import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningEntry
 import com.rork.vinetrack.data.model.PruningSeasonIds
@@ -461,6 +462,52 @@ class PruningSyncRepository(private val session: SessionStore) {
         val canonical: PruningActivityCanonical? = null,
     )
 
+    // MARK: Pruning-owned labour lines (sql/190)
+
+    /**
+     * ONE line inside the desired-state payload.
+     *
+     * `id` is always sent: it is the client-generated idempotency key, and
+     * sending it is what makes an offline replay upsert the same row instead of
+     * inserting a duplicate.
+     */
+    @Serializable
+    data class LabourLinePayload(
+        val id: String,
+        @SerialName("work_date") val workDate: String? = null,
+        @SerialName("worker_type_id") val workerTypeId: String? = null,
+        @SerialName("worker_type") val workerType: String = "",
+        @SerialName("worker_count") val workerCount: Int = 1,
+        @SerialName("hours_per_worker") val hoursPerWorker: Double = 0.0,
+        @SerialName("hourly_rate") val hourlyRate: Double? = null,
+        val notes: String = "",
+        @SerialName("line_index") val lineIndex: Int = 0,
+    )
+
+    @Serializable
+    private data class SaveLabourLinesArgs(
+        @SerialName("p_activity_id") val activityId: String,
+        @SerialName("p_lines") val lines: List<LabourLinePayload>,
+        @SerialName("p_client_updated_at") val clientUpdatedAt: String,
+    )
+
+    /**
+     * The canonical answer from `save_pruning_activity_labour_lines`: the full
+     * server-side set plus the activity's effective hours and cost, so the
+     * client can replace its local set wholesale instead of guessing what
+     * landed.
+     */
+    @Serializable
+    data class LabourLinesResult(
+        @SerialName("activity_id") val activityId: String? = null,
+        val saved: Int? = null,
+        val removed: Int? = null,
+        @SerialName("labour_lines") val labourLines: List<PruningActivityLabourLine> = emptyList(),
+        @SerialName("total_labour_hours") val totalLabourHours: Double? = null,
+        @SerialName("labour_cost") val labourCost: Double? = null,
+        @SerialName("labour_cost_source") val labourCostSource: String? = null,
+    )
+
     @Serializable
     private data class IdArgs(@SerialName("p_id") val id: String)
 
@@ -501,6 +548,18 @@ class PruningSyncRepository(private val session: SessionStore) {
 
     suspend fun fetchSegments(vineyardId: String): List<SegmentRow> =
         getList("pruning_row_segments?vineyard_id=eq.$vineyardId&completed=eq.true")
+
+    /**
+     * Every pruning labour line of the vineyard (sql/190), soft-deleted rows
+     * INCLUDED so a delete made on another device is applied locally too.
+     *
+     * Always the FULL vineyard slice, never an incremental cursor: labour lines
+     * are also written by the portal, per-vineyard volume is small, and the
+     * local apply is a wholesale per-activity replace — so a full fetch is both
+     * safe and self-healing.
+     */
+    suspend fun fetchActivityLabourLines(vineyardId: String): List<PruningActivityLabourLine> =
+        getList("pruning_activity_labour_lines?vineyard_id=eq.$vineyardId&order=line_index.asc")
 
     /** Fetches the authoritative SQL 115 summary for the online parity check. */
     suspend fun fetchVineyardSummary(vineyardId: String): ServerSummary = withContext(Dispatchers.IO) {
@@ -776,6 +835,65 @@ class PruningSyncRepository(private val session: SessionStore) {
                 ),
             ),
         )
+    }
+
+    /**
+     * DESIRED-STATE save of ALL labour lines of one pruning activity (sql/190).
+     *
+     * The payload is the COMPLETE desired set: lines present are upserted on
+     * their CLIENT id, lines absent are soft-deleted, and a re-sent soft-deleted
+     * line is restored. Replaying the same payload is therefore idempotent,
+     * which is what makes an offline replay deterministic — and an EMPTY list is
+     * a legitimate instruction meaning "this activity has no labour lines",
+     * never a no-op.
+     *
+     * Returns the canonical server set plus the activity's effective hours and
+     * cost, so the caller can replace its local set wholesale.
+     */
+    suspend fun saveActivityLabourLines(
+        activityId: String,
+        lines: List<PruningActivityLabourLine>,
+        clientUpdatedAt: String = Instant.now().toString(),
+    ): LabourLinesResult = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val payload = lines.mapIndexed { index, line ->
+            LabourLinePayload(
+                id = line.id,
+                workDate = line.workDate,
+                workerTypeId = line.operatorCategoryId,
+                workerType = line.workerType,
+                workerCount = line.workerCount,
+                hoursPerWorker = line.hoursPerWorker,
+                // An UNRATED line must send SQL NULL, never 0 — that distinction
+                // is the whole reason "not specified" never becomes "$0.00".
+                hourlyRate = line.hourlyRate,
+                notes = line.notes,
+                lineIndex = index,
+            )
+        }
+        val response = SupabaseClient.http.post(
+            SupabaseClient.rpcUrl("save_pruning_activity_labour_lines"),
+        ) {
+            authHeaders(token)
+            contentType(ContentType.Application.Json)
+            setBody(
+                rpcJson.encodeToString(
+                    SaveLabourLinesArgs.serializer(),
+                    SaveLabourLinesArgs(
+                        activityId = activityId,
+                        lines = payload,
+                        clientUpdatedAt = clientUpdatedAt,
+                    ),
+                ),
+            )
+        }
+        when {
+            response.status.isSuccess() ->
+                resultJson.decodeFromString(LabourLinesResult.serializer(), response.bodyAsText())
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
     }
 
     /** Reverses the parent activity as ONE operation; every allocation inherits it. */

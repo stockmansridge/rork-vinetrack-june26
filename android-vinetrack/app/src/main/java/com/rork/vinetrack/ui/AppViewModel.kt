@@ -68,11 +68,13 @@ import com.rork.vinetrack.data.FertiliserSyncRepository
 import com.rork.vinetrack.data.PendingWriteOverlay
 import com.rork.vinetrack.data.PendingWriteRepository
 import com.rork.vinetrack.data.PruningStore
+import com.rork.vinetrack.data.PruningActivityLabourCosting
 import com.rork.vinetrack.data.PruningSyncCoordinator
 import com.rork.vinetrack.data.PruningSyncRepository
 import com.rork.vinetrack.data.PruningSyncStatus
 import com.rork.vinetrack.data.model.FertiliserRecord
 import com.rork.vinetrack.data.model.PruningActivityDraft
+import com.rork.vinetrack.data.model.PruningActivityLabourLine
 import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningSeasonIds
 import com.rork.vinetrack.data.model.PruningCalculator
@@ -554,6 +556,17 @@ data class AppUiState(
     val vineyardLabourLines: List<WorkTaskLabourLine>? = null,
     /** Labour lines for the work task currently open in detail. */
     val taskLabourLines: List<WorkTaskLabourLine> = emptyList(),
+    /**
+     * PRUNING-OWNED labour lines of the vineyard's activities (sql/190).
+     *
+     * Labour belongs to the activity and is counted ONCE however many blocks it
+     * covers; a linked Work Task never holds a copy, it reads through to these
+     * rows. Kept vineyard-wide so a report can resolve any activity's labour
+     * without reloading per activity.
+     */
+    val pruningActivityLabourLines: List<PruningActivityLabourLine> = emptyList(),
+    /** True while an activity's labour set is being saved. */
+    val pruningLabourBusy: Boolean = false,
     /** Machine lines for the work task currently open in detail. */
     val taskMachineLines: List<WorkTaskMachineLine> = emptyList(),
     /** Work task id the loaded lines belong to (null when nothing is open). */
@@ -3885,6 +3898,121 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun refreshPruningActivities(vineyardId: String): List<PruningActivityDraft> =
         pruningSyncCoordinator.refreshActivities(vineyardId)
             .sortedWith(compareByDescending<PruningActivityDraft> { it.date }.thenByDescending { it.createdAtMs })
+
+    // MARK: Pruning-owned labour lines (sql/190)
+
+    /** The live labour lines of ONE activity, in stable display order. */
+    fun pruningLabourLines(vineyardId: String, activityId: String): List<PruningActivityLabourLine> =
+        pruningSyncCoordinator.labourLines(vineyardId, activityId)
+
+    /** Loads the vineyard's pruning labour into state, pulling when online. */
+    fun loadPruningLabourLines(vineyardId: String) {
+        _ui.update { it.copy(pruningActivityLabourLines = pruningSyncCoordinator.labourLines(vineyardId)) }
+        viewModelScope.launch {
+            val refreshed = pruningSyncCoordinator.refreshLabourLines(vineyardId)
+            if (_ui.value.selectedVineyardId != vineyardId) return@launch
+            _ui.update { it.copy(pruningActivityLabourLines = refreshed) }
+        }
+    }
+
+    /**
+     * Adds or edits ONE labour line on a pruning activity.
+     *
+     * The whole set is then pushed as a single DESIRED-STATE save, so a create,
+     * an edit and a removal all replay through the same idempotent call.
+     */
+    fun savePruningLabourLine(
+        vineyardId: String,
+        activityId: String,
+        lineId: String?,
+        workDate: String,
+        operatorCategoryId: String?,
+        workerType: String,
+        workerCount: Int,
+        hoursPerWorker: Double,
+        hourlyRate: Double?,
+        notes: String?,
+    ) {
+        val existing = pruningSyncCoordinator.labourLines(vineyardId, activityId)
+        val id = lineId ?: java.util.UUID.randomUUID().toString()
+        val line = PruningActivityLabourLine(
+            id = id,
+            pruningActivityId = activityId,
+            vineyardId = vineyardId,
+            workDate = workDate,
+            operatorCategoryId = operatorCategoryId,
+            workerType = workerType.trim(),
+            workerCount = workerCount.coerceAtLeast(0),
+            hoursPerWorker = hoursPerWorker.coerceAtLeast(0.0),
+            // A null rate is "not specified", never $0.00 — the line still
+            // records its hours.
+            hourlyRate = hourlyRate,
+            // DB-generated totals are unknown until sync; the local model
+            // re-derives them from the same inputs.
+            totalHours = null,
+            totalCost = null,
+            notes = notes.orEmpty(),
+            lineIndex = existing.indexOfFirst { it.id == id }.takeIf { it >= 0 } ?: existing.size,
+        )
+        val desired = if (existing.any { it.id == id }) {
+            existing.map { if (it.id == id) line else it }
+        } else {
+            existing + line
+        }
+        pushPruningLabourLines(vineyardId, activityId, desired)
+    }
+
+    /**
+     * Removes ONE labour line. Expressed as "no longer in the desired set", so
+     * the server soft-deletes it and a replay cannot resurrect it.
+     */
+    fun deletePruningLabourLine(vineyardId: String, activityId: String, lineId: String) {
+        val desired = pruningSyncCoordinator
+            .labourLines(vineyardId, activityId)
+            .filterNot { it.id == lineId }
+        pushPruningLabourLines(vineyardId, activityId, desired)
+    }
+
+    /**
+     * Converts a LEGACY single-crew activity into one labour line.
+     *
+     * Only ever called from an explicit user action: `worker_or_crew` is free
+     * text ("Dave + 2 casuals") that cannot be honestly split into a worker type
+     * and a crew size, so nothing is ever back-filled automatically. The
+     * original scalars are left untouched.
+     */
+    fun convertPruningLegacyLabour(vineyardId: String, activityId: String) {
+        val draft = pruningSyncCoordinator.activity(vineyardId, activityId) ?: return
+        val line = PruningActivityLabourCosting.legacyConversionLine(
+            lineId = java.util.UUID.randomUUID().toString(),
+            activityId = activityId,
+            vineyardId = vineyardId,
+            workDate = draft.date,
+            workerOrCrew = draft.worker,
+            legacyHours = draft.labourHours,
+            legacyRate = draft.hourlyRate,
+        ) ?: return
+        pushPruningLabourLines(vineyardId, activityId, listOf(line))
+    }
+
+    private fun pushPruningLabourLines(
+        vineyardId: String,
+        activityId: String,
+        desired: List<PruningActivityLabourLine>,
+    ) {
+        _ui.update { it.copy(pruningLabourBusy = true) }
+        viewModelScope.launch {
+            val saved = pruningSyncCoordinator.saveLabourLines(vineyardId, activityId, desired)
+            _ui.update { st ->
+                val others = st.pruningActivityLabourLines
+                    .filterNot { it.pruningActivityId == activityId }
+                st.copy(
+                    pruningActivityLabourLines = others + saved,
+                    pruningLabourBusy = false,
+                )
+            }
+        }
+    }
 
     fun pruningActivityReconciliation(activityId: String) =
         pruningSyncCoordinator.reconciliation(activityId)

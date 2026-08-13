@@ -3,6 +3,7 @@ package com.rork.vinetrack.data
 import android.content.Context
 import androidx.core.content.edit
 import com.rork.vinetrack.data.model.PruningActivityDraft
+import com.rork.vinetrack.data.model.PruningActivityLabourLine
 import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningEntry
 import kotlinx.serialization.json.Json
@@ -86,6 +87,77 @@ class PruningStore(context: Context) {
 
     fun activity(vineyardId: String, activityId: String): PruningActivityDraft? =
         loadActivities(vineyardId).firstOrNull { it.id == activityId }
+
+    // MARK: Pruning-owned labour lines (sql/190)
+
+    /**
+     * Every labour line of the vineyard's activities.
+     *
+     * Labour is PRUNING-OWNED: these rows belong to the activity, are counted
+     * once however many blocks it covers, and a linked Work Task never holds a
+     * copy — it reads through to the same rows.
+     */
+    fun loadLabourLines(vineyardId: String): List<PruningActivityLabourLine> {
+        val raw = prefs.getString("activity_labour_v1_$vineyardId", null) ?: return emptyList()
+        return runCatching { json.decodeFromString<List<PruningActivityLabourLine>>(raw) }
+            .getOrDefault(emptyList())
+    }
+
+    fun saveLabourLines(vineyardId: String, lines: List<PruningActivityLabourLine>) {
+        prefs.edit { putString("activity_labour_v1_$vineyardId", json.encodeToString(lines)) }
+    }
+
+    /** The live lines of ONE activity, in stable display order. */
+    fun labourLines(vineyardId: String, activityId: String): List<PruningActivityLabourLine> =
+        PruningActivityLabourCosting.linesFor(loadLabourLines(vineyardId), activityId)
+
+    /**
+     * Replaces ONE activity's whole set — the local twin of the desired-state
+     * RPC contract. `lineIndex` is renumbered from the given order so the stored
+     * display order is the order the operator actually sees.
+     */
+    fun replaceLabourLines(
+        vineyardId: String,
+        activityId: String,
+        lines: List<PruningActivityLabourLine>,
+    ): List<PruningActivityLabourLine> {
+        val others = loadLabourLines(vineyardId).filterNot { it.pruningActivityId == activityId }
+        val renumbered = lines.mapIndexed { index, line ->
+            line.copy(
+                pruningActivityId = activityId,
+                vineyardId = vineyardId,
+                lineIndex = index,
+            )
+        }
+        val updated = others + renumbered
+        saveLabourLines(vineyardId, updated)
+        return updated
+    }
+
+    /** Upserts ONE line by its client id, preserving every other line. */
+    fun upsertLabourLine(
+        vineyardId: String,
+        line: PruningActivityLabourLine,
+    ): List<PruningActivityLabourLine> {
+        val current = loadLabourLines(vineyardId)
+        val updated = if (current.any { it.id == line.id }) {
+            current.map { if (it.id == line.id) line else it }
+        } else {
+            current + line
+        }
+        saveLabourLines(vineyardId, updated)
+        return updated
+    }
+
+    /**
+     * Removes ONE line locally. The desired-state push then expresses this as
+     * "the line is no longer in the set", which is what the server soft-deletes.
+     */
+    fun removeLabourLine(vineyardId: String, lineId: String): List<PruningActivityLabourLine> {
+        val updated = loadLabourLines(vineyardId).filterNot { it.id == lineId }
+        saveLabourLines(vineyardId, updated)
+        return updated
+    }
 
     fun upsertActivity(vineyardId: String, draft: PruningActivityDraft): List<PruningActivityDraft> {
         val current = loadActivities(vineyardId)

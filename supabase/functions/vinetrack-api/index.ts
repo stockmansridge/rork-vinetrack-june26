@@ -1835,6 +1835,68 @@ async function loadWorkTaskLabourLineCosts(
   return result;
 }
 
+interface PruningLabourLineRow {
+  id: string; pruning_activity_id: string; work_date: string;
+  worker_type_id: string | null; worker_type: string;
+  worker_count: number; hours_per_worker: number;
+  hourly_rate: number | null; total_hours: number; total_cost: number;
+  notes: string; line_index: number;
+}
+
+/**
+ * Active labour lines per PRUNING ACTIVITY (sql/190).
+ *
+ * Labour is pruning-owned: these rows belong to the activity and are counted
+ * ONCE however many blocks it covers. A linked Work Task never holds a copy —
+ * it reads through to these same rows — so the two modules can never report
+ * the same money twice.
+ */
+async function loadPruningActivityLabourLines(
+  db: SupabaseClient, activityIds: string[],
+): Promise<Map<string, PruningLabourLineRow[]>> {
+  const result = new Map<string, PruningLabourLineRow[]>();
+  if (activityIds.length === 0) return result;
+  const { data, error } = await db.from("pruning_activity_labour_lines")
+    .select(
+      "id, pruning_activity_id, work_date, worker_type_id, worker_type, worker_count, " +
+      "hours_per_worker, hourly_rate, total_hours, total_cost, notes, line_index",
+    )
+    .in("pruning_activity_id", activityIds)
+    .is("deleted_at", null)
+    .order("line_index", { ascending: true });
+  if (error) {
+    console.error("[vinetrack-api] pruning labour lines lookup failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  for (const l of (data ?? []) as unknown as PruningLabourLineRow[]) {
+    const list = result.get(l.pruning_activity_id) ?? [];
+    list.push(l);
+    result.set(l.pruning_activity_id, list);
+  }
+  return result;
+}
+
+/**
+ * Hours sum EVERY active line, including UNRATED ones — an unpriced line is
+ * still work that was done and still drives vines-per-hour. Null when the
+ * activity owns no line at all.
+ */
+function pruningLineHours(lines: PruningLabourLineRow[]): number | null {
+  if (lines.length === 0) return null;
+  return round3(lines.reduce((sum, l) => sum + (l.total_hours ?? 0), 0));
+}
+
+/**
+ * Cost sums only RATED lines. total_cost is generated with
+ * coalesce(hourly_rate, 0), so summing blindly would turn "nobody entered a
+ * rate" into $0.00. Unknown stays null.
+ */
+function pruningLineCost(lines: PruningLabourLineRow[]): number | null {
+  const rated = lines.filter((l) => l.hourly_rate !== null);
+  if (rated.length === 0) return null;
+  return round3(rated.reduce((sum, l) => sum + (l.total_cost ?? 0), 0));
+}
+
 interface TaskBlockLink { work_task_id: string; paddock_id: string }
 
 /** Blocks per task: work_task_paddocks joins, legacy paddock_id fallback. */
@@ -2025,6 +2087,12 @@ interface ActivityLabour {
   costing_method: string | null;
   piece_rate_per_vine: number | null;
   piece_vine_count: number | null;
+  /** Effective hours: the activity's own lines, else the legacy scalar. */
+  hours: number | null;
+  hours_source: string | null;
+  /** The activity's OWN labour lines (sql/190). */
+  lines: PruningLabourLineRow[];
+  line_count: number;
 }
 
 async function loadPruningActivityLabour(
@@ -2047,34 +2115,81 @@ async function loadPruningActivityLabour(
     for (const t of (data ?? []) as unknown as WorkTaskRow[]) tasks.set(t.id, t);
   }
   const lineCosts = await loadWorkTaskLabourLineCosts(db, taskIds);
+  // sql/190: the activity's OWN labour lines — the new rung 2 of the chain.
+  const ownLines = await loadPruningActivityLabourLines(db, rows.map((r) => r.id));
 
   for (const r of rows) {
     const legacy = r.labour_hours !== null && r.hourly_rate !== null
       ? round3(r.labour_hours * r.hourly_rate)
       : null;
+    const lines = ownLines.get(r.id) ?? [];
+    // Hours count EVERY active line; cost counts only the RATED ones. That
+    // asymmetry is deliberate: an unpriced line is still work that was done.
+    const ownHours = pruningLineHours(lines);
+    const ownCost = pruningLineCost(lines);
+    const hours = ownHours ?? (r.labour_hours ?? null);
+    const hoursSource = ownHours !== null
+      ? "labour_lines"
+      : (r.labour_hours !== null ? "activity_hours" : null);
+
     const task = r.work_task_id ? tasks.get(r.work_task_id) : undefined;
     if (!task) {
+      // Unlinked: the activity's own lines, else the legacy scalar pair.
+      const cost = ownCost ?? (lines.length > 0 ? null : legacy);
+      const source = ownCost !== null
+        ? "pruning_labour_lines"
+        : (lines.length > 0 ? null : (legacy !== null ? "activity_hours" : null));
       result.set(r.id, {
-        cost: legacy,
-        source: legacy !== null ? "activity_hours" : null,
+        cost,
+        source,
         costing_method: null,
         piece_rate_per_vine: null,
         piece_vine_count: null,
+        hours,
+        hours_source: hoursSource,
+        lines,
+        line_count: lines.length,
       });
       continue;
     }
     const lineCost = lineCosts.get(task.id) ?? null;
     const piece = isPieceRate(task);
-    const cost = piece ? (task.piece_rate_total_cost ?? null) : (lineCost ?? legacy);
-    const source = piece
-      ? (task.piece_rate_total_cost !== null ? "piece_rate" : null)
-      : (lineCost !== null ? "labour_lines" : (legacy !== null ? "activity_hours" : null));
+    // Strict precedence, never addition:
+    //   1. a linked piece-rate task IS the cost (no fallback),
+    //   2. the activity's OWN rated labour lines (sql/190),
+    //   3. the linked hourly task's rated lines (sql/189),
+    //   4. the legacy scalar pair (sql/166).
+    // An activity that owns lines but has priced none of them stops at rung 2
+    // with a null cost: those lines ARE its labour record, so falling through
+    // would report someone else's money.
+    let cost: number | null;
+    let source: string | null;
+    if (piece) {
+      cost = task.piece_rate_total_cost ?? null;
+      source = cost !== null ? "piece_rate" : null;
+    } else if (ownCost !== null) {
+      cost = ownCost;
+      source = "pruning_labour_lines";
+    } else if (lines.length > 0) {
+      cost = null;
+      source = null;
+    } else if (lineCost !== null) {
+      cost = lineCost;
+      source = "labour_lines";
+    } else {
+      cost = legacy;
+      source = legacy !== null ? "activity_hours" : null;
+    }
     result.set(r.id, {
       cost,
       source,
       costing_method: task.costing_method ?? "hourly",
       piece_rate_per_vine: task.piece_rate_per_vine ?? null,
       piece_vine_count: task.piece_vine_count ?? null,
+      hours,
+      hours_source: hoursSource,
+      lines,
+      line_count: lines.length,
     });
   }
   return result;
@@ -2088,6 +2203,9 @@ function mapPruningActivity(
 ) {
   const hours = row.labour_hours;
   const vines = row.total_estimated_vines;
+  // Precedence, never addition — the lines and the legacy scalar are two
+  // representations of the SAME hours.
+  const effectiveHours = labour ? labour.hours : (hours ?? null);
   const base: Record<string, unknown> = {
     id: row.id,
     vineyard_id: row.vineyard_id,
@@ -2097,13 +2215,22 @@ function mapPruningActivity(
     vintage_year: row.vintage_year ?? null,
     started_at: row.start_time ?? null,
     ended_at: row.finish_time ?? null,
+    // AS RECORDED, so a legacy single-crew activity round-trips unchanged.
     labour_hours: hours ?? null,
+    // sql/190: the EFFECTIVE hours — the activity's own labour lines when it
+    // owns any, otherwise the same legacy scalar as before. Counts UNRATED
+    // lines too: an unpriced line is still work that was done.
+    total_labour_hours: effectiveHours,
+    labour_hours_source: labour ? labour.hours_source : (hours !== null ? "activity_hours" : null),
+    labour_line_count: labour?.line_count ?? 0,
     vines_pruned: vines,
     row_equivalents: round3(row.total_row_equivalents),
     quarters_completed: row.total_quarters,
-    // Derived: total estimated vines / activity labour hours (documented).
-    vines_per_labour_hour: hours !== null && hours > 0 && vines > 0
-      ? Math.round((vines / hours) * 10) / 10
+    // Derived: total estimated vines / EFFECTIVE labour hours, so an activity
+    // costed from labour lines reports productivity on the same hours it is
+    // costed on.
+    vines_per_labour_hour: effectiveHours !== null && effectiveHours > 0 && vines > 0
+      ? Math.round((vines / effectiveHours) * 10) / 10
       : null,
     block_summary: row.block_summary.trim() || null,
     blocks,
@@ -2114,6 +2241,28 @@ function mapPruningActivity(
   };
   if (hasScope(profile, "labour:read")) {
     base.crew = row.worker_or_crew.trim() || null;
+    // sql/190. worker_type is a CATEGORY ("Contractor"), never a person, so the
+    // line itself is labour data; the money on it stays behind costs:read.
+    const showCosts = hasScope(profile, "costs:read");
+    base.labour_lines = (labour?.lines ?? []).map((l) => {
+      const line: Record<string, unknown> = {
+        id: l.id,
+        work_date: l.work_date,
+        worker_type_id: l.worker_type_id ?? null,
+        worker_type: l.worker_type,
+        worker_count: l.worker_count,
+        hours_per_worker: l.hours_per_worker,
+        total_hours: l.total_hours,
+        notes: l.notes?.trim() || null,
+        line_index: l.line_index,
+      };
+      if (showCosts) {
+        line.hourly_rate = l.hourly_rate ?? null;
+        // NULL, not 0.00, on an unrated line — matching the costing rule.
+        line.total_cost = l.hourly_rate !== null ? l.total_cost : null;
+      }
+      return line;
+    });
   }
   if (hasScope(profile, "costs:read")) {
     // hourly_rate stays as recorded — on a piece-rate job it is operational

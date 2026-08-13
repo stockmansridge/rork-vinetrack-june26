@@ -1,8 +1,13 @@
 # Portal handoff — Pruning Activity labour lines (SQL 190)
 
-**Status:** shared contract final. Migration written, not yet applied.
+**Status:** shared contract final and UNCHANGED. Migration applied, tests green,
+iOS + Android shipped, `vinetrack-api` updated. Ready for the portal to adopt.
 **Source of truth:** Rork/VineTrack mobile. Lovable CONSUMES this contract and
 must not create or modify any of the objects below.
+
+> Nothing in sections 1–11 changed while mobile was built. The contract you
+> reviewed is the contract that shipped — same table, same columns, same RPC
+> signature, same precedence, same fixtures.
 
 ---
 
@@ -168,13 +173,50 @@ exactly as now. Offer "convert to labour lines" as an explicit action.
 
 ## 10. Sequence
 
-1. Apply `sql/190_pruning_activity_labour_lines.sql` (needs 166, 188, 189).
-2. Run `sql/tests/190_pruning_activity_labour_lines_tests.sql` — rollback-only,
-   21 tests, expect `SQL 190 pruning labour line tests: ALL PASSED`.
-3. Redeploy `supabase/functions/vinetrack-api` (pending — will expose
-   `labour_lines` and `total_labour_hours` on pruning activities).
-4. Mobile ships the Labour lines editor on iOS and Android.
-5. Portal adopts this contract.
+1. ~~Apply `sql/190_pruning_activity_labour_lines.sql` (needs 166, 188, 189).~~ **Done.**
+2. ~~Run `sql/tests/190_pruning_activity_labour_lines_tests.sql`.~~ **Done — all passed.**
+3. ~~Redeploy `supabase/functions/vinetrack-api`.~~ **Code updated — needs deploying.**
+4. ~~Mobile ships the Labour lines editor on iOS and Android.~~ **Done.**
+5. **Portal adopts this contract.** ← you are here
+
+### What `vinetrack-api` now returns on a pruning activity
+
+Added, additive only — every pre-190 key keeps its name, type and value:
+
+- `total_labour_hours` — the EFFECTIVE hours (own lines when any, else the
+  legacy scalar). Counts unrated lines.
+- `labour_hours_source` — `labour_lines` | `activity_hours` | null
+- `labour_line_count`
+- `labour_lines[]` — requires `labour:read`. `worker_type` is a CATEGORY, never
+  a person. `hourly_rate` and `total_cost` appear only with `costs:read`, and
+  `total_cost` is **null, not 0.00**, on an unrated line.
+- `labour_cost_source` gains `pruning_labour_lines` (the activity's OWN lines)
+  alongside the existing `labour_lines` (a linked task's).
+- `labour_hours` is still reported **as recorded**, so a legacy single-crew
+  activity round-trips unchanged.
+- `vines_per_labour_hour` is now derived from `total_labour_hours`, so an
+  activity is measured on the same hours it is costed on.
+
+## 12. Mobile implementation notes (for reference, not obligations)
+
+Both clients now treat labour as pruning-owned, which is what the portal should
+do too:
+
+- The Pruning Activity editor has ONE labour surface, writing
+  `pruning_activity_labour_lines`. It is not a second editor next to the Work
+  Task one — the Work Task card in that screen is now link management only.
+- Piece rate stays a Work Task property (sql/188). Choosing it writes
+  `work_tasks.costing_method` and the agreed rate; any hours captured alongside
+  it are saved as an **unrated** pruning labour line. No synthetic "piece rate"
+  labour line is ever created.
+- A legacy activity renders its original crew/hours/rate exactly as recorded,
+  with an explicit "Convert to labour lines" action. Never automatic.
+- Saving goes through `save_pruning_activity_labour_lines` with the COMPLETE
+  set every time — add, edit and remove all replay through the same idempotent
+  call. An empty array is a real instruction ("no labour lines"), not a no-op.
+- Both suites assert the section 11 fixtures:
+  `ios/VineTrackTests/PruningActivityLabourLineTests.swift` and
+  `android-vinetrack/.../data/PruningActivityLabourLineTest.kt`.
 
 ## 11. Shared regression fixtures
 

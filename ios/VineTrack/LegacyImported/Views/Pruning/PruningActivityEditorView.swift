@@ -139,21 +139,28 @@ struct PruningActivityEditorView: View {
         return parts.joined(separator: " · ")
     }
 
-    /// Live labour lines of the LINKED Work Task — the authoritative source of
-    /// this activity's person-hours and labour cost.
+    /// Live labour lines of the LINKED Work Task. Since sql/190 these are only a
+    /// FALLBACK: labour is pruning-owned, so an activity's own lines outrank
+    /// them. They are never copied here and never added to the activity's own.
     private var linkedLabourLines: [WorkTaskLabourLine] {
         guard let taskId = draft.workTaskId else { return [] }
         return WorkTaskLabourCosting.lines(store.workTaskLabourLines, for: taskId)
     }
 
-    /// Labour resolved for this activity, with the task's costing method applied
-    /// FIRST: a piece-rate job is costed from its own snapshot (even with no
-    /// labour lines at all), an hourly job from its lines, and the historical
-    /// activity values are used ONLY for legacy records. Never more than one.
-    private var resolvedLabour: WorkTaskLabourCosting.ResolvedLabour {
-        PieceRateCosting.resolveActivityLabour(
+    /// This activity's OWN labour lines (sql/190) — the primary labour record.
+    private var activityLabourLines: [PruningActivityLabourLine] {
+        store.labourLines(forPruningActivity: draft.id)
+    }
+
+    /// Labour resolved for this activity by the SQL 190 chain — precedence,
+    /// never addition: a linked piece-rate job is costed from its own snapshot,
+    /// then the activity's own labour lines, then the linked hourly task's
+    /// lines, then the legacy scalar pair. Exactly one contributes.
+    private var resolvedLabour: PruningActivityLabourCosting.Resolved {
+        PruningActivityLabourCosting.resolve(
             task: linkedTask,
-            lines: linkedLabourLines,
+            activityLines: activityLabourLines,
+            taskLines: linkedLabourLines,
             legacyHours: draft.labourHours,
             legacyRate: draft.hourlyRate,
             includeCost: canViewCosting
@@ -227,6 +234,9 @@ struct PruningActivityEditorView: View {
                 focusedBlockSection(focusedPaddock)
             }
             workTaskSection
+            // Labour comes AFTER the Work Task link so the piece-rate choice on
+            // the labour sheet can see which task it is pricing.
+            labourSection
             summarySection
             saveSection
         }
@@ -418,19 +428,10 @@ struct PruningActivityEditorView: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(linkedLabourLines.isEmpty ? .orange : .secondary)
                 }
-                // THE ONE labour surface for this activity. There is deliberately
-                // no "Open task" shortcut here: the Work Task editor carries its
-                // own labour section, and offering both made it look as though
-                // labour had to be entered twice.
-                WorkTaskLabourLinesSection(
-                    workTaskId: linkedTask.id,
-                    vineyardId: draft.vineyardId,
-                    defaultWorkDate: draft.date,
-                    costingContext: WorkTaskCostingContext(
-                        taskId: linkedTask.id,
-                        suggestedVineCount: draft.totalEstimatedVines
-                    )
-                )
+                // Labour itself lives in the Labour section below — it belongs
+                // to the ACTIVITY (sql/190), not to this task, and rendering a
+                // second labour editor here would make it look as though labour
+                // had to be entered twice.
                 Button("Change linked task") { showTaskPicker = true }
                     .font(.subheadline)
                 Button("Unlink task", role: .destructive) {
@@ -465,19 +466,68 @@ struct PruningActivityEditorView: View {
                     .font(.subheadline)
             }
         } header: {
-            Text("Labour & Work Task")
+            Text("Work Task")
         } footer: {
             Text(labourSectionFooter)
         }
     }
 
-    /// Explains where labour is entered, and — once rows are selected — that a
-    /// piece rate can be costed from them.
+    // MARK: Labour (activity level, sql/190)
+
+    /// THE ONE labour surface for this activity.
+    ///
+    /// Labour is PRUNING-OWNED: these lines belong to the activity and are
+    /// counted ONCE however many blocks it covers. A linked Work Task never gets
+    /// a copy — it reads through to the same rows — so the Pruning report and
+    /// the Work Task report show the same number from the same record.
+    @ViewBuilder
+    private var labourSection: some View {
+        Section {
+            PruningActivityLabourLinesSection(
+                activityId: draft.id,
+                vineyardId: draft.vineyardId,
+                defaultWorkDate: draft.date,
+                linkedTask: linkedTask,
+                legacyWorker: draft.worker,
+                legacyHours: draft.labourHours,
+                legacyRate: draft.hourlyRate,
+                canEdit: !draft.isReversed,
+                costingContext: linkedTask.map {
+                    WorkTaskCostingContext(
+                        taskId: $0.id,
+                        suggestedVineCount: draft.totalEstimatedVines
+                    )
+                }
+            )
+        } header: {
+            Text("Labour")
+        } footer: {
+            Text(activityLabourFooter)
+        }
+    }
+
+    /// Explains the two deliberately different rules: hours count every line,
+    /// cost counts only the rated ones.
+    private var activityLabourFooter: String {
+        var parts: [String] = [
+            "Recorded once for the whole activity, never per block — add one line per crew or rate."
+        ]
+        if resolvedLabour.lineCount > 0 {
+            parts.append("Hours include every line; cost includes only the lines with a rate, so an unpriced line reads as not specified rather than $0.00.")
+        }
+        if draft.blockCount > 1 {
+            parts.append("This activity covers \(draft.blockCount) blocks and its labour is still counted once.")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    /// Explains what the link is for, and — once rows are selected — that a
+    /// piece rate can be costed from them on the labour sheet below.
     private var labourSectionFooter: String {
-        let base = "Entered once here for the whole activity, never per block. Unlinking leaves the Work Task and its labour intact."
+        let base = "Linking is optional. Unlinking leaves the Work Task intact and never touches this activity's labour."
         guard linkedTask != nil else { return base }
         if draft.totalEstimatedVines > 0 {
-            return "Add labour to choose Hourly or Piece Rate. \(PieceRateCosting.vineCountLabel(draft.totalEstimatedVines)) vines are selected, ready to cost at a rate per vine. " + base
+            return "Add labour below to choose Hourly or Piece Rate. \(PieceRateCosting.vineCountLabel(draft.totalEstimatedVines)) vines are selected, ready to cost at a rate per vine. " + base
         }
         return "Select rows above to cost this job at a rate per vine. " + base
     }
@@ -850,16 +900,29 @@ struct PruningActivityEditorView: View {
             return parts.isEmpty
                 ? "Paid per vine — add the agreed rate per vine to cost this job."
                 : "Piece rate · " + parts.joined(separator: " · ")
+        case .pruningLabourLines:
+            // This activity's OWN labour lines (sql/190). Counted once for the
+            // whole activity, however many blocks it covers.
+            var parts: [String] = ["\(labour.lineCount) labour line\(labour.lineCount == 1 ? "" : "s")"]
+            if let hours = labour.hours {
+                parts.append("\(Self.number(hours, digits: 1)) total labour hours")
+            }
+            // Hours count every line; cost counts only the RATED ones, so a
+            // total that is genuinely unknown says so instead of reading $0.00.
+            if canViewCosting {
+                parts.append(labour.cost.map { "labour cost \(Self.number($0))" } ?? "labour cost not specified")
+            }
+            return parts.joined(separator: " · ")
         case .workTaskLines:
             var parts: [String] = []
             if let hours = labour.hours {
-                parts.append("\(Self.number(hours, digits: 1)) person-hours from the Work Task")
+                parts.append("\(Self.number(hours, digits: 1)) person-hours from the linked Work Task")
             }
             if let cost = labour.cost {
                 parts.append("labour cost \(Self.number(cost))")
             }
             return parts.isEmpty ? "Labour recorded on the linked Work Task." : parts.joined(separator: " · ")
-        case .legacyActivity:
+        case .activityHours:
             var parts: [String] = []
             if let hours = labour.hours {
                 parts.append("\(Self.number(hours, digits: 1)) legacy activity hours")
@@ -867,9 +930,9 @@ struct PruningActivityEditorView: View {
             if let cost = labour.cost {
                 parts.append("legacy cost \(Self.number(cost))")
             }
-            return parts.joined(separator: " · ") + " — add Work Task labour lines to replace it."
+            return parts.joined(separator: " · ") + " — kept exactly as recorded. Add labour lines to replace it."
         case .none:
-            return "No labour recorded — link a Work Task and add labour lines to cost this job."
+            return "No labour recorded — add a labour line to cost this job."
         }
     }
 
