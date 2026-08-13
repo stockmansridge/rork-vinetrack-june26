@@ -1,6 +1,7 @@
-# Piece Rate pruning costing — shared contract (sql/188)
+# Piece Rate pruning costing — shared contract (sql/188 + sql/189)
 
-Status: **live on iOS + Android** · Portal (Lovable) **CONSUMES ONLY**.
+Status: **live on iOS + Android**, and **resolved database-side and API-side by
+sql/189** · Portal (Lovable) **CONSUMES ONLY**.
 
 Rork/VineTrack mobile is the source of truth for this contract. The portal must
 not create or modify any of these columns, tables, constraints or RPCs.
@@ -32,6 +33,107 @@ Three rules every consumer (mobile, portal, API, reports) must honour:
    the only switch.
 3. **Never treat an absent agreement as `$0.00`.** A missing rate or quantity is
    "not specified".
+
+## Effective work task labour cost — the one number to read
+
+There is exactly **one** labour cost for a work task, and one rule that produces
+it. Every client, report, database object and endpoint uses this rule.
+
+```
+effectiveLabourCost(task):
+
+  costing_method = 'piece_rate'   →  work_tasks.piece_rate_total_cost
+  anything else, including NULL   →  Σ ACTIVE, RATED work_task_labour_lines.total_cost
+```
+
+- **Never add them.** A piece-rate job's cost is its agreement; its labour lines
+  are hours, not money. `piece_rate_total_cost + Σ line.total_cost` is always
+  wrong.
+- **An unrecognised or missing `costing_method` reads as hourly**, so every
+  legacy record keeps its exact pre-existing value.
+- **Soft-deleted lines never contribute** (`deleted_at is null`).
+- **Unrated lines are skipped, not counted as zero.** `total_cost` is generated
+  with `coalesce(hourly_rate, 0)`, so summing an unrated line silently turns "no
+  rate entered" into `$0.00`. A task whose lines carry no rate resolves to
+  **null — "not specified"**.
+
+### Fallback for a pruning activity with no linked Work Task
+
+A pruning activity may pre-date work tasks, or simply not be linked to one.
+Those records keep their own activity-level figure, untouched:
+
+```
+effectiveLabourCost(activity):
+
+  linked task, piece rate   →  the task's piece_rate_total_cost
+                               (no fallback — an unpriced piece-rate job is
+                               "not specified", and falling back to hours × rate
+                               would report an HOURLY figure for a piece-rate job)
+  linked task, otherwise    →  the task's rated labour lines,
+                               else the activity's own labour_hours × hourly_rate
+  no linked task            →  labour_hours × hourly_rate   (legacy, unchanged)
+```
+
+This is **precedence, never addition**. The middle branch's fallback exists so
+nothing that had a value before sql/189 loses it: an activity linked to a task
+with no costed line still reports its own hours × rate, exactly as it always
+did.
+
+### Where the rule lives
+
+| surface | implementation |
+| --- | --- |
+| iOS | `PieceRateCosting.effectiveLabourCost(task:labourLines:)` |
+| Android | `PieceRateCosting.effectiveLabourCost(task, labourLines)` |
+| database, task | `public.work_task_effective_labour_cost(uuid)` (sql/189) |
+| database, activity | `public.pruning_activity_effective_labour_cost(uuid)` (sql/189) |
+| database, joins | `public.v_work_task_effective_labour_cost` (sql/189) |
+| shared API | `effective_labour_cost` on the work task payload |
+
+The hourly side is also exposed on its own —
+`public.work_task_labour_line_cost(uuid)` and the view's `labour_line_cost` — so
+an audit screen can show "the hourly lines would have been $480" **beside** the
+real cost. It is never added to it.
+
+Each surface also reports **which branch produced the number** — `piece_rate` |
+`labour_lines` | `activity_hours` | `null` — so a report can label the figure
+without re-deriving the branch and eventually disagreeing with the cost it is
+labelling.
+
+### Where it is exposed
+
+- `public.pruning_activity_json` → `activity.labour_cost` and
+  `totals.labour_cost`, plus `labour_cost_source`, `costing_method`,
+  `piece_rate_per_vine`, `piece_vine_count`, `piece_rate_total_cost` and
+  `totals.cost_per_vine`.
+- `public.pruning_activity_allocation_export` → `activity_labour_cost` (primary
+  allocation row only), `activity_labour_cost_source`,
+  `activity_costing_method`, `activity_piece_rate_per_vine`,
+  `activity_piece_vine_count` and `allocation_share_labour_cost`.
+- `vinetrack-api` work tasks → `costing_method` and `piece_vine_count` always;
+  `piece_rate_per_vine`, `piece_rate_total_cost`, `effective_labour_cost` and
+  `labour_cost_source` with `costs:read`.
+- `vinetrack-api` pruning activities → `labour_cost` now resolves through the
+  same rule, plus `labour_cost_source`, `costing_method`, `piece_rate_per_vine`
+  and `piece_vine_count`.
+
+### Multi-block allocation
+
+`allocation_share_labour_cost` splits the **one** effective cost across the
+live, non-skipped allocations by each block's share of row equivalents, rounded
+to cents, with the rounding residual assigned to the primary allocation. The
+allocations therefore reconcile **exactly**:
+
+```
+$1,000 piece-rate job, 60 / 40 by row equivalents
+    Block A    $600.00
+    Block B    $400.00
+    total    $1,000.00      ← exactly, never $999.99
+```
+
+Skipped allocations never carry labour (sql/168), and the piece-rate figure is
+always the **saved snapshot** — allocation never re-reads today's row vine
+counts.
 
 ### Why `work_task_labour_lines` was left alone
 
@@ -195,7 +297,8 @@ boundaries themselves (1,000 / 10,000,000) are acceptable values.
 | snapshot repository | `.../Repositories/WorkTaskPieceRateRowRepository.swift` | `.../data/` work task repository |
 | tracker UI | Record Pruning sheet | `.../ui/screens/PruningTrackerScreen.kt` |
 | parity tests | `ios/VineTrackTests/PieceRateCostingTests.swift` | `.../data/PieceRateCostingTest.kt` |
-| database tests | `sql/tests/188_piece_rate_pruning_costing_tests.sql` | — |
+| effective-cost parity tests | `ios/VineTrackTests/EffectiveLabourCostTests.swift` | `.../data/EffectiveLabourCostTest.kt` |
+| database tests | `sql/tests/188_piece_rate_pruning_costing_tests.sql` and `sql/tests/189_effective_work_task_labour_cost_tests.sql` | — |
 
 Both unit suites assert the **same fixtures**, so a divergence between the
 platforms fails a build. The database suite is rollback-only and safe to run
@@ -203,12 +306,18 @@ against the shared project.
 
 ## Portal / API consumers — checklist
 
+- [ ] **Read the value the backend already resolved**: `effective_labour_cost`
+      on a work task, `labour_cost` on a pruning activity, or
+      `activity_labour_cost` in the export view. Deriving
+      `labour_hours × hourly_rate` yourself is now wrong.
 - [ ] Read `costing_method` and branch on it. Treat any unrecognised value as
       `'hourly'`.
 - [ ] For `'piece_rate'`, read `piece_rate_total_cost`. Do not recompute it from
       `paddocks.rows`.
 - [ ] Never add `Σ work_task_labour_lines.total_cost` to
       `piece_rate_total_cost`.
+- [ ] Never fabricate a labour line to represent a piece-rate job. A piece-rate
+      task with zero labour lines is valid and fully represented by the API.
 - [ ] Render an absent cost as "not specified", not `$0.00`.
 - [ ] Show hours on a piece-rate job as operational history only.
 - [ ] Preserve `paddocks.rows[].id` and `vineCountOverride` on any write to

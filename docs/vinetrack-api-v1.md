@@ -172,9 +172,11 @@ grants access to any route (`costs:read` alone cannot call
 | Fuel purchase | `volume_l`, `date` | `fuel:read` | none |
 | Equipment | (no cost-bearing fields exist canonically) | `equipment:read` | — |
 | Work task detail | `labour_lines[].hourly_rate`, `labour_lines[].total_cost`, `machine_lines[].fuel_cost`, `machine_lines[].hourly_rate`, `machine_lines[].total_cost` | `work_tasks:read` | `costs:read` |
+| Work task | `piece_rate_per_vine`, `piece_rate_total_cost`, `effective_labour_cost`, `labour_cost_source` | `work_tasks:read` | `costs:read` |
+| Work task | `costing_method`, `piece_vine_count` (operational, not money) | `work_tasks:read` | none |
 | Work task detail | `machine_lines[].operator` | `work_tasks:read` | `labour:read` |
 | Pruning | `crew` (worker/crew identity snapshot) | `pruning:read` | `labour:read` |
-| Pruning | `hourly_rate`, `labour_cost` | `pruning:read` | `costs:read` |
+| Pruning | `hourly_rate`, `labour_cost`, `labour_cost_source`, `costing_method`, `piece_rate_per_vine`, `piece_vine_count` | `pruning:read` | `costs:read` |
 | Irrigation record | (no cost or labour fields exist canonically) | `irrigation:read` | — |
 | Growth stage | `recorded_by` (user id + name) | `growth_stages:read` | `labour:read` |
 | Yield record | (no pricing/revenue fields exist canonically — `costs:read` gates nothing today; any future financial grape-sale data will be `costs:read`-gated) | `yield:read` | — |
@@ -635,12 +637,37 @@ Optional filters: `from`, `to` (task date), `status` (stored status value),
   "notes": null,
   "is_archived": false,
   "is_finalized": true,
+  "costing_method": "piece_rate",
+  "piece_vine_count": 250,
+  "piece_rate_per_vine": 0.55,
+  "piece_rate_total_cost": 137.50,
+  "effective_labour_cost": 137.50,
+  "labour_cost_source": "piece_rate",
   "created_at": "2026-08-01T05:12:40Z",
   "updated_at": "2026-08-02T03:01:11Z"
 }
 ```
 
 - There is **no** canonical title column — `task_type` is the task's label.
+- **Labour costing (sql/188 + sql/189).** `costing_method` is `hourly` |
+  `piece_rate` and is the ONLY switch. `effective_labour_cost` is the task's
+  one labour cost:
+
+  ```
+  costing_method = 'piece_rate'  → piece_rate_total_cost
+  anything else                  → Σ active, RATED labour_lines[].total_cost
+  ```
+
+  Never add the two. `labour_cost_source` labels which branch produced it
+  (`piece_rate` | `labour_lines` | `null`). `null` means "not specified" — it
+  is never `0`. A piece-rate task with **no labour lines at all** is valid and
+  fully represented here; consumers must not fabricate a labour line to
+  express one. `piece_rate_total_cost` is generated from the historical
+  snapshot (`piece_vine_count × piece_rate_per_vine`) and never recomputed
+  from current vineyard geometry.
+- `costing_method` and `piece_vine_count` are operational and always present.
+  `piece_rate_per_vine`, `piece_rate_total_cost`, `effective_labour_cost` and
+  `labour_cost_source` require `costs:read`.
 - `status` is the stored client value (free text, nullable); `is_archived`
   and `is_finalized` are returned as explicit flags. Archived tasks remain
   in the collection as history; deleted tasks never appear.
