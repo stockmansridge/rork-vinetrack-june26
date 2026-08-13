@@ -4782,12 +4782,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * (authoritative), caching the result for instant display next launch. Soft-
      * fails to the cached value so a fetch hiccup never reverts units mid-session.
      */
-    private fun refreshRegionSettings(vineyardId: String) {
+    fun refreshRegionSettings(vineyardId: String? = _ui.value.selectedVineyardId) {
+        val id = vineyardId ?: return
         viewModelScope.launch {
-            val fetched = runCatching { regionSettingsRepo.get(vineyardId) }.getOrNull() ?: return@launch
-            regionSettingsStore.save(vineyardId, fetched)
-            if (_ui.value.selectedVineyardId == vineyardId) {
+            val fetched = runCatching { regionSettingsRepo.get(id) }
+                .onFailure { Log.w("RegionSettings", "load failed for vineyard $id: ${it.message}") }
+                .getOrNull() ?: return@launch
+            regionSettingsStore.save(id, fetched)
+            if (_ui.value.selectedVineyardId == id) {
                 _ui.update { it.copy(regionSettings = fetched) }
+            }
+        }
+    }
+
+    /**
+     * Save vineyard-level Region & Units through the shared
+     * `set_vineyard_region_settings` contract, then publish the authoritative
+     * server response app-wide so date/area/volume/currency formatting updates
+     * immediately. [onResult] gets null on success, else a customer-facing
+     * message (developer detail is logged).
+     */
+    fun saveRegionSettings(settings: RegionSettings, onResult: (String?) -> Unit) {
+        val id = _ui.value.selectedVineyardId
+        if (id == null) {
+            onResult("Select a vineyard before changing region settings.")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val saved = regionSettingsRepo.set(id, settings)
+                regionSettingsStore.save(id, saved)
+                if (_ui.value.selectedVineyardId == id) {
+                    _ui.update { it.copy(regionSettings = saved) }
+                }
+                onResult(null)
+            } catch (e: Exception) {
+                Log.e("RegionSettings", "save failed for vineyard $id", e)
+                onResult(e.message ?: "Couldn't save Region & Units. Please try again.")
             }
         }
     }
@@ -4796,6 +4827,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val id = _ui.value.selectedVineyardId ?: return
         refreshSelectedVineyardLogo()
         refreshGrowthStageImages()
+        // Region & Units are shared across iOS / Android / portal — pull them on
+        // the normal refresh lifecycle so edits made elsewhere land here.
+        refreshRegionSettings(id)
         refreshSeasonSettings(id)
         viewModelScope.launch { loadVineyardData(id) }
     }
