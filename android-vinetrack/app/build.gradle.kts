@@ -166,23 +166,34 @@ androidComponents {
 // bytecode, full coverage, and none of the release lint-model task chain that
 // broke the export machine.
 //
-// Deliberately NOT inside `afterEvaluate`:
-//   * `tasks.findByName(...)` forces EAGER realization of every task in the
-//     project just to test for one name. On the memory-constrained export
-//     machine that full realization is exactly the kind of work that throws
-//     during evaluation — and an exception there is the masked
-//     PluginCrashReporter failure with the real cause destroyed.
-//   * `tasks.names` answers the same question lazily, without realizing any
-//     task, and `register` stays lazy too, so nothing is configured unless the
-//     alias is actually requested.
-// The name check still guards against colliding with AGP's own task for the
-// case where the variant disabling above did not apply.
-if ("testReleaseUnitTest" !in tasks.names) {
-    tasks.register("testReleaseUnitTest") {
-        group = "verification"
-        description =
-            "Alias: runs the unit tests against the debug variant (release unit tests are disabled)."
-        dependsOn("testDebugUnitTest")
+// The guard MUST satisfy two independent constraints at once:
+//
+//  1. TIMING — it has to run inside `afterEvaluate`. AGP creates its variant
+//     tasks during ITS afterEvaluate, so a top-level check runs too early and
+//     always sees the name as free. It would then register unconditionally and
+//     collide with AGP's own task on any machine where the disabling above did
+//     not take effect, throwing `Cannot add task 'testReleaseUnitTest' as a
+//     task with that name already exists` from inside project evaluation —
+//     which AGP funnels through its crash reporter, surfacing on the export
+//     machine as the masked `PluginCrashReporter` NoClassDefFoundError with the
+//     real cause destroyed. Our afterEvaluate is registered while this script
+//     body runs, i.e. after AGP's, so AGP's runs first and this sees the truth.
+//
+//  2. LAZINESS — it must not call `tasks.findByName(...)`, which forces EAGER
+//     realization of every task in the project just to test one name. `tasks.names`
+//     answers the same question without realizing anything, and `register`
+//     stays lazy, so the alias is configured only if actually requested.
+//
+// Both properties together mean this can no longer throw during evaluation,
+// whether or not the release unit-test variant was successfully disabled.
+afterEvaluate {
+    if ("testReleaseUnitTest" !in tasks.names) {
+        tasks.register("testReleaseUnitTest") {
+            group = "verification"
+            description =
+                "Alias: runs the unit tests against the debug variant (release unit tests are disabled)."
+            dependsOn("testDebugUnitTest")
+        }
     }
 }
 
