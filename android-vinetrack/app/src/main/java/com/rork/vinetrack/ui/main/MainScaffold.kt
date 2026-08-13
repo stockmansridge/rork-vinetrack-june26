@@ -462,7 +462,7 @@ private fun ToolHost(
         ToolRoute.WeatherData -> WeatherDataScreen(state, modifier, onBack = onBack, onOpenTool = onOpenTool)
         ToolRoute.VineyardLocation -> VineyardLocationScreen(vm, state, modifier, onBack = onBack)
         ToolRoute.Settings -> SettingsScreen(vm, state, modifier, onBack, onOpenTool = onOpenTool)
-        ToolRoute.RegionUnits -> RegionUnitsSettingsScreen(vm, state, modifier, onBack = onBack)
+        ToolRoute.RegionUnits -> RegionUnitsSettingsScreen(state, modifier, onBack = onBack)
         ToolRoute.SyncStatus -> SyncStatusScreen(vm, state, modifier, onBack)
         ToolRoute.OfflineReadiness -> OfflineReadinessScreen(
             state,
