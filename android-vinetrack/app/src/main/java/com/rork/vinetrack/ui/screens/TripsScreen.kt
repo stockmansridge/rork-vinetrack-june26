@@ -3031,13 +3031,16 @@ private fun StartTripSheet(
                     subtitle = blockSubtitle,
                     onClick = { showBlockPicker = true },
                 )
+                // Area is canonical hectares; present it in the vineyard's unit
+                // with a caption that follows that unit.
+                val areaFmt = LocalRegionFormatter.current
                 if (selectedPaddocks.size == 1 && !selectedPaddocks.first().rows.isNullOrEmpty()) {
                     val p = selectedPaddocks.first()
                     val rows = p.rows.orEmpty().map { it.number }.sorted()
                     StartTripStatsRow(
                         listOf(
                             "${p.rowCount}" to TripRowSequencePlanner.compactRowRangeLabel(rows),
-                            "%.2f".format(p.areaHectares) to "Hectares",
+                            String.format(Locale.US, "%.2f", areaFmt.areaValue(p.areaHectares)) to areaFmt.areaUnitName,
                             "${p.effectiveVineCount}" to "Vines",
                         ),
                     )
@@ -3045,7 +3048,11 @@ private fun StartTripSheet(
                     StartTripStatsRow(
                         listOf(
                             "${selectedPaddocks.size}" to "Blocks",
-                            "%.2f".format(selectedPaddocks.sumOf { it.areaHectares }) to "Hectares",
+                            String.format(
+                                Locale.US,
+                                "%.2f",
+                                areaFmt.areaValue(selectedPaddocks.sumOf { it.areaHectares }),
+                            ) to areaFmt.areaUnitName,
                             "${selectedPaddocks.sumOf { it.rowCount }}" to "Rows",
                             "${selectedPaddocks.sumOf { it.effectiveVineCount }}" to "Vines",
                         ),

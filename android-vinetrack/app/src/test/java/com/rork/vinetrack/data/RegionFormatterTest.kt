@@ -71,6 +71,49 @@ class RegionFormatterTest {
     }
 
     @Test
+    fun `area unit name is the full word for split stat tiles`() {
+        // The Home "Vineyard Overview" card shows the number and the unit as two
+        // separate lines, so it needs the word rather than the abbreviation.
+        assertEquals("Hectares", RegionFormatter(au).areaUnitName)
+        assertEquals("Acres", RegionFormatter(us).areaUnitName)
+        // Canada's preset is metric (hectares) even though it shares US
+        // terminology and Brix — the label follows the AREA unit, not the country.
+        assertEquals("Hectares", RegionFormatter(ca).areaUnitName)
+    }
+
+    @Test
+    fun `headline area keeps australian output byte for byte`() {
+        val fmt = RegionFormatter(au)
+        // Reproduces the inline rule the Home overview tile used before it was
+        // regionalised: one decimal below 100, none at or above it.
+        assertEquals("12.5", fmt.formatAreaHeadline(12.5))
+        assertEquals("99.9", fmt.formatAreaHeadline(99.9))
+        assertEquals("100", fmt.formatAreaHeadline(100.0))
+        assertEquals("1234", fmt.formatAreaHeadline(1234.0))
+    }
+
+    @Test
+    fun `headline area converts and re-thresholds on the displayed value`() {
+        val fmt = RegionFormatter(us)
+        // 12.5 ha -> 30.89 ac: below 100, so one decimal is kept.
+        assertEquals("30.9", fmt.formatAreaHeadline(12.5))
+        // 45 ha -> 111.2 ac: the CONVERTED value crosses 100, so decimals drop
+        // even though the canonical hectare figure has not.
+        assertEquals("111", fmt.formatAreaHeadline(45.0))
+    }
+
+    @Test
+    fun `headline area is never the raw hectare number for an acres vineyard`() {
+        // Regression: the Home overview tile printed canonical hectares under a
+        // hardcoded "Hectares" caption, so an acres vineyard saw hectare figures
+        // while every other screen converted.
+        val hectares = 40.0
+        val usFmt = RegionFormatter(us)
+        assertNotEquals(usFmt.formatAreaHeadline(hectares), RegionFormatter(au).formatAreaHeadline(hectares))
+        assertEquals("98.8", usFmt.formatAreaHeadline(hectares))
+    }
+
+    @Test
     fun `area conversion never mutates the stored hectare value`() {
         val stored = 12.5
         RegionFormatter(us).formatArea(stored)

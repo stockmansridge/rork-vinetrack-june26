@@ -51,6 +51,33 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
         AreaUnit.Acres -> "ac"
     }
 
+    /**
+     * Full-word label for the configured area unit, for stat tiles that show the
+     * number and its unit as separate lines (e.g. the Home "Vineyard Overview"
+     * card) rather than as one "12.5 ha" string.
+     *
+     * Mirrors iOS `NewMainTabView.areaUnitLabel`.
+     */
+    val areaUnitName: String get() = when (area) {
+        AreaUnit.Hectares -> "Hectares"
+        AreaUnit.Acres -> "Acres"
+    }
+
+    /**
+     * Area for large headline stat tiles: converts to the vineyard's unit, then
+     * drops the decimal once the converted value reaches 100 ("1234", "12.5").
+     * Returns the number ONLY — callers pair it with [areaUnitName] as a
+     * separate caption.
+     *
+     * Distinct from [areaCompactValue], which trims at 10 for dense inline rows.
+     * Both threshold on the CONVERTED value so the precision rule describes what
+     * the user actually sees. Mirrors iOS `NewMainTabView.formattedHectares`.
+     */
+    fun formatAreaHeadline(hectares: Double): String {
+        val value = areaValue(hectares)
+        return if (value >= 100) number(value, 0) else number(value, 1)
+    }
+
     /** e.g. "12.50 ha" (AU) or "30.89 ac" (US). */
     fun formatArea(hectares: Double, fractionDigits: Int = 2): String =
         "${number(areaValue(hectares), fractionDigits)} $areaUnitAbbreviation"

@@ -2715,7 +2715,7 @@ private fun ReportsContent(
                         ) {
                             Text("Coverage & normalised", fontWeight = FontWeight.SemiBold)
                             DetailLine("Valves / blocks", "${o.valvesUsed ?: 0} / ${o.blocksIrrigated ?: 0}")
-                            DetailLine("Serviced area", o.servicedAreaHectares?.let { String.format(java.util.Locale.US, "%.2f ha", it) } ?: "—")
+                            DetailLine("Serviced area", o.servicedAreaHectares?.let { fmt.formatArea(it) } ?: "—")
                             DetailLine("Serviced vines", o.servicedVines?.toString() ?: "—")
                             DetailLine("Per hectare", o.litresPerHectare?.let { IrrigationUnits.perHectare(it, fmt) } ?: "—")
                             DetailLine("Per vine", o.litresPerVine?.let { IrrigationUnits.perVine(it, fmt) } ?: "—")

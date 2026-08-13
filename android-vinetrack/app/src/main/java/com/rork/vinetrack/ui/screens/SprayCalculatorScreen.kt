@@ -97,6 +97,7 @@ import coil3.compose.SubcomposeAsyncImage
 import coil3.compose.SubcomposeAsyncImageContent
 import com.rork.vinetrack.data.CanopyWaterRates
 import com.rork.vinetrack.data.CanopyWaterRatesStore
+import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.SprayCalculator
 import com.rork.vinetrack.data.SprayRecordRepository
 import com.rork.vinetrack.data.TrackingPattern
@@ -575,8 +576,12 @@ fun SprayCalculatorScreen(
                     if (selectedPaddocks.isNotEmpty()) {
                         VineyardCard {
                             Row(Modifier.fillMaxWidth()) {
+                                // Canonical hectares converted to the vineyard's
+                                // unit; the caption follows that unit instead of
+                                // being hardcoded to "Hectares".
+                                val areaFmt = LocalRegionFormatter.current
                                 StatCell("${selectedPaddocks.size}", if (selectedPaddocks.size == 1) "Block" else "Blocks", Modifier.weight(1f))
-                                StatCell(fmtNum(totalArea, 2), "Hectares", Modifier.weight(1f))
+                                StatCell(fmtNum(areaFmt.areaValue(totalArea), 2), areaFmt.areaUnitName, Modifier.weight(1f))
                                 StatCell("$totalRows", "Rows", Modifier.weight(1f))
                             }
                         }
@@ -1114,7 +1119,7 @@ private fun BlockPickerSheet(
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(paddock.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                        Text(paddockMetaLine(paddock), fontSize = 12.sp, color = vine.textSecondary)
+                        Text(paddockMetaLine(paddock, LocalRegionFormatter.current), fontSize = 12.sp, color = vine.textSecondary)
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -1123,9 +1128,14 @@ private fun BlockPickerSheet(
     }
 }
 
-/** Per-row meta line: "1.20 ha · 12 rows · Rows 1–12" (iOS parity). */
-private fun paddockMetaLine(paddock: Paddock): String {
-    val ha = String.format(Locale.US, "%.2f ha", paddock.areaHectares)
+/**
+ * Per-row meta line: "1.20 ha · 12 rows · Rows 1–12" (iOS parity).
+ *
+ * Takes the formatter so the area follows the vineyard's configured unit rather
+ * than printing canonical hectares under a hardcoded " ha" suffix.
+ */
+private fun paddockMetaLine(paddock: Paddock, fmt: RegionFormatter): String {
+    val ha = fmt.formatArea(paddock.areaHectares)
     val nums = paddock.rows.orEmpty().map { it.number }
     val lo = nums.minOrNull()
     val hi = nums.maxOrNull()

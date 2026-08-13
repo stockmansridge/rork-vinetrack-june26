@@ -929,6 +929,11 @@ private fun QuickActionCard(
 private fun OverviewSection(state: AppUiState, onOpenMap: () -> Unit) {
     val totalHectares = state.totalHectares
     val totalVines = state.paddocks.sumOf { it.effectiveVineCount }
+    // Area is stored canonically in hectares and must be presented in the
+    // selected vineyard's unit — this tile previously printed the raw canonical
+    // number under a hardcoded "Hectares" caption, so an acres vineyard saw
+    // hectare figures here while every other screen converted correctly.
+    val fmt = state.regionFormatter
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -972,8 +977,8 @@ private fun OverviewSection(state: AppUiState, onOpenMap: () -> Unit) {
             Row(modifier = Modifier.fillMaxWidth()) {
                 OverviewStat("${state.paddocks.size}", "Blocks", Icons.Filled.Grass, VineColors.LeafGreen, Modifier.weight(1f))
                 OverviewStat(
-                    if (totalHectares >= 100) "%.0f".format(totalHectares) else "%.1f".format(totalHectares),
-                    "Hectares", Icons.Filled.Map, VineColors.Orange, Modifier.weight(1f),
+                    fmt.formatAreaHeadline(totalHectares),
+                    fmt.areaUnitName, Icons.Filled.Map, VineColors.Orange, Modifier.weight(1f),
                 )
                 OverviewStat(formattedCount(totalVines), "Vines", painterResource(R.drawable.grape_vine_leaf), VineColors.DarkGreen, Modifier.weight(1f))
             }
