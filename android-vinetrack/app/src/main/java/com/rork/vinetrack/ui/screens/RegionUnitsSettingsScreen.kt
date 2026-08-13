@@ -30,12 +30,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,20 +44,17 @@ import com.rork.vinetrack.data.RegionCountry
 import com.rork.vinetrack.data.RegionCurrency
 import com.rork.vinetrack.data.RegionDateFormat
 import com.rork.vinetrack.data.RegionSettings
-import com.rork.vinetrack.data.RegionSettingsRepository
-import com.rork.vinetrack.data.RegionSettingsStore
 import com.rork.vinetrack.data.SprayRateAreaUnit
 import com.rork.vinetrack.data.SugarMeasurementUnit
 import com.rork.vinetrack.data.TerminologyRegion
 import com.rork.vinetrack.data.VolumeUnit
-import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.ui.AppUiState
+import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
-import kotlinx.coroutines.launch
 
 /**
  * Vineyard-level "Region & Units" settings, mirroring the iOS
@@ -70,52 +65,63 @@ import kotlinx.coroutines.launch
  *
  * Editing is owner/manager only; staff and operators see a read-only view (the
  * server RPC also enforces this). Any missing value falls back to AU defaults.
+ *
+ * Saving goes through [AppViewModel.saveRegionSettings] rather than a private
+ * repository instance, so the new units take effect across the whole app the
+ * moment they are saved instead of only after the vineyard is reselected.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RegionUnitsSettingsScreen(
+    vm: AppViewModel,
     state: AppUiState,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
 ) {
     val vine = LocalVineColors.current
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val store = remember { RegionSettingsStore(context) }
-    val repo = remember { RegionSettingsRepository(SessionStore(context)) }
     val vineyardId = state.selectedVineyardId
     val canEdit = state.currentRole == "owner" || state.currentRole == "manager"
 
-    var working by remember { mutableStateOf(store.load(vineyardId)) }
+    var working by remember { mutableStateOf(state.regionSettings) }
+    var isDirty by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
     var saved by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var pendingCountry by remember { mutableStateOf<RegionCountry?>(null) }
 
+    /** Apply an edit and mark the form dirty so a late fetch can't overwrite it. */
+    fun edit(transform: (RegionSettings) -> RegionSettings) {
+        working = transform(working)
+        isDirty = true
+        saved = false
+    }
+
     // Pull authoritative server values when the screen opens, so settings saved
     // on another device or the web portal are reflected immediately.
-    LaunchedEffect(vineyardId) {
-        if (vineyardId == null) return@LaunchedEffect
-        runCatching { repo.get(vineyardId) }.getOrNull()?.let { remote ->
-            store.save(vineyardId, remote)
-            if (!isSaving && pendingCountry == null) working = remote
-        }
+    LaunchedEffect(vineyardId) { vm.reloadRegionSettings() }
+
+    // Adopt app-wide settings ONLY while the form has no unsaved edits. Without
+    // this guard a slow background fetch landing after the user changed a unit
+    // silently reverted it, so the next Save wrote back the old value.
+    LaunchedEffect(state.regionSettings) {
+        if (!isDirty && !isSaving) working = state.regionSettings
     }
 
     fun save() {
-        if (!canEdit || vineyardId == null || isSaving) return
+        if (!canEdit || isSaving) return
         isSaving = true
-        scope.launch {
-            try {
-                val result = repo.set(vineyardId, working)
-                store.save(vineyardId, result)
-                working = result
-                saved = true
-            } catch (e: Exception) {
-                errorMessage = e.message ?: "Couldn't save region settings."
-            } finally {
-                isSaving = false
-            }
+        vm.saveRegionSettings(working) { result ->
+            isSaving = false
+            result.fold(
+                onSuccess = { persisted ->
+                    working = persisted
+                    isDirty = false
+                    saved = true
+                },
+                onFailure = { e ->
+                    errorMessage = e.message ?: "Couldn't save region settings."
+                },
+            )
         }
     }
 
@@ -131,7 +137,9 @@ fun RegionUnitsSettingsScreen(
                         if (isSaving) {
                             CircularProgressIndicator(modifier = Modifier.size(22.dp).padding(end = 12.dp), strokeWidth = 2.dp)
                         } else {
-                            TextButton(onClick = { save() }) { Text("Save", fontWeight = FontWeight.SemiBold) }
+                            TextButton(onClick = { save() }, enabled = isDirty) {
+                                Text("Save", fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                 },
@@ -153,6 +161,35 @@ fun RegionUnitsSettingsScreen(
                     fontSize = 12.sp,
                     color = vine.textSecondary,
                 )
+            }
+
+            // Explicit save feedback: without it a successful save looked
+            // identical to no save at all.
+            if (canEdit && (isDirty || saved)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (saved) {
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = null,
+                            tint = VineColors.Success,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Text(
+                            "Saved. New units apply across the app straight away.",
+                            fontSize = 12.sp,
+                            color = VineColors.Success,
+                        )
+                    } else {
+                        Text(
+                            "Unsaved changes — tap Save to apply them.",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
+                }
             }
 
             // Country
@@ -180,7 +217,7 @@ fun RegionUnitsSettingsScreen(
                         label = c.label,
                         selected = working.currencyCode == c.code,
                         enabled = canEdit,
-                        onClick = { working = working.copy(currencyCode = c.code) },
+                        onClick = { edit { w -> w.copy(currencyCode = c.code) } },
                     )
                     if (index < RegionCurrency.entries.lastIndex) RowDividerThin(vine.cardBorder)
                 }
@@ -188,30 +225,30 @@ fun RegionUnitsSettingsScreen(
 
             // Units
             PickerSection(title = "Units") {
-                OptionRow("Area", AreaUnit.entries.map { it.raw to it.label }, working.areaUnit, canEdit) {
-                    working = working.copy(areaUnit = it)
+                OptionRow("Area", AreaUnit.entries.map { it.raw to it.label }, working.areaUnit, canEdit) { raw ->
+                    edit { w -> w.copy(areaUnit = raw) }
                 }
                 RowDividerThin(vine.cardBorder)
-                OptionRow("Volume", VolumeUnit.entries.map { it.raw to it.label }, working.volumeUnit, canEdit) {
-                    working = working.copy(volumeUnit = it)
+                OptionRow("Volume", VolumeUnit.entries.map { it.raw to it.label }, working.volumeUnit, canEdit) { raw ->
+                    edit { w -> w.copy(volumeUnit = raw) }
                 }
                 RowDividerThin(vine.cardBorder)
-                OptionRow("Distance", DistanceSystem.entries.map { it.raw to it.label }, working.distanceUnit, canEdit) {
-                    working = working.copy(distanceUnit = it)
+                OptionRow("Distance", DistanceSystem.entries.map { it.raw to it.label }, working.distanceUnit, canEdit) { raw ->
+                    edit { w -> w.copy(distanceUnit = raw) }
                 }
                 RowDividerThin(vine.cardBorder)
-                OptionRow("Fuel", FuelUnit.entries.map { it.raw to it.label }, working.fuelUnit, canEdit) {
-                    working = working.copy(fuelUnit = it)
+                OptionRow("Fuel", FuelUnit.entries.map { it.raw to it.label }, working.fuelUnit, canEdit) { raw ->
+                    edit { w -> w.copy(fuelUnit = raw) }
                 }
                 RowDividerThin(vine.cardBorder)
-                OptionRow("Spray Rate Area", SprayRateAreaUnit.entries.map { it.raw to it.label }, working.sprayRateAreaUnit, canEdit) {
-                    working = working.copy(sprayRateAreaUnit = it)
+                OptionRow("Spray Rate Area", SprayRateAreaUnit.entries.map { it.raw to it.label }, working.sprayRateAreaUnit, canEdit) { raw ->
+                    edit { w -> w.copy(sprayRateAreaUnit = raw) }
                 }
                 RowDividerThin(vine.cardBorder)
                 // Shows the resolved unit (explicit preference or regional default);
                 // tapping saves an explicit vineyard-wide preference (sql/180).
-                OptionRow("Grape sugar measurement", SugarMeasurementUnit.entries.map { it.raw to it.label }, working.sugarUnit.raw, canEdit) {
-                    working = working.copy(sugarMeasurementUnit = it)
+                OptionRow("Grape sugar measurement", SugarMeasurementUnit.entries.map { it.raw to it.label }, working.sugarUnit.raw, canEdit) { raw ->
+                    edit { w -> w.copy(sugarMeasurementUnit = raw) }
                 }
             }
 
@@ -225,7 +262,7 @@ fun RegionUnitsSettingsScreen(
                         label = f.label,
                         selected = working.dateFormat == f.raw,
                         enabled = canEdit,
-                        onClick = { working = working.copy(dateFormat = f.raw) },
+                        onClick = { edit { w -> w.copy(dateFormat = f.raw) } },
                     )
                     if (index < RegionDateFormat.entries.lastIndex) RowDividerThin(vine.cardBorder)
                 }
@@ -238,7 +275,7 @@ fun RegionUnitsSettingsScreen(
                         label = t.label,
                         selected = working.terminologyRegion == t.raw,
                         enabled = canEdit,
-                        onClick = { working = working.copy(terminologyRegion = t.raw) },
+                        onClick = { edit { w -> w.copy(terminologyRegion = t.raw) } },
                     )
                     if (index < TerminologyRegion.entries.lastIndex) RowDividerThin(vine.cardBorder)
                 }
@@ -267,13 +304,13 @@ fun RegionUnitsSettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    working = country.recommendedPreset.copy(timezone = working.timezone)
+                    edit { w -> country.recommendedPreset.copy(timezone = w.timezone) }
                     pendingCountry = null
                 }) { Text("Apply Defaults") }
             },
             dismissButton = {
                 TextButton(onClick = {
-                    working = working.copy(countryCode = country.code)
+                    edit { w -> w.copy(countryCode = country.code) }
                     pendingCountry = null
                 }) { Text("Keep Current Settings") }
             },

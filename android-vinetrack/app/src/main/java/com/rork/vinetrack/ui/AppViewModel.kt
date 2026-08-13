@@ -4798,6 +4798,45 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Re-read Region & Units from the backend for the selected vineyard. */
+    fun reloadRegionSettings() {
+        val id = _ui.value.selectedVineyardId ?: return
+        refreshRegionSettings(id)
+    }
+
+    /**
+     * Persist vineyard Region & Units settings and apply them app-wide.
+     *
+     * The Region & Units screen must save through here rather than owning its
+     * own repository: [AppUiState.regionSettings] is what every other screen
+     * formats against, so a save that only wrote to the backend and the local
+     * cache left the running app showing the previous units until the vineyard
+     * was reselected or the app restarted.
+     *
+     * [onResult] is invoked on the main dispatcher with the persisted settings
+     * as returned by the server (the authoritative value), or the failure.
+     */
+    fun saveRegionSettings(
+        settings: RegionSettings,
+        onResult: (Result<RegionSettings>) -> Unit,
+    ) {
+        val vineyardId = _ui.value.selectedVineyardId
+        if (vineyardId == null) {
+            onResult(Result.failure(IllegalStateException("Select a vineyard before changing region settings.")))
+            return
+        }
+        viewModelScope.launch {
+            val result = runCatching { regionSettingsRepo.set(vineyardId, settings) }
+            result.onSuccess { saved ->
+                regionSettingsStore.save(vineyardId, saved)
+                if (_ui.value.selectedVineyardId == vineyardId) {
+                    _ui.update { it.copy(regionSettings = saved) }
+                }
+            }
+            onResult(result)
+        }
+    }
+
     fun refresh() {
         val id = _ui.value.selectedVineyardId ?: return
         refreshSelectedVineyardLogo()
