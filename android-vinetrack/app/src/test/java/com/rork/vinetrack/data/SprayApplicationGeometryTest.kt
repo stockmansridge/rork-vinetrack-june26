@@ -1,5 +1,8 @@
 package com.rork.vinetrack.data
 
+import com.rork.vinetrack.data.model.CoordinatePoint
+import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.PaddockRow
 import com.rork.vinetrack.data.spray.SprayApplicationMode
 import com.rork.vinetrack.data.spray.SprayApplicationPlanner
 import com.rork.vinetrack.data.spray.SprayBandWidth
@@ -77,34 +80,103 @@ class SprayApplicationGeometryTest {
     }
 
     @Test
-    fun `mapped row geometry wins over a stored length`() {
-        // Real measured geometry outranks a stored figure. This is deliberately
-        // the OPPOSITE of the legacy `Paddock.effectiveTotalRowLength`
-        // (override-wins), which is left untouched for irrigation/vine counts.
+    fun `operator override wins over mapped geometry`() {
+        // The operator override is an EXPLICIT human correction, not a cache:
+        // the block editor files it under "Calculation Overrides" and tells the
+        // grower it exists for more accurate calculations. It therefore outranks
+        // mapped geometry, matching the legacy `effectiveTotalRowLength`.
         val block = SprayBlockInput(
             blockId = "A",
             grossAreaHectares = 10.0,
             mappedRowLengthMetres = 31_250.0,
-            storedRowLengthMetres = 99_999.0,
+            operatorRowLengthOverrideMetres = 99_999.0,
             rowSpacingMetres = 3.2,
         )
         val geometry = SprayGeometryResolver.resolve(listOf(block))
-        assertEquals(31_250.0, geometry.totalRowLengthMetres!!, tolerance)
-        assertEquals(SprayGeometrySource.MAPPED_ROWS, geometry.source)
+        assertEquals(99_999.0, geometry.totalRowLengthMetres!!, tolerance)
+        assertEquals(SprayGeometrySource.OPERATOR_OVERRIDE, geometry.source)
+        assertEquals(SprayGeometryQuality.AUTHORITATIVE, geometry.quality)
     }
 
     @Test
-    fun `stored row length is used when nothing is mapped`() {
+    fun `operator override is used when nothing is mapped`() {
         val block = SprayBlockInput(
             blockId = "A",
             grossAreaHectares = 10.0,
-            storedRowLengthMetres = 30_000.0,
+            operatorRowLengthOverrideMetres = 30_000.0,
             rowSpacingMetres = 3.2,
         )
         val geometry = SprayGeometryResolver.resolve(listOf(block))
         assertEquals(30_000.0, geometry.totalRowLengthMetres!!, tolerance)
-        assertEquals(SprayGeometrySource.STORED_ROW_LENGTH, geometry.source)
+        assertEquals(SprayGeometrySource.OPERATOR_OVERRIDE, geometry.source)
         assertEquals(SprayGeometryQuality.AUTHORITATIVE, geometry.quality)
+    }
+
+    @Test
+    fun `canonical engine agrees with legacy effectiveTotalRowLength`() {
+        // THE cross-feature guarantee: spray (canonical engine) and irrigation /
+        // vine counts / pruning (legacy accessor) must resolve the same block to
+        // the same metres, so one screen can never contradict another.
+        val rows = listOf(
+            PaddockRow(
+                number = 1,
+                startPoint = CoordinatePoint(-34.0, 138.0),
+                endPoint = CoordinatePoint(-34.0, 138.0027),
+            ),
+        )
+        val polygon = listOf(
+            CoordinatePoint(-34.0000, 138.0000),
+            CoordinatePoint(-34.0000, 138.0030),
+            CoordinatePoint(-34.0020, 138.0030),
+            CoordinatePoint(-34.0020, 138.0000),
+        )
+        val mapped = Paddock(
+            id = "p1",
+            vineyardId = "v1",
+            name = "Mapped",
+            polygonPoints = polygon,
+            rows = rows,
+            rowWidth = 3.2,
+        )
+        val mappedGeometry = SprayGeometryResolver.resolvePaddocks(listOf(mapped))
+        assertEquals(mapped.effectiveTotalRowLength, mappedGeometry.totalRowLengthMetres!!, 1e-6)
+        assertEquals(SprayGeometrySource.MAPPED_ROWS, mappedGeometry.source)
+
+        val overridden = mapped.copy(rowLengthOverride = 12_345.0)
+        val overriddenGeometry = SprayGeometryResolver.resolvePaddocks(listOf(overridden))
+        assertEquals(12_345.0, overriddenGeometry.totalRowLengthMetres!!, tolerance)
+        assertEquals(12_345.0, overridden.effectiveTotalRowLength, tolerance)
+        assertEquals(SprayGeometrySource.OPERATOR_OVERRIDE, overriddenGeometry.source)
+    }
+
+    @Test
+    fun `paddock with no stored row spacing is incomplete not defaulted to 2 point 5`() {
+        // A block whose row spacing was NEVER entered must not borrow a 2.5 m
+        // assumption for a dose-critical calculation.
+        val noSpacing = Paddock(id = "p1", vineyardId = "v1", name = "No spacing", rowWidth = null)
+        assertNull(noSpacing.authoritativeRowSpacingMetres)
+        assertFalse(noSpacing.hasAuthoritativeRowSpacing)
+
+        val geometry = SprayGeometryResolver.resolvePaddocks(listOf(noSpacing))
+        assertNull(geometry.totalRowLengthMetres)
+        assertEquals(SprayGeometryQuality.INCOMPLETE, geometry.quality)
+        assertEquals(
+            SprayGeometryUnavailable.MISSING_ROW_SPACING,
+            geometry.blocks.first().unavailableReason,
+        )
+
+        // An explicitly entered 2.5 m IS authoritative — the two are distinct.
+        val explicit = Paddock(id = "p2", vineyardId = "v1", name = "Explicit", rowWidth = 2.5)
+        assertEquals(2.5, explicit.authoritativeRowSpacingMetres!!, tolerance)
+    }
+
+    @Test
+    fun `deprecated stored row length source still decodes`() {
+        // sql/191 rows persisted the operator override as "stored_row_length".
+        // Those rows must keep decoding after sql/192 renamed the concept.
+        assertEquals(SprayGeometrySource.STORED_ROW_LENGTH, SprayGeometrySource.from("stored_row_length"))
+        assertEquals(SprayGeometrySource.OPERATOR_OVERRIDE, SprayGeometrySource.from("operator_override"))
+        assertEquals("operator_override", SprayGeometrySource.OPERATOR_OVERRIDE.raw)
     }
 
     @Test

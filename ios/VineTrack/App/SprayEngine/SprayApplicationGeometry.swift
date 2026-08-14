@@ -6,9 +6,13 @@ import Foundation
 /// the geometry that produced it. This is the ONLY place spray calculations are
 /// allowed to decide what "row length" means.
 nonisolated enum SprayGeometrySource: String, Sendable, Codable, CaseIterable {
-    /// Summed length of the block's actual mapped rows. Best available truth.
+    /// The operator's explicit row-length correction (`rowLengthOverride`).
+    /// Highest authority: a human deliberately overruled the geometry.
+    case operatorOverride = "operator_override"
+    /// Summed length of the block's actual mapped rows.
     case mappedRows = "mapped_rows"
-    /// The operator's stored block row/trellis length (`rowLengthOverride`).
+    /// Deprecated SQL 191 spelling of `operatorOverride`. Never written by new
+    /// code; retained so rows already persisted with it still decode.
     case storedRowLength = "stored_row_length"
     /// Derived from block area and row spacing: `areaHa × 10_000 / rowSpacing`.
     case derivedFromAreaAndSpacing = "derived_from_area_and_spacing"
@@ -57,8 +61,8 @@ nonisolated struct SprayBlockInput: Sendable, Hashable {
     let grossAreaHectares: Double?
     /// Summed length of mapped rows, when the block actually has rows.
     let mappedRowLengthMetres: Double?
-    /// Stored block row/trellis length, when the operator has entered one.
-    let storedRowLengthMetres: Double?
+    /// The operator's explicit row-length correction, when they entered one.
+    let operatorRowLengthOverrideMetres: Double?
     /// Row spacing in metres. `nil` means genuinely unknown — NEVER defaulted.
     let rowSpacingMetres: Double?
     let rowCount: Int?
@@ -67,14 +71,14 @@ nonisolated struct SprayBlockInput: Sendable, Hashable {
         blockId: String,
         grossAreaHectares: Double?,
         mappedRowLengthMetres: Double? = nil,
-        storedRowLengthMetres: Double? = nil,
+        operatorRowLengthOverrideMetres: Double? = nil,
         rowSpacingMetres: Double? = nil,
         rowCount: Int? = nil
     ) {
         self.blockId = blockId
         self.grossAreaHectares = grossAreaHectares
         self.mappedRowLengthMetres = mappedRowLengthMetres
-        self.storedRowLengthMetres = storedRowLengthMetres
+        self.operatorRowLengthOverrideMetres = operatorRowLengthOverrideMetres
         self.rowSpacingMetres = rowSpacingMetres
         self.rowCount = rowCount
     }
@@ -145,7 +149,7 @@ nonisolated struct SprayApplicationGeometry: Sendable, Hashable {
         if blocks.contains(where: { $0.source == .unavailable }) { return .unavailable }
         return blocks.contains(where: { $0.source == .derivedFromAreaAndSpacing })
             ? .derivedFromAreaAndSpacing
-            : .storedRowLength
+            : .mappedRows
     }
 
     var isUsable: Bool { totalRowLengthMetres != nil }
@@ -161,20 +165,31 @@ nonisolated struct SprayApplicationGeometry: Sendable, Hashable {
     }
 }
 
-/// THE canonical row/trellis-length engine for spray calculations.
+/// THE canonical row/trellis-length engine for VineTrack.
 ///
 /// Resolution hierarchy, highest first:
-///  1. Actual mapped row geometry (`mappedRowLengthMetres`) — authoritative.
-///  2. Valid stored block row/trellis length — authoritative.
+///  1. Explicit operator override (`rowLengthOverride`) — authoritative.
+///  2. Actual mapped row geometry (`mappedRowLengthMetres`) — authoritative.
 ///  3. Derived from gross area × valid row spacing — derived.
 ///  4. Otherwise an explicit incomplete state.
 ///
-/// NOTE ON PRECEDENCE: this deliberately prefers MAPPED geometry over the
-/// stored `rowLengthOverride`, which is the opposite of the long-standing
-/// `Paddock.effectiveTotalRowLength` (override-wins). That legacy property is
-/// left untouched — it still drives irrigation, vine counts and pruning — so
-/// nothing existing changes behaviour. Spray is the only consumer of this
-/// engine.
+/// PRECEDENCE RATIONALE: the operator override outranks mapped geometry
+/// because VineTrack has always presented it as a deliberate correction, not
+/// a cache. The block editor files it under "Calculation Overrides", badges it
+/// "Manual override active", offers a Reset, and tells the grower it exists
+/// for "more accurate water usage and yield calculations". It is only ever
+/// written from that field.
+///
+/// This makes the canonical engine AGREE with the long-standing legacy
+/// accessor `Paddock.effectiveTotalRowLength`
+/// (`rowLengthOverride ?? totalRowLengthMetres`), so spray, irrigation, vine
+/// counts and pruning all resolve the same block to the same metres. The
+/// engine is a strict superset: it adds the derived and incomplete tiers that
+/// the legacy accessor cannot express (it collapses both to 0).
+///
+/// There is no separate "stored calculated row length" in VineTrack — no such
+/// column exists — so the audit's tiers 1 and 3 are the same field and
+/// collapse into tier 1 here.
 nonisolated enum SprayGeometryResolver {
 
     /// Metres of row per hectare at a given spacing: `10_000 / rowSpacing`.
@@ -208,13 +223,13 @@ nonisolated enum SprayGeometryResolver {
             )
         }
 
-        // 1. Mapped row geometry.
+        // 1. Explicit operator override — a human overruled the geometry.
+        if let override = positive(input.operatorRowLengthOverrideMetres) {
+            return result(override, .operatorOverride, .authoritative)
+        }
+        // 2. Mapped row geometry.
         if let mapped = positive(input.mappedRowLengthMetres) {
             return result(mapped, .mappedRows, .authoritative)
-        }
-        // 2. Stored block row/trellis length.
-        if let stored = positive(input.storedRowLengthMetres) {
-            return result(stored, .storedRowLength, .authoritative)
         }
         // 3. Derived from area and spacing.
         if let spacing, area > 0 {
@@ -237,19 +252,17 @@ extension SprayBlockInput {
     /// `mappedRowLengthMetres` is taken only when the block genuinely has mapped
     /// rows, so an empty `rows` array cannot masquerade as a measured zero.
     ///
-    /// KNOWN LIMITATION: `Paddock.rowWidth` is non-optional and defaults to
-    /// 2.5 m (including on decode), so a block whose spacing was never entered
-    /// is indistinguishable from one deliberately set to 2.5 m. This adapter
-    /// therefore cannot report `missingRowSpacing` for such blocks. Making
-    /// `rowWidth` optional is a separate, wider change.
+    /// Row spacing comes from `authoritativeRowSpacingMetres`, so a block whose
+    /// spacing was never entered resolves to `missingRowSpacing` instead of
+    /// silently borrowing the 2.5 m legacy display fallback.
     static func from(paddock: Paddock) -> SprayBlockInput {
         let mapped: Double? = paddock.rows.isEmpty ? nil : paddock.totalRowLengthMetres
         return SprayBlockInput(
             blockId: paddock.id.uuidString,
             grossAreaHectares: paddock.areaHectares,
             mappedRowLengthMetres: mapped,
-            storedRowLengthMetres: paddock.rowLengthOverride,
-            rowSpacingMetres: paddock.rowWidth > 0 ? paddock.rowWidth : nil,
+            operatorRowLengthOverrideMetres: paddock.rowLengthOverride,
+            rowSpacingMetres: paddock.authoritativeRowSpacingMetres,
             rowCount: paddock.rows.isEmpty ? nil : paddock.rows.count
         )
     }

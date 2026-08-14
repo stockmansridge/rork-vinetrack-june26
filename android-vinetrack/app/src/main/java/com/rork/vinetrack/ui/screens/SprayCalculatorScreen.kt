@@ -110,6 +110,8 @@ import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.data.model.chemicalUnitFromBase
 import com.rork.vinetrack.data.model.resolveSprayTrip
 import com.rork.vinetrack.data.model.sprayOperationTypes
+import com.rork.vinetrack.data.spray.SprayBlockInput
+import com.rork.vinetrack.data.spray.SprayGeometryResolver
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.SprayJobRowPlan
@@ -250,16 +252,28 @@ fun SprayCalculatorScreen(
     val totalArea = selectedPaddocks.sumOf { it.areaHectares }
     val totalRows = selectedPaddocks.sumOf { it.rows.orEmpty().size }
 
-    // Average row spacing across selected blocks (default 2.5m, matching iOS).
-    val averageRowSpacing = remember(selectedPaddocks) {
-        val widths = selectedPaddocks.mapNotNull { it.rowWidth?.takeIf { w -> w > 0 } }
-        if (widths.isEmpty()) 2.5 else widths.sum() / widths.size
+    // Canonical geometry for the selection — single source of truth for row
+    // length and row spacing. Mirrors iOS `SprayCalculatorView`.
+    val applicationGeometry = remember(selectedPaddocks) {
+        SprayGeometryResolver.resolve(selectedPaddocks.map { SprayBlockInput.from(it) })
     }
 
+    // Row spacing ONLY when every selected block has an explicitly entered
+    // spacing and they agree. Deliberately null rather than falling back to
+    // 2.5 m or averaging differing spacings: L/ha is derived as
+    // `L/100m × 10_000 / rowSpacing / 100`, so an assumed spacing propagates
+    // straight into the water rate and every product quantity built on it.
+    val resolvedRowSpacing: Double? = applicationGeometry.uniformRowSpacingMetres
+
     val per100m = SprayCalculator.litresPer100m(canopyRates, canopySize, canopyDensity)
-    val recommendedRate = CanopyWaterRates.litresPerHa(per100m, averageRowSpacing)
-    val chosenRate = if (hasEditedSprayRate) (sprayRateText.toDoubleOrNull() ?: recommendedRate) else recommendedRate
-    val concentrationFactor = if (chosenRate > 0) recommendedRate / chosenRate else 1.0
+    val recommendedRate: Double? = resolvedRowSpacing?.let { CanopyWaterRates.litresPerHa(per100m, it) }
+    val chosenRate = if (hasEditedSprayRate) {
+        sprayRateText.toDoubleOrNull() ?: (recommendedRate ?: 0.0)
+    } else {
+        recommendedRate ?: 0.0
+    }
+    val concentrationFactor =
+        if (chosenRate > 0 && recommendedRate != null) recommendedRate / chosenRate else 1.0
     val usesCF = SprayCalculator.usesConcentrationFactor(operationType)
 
     val selectedEquipment = state.sprayEquipment.firstOrNull { it.id == sprayEquipmentId }
@@ -764,7 +778,12 @@ fun SprayCalculatorScreen(
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text("Volume", fontSize = 12.sp, color = vine.textSecondary)
-                            Text(LocalRegionFormatter.current.formatVolumePerArea(recommendedRate), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = VineColors.DarkGreen)
+                            Text(
+                                recommendedRate?.let { LocalRegionFormatter.current.formatVolumePerArea(it) } ?: "—",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (recommendedRate != null) VineColors.DarkGreen else vine.textSecondary,
+                            )
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text("Per 100m row", fontSize = 12.sp, color = vine.textSecondary)
@@ -772,13 +791,27 @@ fun SprayCalculatorScreen(
                         }
                     }
 
-                    // Row spacing — display only, matching iOS.
-                    Text(
-                        "Row spacing: ${fmtNum(averageRowSpacing, 1)}m",
-                        fontSize = 12.sp,
-                        color = vine.textSecondary,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
+                    // Row spacing — display only, matching iOS. When it cannot be
+                    // resolved we say so instead of showing an assumed 2.5 m.
+                    if (resolvedRowSpacing != null) {
+                        Text(
+                            "Row spacing: ${fmtNum(resolvedRowSpacing, 1)}m",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    } else {
+                        Text(
+                            if (selectedPaddocks.size > 1) {
+                                "Selected blocks have missing or differing row spacing — set a matching row spacing in block details to calculate L/ha."
+                            } else {
+                                "Set row spacing in block details to calculate L/ha."
+                            },
+                            fontSize = 12.sp,
+                            color = VineColors.Warning,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
 
                     if (usesCF) {
                         Spacer12()
@@ -786,7 +819,7 @@ fun SprayCalculatorScreen(
                         Spacer8()
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             OutlinedTextField(
-                                value = if (hasEditedSprayRate) sprayRateText else fmtNum(recommendedRate, 0),
+                                value = if (hasEditedSprayRate) sprayRateText else recommendedRate?.let { fmtNum(it, 0) } ?: "",
                                 onValueChange = { sprayRateText = it.filter { c -> c.isDigit() || c == '.' }; hasEditedSprayRate = true; result = null },
                                 label = { Text("Chosen Spray Rate (L/ha)") },
                                 singleLine = true,

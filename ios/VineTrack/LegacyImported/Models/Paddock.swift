@@ -9,7 +9,14 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
     var polygonPoints: [CoordinatePoint]
     var rows: [PaddockRow]
     var rowDirection: Double
-    var rowWidth: Double
+    /// Raw stored row spacing. `nil` means NO row spacing has ever been
+    /// entered for this block — which is NOT the same as 2.5 m.
+    ///
+    /// Prefer `authoritativeRowSpacingMetres` for anything that doses a tank,
+    /// derives L/ha or computes a treated area. Use `rowWidth` for legacy
+    /// spatial work (row guidance, trip corridors, map previews) where a
+    /// nominal fallback is harmless.
+    var rowWidthRaw: Double?
     var rowOffset: Double
     var vineSpacing: Double
     var vineCountOverride: Int?
@@ -33,7 +40,7 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
         polygonPoints: [CoordinatePoint] = [],
         rows: [PaddockRow] = [],
         rowDirection: Double = 0,
-        rowWidth: Double = 2.5,
+        rowWidth: Double? = Paddock.nominalRowSpacingMetres,
         rowOffset: Double = 0,
         vineSpacing: Double = 1.0,
         vineCountOverride: Int? = nil,
@@ -56,7 +63,7 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
         self.polygonPoints = polygonPoints
         self.rows = rows
         self.rowDirection = rowDirection
-        self.rowWidth = rowWidth
+        self.rowWidthRaw = rowWidth
         self.rowOffset = rowOffset
         self.vineSpacing = vineSpacing
         self.vineCountOverride = vineCountOverride
@@ -75,7 +82,9 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
-        case id, vineyardId, name, polygonPoints, rows, rowDirection, rowWidth, rowOffset, vineSpacing, vineCountOverride, rowLengthOverride, flowPerEmitter, emitterSpacing, intermediatePostSpacing, varietyAllocations, budburstDate, floweringDate, veraisonDate, harvestDate, plantingYear, calculationModeOverride, resetModeOverride
+        case id, vineyardId, name, polygonPoints, rows, rowDirection, rowOffset, vineSpacing, vineCountOverride, rowLengthOverride, flowPerEmitter, emitterSpacing, intermediatePostSpacing, varietyAllocations, budburstDate, floweringDate, veraisonDate, harvestDate, plantingYear, calculationModeOverride, resetModeOverride
+        // Persisted under its historical key so stored JSON is unchanged.
+        case rowWidthRaw = "rowWidth"
     }
 
     init(from decoder: Decoder) throws {
@@ -86,7 +95,9 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
         polygonPoints = try container.decode([CoordinatePoint].self, forKey: .polygonPoints)
         rows = try container.decode([PaddockRow].self, forKey: .rows)
         rowDirection = try container.decode(Double.self, forKey: .rowDirection)
-        rowWidth = try container.decodeIfPresent(Double.self, forKey: .rowWidth) ?? 2.5
+        // NO `?? 2.5` — absence is preserved so calculation-critical callers can
+        // tell "never entered" from "deliberately 2.5 m".
+        rowWidthRaw = try container.decodeIfPresent(Double.self, forKey: .rowWidthRaw)
         rowOffset = try container.decodeIfPresent(Double.self, forKey: .rowOffset) ?? 0
         vineSpacing = try container.decodeIfPresent(Double.self, forKey: .vineSpacing) ?? 1.0
         vineCountOverride = try container.decodeIfPresent(Int.self, forKey: .vineCountOverride)
@@ -176,6 +187,34 @@ extension Paddock {
         return area / 10_000.0
     }
 
+    /// Nominal row spacing used ONLY as a legacy display/spatial fallback.
+    /// Never used by spray, carrier-volume or treated-area arithmetic.
+    static let nominalRowSpacingMetres: Double = 2.5
+
+    /// Legacy row spacing accessor. Always returns a number, falling back to
+    /// `nominalRowSpacingMetres` when none was ever entered.
+    ///
+    /// Preserved verbatim so existing spatial consumers (row guidance, trip
+    /// corridor tolerances, map previews, pin de-duplication) keep their
+    /// current behaviour. Writing through it records an explicit value.
+    var rowWidth: Double {
+        get { rowWidthRaw ?? Paddock.nominalRowSpacingMetres }
+        set { rowWidthRaw = newValue }
+    }
+
+    /// Row spacing ONLY when it is genuinely known, otherwise `nil`.
+    ///
+    /// This is the accessor every calculation-critical path must use. A block
+    /// with no spacing entered returns `nil` here while `rowWidth` would
+    /// silently answer 2.5 m.
+    var authoritativeRowSpacingMetres: Double? {
+        guard let value = rowWidthRaw, value.isFinite, value > 0 else { return nil }
+        return value
+    }
+
+    /// True when the operator has explicitly entered a row spacing.
+    var hasAuthoritativeRowSpacing: Bool { authoritativeRowSpacingMetres != nil }
+
     var rowSpacingMetres: Double { rowWidth }
 
     var totalRowLengthMetres: Double {
@@ -189,6 +228,13 @@ extension Paddock {
         }
     }
 
+    /// Legacy effective row length: operator override wins over mapped rows.
+    ///
+    /// This precedence is INTENTIONAL and is now the canonical one — see
+    /// `SprayGeometryResolver`, which agrees with it. Retained as the
+    /// convenience accessor for irrigation, vine counts and pruning; spray
+    /// goes through the canonical resolver so it also gets the derived and
+    /// incomplete tiers this property cannot express (it returns 0).
     var effectiveTotalRowLength: Double {
         rowLengthOverride ?? totalRowLengthMetres
     }

@@ -12,10 +12,19 @@ import kotlin.math.abs
  * allowed to decide what "row length" means.
  */
 enum class SprayGeometrySource(val raw: String) {
-    /** Summed length of the block's actual mapped rows. Best available truth. */
+    /**
+     * The operator's explicit row-length correction (`rowLengthOverride`).
+     * Highest authority: a human deliberately overruled the geometry.
+     */
+    OPERATOR_OVERRIDE("operator_override"),
+
+    /** Summed length of the block's actual mapped rows. */
     MAPPED_ROWS("mapped_rows"),
 
-    /** The operator's stored block row/trellis length (`rowLengthOverride`). */
+    /**
+     * Deprecated SQL 191 spelling of [OPERATOR_OVERRIDE]. Never written by new
+     * code; retained so rows already persisted with it still decode.
+     */
     STORED_ROW_LENGTH("stored_row_length"),
 
     /** Derived from block area and row spacing: `areaHa × 10_000 / rowSpacing`. */
@@ -78,8 +87,8 @@ data class SprayBlockInput(
     val grossAreaHectares: Double?,
     /** Summed length of mapped rows, when the block actually has rows. */
     val mappedRowLengthMetres: Double? = null,
-    /** Stored block row/trellis length, when the operator has entered one. */
-    val storedRowLengthMetres: Double? = null,
+    /** The operator's explicit row-length correction, when they entered one. */
+    val operatorRowLengthOverrideMetres: Double? = null,
     /** Row spacing in metres. Null means genuinely unknown — NEVER defaulted. */
     val rowSpacingMetres: Double? = null,
     val rowCount: Int? = null,
@@ -92,11 +101,11 @@ data class SprayBlockInput(
          * mapped rows, so an empty `rows` list cannot masquerade as a measured
          * zero.
          *
-         * Unlike iOS — where `Paddock.rowWidth` is non-optional and defaults to
-         * 2.5 m — the Android model stores row spacing as nullable, so a block
-         * whose spacing was never entered correctly reports
+         * Row spacing comes from [Paddock.authoritativeRowSpacingMetres], so a
+         * block whose spacing was never entered reports
          * [SprayGeometryUnavailable.MISSING_ROW_SPACING] instead of silently
-         * calculating against an assumed 2.5 m.
+         * calculating against an assumed 2.5 m. iOS now matches via its own
+         * `authoritativeRowSpacingMetres`.
          */
         fun from(paddock: Paddock): SprayBlockInput {
             val hasRows = !paddock.rows.isNullOrEmpty()
@@ -104,8 +113,8 @@ data class SprayBlockInput(
                 blockId = paddock.id,
                 grossAreaHectares = paddock.areaHectares,
                 mappedRowLengthMetres = if (hasRows) paddock.totalRowLengthMetres else null,
-                storedRowLengthMetres = paddock.rowLengthOverride,
-                rowSpacingMetres = paddock.rowWidth?.takeIf { it > 0 },
+                operatorRowLengthOverrideMetres = paddock.rowLengthOverride,
+                rowSpacingMetres = paddock.authoritativeRowSpacingMetres,
                 rowCount = if (hasRows) paddock.rowCount else null,
             )
         }
@@ -192,7 +201,7 @@ data class SprayApplicationGeometry(val blocks: List<SprayBlockGeometry>) {
             return if (blocks.any { it.source == SprayGeometrySource.DERIVED_FROM_AREA_AND_SPACING }) {
                 SprayGeometrySource.DERIVED_FROM_AREA_AND_SPACING
             } else {
-                SprayGeometrySource.STORED_ROW_LENGTH
+                SprayGeometrySource.MAPPED_ROWS
             }
         }
 
@@ -211,19 +220,30 @@ data class SprayApplicationGeometry(val blocks: List<SprayBlockGeometry>) {
 }
 
 /**
- * THE canonical row/trellis-length engine for spray calculations.
+ * THE canonical row/trellis-length engine for VineTrack.
  *
  * Resolution hierarchy, highest first:
- *  1. Actual mapped row geometry ([SprayBlockInput.mappedRowLengthMetres]) — authoritative.
- *  2. Valid stored block row/trellis length — authoritative.
+ *  1. Explicit operator override ([SprayBlockInput.operatorRowLengthOverrideMetres]) — authoritative.
+ *  2. Actual mapped row geometry ([SprayBlockInput.mappedRowLengthMetres]) — authoritative.
  *  3. Derived from gross area × valid row spacing — derived.
  *  4. Otherwise an explicit incomplete state.
  *
- * NOTE ON PRECEDENCE: this deliberately prefers MAPPED geometry over the stored
- * `rowLengthOverride`, which is the opposite of the long-standing
- * `Paddock.effectiveTotalRowLength` (override-wins). That legacy property is
- * left untouched — it still drives irrigation, vine counts and pruning — so
- * nothing existing changes behaviour. Spray is the only consumer of this engine.
+ * PRECEDENCE RATIONALE: the operator override outranks mapped geometry because
+ * VineTrack has always presented it as a deliberate correction, not a cache.
+ * The block editor files it under "Calculation Overrides", badges it "Manual
+ * override active", offers a Reset, and tells the grower it exists for "more
+ * accurate water usage and yield calculations". It is only ever written from
+ * that field.
+ *
+ * This makes the canonical engine AGREE with the long-standing legacy accessor
+ * `Paddock.effectiveTotalRowLength` (`rowLengthOverride ?: totalRowLengthMetres`),
+ * so spray, irrigation, vine counts and pruning all resolve the same block to
+ * the same metres. The engine is a strict superset: it adds the derived and
+ * incomplete tiers the legacy accessor cannot express (it collapses both to 0).
+ *
+ * There is no separate "stored calculated row length" in VineTrack — no such
+ * column exists — so the audit's tiers 1 and 3 are the same field and collapse
+ * into tier 1 here.
  */
 object SprayGeometryResolver {
 
@@ -254,13 +274,13 @@ object SprayGeometryResolver {
             unavailableReason = reason,
         )
 
-        // 1. Mapped row geometry.
+        // 1. Explicit operator override — a human overruled the geometry.
+        positive(input.operatorRowLengthOverrideMetres)?.let {
+            return result(it, SprayGeometrySource.OPERATOR_OVERRIDE, SprayGeometryQuality.AUTHORITATIVE)
+        }
+        // 2. Mapped row geometry.
         positive(input.mappedRowLengthMetres)?.let {
             return result(it, SprayGeometrySource.MAPPED_ROWS, SprayGeometryQuality.AUTHORITATIVE)
-        }
-        // 2. Stored block row/trellis length.
-        positive(input.storedRowLengthMetres)?.let {
-            return result(it, SprayGeometrySource.STORED_ROW_LENGTH, SprayGeometryQuality.AUTHORITATIVE)
         }
         // 3. Derived from area and spacing.
         if (spacing != null && area > 0) {

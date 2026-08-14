@@ -139,27 +139,53 @@ struct SprayCalculatorView: View {
         return "Per block — \(assigned)/\(selectedPaddockIds.count) assigned (\(count >= 0 ? "" : ""))"
     }
 
-    private var averageRowSpacing: Double {
-        guard !selectedPaddocks.isEmpty else { return 2.5 }
-        return selectedPaddocks.reduce(0) { $0 + $1.rowSpacingMetres } / Double(selectedPaddocks.count)
+    /// Canonical geometry for the current selection — the single source of
+    /// truth for row length and row spacing in this screen.
+    private var applicationGeometry: SprayApplicationGeometry {
+        SprayGeometryResolver.resolve(selectedPaddocks.map { SprayBlockInput.from(paddock: $0) })
     }
 
-    private var waterRateEntry: CanopyWaterRate.RateEntry {
-        CanopyWaterRate.rate(
+    /// Row spacing for the selection, ONLY when every selected block has an
+    /// explicitly entered spacing and they agree.
+    ///
+    /// Deliberately returns `nil` rather than falling back to 2.5 m or
+    /// averaging differing spacings. Both of those silently mis-dose the tank:
+    /// L/ha is derived as `L/100m × 10_000 / rowSpacing / 100`, so an assumed
+    /// spacing propagates straight into the water rate and every product
+    /// quantity computed from it.
+    private var resolvedRowSpacingMetres: Double? {
+        applicationGeometry.uniformRowSpacingMetres
+    }
+
+    /// Litres per 100 m of row — independent of row spacing, so it is always
+    /// displayable even when spacing is unknown.
+    private var litresPer100mValue: Double {
+        CanopyWaterRate.litresPer100m(
             size: canopySize,
             density: canopyDensity,
-            rowSpacingMetres: averageRowSpacing,
+            settings: store.settings.canopyWaterRates
+        )
+    }
+
+    /// `nil` when row spacing could not be resolved, so callers must handle the
+    /// unavailable case instead of receiving a confidently wrong number.
+    private var waterRateEntry: CanopyWaterRate.RateEntry? {
+        guard let spacing = resolvedRowSpacingMetres else { return nil }
+        return CanopyWaterRate.rate(
+            size: canopySize,
+            density: canopyDensity,
+            rowSpacingMetres: spacing,
             settings: store.settings.canopyWaterRates
         )
     }
 
     private var chosenSprayRate: Double {
-        Double(sprayRateText) ?? waterRateEntry.litresPerHa
+        Double(sprayRateText) ?? (waterRateEntry?.litresPerHa ?? 0)
     }
 
     private var concentrationFactor: Double {
-        guard chosenSprayRate > 0 else { return 1.0 }
-        return waterRateEntry.litresPerHa / chosenSprayRate
+        guard chosenSprayRate > 0, let diluteRate = waterRateEntry?.litresPerHa else { return 1.0 }
+        return diluteRate / chosenSprayRate
     }
 
     private var formIsValid: Bool {
@@ -908,16 +934,22 @@ struct SprayCalculatorView: View {
                         Text("Volume")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("\(String(format: "%.0f", waterRateEntry.litresPerHa)) L/ha")
-                            .font(.title3.bold())
-                            .foregroundStyle(VineyardTheme.olive)
+                        if let perHa = waterRateEntry?.litresPerHa {
+                            Text("\(String(format: "%.0f", perHa)) L/ha")
+                                .font(.title3.bold())
+                                .foregroundStyle(VineyardTheme.olive)
+                        } else {
+                            Text("—")
+                                .font(.title3.bold())
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     Spacer()
                     VStack(alignment: .trailing, spacing: 2) {
                         Text("Per 100m row")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("\(String(format: "%.0f", waterRateEntry.litresPer100m)) L")
+                        Text("\(String(format: "%.0f", litresPer100mValue)) L")
                             .font(.subheadline.weight(.semibold))
                     }
                 }
@@ -925,9 +957,20 @@ struct SprayCalculatorView: View {
                 .background(VineyardTheme.olive.opacity(0.08))
                 .clipShape(.rect(cornerRadius: 10))
 
-                Text("Row spacing: \(String(format: "%.1f", averageRowSpacing))m")
+                if let spacing = resolvedRowSpacingMetres {
+                    Text("Row spacing: \(String(format: "%.1f", spacing))m")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    Label(
+                        selectedPaddocks.count > 1
+                            ? "Selected blocks have missing or differing row spacing — set a matching row spacing in block details to calculate L/ha."
+                            : "Set row spacing in block details to calculate L/ha.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.orange)
+                }
 
                 if operationType.useConcentrationFactor {
                     Divider()
@@ -964,14 +1007,14 @@ struct SprayCalculatorView: View {
             .background(Color(.secondarySystemGroupedBackground))
             .clipShape(.rect(cornerRadius: 10))
         }
-        .onChange(of: waterRateEntry.litresPerHa) { _, newValue in
-            if !hasEditedSprayRate {
+        .onChange(of: waterRateEntry?.litresPerHa) { _, newValue in
+            if !hasEditedSprayRate, let newValue {
                 sprayRateText = String(format: "%.0f", newValue)
             }
         }
         .onAppear {
-            if sprayRateText.isEmpty {
-                sprayRateText = String(format: "%.0f", waterRateEntry.litresPerHa)
+            if sprayRateText.isEmpty, let perHa = waterRateEntry?.litresPerHa {
+                sprayRateText = String(format: "%.0f", perHa)
             }
         }
     }

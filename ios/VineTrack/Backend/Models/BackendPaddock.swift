@@ -129,7 +129,9 @@ extension BackendPaddock {
             vineyardId: paddock.vineyardId,
             name: paddock.name,
             rowDirection: paddock.rowDirection,
-            rowWidth: paddock.rowWidth,
+            // Raw value on purpose: pushing the 2.5 m legacy display fallback
+            // would persist a guess as if the operator had entered it.
+            rowWidth: paddock.rowWidthRaw,
             rowOffset: paddock.rowOffset,
             vineSpacing: paddock.vineSpacing,
             vineCountOverride: paddock.vineCountOverride,
@@ -161,7 +163,8 @@ extension BackendPaddock {
             polygonPoints: polygonPoints ?? [],
             rows: rows ?? [],
             rowDirection: rowDirection ?? 0,
-            rowWidth: rowWidth ?? 2.5,
+            // Absence is preserved — see `Paddock.authoritativeRowSpacingMetres`.
+            rowWidth: rowWidth,
             rowOffset: rowOffset ?? 0,
             vineSpacing: vineSpacing ?? 1.0,
             vineCountOverride: vineCountOverride,

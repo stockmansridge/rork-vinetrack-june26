@@ -726,6 +726,20 @@ interface SprayRow {
   spray_equipment_id: string | null;
   operation_type: string | null;
   tanks: unknown;
+  // Application geometry (sql/191, sql/192). Null on every record written
+  // before those migrations — such records have no recoverable treated area.
+  gross_area_ha: number | null;
+  treated_area_ha: number | null;
+  treated_area_method: string | null;
+  band_width_total_metres: number | null;
+  canonical_row_length_metres: number | null;
+  geometry_source: string | null;
+  geometry_quality: string | null;
+  carrier_volume_basis: string | null;
+  total_carrier_litres: number | null;
+  carrier_litres_per_hectare: number | null;
+  dilute_litres_per_100m: number | null;
+  applied_litres_per_100m: number | null;
   created_at: string; updated_at: string;
 }
 
@@ -733,6 +747,9 @@ const SPRAY_COLUMNS =
   "id, vineyard_id, trip_id, spray_job_id, date, start_time, end_time, temperature, wind_speed, " +
   "wind_direction, humidity, spray_reference, notes, number_of_fans_jets, average_speed, " +
   "equipment_type, tractor, machine_id, tractor_id, spray_equipment_id, operation_type, tanks, " +
+  "gross_area_ha, treated_area_ha, treated_area_method, band_width_total_metres, " +
+  "canonical_row_length_metres, geometry_source, geometry_quality, carrier_volume_basis, " +
+  "total_carrier_litres, carrier_litres_per_hectare, dilute_litres_per_100m, applied_litres_per_100m, " +
   "created_at, updated_at";
 
 interface TankJson {
@@ -748,7 +765,13 @@ function parseTanks(raw: unknown): TankJson[] {
   return Array.isArray(raw) ? (raw as TankJson[]) : [];
 }
 
-/** Hectares one tank covers: waterVolume * cf / sprayRatePerHa (canonical client derivation). */
+/**
+ * Hectares one tank covers: waterVolume * cf / sprayRatePerHa.
+ *
+ * IMPORTANT: this is a GROSS (whole-block) area. It inverts the L/ha rate the
+ * operator sprayed at, so it describes the ground the tank covered, NOT the
+ * canopy band actually wetted. It must never be published as a treated area.
+ */
 function tankAreaHa(t: TankJson): number {
   const water = num(t.waterVolume) ?? 0;
   const rate = num(t.sprayRatePerHa) ?? 0;
@@ -801,10 +824,51 @@ function mapSpraySummary(row: SprayRow, idx: MachineIndex) {
       wind_direction: row.wind_direction ?? null,
       humidity_percent: row.humidity ?? null,
     },
-    // Derived from the canonical tank mix: water = sum(tank waterVolume);
-    // area = sum(waterVolume * concentrationFactor / sprayRatePerHa).
+    // Derived from the canonical tank mix: water = sum(tank waterVolume).
     water_volume_l: totals.waterL,
+    // DEPRECATED (kept for backwards compatibility, unchanged semantics).
+    //
+    // Despite its name this has ALWAYS carried a GROSS whole-block area,
+    // re-derived from the tank mix as
+    // `sum(waterVolume * concentrationFactor / sprayRatePerHa)`. It is NOT the
+    // physically treated (banded) area. Its value and null-behaviour are left
+    // exactly as shipped so existing consumers do not break.
+    //
+    // Use `gross_area_ha` for this number under an accurate name, and
+    // `application_geometry.treated_area_ha` for the genuine treated area.
     treated_area_ha: totals.areaHa > 0 ? totals.areaHa : null,
+    // Gross (whole-block) hectares under a truthful name. Prefers the value
+    // recorded by the app; falls back to the historical tank-mix derivation so
+    // pre-sql/191 records still report a gross area.
+    gross_area_ha: num(row.gross_area_ha) ?? (totals.areaHa > 0 ? totals.areaHa : null),
+    // Canonical application geometry (sql/191, sql/192).
+    //
+    // Every field is read STRAIGHT from storage and is null when the app did
+    // not record it. Nothing here is re-derived or back-filled: a treated area
+    // that was never measured must read null rather than borrow the gross area,
+    // because a banded treated area is typically a fraction of the block and
+    // silently substituting gross would overstate application rates.
+    application_geometry: {
+      // Physically treated (banded) hectares: canopy band actually wetted.
+      treated_area_ha: num(row.treated_area_ha),
+      // Which formula produced treated_area_ha: canonical_row_length |
+      // area_and_spacing_fallback | whole_block | unavailable.
+      treated_area_method: row.treated_area_method ?? null,
+      // Authoritative band width per row used by the arithmetic.
+      band_width_total_m: num(row.band_width_total_metres),
+      canonical_row_length_m: num(row.canonical_row_length_metres),
+      // operator_override | mapped_rows | derived_from_area_and_spacing |
+      // unavailable. "stored_row_length" is the deprecated sql/191 spelling of
+      // operator_override and may still appear on rows written before sql/192.
+      geometry_source: row.geometry_source ?? null,
+      // authoritative | derived | incomplete.
+      geometry_quality: row.geometry_quality ?? null,
+      carrier_volume_basis: row.carrier_volume_basis ?? null,
+      total_carrier_litres: num(row.total_carrier_litres),
+      carrier_litres_per_hectare: num(row.carrier_litres_per_hectare),
+      dilute_litres_per_100m: num(row.dilute_litres_per_100m),
+      applied_litres_per_100m: num(row.applied_litres_per_100m),
+    },
     tank_count: tanks.length,
     product_names: totals.productNames,
     average_speed_kmh: row.average_speed ?? null,
@@ -826,6 +890,7 @@ function mapSprayTanks(raw: unknown, includeCosts: boolean) {
       water_volume_l: num(t.waterVolume),
       spray_rate_l_per_ha: num(t.sprayRatePerHa),
       concentration_factor: num(t.concentrationFactor),
+      // GROSS hectares this tank covers, not a banded treated area.
       area_ha: round3(tankAreaHa(t)) || null,
       products: chems.map((c) => {
         const product: Record<string, unknown> = {

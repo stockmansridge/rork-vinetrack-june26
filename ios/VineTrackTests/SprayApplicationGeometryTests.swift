@@ -49,33 +49,102 @@ struct SprayApplicationGeometryTests {
         #expect(geometry.isUsable)
     }
 
-    @Test func mappedRowGeometryWinsOverAStoredLength() {
-        // Real measured geometry outranks a stored figure. This is deliberately
-        // the OPPOSITE of the legacy `Paddock.effectiveTotalRowLength`
-        // (override-wins), which is left untouched for irrigation/vine counts.
+    @Test func operatorOverrideWinsOverMappedGeometry() {
+        // The operator override is an EXPLICIT human correction, not a cache:
+        // the block editor files it under "Calculation Overrides" and tells the
+        // grower it exists for more accurate calculations. It therefore outranks
+        // mapped geometry, matching the legacy `effectiveTotalRowLength`.
         let block = SprayBlockInput(
             blockId: "A",
             grossAreaHectares: 10,
             mappedRowLengthMetres: 31_250,
-            storedRowLengthMetres: 99_999,
+            operatorRowLengthOverrideMetres: 99_999,
             rowSpacingMetres: 3.2
         )
         let geometry = SprayGeometryResolver.resolve([block])
-        #expect(geometry.totalRowLengthMetres == 31_250)
-        #expect(geometry.source == .mappedRows)
+        #expect(geometry.totalRowLengthMetres == 99_999)
+        #expect(geometry.source == .operatorOverride)
+        #expect(geometry.quality == .authoritative)
     }
 
-    @Test func storedRowLengthIsUsedWhenNothingIsMapped() {
+    @Test func operatorOverrideIsUsedWhenNothingIsMapped() {
         let block = SprayBlockInput(
             blockId: "A",
             grossAreaHectares: 10,
-            storedRowLengthMetres: 30_000,
+            operatorRowLengthOverrideMetres: 30_000,
             rowSpacingMetres: 3.2
         )
         let geometry = SprayGeometryResolver.resolve([block])
         #expect(geometry.totalRowLengthMetres == 30_000)
-        #expect(geometry.source == .storedRowLength)
+        #expect(geometry.source == .operatorOverride)
         #expect(geometry.quality == .authoritative)
+    }
+
+    @Test func canonicalEngineAgreesWithLegacyEffectiveTotalRowLength() {
+        // THE cross-feature guarantee: spray (canonical engine) and irrigation /
+        // vine counts / pruning (legacy accessor) must resolve the same block to
+        // the same metres, so one screen can never contradict another.
+        let rows = [
+            PaddockRow(
+                number: 1,
+                startPoint: CoordinatePoint(latitude: -34.0, longitude: 138.0),
+                endPoint: CoordinatePoint(latitude: -34.0, longitude: 138.0027)
+            )
+        ]
+        let polygon = [
+            CoordinatePoint(latitude: -34.0000, longitude: 138.0000),
+            CoordinatePoint(latitude: -34.0000, longitude: 138.0030),
+            CoordinatePoint(latitude: -34.0020, longitude: 138.0030),
+            CoordinatePoint(latitude: -34.0020, longitude: 138.0000)
+        ]
+
+        // Mapped rows, no override: both read the mapped length.
+        let mapped = Paddock(vineyardId: UUID(), name: "Mapped",
+                             polygonPoints: polygon, rows: rows, rowWidth: 3.2)
+        let mappedGeometry = SprayGeometryResolver.resolve([SprayBlockInput.from(paddock: mapped)])
+        #expect(abs((mappedGeometry.totalRowLengthMetres ?? 0) - mapped.effectiveTotalRowLength) < 1e-6)
+        #expect(mappedGeometry.source == .mappedRows)
+
+        // Override present: both prefer the override over the mapped rows.
+        var overridden = mapped
+        overridden.rowLengthOverride = 12_345
+        let overriddenGeometry = SprayGeometryResolver.resolve([SprayBlockInput.from(paddock: overridden)])
+        #expect(overriddenGeometry.totalRowLengthMetres == 12_345)
+        #expect(overridden.effectiveTotalRowLength == 12_345)
+        #expect(overriddenGeometry.source == .operatorOverride)
+    }
+
+    @Test func paddockWithNoStoredRowSpacingIsIncompleteNotDefaultedTo2Point5() {
+        // A block whose row spacing was NEVER entered must not borrow the 2.5 m
+        // legacy display fallback for a dose-critical calculation.
+        let json = """
+        {"id":"\(UUID().uuidString)","vineyardId":"\(UUID().uuidString)",
+         "name":"No spacing","polygonPoints":[],"rows":[],"rowDirection":0}
+        """
+        let paddock = try! JSONDecoder().decode(Paddock.self, from: Data(json.utf8))
+
+        // The legacy accessor still answers 2.5 m, unchanged, for spatial work.
+        #expect(paddock.rowWidth == 2.5)
+        // But the calculation-critical accessor refuses to invent one.
+        #expect(paddock.authoritativeRowSpacingMetres == nil)
+        #expect(!paddock.hasAuthoritativeRowSpacing)
+
+        let geometry = SprayGeometryResolver.resolve([SprayBlockInput.from(paddock: paddock)])
+        #expect(geometry.totalRowLengthMetres == nil)
+        #expect(geometry.quality == .incomplete)
+        #expect(geometry.blocks.first?.unavailableReason == .missingRowSpacing)
+
+        // An explicitly entered 2.5 m IS authoritative — the two are now distinct.
+        let explicit = Paddock(name: "Explicit", rowWidth: 2.5)
+        #expect(explicit.authoritativeRowSpacingMetres == 2.5)
+    }
+
+    @Test func deprecatedStoredRowLengthSourceStillDecodes() {
+        // sql/191 rows persisted the operator override as "stored_row_length".
+        // Those rows must keep decoding after sql/192 renamed the concept.
+        #expect(SprayGeometrySource(rawValue: "stored_row_length") == .storedRowLength)
+        #expect(SprayGeometrySource(rawValue: "operator_override") == .operatorOverride)
+        #expect(SprayGeometrySource.operatorOverride.rawValue == "operator_override")
     }
 
     @Test func rowLengthIsDerivedFromAreaAndSpacing() {

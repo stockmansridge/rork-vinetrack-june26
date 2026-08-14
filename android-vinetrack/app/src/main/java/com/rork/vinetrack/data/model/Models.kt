@@ -254,6 +254,28 @@ data class Paddock(
             }
         }
 
+    /**
+     * Row spacing ONLY when it is genuinely known, otherwise null.
+     *
+     * The accessor every calculation-critical path must use, so a block with no
+     * spacing entered is never silently treated as 2.5 m. Twin of the iOS
+     * `Paddock.authoritativeRowSpacingMetres`.
+     */
+    val authoritativeRowSpacingMetres: Double?
+        get() = rowWidth?.takeIf { it.isFinite() && it > 0 }
+
+    /** True when the operator has explicitly entered a row spacing. */
+    val hasAuthoritativeRowSpacing: Boolean get() = authoritativeRowSpacingMetres != null
+
+    /**
+     * Legacy effective row length: operator override wins over mapped rows.
+     *
+     * This precedence is INTENTIONAL and is now the canonical one — see
+     * `SprayGeometryResolver`, which agrees with it. Retained as the convenience
+     * accessor for irrigation, vine counts and pruning; spray goes through the
+     * canonical resolver so it also gets the derived and incomplete tiers this
+     * property cannot express (it returns 0).
+     */
     val effectiveTotalRowLength: Double get() = rowLengthOverride ?: totalRowLengthMetres
 
     private val estimatedVineCount: Int
