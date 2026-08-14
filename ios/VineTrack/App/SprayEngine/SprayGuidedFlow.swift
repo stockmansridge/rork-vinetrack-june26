@@ -75,6 +75,10 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
     /// a treated area. Named separately from `unresolvedProducts` because the fix
     /// is specific: complete the band width or the block's row geometry.
     case treatedAreaBasisUnavailable(names: [String])
+    /// A banded pass has area-rated products whose area scope nobody has
+    /// confirmed. The operator must say whether the label rate applies to the
+    /// whole block or only the treated band.
+    case productAreaBasisRequired(names: [String])
 
     var title: String {
         switch self {
@@ -91,6 +95,7 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case .noProductsAdded: return "Add products"
         case .unresolvedProducts: return "Product rate unavailable"
         case .treatedAreaBasisUnavailable: return "Treated area required"
+        case .productAreaBasisRequired: return "Choose an area basis"
         }
     }
 
@@ -123,6 +128,9 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case let .treatedAreaBasisUnavailable(names):
             return "Complete the band width and block geometry before using a Treated Area "
                 + "product rate for \(names.joined(separator: ", "))."
+        case let .productAreaBasisRequired(names):
+            return "This is a banded application. Choose whether \(names.joined(separator: ", ")) "
+                + "applies to the whole block area or only the treated band area."
         }
     }
 
@@ -430,6 +438,17 @@ nonisolated struct SprayGuidedFlow: Sendable {
             // produce one is called out specifically, so the operator is never
             // left guessing which of several possible inputs is missing — and is
             // never quietly dosed against gross area instead.
+            // A banded pass multiplies an area rate by either gross or treated
+            // hectares — several times apart. Refusing to proceed until the
+            // operator says which is deliberate: silently defaulting would freeze
+            // an unconfirmed guess into a compliance record. Whole-block passes
+            // are never ambiguous, so they are never asked.
+            if mode == .banded {
+                let undecided = inputs.products.filter(\.needsAreaBasisDecision)
+                if !undecided.isEmpty {
+                    return .productAreaBasisRequired(names: undecided.map(\.name))
+                }
+            }
             let treatedAreaLines = inputs.products.filter { $0.basis == .treatedArea }
             if !treatedAreaLines.isEmpty, plan.treatedAreaHectares == nil {
                 return .treatedAreaBasisUnavailable(names: treatedAreaLines.map(\.name))

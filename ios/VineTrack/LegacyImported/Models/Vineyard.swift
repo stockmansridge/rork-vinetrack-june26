@@ -14,6 +14,14 @@ nonisolated struct Vineyard: Codable, Identifiable, Sendable, Hashable {
     /// Timestamp the synced logo was last updated, as reported by the backend.
     /// Used to decide when to refetch the cached `logoData`.
     var logoUpdatedAt: Date?
+    /// The vineyard's stored spray compliance profile (sql/192), e.g. `au` or
+    /// `nz_swnz`. `nil` means the vineyard has never chosen one, in which case
+    /// resolution falls back to the country WITHOUT ever writing that fallback
+    /// back to the database.
+    var sprayComplianceProfile: String?
+    /// The vineyard's stored carrier-volume policy (sql/192), e.g.
+    /// `litres_per_100_metres`. `nil` means unset — see above.
+    var sprayCarrierVolumeBasis: String?
 
     init(
         id: UUID = UUID(),
@@ -23,7 +31,9 @@ nonisolated struct Vineyard: Codable, Identifiable, Sendable, Hashable {
         logoData: Data? = nil,
         country: String = "",
         logoPath: String? = nil,
-        logoUpdatedAt: Date? = nil
+        logoUpdatedAt: Date? = nil,
+        sprayComplianceProfile: String? = nil,
+        sprayCarrierVolumeBasis: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -33,10 +43,13 @@ nonisolated struct Vineyard: Codable, Identifiable, Sendable, Hashable {
         self.country = country
         self.logoPath = logoPath
         self.logoUpdatedAt = logoUpdatedAt
+        self.sprayComplianceProfile = sprayComplianceProfile
+        self.sprayCarrierVolumeBasis = sprayCarrierVolumeBasis
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
         case id, name, users, createdAt, logoData, country, logoPath, logoUpdatedAt
+        case sprayComplianceProfile, sprayCarrierVolumeBasis
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -49,6 +62,22 @@ nonisolated struct Vineyard: Codable, Identifiable, Sendable, Hashable {
         country = try container.decodeIfPresent(String.self, forKey: .country) ?? ""
         logoPath = try container.decodeIfPresent(String.self, forKey: .logoPath)
         logoUpdatedAt = try container.decodeIfPresent(Date.self, forKey: .logoUpdatedAt)
+        sprayComplianceProfile = try container.decodeIfPresent(String.self, forKey: .sprayComplianceProfile)
+        sprayCarrierVolumeBasis = try container.decodeIfPresent(String.self, forKey: .sprayCarrierVolumeBasis)
+    }
+
+    /// THE spray profile accessor for this vineyard.
+    ///
+    /// Resolution lives entirely in `SprayVineyardProfile`: stored value →
+    /// country-derived fallback → safe default. Screens read this instead of
+    /// inspecting `country` themselves, so a vineyard that has explicitly chosen
+    /// a profile is never overridden by its own address.
+    var sprayProfile: SprayVineyardProfile {
+        SprayVineyardProfile(
+            storedProfile: SprayComplianceProfile(rawValue: sprayComplianceProfile ?? ""),
+            storedPolicy: SprayCarrierVolumePolicy(rawValue: sprayCarrierVolumeBasis ?? ""),
+            countryCode: country
+        )
     }
 }
 

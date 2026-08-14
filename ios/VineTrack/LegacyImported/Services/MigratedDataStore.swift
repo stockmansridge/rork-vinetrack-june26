@@ -669,6 +669,11 @@ final class MigratedDataStore {
                 var updated = local
                 updated.name = backend.name
                 updated.country = backend.country ?? local.country
+                // Spray profile is authoritative from the backend, INCLUDING a
+                // cleared value: a vineyard that resets its profile must fall
+                // back to the country default rather than keep a stale lock.
+                updated.sprayComplianceProfile = backend.sprayComplianceProfile
+                updated.sprayCarrierVolumeBasis = backend.sprayCarrierVolumeBasis
                 updated.logoPath = backend.logoPath
                 let remoteUpdated = backend.logoUpdatedAt
                 let localUpdated = local.logoUpdatedAt
@@ -709,7 +714,9 @@ final class MigratedDataStore {
                     logoData: cached,
                     country: backend.country ?? "",
                     logoPath: backend.logoPath,
-                    logoUpdatedAt: backend.logoUpdatedAt
+                    logoUpdatedAt: backend.logoUpdatedAt,
+                    sprayComplianceProfile: backend.sprayComplianceProfile,
+                    sprayCarrierVolumeBasis: backend.sprayCarrierVolumeBasis
                 )
                 merged.append(mapped)
             }

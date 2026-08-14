@@ -121,6 +121,19 @@ sealed interface SprayGuidedBlocker {
                 "Treated Area product rate for ${names.joinToString(", ")}."
         override val needsBlockEditor: Boolean get() = true
     }
+
+    /**
+     * A banded pass has area-rated products whose area scope nobody has
+     * confirmed. The operator must say whether the label rate applies to the
+     * whole block or only the treated band.
+     */
+    data class ProductAreaBasisRequired(val names: List<String>) : SprayGuidedBlocker {
+        override val title: String get() = "Choose an area basis"
+        override val message: String
+            get() = "This is a banded application. Choose whether " +
+                "${names.joinToString(", ")} applies to the whole block area or " +
+                "only the treated band area."
+    }
 }
 
 /**
@@ -458,8 +471,21 @@ data class SprayGuidedFlow(
                 val treatedAreaLines = inputs.products.filter {
                     it.basis == SprayProductRateBasis.TREATED_AREA
                 }
+                // A banded pass multiplies an area rate by either gross or
+                // treated hectares - several times apart. Refusing to proceed
+                // until the operator says which is deliberate: silently
+                // defaulting would freeze an unconfirmed guess into a compliance
+                // record. Whole-block passes are never ambiguous, so they are
+                // never asked.
+                val undecided = if (mode == SprayApplicationMode.BANDED) {
+                    inputs.products.filter { it.needsAreaBasisDecision }
+                } else {
+                    emptyList()
+                }
                 val unresolved = plan.unresolvedProductLines
                 when {
+                    undecided.isNotEmpty() ->
+                        SprayGuidedBlocker.ProductAreaBasisRequired(undecided.map { it.name })
                     treatedAreaLines.isNotEmpty() && plan.treatedAreaHectares == null ->
                         SprayGuidedBlocker.TreatedAreaBasisUnavailable(
                             treatedAreaLines.map { it.name },

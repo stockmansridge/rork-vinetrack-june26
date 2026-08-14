@@ -129,11 +129,18 @@ import com.rork.vinetrack.data.spray.SprayProductRateBasis
 import com.rork.vinetrack.data.spray.SprayTarget
 import com.rork.vinetrack.data.spray.SprayVineyardProfile
 import com.rork.vinetrack.ui.LocalRegionFormatter
+import com.rork.vinetrack.data.spray.SprayApplicationPlan
+import com.rork.vinetrack.data.spray.SprayProductLineResult
 import com.rork.vinetrack.ui.components.GuidedBlockerBanner
 import com.rork.vinetrack.ui.components.GuidedCalculatedPanel
 import com.rork.vinetrack.ui.components.GuidedCalculatedRow
 import com.rork.vinetrack.ui.components.GuidedChip
+import com.rork.vinetrack.ui.components.GuidedProductBasisPicker
+import com.rork.vinetrack.ui.components.GuidedProductCalculationRow
+import com.rork.vinetrack.ui.components.GuidedReviewGroup
 import com.rork.vinetrack.ui.components.GuidedReviewRow
+import com.rork.vinetrack.ui.components.GuidedStepCard
+import com.rork.vinetrack.ui.components.ResistanceCheckSlot
 import com.rork.vinetrack.ui.components.SprayGuidedFormat
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
@@ -157,6 +164,29 @@ private class CalcChemLine(
     var selectedRateId by mutableStateOf(selectedRateId)
     var basis by mutableStateOf(basis)
     var overrideText by mutableStateOf("")
+}
+
+/**
+ * The plan's calculated line for the chemical line at [index] on screen.
+ *
+ * Walks [chemLines] in the SAME order and with the same skip rule the guided
+ * inputs use, so two lines sharing one chemical stay distinct — matching on
+ * product id alone would collapse them into one.
+ */
+private fun guidedPlanLineFor(
+    plan: SprayApplicationPlan,
+    chemLines: List<CalcChemLine>,
+    savedChemicals: List<SavedChemical>,
+    index: Int,
+): SprayProductLineResult? {
+    var planIndex = 0
+    chemLines.forEachIndexed { i, line ->
+        val exists = savedChemicals.any { it.id == line.chemicalId }
+        if (!exists) return@forEachIndexed
+        if (i == index) return plan.productLines.getOrNull(planIndex)
+        planIndex += 1
+    }
+    return null
 }
 
 private fun basisOf(raw: String): SprayCalculator.RateBasis =
@@ -311,15 +341,23 @@ fun SprayCalculatorScreen(
     val selectedMachine = state.machines.firstOrNull { it.id == machineId }
 
     /**
-     * The vineyard's sql/192 spray-profile columns are not yet projected onto the
-     * Android vineyard model, so both stored fields stay null and the profile
-     * resolves from the organisation's country — the designed fallback, matching
-     * iOS. Resolution never writes anything, so an unset vineyard simply presents
-     * a country-appropriate default (NZ → SWNZ locked to L/100 m, otherwise AU).
+     * The vineyard's spray profile — read from the vineyard, never re-derived
+     * here.
+     *
+     * `Vineyard.sprayProfile` owns the whole resolution order (stored sql/192
+     * value -> country fallback -> safe default), so this screen must NOT inspect
+     * country or region settings itself: a vineyard that has deliberately chosen
+     * the AU profile while sitting in NZ would otherwise be silently forced back
+     * onto SWNZ by its own address.
+     *
+     * The region country is used ONLY when no vineyard is selected at all, which
+     * is the same safe default the vineyard accessor would apply. Resolution
+     * never writes anything back to the database.
      */
     val regionCountryCode = LocalRegionFormatter.current.settings.countryCode
-    val sprayProfile = remember(regionCountryCode) {
-        SprayVineyardProfile(countryCode = regionCountryCode)
+    val selectedVineyard = state.selectedVineyard
+    val sprayProfile = remember(selectedVineyard, regionCountryCode) {
+        selectedVineyard?.sprayProfile ?: SprayVineyardProfile(countryCode = regionCountryCode)
     }
 
     /**
@@ -380,6 +418,79 @@ fun SprayCalculatorScreen(
         profile = sprayProfile,
     )
     val guidedPlan = guidedFlow.plan
+
+    /**
+     * The section the operator has explicitly opened. Null means "follow the
+     * flow", so the screen lands on whatever still needs attention rather than
+     * on a step that is already done.
+     */
+    var openedStep by remember { mutableStateOf<SprayGuidedStep?>(null) }
+    val expandedStep = openedStep ?: guidedFlow.activeStep
+    val toggleStep: (SprayGuidedStep) -> Unit = { step ->
+        openedStep = if (expandedStep == step) null else step
+    }
+
+    // One-line recaps for collapsed sections. Every figure comes off the plan.
+    val applicationSummary = if (sprayName.isBlank()) operationType else "$operationType \u2014 $sprayName"
+    val blocksSummary = if (selectedPaddocks.isEmpty()) {
+        "No blocks selected"
+    } else {
+        selectedPaddocks.joinToString(", ") { it.name } +
+            " \u2014 ${SprayGuidedFormat.hectares(guidedPlan.grossAreaHectares)} gross"
+    }
+    val targetSummary = when {
+        sprayTargets.isEmpty() -> "Not set"
+        else -> {
+            val names = guidedFlow.orderedTargets.joinToString(", ") { it.label }
+            val treated = guidedPlan.treatedAreaHectares
+            when {
+                guidedFlow.requiresBandWidth && treated != null ->
+                    "$names \u2014 ${SprayGuidedFormat.hectares(treated)} treated"
+                sprayHeadTarget != null -> "$names \u2014 ${sprayHeadTarget?.label}"
+                else -> names
+            }
+        }
+    }
+    val growthStageSummary = when {
+        selectedPaddocks.isEmpty() -> "Select blocks first"
+        growthModeSame -> GrowthStage.byCode(sharedStageCode)?.displayName ?: "Not set"
+        else -> {
+            val assigned = selectedPaddocks.count { perBlockStages.containsKey(it.id) }
+            "Per block \u2014 $assigned/${selectedPaddocks.size} assigned"
+        }
+    }
+    val equipmentSummary = selectedEquipment?.let { equipment ->
+        if (fansJets.isBlank()) equipment.displayName else "${equipment.displayName} \u2014 $fansJets fans/jets"
+    } ?: "Not selected"
+    val carrierSummary = if (!guidedFlow.isCarrierResolved) {
+        "Not set"
+    } else {
+        val carrier = guidedPlan.carrier
+        val entered = when (carrier.basis) {
+            SprayCarrierBasis.LITRES_PER_HECTARE ->
+                SprayGuidedFormat.litresPerHectare(carrier.litresPerHectare)
+            SprayCarrierBasis.LITRES_PER_100_METRES ->
+                SprayGuidedFormat.litresPer100m(carrier.appliedLitresPer100Metres)
+        }
+        "$entered \u2014 ${SprayGuidedFormat.litres(carrier.totalLitres)} total"
+    }
+    val productsSummary = when {
+        guidedPlan.productLines.isEmpty() -> "No products added"
+        else -> {
+            val unresolved = guidedPlan.productLines.count { it.isUnresolved }
+            val base = if (guidedPlan.productLines.size == 1) {
+                "1 product"
+            } else {
+                "${guidedPlan.productLines.size} products"
+            }
+            if (unresolved > 0) "$base \u2014 $unresolved unavailable" else base
+        }
+    }
+    val reviewSummary = if (guidedFlow.isComplete) {
+        "Ready to save or start"
+    } else {
+        guidedFlow.firstBlocker?.title ?: "Incomplete"
+    }
 
     // Row plan geometry — blocks ordered lowest row first, matching iOS.
     val orderedSelectedPaddocks = remember(selectedPaddocks) {
@@ -532,7 +643,16 @@ fun SprayCalculatorScreen(
             operationType = operationType,
             tripId = null,
             isTemplate = false,
-            tanks = SprayCalculator.buildTanks(r, chosenRate),
+            // Each product line carries the area basis the operator chose for
+            // THAT line, keyed by saved-chemical id so a banded treated-band
+            // quantity reloads as a treated-band one.
+            tanks = SprayCalculator.buildTanks(
+                result = r,
+                chosenSprayRate = chosenRate,
+                rateBases = chemLines.mapNotNull { line ->
+                    productAreaBasis[line.uid]?.let { line.chemicalId to it }
+                }.toMap(),
+            ),
             // Projection of the SAME plan the Review step displayed. The 17
             // sql/191 + sql/192 columns are never populated from UI state.
             applicationGeometry = guidedFlow.snapshot,
@@ -647,8 +767,19 @@ fun SprayCalculatorScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Spray name
+            // Step 1 — Application. Same sequence, wording and gating as iOS.
             item {
+                GuidedStepCard(
+                    step = SprayGuidedStep.APPLICATION,
+                    index = 1,
+                    isLocked = !guidedFlow.isUnlocked(SprayGuidedStep.APPLICATION),
+                    isDone = guidedFlow.isComplete(SprayGuidedStep.APPLICATION),
+                    isExpanded = expandedStep == SprayGuidedStep.APPLICATION,
+                    summary = applicationSummary,
+                    accent = VineColors.Olive,
+                    doneAccent = VineColors.Olive,
+                    onToggle = { toggleStep(SprayGuidedStep.APPLICATION) },
+                ) {
                 OutlinedTextField(
                     value = sprayName,
                     onValueChange = { sprayName = it },
@@ -657,10 +788,6 @@ fun SprayCalculatorScreen(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-            }
-
-            // Operation type
-            item {
                 var menu by remember { mutableStateOf(false) }
                 ExposedDropdownMenuBox(expanded = menu, onExpandedChange = { menu = it }) {
                     OutlinedTextField(
@@ -673,15 +800,47 @@ fun SprayCalculatorScreen(
                     )
                     ExposedDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         sprayOperationTypes.forEach { op ->
-                            DropdownMenuItem(text = { Text(op) }, onClick = { operationType = op; menu = false })
+                            DropdownMenuItem(
+                                text = { Text(op) },
+                                onClick = {
+                                    if (op != operationType) {
+                                        operationType = op
+                                        // Changing the application invalidates the
+                                        // decisions that belonged to the old one:
+                                        // a banded pass has no spray head target,
+                                        // a foliar pass has no band width, and an
+                                        // area basis chosen for a band means
+                                        // nothing once the band is gone. Clearing
+                                        // here keeps the screen honest; the flow
+                                        // enforces the same rule for what gets
+                                        // persisted.
+                                        sprayHeadTarget = null
+                                        bandWidthText = ""
+                                        productAreaBasis.clear()
+                                        result = null
+                                    }
+                                    menu = false
+                                },
+                            )
                         }
                     }
                 }
+                }
             }
 
-            // Blocks — compact iOS-style summary card + stat strip
-            item { SectionHeader("Blocks", onLight = true) }
+            // Step 2 — Blocks.
             item {
+                GuidedStepCard(
+                    step = SprayGuidedStep.BLOCKS,
+                    index = 2,
+                    isLocked = !guidedFlow.isUnlocked(SprayGuidedStep.BLOCKS),
+                    isDone = guidedFlow.isComplete(SprayGuidedStep.BLOCKS),
+                    isExpanded = expandedStep == SprayGuidedStep.BLOCKS,
+                    summary = blocksSummary,
+                    accent = VineColors.Olive,
+                    doneAccent = VineColors.Olive,
+                    onToggle = { toggleStep(SprayGuidedStep.BLOCKS) },
+                ) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     BlocksSummaryCard(
                         selectedPaddocks = selectedPaddocks,
@@ -704,11 +863,152 @@ fun SprayCalculatorScreen(
                         }
                     }
                 }
+                }
             }
 
-            // Growth stage
-            item { SectionHeader("Growth Stage", onLight = true) }
+            // Step 3 — Target. Multi-select intent, then the ONE application
+            // specific question: foliar asks where the head is aimed, banded asks
+            // for the treated width, spreader asks neither.
             item {
+                GuidedStepCard(
+                    step = SprayGuidedStep.TARGET,
+                    index = 3,
+                    isLocked = !guidedFlow.isUnlocked(SprayGuidedStep.TARGET),
+                    isDone = guidedFlow.isComplete(SprayGuidedStep.TARGET),
+                    isExpanded = expandedStep == SprayGuidedStep.TARGET,
+                    summary = targetSummary,
+                    accent = VineColors.Olive,
+                    doneAccent = VineColors.Olive,
+                    onToggle = { toggleStep(SprayGuidedStep.TARGET) },
+                ) {
+                    Text(
+                        "What are you targeting?",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary,
+                    )
+                    Text(
+                        "Select every pest, disease or purpose this spray addresses.",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                    )
+                    SprayTarget.presentationOrder.chunked(2).forEach { pair ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            pair.forEach { target ->
+                                GuidedChip(
+                                    label = target.label,
+                                    isSelected = sprayTargets.contains(target),
+                                    accent = VineColors.Olive,
+                                    modifier = Modifier.weight(1f),
+                                    onClick = {
+                                        if (sprayTargets.contains(target)) {
+                                            sprayTargets.remove(target)
+                                        } else {
+                                            sprayTargets.add(target)
+                                        }
+                                    },
+                                )
+                            }
+                            if (pair.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                    }
+
+                    if (guidedFlow.requiresSprayHeadTarget) {
+                        Text(
+                            "Spray Head Target",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = vine.textPrimary,
+                        )
+                        SprayHeadTarget.entries.chunked(2).forEach { pair ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                pair.forEach { head ->
+                                    GuidedChip(
+                                        label = head.label,
+                                        isSelected = sprayHeadTarget == head,
+                                        accent = VineColors.Olive,
+                                        modifier = Modifier.weight(1f),
+                                        onClick = { sprayHeadTarget = head },
+                                    )
+                                }
+                                if (pair.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
+                        sprayHeadTarget?.let { head ->
+                            Text(head.detail, fontSize = 11.sp, color = vine.textSecondary)
+                        }
+                    }
+
+                    if (guidedFlow.requiresBandWidth) {
+                        Text(
+                            "Total Treated Band Width",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = vine.textPrimary,
+                        )
+                        OutlinedTextField(
+                            value = bandWidthText,
+                            onValueChange = {
+                                bandWidthText = it.filter { c -> c.isDigit() || c == '.' }
+                                result = null
+                            },
+                            label = { Text("Band width (m)") },
+                            placeholder = { Text("0.80") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "Total sprayed width per row, both sides combined.",
+                            fontSize = 11.sp,
+                            color = vine.textSecondary,
+                        )
+                        // Gross AND treated both come out of the plan the moment a
+                        // band width exists. The screen computes neither.
+                        if (guidedFlow.bandWidth != null) {
+                            GuidedCalculatedPanel(
+                                title = "Application geometry",
+                                accent = VineColors.Olive,
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    GuidedCalculatedRow(
+                                        label = "Gross area",
+                                        value = SprayGuidedFormat.hectares(guidedPlan.grossAreaHectares),
+                                        accent = VineColors.Olive,
+                                    )
+                                    GuidedCalculatedRow(
+                                        label = "Treated area",
+                                        value = SprayGuidedFormat.hectares(guidedPlan.treatedAreaHectares),
+                                        accent = VineColors.Olive,
+                                        emphasis = true,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    guidedFlow.blocker(SprayGuidedStep.TARGET)?.let { blocker ->
+                        GuidedBlockerBanner(
+                            blocker = blocker,
+                            onFix = { showBlockPicker = true },
+                        )
+                    }
+                }
+            }
+
+            // Step 4 — Growth stage.
+            item {
+                GuidedStepCard(
+                    step = SprayGuidedStep.GROWTH_STAGE,
+                    index = 4,
+                    isLocked = !guidedFlow.isUnlocked(SprayGuidedStep.GROWTH_STAGE),
+                    isDone = guidedFlow.isComplete(SprayGuidedStep.GROWTH_STAGE),
+                    isExpanded = expandedStep == SprayGuidedStep.GROWTH_STAGE,
+                    summary = growthStageSummary,
+                    accent = VineColors.Olive,
+                    doneAccent = VineColors.Olive,
+                    onToggle = { toggleStep(SprayGuidedStep.GROWTH_STAGE) },
+                ) {
                 GrowthStageSection(
                     selectedPaddocks = selectedPaddocks,
                     expanded = growthExpanded,
@@ -735,10 +1035,22 @@ fun SprayCalculatorScreen(
                     },
                     perBlockStages = perBlockStages,
                 )
+                }
             }
 
-            // Equipment — header + add (+), selected card expands into a list
+            // Step 5 — Equipment.
             item {
+                GuidedStepCard(
+                    step = SprayGuidedStep.EQUIPMENT,
+                    index = 5,
+                    isLocked = !guidedFlow.isUnlocked(SprayGuidedStep.EQUIPMENT),
+                    isDone = guidedFlow.isComplete(SprayGuidedStep.EQUIPMENT),
+                    isExpanded = expandedStep == SprayGuidedStep.EQUIPMENT,
+                    summary = equipmentSummary,
+                    accent = VineColors.Olive,
+                    doneAccent = VineColors.Olive,
+                    onToggle = { toggleStep(SprayGuidedStep.EQUIPMENT) },
+                ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     SectionHeader("Equipment", onLight = true, modifier = Modifier.weight(1f))
                     IconButton(onClick = { showAddEquipment = true }) {
@@ -750,8 +1062,6 @@ fun SprayCalculatorScreen(
                         )
                     }
                 }
-            }
-            item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     EquipmentSummaryCard(
                         equipmentName = selectedEquipment?.displayName,
@@ -802,19 +1112,121 @@ fun SprayCalculatorScreen(
                         }
                     }
                 }
+                }
             }
 
-            // Water rate
-            item { SectionHeader("Calculated Water Rate", onLight = true) }
+            // Step 6 — Carrier Volume.
             item {
+                GuidedStepCard(
+                    step = SprayGuidedStep.CARRIER,
+                    index = 6,
+                    isLocked = !guidedFlow.isUnlocked(SprayGuidedStep.CARRIER),
+                    isDone = guidedFlow.isComplete(SprayGuidedStep.CARRIER),
+                    isExpanded = expandedStep == SprayGuidedStep.CARRIER,
+                    summary = carrierSummary,
+                    accent = VineColors.Olive,
+                    doneAccent = VineColors.Olive,
+                    onToggle = { toggleStep(SprayGuidedStep.CARRIER) },
+                ) {
+                // Only offer a choice when the vineyard profile genuinely allows
+                // one. An NZ/SWNZ vineyard is locked to L/100 m and never sees an
+                // L/ha option or an "allow either" selector, so a compliance
+                // spray cannot be switched onto the wrong basis by accident.
+                if (guidedFlow.isCarrierBasisLocked) {
+                    Text(
+                        "This vineyard records carrier volume in " +
+                            "${SprayGuidedFormat.carrierBasisLabel(guidedFlow.effectiveCarrierBasis)}.",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                    )
+                } else {
+                    Text(
+                        "Carrier volume basis",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary,
+                    )
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        val bases = listOf(
+                            SprayCarrierBasis.LITRES_PER_100_METRES,
+                            SprayCarrierBasis.LITRES_PER_HECTARE,
+                        )
+                        bases.forEachIndexed { i, basis ->
+                            SegmentedButton(
+                                selected = guidedFlow.effectiveCarrierBasis == basis,
+                                onClick = { carrierBasisChoice = basis; result = null },
+                                shape = SegmentedButtonDefaults.itemShape(i, bases.size),
+                            ) { Text(SprayGuidedFormat.carrierBasisLabel(basis), fontSize = 13.sp) }
+                        }
+                    }
+                }
+
+                if (guidedFlow.effectiveCarrierBasis == SprayCarrierBasis.LITRES_PER_100_METRES) {
+                    // Row-length entry: the operator types ONLY the two rates.
+                    // Concentration factor, total litres and the equivalent L/ha
+                    // are all read back from the plan.
+                    OutlinedTextField(
+                        value = diluteLitresPer100mText,
+                        onValueChange = {
+                            diluteLitresPer100mText = it.filter { c -> c.isDigit() || c == '.' }
+                            result = null
+                        },
+                        label = { Text("Dilute / Runoff Volume (L/100 m)") },
+                        placeholder = { Text("40") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = appliedLitresPer100mText,
+                        onValueChange = {
+                            appliedLitresPer100mText = it.filter { c -> c.isDigit() || c == '.' }
+                            result = null
+                        },
+                        label = { Text("Actual Applied Volume (L/100 m)") },
+                        placeholder = { Text("20") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (guidedFlow.isCarrierResolved) {
+                        val carrier = guidedPlan.carrier
+                        GuidedCalculatedPanel(
+                            title = "Calculated carrier volume",
+                            accent = VineColors.Olive,
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                GuidedCalculatedRow(
+                                    label = "Concentration factor",
+                                    value = SprayGuidedFormat.factor(carrier.concentrationFactor),
+                                    accent = VineColors.Olive,
+                                )
+                                GuidedCalculatedRow(
+                                    label = "Total carrier",
+                                    value = SprayGuidedFormat.litres(carrier.totalLitres),
+                                    accent = VineColors.Olive,
+                                    emphasis = true,
+                                )
+                                GuidedCalculatedRow(
+                                    label = "Equivalent applied volume",
+                                    value = SprayGuidedFormat.litresPerHectare(carrier.litresPerHectare),
+                                    accent = VineColors.Olive,
+                                    caption = if (carrier.litresPerHectare != null) {
+                                        "Derived from row spacing \u2014 not entered"
+                                    } else {
+                                        "Needs one matching row spacing across blocks"
+                                    },
+                                )
+                            }
+                        }
+                    }
+                } else {
                 Text(
                     "Based on row widths & canopy status",
                     fontSize = 12.sp,
                     color = vine.textSecondary,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                 )
-            }
-            item {
                 VineyardCard {
                     Text("VSP Canopy Size", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
                     Spacer8()
@@ -941,19 +1353,87 @@ fun SprayCalculatorScreen(
                         }
                     }
                 }
+                }
+
+                guidedFlow.blocker(SprayGuidedStep.CARRIER)?.let { blocker ->
+                    GuidedBlockerBanner(
+                        blocker = blocker,
+                        onFix = { showBlockPicker = true },
+                    )
+                }
+                }
             }
 
-            // Chemicals
-            item { SectionHeader("Chemicals", onLight = true) }
-            itemsIndexed(chemLines, key = { _, line -> line.uid }) { idx, line ->
-                CalcChemicalLineCard(
-                    line = line,
-                    savedChemicals = state.savedChemicals,
-                    onChanged = { result = null },
-                    onRemove = { chemLines.removeAt(idx); result = null },
-                )
-            }
+            // Step 7 — Products.
             item {
+                GuidedStepCard(
+                    step = SprayGuidedStep.PRODUCTS,
+                    index = 7,
+                    isLocked = !guidedFlow.isUnlocked(SprayGuidedStep.PRODUCTS),
+                    isDone = guidedFlow.isComplete(SprayGuidedStep.PRODUCTS),
+                    isExpanded = expandedStep == SprayGuidedStep.PRODUCTS,
+                    summary = productsSummary,
+                    accent = VineColors.Olive,
+                    doneAccent = VineColors.Olive,
+                    onToggle = { toggleStep(SprayGuidedStep.PRODUCTS) },
+                ) {
+                chemLines.forEachIndexed { idx, line ->
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CalcChemicalLineCard(
+                            line = line,
+                            savedChemicals = state.savedChemicals,
+                            onChanged = { result = null },
+                            onRemove = { chemLines.removeAt(idx); result = null },
+                        )
+
+                        // The area question is asked ONLY where it is genuinely
+                        // ambiguous: an area-rated label on a banded pass. A
+                        // per-100 L product is never asked — its basis is the
+                        // carrier, not the ground — and a whole-block pass is
+                        // never asked because treated and gross are the same.
+                        if (guidedFlow.requiresBandWidth &&
+                            line.basis != SprayCalculator.RateBasis.PER_100L
+                        ) {
+                            GuidedProductBasisPicker(
+                                selected = productAreaBasis[line.uid]
+                                    ?: SprayProductRateBasis.WHOLE_BLOCK_AREA,
+                                accent = VineColors.Olive,
+                            ) { basis ->
+                                productAreaBasis[line.uid] = basis
+                                result = null
+                            }
+                            if (productAreaBasis[line.uid] == null) {
+                                Text(
+                                    "Choose an area basis for this product before continuing.",
+                                    fontSize = 11.sp,
+                                    color = VineColors.Warning,
+                                )
+                            }
+                        }
+
+                        // The calculated explanation, straight off the plan.
+                        guidedPlanLineFor(guidedPlan, chemLines, state.savedChemicals, idx)?.let { planLine ->
+                            GuidedProductCalculationRow(
+                                line = planLine,
+                                accent = VineColors.Olive,
+                            )
+                        }
+
+                        // Reserved insertion point for the future Resistance
+                        // Check, immediately beneath the chemistry it will judge.
+                        // Renders nothing today — a fabricated "no issues" verdict
+                        // would be worse than silence.
+                        ResistanceCheckSlot(guidedFlow.isResistanceCheckApplicable)
+                    }
+                }
+
+                guidedFlow.blocker(SprayGuidedStep.PRODUCTS)?.let { blocker ->
+                    GuidedBlockerBanner(
+                        blocker = blocker,
+                        onFix = { showBlockPicker = true },
+                    )
+                }
+
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = {
@@ -991,6 +1471,224 @@ fun SprayCalculatorScreen(
                             fontSize = 12.sp,
                             color = vine.textSecondary,
                         )
+                    }
+                }
+                }
+            }
+
+            // Step 8 — Review. A REVIEW, not another editable form: every figure
+            // is read off the SAME plan the record is built from, so what the
+            // operator signs off and what is persisted cannot disagree.
+            item {
+                GuidedStepCard(
+                    step = SprayGuidedStep.REVIEW,
+                    index = 8,
+                    isLocked = !guidedFlow.isUnlocked(SprayGuidedStep.REVIEW),
+                    isDone = guidedFlow.isComplete,
+                    isExpanded = expandedStep == SprayGuidedStep.REVIEW,
+                    summary = reviewSummary,
+                    accent = VineColors.Olive,
+                    doneAccent = VineColors.Olive,
+                    onToggle = { toggleStep(SprayGuidedStep.REVIEW) },
+                ) {
+                    val carrier = guidedPlan.carrier
+
+                    GuidedReviewGroup(
+                        title = "Application",
+                        accent = VineColors.Olive,
+                        onEdit = { toggleStep(SprayGuidedStep.APPLICATION) },
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            GuidedReviewRow("Method", operationType)
+                            if (sprayName.isNotBlank()) GuidedReviewRow("Name", sprayName)
+                        }
+                    }
+
+                    GuidedReviewGroup(
+                        title = "Blocks & geometry",
+                        accent = VineColors.Olive,
+                        onEdit = { toggleStep(SprayGuidedStep.BLOCKS) },
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            GuidedReviewRow(
+                                "Blocks",
+                                selectedPaddocks.joinToString(", ") { it.name },
+                            )
+                            GuidedReviewRow(
+                                "Gross area",
+                                SprayGuidedFormat.hectares(guidedPlan.grossAreaHectares),
+                            )
+                            guidedPlan.geometry.totalRowLengthMetres?.let { metres ->
+                                GuidedReviewRow(
+                                    "Canonical row length",
+                                    SprayGuidedFormat.metres(metres),
+                                )
+                            }
+                        }
+                    }
+
+                    GuidedReviewGroup(
+                        title = "Target",
+                        accent = VineColors.Olive,
+                        onEdit = { toggleStep(SprayGuidedStep.TARGET) },
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            GuidedReviewRow(
+                                "Target(s)",
+                                guidedFlow.orderedTargets.joinToString(", ") { it.label },
+                            )
+                            guidedFlow.effectiveSprayHeadTarget?.let { head ->
+                                GuidedReviewRow("Spray head", head.label)
+                            }
+                            if (guidedFlow.requiresBandWidth) {
+                                GuidedReviewRow(
+                                    "Band width",
+                                    SprayGuidedFormat.metres(
+                                        guidedPlan.treatedArea.bandWidth?.totalMetres,
+                                        decimals = 2,
+                                    ),
+                                )
+                                GuidedReviewRow(
+                                    "Treated area",
+                                    SprayGuidedFormat.hectares(guidedPlan.treatedAreaHectares),
+                                )
+                            }
+                        }
+                    }
+
+                    GuidedReviewGroup(
+                        title = "Growth stage",
+                        accent = VineColors.Olive,
+                        onEdit = { toggleStep(SprayGuidedStep.GROWTH_STAGE) },
+                    ) {
+                        GuidedReviewRow("Stage", growthStageSummary)
+                    }
+
+                    GuidedReviewGroup(
+                        title = "Equipment",
+                        accent = VineColors.Olive,
+                        onEdit = { toggleStep(SprayGuidedStep.EQUIPMENT) },
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            GuidedReviewRow(
+                                "Spray unit",
+                                selectedEquipment?.displayName ?: "Not selected",
+                            )
+                            GuidedReviewRow(
+                                "Fans / jets",
+                                fansJets.ifBlank { "Not set" },
+                            )
+                            GuidedReviewRow(
+                                "Machine",
+                                selectedMachine?.displayName ?: "Not selected",
+                            )
+                        }
+                    }
+
+                    GuidedReviewGroup(
+                        title = "Carrier volume",
+                        accent = VineColors.Olive,
+                        onEdit = { toggleStep(SprayGuidedStep.CARRIER) },
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            GuidedReviewRow(
+                                "Basis",
+                                SprayGuidedFormat.carrierBasisLabel(carrier.basis),
+                            )
+                            if (carrier.basis == SprayCarrierBasis.LITRES_PER_100_METRES) {
+                                GuidedReviewRow(
+                                    "Dilute / runoff",
+                                    SprayGuidedFormat.litresPer100m(carrier.diluteLitresPer100Metres),
+                                )
+                                GuidedReviewRow(
+                                    "Actual applied",
+                                    SprayGuidedFormat.litresPer100m(carrier.appliedLitresPer100Metres),
+                                )
+                            }
+                            GuidedReviewRow(
+                                "Concentration",
+                                SprayGuidedFormat.factor(carrier.concentrationFactor),
+                            )
+                            GuidedReviewRow(
+                                "Total carrier",
+                                SprayGuidedFormat.litres(carrier.totalLitres),
+                            )
+                            GuidedReviewRow(
+                                "Equivalent L/ha",
+                                SprayGuidedFormat.litresPerHectare(carrier.litresPerHectare),
+                            )
+                            GuidedReviewRow(
+                                "Tanks",
+                                "${guidedPlan.tankSplit.totalTanks} \u00D7 " +
+                                    SprayGuidedFormat.litres(guidedPlan.tankSplit.tankCapacityLitres),
+                            )
+                        }
+                    }
+
+                    GuidedReviewGroup(
+                        title = "Products",
+                        accent = VineColors.Olive,
+                        onEdit = { toggleStep(SprayGuidedStep.PRODUCTS) },
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            guidedPlan.productLines.forEach { line ->
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Row(Modifier.fillMaxWidth()) {
+                                        Text(
+                                            line.name,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = vine.textPrimary,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        Text(
+                                            SprayGuidedFormat.quantity(line.totalQuantity, line.unit),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (line.isUnresolved) {
+                                                VineColors.Warning
+                                            } else {
+                                                VineColors.Olive
+                                            },
+                                        )
+                                    }
+                                    Text(
+                                        SprayGuidedFormat.productBasisLabel(line.basis),
+                                        fontSize = 11.sp,
+                                        color = vine.textSecondary,
+                                    )
+                                    // The same arithmetic the Products step showed,
+                                    // from the same plan — Review never recalculates.
+                                    SprayGuidedFormat.productCalculation(line)?.let { calculation ->
+                                        Text(
+                                            calculation,
+                                            fontSize = 11.sp,
+                                            color = vine.textSecondary,
+                                        )
+                                    }
+                                    line.quantityPerFullTank?.let { perTank ->
+                                        if (guidedPlan.tankSplit.totalTanks > 1) {
+                                            Text(
+                                                "Per full tank: " +
+                                                    SprayGuidedFormat.quantity(perTank, line.unit),
+                                                fontSize = 11.sp,
+                                                color = vine.textSecondary,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (notes.isNotBlank()) {
+                        GuidedReviewGroup(title = "Notes", accent = VineColors.Olive) {
+                            Text(notes, fontSize = 13.sp, color = vine.textPrimary)
+                        }
+                    }
+
+                    guidedFlow.firstBlocker?.let { blocker ->
+                        GuidedBlockerBanner(blocker = blocker)
                     }
                 }
             }

@@ -201,6 +201,17 @@ object SprayCalculator {
     fun buildTanks(
         result: Result,
         chosenSprayRate: Double,
+        /**
+         * The area basis the operator chose for each product line, keyed by
+         * saved-chemical id.
+         *
+         * Only area-rated lines appear here; a per-100 L label is per-100 L
+         * wherever it is used. A line that is absent falls back to whole block -
+         * the legacy `per_hectare` meaning - so historical behaviour is never
+         * restated. On a banded pass the guided flow will not let the spray be
+         * saved until the choice has actually been made.
+         */
+        rateBases: Map<String, com.rork.vinetrack.data.spray.SprayProductRateBasis> = emptyMap(),
     ): List<SprayTank> {
         val totalTanks = result.totalTanks
         if (totalTanks <= 0) {
@@ -232,6 +243,17 @@ object SprayCalculator {
                     ratePer100L = if (cr.basis == RateBasis.PER_100L) cr.rate else 0.0,
                     costPerUnit = cr.costPerUnit ?: 0.0,
                     unit = cr.unit,
+                    // Snapshot the basis this line was actually calculated on.
+                    // Without it a banded treated-band quantity would reload as a
+                    // whole-block one and silently restate itself.
+                    rateBasis = if (cr.basis == RateBasis.PER_100L) {
+                        com.rork.vinetrack.data.spray.SprayProductRateBasis.PER_100_LITRES.raw
+                    } else {
+                        (
+                            cr.savedChemicalId?.let { rateBases[it] }
+                                ?: com.rork.vinetrack.data.spray.SprayProductRateBasis.WHOLE_BLOCK_AREA
+                            ).raw
+                    },
                     savedChemicalId = cr.savedChemicalId,
                 )
             }

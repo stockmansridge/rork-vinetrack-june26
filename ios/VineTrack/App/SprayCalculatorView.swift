@@ -253,18 +253,21 @@ struct SprayCalculatorView: View {
 
     // MARK: - Guided flow
 
-    /// The vineyard's carrier-volume policy. An unset vineyard keeps NULL in the
-    /// database and simply presents a country-appropriate default.
-    /// The vineyard's sql/192 `spray_compliance_profile` /
-    /// `spray_carrier_volume_basis` columns are not yet projected onto the iOS
-    /// vineyard model, so both stored fields stay nil here and the profile
-    /// resolves from the organisation's country. That is exactly the designed
-    /// fallback: resolution never writes anything, so an unset vineyard simply
-    /// presents a country-appropriate default (NZ → SWNZ, everyone else → AU)
-    /// instead of silently acquiring a profile it never chose. Wiring the stored
-    /// columns later changes only this one accessor.
+    /// The vineyard's spray profile — read from the vineyard, never re-derived
+    /// here.
+    ///
+    /// `Vineyard.sprayProfile` owns the whole resolution order (stored sql/192
+    /// value → country fallback → safe default), so this screen must NOT inspect
+    /// country or region settings itself: a vineyard that has deliberately
+    /// chosen the AU profile while sitting in NZ would otherwise be silently
+    /// forced back onto SWNZ by its own address.
+    ///
+    /// The region country is used ONLY when no vineyard is selected at all,
+    /// which is the same safe default the vineyard accessor would apply.
+    /// Resolution never writes anything back to the database.
     private var sprayProfile: SprayVineyardProfile {
-        SprayVineyardProfile(countryCode: store.settings.regionSettings.countryCode)
+        store.selectedVineyard?.sprayProfile
+            ?? SprayVineyardProfile(countryCode: store.settings.regionSettings.countryCode)
     }
 
     /// The tank capacity of the selected spray unit — the only figure the tank
@@ -286,13 +289,14 @@ struct SprayCalculatorView: View {
             else { return nil }
             let savedRate = chemical.rates.first(where: { $0.id == line.selectedRateId })
             let rate = line.overrideRate ?? savedRate?.value ?? chemical.ratePerHa
+            let chosenAreaBasis = productAreaBasis[line.id]
             let basis: SprayProductRateBasis = {
                 switch line.basis {
                 case .per100Litres:
                     return .per100Litres
                 case .perHectare:
                     // Legacy `per_hectare` means WHOLE BLOCK — never treated area.
-                    return productAreaBasis[line.id] ?? .wholeBlockArea
+                    return chosenAreaBasis ?? .wholeBlockArea
                 }
             }()
             return SprayProductLineInput(
@@ -301,7 +305,12 @@ struct SprayCalculatorView: View {
                 unit: chemical.unit.rawValue,
                 basis: basis,
                 rate: rate,
-                costPerUnit: chemical.purchase?.costPerBaseUnit
+                costPerUnit: chemical.purchase?.costPerBaseUnit,
+                // Whole block is what the screen SHOWS until the operator
+                // chooses, but on a banded pass it is not yet a decision. The
+                // flag keeps that distinction so the flow can insist on an
+                // answer instead of persisting an unconfirmed default.
+                isAreaBasisExplicit: chosenAreaBasis != nil
             )
         }
     }
@@ -1775,17 +1784,72 @@ struct SprayCalculatorView: View {
         }
     }
 
+    /// The plan's calculated line for each chemical line on screen.
+    ///
+    /// Built by walking `chemicalLines` in the SAME order and with the same skip
+    /// rule as `guidedProductLines`, so two lines using one chemical stay
+    /// distinct — matching on product id alone would collapse them.
+    private var planLinesByChemicalLineId: [UUID: SprayProductLineResult] {
+        let planLines = flow.plan.productLines
+        var mapped: [UUID: SprayProductLineResult] = [:]
+        var index = 0
+        for line in chemicalLines {
+            guard store.savedChemicals.contains(where: { $0.id == line.chemicalId }) else { continue }
+            if index < planLines.count { mapped[line.id] = planLines[index] }
+            index += 1
+        }
+        return mapped
+    }
+
+    /// Whether this line must ask the Whole Block vs Treated Band question.
+    ///
+    /// Asked ONLY for an area-rated label on a banded pass. A per-100 L product
+    /// is never asked — its basis is the carrier, not the ground. A whole-block
+    /// pass is never asked either, because treated and gross are the same thing.
+    private func showsAreaBasisPicker(for line: ChemicalLine) -> Bool {
+        flow.requiresBandWidth && line.basis == .perHectare
+    }
+
     private var chemicalLinesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Chemicals", icon: "flask")
 
             ForEach($chemicalLines) { $line in
-                CalcChemicalLineCard(
-                    line: $line,
-                    chemicals: store.savedChemicals
-                ) {
-                    chemicalLines.removeAll { $0.id == line.id }
+                VStack(alignment: .leading, spacing: 8) {
+                    CalcChemicalLineCard(
+                        line: $line,
+                        chemicals: store.savedChemicals
+                    ) {
+                        chemicalLines.removeAll { $0.id == line.id }
+                    }
+
+                    if showsAreaBasisPicker(for: line) {
+                        GuidedProductBasisPicker(
+                            selected: productAreaBasis[line.id] ?? .wholeBlockArea
+                        ) { basis in
+                            withAnimation(.snappy(duration: 0.2)) {
+                                productAreaBasis[line.id] = basis
+                            }
+                        }
+                        if productAreaBasis[line.id] == nil {
+                            Text("Choose an area basis for this product before continuing.")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+
+                    // The calculated explanation, straight off the plan.
+                    if let planLine = planLinesByChemicalLineId[line.id] {
+                        GuidedProductCalculationRow(line: planLine)
+                    }
+
+                    // Reserved insertion point for the future Resistance Check,
+                    // immediately beneath the chemistry it will judge. Renders
+                    // nothing today — a fabricated "no issues" verdict would be
+                    // worse than silence.
+                    ResistanceCheckSlot(isApplicable: flow.isResistanceCheckApplicable)
                 }
+                .padding(.bottom, 4)
             }
 
             Button {
@@ -2458,6 +2522,10 @@ struct SprayCalculatorView: View {
                 }
             }
 
+            GuidedReviewGroup(title: "Growth stage", onEdit: { toggle(.growthStage) }) {
+                GuidedReviewRow(label: "Stage", value: growthStageSummary)
+            }
+
             GuidedReviewGroup(title: "Equipment", onEdit: { toggle(.equipment) }) {
                 VStack(alignment: .leading, spacing: 6) {
                     GuidedReviewRow(label: "Spray unit", value: selectedEquipmentName)
@@ -2521,6 +2589,13 @@ struct SprayCalculatorView: View {
                             Text(SprayGuidedFormat.productBasisLabel(line.basis))
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
+                            // The same arithmetic the Products step showed, from
+                            // the same plan — Review never recalculates.
+                            if let calculation = SprayGuidedFormat.productCalculation(line) {
+                                Text(calculation)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
                             if let perTank = line.quantityPerFullTank, plan.tankSplit.totalTanks > 1 {
                                 Text("Per full tank: \(SprayGuidedFormat.quantity(perTank, unit: line.unit))")
                                     .font(.caption2)
@@ -2528,6 +2603,15 @@ struct SprayCalculatorView: View {
                             }
                         }
                     }
+                }
+            }
+
+            if !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                GuidedReviewGroup(title: "Notes") {
+                    Text(notes)
+                        .font(.footnote)
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
@@ -2562,6 +2646,21 @@ struct SprayCalculatorView: View {
         withAnimation(.spring(duration: 0.4)) { showResults = true }
     }
 
+    /// The rate basis to FREEZE onto a saved chemical line.
+    ///
+    /// A per-100 L label is per-100 L wherever it is used. An area rate takes
+    /// whatever the operator chose for that specific line, defaulting to whole
+    /// block — the legacy `per_hectare` meaning — so historical behaviour is
+    /// never restated. On a banded pass the flow will not let the spray be saved
+    /// until that choice has actually been made.
+    private func persistedRateBasis(for chemResult: ChemicalCalculationResult) -> SprayProductRateBasis {
+        if chemResult.basis == .per100Litres { return .per100Litres }
+        guard let savedId = chemResult.savedChemicalId,
+              let line = chemicalLines.first(where: { $0.chemicalId == savedId })
+        else { return .wholeBlockArea }
+        return productAreaBasis[line.id] ?? .wholeBlockArea
+    }
+
     private func buildSprayTanks(result: SprayCalculationResult, tankCapacity: Double) -> [SprayTank] {
         let totalTanks = result.fullTankCount + (result.lastTankLitres > 0 ? 1 : 0)
         guard totalTanks > 0 else {
@@ -2584,6 +2683,10 @@ struct SprayCalculatorView: View {
                     ratePer100L: chemResult.basis == .per100Litres ? chemResult.selectedRate : 0,
                     costPerUnit: chemResult.costPerBaseUnit ?? 0,
                     unit: chemResult.unit,
+                    // Snapshot the basis the operator actually chose for THIS
+                    // line. Without it a banded treated-band quantity would
+                    // reload as a whole-block one and silently restate itself.
+                    rateBasis: persistedRateBasis(for: chemResult),
                     savedChemicalId: chemResult.savedChemicalId
                 )
             }

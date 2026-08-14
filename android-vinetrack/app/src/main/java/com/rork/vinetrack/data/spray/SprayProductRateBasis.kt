@@ -28,6 +28,31 @@ enum class SprayProductRateBasis(val raw: String, val label: String) {
     /** Whether this basis measures against an area (used for reporting labels). */
     val isAreaBased: Boolean get() = this == WHOLE_BLOCK_AREA || this == TREATED_AREA
 
+    /** How the rate itself is written on the label, e.g. `2 L/ha`. */
+    val rateSuffix: String
+        get() = when (this) {
+            WHOLE_BLOCK_AREA, TREATED_AREA -> "/ha"
+            PER_100_LITRES -> "/100 L"
+            PER_100_METRES -> "/100 m"
+        }
+
+    /** What the measured half of the calculation is called, e.g. `whole block`. */
+    val measuredNoun: String
+        get() = when (this) {
+            WHOLE_BLOCK_AREA -> "whole block"
+            TREATED_AREA -> "treated band"
+            PER_100_LITRES -> "carrier"
+            PER_100_METRES -> "row"
+        }
+
+    /** The unit the measured half is expressed in. */
+    val measuredUnit: String
+        get() = when (this) {
+            WHOLE_BLOCK_AREA, TREATED_AREA -> "ha"
+            PER_100_LITRES -> "L"
+            PER_100_METRES -> "m"
+        }
+
     /**
      * The stored value for a legacy reader that only understands `per_hectare` /
      * `per_100_litres`, so older clients and the portal keep working while the
@@ -37,6 +62,16 @@ enum class SprayProductRateBasis(val raw: String, val label: String) {
         get() = if (this == PER_100_LITRES) "per_100_litres" else "per_hectare"
 
     companion object {
+        /**
+         * The two bases an AREA-rated product line may legitimately choose
+         * between.
+         *
+         * Deliberately excludes the per-100 L and per-100 m bases: those come
+         * from the product's own label, are not an area question, and must never
+         * appear as a Whole Block / Treated Band choice.
+         */
+        val areaChoices: List<SprayProductRateBasis> = listOf(WHOLE_BLOCK_AREA, TREATED_AREA)
+
         /**
          * Deterministic mapping from the legacy stored strings.
          *
@@ -142,5 +177,27 @@ object SprayProductQuantityCalculator {
                 if (metres != null && metres.isFinite() && metres > 0) rate * metres / 100.0 else null
             }
         }
+    }
+
+    /**
+     * The MEASURED value a basis multiplies against — the "× 10.00 ha" half of
+     * the calculation the operator sees.
+     *
+     * Returned from the engine rather than re-read from screen state so the
+     * explanation and the quantity provably describe the same arithmetic. Null
+     * under exactly the same conditions that make [totalQuantity] null.
+     */
+    fun basisInput(
+        basis: SprayProductRateBasis,
+        context: SprayQuantityContext,
+    ): Double? = when (basis) {
+        SprayProductRateBasis.WHOLE_BLOCK_AREA ->
+            context.grossAreaHectares.takeIf { it.isFinite() && it > 0 }
+        SprayProductRateBasis.TREATED_AREA ->
+            context.treatedAreaHectares?.takeIf { it.isFinite() && it > 0 }
+        SprayProductRateBasis.PER_100_LITRES ->
+            context.carrierLitres.takeIf { it.isFinite() && it > 0 }
+        SprayProductRateBasis.PER_100_METRES ->
+            context.rowLengthMetres?.takeIf { it.isFinite() && it > 0 }
     }
 }

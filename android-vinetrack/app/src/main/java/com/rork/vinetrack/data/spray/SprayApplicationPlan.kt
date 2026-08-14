@@ -35,7 +35,28 @@ data class SprayProductLineInput(
     val basis: SprayProductRateBasis,
     val rate: Double,
     val costPerUnit: Double? = null,
-)
+    /**
+     * Whether the operator has EXPLICITLY chosen this line's area basis.
+     *
+     * Only meaningful for area-rated lines on a banded pass, where whole-block
+     * and treated-band hectares differ by several times. `false` means "the
+     * screen is showing a default nobody has confirmed", which the flow blocks
+     * on rather than freezing a guess into a compliance record.
+     *
+     * Defaults to `true` so every legacy caller — and every historical record
+     * replayed through the engine — keeps its existing meaning untouched.
+     */
+    val isAreaBasisExplicit: Boolean = true,
+) {
+    /**
+     * True when this line still needs the operator to answer the Whole Block vs
+     * Treated Band question.
+     *
+     * A per-100 L line is never ambiguous: its basis comes from the product's own
+     * label, not from how the block was covered.
+     */
+    val needsAreaBasisDecision: Boolean get() = basis.isAreaBased && !isAreaBasisExplicit
+}
 
 /** A calculated product line. */
 data class SprayProductLineResult(
@@ -52,6 +73,18 @@ data class SprayProductLineResult(
     val quantityPerFullTank: Double?,
     val quantityInLastTank: Double?,
     val costPerUnit: Double?,
+    /**
+     * The MEASURED value this line's rate was multiplied against — gross
+     * hectares, treated hectares, carrier litres or row metres, depending on
+     * [basis].
+     *
+     * Carried out of the planner so the UI can explain a quantity
+     * ("2 L/ha × 10.00 ha whole block") without recomputing anything. A screen
+     * that reached for its own hectares here could show a sum that no longer
+     * matches the persisted record. Null when the input was unavailable, which
+     * is exactly when [totalQuantity] is null too.
+     */
+    val basisInput: Double? = null,
 ) {
     val totalCost: Double?
         get() {
@@ -65,6 +98,49 @@ data class SprayProductLineResult(
      * operator rather than silently omitted from the mix.
      */
     val isUnresolved: Boolean get() = totalQuantity == null
+
+    /**
+     * Why this line cannot be calculated, as the ONE input that is missing.
+     *
+     * Distinguishing these matters: a treated-area product needs band geometry,
+     * while a per-100 L product needs the carrier step — telling an operator to
+     * fix the wrong one wastes a spray window.
+     */
+    val unresolvedReason: SprayProductUnresolvedReason?
+        get() = if (!isUnresolved) {
+            null
+        } else {
+            when (basis) {
+                SprayProductRateBasis.WHOLE_BLOCK_AREA ->
+                    SprayProductUnresolvedReason.GROSS_AREA_UNAVAILABLE
+                SprayProductRateBasis.TREATED_AREA ->
+                    SprayProductUnresolvedReason.TREATED_AREA_UNAVAILABLE
+                SprayProductRateBasis.PER_100_LITRES ->
+                    SprayProductUnresolvedReason.CARRIER_UNAVAILABLE
+                SprayProductRateBasis.PER_100_METRES ->
+                    SprayProductUnresolvedReason.ROW_LENGTH_UNAVAILABLE
+            }
+        }
+}
+
+/** The single missing input behind an unresolved product line. */
+enum class SprayProductUnresolvedReason(val title: String, val message: String) {
+    GROSS_AREA_UNAVAILABLE(
+        "Block area required",
+        "Select blocks with an area before this product can be calculated.",
+    ),
+    TREATED_AREA_UNAVAILABLE(
+        "Treated area unavailable",
+        "Complete the band width and block geometry before this product can be calculated.",
+    ),
+    CARRIER_UNAVAILABLE(
+        "Carrier volume required",
+        "Complete the Carrier Volume step before this product quantity can be calculated.",
+    ),
+    ROW_LENGTH_UNAVAILABLE(
+        "Row length unavailable",
+        "Complete the block row geometry before this product can be calculated.",
+    ),
 }
 
 /** How the carrier volume splits into tanks. */
@@ -190,6 +266,7 @@ object SprayApplicationPlanner {
 
         val lines = productLines.map { line ->
             val total = SprayProductQuantityCalculator.totalQuantity(line.rate, line.basis, context)
+            val basisInput = SprayProductQuantityCalculator.basisInput(line.basis, context)
             var perFullTank: Double? = if (total == null) null else 0.0
             var inLastTank: Double? = if (total == null) null else 0.0
             if (total != null && carrier.totalLitres > 0 && split.totalTanks > 0) {
@@ -212,6 +289,7 @@ object SprayApplicationPlanner {
                 quantityPerFullTank = perFullTank,
                 quantityInLastTank = inLastTank,
                 costPerUnit = line.costPerUnit,
+                basisInput = basisInput,
             )
         }
 

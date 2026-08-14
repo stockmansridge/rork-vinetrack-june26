@@ -19,6 +19,16 @@ nonisolated struct SprayProductLineInput: Sendable, Hashable {
     let basis: SprayProductRateBasis
     let rate: Double
     let costPerUnit: Double?
+    /// Whether the operator has EXPLICITLY chosen this line's area basis.
+    ///
+    /// Only meaningful for area-rated lines on a banded pass, where whole-block
+    /// and treated-band hectares differ by several times. `false` means "the
+    /// screen is showing a default nobody has confirmed", which the flow blocks
+    /// on rather than freezing a guess into a compliance record.
+    ///
+    /// Defaults to `true` so every legacy caller — and every historical record
+    /// replayed through the engine — keeps its existing meaning untouched.
+    let isAreaBasisExplicit: Bool
 
     init(
         productId: String,
@@ -26,7 +36,8 @@ nonisolated struct SprayProductLineInput: Sendable, Hashable {
         unit: String,
         basis: SprayProductRateBasis,
         rate: Double,
-        costPerUnit: Double? = nil
+        costPerUnit: Double? = nil,
+        isAreaBasisExplicit: Bool = true
     ) {
         self.productId = productId
         self.name = name
@@ -34,6 +45,16 @@ nonisolated struct SprayProductLineInput: Sendable, Hashable {
         self.basis = basis
         self.rate = rate
         self.costPerUnit = costPerUnit
+        self.isAreaBasisExplicit = isAreaBasisExplicit
+    }
+
+    /// True when this line still needs the operator to answer the Whole Block vs
+    /// Treated Band question.
+    ///
+    /// A per-100 L line is never ambiguous: its basis comes from the product's
+    /// own label, not from how the block was covered.
+    var needsAreaBasisDecision: Bool {
+        basis.isAreaBased && !isAreaBasisExplicit
     }
 }
 
@@ -50,6 +71,16 @@ nonisolated struct SprayProductLineResult: Sendable, Hashable {
     let quantityPerFullTank: Double?
     let quantityInLastTank: Double?
     let costPerUnit: Double?
+    /// The MEASURED value this line's rate was multiplied against — gross
+    /// hectares, treated hectares, carrier litres or row metres, depending on
+    /// `basis`.
+    ///
+    /// Carried out of the planner so the UI can explain a quantity
+    /// ("2 L/ha × 10.00 ha whole block") without recomputing anything. A screen
+    /// that reached for its own hectares here could show a sum that no longer
+    /// matches the persisted record. `nil` when the input was unavailable, which
+    /// is exactly when `totalQuantity` is `nil` too.
+    let basisInput: Double?
 
     var totalCost: Double? {
         guard let total = totalQuantity, let cost = costPerUnit, cost > 0 else { return nil }
@@ -59,6 +90,51 @@ nonisolated struct SprayProductLineResult: Sendable, Hashable {
     /// True when this line could not be calculated and must be surfaced to the
     /// operator rather than silently omitted from the mix.
     var isUnresolved: Bool { totalQuantity == nil }
+
+    /// Why this line cannot be calculated, as the ONE input that is missing.
+    ///
+    /// Distinguishing these matters: a treated-area product needs band geometry,
+    /// while a per-100 L product needs the carrier step — telling an operator to
+    /// fix the wrong one wastes a spray window.
+    var unresolvedReason: SprayProductUnresolvedReason? {
+        guard isUnresolved else { return nil }
+        switch basis {
+        case .wholeBlockArea: return .grossAreaUnavailable
+        case .treatedArea: return .treatedAreaUnavailable
+        case .per100Litres: return .carrierUnavailable
+        case .per100Metres: return .rowLengthUnavailable
+        }
+    }
+}
+
+/// The single missing input behind an unresolved product line.
+nonisolated enum SprayProductUnresolvedReason: Sendable, Hashable {
+    case grossAreaUnavailable
+    case treatedAreaUnavailable
+    case carrierUnavailable
+    case rowLengthUnavailable
+
+    var title: String {
+        switch self {
+        case .grossAreaUnavailable: return "Block area required"
+        case .treatedAreaUnavailable: return "Treated area unavailable"
+        case .carrierUnavailable: return "Carrier volume required"
+        case .rowLengthUnavailable: return "Row length unavailable"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .grossAreaUnavailable:
+            return "Select blocks with an area before this product can be calculated."
+        case .treatedAreaUnavailable:
+            return "Complete the band width and block geometry before this product can be calculated."
+        case .carrierUnavailable:
+            return "Complete the Carrier Volume step before this product quantity can be calculated."
+        case .rowLengthUnavailable:
+            return "Complete the block row geometry before this product can be calculated."
+        }
+    }
 }
 
 /// How the carrier volume splits into tanks.
@@ -187,6 +263,10 @@ nonisolated enum SprayApplicationPlanner {
                 basis: line.basis,
                 context: context
             )
+            let basisInput = SprayProductQuantityCalculator.basisInput(
+                basis: line.basis,
+                context: context
+            )
             let perFullTank: Double?
             let inLastTank: Double?
             if let total, carrier.totalLitres > 0, split.totalTanks > 0 {
@@ -207,7 +287,8 @@ nonisolated enum SprayApplicationPlanner {
                 totalQuantity: total,
                 quantityPerFullTank: perFullTank,
                 quantityInLastTank: inLastTank,
-                costPerUnit: line.costPerUnit
+                costPerUnit: line.costPerUnit,
+                basisInput: basisInput
             )
         }
 

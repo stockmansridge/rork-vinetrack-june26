@@ -27,6 +27,41 @@ nonisolated enum SprayProductRateBasis: String, Sendable, Codable, CaseIterable 
         }
     }
 
+    /// How the rate itself is written on the label, e.g. `2 L/ha`.
+    var rateSuffix: String {
+        switch self {
+        case .wholeBlockArea, .treatedArea: return "/ha"
+        case .per100Litres: return "/100 L"
+        case .per100Metres: return "/100 m"
+        }
+    }
+
+    /// What the measured half of the calculation is called, e.g. `whole block`.
+    var measuredNoun: String {
+        switch self {
+        case .wholeBlockArea: return "whole block"
+        case .treatedArea: return "treated band"
+        case .per100Litres: return "carrier"
+        case .per100Metres: return "row"
+        }
+    }
+
+    /// The unit the measured half is expressed in.
+    var measuredUnit: String {
+        switch self {
+        case .wholeBlockArea, .treatedArea: return "ha"
+        case .per100Litres: return "L"
+        case .per100Metres: return "m"
+        }
+    }
+
+    /// The two bases an AREA-rated product line may legitimately choose between.
+    ///
+    /// Deliberately excludes the per-100 L and per-100 m bases: those come from
+    /// the product's own label, are not an area question, and must never appear
+    /// as a Whole Block / Treated Band choice.
+    static var areaChoices: [SprayProductRateBasis] { [.wholeBlockArea, .treatedArea] }
+
     /// Whether this basis measures against an area (used for reporting labels).
     var isAreaBased: Bool { self == .wholeBlockArea || self == .treatedArea }
 
@@ -139,6 +174,32 @@ nonisolated enum SprayProductQuantityCalculator {
         case .per100Metres:
             guard let metres = context.rowLengthMetres, metres.isFinite, metres > 0 else { return nil }
             return rate * metres / 100.0
+        }
+    }
+
+    /// The MEASURED value a basis multiplies against — the "× 10.00 ha" half of
+    /// the calculation the operator sees.
+    ///
+    /// Returned from the engine rather than re-read from screen state so the
+    /// explanation and the quantity provably describe the same arithmetic.
+    /// `nil` under exactly the same conditions that make `totalQuantity` `nil`.
+    static func basisInput(
+        basis: SprayProductRateBasis,
+        context: SprayQuantityContext
+    ) -> Double? {
+        switch basis {
+        case .wholeBlockArea:
+            guard context.grossAreaHectares.isFinite, context.grossAreaHectares > 0 else { return nil }
+            return context.grossAreaHectares
+        case .treatedArea:
+            guard let treated = context.treatedAreaHectares, treated.isFinite, treated > 0 else { return nil }
+            return treated
+        case .per100Litres:
+            guard context.carrierLitres.isFinite, context.carrierLitres > 0 else { return nil }
+            return context.carrierLitres
+        case .per100Metres:
+            guard let metres = context.rowLengthMetres, metres.isFinite, metres > 0 else { return nil }
+            return metres
         }
     }
 }

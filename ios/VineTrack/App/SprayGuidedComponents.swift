@@ -212,12 +212,80 @@ struct GuidedCalculatedPanel<Content: View>: View {
 ///
 /// Deliberately renders NOTHING when disabled: showing a fake "no resistance
 /// issues" result would be worse than showing nothing, because an operator would
-/// trust it. The rules engine is a separate task; this only fixes the location.
+/// trust it. The rules engine is a separate task; this only fixes the location —
+/// immediately beneath the product line it will judge.
 struct ResistanceCheckSlot: View {
     let isApplicable: Bool
 
     var body: some View {
         EmptyView()
+    }
+}
+
+/// The per-product area-basis picker.
+///
+/// Deliberately a full-width, always-visible control on the product line rather
+/// than something behind an "advanced" disclosure: on a banded pass the
+/// difference between whole-block and treated-band hectares is a 4× difference
+/// in product, so it is not a detail the operator should have to go looking for.
+struct GuidedProductBasisPicker: View {
+    let selected: SprayProductRateBasis
+    let onSelect: (SprayProductRateBasis) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Apply this product rate to:")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                ForEach(SprayProductRateBasis.areaChoices, id: \.self) { basis in
+                    GuidedChip(
+                        label: SprayGuidedFormat.productBasisLabel(basis),
+                        icon: nil,
+                        isSelected: selected == basis
+                    ) {
+                        onSelect(basis)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The calculated explanation for one product line.
+///
+/// Shows the arithmetic in the operator's own terms — rate × measured amount —
+/// then the requirement. When the line cannot resolve it names the ONE missing
+/// input instead of showing a zero.
+struct GuidedProductCalculationRow: View {
+    let line: SprayProductLineResult
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if let calculation = SprayGuidedFormat.productCalculation(line) {
+                Text(calculation)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(SprayGuidedFormat.productRequirement(line))
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(VineyardTheme.olive)
+                    .monospacedDigit()
+            } else if let reason = line.unresolvedReason {
+                Text(reason.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.orange)
+                Text(reason.message)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(
+            (line.isUnresolved ? Color.orange : VineyardTheme.olive).opacity(0.08)
+        )
+        .clipShape(.rect(cornerRadius: 8))
     }
 }
 
@@ -325,6 +393,35 @@ enum SprayGuidedFormat {
         case .litresPerHectare: return "L/ha"
         case .litresPer100Metres: return "L/100 m"
         }
+    }
+
+    /// The rate as written on the label, e.g. `2 L/ha` or `100 mL/100 L`.
+    static func productRate(_ line: SprayProductLineResult) -> String {
+        let decimals: Int = line.rate < 10 ? 1 : 0
+        return "\(number(line.rate, decimals: decimals)) \(line.unit)\(line.basis.rateSuffix)"
+    }
+
+    /// The MEASURED half of the calculation, e.g. `10.00 ha whole block`.
+    ///
+    /// Reads `basisInput` straight off the planner's line — the screen never
+    /// substitutes its own hectares or litres here, so the explanation and the
+    /// quantity can never describe different arithmetic.
+    static func productMeasuredInput(_ line: SprayProductLineResult) -> String? {
+        guard let input = line.basisInput, input.isFinite else { return nil }
+        let decimals = line.basis.measuredUnit == "ha" ? 2 : 0
+        return "\(number(input, decimals: decimals)) \(line.basis.measuredUnit) \(line.basis.measuredNoun)"
+    }
+
+    /// The full one-line explanation, e.g. `2 L/ha × 10.00 ha whole block`.
+    static func productCalculation(_ line: SprayProductLineResult) -> String? {
+        guard let measured = productMeasuredInput(line) else { return nil }
+        return "\(productRate(line)) × \(measured)"
+    }
+
+    /// The resulting requirement, e.g. `20.0 L required`.
+    static func productRequirement(_ line: SprayProductLineResult) -> String {
+        guard let total = line.totalQuantity else { return "Unavailable" }
+        return "\(quantity(total, unit: line.unit)) required"
     }
 
     /// User-facing wording for a product's label rate basis.
