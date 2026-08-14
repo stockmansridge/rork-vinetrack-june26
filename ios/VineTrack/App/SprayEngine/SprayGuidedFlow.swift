@@ -71,6 +71,10 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
     case noProductsAdded
     /// Product lines whose basis input is unavailable (names for the message).
     case unresolvedProducts(names: [String])
+    /// A product is rated per TREATED hectare but the band geometry cannot yield
+    /// a treated area. Named separately from `unresolvedProducts` because the fix
+    /// is specific: complete the band width or the block's row geometry.
+    case treatedAreaBasisUnavailable(names: [String])
 
     var title: String {
         switch self {
@@ -86,6 +90,7 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case .carrierNotCalculable: return "Carrier volume unavailable"
         case .noProductsAdded: return "Add products"
         case .unresolvedProducts: return "Product rate unavailable"
+        case .treatedAreaBasisUnavailable: return "Treated area required"
         }
     }
 
@@ -115,13 +120,18 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
             return "Add at least one product to the tank mix."
         case let .unresolvedProducts(names):
             return "Cannot calculate \(names.joined(separator: ", ")). Check the rate basis and block geometry."
+        case let .treatedAreaBasisUnavailable(names):
+            return "Complete the band width and block geometry before using a Treated Area "
+                + "product rate for \(names.joined(separator: ", "))."
         }
     }
 
     /// True when the operator has to leave the calculator and fix block setup.
     var needsBlockEditor: Bool {
         switch self {
-        case .blockSetupRequired, .treatedAreaUnavailable, .carrierNotCalculable: return true
+        case .blockSetupRequired, .treatedAreaUnavailable, .carrierNotCalculable,
+             .treatedAreaBasisUnavailable:
+            return true
         default: return false
         }
     }
@@ -214,6 +224,26 @@ nonisolated struct SprayGuidedFlow: Sendable {
 
     /// True when canopy-specific settings apply. Spreader has no canopy.
     var supportsCanopySettings: Bool { inputs.operationType != .spreader }
+
+    // MARK: - Application intent
+
+    /// The spray head target that actually applies, which is `nil` for anything
+    /// that is not a foliar pass.
+    ///
+    /// This is where "changing Foliar → Banded clears the spray head target" is
+    /// enforced. Doing it here rather than only in the screens means a stale
+    /// value can never reach the snapshot even if a UI forgets to reset its own
+    /// state — the persisted record cannot claim a banded pass was aimed at the
+    /// bunch line. The same rule already governs `bandWidth` in the other
+    /// direction.
+    var effectiveSprayHeadTarget: SprayHeadTarget? {
+        requiresSprayHeadTarget ? inputs.sprayHeadTarget : nil
+    }
+
+    /// The operator's targets in stable presentation order, de-duplicated.
+    var orderedTargets: [SprayTarget] {
+        SprayTarget.presentationOrder.filter(inputs.targets.contains)
+    }
 
     // MARK: - Carrier policy
 
@@ -339,7 +369,11 @@ nonisolated struct SprayGuidedFlow: Sendable {
     /// columns are never populated from individual UI state variables.
     var snapshot: SprayApplicationSnapshot? {
         guard let plan = persistablePlan else { return nil }
-        let snapshot = SprayApplicationSnapshot(plan: plan)
+        let snapshot = SprayApplicationSnapshot(
+            plan: plan,
+            targets: orderedTargets,
+            sprayHeadTarget: effectiveSprayHeadTarget
+        )
         return snapshot.isEmpty ? nil : snapshot
     }
 
@@ -392,6 +426,14 @@ nonisolated struct SprayGuidedFlow: Sendable {
 
         case .products:
             guard !inputs.products.isEmpty else { return .noProductsAdded }
+            // A product rated per TREATED hectare against geometry that cannot
+            // produce one is called out specifically, so the operator is never
+            // left guessing which of several possible inputs is missing — and is
+            // never quietly dosed against gross area instead.
+            let treatedAreaLines = inputs.products.filter { $0.basis == .treatedArea }
+            if !treatedAreaLines.isEmpty, plan.treatedAreaHectares == nil {
+                return .treatedAreaBasisUnavailable(names: treatedAreaLines.map(\.name))
+            }
             let unresolved = plan.unresolvedProductLines
             guard unresolved.isEmpty else {
                 return .unresolvedProducts(names: unresolved.map(\.name))

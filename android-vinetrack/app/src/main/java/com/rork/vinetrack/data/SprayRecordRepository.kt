@@ -77,6 +77,10 @@ class SprayRecordRepository(private val session: SessionStore) {
         @SerialName("dilute_litres_per_100m") val diluteLitresPer100m: Double? = null,
         @SerialName("applied_litres_per_100m") val appliedLitresPer100m: Double? = null,
         @SerialName("concentration_factor") val concentrationFactor: Double? = null,
+        // sql/193 application intent. `targets` is a Postgres text[]; null means
+        // never recorded, an empty list means the operator recorded none.
+        @SerialName("targets") val targets: List<String>? = null,
+        @SerialName("spray_head_target") val sprayHeadTarget: String? = null,
         @SerialName("created_by") val createdBy: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
@@ -124,6 +128,11 @@ class SprayRecordRepository(private val session: SessionStore) {
         @SerialName("dilute_litres_per_100m") val diluteLitresPer100m: Double? = null,
         @SerialName("applied_litres_per_100m") val appliedLitresPer100m: Double? = null,
         @SerialName("concentration_factor") val concentrationFactor: Double? = null,
+        // sql/193 application intent. Always sent — including as explicit nulls —
+        // so switching an existing spray from Foliar to Banded actually CLEARS the
+        // stored spray head target instead of leaving a stale claim on the record.
+        @SerialName("targets") val targets: List<String>? = null,
+        @SerialName("spray_head_target") val sprayHeadTarget: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
@@ -238,6 +247,8 @@ class SprayRecordRepository(private val session: SessionStore) {
                 diluteLitresPer100m = geometry?.diluteLitresPer100m,
                 appliedLitresPer100m = geometry?.appliedLitresPer100m,
                 concentrationFactor = geometry?.concentrationFactor,
+                targets = geometry?.targets?.map { it.raw },
+                sprayHeadTarget = geometry?.sprayHeadTarget?.raw,
                 createdBy = session.userId,
                 clientUpdatedAt = now,
             )
@@ -303,6 +314,8 @@ class SprayRecordRepository(private val session: SessionStore) {
                 diluteLitresPer100m = geometry?.diluteLitresPer100m,
                 appliedLitresPer100m = geometry?.appliedLitresPer100m,
                 concentrationFactor = geometry?.concentrationFactor,
+                targets = geometry?.targets?.map { it.raw },
+                sprayHeadTarget = geometry?.sprayHeadTarget?.raw,
                 clientUpdatedAt = clientUpdatedAt ?: nowIso(),
             )
             val response = SupabaseClient.http.patch(SupabaseClient.restUrl("spray_records?id=eq.$id")) {

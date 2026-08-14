@@ -43,7 +43,32 @@ data class Vineyard(
     val longitude: Double? = null,
     @SerialName("elevation_metres") val elevationMetres: Double? = null,
     val timezone: String? = null,
-)
+    /**
+     * sql/191 `vineyards.spray_compliance_profile`. Null when the grower never
+     * chose one, which is NOT the same as choosing Australia — see
+     * [com.rork.vinetrack.data.spray.SprayVineyardProfile], where null falls back
+     * to the country default without ever writing that fallback to the database.
+     */
+    @SerialName("spray_compliance_profile") val sprayComplianceProfile: String? = null,
+    /** sql/191 `vineyards.spray_carrier_volume_basis`. Null when never chosen. */
+    @SerialName("spray_carrier_volume_basis") val sprayCarrierVolumeBasis: String? = null,
+) {
+    /**
+     * The vineyard's spray profile as stored, ready for the guided flow.
+     *
+     * Resolution order lives entirely in `SprayVineyardProfile`: stored value ->
+     * country-derived compatibility fallback -> safe default. Nothing here writes
+     * a resolved fallback back to the database.
+     */
+    val sprayProfile: com.rork.vinetrack.data.spray.SprayVineyardProfile
+        get() = com.rork.vinetrack.data.spray.SprayVineyardProfile(
+            storedProfile = com.rork.vinetrack.data.spray.SprayComplianceProfile
+                .from(sprayComplianceProfile),
+            storedPolicy = com.rork.vinetrack.data.spray.SprayCarrierVolumePolicy
+                .from(sprayCarrierVolumeBasis),
+            countryCode = country,
+        )
+}
 
 /**
  * A single GPS point on a trip path. [latitude]/[longitude] are the original,
@@ -1542,6 +1567,11 @@ data class SprayRecord(
     @SerialName("dilute_litres_per_100m") val diluteLitresPer100m: Double? = null,
     @SerialName("applied_litres_per_100m") val appliedLitresPer100m: Double? = null,
     @SerialName("concentration_factor") val concentrationFactor: Double? = null,
+    // sql/193 application intent — what the operator declared this spray was FOR.
+    // Null means never recorded (pre-sql/193); an empty list means recorded as
+    // explicitly none. NEVER inferred from the products in the tank.
+    @SerialName("targets") val targets: List<String>? = null,
+    @SerialName("spray_head_target") val sprayHeadTarget: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
@@ -1575,6 +1605,8 @@ data class SprayRecord(
             diluteLitresPer100m = diluteLitresPer100m,
             appliedLitresPer100m = appliedLitresPer100m,
             concentrationFactor = concentrationFactor,
+            targets = targets,
+            sprayHeadTarget = sprayHeadTarget,
         )
 
     /** User-facing label: the spray reference, else operation type, else a fallback. */

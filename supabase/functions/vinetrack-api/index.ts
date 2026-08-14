@@ -745,6 +745,11 @@ interface SprayRow {
   dilute_litres_per_100m: number | null;
   applied_litres_per_100m: number | null;
   concentration_factor: number | null;
+  // Application intent (sql/193). Null on every record written before that
+  // migration — such records have no recoverable target and MUST NOT have one
+  // inferred from the products in the tank.
+  targets: string[] | null;
+  spray_head_target: string | null;
   created_at: string; updated_at: string;
 }
 
@@ -757,6 +762,7 @@ const SPRAY_COLUMNS =
   "canonical_row_length_metres, row_spacing_metres, geometry_source, geometry_quality, " +
   "carrier_volume_basis, total_carrier_litres, carrier_litres_per_hectare, " +
   "dilute_litres_per_100m, applied_litres_per_100m, concentration_factor, " +
+  "targets, spray_head_target, " +
   "created_at, updated_at";
 
 interface TankJson {
@@ -888,7 +894,22 @@ function mapSpraySummary(row: SprayRow, idx: MachineIndex) {
       applied_litres_per_100m: num(row.applied_litres_per_100m),
       // dilute / applied. 1.0 when spraying dilute (no concentration).
       concentration_factor: num(row.concentration_factor),
+      // full_canopy | bunch_line | leaf_zone. Foliar passes only; null for a
+      // banded or spreader application and for pre-sql/193 records.
+      spray_head_target: row.spray_head_target ?? null,
     },
+    // What the operator declared this spray was FOR, as stable identifiers
+    // (powdery_mildew, downy_mildew, botrytis, weeds, nutrition_biostimulant,
+    // other, ...). The vocabulary is open and MAY grow, so consumers should
+    // tolerate unrecognised values rather than rejecting the record.
+    //
+    // null  = never recorded (record predates sql/193)
+    // []    = the operator recorded no target
+    //
+    // Read STRAIGHT off the stored column. Never inferred from the tank mix: a
+    // grower who tank mixes a nutrient with a fungicide has one target, not two,
+    // and only the operator knows which.
+    targets: Array.isArray(row.targets) ? row.targets : null,
     tank_count: tanks.length,
     product_names: totals.productNames,
     average_speed_kmh: row.average_speed ?? null,

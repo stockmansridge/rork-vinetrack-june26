@@ -14,6 +14,13 @@ nonisolated struct BackendVineyard: Identifiable, Codable, Sendable {
     let longitude: Double?
     let elevationMetres: Double?
     let timezone: String?
+    /// sql/191 `vineyards.spray_compliance_profile`. Nil when the grower never
+    /// chose one, which is NOT the same as choosing Australia — see
+    /// `SprayVineyardProfile`, where nil falls back to the country default
+    /// without ever writing that fallback back to the database.
+    let sprayComplianceProfile: String?
+    /// sql/191 `vineyards.spray_carrier_volume_basis`. Nil when never chosen.
+    let sprayCarrierVolumeBasis: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -29,6 +36,8 @@ nonisolated struct BackendVineyard: Identifiable, Codable, Sendable {
         case longitude
         case elevationMetres = "elevation_metres"
         case timezone
+        case sprayComplianceProfile = "spray_compliance_profile"
+        case sprayCarrierVolumeBasis = "spray_carrier_volume_basis"
     }
 
     nonisolated init(
@@ -44,7 +53,9 @@ nonisolated struct BackendVineyard: Identifiable, Codable, Sendable {
         latitude: Double? = nil,
         longitude: Double? = nil,
         elevationMetres: Double? = nil,
-        timezone: String? = nil
+        timezone: String? = nil,
+        sprayComplianceProfile: String? = nil,
+        sprayCarrierVolumeBasis: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -59,6 +70,8 @@ nonisolated struct BackendVineyard: Identifiable, Codable, Sendable {
         self.longitude = longitude
         self.elevationMetres = elevationMetres
         self.timezone = timezone
+        self.sprayComplianceProfile = sprayComplianceProfile
+        self.sprayCarrierVolumeBasis = sprayCarrierVolumeBasis
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -76,5 +89,20 @@ nonisolated struct BackendVineyard: Identifiable, Codable, Sendable {
         longitude = try c.decodeIfPresent(Double.self, forKey: .longitude)
         elevationMetres = try c.decodeIfPresent(Double.self, forKey: .elevationMetres)
         timezone = try c.decodeIfPresent(String.self, forKey: .timezone)
+        sprayComplianceProfile = try c.decodeIfPresent(String.self, forKey: .sprayComplianceProfile)
+        sprayCarrierVolumeBasis = try c.decodeIfPresent(String.self, forKey: .sprayCarrierVolumeBasis)
+    }
+
+    /// The vineyard's spray profile as stored, ready for the guided flow.
+    ///
+    /// Resolution order lives entirely in `SprayVineyardProfile`:
+    /// stored value → country-derived compatibility fallback → safe default.
+    /// Nothing here writes a resolved fallback back to the database.
+    var sprayProfile: SprayVineyardProfile {
+        SprayVineyardProfile(
+            storedProfile: SprayComplianceProfile(rawValue: sprayComplianceProfile ?? ""),
+            storedPolicy: SprayCarrierVolumePolicy(rawValue: sprayCarrierVolumeBasis ?? ""),
+            countryCode: country
+        )
     }
 }

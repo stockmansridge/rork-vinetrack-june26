@@ -587,8 +587,22 @@ class SprayGuidedFlowTest {
         assertTrue(snapshot.hasGenuineTreatedArea)
 
         // The snapshot is exactly what projecting the plan produces — the UI never
-        // populates the 17 columns from its own state.
-        assertEquals(SprayApplicationSnapshot.from(plan), snapshot)
+        // populates the geometry/carrier columns from its own state. Application
+        // intent (sql/193) rides along on the same projection, so Review and the
+        // persisted record cannot disagree about what was targeted either.
+        assertEquals(
+            SprayApplicationSnapshot.from(
+                plan = plan,
+                targets = flow.orderedTargets,
+                sprayHeadTarget = flow.effectiveSprayHeadTarget,
+            ),
+            snapshot,
+        )
+
+        // Banded: the spray head target is not applicable and must not be frozen
+        // into the record even if a value is lingering in screen state.
+        assertNull(snapshot.sprayHeadTarget)
+        assertEquals(flow.orderedTargets, snapshot.targets)
     }
 
     // endregion

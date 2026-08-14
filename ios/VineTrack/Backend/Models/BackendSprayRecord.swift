@@ -44,6 +44,10 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
     let diluteLitresPer100m: Double?
     let appliedLitresPer100m: Double?
     let concentrationFactor: Double?
+    // sql/193 application intent. `targets` is a Postgres text[]; nil means the
+    // record predates the migration, [] means the operator recorded none.
+    let targets: [String]?
+    let sprayHeadTarget: String?
     let createdBy: UUID?
     let updatedBy: UUID?
     let createdAt: Date?
@@ -93,6 +97,8 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
         case diluteLitresPer100m = "dilute_litres_per_100m"
         case appliedLitresPer100m = "applied_litres_per_100m"
         case concentrationFactor = "concentration_factor"
+        case targets
+        case sprayHeadTarget = "spray_head_target"
         case createdBy = "created_by"
         case updatedBy = "updated_by"
         case createdAt = "created_at"
@@ -151,6 +157,11 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
     let diluteLitresPer100m: Double?
     let appliedLitresPer100m: Double?
     let concentrationFactor: Double?
+    /// sql/193 application intent, encoded even when nil so switching an existing
+    /// spray from Foliar to Banded actually CLEARS the stored spray head target
+    /// instead of leaving a stale claim on the record.
+    let targets: [String]?
+    let sprayHeadTarget: String?
     let createdBy: UUID?
     let clientUpdatedAt: Date
 
@@ -195,6 +206,8 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
         case diluteLitresPer100m = "dilute_litres_per_100m"
         case appliedLitresPer100m = "applied_litres_per_100m"
         case concentrationFactor = "concentration_factor"
+        case targets
+        case sprayHeadTarget = "spray_head_target"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
     }
@@ -251,6 +264,8 @@ extension BackendSprayRecord {
             diluteLitresPer100m: geometry?.diluteLitresPer100m,
             appliedLitresPer100m: geometry?.appliedLitresPer100m,
             concentrationFactor: geometry?.concentrationFactor,
+            targets: geometry?.targets?.map(\.rawValue),
+            sprayHeadTarget: geometry?.sprayHeadTarget?.rawValue,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
         )
@@ -310,7 +325,14 @@ extension BackendSprayRecord {
             carrierLitresPerHectare: carrierLitresPerHectare,
             diluteLitresPer100m: diluteLitresPer100m,
             appliedLitresPer100m: appliedLitresPer100m,
-            concentrationFactor: concentrationFactor
+            concentrationFactor: concentrationFactor,
+            // sql/193 puts no value CHECK on `targets` so the vocabulary can grow
+            // without a migration; unrecognised identifiers written by a newer
+            // build degrade to nothing rather than failing the whole record. A
+            // stored-but-unrecognised array stays [] (recorded) not nil (never
+            // recorded), preserving the distinction the planner relies on.
+            targets: targets.map { $0.compactMap(SprayTarget.from) },
+            sprayHeadTarget: SprayHeadTarget.from(sprayHeadTarget)
         )
         return snapshot.isEmpty ? nil : snapshot
     }

@@ -79,6 +79,30 @@ data class SprayApplicationSnapshot(
     val diluteLitresPer100m: Double? = null,
     val appliedLitresPer100m: Double? = null,
     val concentrationFactor: Double? = null,
+
+    // ------------------------------------------------- application intent (193)
+    //
+    // Unlike every field above these are not calculated outputs — they are what
+    // the operator declared this spray was FOR. They live here rather than in a
+    // separate carrier because they share the record's persistence, offline
+    // replay and reload path, and because a compliance document has to state
+    // intent as well as arithmetic.
+
+    /**
+     * What the spray targeted, as stable identifiers.
+     *
+     * Null means never recorded (a pre-sql/193 record); an empty list means
+     * recorded as explicitly none. That distinction is load-bearing for the
+     * future Resistance Planner, which must not read silence as "nothing
+     * targeted". NEVER inferred from the products in the tank.
+     */
+    val targets: List<SprayTarget>? = null,
+
+    /**
+     * Where the spray head was aimed. Foliar applications only — a banded or
+     * spreader pass legitimately carries null.
+     */
+    val sprayHeadTarget: SprayHeadTarget? = null,
 ) {
 
     /**
@@ -94,7 +118,15 @@ data class SprayApplicationSnapshot(
             geometrySource == null && geometryQuality == null &&
             carrierVolumeBasis == null && totalCarrierLitres == null &&
             carrierLitresPerHectare == null && diluteLitresPer100m == null &&
-            appliedLitresPer100m == null && concentrationFactor == null
+            appliedLitresPer100m == null && concentrationFactor == null &&
+            targets == null && sprayHeadTarget == null
+
+    /**
+     * True when the operator's target selection was genuinely recorded, so the
+     * UI can distinguish "unknown (historical)" from "none selected".
+     */
+    val hasRecordedTargets: Boolean
+        get() = targets?.isNotEmpty() == true
 
     /**
      * True when this snapshot records a banded application whose treated area is
@@ -160,6 +192,11 @@ data class SprayApplicationSnapshot(
             diluteLitresPer100m = diluteLitresPer100m,
             appliedLitresPer100m = appliedLitresPer100m,
             concentrationFactor = concentrationFactor,
+            // Targets and spray head target are reusable INPUT intent, not
+            // geometry-dependent output, so a template keeps them: "my powdery
+            // mildew bunch-line spray" is exactly what a template is for.
+            targets = targets,
+            sprayHeadTarget = sprayHeadTarget,
         )
         return if (configuration.isEmpty) null else configuration
     }
@@ -169,10 +206,22 @@ data class SprayApplicationSnapshot(
          * Project a finished plan onto the storage columns.
          *
          * This is the ONLY way to build a populated snapshot from a calculation.
-         * Values are copied, never recomputed.
+         * Calculated values are copied, never recomputed.
+         *
+         * [targets] and [sprayHeadTarget] are passed alongside because they are
+         * operator intent rather than engine output — the planner has no opinion
+         * on them, and putting them INTO the plan would imply they affect the
+         * arithmetic. They still funnel through this one factory so the record
+         * continues to have exactly one persistence face.
          */
-        fun from(plan: SprayApplicationPlan): SprayApplicationSnapshot =
+        fun from(
+            plan: SprayApplicationPlan,
+            targets: List<SprayTarget>? = null,
+            sprayHeadTarget: SprayHeadTarget? = null,
+        ): SprayApplicationSnapshot =
             SprayApplicationSnapshot(
+                targets = targets?.let(::normalisedTargets),
+                sprayHeadTarget = sprayHeadTarget,
                 grossAreaHa = nonNegative(plan.treatedArea.grossAreaHectares),
                 treatedAreaHa = nonNegative(plan.treatedArea.treatedAreaHectares),
                 applicationMode = plan.mode,
@@ -219,8 +268,18 @@ data class SprayApplicationSnapshot(
             diluteLitresPer100m: Double?,
             appliedLitresPer100m: Double?,
             concentrationFactor: Double?,
+            targets: List<String>? = null,
+            sprayHeadTarget: String? = null,
         ): SprayApplicationSnapshot? {
             val snapshot = SprayApplicationSnapshot(
+                // sql/193 deliberately puts NO value CHECK on `targets` so the
+                // vocabulary can expand without a migration. The cost is that this
+                // client can meet an identifier a newer build wrote: drop what we
+                // don't recognise rather than failing the whole spray record. An
+                // array that is present but entirely unrecognised stays empty
+                // (recorded) — not null (never recorded).
+                targets = targets?.let { raw -> normalisedTargets(raw.mapNotNull(SprayTarget::from)) },
+                sprayHeadTarget = SprayHeadTarget.from(sprayHeadTarget),
                 grossAreaHa = grossAreaHa,
                 treatedAreaHa = treatedAreaHa,
                 applicationMode = SprayApplicationMode.from(applicationMode),
@@ -254,5 +313,14 @@ data class SprayApplicationSnapshot(
         /** Non-negative columns: negatives and non-finite become null. */
         private fun nonNegative(value: Double?): Double? =
             if (value != null && value.isFinite() && value >= 0) value else null
+
+        /**
+         * De-duplicate and order targets so two sprays with the same selection
+         * always serialise to the same array, whatever order the operator tapped.
+         */
+        private fun normalisedTargets(targets: List<SprayTarget>): List<SprayTarget> {
+            val selected = targets.toSet()
+            return SprayTarget.presentationOrder.filter(selected::contains)
+        }
     }
 }

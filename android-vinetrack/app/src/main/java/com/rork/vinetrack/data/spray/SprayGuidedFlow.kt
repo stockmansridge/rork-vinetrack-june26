@@ -108,6 +108,19 @@ sealed interface SprayGuidedBlocker {
             get() = "Cannot calculate ${names.joinToString(", ")}. " +
                 "Check the rate basis and block geometry."
     }
+
+    /**
+     * A product is rated per TREATED hectare but the band geometry cannot yield a
+     * treated area. Named separately from [UnresolvedProducts] because the fix is
+     * specific: complete the band width or the block's row geometry.
+     */
+    data class TreatedAreaBasisUnavailable(val names: List<String>) : SprayGuidedBlocker {
+        override val title: String get() = "Treated area required"
+        override val message: String
+            get() = "Complete the band width and block geometry before using a " +
+                "Treated Area product rate for ${names.joinToString(", ")}."
+        override val needsBlockEditor: Boolean get() = true
+    }
 }
 
 /**
@@ -197,6 +210,27 @@ data class SprayGuidedFlow(
     /** True when canopy-specific settings apply. Spreader has no canopy. */
     val supportsCanopySettings: Boolean
         get() = inputs.operationType != SprayOperationType.SPREADER
+
+    // endregion
+
+    // region Application intent
+
+    /**
+     * The spray head target that actually applies, which is null for anything
+     * that is not a foliar pass.
+     *
+     * This is where "changing Foliar -> Banded clears the spray head target" is
+     * enforced. Doing it here rather than only in the screens means a stale value
+     * can never reach the snapshot even if a UI forgets to reset its own state -
+     * the persisted record cannot claim a banded pass was aimed at the bunch
+     * line. The same rule already governs [bandWidth] in the other direction.
+     */
+    val effectiveSprayHeadTarget: SprayHeadTarget?
+        get() = if (requiresSprayHeadTarget) inputs.sprayHeadTarget else null
+
+    /** The operator's targets in stable presentation order, de-duplicated. */
+    val orderedTargets: List<SprayTarget>
+        get() = SprayTarget.presentationOrder.filter(inputs.targets::contains)
 
     // endregion
 
@@ -355,7 +389,11 @@ data class SprayGuidedFlow(
     val snapshot: SprayApplicationSnapshot?
         get() {
             val plan = persistablePlan ?: return null
-            val snapshot = SprayApplicationSnapshot.from(plan)
+            val snapshot = SprayApplicationSnapshot.from(
+                plan = plan,
+                targets = orderedTargets,
+                sprayHeadTarget = effectiveSprayHeadTarget,
+            )
             return if (snapshot.isEmpty) null else snapshot
         }
 
@@ -413,11 +451,21 @@ data class SprayGuidedFlow(
         SprayGuidedStep.PRODUCTS -> when {
             inputs.products.isEmpty() -> SprayGuidedBlocker.NoProductsAdded
             else -> {
+                // A product rated per TREATED hectare against geometry that cannot
+                // produce one is called out specifically, so the operator is never
+                // left guessing which of several possible inputs is missing - and
+                // is never quietly dosed against gross area instead.
+                val treatedAreaLines = inputs.products.filter {
+                    it.basis == SprayProductRateBasis.TREATED_AREA
+                }
                 val unresolved = plan.unresolvedProductLines
-                if (unresolved.isEmpty()) {
-                    null
-                } else {
-                    SprayGuidedBlocker.UnresolvedProducts(unresolved.map { it.name })
+                when {
+                    treatedAreaLines.isNotEmpty() && plan.treatedAreaHectares == null ->
+                        SprayGuidedBlocker.TreatedAreaBasisUnavailable(
+                            treatedAreaLines.map { it.name },
+                        )
+                    unresolved.isEmpty() -> null
+                    else -> SprayGuidedBlocker.UnresolvedProducts(unresolved.map { it.name })
                 }
             }
         }
