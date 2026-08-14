@@ -1,5 +1,7 @@
 package com.rork.vinetrack.data.spray
 
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlin.math.max
 
 /**
@@ -11,11 +13,14 @@ import kotlin.math.max
  * may enter carrier volume exclusively in L/100 m while still dosing a product
  * whose label is authoritative in L/ha.
  */
+@Serializable
 enum class SprayCarrierBasis(val raw: String) {
     /** Hectare-based carrier volume — the long-standing VineTrack behaviour. */
+    @SerialName("l_per_ha")
     LITRES_PER_HECTARE("l_per_ha"),
 
     /** Row-length-based carrier volume — authoritative for NZ/SWNZ workflows. */
+    @SerialName("l_per_100m")
     LITRES_PER_100_METRES("l_per_100m"),
     ;
 

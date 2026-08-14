@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.SprayTank
+import com.rork.vinetrack.data.spray.SprayApplicationSnapshot
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -72,6 +73,14 @@ class SprayRecordCreateSync(
         val tripId: String? = null,
         val isTemplate: Boolean = false,
         val tanks: List<SprayTank> = emptyList(),
+        /**
+         * Canonical sql/191 + sql/192 calculation snapshot, carried through the
+         * outbox so a spray created OFFLINE keeps its gross/treated distinction,
+         * canonical row metres, band geometry and carrier values when it finally
+         * replays. Null on payloads queued before this field existed, and on
+         * records never calculated through the Spray Engine.
+         */
+        val applicationGeometry: SprayApplicationSnapshot? = null,
         val clientUpdatedAt: String,
     )
 
@@ -117,6 +126,7 @@ class SprayRecordCreateSync(
             tripId = input.tripId,
             isTemplate = input.isTemplate,
             tanks = input.tanks,
+            applicationGeometry = input.applicationGeometry,
             clientUpdatedAt = clientUpdatedAt,
         )
         return pending.enqueue(
@@ -212,6 +222,7 @@ class SprayRecordCreateSync(
                             tripId = payload.tripId,
                             isTemplate = payload.isTemplate,
                             tanks = payload.tanks,
+                            applicationGeometry = payload.applicationGeometry,
                         ),
                         id = payload.id,
                         clientUpdatedAt = payload.clientUpdatedAt,

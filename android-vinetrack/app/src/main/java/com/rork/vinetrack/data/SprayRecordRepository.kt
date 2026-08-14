@@ -3,6 +3,7 @@ package com.rork.vinetrack.data
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.SprayTank
+import com.rork.vinetrack.data.spray.SprayApplicationSnapshot
 import io.ktor.client.call.body
 import io.ktor.client.request.headers
 import io.ktor.client.request.patch
@@ -58,6 +59,24 @@ class SprayRecordRepository(private val session: SessionStore) {
         @SerialName("trip_id") val tripId: String? = null,
         @SerialName("is_template") val isTemplate: Boolean = false,
         val tanks: List<SprayTank> = emptyList(),
+        // sql/191 + sql/192 snapshot columns, projected from the canonical plan.
+        @SerialName("gross_area_ha") val grossAreaHa: Double? = null,
+        @SerialName("treated_area_ha") val treatedAreaHa: Double? = null,
+        @SerialName("application_mode") val applicationMode: String? = null,
+        @SerialName("treated_area_method") val treatedAreaMethod: String? = null,
+        @SerialName("band_width_total_metres") val bandWidthTotalMetres: Double? = null,
+        @SerialName("band_width_left_metres") val bandWidthLeftMetres: Double? = null,
+        @SerialName("band_width_right_metres") val bandWidthRightMetres: Double? = null,
+        @SerialName("canonical_row_length_metres") val canonicalRowLengthMetres: Double? = null,
+        @SerialName("row_spacing_metres") val rowSpacingMetres: Double? = null,
+        @SerialName("geometry_source") val geometrySource: String? = null,
+        @SerialName("geometry_quality") val geometryQuality: String? = null,
+        @SerialName("carrier_volume_basis") val carrierVolumeBasis: String? = null,
+        @SerialName("total_carrier_litres") val totalCarrierLitres: Double? = null,
+        @SerialName("carrier_litres_per_hectare") val carrierLitresPerHectare: Double? = null,
+        @SerialName("dilute_litres_per_100m") val diluteLitresPer100m: Double? = null,
+        @SerialName("applied_litres_per_100m") val appliedLitresPer100m: Double? = null,
+        @SerialName("concentration_factor") val concentrationFactor: Double? = null,
         @SerialName("created_by") val createdBy: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
@@ -84,6 +103,27 @@ class SprayRecordRepository(private val session: SessionStore) {
         @SerialName("trip_id") val tripId: String? = null,
         @SerialName("is_template") val isTemplate: Boolean = false,
         val tanks: List<SprayTank> = emptyList(),
+        // sql/191 + sql/192 snapshot columns. Always sent — including as explicit
+        // nulls — so an edit that clears geometry (e.g. a job switched from banded
+        // back to whole-block) actually clears the stored columns instead of
+        // leaving a stale treated area behind.
+        @SerialName("gross_area_ha") val grossAreaHa: Double? = null,
+        @SerialName("treated_area_ha") val treatedAreaHa: Double? = null,
+        @SerialName("application_mode") val applicationMode: String? = null,
+        @SerialName("treated_area_method") val treatedAreaMethod: String? = null,
+        @SerialName("band_width_total_metres") val bandWidthTotalMetres: Double? = null,
+        @SerialName("band_width_left_metres") val bandWidthLeftMetres: Double? = null,
+        @SerialName("band_width_right_metres") val bandWidthRightMetres: Double? = null,
+        @SerialName("canonical_row_length_metres") val canonicalRowLengthMetres: Double? = null,
+        @SerialName("row_spacing_metres") val rowSpacingMetres: Double? = null,
+        @SerialName("geometry_source") val geometrySource: String? = null,
+        @SerialName("geometry_quality") val geometryQuality: String? = null,
+        @SerialName("carrier_volume_basis") val carrierVolumeBasis: String? = null,
+        @SerialName("total_carrier_litres") val totalCarrierLitres: Double? = null,
+        @SerialName("carrier_litres_per_hectare") val carrierLitresPerHectare: Double? = null,
+        @SerialName("dilute_litres_per_100m") val diluteLitresPer100m: Double? = null,
+        @SerialName("applied_litres_per_100m") val appliedLitresPer100m: Double? = null,
+        @SerialName("concentration_factor") val concentrationFactor: Double? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
@@ -111,7 +151,27 @@ class SprayRecordRepository(private val session: SessionStore) {
         val tripId: String?,
         val isTemplate: Boolean = false,
         val tanks: List<SprayTank>,
+        /**
+         * The canonical calculation snapshot to persist, or null when this record
+         * was not calculated through the Spray Engine.
+         *
+         * Carried as ONE value rather than 17 loose parameters so a caller cannot
+         * update part of the geometry and leave the dependent outputs stale — the
+         * application result is written as a single coherent snapshot.
+         */
+        val applicationGeometry: SprayApplicationSnapshot? = null,
     )
+
+    /**
+     * The geometry actually written for this input.
+     *
+     * Templates persist reusable INPUT INTENT, never calculated output: a
+     * template must not freeze one season's row length and silently reuse it
+     * against different blocks next season. Enforced here, at the single
+     * persistence point, so neither the create nor the update path can forget it.
+     */
+    private fun SprayInput.geometryToPersist(): SprayApplicationSnapshot? =
+        if (isTemplate) applicationGeometry?.templateConfiguration() else applicationGeometry
 
     fun nowIso(): String = Instant.now().toString()
 
@@ -138,6 +198,7 @@ class SprayRecordRepository(private val session: SessionStore) {
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
             val now = clientUpdatedAt ?: nowIso()
+            val geometry = input.geometryToPersist()
             val body = SprayInsert(
                 id = id,
                 vineyardId = vineyardId,
@@ -160,6 +221,23 @@ class SprayRecordRepository(private val session: SessionStore) {
                 tripId = input.tripId,
                 isTemplate = input.isTemplate,
                 tanks = input.tanks,
+                grossAreaHa = geometry?.grossAreaHa,
+                treatedAreaHa = geometry?.treatedAreaHa,
+                applicationMode = geometry?.applicationMode?.raw,
+                treatedAreaMethod = geometry?.treatedAreaMethod?.raw,
+                bandWidthTotalMetres = geometry?.bandWidthTotalMetres,
+                bandWidthLeftMetres = geometry?.bandWidthLeftMetres,
+                bandWidthRightMetres = geometry?.bandWidthRightMetres,
+                canonicalRowLengthMetres = geometry?.canonicalRowLengthMetres,
+                rowSpacingMetres = geometry?.rowSpacingMetres,
+                geometrySource = geometry?.geometrySource?.raw,
+                geometryQuality = geometry?.geometryQuality?.raw,
+                carrierVolumeBasis = geometry?.carrierVolumeBasis?.raw,
+                totalCarrierLitres = geometry?.totalCarrierLitres,
+                carrierLitresPerHectare = geometry?.carrierLitresPerHectare,
+                diluteLitresPer100m = geometry?.diluteLitresPer100m,
+                appliedLitresPer100m = geometry?.appliedLitresPer100m,
+                concentrationFactor = geometry?.concentrationFactor,
                 createdBy = session.userId,
                 clientUpdatedAt = now,
             )
@@ -187,6 +265,7 @@ class SprayRecordRepository(private val session: SessionStore) {
         withContext(Dispatchers.IO) {
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
+            val geometry = input.geometryToPersist()
             val patch = SprayPatch(
                 date = input.date,
                 startTime = input.startTime,
@@ -207,6 +286,23 @@ class SprayRecordRepository(private val session: SessionStore) {
                 tripId = input.tripId,
                 isTemplate = input.isTemplate,
                 tanks = input.tanks,
+                grossAreaHa = geometry?.grossAreaHa,
+                treatedAreaHa = geometry?.treatedAreaHa,
+                applicationMode = geometry?.applicationMode?.raw,
+                treatedAreaMethod = geometry?.treatedAreaMethod?.raw,
+                bandWidthTotalMetres = geometry?.bandWidthTotalMetres,
+                bandWidthLeftMetres = geometry?.bandWidthLeftMetres,
+                bandWidthRightMetres = geometry?.bandWidthRightMetres,
+                canonicalRowLengthMetres = geometry?.canonicalRowLengthMetres,
+                rowSpacingMetres = geometry?.rowSpacingMetres,
+                geometrySource = geometry?.geometrySource?.raw,
+                geometryQuality = geometry?.geometryQuality?.raw,
+                carrierVolumeBasis = geometry?.carrierVolumeBasis?.raw,
+                totalCarrierLitres = geometry?.totalCarrierLitres,
+                carrierLitresPerHectare = geometry?.carrierLitresPerHectare,
+                diluteLitresPer100m = geometry?.diluteLitresPer100m,
+                appliedLitresPer100m = geometry?.appliedLitresPer100m,
+                concentrationFactor = geometry?.concentrationFactor,
                 clientUpdatedAt = clientUpdatedAt ?: nowIso(),
             )
             val response = SupabaseClient.http.patch(SupabaseClient.restUrl("spray_records?id=eq.$id")) {

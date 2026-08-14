@@ -1,5 +1,7 @@
 package com.rork.vinetrack.data.model
 
+import com.rork.vinetrack.data.spray.SprayApplicationSnapshot
+import com.rork.vinetrack.data.spray.SprayProductRateBasis
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlin.math.abs
@@ -1403,8 +1405,37 @@ data class SprayChemical(
     val ratePer100L: Double = 0.0,
     val costPerUnit: Double = 0.0,
     val unit: String = "Litres",
+    /**
+     * Which area/volume this line's rate is quoted against (sql/191 per-product
+     * rate basis), as a [SprayProductRateBasis] raw value.
+     *
+     * Persisted per CHEMICAL LINE inside the `tanks` JSONB — never as a
+     * job-level setting — so one tank can legitimately mix bases:
+     *
+     * ```text
+     * Kelp      2 L/block ha   × 10 ha    = 20 L
+     * Herbicide 2 L/treated ha × 2.5 ha   =  5 L
+     * Adjuvant  100 mL/100 L   × 6,250 L  =  6.25 L
+     * ```
+     *
+     * Null on legacy lines. Absence is NOT silently read as whole-block: use
+     * [resolvedRateBasis], which documents the legacy assumption at the point
+     * of use.
+     */
+    val rateBasis: String? = null,
     val savedChemicalId: String? = null,
 ) {
+    /**
+     * The basis to calculate against, defaulting a legacy line to
+     * [SprayProductRateBasis.WHOLE_BLOCK_AREA].
+     *
+     * Mirrors the sql/191 rule that legacy `per_hectare` means whole-block area
+     * and NEVER treated area — reading an old line as treated-area would
+     * silently under-dose it.
+     */
+    val resolvedRateBasis: SprayProductRateBasis
+        get() = SprayProductRateBasis.legacy(rateBasis) ?: SprayProductRateBasis.WHOLE_BLOCK_AREA
+
     /** Cost of this chemical line for one tank: unit cost × amount entered per tank. */
     val costPerTank: Double get() = costPerUnit * volumePerTank
 
@@ -1485,10 +1516,66 @@ data class SprayRecord(
     @SerialName("is_template") val isTemplate: Boolean = false,
     @SerialName("operation_type") val operationType: String? = null,
     val tanks: List<SprayTank>? = null,
+    // ---------------------------------------------------------------------
+    // sql/191 + sql/192 application-geometry / carrier snapshot.
+    //
+    // Flat columns, because this data class IS the `spray_records` wire and
+    // local-cache shape. All nullable with null defaults: records written
+    // before the migration simply have no values and must keep reading back as
+    // "not recorded" rather than acquiring guessed geometry. Read them through
+    // [applicationGeometry].
+    // ---------------------------------------------------------------------
+    @SerialName("gross_area_ha") val grossAreaHa: Double? = null,
+    @SerialName("treated_area_ha") val treatedAreaHa: Double? = null,
+    @SerialName("application_mode") val applicationMode: String? = null,
+    @SerialName("treated_area_method") val treatedAreaMethod: String? = null,
+    @SerialName("band_width_total_metres") val bandWidthTotalMetres: Double? = null,
+    @SerialName("band_width_left_metres") val bandWidthLeftMetres: Double? = null,
+    @SerialName("band_width_right_metres") val bandWidthRightMetres: Double? = null,
+    @SerialName("canonical_row_length_metres") val canonicalRowLengthMetres: Double? = null,
+    @SerialName("row_spacing_metres") val rowSpacingMetres: Double? = null,
+    @SerialName("geometry_source") val geometrySource: String? = null,
+    @SerialName("geometry_quality") val geometryQuality: String? = null,
+    @SerialName("carrier_volume_basis") val carrierVolumeBasis: String? = null,
+    @SerialName("total_carrier_litres") val totalCarrierLitres: Double? = null,
+    @SerialName("carrier_litres_per_hectare") val carrierLitresPerHectare: Double? = null,
+    @SerialName("dilute_litres_per_100m") val diluteLitresPer100m: Double? = null,
+    @SerialName("applied_litres_per_100m") val appliedLitresPer100m: Double? = null,
+    @SerialName("concentration_factor") val concentrationFactor: Double? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     val dateEpochMs: Long? get() = parseIsoToEpochMs(date ?: startTime)
+
+    /**
+     * The frozen canonical calculation snapshot for this record, read back
+     * VERBATIM from storage — nothing is re-derived from current block
+     * geometry, which is what keeps a completed record stable after the
+     * vineyard is edited.
+     *
+     * Null for every pre-sql/191 record and for any record never calculated
+     * through the Spray Engine.
+     */
+    val applicationGeometry: SprayApplicationSnapshot?
+        get() = SprayApplicationSnapshot.fromColumns(
+            grossAreaHa = grossAreaHa,
+            treatedAreaHa = treatedAreaHa,
+            applicationMode = applicationMode,
+            treatedAreaMethod = treatedAreaMethod,
+            bandWidthTotalMetres = bandWidthTotalMetres,
+            bandWidthLeftMetres = bandWidthLeftMetres,
+            bandWidthRightMetres = bandWidthRightMetres,
+            canonicalRowLengthMetres = canonicalRowLengthMetres,
+            rowSpacingMetres = rowSpacingMetres,
+            geometrySource = geometrySource,
+            geometryQuality = geometryQuality,
+            carrierVolumeBasis = carrierVolumeBasis,
+            totalCarrierLitres = totalCarrierLitres,
+            carrierLitresPerHectare = carrierLitresPerHectare,
+            diluteLitresPer100m = diluteLitresPer100m,
+            appliedLitresPer100m = appliedLitresPer100m,
+            concentrationFactor = concentrationFactor,
+        )
 
     /** User-facing label: the spray reference, else operation type, else a fallback. */
     val displayLabel: String

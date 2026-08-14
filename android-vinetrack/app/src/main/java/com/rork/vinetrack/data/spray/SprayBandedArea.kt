@@ -1,5 +1,8 @@
 package com.rork.vinetrack.data.spray
 
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
 /**
  * The sprayed band width per row for a banded/strip application — the Kotlin
  * twin of the Swift `SprayBandWidth`.
@@ -28,18 +31,29 @@ data class SprayBandWidth(
 }
 
 /** How a treated area was arrived at. */
+@Serializable
 enum class SprayTreatedAreaMethod(val raw: String) {
     /** `canonicalRowLengthMetres × totalBandWidth ÷ 10_000` — preferred. */
+    @SerialName("canonical_row_length")
     CANONICAL_ROW_LENGTH("canonical_row_length"),
 
     /** `grossHa × totalBandWidth ÷ rowSpacing` — only when no canonical length. */
+    @SerialName("area_and_spacing_fallback")
     AREA_AND_SPACING_FALLBACK("area_and_spacing_fallback"),
 
     /** Not a banded application: treated area IS the gross area. */
+    @SerialName("whole_block")
     WHOLE_BLOCK("whole_block"),
 
     /** Could not be determined. */
+    @SerialName("unavailable")
     UNAVAILABLE("unavailable"),
+    ;
+
+    companion object {
+        fun from(raw: String?): SprayTreatedAreaMethod? =
+            entries.firstOrNull { it.raw == raw?.trim()?.lowercase() }
+    }
 }
 
 /**

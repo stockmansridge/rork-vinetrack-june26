@@ -30,6 +30,17 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
     var sprayEquipmentId: UUID?
     var isTemplate: Bool
     var operationType: OperationType
+    /// Frozen projection of the canonical `SprayApplicationPlan` this record was
+    /// calculated from (sql/191 + sql/192 columns).
+    ///
+    /// `nil` for every record written before sql/191 and for any record never
+    /// calculated through the Spray Engine. Absence is preserved, never guessed:
+    /// a historical banded spray whose treated area was never measured stays
+    /// `nil` rather than acquiring one derived from today's block geometry.
+    ///
+    /// Read this instead of re-deriving geometry — a completed record is a
+    /// compliance document and must not change when the vineyard does.
+    var applicationGeometry: SprayApplicationSnapshot?
 
     init(
         id: UUID = UUID(),
@@ -54,7 +65,8 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         tractorId: UUID? = nil,
         sprayEquipmentId: UUID? = nil,
         isTemplate: Bool = false,
-        operationType: OperationType = .foliarSpray
+        operationType: OperationType = .foliarSpray,
+        applicationGeometry: SprayApplicationSnapshot? = nil
     ) {
         self.id = id
         self.tripId = tripId
@@ -79,6 +91,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         self.sprayEquipmentId = sprayEquipmentId
         self.isTemplate = isTemplate
         self.operationType = operationType
+        self.applicationGeometry = applicationGeometry
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -87,6 +100,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         case sprayReference, tanks, notes, numberOfFansJets
         case averageSpeed, equipmentType, tractor, tractorGear
         case machineId, tractorId, sprayEquipmentId, isTemplate, operationType
+        case applicationGeometry
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -114,6 +128,13 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         sprayEquipmentId = try container.decodeIfPresent(UUID.self, forKey: .sprayEquipmentId)
         isTemplate = try container.decodeIfPresent(Bool.self, forKey: .isTemplate) ?? false
         operationType = try container.decodeIfPresent(OperationType.self, forKey: .operationType) ?? .foliarSpray
+        let decodedGeometry = try? container.decodeIfPresent(
+            SprayApplicationSnapshot.self,
+            forKey: .applicationGeometry
+        )
+        // An all-null snapshot is indistinguishable from "never recorded", so
+        // normalise it to nil and keep one representation of absence.
+        applicationGeometry = (decodedGeometry?.isEmpty ?? true) ? nil : decodedGeometry
     }
 }
 
@@ -191,6 +212,22 @@ nonisolated struct SprayChemical: Codable, Identifiable, Sendable, Hashable {
     /// silently zero-cost. Use `hasCost` to test for availability.
     var costPerUnit: Double
     var unit: ChemicalUnit
+    /// Which area/volume this line's rate is quoted against, snapshotted so the
+    /// amount stays explainable later (sql/191 per-product rate basis).
+    ///
+    /// Persisted per CHEMICAL LINE inside the `tanks` JSONB — never as a
+    /// job-level setting — so one tank can legitimately mix bases:
+    ///
+    /// ```text
+    /// Kelp      2 L/block ha  × 10 ha    = 20 L
+    /// Herbicide 2 L/treated ha × 2.5 ha  =  5 L
+    /// Adjuvant  100 mL/100 L  × 6,250 L  =  6.25 L
+    /// ```
+    ///
+    /// `nil` on legacy lines. Absence is NOT silently read as
+    /// `wholeBlockArea`: use `resolvedRateBasis` where a concrete basis is
+    /// required, which documents the legacy assumption at the point of use.
+    var rateBasis: SprayProductRateBasis?
     /// Snapshot of the source `SavedChemical.id` when this line was created
     /// from a saved chemical. Enables reliable cost lookup/fallback later if
     /// the snapshot in `costPerUnit` is missing.
@@ -198,6 +235,16 @@ nonisolated struct SprayChemical: Codable, Identifiable, Sendable, Hashable {
 
     /// Whether this chemical line has a usable cost per unit snapshot.
     var hasCost: Bool { costPerUnit > 0 }
+
+    /// The basis to calculate against, defaulting a legacy line to
+    /// `wholeBlockArea`.
+    ///
+    /// This mirrors the sql/191 rule that legacy `per_hectare` means
+    /// whole-block area and NEVER treated area — reading an old line as
+    /// treated-area would silently under-dose it.
+    var resolvedRateBasis: SprayProductRateBasis {
+        rateBasis ?? .wholeBlockArea
+    }
 
     var costPerTank: Double {
         costPerUnit * volumePerTank
@@ -219,7 +266,7 @@ nonisolated struct SprayChemical: Codable, Identifiable, Sendable, Hashable {
         unit.rawValue
     }
 
-    init(id: UUID = UUID(), name: String = "", volumePerTank: Double = 0, ratePerHa: Double = 0, ratePer100L: Double = 0, costPerUnit: Double = 0, unit: ChemicalUnit = .litres, savedChemicalId: UUID? = nil) {
+    init(id: UUID = UUID(), name: String = "", volumePerTank: Double = 0, ratePerHa: Double = 0, ratePer100L: Double = 0, costPerUnit: Double = 0, unit: ChemicalUnit = .litres, rateBasis: SprayProductRateBasis? = nil, savedChemicalId: UUID? = nil) {
         self.id = id
         self.name = name
         self.volumePerTank = volumePerTank
@@ -227,11 +274,12 @@ nonisolated struct SprayChemical: Codable, Identifiable, Sendable, Hashable {
         self.ratePer100L = ratePer100L
         self.costPerUnit = costPerUnit
         self.unit = unit
+        self.rateBasis = rateBasis
         self.savedChemicalId = savedChemicalId
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
-        case id, name, volumePerTank, ratePerHa, ratePer100L, costPerUnit, unit, savedChemicalId
+        case id, name, volumePerTank, ratePerHa, ratePer100L, costPerUnit, unit, rateBasis, savedChemicalId
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -243,6 +291,18 @@ nonisolated struct SprayChemical: Codable, Identifiable, Sendable, Hashable {
         ratePer100L = try container.decodeIfPresent(Double.self, forKey: .ratePer100L) ?? 0
         costPerUnit = try container.decodeIfPresent(Double.self, forKey: .costPerUnit) ?? 0
         unit = try container.decodeIfPresent(ChemicalUnit.self, forKey: .unit) ?? .litres
+        // Tolerant, and legacy-aware: an exact basis decodes directly, an older
+        // spelling (`per_hectare`, `l/ha`, ...) is mapped deterministically by
+        // `legacy(_:)` — which resolves `per_hectare` to whole-block area, never
+        // treated area — and anything unrecognised degrades to nil instead of
+        // failing the whole record. Mirrors Android's `resolvedRateBasis`.
+        if let exact = try? container.decodeIfPresent(SprayProductRateBasis.self, forKey: .rateBasis) {
+            rateBasis = exact
+        } else if let raw = try? container.decodeIfPresent(String.self, forKey: .rateBasis) {
+            rateBasis = SprayProductRateBasis.legacy(raw)
+        } else {
+            rateBasis = nil
+        }
         savedChemicalId = try container.decodeIfPresent(UUID.self, forKey: .savedChemicalId)
     }
 }

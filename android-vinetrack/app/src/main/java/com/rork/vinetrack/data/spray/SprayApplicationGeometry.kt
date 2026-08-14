@@ -1,6 +1,8 @@
 package com.rork.vinetrack.data.spray
 
 import com.rork.vinetrack.data.model.Paddock
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlin.math.abs
 
 /**
@@ -11,26 +13,32 @@ import kotlin.math.abs
  * geometry that produced it. This is the ONLY place spray calculations are
  * allowed to decide what "row length" means.
  */
+@Serializable
 enum class SprayGeometrySource(val raw: String) {
     /**
      * The operator's explicit row-length correction (`rowLengthOverride`).
      * Highest authority: a human deliberately overruled the geometry.
      */
+    @SerialName("operator_override")
     OPERATOR_OVERRIDE("operator_override"),
 
     /** Summed length of the block's actual mapped rows. */
+    @SerialName("mapped_rows")
     MAPPED_ROWS("mapped_rows"),
 
     /**
      * Deprecated SQL 191 spelling of [OPERATOR_OVERRIDE]. Never written by new
      * code; retained so rows already persisted with it still decode.
      */
+    @SerialName("stored_row_length")
     STORED_ROW_LENGTH("stored_row_length"),
 
     /** Derived from block area and row spacing: `areaHa × 10_000 / rowSpacing`. */
+    @SerialName("derived_from_area_and_spacing")
     DERIVED_FROM_AREA_AND_SPACING("derived_from_area_and_spacing"),
 
     /** Nothing reliable enough to calculate a spray quantity from. */
+    @SerialName("unavailable")
     UNAVAILABLE("unavailable"),
     ;
 
@@ -44,15 +52,25 @@ enum class SprayGeometrySource(val raw: String) {
  * How much the geometry can be trusted. Drives whether the UI may present a
  * quantity plainly, must qualify it, or must refuse to calculate.
  */
+@Serializable
 enum class SprayGeometryQuality(val raw: String) {
     /** Measured or explicitly stored by the operator. */
+    @SerialName("authoritative")
     AUTHORITATIVE("authoritative"),
 
     /** Arithmetically derived from other valid stored values. */
+    @SerialName("derived")
     DERIVED("derived"),
 
     /** Cannot be determined — spray quantities must not be calculated. */
+    @SerialName("incomplete")
     INCOMPLETE("incomplete"),
+    ;
+
+    companion object {
+        fun from(raw: String?): SprayGeometryQuality? =
+            entries.firstOrNull { it.raw == raw?.trim()?.lowercase() }
+    }
 }
 
 /**

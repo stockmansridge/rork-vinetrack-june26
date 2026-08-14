@@ -24,6 +24,26 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
     let isTemplate: Bool?
     let operationType: String?
     let tanks: [SprayTank]?
+    // sql/191 + sql/192 application geometry / carrier snapshot. All nullable:
+    // records written before the migration simply have no values and must keep
+    // reading back as "not recorded" rather than acquiring guessed geometry.
+    let grossAreaHa: Double?
+    let treatedAreaHa: Double?
+    let applicationMode: String?
+    let treatedAreaMethod: String?
+    let bandWidthTotalMetres: Double?
+    let bandWidthLeftMetres: Double?
+    let bandWidthRightMetres: Double?
+    let canonicalRowLengthMetres: Double?
+    let rowSpacingMetres: Double?
+    let geometrySource: String?
+    let geometryQuality: String?
+    let carrierVolumeBasis: String?
+    let totalCarrierLitres: Double?
+    let carrierLitresPerHectare: Double?
+    let diluteLitresPer100m: Double?
+    let appliedLitresPer100m: Double?
+    let concentrationFactor: Double?
     let createdBy: UUID?
     let updatedBy: UUID?
     let createdAt: Date?
@@ -56,6 +76,23 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
         case isTemplate = "is_template"
         case operationType = "operation_type"
         case tanks
+        case grossAreaHa = "gross_area_ha"
+        case treatedAreaHa = "treated_area_ha"
+        case applicationMode = "application_mode"
+        case treatedAreaMethod = "treated_area_method"
+        case bandWidthTotalMetres = "band_width_total_metres"
+        case bandWidthLeftMetres = "band_width_left_metres"
+        case bandWidthRightMetres = "band_width_right_metres"
+        case canonicalRowLengthMetres = "canonical_row_length_metres"
+        case rowSpacingMetres = "row_spacing_metres"
+        case geometrySource = "geometry_source"
+        case geometryQuality = "geometry_quality"
+        case carrierVolumeBasis = "carrier_volume_basis"
+        case totalCarrierLitres = "total_carrier_litres"
+        case carrierLitresPerHectare = "carrier_litres_per_hectare"
+        case diluteLitresPer100m = "dilute_litres_per_100m"
+        case appliedLitresPer100m = "applied_litres_per_100m"
+        case concentrationFactor = "concentration_factor"
         case createdBy = "created_by"
         case updatedBy = "updated_by"
         case createdAt = "created_at"
@@ -93,6 +130,27 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
     let isTemplate: Bool
     let operationType: String
     let tanks: [SprayTank]
+    /// sql/191 + sql/192 snapshot columns, projected from the canonical plan.
+    /// Encoded even when nil so an edit that clears geometry (for example a job
+    /// switched from banded back to whole-block) actually clears the stored
+    /// columns instead of leaving a stale treated area behind.
+    let grossAreaHa: Double?
+    let treatedAreaHa: Double?
+    let applicationMode: String?
+    let treatedAreaMethod: String?
+    let bandWidthTotalMetres: Double?
+    let bandWidthLeftMetres: Double?
+    let bandWidthRightMetres: Double?
+    let canonicalRowLengthMetres: Double?
+    let rowSpacingMetres: Double?
+    let geometrySource: String?
+    let geometryQuality: String?
+    let carrierVolumeBasis: String?
+    let totalCarrierLitres: Double?
+    let carrierLitresPerHectare: Double?
+    let diluteLitresPer100m: Double?
+    let appliedLitresPer100m: Double?
+    let concentrationFactor: Double?
     let createdBy: UUID?
     let clientUpdatedAt: Date
 
@@ -120,6 +178,23 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
         case isTemplate = "is_template"
         case operationType = "operation_type"
         case tanks
+        case grossAreaHa = "gross_area_ha"
+        case treatedAreaHa = "treated_area_ha"
+        case applicationMode = "application_mode"
+        case treatedAreaMethod = "treated_area_method"
+        case bandWidthTotalMetres = "band_width_total_metres"
+        case bandWidthLeftMetres = "band_width_left_metres"
+        case bandWidthRightMetres = "band_width_right_metres"
+        case canonicalRowLengthMetres = "canonical_row_length_metres"
+        case rowSpacingMetres = "row_spacing_metres"
+        case geometrySource = "geometry_source"
+        case geometryQuality = "geometry_quality"
+        case carrierVolumeBasis = "carrier_volume_basis"
+        case totalCarrierLitres = "total_carrier_litres"
+        case carrierLitresPerHectare = "carrier_litres_per_hectare"
+        case diluteLitresPer100m = "dilute_litres_per_100m"
+        case appliedLitresPer100m = "applied_litres_per_100m"
+        case concentrationFactor = "concentration_factor"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
     }
@@ -128,7 +203,14 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
 extension BackendSprayRecord {
     /// Map a local SprayRecord into an upsert payload.
     static func upsert(from record: SprayRecord, createdBy: UUID?, clientUpdatedAt: Date) -> BackendSprayRecordUpsert {
-        BackendSprayRecordUpsert(
+        // Templates persist reusable INPUT INTENT, never calculated output: a
+        // template must not freeze one season's row length and silently reuse it
+        // against different blocks next season. Enforced here, at the single
+        // persistence point, so no caller can forget it.
+        let geometry = record.isTemplate
+            ? record.applicationGeometry?.templateConfiguration()
+            : record.applicationGeometry
+        return BackendSprayRecordUpsert(
             id: record.id,
             vineyardId: record.vineyardId,
             tripId: record.tripId,
@@ -152,6 +234,23 @@ extension BackendSprayRecord {
             isTemplate: record.isTemplate,
             operationType: record.operationType.rawValue,
             tanks: record.tanks,
+            grossAreaHa: geometry?.grossAreaHa,
+            treatedAreaHa: geometry?.treatedAreaHa,
+            applicationMode: geometry?.applicationMode?.rawValue,
+            treatedAreaMethod: geometry?.treatedAreaMethod?.rawValue,
+            bandWidthTotalMetres: geometry?.bandWidthTotalMetres,
+            bandWidthLeftMetres: geometry?.bandWidthLeftMetres,
+            bandWidthRightMetres: geometry?.bandWidthRightMetres,
+            canonicalRowLengthMetres: geometry?.canonicalRowLengthMetres,
+            rowSpacingMetres: geometry?.rowSpacingMetres,
+            geometrySource: geometry?.geometrySource?.rawValue,
+            geometryQuality: geometry?.geometryQuality?.rawValue,
+            carrierVolumeBasis: geometry?.carrierVolumeBasis?.rawValue,
+            totalCarrierLitres: geometry?.totalCarrierLitres,
+            carrierLitresPerHectare: geometry?.carrierLitresPerHectare,
+            diluteLitresPer100m: geometry?.diluteLitresPer100m,
+            appliedLitresPer100m: geometry?.appliedLitresPer100m,
+            concentrationFactor: geometry?.concentrationFactor,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
         )
@@ -182,7 +281,37 @@ extension BackendSprayRecord {
             tractorId: tractorId,
             sprayEquipmentId: sprayEquipmentId,
             isTemplate: isTemplate ?? false,
-            operationType: operationType.flatMap { OperationType(rawValue: $0) } ?? .foliarSpray
+            operationType: operationType.flatMap { OperationType(rawValue: $0) } ?? .foliarSpray,
+            applicationGeometry: applicationGeometrySnapshot
         )
+    }
+
+    /// Rebuild the stored snapshot from the flat columns.
+    ///
+    /// Read back VERBATIM — nothing is re-derived from current block geometry,
+    /// which is what keeps a completed record stable after the vineyard is
+    /// edited. Returns nil when every column is null (a pre-sql/191 record), so
+    /// "not recorded" stays distinguishable from "recorded as zero".
+    private var applicationGeometrySnapshot: SprayApplicationSnapshot? {
+        let snapshot = SprayApplicationSnapshot(
+            grossAreaHa: grossAreaHa,
+            treatedAreaHa: treatedAreaHa,
+            applicationMode: applicationMode.flatMap { SprayApplicationMode(rawValue: $0) },
+            treatedAreaMethod: treatedAreaMethod.flatMap { SprayTreatedAreaMethod(rawValue: $0) },
+            bandWidthTotalMetres: bandWidthTotalMetres,
+            bandWidthLeftMetres: bandWidthLeftMetres,
+            bandWidthRightMetres: bandWidthRightMetres,
+            canonicalRowLengthMetres: canonicalRowLengthMetres,
+            rowSpacingMetres: rowSpacingMetres,
+            geometrySource: geometrySource.flatMap { SprayGeometrySource(rawValue: $0) },
+            geometryQuality: geometryQuality.flatMap { SprayGeometryQuality(rawValue: $0) },
+            carrierVolumeBasis: carrierVolumeBasis.flatMap { SprayCarrierBasis(rawValue: $0) },
+            totalCarrierLitres: totalCarrierLitres,
+            carrierLitresPerHectare: carrierLitresPerHectare,
+            diluteLitresPer100m: diluteLitresPer100m,
+            appliedLitresPer100m: appliedLitresPer100m,
+            concentrationFactor: concentrationFactor
+        )
+        return snapshot.isEmpty ? nil : snapshot
     }
 }

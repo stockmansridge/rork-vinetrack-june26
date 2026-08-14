@@ -1,14 +1,25 @@
 package com.rork.vinetrack.data.spray
 
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import kotlin.math.ceil
 
 /** What kind of application this is — decides how treated area is resolved. */
+@Serializable
 enum class SprayApplicationMode(val raw: String) {
     /** Whole-canopy application: treated area equals gross area. */
+    @SerialName("whole_block")
     WHOLE_BLOCK("whole_block"),
 
     /** Banded/strip application: treated area comes from band width × row length. */
+    @SerialName("banded")
     BANDED("banded"),
+    ;
+
+    companion object {
+        fun from(raw: String?): SprayApplicationMode? =
+            entries.firstOrNull { it.raw == raw?.trim()?.lowercase() }
+    }
 }
 
 /**

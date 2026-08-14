@@ -730,9 +730,13 @@ interface SprayRow {
   // before those migrations — such records have no recoverable treated area.
   gross_area_ha: number | null;
   treated_area_ha: number | null;
+  application_mode: string | null;
   treated_area_method: string | null;
   band_width_total_metres: number | null;
+  band_width_left_metres: number | null;
+  band_width_right_metres: number | null;
   canonical_row_length_metres: number | null;
+  row_spacing_metres: number | null;
   geometry_source: string | null;
   geometry_quality: string | null;
   carrier_volume_basis: string | null;
@@ -740,6 +744,7 @@ interface SprayRow {
   carrier_litres_per_hectare: number | null;
   dilute_litres_per_100m: number | null;
   applied_litres_per_100m: number | null;
+  concentration_factor: number | null;
   created_at: string; updated_at: string;
 }
 
@@ -747,9 +752,11 @@ const SPRAY_COLUMNS =
   "id, vineyard_id, trip_id, spray_job_id, date, start_time, end_time, temperature, wind_speed, " +
   "wind_direction, humidity, spray_reference, notes, number_of_fans_jets, average_speed, " +
   "equipment_type, tractor, machine_id, tractor_id, spray_equipment_id, operation_type, tanks, " +
-  "gross_area_ha, treated_area_ha, treated_area_method, band_width_total_metres, " +
-  "canonical_row_length_metres, geometry_source, geometry_quality, carrier_volume_basis, " +
-  "total_carrier_litres, carrier_litres_per_hectare, dilute_litres_per_100m, applied_litres_per_100m, " +
+  "gross_area_ha, treated_area_ha, application_mode, treated_area_method, " +
+  "band_width_total_metres, band_width_left_metres, band_width_right_metres, " +
+  "canonical_row_length_metres, row_spacing_metres, geometry_source, geometry_quality, " +
+  "carrier_volume_basis, total_carrier_litres, carrier_litres_per_hectare, " +
+  "dilute_litres_per_100m, applied_litres_per_100m, concentration_factor, " +
   "created_at, updated_at";
 
 interface TankJson {
@@ -849,6 +856,9 @@ function mapSpraySummary(row: SprayRow, idx: MachineIndex) {
     // because a banded treated area is typically a fraction of the block and
     // silently substituting gross would overstate application rates.
     application_geometry: {
+      // whole_block | banded. Separates "treated equals gross because the whole
+      // canopy was sprayed" from "banded, and this is the strip".
+      application_mode: row.application_mode ?? null,
       // Physically treated (banded) hectares: canopy band actually wetted.
       treated_area_ha: num(row.treated_area_ha),
       // Which formula produced treated_area_ha: canonical_row_length |
@@ -856,7 +866,15 @@ function mapSpraySummary(row: SprayRow, idx: MachineIndex) {
       treated_area_method: row.treated_area_method ?? null,
       // Authoritative band width per row used by the arithmetic.
       band_width_total_m: num(row.band_width_total_metres),
+      // Per-side widths when the operator entered them separately. The total
+      // above is what the arithmetic used either way.
+      band_width_left_m: num(row.band_width_left_metres),
+      band_width_right_m: num(row.band_width_right_metres),
       canonical_row_length_m: num(row.canonical_row_length_metres),
+      // Row spacing AS AT CALCULATION TIME. Deliberately snapshotted: the
+      // block's current spacing may since have been edited, and this record
+      // must keep reporting the value actually used.
+      row_spacing_m: num(row.row_spacing_metres),
       // operator_override | mapped_rows | derived_from_area_and_spacing |
       // unavailable. "stored_row_length" is the deprecated sql/191 spelling of
       // operator_override and may still appear on rows written before sql/192.
@@ -868,6 +886,8 @@ function mapSpraySummary(row: SprayRow, idx: MachineIndex) {
       carrier_litres_per_hectare: num(row.carrier_litres_per_hectare),
       dilute_litres_per_100m: num(row.dilute_litres_per_100m),
       applied_litres_per_100m: num(row.applied_litres_per_100m),
+      // dilute / applied. 1.0 when spraying dilute (no concentration).
+      concentration_factor: num(row.concentration_factor),
     },
     tank_count: tanks.length,
     product_names: totals.productNames,
