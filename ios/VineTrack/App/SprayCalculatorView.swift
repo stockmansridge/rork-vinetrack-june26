@@ -61,6 +61,20 @@ struct SprayCalculatorView: View {
     @State private var capturedWindDirection: String = ""
     @State private var capturedHumidity: Double?
 
+    // Guided flow — Step 3 Target, Step 6 Carrier
+    @State private var sprayTargets: Set<SprayTarget> = []
+    @State private var sprayHeadTarget: SprayHeadTarget?
+    @State private var bandWidthText: String = ""
+    @State private var carrierBasisChoice: SprayCarrierBasis = .litresPerHectare
+    @State private var diluteLitresPer100mText: String = ""
+    @State private var appliedLitresPer100mText: String = ""
+    /// Per-product-line area basis for banded jobs. Keyed by `ChemicalLine.id`
+    /// because the decision belongs to the individual product, never the job.
+    @State private var productAreaBasis: [UUID: SprayProductRateBasis] = [:]
+    /// The section the operator has explicitly opened. `nil` follows the flow's
+    /// own `activeStep`, so the screen advances by itself as decisions are made.
+    @State private var openedStep: SprayGuidedStep?
+
     // UI
     @State private var isPaddocksExpanded: Bool = true
     @State private var isEquipmentExpanded: Bool = true
@@ -237,19 +251,167 @@ struct SprayCalculatorView: View {
         } ?? "Not selected"
     }
 
+    // MARK: - Guided flow
+
+    /// The vineyard's carrier-volume policy. An unset vineyard keeps NULL in the
+    /// database and simply presents a country-appropriate default.
+    /// The vineyard's sql/192 `spray_compliance_profile` /
+    /// `spray_carrier_volume_basis` columns are not yet projected onto the iOS
+    /// vineyard model, so both stored fields stay nil here and the profile
+    /// resolves from the organisation's country. That is exactly the designed
+    /// fallback: resolution never writes anything, so an unset vineyard simply
+    /// presents a country-appropriate default (NZ → SWNZ, everyone else → AU)
+    /// instead of silently acquiring a profile it never chose. Wiring the stored
+    /// columns later changes only this one accessor.
+    private var sprayProfile: SprayVineyardProfile {
+        SprayVineyardProfile(countryCode: store.settings.regionSettings.countryCode)
+    }
+
+    /// The tank capacity of the selected spray unit — the only figure the tank
+    /// split may be derived from.
+    private var selectedTankCapacityLitres: Double {
+        selectedEquipmentId
+            .flatMap { id in store.sprayEquipment.first(where: { $0.id == id }) }?
+            .tankCapacityLitres ?? 0
+    }
+
+    /// Maps the operator's chemical lines onto engine product inputs.
+    ///
+    /// Each line carries its OWN rate basis: a per-100 L label stays per-100 L,
+    /// and an area-rated label resolves to whole-block unless the operator chose
+    /// the treated band for that specific line.
+    private var guidedProductLines: [SprayProductLineInput] {
+        chemicalLines.compactMap { line -> SprayProductLineInput? in
+            guard let chemical = store.savedChemicals.first(where: { $0.id == line.chemicalId })
+            else { return nil }
+            let savedRate = chemical.rates.first(where: { $0.id == line.selectedRateId })
+            let rate = line.overrideRate ?? savedRate?.value ?? chemical.ratePerHa
+            let basis: SprayProductRateBasis = {
+                switch line.basis {
+                case .per100Litres:
+                    return .per100Litres
+                case .perHectare:
+                    // Legacy `per_hectare` means WHOLE BLOCK — never treated area.
+                    return productAreaBasis[line.id] ?? .wholeBlockArea
+                }
+            }()
+            return SprayProductLineInput(
+                productId: chemical.id.uuidString,
+                name: chemical.name,
+                unit: chemical.unit.rawValue,
+                basis: basis,
+                rate: rate,
+                costPerUnit: chemical.purchase?.costPerBaseUnit
+            )
+        }
+    }
+
+    /// Everything the operator has entered, as plain data.
+    private var guidedInputs: SprayGuidedInputs {
+        var inputs = SprayGuidedInputs()
+        inputs.sprayName = sprayName
+        inputs.operationType = operationType
+        inputs.blocks = selectedPaddocks.map { SprayBlockInput.from(paddock: $0) }
+        inputs.targets = sprayTargets
+        inputs.sprayHeadTarget = sprayHeadTarget
+        inputs.bandWidthTotalMetres = Double(bandWidthText)
+        inputs.isGrowthStageAssigned = isGrowthStageAssigned
+        inputs.isEquipmentSelected = selectedEquipmentId != nil
+        inputs.tankCapacityLitres = selectedTankCapacityLitres
+        inputs.carrierBasis = carrierBasisChoice
+        inputs.litresPerHectare = Double(sprayRateText)
+        inputs.diluteLitresPerHectare = waterRateEntry?.litresPerHa
+        inputs.diluteLitresPer100Metres = Double(diluteLitresPer100mText)
+        inputs.appliedLitresPer100Metres = Double(appliedLitresPer100mText)
+        inputs.products = guidedProductLines
+        inputs.notes = notes
+        return inputs
+    }
+
+    /// THE single bridge to `SprayApplicationPlanner.plan`. Every calculated
+    /// figure this screen displays is read back off `flow.plan` — the View does
+    /// no arithmetic of its own.
+    private var flow: SprayGuidedFlow {
+        SprayGuidedFlow(inputs: guidedInputs, profile: sprayProfile)
+    }
+
+    /// Whether a growth stage has genuinely been assigned for the selection.
+    private var isGrowthStageAssigned: Bool {
+        guard !selectedPaddockIds.isEmpty else { return false }
+        switch growthStageMode {
+        case .same:
+            return sharedGrowthStageId != nil
+        case .perPaddock:
+            return selectedPaddockIds.allSatisfy { paddockPhenologyStages[$0] != nil }
+        }
+    }
+
+    /// The section currently expanded: the operator's explicit choice, otherwise
+    /// whatever the flow says still needs attention.
+    private var expandedStep: SprayGuidedStep {
+        openedStep ?? flow.activeStep
+    }
+
+    private func toggle(_ step: SprayGuidedStep) {
+        withAnimation(.spring(duration: 0.3)) {
+            openedStep = expandedStep == step ? nil : step
+        }
+    }
+
+    @ViewBuilder
+    private func guidedCard<Content: View>(
+        _ step: SprayGuidedStep,
+        _ index: Int,
+        summary: String,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        GuidedStepCard(
+            step: step,
+            index: index,
+            isLocked: !flow.isUnlocked(step),
+            isDone: flow.isComplete(step),
+            isExpanded: expandedStep == step,
+            summary: summary,
+            onToggle: { toggle(step) },
+            content: content
+        )
+    }
+
     // MARK: - Body
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
-                    sprayNameSection
-                    operationTypeSection
-                    paddockSelection
-                    growthStageSection
-                    equipmentSelection
-                    waterRateSection
-                    chemicalLinesSection
+                VStack(spacing: 12) {
+                    guidedCard(.application, 1, summary: applicationSummary) {
+                        sprayNameSection
+                        operationTypeSection
+                    }
+                    guidedCard(.blocks, 2, summary: blocksSummary) {
+                        paddockSelection
+                        blockGeometrySummary
+                    }
+                    guidedCard(.target, 3, summary: targetSummary) {
+                        targetSection
+                    }
+                    guidedCard(.growthStage, 4, summary: growthStageSummaryLine) {
+                        growthStageSection
+                    }
+                    guidedCard(.equipment, 5, summary: equipmentSummary) {
+                        equipmentSelection
+                        tractorSelection
+                        mixTripSetupSection
+                    }
+                    guidedCard(.carrier, 6, summary: carrierSummary) {
+                        carrierVolumeSection
+                    }
+                    guidedCard(.products, 7, summary: productsSummary) {
+                        chemicalLinesSection
+                    }
+                    guidedCard(.review, 8, summary: reviewSummary) {
+                        reviewSection
+                    }
+
                     notesSection
                     actionButtons
 
@@ -1917,6 +2079,464 @@ struct SprayCalculatorView: View {
         }
     }
 
+    // MARK: - Guided step summaries
+    //
+    // One-line recaps shown when a completed step collapses, so the operator can
+    // see every decision made so far without scrolling the whole form.
+
+    private var applicationSummary: String {
+        let name = sprayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? operationType.rawValue : "\(operationType.rawValue) — \(name)"
+    }
+
+    private var blocksSummary: String {
+        guard !selectedPaddocks.isEmpty else { return "No blocks selected" }
+        let names = selectedPaddocks.map(\.name).joined(separator: ", ")
+        return "\(names) — \(SprayGuidedFormat.hectares(flow.plan.grossAreaHectares)) gross"
+    }
+
+    private var targetSummary: String {
+        guard !sprayTargets.isEmpty else { return "Not set" }
+        let names = SprayTarget.presentationOrder
+            .filter { sprayTargets.contains($0) }
+            .map(\.label)
+            .joined(separator: ", ")
+        if operationType == .bandedSpray, let treated = flow.plan.treatedAreaHectares {
+            return "\(names) — \(SprayGuidedFormat.hectares(treated)) treated"
+        }
+        if let head = sprayHeadTarget {
+            return "\(names) — \(head.label)"
+        }
+        return names
+    }
+
+    private var growthStageSummaryLine: String { growthStageSummary }
+
+    private var equipmentSummary: String {
+        guard selectedEquipmentId != nil else { return "Not selected" }
+        let jets = numberOfFansJets.trimmingCharacters(in: .whitespacesAndNewlines)
+        return jets.isEmpty
+            ? selectedEquipmentName
+            : "\(selectedEquipmentName) — \(jets) fans/jets"
+    }
+
+    private var carrierSummary: String {
+        guard flow.isCarrierResolved else { return "Not set" }
+        let carrier = flow.plan.carrier
+        switch carrier.basis {
+        case .litresPerHectare:
+            return "\(SprayGuidedFormat.litresPerHectare(carrier.litresPerHectare)) — \(SprayGuidedFormat.litres(carrier.totalLitres)) total"
+        case .litresPer100Metres:
+            return "\(SprayGuidedFormat.litresPer100m(carrier.appliedLitresPer100Metres)) — \(SprayGuidedFormat.litres(carrier.totalLitres)) total"
+        }
+    }
+
+    private var productsSummary: String {
+        let lines = flow.plan.productLines
+        guard !lines.isEmpty else { return "No products added" }
+        let unresolved = lines.filter(\.isUnresolved).count
+        let base = lines.count == 1 ? "1 product" : "\(lines.count) products"
+        return unresolved > 0 ? "\(base) — \(unresolved) unavailable" : base
+    }
+
+    private var reviewSummary: String {
+        flow.isComplete ? "Ready to save or start" : (flow.firstBlocker?.title ?? "Incomplete")
+    }
+
+    // MARK: - Step 2 — calculated block geometry
+
+    /// Compact, READ-ONLY geometry recap straight from the canonical resolver.
+    /// The operator never types these numbers.
+    @ViewBuilder
+    private var blockGeometrySummary: some View {
+        let plan = flow.plan
+        let geometry = plan.geometry
+
+        if !selectedPaddocks.isEmpty {
+            GuidedCalculatedPanel(title: "Calculated from block setup") {
+                VStack(spacing: 8) {
+                    GuidedCalculatedRow(
+                        label: "Gross area",
+                        value: SprayGuidedFormat.hectares(plan.grossAreaHectares),
+                        emphasis: true
+                    )
+                    if let metres = geometry.totalRowLengthMetres {
+                        GuidedCalculatedRow(
+                            label: "Total row / trellis length",
+                            value: SprayGuidedFormat.metres(metres),
+                            caption: SprayGuidedFormat.geometrySourceLabel(geometry.source)
+                        )
+                    }
+                    if let spacing = geometry.uniformRowSpacingMetres {
+                        GuidedCalculatedRow(
+                            label: "Row spacing",
+                            value: SprayGuidedFormat.metres(spacing, decimals: 1)
+                        )
+                    } else if selectedPaddocks.count > 1 {
+                        GuidedCalculatedRow(label: "Row spacing", value: "Mixed across blocks")
+                    }
+                }
+            }
+        }
+
+        if let blocker = flow.blocker(for: .blocks), blocker != .noBlocksSelected {
+            GuidedBlockerBanner(blocker: blocker) { showSprayPaddockPicker = true }
+        }
+    }
+
+    // MARK: - Step 3 — Target
+
+    @ViewBuilder
+    private var targetSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("What are you targeting?")
+                    .font(.subheadline.weight(.semibold))
+                Text("Select every pest, disease or purpose this spray addresses.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                    ForEach(SprayTarget.presentationOrder) { target in
+                        GuidedChip(
+                            label: target.label,
+                            icon: target.iconName,
+                            isSelected: sprayTargets.contains(target)
+                        ) {
+                            withAnimation(.snappy(duration: 0.2)) {
+                                if sprayTargets.contains(target) {
+                                    sprayTargets.remove(target)
+                                } else {
+                                    sprayTargets.insert(target)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // The application-specific question. Foliar asks where the head is
+            // aimed; banded asks for the treated width; spreader asks neither.
+            if flow.requiresSprayHeadTarget {
+                Divider()
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Spray Head Target")
+                        .font(.subheadline.weight(.semibold))
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                        ForEach(SprayHeadTarget.allCases) { head in
+                            GuidedChip(
+                                label: head.label,
+                                icon: nil,
+                                isSelected: sprayHeadTarget == head
+                            ) {
+                                withAnimation(.snappy(duration: 0.2)) { sprayHeadTarget = head }
+                            }
+                        }
+                    }
+                    if let detail = sprayHeadTarget?.detail {
+                        Text(detail)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+
+            if flow.requiresBandWidth {
+                Divider()
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Total Treated Band Width")
+                        .font(.subheadline.weight(.semibold))
+                    HStack(spacing: 8) {
+                        TextField("0.80", text: $bandWidthText)
+                            .keyboardType(.decimalPad)
+                            .font(.body.weight(.medium))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(Color(.tertiarySystemGroupedBackground))
+                            .clipShape(.rect(cornerRadius: 8))
+                        Text("m")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Total sprayed width per row, both sides combined.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+
+                    // Gross and treated BOTH come from the plan the moment a
+                    // band width exists. The View computes neither.
+                    if flow.bandWidth != nil {
+                        GuidedCalculatedPanel(title: "Application geometry") {
+                            VStack(spacing: 8) {
+                                GuidedCalculatedRow(
+                                    label: "Gross area",
+                                    value: SprayGuidedFormat.hectares(flow.plan.grossAreaHectares)
+                                )
+                                GuidedCalculatedRow(
+                                    label: "Treated area",
+                                    value: SprayGuidedFormat.hectares(flow.plan.treatedAreaHectares),
+                                    emphasis: true
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let blocker = flow.blocker(for: .target) {
+                GuidedBlockerBanner(blocker: blocker) { showSprayPaddockPicker = true }
+            }
+        }
+    }
+
+    // MARK: - Step 6 — Carrier Volume
+
+    @ViewBuilder
+    private var carrierVolumeSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // Only offer a choice when the vineyard profile genuinely allows one.
+            // An NZ/SWNZ vineyard is locked to L/100 m and sees no L/ha option.
+            if flow.isCarrierBasisLocked {
+                Label(
+                    "This vineyard records carrier volume in \(SprayGuidedFormat.carrierBasisLabel(flow.effectiveCarrierBasis)).",
+                    systemImage: "lock.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Carrier volume basis")
+                        .font(.subheadline.weight(.semibold))
+                    Picker("Carrier basis", selection: $carrierBasisChoice) {
+                        Text("L/100 m").tag(SprayCarrierBasis.litresPer100Metres)
+                        Text("L/ha").tag(SprayCarrierBasis.litresPerHectare)
+                    }
+                    .pickerStyle(.segmented)
+                }
+            }
+
+            if flow.effectiveCarrierBasis == .litresPer100Metres {
+                litresPer100mFields
+            } else {
+                waterRateSection
+            }
+
+            if let blocker = flow.blocker(for: .carrier) {
+                GuidedBlockerBanner(blocker: blocker) { showSprayPaddockPicker = true }
+            }
+        }
+    }
+
+    /// Row-length carrier entry. The operator enters ONLY the two L/100 m rates;
+    /// concentration factor, total litres and equivalent L/ha are all read back
+    /// from the plan.
+    @ViewBuilder
+    private var litresPer100mFields: some View {
+        let carrier = flow.plan.carrier
+
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Dilute / Runoff Volume")
+                    .font(.subheadline.weight(.medium))
+                HStack(spacing: 8) {
+                    TextField("40", text: $diluteLitresPer100mText)
+                        .keyboardType(.decimalPad)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(Color(.tertiarySystemGroupedBackground))
+                        .clipShape(.rect(cornerRadius: 8))
+                    Text("L/100 m").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Actual Applied Volume")
+                    .font(.subheadline.weight(.medium))
+                HStack(spacing: 8) {
+                    TextField("20", text: $appliedLitresPer100mText)
+                        .keyboardType(.decimalPad)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(Color(.tertiarySystemGroupedBackground))
+                        .clipShape(.rect(cornerRadius: 8))
+                    Text("L/100 m").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            if flow.isCarrierResolved {
+                GuidedCalculatedPanel(title: "Calculated carrier volume") {
+                    VStack(spacing: 8) {
+                        GuidedCalculatedRow(
+                            label: "Concentration factor",
+                            value: SprayGuidedFormat.factor(carrier.concentrationFactor)
+                        )
+                        GuidedCalculatedRow(
+                            label: "Total carrier",
+                            value: SprayGuidedFormat.litres(carrier.totalLitres),
+                            emphasis: true
+                        )
+                        if let perHa = carrier.litresPerHectare {
+                            GuidedCalculatedRow(
+                                label: "Equivalent applied volume",
+                                value: SprayGuidedFormat.litresPerHectare(perHa),
+                                caption: "Derived from row spacing — not entered"
+                            )
+                        } else {
+                            GuidedCalculatedRow(
+                                label: "Equivalent applied volume",
+                                value: "—",
+                                caption: "Needs one matching row spacing across blocks"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Step 10 — Review
+
+    /// A REVIEW, not another editable form. Every figure is assembled from the
+    /// one `SprayApplicationPlan`; each group offers a jump back to its section.
+    @ViewBuilder
+    private var reviewSection: some View {
+        let plan = flow.plan
+        let carrier = plan.carrier
+
+        VStack(alignment: .leading, spacing: 10) {
+            GuidedReviewGroup(title: "Application", onEdit: { toggle(.application) }) {
+                VStack(alignment: .leading, spacing: 6) {
+                    GuidedReviewRow(label: "Method", value: operationType.rawValue)
+                    if !sprayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        GuidedReviewRow(label: "Name", value: sprayName)
+                    }
+                }
+            }
+
+            GuidedReviewGroup(title: "Blocks & geometry", onEdit: { toggle(.blocks) }) {
+                VStack(alignment: .leading, spacing: 6) {
+                    GuidedReviewRow(
+                        label: "Blocks",
+                        value: selectedPaddocks.map(\.name).joined(separator: ", ")
+                    )
+                    GuidedReviewRow(
+                        label: "Gross area",
+                        value: SprayGuidedFormat.hectares(plan.grossAreaHectares)
+                    )
+                    if let metres = plan.geometry.totalRowLengthMetres {
+                        GuidedReviewRow(
+                            label: "Canonical row length",
+                            value: SprayGuidedFormat.metres(metres)
+                        )
+                    }
+                }
+            }
+
+            GuidedReviewGroup(title: "Target", onEdit: { toggle(.target) }) {
+                VStack(alignment: .leading, spacing: 6) {
+                    GuidedReviewRow(
+                        label: "Target(s)",
+                        value: SprayTarget.presentationOrder
+                            .filter { sprayTargets.contains($0) }
+                            .map(\.label)
+                            .joined(separator: ", ")
+                    )
+                    if let head = sprayHeadTarget, flow.requiresSprayHeadTarget {
+                        GuidedReviewRow(label: "Spray head", value: head.label)
+                    }
+                    if flow.requiresBandWidth {
+                        GuidedReviewRow(
+                            label: "Band width",
+                            value: SprayGuidedFormat.metres(
+                                plan.treatedArea.bandWidth?.totalMetres,
+                                decimals: 2
+                            )
+                        )
+                        GuidedReviewRow(
+                            label: "Treated area",
+                            value: SprayGuidedFormat.hectares(plan.treatedAreaHectares)
+                        )
+                    }
+                }
+            }
+
+            GuidedReviewGroup(title: "Equipment", onEdit: { toggle(.equipment) }) {
+                VStack(alignment: .leading, spacing: 6) {
+                    GuidedReviewRow(label: "Spray unit", value: selectedEquipmentName)
+                    GuidedReviewRow(
+                        label: "Fans / jets",
+                        value: numberOfFansJets.isEmpty ? "Not set" : numberOfFansJets,
+                        isMuted: numberOfFansJets.isEmpty
+                    )
+                    GuidedReviewRow(label: "Tractor", value: selectedTractorName)
+                }
+            }
+
+            GuidedReviewGroup(title: "Carrier volume", onEdit: { toggle(.carrier) }) {
+                VStack(alignment: .leading, spacing: 6) {
+                    GuidedReviewRow(
+                        label: "Basis",
+                        value: SprayGuidedFormat.carrierBasisLabel(carrier.basis)
+                    )
+                    if carrier.basis == .litresPer100Metres {
+                        GuidedReviewRow(
+                            label: "Dilute / runoff",
+                            value: SprayGuidedFormat.litresPer100m(carrier.diluteLitresPer100Metres)
+                        )
+                        GuidedReviewRow(
+                            label: "Actual applied",
+                            value: SprayGuidedFormat.litresPer100m(carrier.appliedLitresPer100Metres)
+                        )
+                    }
+                    GuidedReviewRow(
+                        label: "Concentration",
+                        value: SprayGuidedFormat.factor(carrier.concentrationFactor)
+                    )
+                    GuidedReviewRow(
+                        label: "Total carrier",
+                        value: SprayGuidedFormat.litres(carrier.totalLitres)
+                    )
+                    GuidedReviewRow(
+                        label: "Equivalent L/ha",
+                        value: SprayGuidedFormat.litresPerHectare(carrier.litresPerHectare)
+                    )
+                    GuidedReviewRow(
+                        label: "Tanks",
+                        value: "\(plan.tankSplit.totalTanks) × \(SprayGuidedFormat.litres(plan.tankSplit.tankCapacityLitres))"
+                    )
+                }
+            }
+
+            GuidedReviewGroup(title: "Products", onEdit: { toggle(.products) }) {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(plan.productLines, id: \.productId) { line in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(line.name)
+                                    .font(.footnote.weight(.semibold))
+                                Spacer()
+                                Text(SprayGuidedFormat.quantity(line.totalQuantity, unit: line.unit))
+                                    .font(.footnote.weight(.bold))
+                                    .foregroundStyle(line.isUnresolved ? .orange : VineyardTheme.olive)
+                                    .monospacedDigit()
+                            }
+                            Text(SprayGuidedFormat.productBasisLabel(line.basis))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            if let perTank = line.quantityPerFullTank, plan.tankSplit.totalTanks > 1 {
+                                Text("Per full tank: \(SprayGuidedFormat.quantity(perTank, unit: line.unit))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let blocker = flow.firstBlocker {
+                GuidedBlockerBanner(blocker: blocker)
+            }
+        }
+    }
+
     // MARK: - Calculation & Save
 
     private func performCalculation(jobDurationHours: Double = 0) {
@@ -2137,7 +2757,10 @@ struct SprayCalculatorView: View {
             equipmentType: equip.name,
             tractor: tractorName,
             isTemplate: false,
-            operationType: operationType
+            operationType: operationType,
+            // Projection of the SAME plan the Review step displayed. The 17
+            // sql/191 + sql/192 columns are never populated from UI state.
+            applicationGeometry: flow.snapshot
         )
         store.addSprayRecord(record)
 
@@ -2207,7 +2830,9 @@ struct SprayCalculatorView: View {
             equipmentType: equip.name,
             tractor: tractorName,
             isTemplate: false,
-            operationType: operationType
+            operationType: operationType,
+            // Projection of the SAME plan the Review step displayed.
+            applicationGeometry: flow.snapshot
         )
         store.addSprayRecord(record)
 

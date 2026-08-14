@@ -118,7 +118,23 @@ import com.rork.vinetrack.ui.SprayJobRowPlan
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
+import com.rork.vinetrack.data.spray.SprayCarrierBasis
+import com.rork.vinetrack.data.spray.SprayGuidedFlow
+import com.rork.vinetrack.data.spray.SprayGuidedInputs
+import com.rork.vinetrack.data.spray.SprayGuidedStep
+import com.rork.vinetrack.data.spray.SprayHeadTarget
+import com.rork.vinetrack.data.spray.SprayOperationType
+import com.rork.vinetrack.data.spray.SprayProductLineInput
+import com.rork.vinetrack.data.spray.SprayProductRateBasis
+import com.rork.vinetrack.data.spray.SprayTarget
+import com.rork.vinetrack.data.spray.SprayVineyardProfile
 import com.rork.vinetrack.ui.LocalRegionFormatter
+import com.rork.vinetrack.ui.components.GuidedBlockerBanner
+import com.rork.vinetrack.ui.components.GuidedCalculatedPanel
+import com.rork.vinetrack.ui.components.GuidedCalculatedRow
+import com.rork.vinetrack.ui.components.GuidedChip
+import com.rork.vinetrack.ui.components.GuidedReviewRow
+import com.rork.vinetrack.ui.components.SprayGuidedFormat
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.time.Instant
@@ -234,6 +250,19 @@ fun SprayCalculatorScreen(
     var showAddChemicalToList by remember { mutableStateOf(false) }
     var notes by remember { mutableStateOf("") }
 
+    // Guided flow — Step 3 Target, Step 6 Carrier. Mirrors iOS `SprayCalculatorView`.
+    val sprayTargets = remember { mutableStateListOf<SprayTarget>() }
+    var sprayHeadTarget by remember { mutableStateOf<SprayHeadTarget?>(null) }
+    var bandWidthText by remember { mutableStateOf("") }
+    var carrierBasisChoice by remember { mutableStateOf(SprayCarrierBasis.LITRES_PER_HECTARE) }
+    var diluteLitresPer100mText by remember { mutableStateOf("") }
+    var appliedLitresPer100mText by remember { mutableStateOf("") }
+    /**
+     * Per-product-line area basis for banded jobs, keyed by `CalcChemLine.uid`
+     * because the decision belongs to the individual product, never the job.
+     */
+    val productAreaBasis = remember { mutableStateMapOf<String, SprayProductRateBasis>() }
+
     // Review step (Spray Tank Mixing)
     var showReview by remember { mutableStateOf(false) }
     var machineId by remember { mutableStateOf<String?>(null) }
@@ -280,6 +309,77 @@ fun SprayCalculatorScreen(
     val tankCapacity = selectedEquipment?.tankCapacityLitres?.takeIf { it > 0 } ?: 0.0
 
     val selectedMachine = state.machines.firstOrNull { it.id == machineId }
+
+    /**
+     * The vineyard's sql/192 spray-profile columns are not yet projected onto the
+     * Android vineyard model, so both stored fields stay null and the profile
+     * resolves from the organisation's country — the designed fallback, matching
+     * iOS. Resolution never writes anything, so an unset vineyard simply presents
+     * a country-appropriate default (NZ → SWNZ locked to L/100 m, otherwise AU).
+     */
+    val regionCountryCode = LocalRegionFormatter.current.settings.countryCode
+    val sprayProfile = remember(regionCountryCode) {
+        SprayVineyardProfile(countryCode = regionCountryCode)
+    }
+
+    /**
+     * Maps the operator's chemical lines onto engine product inputs. Each line
+     * carries its OWN rate basis: a per-100 L label stays per-100 L, and an
+     * area-rated label resolves to whole-block unless the operator chose the
+     * treated band for that specific line.
+     */
+    val guidedProducts: List<SprayProductLineInput> = chemLines.mapNotNull { line ->
+        val chem = state.savedChemicals.firstOrNull { it.id == line.chemicalId }
+            ?: return@mapNotNull null
+        val basis = if (line.basis == SprayCalculator.RateBasis.PER_100L) {
+            SprayProductRateBasis.PER_100_LITRES
+        } else {
+            // Legacy `per_hectare` means WHOLE BLOCK — never treated area.
+            productAreaBasis[line.uid] ?: SprayProductRateBasis.WHOLE_BLOCK_AREA
+        }
+        SprayProductLineInput(
+            productId = chem.id,
+            name = chem.displayName,
+            unit = chem.unit.toString(),
+            basis = basis,
+            rate = effectiveRateDisplay(chem, line),
+            costPerUnit = if (canEditCost) chem.costPerUnit else null,
+        )
+    }
+
+    /**
+     * THE single bridge to `SprayApplicationPlanner.plan`. Every calculated figure
+     * this screen displays is read back off `guidedPlan` — the screen does no
+     * arithmetic of its own.
+     */
+    val guidedFlow = SprayGuidedFlow(
+        inputs = SprayGuidedInputs(
+            sprayName = sprayName,
+            operationType = SprayOperationType.from(operationType)
+                ?: SprayOperationType.FOLIAR_SPRAY,
+            blocks = selectedPaddocks.map { SprayBlockInput.from(it) },
+            targets = sprayTargets.toSet(),
+            sprayHeadTarget = sprayHeadTarget,
+            bandWidthTotalMetres = bandWidthText.toDoubleOrNull(),
+            isGrowthStageAssigned = if (growthModeSame) {
+                sharedStageCode != null && selectedPaddockIds.isNotEmpty()
+            } else {
+                selectedPaddockIds.isNotEmpty() &&
+                    selectedPaddockIds.all { perBlockStages[it] != null }
+            },
+            isEquipmentSelected = sprayEquipmentId != null,
+            tankCapacityLitres = tankCapacity,
+            carrierBasis = carrierBasisChoice,
+            litresPerHectare = chosenRate.takeIf { it > 0 },
+            diluteLitresPerHectare = recommendedRate,
+            diluteLitresPer100Metres = diluteLitresPer100mText.toDoubleOrNull(),
+            appliedLitresPer100Metres = appliedLitresPer100mText.toDoubleOrNull(),
+            products = guidedProducts,
+            notes = notes,
+        ),
+        profile = sprayProfile,
+    )
+    val guidedPlan = guidedFlow.plan
 
     // Row plan geometry — blocks ordered lowest row first, matching iOS.
     val orderedSelectedPaddocks = remember(selectedPaddocks) {
@@ -433,6 +533,9 @@ fun SprayCalculatorScreen(
             tripId = null,
             isTemplate = false,
             tanks = SprayCalculator.buildTanks(r, chosenRate),
+            // Projection of the SAME plan the Review step displayed. The 17
+            // sql/191 + sql/192 columns are never populated from UI state.
+            applicationGeometry = guidedFlow.snapshot,
         )
     }
 
