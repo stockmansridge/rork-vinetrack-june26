@@ -60,37 +60,65 @@ declare
   v_failed boolean;
 begin
   -- ---------------- T1 objects ----------------
-  select count(*) into v_cnt
-    from information_schema.columns
-   where table_schema = 'public'
-     and table_name   = 'spray_records'
-     and column_name in (
-       'gross_area_ha', 'treated_area_ha', 'application_mode', 'treated_area_method',
-       'band_width_total_metres', 'band_width_left_metres', 'band_width_right_metres',
-       'canonical_row_length_metres', 'row_spacing_metres', 'geometry_source',
-       'geometry_quality', 'carrier_volume_basis', 'total_carrier_litres',
-       'carrier_litres_per_hectare', 'dilute_litres_per_100m',
-       'applied_litres_per_100m', 'concentration_factor');
-  if v_cnt <> 18 then
-    raise exception 'T1 failed: expected 18 new spray_records columns, found %', v_cnt;
+  -- Asserted BY NAME, never by count. A count can only say "one is missing";
+  -- it can never say WHICH one, which makes it useless as a diagnostic. These
+  -- lists are the authoritative statement of the stored contract.
+  --
+  -- spray_records takes 17 columns, spray_jobs 13. That asymmetry is deliberate,
+  -- not an omission: `row_spacing_metres` and `concentration_factor` already
+  -- exist on spray_jobs (sql/034) and must not be redeclared there.
+  select string_agg(t.col, ', ' order by t.col) into v_txt
+    from unnest(array[
+      'gross_area_ha', 'treated_area_ha', 'application_mode', 'treated_area_method',
+      'band_width_total_metres', 'band_width_left_metres', 'band_width_right_metres',
+      'canonical_row_length_metres', 'row_spacing_metres', 'geometry_source',
+      'geometry_quality', 'carrier_volume_basis', 'total_carrier_litres',
+      'carrier_litres_per_hectare', 'dilute_litres_per_100m',
+      'applied_litres_per_100m', 'concentration_factor']) as t(col)
+   where not exists (
+     select 1
+       from information_schema.columns ic
+      where ic.table_schema = 'public'
+        and ic.table_name   = 'spray_records'
+        and ic.column_name  = t.col);
+  if v_txt is not null then
+    raise exception 'T1 failed: spray_records is missing column(s): %', v_txt;
   end if;
 
-  select count(*) into v_cnt
-    from information_schema.columns
-   where table_schema = 'public'
-     and table_name   = 'spray_jobs'
-     and column_name in (
-       'gross_area_ha', 'treated_area_ha', 'application_mode', 'treated_area_method',
-       'band_width_total_metres', 'band_width_left_metres', 'band_width_right_metres',
-       'canonical_row_length_metres', 'geometry_source', 'geometry_quality',
-       'carrier_volume_basis', 'dilute_litres_per_100m', 'applied_litres_per_100m');
-  if v_cnt <> 13 then
-    raise exception 'T1 failed: expected 13 new spray_jobs columns, found %', v_cnt;
+  select string_agg(t.col, ', ' order by t.col) into v_txt
+    from unnest(array[
+      'gross_area_ha', 'treated_area_ha', 'application_mode', 'treated_area_method',
+      'band_width_total_metres', 'band_width_left_metres', 'band_width_right_metres',
+      'canonical_row_length_metres', 'geometry_source', 'geometry_quality',
+      'carrier_volume_basis', 'dilute_litres_per_100m',
+      'applied_litres_per_100m']) as t(col)
+   where not exists (
+     select 1
+       from information_schema.columns ic
+      where ic.table_schema = 'public'
+        and ic.table_name   = 'spray_jobs'
+        and ic.column_name  = t.col);
+  if v_txt is not null then
+    raise exception 'T1 failed: spray_jobs is missing column(s): %', v_txt;
+  end if;
+
+  select string_agg(t.col, ', ' order by t.col) into v_txt
+    from unnest(array[
+      'spray_compliance_profile', 'spray_carrier_volume_basis']) as t(col)
+   where not exists (
+     select 1
+       from information_schema.columns ic
+      where ic.table_schema = 'public'
+        and ic.table_name   = 'vineyards'
+        and ic.column_name  = t.col);
+  if v_txt is not null then
+    raise exception 'T1 failed: vineyards is missing column(s): %', v_txt;
   end if;
 
   -- Every new column must be nullable: a nullable column can never invalidate
   -- an existing row.
-  select count(*) into v_cnt
+  select string_agg(table_name || '.' || column_name, ', '
+                    order by table_name || '.' || column_name) into v_txt
     from information_schema.columns
    where table_schema = 'public'
      and table_name   in ('spray_records', 'spray_jobs')
@@ -99,8 +127,8 @@ begin
        'band_width_total_metres', 'canonical_row_length_metres', 'geometry_source',
        'geometry_quality', 'carrier_volume_basis')
      and is_nullable = 'NO';
-  if v_cnt <> 0 then
-    raise exception 'T1 failed: % new column(s) are NOT NULL', v_cnt;
+  if v_txt is not null then
+    raise exception 'T1 failed: new column(s) are NOT NULL: %', v_txt;
   end if;
 
   -- Fixtures.
