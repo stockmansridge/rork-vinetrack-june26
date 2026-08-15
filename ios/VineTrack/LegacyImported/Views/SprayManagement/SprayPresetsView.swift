@@ -313,6 +313,25 @@ struct EditSavedChemicalSheet: View {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Re-resolved verification for the chemistry currently typed into this form.
+    ///
+    /// `nil` when nothing resistance-critical has moved — which is the common
+    /// case, and the reason editing a price, a note or the stock on hand never
+    /// disturbs a verified product. Only records that actually HOLD structured
+    /// intelligence are reconciled: a pure legacy chemical already resolves to
+    /// Needs Match on read, so there is no false trust there to protect.
+    private var editOutcome: ChemicalEditOutcome? {
+        guard let stored = chemical?.chemicalIntelligence, !stored.isEmpty else { return nil }
+        return ChemicalEditReconciler.reconcileLegacyEdit(
+            existing: stored,
+            activeIngredientText: activeIngredient.trimmingCharacters(in: .whitespacesAndNewlines),
+            chemicalGroupText: chemicalGroup.trimmingCharacters(in: .whitespacesAndNewlines),
+            modeOfActionText: modeOfAction.trimmingCharacters(in: .whitespacesAndNewlines),
+            productCategory: productCategory?.rawValue ?? "",
+            registrantText: manufacturer.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -506,6 +525,9 @@ struct EditSavedChemicalSheet: View {
             LabeledField(label: "Mode of Action (MOA)") {
                 TextField("e.g. 11", text: $modeOfAction)
             }
+            if let warning = editOutcome?.warning {
+                verificationWarning(warning)
+            }
             LabeledURLField(
                 label: "Official Label URL",
                 placeholder: "https://...",
@@ -529,6 +551,22 @@ struct EditSavedChemicalSheet: View {
         } footer: {
             Text("Use Label URL only for the official product label, preferably a PDF. Product pages may be used for manufacturer or marketing information, but are never shown as the official label.")
         }
+    }
+
+    /// States the trust consequence of a resistance-critical correction without
+    /// blocking it. Absent unless verification actually falls, so an operator
+    /// fixing a typo in a note is never lectured about resistance.
+    private func verificationWarning(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label("Verification will be updated", systemImage: "exclamationmark.triangle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .combine)
     }
 
     private var ratesSection: some View {
@@ -782,6 +820,13 @@ struct EditSavedChemicalSheet: View {
             existing.inventoryQuantity = parseOptional(inventoryText)
             existing.inventoryUnit = parseOptional(inventoryText) != nil ? "packs" : existing.inventoryUnit
             existing.applicationNotes = applicationNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Re-resolved intelligence when resistance-critical chemistry
+            // changed, so a hand-edited group cannot leave a stale `verified`
+            // status or an authoritative citation for the OLD value behind.
+            // Left untouched on an unrelated edit.
+            if let outcome = editOutcome {
+                existing.chemicalIntelligence = outcome.intelligence
+            }
             store.updateSavedChemical(existing)
         } else {
             let new = SavedChemical(
