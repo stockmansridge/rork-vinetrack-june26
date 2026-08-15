@@ -2103,6 +2103,8 @@ private fun ChemicalDraft.toModel(
                 com.rork.vinetrack.data.chemical.ChemicalLineSnapshot.capture(
                     intelligence = chem.resolvedIntelligence,
                     legacyChemicalGroup = chem.chemicalGroup,
+                    savedChemicalId = chem.id,
+                    productName = chem.name,
                     capturedAt = Instant.now().toString(),
                 )
             }

@@ -20,6 +20,17 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class ChemicalLineSnapshot(
+    /**
+     * Which Chemical Store record was frozen. Kept so history is
+     * self-describing: a reader of the snapshot alone can say what it came
+     * from. Never used to re-read today's record for chemistry.
+     */
+    @SerialName("saved_chemical_id") val savedChemicalId: String? = null,
+    /**
+     * The product name AS DISPLAYED at application time. Frozen separately from
+     * the store record because a product can be renamed later.
+     */
+    @SerialName("product_name") val productName: String? = null,
     @SerialName("active_ingredients")
     val activeIngredients: List<ChemicalActiveIngredient> = emptyList(),
     /**
@@ -63,6 +74,8 @@ data class ChemicalLineSnapshot(
         fun capture(
             intelligence: ChemicalIntelligence?,
             legacyChemicalGroup: String,
+            savedChemicalId: String? = null,
+            productName: String? = null,
             capturedAt: String? = null,
         ): ChemicalLineSnapshot? {
             if (intelligence == null || intelligence.isEmpty) {
@@ -71,6 +84,8 @@ data class ChemicalLineSnapshot(
                 val trimmed = legacyChemicalGroup.trim()
                 if (trimmed.isEmpty()) return null
                 return ChemicalLineSnapshot(
+                    savedChemicalId = savedChemicalId,
+                    productName = productName,
                     verificationStatus = ChemicalVerificationStatus.UNVERIFIED,
                     schemaVersion = 0,
                     activityGroupTableVersion = 0,
@@ -79,6 +94,8 @@ data class ChemicalLineSnapshot(
                 )
             }
             return ChemicalLineSnapshot(
+                savedChemicalId = savedChemicalId,
+                productName = productName,
                 activeIngredients = intelligence.activeIngredients,
                 activityGroupCodes = intelligence.activityGroupCodes,
                 // The RESOLVED status, not the stored one: a spray must never

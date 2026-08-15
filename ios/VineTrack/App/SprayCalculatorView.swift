@@ -2677,7 +2677,11 @@ struct SprayCalculatorView: View {
         else { return nil }
         return ChemicalLineSnapshot.capture(
             from: chemical.chemicalIntelligence,
-            legacyChemicalGroup: chemical.chemicalGroup
+            legacyChemicalGroup: chemical.chemicalGroup,
+            // uuidString, not the UUID: the snapshot's key must serialise
+            // identically to Android's so one JSON shape covers both platforms.
+            savedChemicalId: savedId.uuidString,
+            productName: chemical.name
         )
     }
 

@@ -13,6 +13,13 @@ import Foundation
 /// Persisted additively inside the existing `tanks` JSONB on each chemical
 /// line, so no relational churn and no migration are required for it.
 nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
+    /// Which Chemical Store record was frozen. Kept so history is
+    /// self-describing: a reader of the snapshot alone can say what it came
+    /// from. Never used to re-read today's record for chemistry.
+    var savedChemicalId: String?
+    /// The product name AS DISPLAYED at application time. Frozen separately
+    /// from the store record because a product can be renamed later.
+    var productName: String?
     /// Actives and their groups as classified at application time.
     var activeIngredients: [ChemicalActiveIngredient]
     /// Bare group codes, e.g. `["3", "11"]`, duplicated out of
@@ -38,6 +45,8 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
     var capturedAt: Date?
 
     init(
+        savedChemicalId: String? = nil,
+        productName: String? = nil,
         activeIngredients: [ChemicalActiveIngredient] = [],
         activityGroupCodes: [String] = [],
         verificationStatus: ChemicalVerificationStatus = .unverified,
@@ -48,6 +57,8 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         legacyChemicalGroup: String? = nil,
         capturedAt: Date? = nil
     ) {
+        self.savedChemicalId = savedChemicalId
+        self.productName = productName
         self.activeIngredients = activeIngredients
         self.activityGroupCodes = activityGroupCodes
         self.verificationStatus = verificationStatus
@@ -60,6 +71,8 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
+        case savedChemicalId = "saved_chemical_id"
+        case productName = "product_name"
         case activeIngredients = "active_ingredients"
         case activityGroupCodes = "activity_groups"
         case verificationStatus = "verification_status"
@@ -73,6 +86,8 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
 
     nonisolated init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        savedChemicalId = try c.decodeIfPresent(String.self, forKey: .savedChemicalId)
+        productName = try c.decodeIfPresent(String.self, forKey: .productName)
         activeIngredients = try c.decodeIfPresent([ChemicalActiveIngredient].self, forKey: .activeIngredients) ?? []
         activityGroupCodes = try c.decodeIfPresent([String].self, forKey: .activityGroupCodes) ?? []
         let raw = try c.decodeIfPresent(String.self, forKey: .verificationStatus) ?? ""
@@ -98,6 +113,8 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
     static func capture(
         from intelligence: ChemicalIntelligence?,
         legacyChemicalGroup: String,
+        savedChemicalId: String? = nil,
+        productName: String? = nil,
         at date: Date = Date()
     ) -> ChemicalLineSnapshot? {
         guard let intelligence, !intelligence.isEmpty else {
@@ -106,6 +123,8 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
             let trimmed = legacyChemicalGroup.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return nil }
             return ChemicalLineSnapshot(
+                savedChemicalId: savedChemicalId,
+                productName: productName,
                 verificationStatus: .unverified,
                 schemaVersion: 0,
                 activityGroupTableVersion: 0,
@@ -114,6 +133,8 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
             )
         }
         return ChemicalLineSnapshot(
+            savedChemicalId: savedChemicalId,
+            productName: productName,
             activeIngredients: intelligence.activeIngredients,
             activityGroupCodes: intelligence.activityGroupCodes,
             // The RESOLVED status, not the stored one: a spray must never claim

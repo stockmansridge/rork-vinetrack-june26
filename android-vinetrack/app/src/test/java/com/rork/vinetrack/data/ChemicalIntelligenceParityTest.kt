@@ -219,6 +219,8 @@ class ChemicalIntelligenceParityTest {
                 ChemicalLineSnapshot.capture(
                     intelligence = chem.resolvedIntelligence,
                     legacyChemicalGroup = chem.chemicalGroup,
+                    savedChemicalId = chem.id,
+                    productName = chem.name,
                     capturedAt = "2026-08-15T02:00:00Z",
                 )?.let { chem.id to it }
             }.toMap(),
@@ -444,7 +446,49 @@ class ChemicalIntelligenceParityTest {
             assertEquals("AU", line.chemicalSnapshot?.countryCode)
             assertEquals("Azoxystrobin", line.chemicalSnapshot?.activeIngredients?.single()?.name)
             assertEquals(250.0, line.chemicalSnapshot?.activeIngredients?.single()?.concentration)
+            // The snapshot names its own origin, so history is readable without
+            // going back to the Chemical Store for context.
+            assertEquals(chem.id, line.chemicalSnapshot?.savedChemicalId)
+            assertEquals("Example Fungicide", line.chemicalSnapshot?.productName)
+            assertEquals(1, line.chemicalSnapshot?.schemaVersion)
+            // Copied verbatim from the record, never re-stamped with today's
+            // table version — otherwise an old spray would claim it was
+            // classified by a reference table that did not exist yet.
+            assertEquals(
+                chem.resolvedIntelligence?.activityGroupTableVersion,
+                line.chemicalSnapshot?.activityGroupTableVersion,
+            )
         }
+    }
+
+    @Test
+    fun `the frozen line carries its own rate basis and calculated quantity`() {
+        val chem = savedChemical(intelligence = group11Intel())
+
+        val line = buildTanksFor(listOf(chem)).first().chemicals.single()
+
+        // Rate, basis and computed quantity are frozen on the LINE beside the
+        // snapshot rather than duplicated inside it, so a single number can
+        // never disagree with itself in one record.
+        assertEquals(1.5, line.ratePerHa, 0.0001)
+        assertEquals(SprayProductRateBasis.WHOLE_BLOCK_AREA.raw, line.rateBasis)
+        assertEquals(7.5, line.volumePerTank, 0.0001)
+        assertEquals(chem.id, line.savedChemicalId)
+    }
+
+    @Test
+    fun `renaming a product later does not rewrite the name on a recorded spray`() {
+        val before = savedChemical(name = "Amistar 250", intelligence = group11Intel())
+        val historical = json.encodeToString(buildTanksFor(listOf(before)))
+
+        // The grower renames the store record next season.
+        savedChemical(name = "Amistar 250 SC (old stock)", intelligence = group11Intel())
+
+        val reloaded = json
+            .decodeFromString<List<com.rork.vinetrack.data.model.SprayTank>>(historical)
+            .first().chemicals.single()
+
+        assertEquals("Amistar 250", reloaded.chemicalSnapshot?.productName)
     }
 
     @Test

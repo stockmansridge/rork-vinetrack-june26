@@ -662,6 +662,8 @@ fun SprayCalculatorScreen(
                     ChemicalLineSnapshot.capture(
                         intelligence = chem.resolvedIntelligence,
                         legacyChemicalGroup = chem.chemicalGroup,
+                        savedChemicalId = chem.id,
+                        productName = chem.name,
                         capturedAt = java.time.Instant.now().toString(),
                     )?.let { chem.id to it }
                 }.toMap(),
