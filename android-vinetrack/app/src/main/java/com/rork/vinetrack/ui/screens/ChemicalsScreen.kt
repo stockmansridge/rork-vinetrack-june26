@@ -54,6 +54,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import com.rork.vinetrack.data.chemical.ChemicalEditOutcome
+import com.rork.vinetrack.data.chemical.ChemicalEditReconciler
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
 import com.rork.vinetrack.data.chemical.legacyGroupProjection
 import com.rork.vinetrack.ui.components.ChemicalVerificationBadge
@@ -679,6 +681,36 @@ internal fun ChemicalFormSheet(
         }
     }
 
+    /**
+     * What this edit does to the record's trust, re-derived from the evidence
+     * model as the operator types.
+     *
+     * Null when nothing resistance-critical has moved — which is the common case
+     * and the reason editing a price or a note never disturbs a verified product.
+     * Only records that actually HOLD structured intelligence are reconciled: a
+     * pure legacy record already resolves to Needs Match on read, so there is no
+     * false trust there to protect.
+     */
+    val editOutcome: ChemicalEditOutcome? = remember(
+        existing?.id,
+        activeIngredient,
+        chemicalGroup,
+        modeOfAction,
+        manufacturer,
+        category,
+    ) {
+        existing?.storedIntelligence?.takeIf { !it.isEmpty }?.let { stored ->
+            ChemicalEditReconciler.reconcileLegacyEdit(
+                existing = stored,
+                activeIngredientText = activeIngredient.trim(),
+                chemicalGroupText = chemicalGroup.trim(),
+                modeOfActionText = modeOfAction.trim(),
+                productCategory = category,
+                registrantText = manufacturer.trim(),
+            )
+        }
+    }
+
     fun save() {
         if (saving) return
         val trimmedName = name.trim()
@@ -753,6 +785,11 @@ internal fun ChemicalFormSheet(
             inventoryQuantity = inventoryText.toDoubleSafe(),
             inventoryUnit = if (inventoryText.toDoubleSafe() != null) "packs" else (existing?.inventoryUnit ?: ""),
             applicationNotes = applicationNotes.trim(),
+            // Re-resolved intelligence when resistance-critical text changed, so a
+            // hand-edited group cannot leave a stale `verified` status behind.
+            // Null on an unrelated edit, and `explicitNulls = false` then OMITS
+            // the structured columns rather than blanking them.
+            intelligence = editOutcome?.intelligence,
         )
         val cb: (Boolean) -> Unit = { ok -> saving = false; if (ok) onDismiss() }
         if (isEdit) vm.updateSavedChemical(existing!!.id, input, cb) else vm.createSavedChemical(input, cb)
@@ -953,6 +990,26 @@ internal fun ChemicalFormSheet(
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                 )
+            }
+            // States the trust consequence of a resistance-critical correction
+            // without blocking it. Absent unless verification actually falls.
+            editOutcome?.warning?.let { warning ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(VineColors.Warning.copy(alpha = 0.12f))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        "Verification will be updated",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary,
+                    )
+                    Text(warning, fontSize = 12.sp, color = vine.textSecondary)
+                }
             }
             OutlinedTextField(
                 value = use,
