@@ -8,32 +8,38 @@ import SwiftUI
 /// record that has lost its evidence shows up in the right bucket immediately.
 private enum ChemicalVerificationFilter: String, CaseIterable, Identifiable {
     case all
+    case verified
+    case partiallyVerified
     case needsMatch
     case conflict
     case unverified
-    case verified
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .all: return "All"
+        case .verified: return "Verified"
+        case .partiallyVerified: return "Partially verified"
         case .needsMatch: return "Needs match"
         case .conflict: return "Conflict"
         case .unverified: return "Unverified"
-        case .verified: return "Verified"
         }
     }
 
+    /// Each verification state gets its own bucket.
+    ///
+    /// Partially verified is deliberately NOT folded in with verified: they are
+    /// different promises about the same product, and a grower auditing their
+    /// store needs to see which records still have unconfirmed resistance data.
     func matches(_ status: ChemicalVerificationStatus) -> Bool {
         switch self {
         case .all: return true
+        case .verified: return status == .verified
+        case .partiallyVerified: return status == .partiallyVerified
         case .needsMatch: return status == .needsMatch
         case .conflict: return status == .conflict
         case .unverified: return status == .unverified
-        // Partially verified belongs with verified here: both mean the product
-        // HAS been matched, which is the distinction a cleanup pass cares about.
-        case .verified: return status == .verified || status == .partiallyVerified
         }
     }
 }
@@ -67,7 +73,7 @@ struct ChemicalsManagementView: View {
     }
 
     private var needsAttentionCount: Int {
-        count(for: .needsMatch) + count(for: .conflict)
+        count(for: .needsMatch) + count(for: .conflict) + count(for: .unverified)
     }
 
     var body: some View {

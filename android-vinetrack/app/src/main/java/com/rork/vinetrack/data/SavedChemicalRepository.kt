@@ -1,6 +1,11 @@
 package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.data.chemical.ChemicalActiveIngredient
+import com.rork.vinetrack.data.chemical.ChemicalDataSource
+import com.rork.vinetrack.data.chemical.ChemicalIntelligence
+import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
+import com.rork.vinetrack.data.chemical.ChemicalVerificationConflict
 import com.rork.vinetrack.data.model.ChemicalPurchase
 import com.rork.vinetrack.data.model.ChemicalRate
 import com.rork.vinetrack.data.model.SavedChemical
@@ -75,7 +80,49 @@ class SavedChemicalRepository(private val session: SessionStore) {
         val inventoryQuantity: Double? = null,
         val inventoryUnit: String = "",
         val applicationNotes: String = "",
+        /**
+         * Structured Chemical Intelligence (sql/194). Null when the write came
+         * from a path that carries no structured data — the columns are then
+         * omitted entirely rather than blanked, so a legacy edit can never
+         * destroy a previously verified record.
+         */
+        val intelligence: ChemicalIntelligence? = null,
     )
+
+    /**
+     * The sql/194 Chemical Intelligence columns, flattened for the REST body.
+     *
+     * Built once and read by both the insert and the patch shapes so the two
+     * write paths cannot drift apart. Every field is nullable and the client's
+     * `explicitNulls = false` means a null is OMITTED from the JSON — which is
+     * what lets an intelligence-free edit leave the structured columns alone.
+     *
+     * `verificationStatus` deliberately persists [ChemicalIntelligence.resolvedVerificationStatus]
+     * rather than the stored claim, so what lands in the database is the status
+     * the evidence actually supports. Confidence can be lowered on write, never
+     * raised.
+     */
+    private class IntelFields(intel: ChemicalIntelligence?) {
+        val activeIngredients = intel?.activeIngredients
+        val activityGroups = intel?.activityGroupCodes
+        val activityGroupScheme = intel?.activityGroups?.firstOrNull()?.scheme?.raw
+        val registrationCountry = intel?.registration?.countryCode?.takeIf { it.isNotBlank() }
+        val registrationScheme = intel?.registration?.scheme?.raw
+        val registrationNumber = intel?.registration?.registrationNumber
+        val registrant = intel?.registration?.registrant
+        val registeredProductName = intel?.registration?.registeredProductName
+        val labelReference = intel?.registration?.labelReference
+        val labelVersion = intel?.registration?.labelVersion
+        val verificationStatus = intel?.resolvedVerificationStatus?.raw
+        val verificationSources = intel?.verification?.sources
+        val verificationConflicts = intel?.verification?.conflicts
+        val verificationUnresolvedFields = intel?.verification?.unresolvedFields
+        val verifiedAt = intel?.verification?.verifiedAt
+        val registeredUses = intel?.registeredUses
+        val labelRateBases = intel?.labelRateBases?.map { it.raw }
+        val activityGroupTableVersion = intel?.activityGroupTableVersion
+        val intelligenceSchemaVersion = intel?.schemaVersion
+    }
 
     @Serializable
     private data class ChemicalInsert(
@@ -111,6 +158,28 @@ class SavedChemicalRepository(private val session: SessionStore) {
         @SerialName("application_notes") val applicationNotes: String = "",
         @SerialName("created_by") val createdBy: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
+        // --- Chemical Intelligence (sql/194) ---
+        @SerialName("active_ingredients") val activeIngredients: List<ChemicalActiveIngredient>? = null,
+        @SerialName("activity_groups") val activityGroups: List<String>? = null,
+        @SerialName("activity_group_scheme") val activityGroupScheme: String? = null,
+        @SerialName("registration_country") val registrationCountry: String? = null,
+        @SerialName("registration_scheme") val registrationScheme: String? = null,
+        @SerialName("registration_number") val registrationNumber: String? = null,
+        val registrant: String? = null,
+        @SerialName("registered_product_name") val registeredProductName: String? = null,
+        @SerialName("label_reference") val labelReference: String? = null,
+        @SerialName("label_version") val labelVersion: String? = null,
+        @SerialName("verification_status") val verificationStatus: String? = null,
+        @SerialName("verification_sources") val verificationSources: List<ChemicalDataSource>? = null,
+        @SerialName("verification_conflicts")
+        val verificationConflicts: List<ChemicalVerificationConflict>? = null,
+        @SerialName("verification_unresolved_fields")
+        val verificationUnresolvedFields: List<String>? = null,
+        @SerialName("verified_at") val verifiedAt: String? = null,
+        @SerialName("registered_uses") val registeredUses: List<ChemicalRegisteredUse>? = null,
+        @SerialName("label_rate_bases") val labelRateBases: List<String>? = null,
+        @SerialName("activity_group_table_version") val activityGroupTableVersion: Int? = null,
+        @SerialName("intelligence_schema_version") val intelligenceSchemaVersion: Int? = null,
     )
 
     @Serializable
@@ -144,6 +213,28 @@ class SavedChemicalRepository(private val session: SessionStore) {
         @SerialName("inventory_unit") val inventoryUnit: String = "",
         @SerialName("application_notes") val applicationNotes: String = "",
         @SerialName("client_updated_at") val clientUpdatedAt: String,
+        // --- Chemical Intelligence (sql/194) ---
+        @SerialName("active_ingredients") val activeIngredients: List<ChemicalActiveIngredient>? = null,
+        @SerialName("activity_groups") val activityGroups: List<String>? = null,
+        @SerialName("activity_group_scheme") val activityGroupScheme: String? = null,
+        @SerialName("registration_country") val registrationCountry: String? = null,
+        @SerialName("registration_scheme") val registrationScheme: String? = null,
+        @SerialName("registration_number") val registrationNumber: String? = null,
+        val registrant: String? = null,
+        @SerialName("registered_product_name") val registeredProductName: String? = null,
+        @SerialName("label_reference") val labelReference: String? = null,
+        @SerialName("label_version") val labelVersion: String? = null,
+        @SerialName("verification_status") val verificationStatus: String? = null,
+        @SerialName("verification_sources") val verificationSources: List<ChemicalDataSource>? = null,
+        @SerialName("verification_conflicts")
+        val verificationConflicts: List<ChemicalVerificationConflict>? = null,
+        @SerialName("verification_unresolved_fields")
+        val verificationUnresolvedFields: List<String>? = null,
+        @SerialName("verified_at") val verifiedAt: String? = null,
+        @SerialName("registered_uses") val registeredUses: List<ChemicalRegisteredUse>? = null,
+        @SerialName("label_rate_bases") val labelRateBases: List<String>? = null,
+        @SerialName("activity_group_table_version") val activityGroupTableVersion: Int? = null,
+        @SerialName("intelligence_schema_version") val intelligenceSchemaVersion: Int? = null,
     )
 
     @Serializable
@@ -169,6 +260,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
         withContext(Dispatchers.IO) {
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
+            val intel = IntelFields(input.intelligence)
             val body = ChemicalInsert(
                 id = UUID.randomUUID().toString(),
                 vineyardId = vineyardId,
@@ -202,6 +294,25 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 applicationNotes = input.applicationNotes,
                 createdBy = session.userId,
                 clientUpdatedAt = nowIso(),
+                activeIngredients = intel.activeIngredients,
+                activityGroups = intel.activityGroups,
+                activityGroupScheme = intel.activityGroupScheme,
+                registrationCountry = intel.registrationCountry,
+                registrationScheme = intel.registrationScheme,
+                registrationNumber = intel.registrationNumber,
+                registrant = intel.registrant,
+                registeredProductName = intel.registeredProductName,
+                labelReference = intel.labelReference,
+                labelVersion = intel.labelVersion,
+                verificationStatus = intel.verificationStatus,
+                verificationSources = intel.verificationSources,
+                verificationConflicts = intel.verificationConflicts,
+                verificationUnresolvedFields = intel.verificationUnresolvedFields,
+                verifiedAt = intel.verifiedAt,
+                registeredUses = intel.registeredUses,
+                labelRateBases = intel.labelRateBases,
+                activityGroupTableVersion = intel.activityGroupTableVersion,
+                intelligenceSchemaVersion = intel.intelligenceSchemaVersion,
             )
             val response = SupabaseClient.http.post(SupabaseClient.restUrl("saved_chemicals")) {
                 authHeaders(token)
@@ -216,6 +327,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
         withContext(Dispatchers.IO) {
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
+            val intel = IntelFields(input.intelligence)
             val patch = ChemicalPatch(
                 name = input.name,
                 unit = input.unit,
@@ -246,6 +358,25 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 inventoryUnit = input.inventoryUnit,
                 applicationNotes = input.applicationNotes,
                 clientUpdatedAt = nowIso(),
+                activeIngredients = intel.activeIngredients,
+                activityGroups = intel.activityGroups,
+                activityGroupScheme = intel.activityGroupScheme,
+                registrationCountry = intel.registrationCountry,
+                registrationScheme = intel.registrationScheme,
+                registrationNumber = intel.registrationNumber,
+                registrant = intel.registrant,
+                registeredProductName = intel.registeredProductName,
+                labelReference = intel.labelReference,
+                labelVersion = intel.labelVersion,
+                verificationStatus = intel.verificationStatus,
+                verificationSources = intel.verificationSources,
+                verificationConflicts = intel.verificationConflicts,
+                verificationUnresolvedFields = intel.verificationUnresolvedFields,
+                verifiedAt = intel.verifiedAt,
+                registeredUses = intel.registeredUses,
+                labelRateBases = intel.labelRateBases,
+                activityGroupTableVersion = intel.activityGroupTableVersion,
+                intelligenceSchemaVersion = intel.intelligenceSchemaVersion,
             )
             val response = SupabaseClient.http.patch(SupabaseClient.restUrl("saved_chemicals?id=eq.$id")) {
                 authHeaders(token)

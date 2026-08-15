@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
@@ -53,6 +54,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
+import com.rork.vinetrack.data.chemical.legacyGroupProjection
+import com.rork.vinetrack.ui.components.ChemicalVerificationBadge
+import com.rork.vinetrack.ui.components.chemicalVerificationTint
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -112,10 +117,32 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
     var editing by remember { mutableStateOf<SavedChemical?>(null) }
     var pendingDelete by remember { mutableStateOf<SavedChemical?>(null) }
     var search by remember { mutableStateOf("") }
-    val filteredChemicals = remember(state.savedChemicals, search) {
-        if (search.isBlank()) state.savedChemicals
-        else state.savedChemicals.filter {
-            it.displayName.contains(search.trim(), true) || it.manufacturer.contains(search.trim(), true)
+    /** Null = "All". Filters on the RESOLVED status, never on display text. */
+    var verificationFilter by remember { mutableStateOf<ChemicalVerificationStatus?>(null) }
+    /** Non-null when running the Search → Match → Verify → Confirm wizard. */
+    var matchingNew by remember { mutableStateOf(false) }
+    var matching by remember { mutableStateOf<SavedChemical?>(null) }
+
+    // Counts come from each record's resolved verification status, so a stale
+    // stored status can never inflate the "Verified" tally.
+    val statusCounts: Map<ChemicalVerificationStatus, Int> =
+        remember(state.savedChemicals) {
+            state.savedChemicals.groupingBy { it.verificationStatus }.eachCount()
+        }
+    val needsAttentionCount: Int = remember(statusCounts) {
+        (statusCounts[ChemicalVerificationStatus.NEEDS_MATCH] ?: 0) +
+            (statusCounts[ChemicalVerificationStatus.CONFLICT] ?: 0) +
+            (statusCounts[ChemicalVerificationStatus.UNVERIFIED] ?: 0)
+    }
+
+    val filteredChemicals = remember(state.savedChemicals, search, verificationFilter) {
+        state.savedChemicals.filter { chem ->
+            val matchesSearch = search.isBlank() ||
+                chem.displayName.contains(search.trim(), true) ||
+                chem.manufacturer.contains(search.trim(), true)
+            val matchesStatus = verificationFilter == null ||
+                chem.verificationStatus == verificationFilter
+            matchesSearch && matchesStatus
         }
     }
     // Surfaced when the backend refuses a permanent delete because the chemical
@@ -148,7 +175,11 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
         floatingActionButton = {
             if (canManage) {
                 FloatingActionButton(
-                    onClick = { creating = true },
+                    // Adding a chemical starts with matching it to a registered
+                    // product rather than with a blank form, so structured
+                    // intelligence is the default path and manual entry the
+                    // deliberate fallback.
+                    onClick = { matchingNew = true },
                     containerColor = ChemTint,
                     contentColor = Color.White,
                 ) { Icon(Icons.Filled.Add, contentDescription = "Add chemical") }
@@ -165,7 +196,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                     "The vineyard owner or manager hasn't added any saved chemicals yet."
                 },
                 actionLabel = if (canManage) "Add chemical" else null,
-                onAction = if (canManage) ({ creating = true }) else null,
+                onAction = if (canManage) ({ matchingNew = true }) else null,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
         } else {
@@ -201,6 +232,70 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
+                if (needsAttentionCount > 0) {
+                    item(key = "needs-attention") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(VineColors.Warning.copy(alpha = 0.10f))
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                Icons.Filled.Science,
+                                contentDescription = null,
+                                tint = VineColors.Warning,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Text(
+                                if (needsAttentionCount == 1) {
+                                    "1 chemical needs verification"
+                                } else {
+                                    "$needsAttentionCount chemicals need verification"
+                                },
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = VineColors.Warning,
+                            )
+                        }
+                    }
+                }
+                item(key = "verification-filters") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        VerificationFilterPill(
+                            label = "All",
+                            count = state.savedChemicals.size,
+                            selected = verificationFilter == null,
+                            tint = ChemTint,
+                        ) { verificationFilter = null }
+                        // Every state gets its own pill: lumping Conflict in with
+                        // Unverified would hide the one case that needs a human.
+                        listOf(
+                            ChemicalVerificationStatus.VERIFIED,
+                            ChemicalVerificationStatus.PARTIALLY_VERIFIED,
+                            ChemicalVerificationStatus.NEEDS_MATCH,
+                            ChemicalVerificationStatus.CONFLICT,
+                            ChemicalVerificationStatus.UNVERIFIED,
+                        ).forEach { status ->
+                            VerificationFilterPill(
+                                label = status.label,
+                                count = statusCounts[status] ?: 0,
+                                selected = verificationFilter == status,
+                                tint = chemicalVerificationTint(status),
+                            ) {
+                                verificationFilter =
+                                    if (verificationFilter == status) null else status
+                            }
+                        }
+                    }
+                }
                 if (filteredChemicals.isEmpty()) {
                     item(key = "no-match") {
                         Text(
@@ -218,12 +313,35 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                         canViewFinancials = canViewFinancials,
                         onEdit = { if (canManage) editing = chem },
                         onDelete = { if (canManage) pendingDelete = chem },
+                        onMatchVerify = { if (canManage) matching = chem },
                     )
                 }
             }
         }
     }
 
+    if (matchingNew) {
+        ChemicalMatchFlowSheet(
+            vm = vm,
+            state = state,
+            existing = null,
+            prefillQuery = "",
+            onDismiss = { matchingNew = false },
+            onEnterManually = { matchingNew = false; creating = true },
+        )
+    }
+    matching?.let { chem ->
+        // Legacy cleanup: the wizard opens pre-filled with the name the grower
+        // already uses and updates THIS record on confirm.
+        ChemicalMatchFlowSheet(
+            vm = vm,
+            state = state,
+            existing = chem,
+            prefillQuery = chem.displayName,
+            onDismiss = { matching = null },
+            onEnterManually = { matching = null; editing = chem },
+        )
+    }
     if (creating) {
         ChemicalFormSheet(
             vm = vm,
@@ -302,13 +420,26 @@ private fun ChemicalRow(
     canViewFinancials: Boolean,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onMatchVerify: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     val fmt = LocalRegionFormatter.current
+    val status = chemical.verificationStatus
     VineyardCard(modifier = if (canManage) Modifier.clickable { onEdit() } else Modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(chemical.displayName, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, fontSize = 16.sp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        chemical.displayName,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary,
+                        fontSize = 16.sp,
+                    )
+                    ChemicalVerificationBadge(status, compact = true)
+                }
                 // Active ingredient leads the subtitle (matches iOS ChemicalDetailRow);
                 // manufacturer follows when present.
                 val subtitle = buildList {
@@ -318,10 +449,19 @@ private fun ChemicalRow(
                 if (subtitle.isNotEmpty()) {
                     Text(subtitle, fontSize = 13.sp, color = vine.textSecondary)
                 }
-                // Category / group / target-problem chips.
+                // Category / group / target-problem chips. The group chip is
+                // DERIVED from structured actives whenever they exist; the legacy
+                // free-text column is only a fallback for records that have not
+                // been matched yet.
+                val structuredGroups = chemical.resolvedIntelligence.activityGroups
+                val groupChip = if (structuredGroups.isNotEmpty()) {
+                    structuredGroups.legacyGroupProjection()
+                } else {
+                    chemical.chemicalGroup.takeIf { it.isNotBlank() }
+                }
                 val chips = buildList {
                     chemical.productCategory.takeIf { it.isNotBlank() }?.let { add(ProductCategories.label(it)) }
-                    chemical.chemicalGroup.takeIf { it.isNotBlank() }?.let { add(it) }
+                    groupChip?.takeIf { it.isNotBlank() }?.let { add(it) }
                     chemical.problem.takeIf { it.isNotBlank() }?.let { add(it) }
                     chemical.modeOfAction.takeIf { it.isNotBlank() }?.let { add("MOA $it") }
                 }
@@ -351,6 +491,23 @@ private fun ChemicalRow(
                         fontWeight = FontWeight.Medium,
                     )
                 }
+                // Progressive cleanup: anything not already matched offers the
+                // wizard straight from the row it appears on.
+                if (canManage && status != ChemicalVerificationStatus.VERIFIED &&
+                    status != ChemicalVerificationStatus.PARTIALLY_VERIFIED
+                ) {
+                    TextButton(
+                        onClick = onMatchVerify,
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                    ) {
+                        Text(
+                            "Match & Verify",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = ChemTint,
+                        )
+                    }
+                }
             }
             if (canManage) {
                 IconButton(onClick = onDelete) {
@@ -358,6 +515,40 @@ private fun ChemicalRow(
                 }
             }
         }
+    }
+}
+
+/** Verification filter pill with a live count derived from resolved statuses. */
+@Composable
+private fun VerificationFilterPill(
+    label: String,
+    count: Int,
+    selected: Boolean,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(if (selected) tint.copy(alpha = 0.18f) else vine.cardBackground)
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            label,
+            fontSize = 12.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) tint else vine.textSecondary,
+        )
+        Text(
+            count.toString(),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (selected) tint else vine.textSecondary,
+        )
     }
 }
 
