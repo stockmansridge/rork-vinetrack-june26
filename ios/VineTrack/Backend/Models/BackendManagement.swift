@@ -36,6 +36,27 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
     let inventoryUnit: String?
     let applicationNotes: String?
     let isActive: Bool?
+    // Chemical Intelligence (sql/194). Nullable throughout so a backend that
+    // has not yet had sql/194 applied still decodes.
+    let activeIngredients: [ChemicalActiveIngredient]?
+    let activityGroups: [String]?
+    let activityGroupScheme: String?
+    let registrationCountry: String?
+    let registrationScheme: String?
+    let registrationNumber: String?
+    let registrant: String?
+    let registeredProductName: String?
+    let labelReference: String?
+    let labelVersion: String?
+    let verificationStatus: String?
+    let verificationSources: [ChemicalDataSource]?
+    let verificationConflicts: [ChemicalVerificationConflict]?
+    let verificationUnresolvedFields: [String]?
+    let verifiedAt: Date?
+    let registeredUses: [ChemicalRegisteredUse]?
+    let labelRateBases: [String]?
+    let activityGroupTableVersion: Int?
+    let intelligenceSchemaVersion: Int?
     let createdAt: Date?
     let updatedAt: Date?
     let deletedAt: Date?
@@ -75,6 +96,25 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         case inventoryUnit = "inventory_unit"
         case applicationNotes = "application_notes"
         case isActive = "is_active"
+        case activeIngredients = "active_ingredients"
+        case activityGroups = "activity_groups"
+        case activityGroupScheme = "activity_group_scheme"
+        case registrationCountry = "registration_country"
+        case registrationScheme = "registration_scheme"
+        case registrationNumber = "registration_number"
+        case registrant
+        case registeredProductName = "registered_product_name"
+        case labelReference = "label_reference"
+        case labelVersion = "label_version"
+        case verificationStatus = "verification_status"
+        case verificationSources = "verification_sources"
+        case verificationConflicts = "verification_conflicts"
+        case verificationUnresolvedFields = "verification_unresolved_fields"
+        case verifiedAt = "verified_at"
+        case registeredUses = "registered_uses"
+        case labelRateBases = "label_rate_bases"
+        case activityGroupTableVersion = "activity_group_table_version"
+        case intelligenceSchemaVersion = "intelligence_schema_version"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
@@ -120,6 +160,29 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         self.inventoryUnit = try c.decodeIfPresent(String.self, forKey: .inventoryUnit)
         self.applicationNotes = try c.decodeIfPresent(String.self, forKey: .applicationNotes)
         self.isActive = try c.decodeIfPresent(Bool.self, forKey: .isActive)
+        // Chemical Intelligence columns were added in sql/194. Every one is
+        // read with `try?` so a backend without the migration — or a payload
+        // written by a newer build — degrades to nil instead of failing the
+        // whole chemical and emptying the operator's Chemical Store.
+        self.activeIngredients = try? c.decodeIfPresent([ChemicalActiveIngredient].self, forKey: .activeIngredients)
+        self.activityGroups = try? c.decodeIfPresent([String].self, forKey: .activityGroups)
+        self.activityGroupScheme = try? c.decodeIfPresent(String.self, forKey: .activityGroupScheme)
+        self.registrationCountry = try? c.decodeIfPresent(String.self, forKey: .registrationCountry)
+        self.registrationScheme = try? c.decodeIfPresent(String.self, forKey: .registrationScheme)
+        self.registrationNumber = try? c.decodeIfPresent(String.self, forKey: .registrationNumber)
+        self.registrant = try? c.decodeIfPresent(String.self, forKey: .registrant)
+        self.registeredProductName = try? c.decodeIfPresent(String.self, forKey: .registeredProductName)
+        self.labelReference = try? c.decodeIfPresent(String.self, forKey: .labelReference)
+        self.labelVersion = try? c.decodeIfPresent(String.self, forKey: .labelVersion)
+        self.verificationStatus = try? c.decodeIfPresent(String.self, forKey: .verificationStatus)
+        self.verificationSources = try? c.decodeIfPresent([ChemicalDataSource].self, forKey: .verificationSources)
+        self.verificationConflicts = try? c.decodeIfPresent([ChemicalVerificationConflict].self, forKey: .verificationConflicts)
+        self.verificationUnresolvedFields = try? c.decodeIfPresent([String].self, forKey: .verificationUnresolvedFields)
+        self.verifiedAt = try? c.decodeIfPresent(Date.self, forKey: .verifiedAt)
+        self.registeredUses = try? c.decodeIfPresent([ChemicalRegisteredUse].self, forKey: .registeredUses)
+        self.labelRateBases = try? c.decodeIfPresent([String].self, forKey: .labelRateBases)
+        self.activityGroupTableVersion = try? c.decodeIfPresent(Int.self, forKey: .activityGroupTableVersion)
+        self.intelligenceSchemaVersion = try? c.decodeIfPresent(Int.self, forKey: .intelligenceSchemaVersion)
         self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
         self.updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
         self.deletedAt = try c.decodeIfPresent(Date.self, forKey: .deletedAt)
@@ -161,6 +224,26 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
     let inventoryUnit: String
     let applicationNotes: String
     let isActive: Bool
+    // Chemical Intelligence (sql/194).
+    let activeIngredients: [ChemicalActiveIngredient]?
+    let activityGroups: [String]?
+    let activityGroupScheme: String?
+    let registrationCountry: String?
+    let registrationScheme: String?
+    let registrationNumber: String?
+    let registrant: String?
+    let registeredProductName: String?
+    let labelReference: String?
+    let labelVersion: String?
+    let verificationStatus: String
+    let verificationSources: [ChemicalDataSource]?
+    let verificationConflicts: [ChemicalVerificationConflict]?
+    let verificationUnresolvedFields: [String]?
+    let verifiedAt: Date?
+    let registeredUses: [ChemicalRegisteredUse]?
+    let labelRateBases: [String]?
+    let activityGroupTableVersion: Int?
+    let intelligenceSchemaVersion: Int
     let createdBy: UUID?
     let clientUpdatedAt: Date
 
@@ -198,6 +281,25 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
         case inventoryUnit = "inventory_unit"
         case applicationNotes = "application_notes"
         case isActive = "is_active"
+        case activeIngredients = "active_ingredients"
+        case activityGroups = "activity_groups"
+        case activityGroupScheme = "activity_group_scheme"
+        case registrationCountry = "registration_country"
+        case registrationScheme = "registration_scheme"
+        case registrationNumber = "registration_number"
+        case registrant
+        case registeredProductName = "registered_product_name"
+        case labelReference = "label_reference"
+        case labelVersion = "label_version"
+        case verificationStatus = "verification_status"
+        case verificationSources = "verification_sources"
+        case verificationConflicts = "verification_conflicts"
+        case verificationUnresolvedFields = "verification_unresolved_fields"
+        case verifiedAt = "verified_at"
+        case registeredUses = "registered_uses"
+        case labelRateBases = "label_rate_bases"
+        case activityGroupTableVersion = "activity_group_table_version"
+        case intelligenceSchemaVersion = "intelligence_schema_version"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
     }
@@ -205,20 +307,27 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
 
 extension BackendSavedChemical {
     static func upsert(from c: SavedChemical, createdBy: UUID?, clientUpdatedAt: Date) -> BackendSavedChemicalUpsert {
-        BackendSavedChemicalUpsert(
+        let intel = c.chemicalIntelligence
+        // The legacy scalars are written as DERIVED projections whenever
+        // structured intelligence exists, so old app builds and the existing
+        // API keep seeing a familiar "3 + 11". When it does not exist the
+        // operator's own values pass through untouched — saving a legacy
+        // chemical must never rewrite it.
+        let legacy = c.legacyProjection
+        return BackendSavedChemicalUpsert(
             id: c.id,
             vineyardId: c.vineyardId,
             name: c.name,
             ratePerHa: c.ratePerHa,
             unit: c.unit.rawValue,
-            chemicalGroup: c.chemicalGroup,
+            chemicalGroup: legacy.chemicalGroup,
             use: c.use,
             manufacturer: c.manufacturer,
             restrictions: c.restrictions,
             notes: c.notes,
             crop: c.crop,
             problem: c.problem,
-            activeIngredient: c.activeIngredient,
+            activeIngredient: legacy.activeIngredient,
             rates: c.rates,
             purchase: c.purchase,
             labelUrl: c.labelURL,
@@ -239,8 +348,75 @@ extension BackendSavedChemical {
             inventoryUnit: c.inventoryUnit,
             applicationNotes: c.applicationNotes,
             isActive: c.isActive,
+            activeIngredients: intel?.activeIngredients,
+            // Written from the structured actives every time, so the queryable
+            // text[] can never drift out of step with them.
+            activityGroups: intel?.activityGroupCodes,
+            activityGroupScheme: intel?.activityGroups.first?.scheme.rawValue,
+            registrationCountry: intel?.registration?.countryCode,
+            registrationScheme: intel?.registration?.scheme?.rawValue,
+            registrationNumber: intel?.registration?.registrationNumber,
+            registrant: intel?.registration?.registrant,
+            registeredProductName: intel?.registration?.registeredProductName,
+            labelReference: intel?.registration?.labelReference,
+            labelVersion: intel?.registration?.labelVersion,
+            // The RESOLVED status, never the stored one: a status is a claim
+            // about evidence, and it is re-derived from that evidence on every
+            // write so an over-optimistic value can never be persisted.
+            verificationStatus: (intel?.resolvedVerificationStatus ?? .needsMatch).rawValue,
+            verificationSources: intel?.verification.sources,
+            verificationConflicts: intel?.verification.conflicts,
+            verificationUnresolvedFields: intel?.verification.unresolvedFields,
+            verifiedAt: intel?.verification.verifiedAt,
+            registeredUses: intel?.registeredUses,
+            labelRateBases: intel?.labelRateBases.map(\.rawValue),
+            activityGroupTableVersion: intel?.activityGroupTableVersion,
+            intelligenceSchemaVersion: intel?.schemaVersion ?? 0,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
+        )
+    }
+
+    /// Rebuilds structured intelligence from the sql/194 columns.
+    ///
+    /// Returns `nil` when the backend carries nothing structured, so the
+    /// chemical falls through to `SavedChemical.resolvedIntelligence` and is
+    /// read as an unmatched legacy record rather than an empty verified one.
+    private func decodedIntelligence() -> ChemicalIntelligence? {
+        let actives = activeIngredients ?? []
+        let uses = registeredUses ?? []
+        let hasRegistration = (registrationNumber?.isEmpty == false)
+            || (registrationCountry?.isEmpty == false)
+        guard !actives.isEmpty || !uses.isEmpty || hasRegistration else { return nil }
+
+        let registration: ChemicalRegistration? = hasRegistration
+            ? ChemicalRegistration(
+                countryCode: registrationCountry ?? "",
+                scheme: registrationScheme.flatMap { ChemicalRegistrationScheme(rawValue: $0) },
+                registrationNumber: registrationNumber,
+                registrant: registrant,
+                registeredProductName: registeredProductName,
+                labelReference: labelReference,
+                labelVersion: labelVersion
+            )
+            : nil
+
+        let verification = ChemicalVerification(
+            status: ChemicalVerificationStatus(rawValue: verificationStatus ?? "") ?? .unverified,
+            sources: verificationSources ?? [],
+            verifiedAt: verifiedAt,
+            conflicts: verificationConflicts ?? [],
+            unresolvedFields: verificationUnresolvedFields ?? []
+        )
+
+        return ChemicalIntelligence(
+            activeIngredients: actives,
+            registration: registration,
+            verification: verification,
+            registeredUses: uses,
+            productCategory: productCategory ?? "",
+            activityGroupTableVersion: activityGroupTableVersion ?? 0,
+            schemaVersion: intelligenceSchemaVersion ?? 0
         )
     }
 
@@ -278,7 +454,8 @@ extension BackendSavedChemical {
             inventoryQuantity: inventoryQuantity,
             inventoryUnit: inventoryUnit ?? "",
             applicationNotes: applicationNotes ?? "",
-            isActive: isActive ?? true
+            isActive: isActive ?? true,
+            chemicalIntelligence: decodedIntelligence()
         )
     }
 }

@@ -2661,6 +2661,26 @@ struct SprayCalculatorView: View {
         return productAreaBasis[line.id] ?? .wholeBlockArea
     }
 
+    /// Freezes the product's resistance classification onto this spray line.
+    ///
+    /// Read from the saved chemical AS IT IS NOW, at the moment the spray is
+    /// recorded, and stored on the line itself. If that chemical is corrected —
+    /// or archived — years from now, this spray still reports the classification
+    /// VineTrack actually used when the application happened, instead of
+    /// silently adopting the new one and rewriting the vineyard's history.
+    ///
+    /// Returns `nil` for a product with nothing structured, so a line stays
+    /// honestly empty rather than implying knowledge that never existed.
+    private func chemicalSnapshot(for chemResult: ChemicalCalculationResult) -> ChemicalLineSnapshot? {
+        guard let savedId = chemResult.savedChemicalId,
+              let chemical = store.savedChemicals.first(where: { $0.id == savedId })
+        else { return nil }
+        return ChemicalLineSnapshot.capture(
+            from: chemical.chemicalIntelligence,
+            legacyChemicalGroup: chemical.chemicalGroup
+        )
+    }
+
     private func buildSprayTanks(result: SprayCalculationResult, tankCapacity: Double) -> [SprayTank] {
         let totalTanks = result.fullTankCount + (result.lastTankLitres > 0 ? 1 : 0)
         guard totalTanks > 0 else {
@@ -2687,7 +2707,8 @@ struct SprayCalculatorView: View {
                     // line. Without it a banded treated-band quantity would
                     // reload as a whole-block one and silently restate itself.
                     rateBasis: persistedRateBasis(for: chemResult),
-                    savedChemicalId: chemResult.savedChemicalId
+                    savedChemicalId: chemResult.savedChemicalId,
+                    chemicalSnapshot: chemicalSnapshot(for: chemResult)
                 )
             }
             tanks.append(

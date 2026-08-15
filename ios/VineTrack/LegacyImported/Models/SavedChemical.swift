@@ -135,6 +135,20 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
     var applicationNotes: String
     var isActive: Bool
 
+    // MARK: Chemical Intelligence (sql/194)
+
+    /// Structured, verification-aware chemical information.
+    ///
+    /// This — not `chemicalGroup` — is the resistance authority. The scalar
+    /// `activeIngredient` / `chemicalGroup` fields above stay exactly where
+    /// they are for old app builds and the existing API, and are written as
+    /// DERIVED projections of this value whenever it is present.
+    ///
+    /// `nil` on every chemical saved before Chemical Intelligence. Use
+    /// `resolvedIntelligence` to read a legacy record as a candidate without
+    /// mutating it or implying it has been verified.
+    var chemicalIntelligence: ChemicalIntelligence?
+
     init(
         id: UUID = UUID(),
         vineyardId: UUID = UUID(),
@@ -168,7 +182,8 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         inventoryQuantity: Double? = nil,
         inventoryUnit: String = "",
         applicationNotes: String = "",
-        isActive: Bool = true
+        isActive: Bool = true,
+        chemicalIntelligence: ChemicalIntelligence? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -203,6 +218,7 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         self.inventoryUnit = inventoryUnit
         self.applicationNotes = applicationNotes
         self.isActive = isActive
+        self.chemicalIntelligence = chemicalIntelligence
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -213,6 +229,7 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         case density, nitrogenPercent, phosphorusPercent, potassiumPercent
         case analysisBasis, organicCertified, inventoryQuantity, inventoryUnit
         case applicationNotes, isActive
+        case chemicalIntelligence
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -252,6 +269,88 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         inventoryUnit = try container.decodeIfPresent(String.self, forKey: .inventoryUnit) ?? ""
         applicationNotes = try container.decodeIfPresent(String.self, forKey: .applicationNotes) ?? ""
         isActive = try container.decodeIfPresent(Bool.self, forKey: .isActive) ?? true
+        // Additive and tolerant: a chemical saved before Chemical Intelligence
+        // has none, and a malformed payload degrades to nil so the chemical
+        // still loads and still works everywhere it did before.
+        chemicalIntelligence = try? container.decodeIfPresent(
+            ChemicalIntelligence.self, forKey: .chemicalIntelligence)
+    }
+}
+
+// MARK: - Chemical Intelligence access
+
+extension SavedChemical {
+    /// Structured intelligence for this chemical, falling back to a CANDIDATE
+    /// reading of the legacy scalar fields when none has been stored.
+    ///
+    /// The fallback is explicitly `.needsMatch` and sourced `.legacyRecord`, so
+    /// it can populate the audit and pre-fill the verification screen while
+    /// being structurally incapable of passing as verified.
+    var resolvedIntelligence: ChemicalIntelligence {
+        if let chemicalIntelligence, !chemicalIntelligence.isEmpty {
+            return chemicalIntelligence
+        }
+        return ChemicalIntelligence.legacySeed(
+            activeIngredientText: activeIngredient,
+            chemicalGroupText: chemicalGroup,
+            modeOfActionText: modeOfAction,
+            productCategory: productCategory,
+            manufacturer: manufacturer,
+            countryCode: chemicalIntelligence?.registration?.countryCode ?? ""
+        )
+    }
+
+    /// The trust level to DISPLAY for this chemical.
+    var verificationStatus: ChemicalVerificationStatus {
+        resolvedIntelligence.resolvedVerificationStatus
+    }
+
+    /// Machine-readable group codes, e.g. `["3", "11"]`.
+    ///
+    /// Empty when nothing dependable is known — which is the honest answer, and
+    /// the reason nothing in VineTrack may fall back to splitting
+    /// `chemicalGroup` on "+".
+    var activityGroupCodes: [String] {
+        resolvedIntelligence.activityGroupCodes
+    }
+
+    /// The Phase 16 contract handed to the future Resistance Rules Engine.
+    ///
+    /// The engine consumes this and nothing else — no `SavedChemical`, no
+    /// `"Group 3 + 11"` parsing, no label scraping.
+    func resistanceProfile() -> ChemicalResistanceProfile {
+        let intel = resolvedIntelligence
+        return ChemicalResistanceProfile(
+            productId: id,
+            productName: name,
+            registrationIdentityKey: intel.registration?.identityKey,
+            countryCode: intel.registration?.countryCode ?? "",
+            activeIngredients: intel.activeIngredients,
+            activityGroups: intel.activityGroups,
+            verificationStatus: intel.resolvedVerificationStatus,
+            registeredUses: intel.registeredUses,
+            labelRateBases: intel.labelRateBases,
+            sourceVersion: "\(intel.schemaVersion).\(intel.activityGroupTableVersion)"
+        )
+    }
+
+    /// The legacy scalar values this chemical should PERSIST, derived from its
+    /// structured intelligence.
+    ///
+    /// Applied on save so `chemical_group` stays a faithful `"3 + 11"` mirror
+    /// for old clients while never being the source of a calculation.
+    /// Returns the existing values untouched when there is no intelligence, so
+    /// a legacy chemical is never rewritten by the mere act of saving it.
+    var legacyProjection: (activeIngredient: String, chemicalGroup: String) {
+        guard let intel = chemicalIntelligence, !intel.isEmpty else {
+            return (activeIngredient, chemicalGroup)
+        }
+        let groups = intel.legacyChemicalGroup
+        let actives = intel.legacyActiveIngredient
+        return (
+            actives.isEmpty ? activeIngredient : actives,
+            groups.isEmpty ? chemicalGroup : groups
+        )
     }
 }
 

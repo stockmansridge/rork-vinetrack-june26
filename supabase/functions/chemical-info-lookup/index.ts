@@ -15,6 +15,15 @@
 
 // deno-lint-ignore-file no-explicit-any
 
+import {
+  ACTIVITY_GROUP_TABLE_VERSION,
+  type ActivityGroup,
+  type ActivityGroupScheme,
+  type GroupConflict,
+  normaliseCode,
+  reconcileGroup,
+} from "./activity-groups.ts";
+
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -90,6 +99,372 @@ function buildInfoPrompt(productName: string, country: string): {
 IMPORTANT: The "formType" field must be either "liquid" or "solid". Determine this from the product's physical form. Liquid products (EC, SC, SL, SE, EW, flowables, suspension concentrates, emulsifiable concentrates, soluble liquids) should be "liquid". Solid products (WG, WDG, WP, DF, granules, wettable powders, dry flowables, water dispersible granules) should be "solid".
 The ratesPerHectare array should contain recommended rates per hectare. For liquid products, values must be in Litres (L). For solid products, values must be in Kilograms (Kg). The ratesPer100L array should contain recommended rates per 100 litres of water, using the same unit convention. Include multiple rates if the label specifies different rates for different conditions (e.g. low/medium/high disease pressure). If rates are not available for a basis, return an empty array.`;
   return { system, user };
+}
+
+// ===========================================================================
+// Structured chemical intelligence (action="structured")
+// ===========================================================================
+//
+// The AI is an EXTRACTION AND MATCHING ASSISTANT here, not the authority. The
+// intended source hierarchy is:
+//
+//   official registered product/label source
+//     -> structured active ingredient information
+//       -> authoritative activity-group classification
+//         -> viticulture-specific cross-check
+//           -> AI/search interpretation          <- what we actually have today
+//
+// Be honest about what this deployment can reach: there is no live APVMA or
+// ACVM API wired up, so the model's reading of public label/register material
+// is the only extraction source. Everything it produces is therefore attributed
+// to `ai_interpretation` and can NEVER, on its own, make a product Verified.
+// The one genuinely authoritative thing running server-side is the FRAC/HRAC/
+// IRAC classification table, which is applied to every active AFTER extraction.
+
+const REGISTER_BY_COUNTRY: Record<string, string> = {
+  AU: "the APVMA public register (PUBCRIS) product number",
+  AUSTRALIA: "the APVMA public register (PUBCRIS) product number",
+  NZ: "the NZ ACVM register number (and the EPA/HSNO approval number if that is what the label quotes)",
+  "NEW ZEALAND":
+    "the NZ ACVM register number (and the EPA/HSNO approval number if that is what the label quotes)",
+};
+
+function registrationSchemeFor(country: string): string | null {
+  const c = country.trim().toUpperCase();
+  if (c === "AU" || c === "AUSTRALIA") return "apvma";
+  if (c === "NZ" || c === "NEW ZEALAND") return "acvm";
+  return null;
+}
+
+function countryCodeFor(country: string): string {
+  const c = country.trim().toUpperCase();
+  if (c === "AU" || c === "AUSTRALIA") return "AU";
+  if (c === "NZ" || c === "NEW ZEALAND") return "NZ";
+  return c.length === 2 ? c : "";
+}
+
+function buildStructuredPrompt(productName: string, country: string): {
+  system: string;
+  user: string;
+} {
+  const system =
+    "You extract structured agricultural product registration data. You respond ONLY with valid JSON " +
+    "— no markdown, no explanation, no code fences.\n\n" +
+    "CRITICAL RULES:\n" +
+    "1. NEVER invent a registration number, a concentration, or a URL. If you are not certain, return null.\n" +
+    "2. A field you cannot establish MUST be null AND its name MUST appear in `unresolved`. " +
+    "Returning null with an honest `unresolved` entry is ALWAYS better than a plausible guess — " +
+    "a wrong active ingredient concentration causes a real mis-dose in a real vineyard.\n" +
+    "3. Product identity is COUNTRY-SPECIFIC. A product name used in Australia is NOT automatically " +
+    "the same registered product in New Zealand. Never carry rates, actives or registration numbers " +
+    "across countries.\n" +
+    "4. List EVERY active ingredient separately. A mixture has multiple actives, each with its own " +
+    "concentration and its own resistance group.";
+
+  const register = REGISTER_BY_COUNTRY[country.trim().toUpperCase()] ??
+    "the national pesticide register that applies in that country";
+  const countryContext = country
+    ? `The vineyard is in ${country}. Use ONLY the ${country}-registered version of this product. ` +
+      `For the registration identifier use ${register}. If this product is not registered in ${country}, ` +
+      `say so by returning null for registration and adding "registration" to unresolved — do NOT ` +
+      `substitute the registration from another country.`
+    : "No country was supplied, so return null for registration and add \"country\" to unresolved.";
+
+  const user = `Provide structured registration data for the agricultural product "${productName}".
+${countryContext}
+
+Return EXACTLY this JSON shape:
+{
+  "product_name": "exact registered product name, or null",
+  "registrant": "registrant/manufacturer of record, or null",
+  "registration_number": "register product number as printed, or null",
+  "label_reference": "direct https URL to the official label PDF if you are certain it exists, else null",
+  "label_version": "label approval date or version if known, else null",
+  "product_category": "one of: fungicide, herbicide, insecticide, miticide, adjuvant, growthRegulator, foliarNutrient, granularFertiliser, liquidFertiliser, biostimulant, other",
+  "form_type": "liquid or solid",
+  "active_ingredients": [
+    {
+      "name": "ISO common name of the active, e.g. Tebuconazole",
+      "concentration": 200,
+      "concentration_unit": "g/L | g/kg | % w/w | % w/v | CFU/g",
+      "activity_group_code": "resistance code only, e.g. 3, 11, M5, 4A, G — no words",
+      "activity_group_scheme": "frac | hrac | irac | not_applicable"
+    }
+  ],
+  "registered_uses": [
+    {
+      "crop": "e.g. Grapes (winegrapes)",
+      "target": "target pest/disease exactly as the label words it, e.g. Powdery mildew",
+      "rates": [
+        {
+          "label": "e.g. Standard rate, or Low disease pressure",
+          "basis": "per_100_litres | per_hectare | range_per_100_litres | range_per_hectare | other",
+          "value": 1.5,
+          "min_value": null,
+          "max_value": null,
+          "unit": "L | mL | kg | g",
+          "raw_text": "verbatim label wording when basis is other, else null"
+        }
+      ],
+      "withholding_period_days": 14,
+      "re_entry_period_hours": null,
+      "restrictions": "short label restriction text, or null"
+    }
+  ],
+  "unresolved": ["names of any fields above you could not establish"]
+}
+
+NOTES ON RATE BASIS — this matters and is frequently confused:
+- The rate basis is what the LABEL quotes the product rate against. It is NOT how the sprayer
+  measures water volume. A vineyard that measures carrier in L/100 m still applies a product whose
+  label says 1.5 L/ha. Never convert a label rate into L/100 m.
+- Use "range_per_hectare" / "range_per_100_litres" (with min_value and max_value) when the label
+  gives a band rather than a single figure. Do not collapse a range to its midpoint.
+- Only include registered_uses you are confident are on the label. Do NOT infer a registered use
+  from the chemistry — "it is a Group 11 so it must control powdery mildew" is exactly the kind of
+  inference that must not appear here. An empty registered_uses array is a valid, honest answer.`;
+  return { system, user };
+}
+
+function parseNumber(value: any): number | null {
+  if (typeof value === "number" && isFinite(value)) return value;
+  if (typeof value === "string") {
+    const n = Number(value.trim());
+    if (isFinite(n)) return n;
+  }
+  return null;
+}
+
+function parseString(value: any): string | null {
+  if (typeof value !== "string") return null;
+  const t = value.trim();
+  if (!t || t.toLowerCase() === "null" || t.toLowerCase() === "unknown") return null;
+  return t;
+}
+
+const RATE_BASES = new Set([
+  "per_100_litres",
+  "per_hectare",
+  "range_per_100_litres",
+  "range_per_hectare",
+  "other",
+]);
+
+function normaliseRegisteredUses(raw: any): any[] {
+  if (!Array.isArray(raw)) return [];
+  const out: any[] = [];
+  for (const use of raw) {
+    const crop = parseString(use?.crop);
+    const target = parseString(use?.target) ?? parseString(use?.target_raw);
+    if (!crop && !target) continue;
+    const rates: any[] = [];
+    if (Array.isArray(use?.rates)) {
+      for (const r of use.rates) {
+        let basis = parseString(r?.basis)?.toLowerCase() ?? "other";
+        if (!RATE_BASES.has(basis)) basis = "other";
+        const value = parseNumber(r?.value);
+        const minValue = parseNumber(r?.min_value);
+        const maxValue = parseNumber(r?.max_value);
+        // A rate with no number at all is only meaningful if the label text was
+        // captured verbatim; otherwise it says nothing and is dropped.
+        const rawText = parseString(r?.raw_text);
+        if (value === null && minValue === null && !rawText) continue;
+        rates.push({
+          label: parseString(r?.label) ?? "",
+          basis,
+          value,
+          min_value: minValue,
+          max_value: maxValue,
+          unit: parseString(r?.unit) ?? "",
+          raw_text: rawText,
+        });
+      }
+    }
+    out.push({
+      crop: crop ?? "",
+      target_raw: target ?? "",
+      rates,
+      withholding_period_days: parseNumber(use?.withholding_period_days),
+      re_entry_period_hours: parseNumber(use?.re_entry_period_hours),
+      restrictions: parseString(use?.restrictions),
+    });
+  }
+  return out;
+}
+
+const SCHEMES: ActivityGroupScheme[] = ["frac", "hrac", "irac", "not_applicable"];
+
+function schemeFromCategory(category: string | null): ActivityGroupScheme | null {
+  switch ((category ?? "").toLowerCase()) {
+    case "fungicide":
+      return "frac";
+    case "herbicide":
+      return "hrac";
+    case "insecticide":
+    case "miticide":
+      return "irac";
+    case "adjuvant":
+    case "foliarnutrient":
+    case "granularfertiliser":
+    case "liquidfertiliser":
+    case "biostimulant":
+      return "not_applicable";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Turns the model's raw extraction into the structured contract, then applies
+ * the authoritative activity-group cross-check to every active.
+ *
+ * The verification status returned here is computed from EVIDENCE, never from
+ * how confident the model sounded:
+ *   - any group disagreement                       -> "conflict"
+ *   - no actives established                       -> "unverified"
+ *   - actives + registration + every group backed
+ *     by the authoritative table                   -> "partially_verified"
+ *
+ * Note what is deliberately absent: this function NEVER returns "verified".
+ * With no live official register available to this deployment, product identity
+ * cannot be authoritatively confirmed server-side, so the highest honest state
+ * is partially verified. Promotion to Verified is a human decision made in the
+ * app's verify step. That ceiling is the entire point of Phase 4.
+ */
+function buildStructuredResponse(parsed: any, country: string): any {
+  const unresolved = new Set<string>(
+    Array.isArray(parsed?.unresolved)
+      ? parsed.unresolved.filter((x: any) => typeof x === "string")
+      : [],
+  );
+
+  const productCategory = parseString(parsed?.product_category);
+  const categoryScheme = schemeFromCategory(productCategory);
+  const conflicts: GroupConflict[] = [];
+  const actives: any[] = [];
+
+  const rawActives = Array.isArray(parsed?.active_ingredients)
+    ? parsed.active_ingredients
+    : [];
+
+  for (const a of rawActives) {
+    const name = parseString(a?.name);
+    if (!name) continue;
+
+    const code = normaliseCode(String(a?.activity_group_code ?? ""));
+    let scheme = parseString(a?.activity_group_scheme)?.toLowerCase() as
+      | ActivityGroupScheme
+      | undefined;
+    if (!scheme || !SCHEMES.includes(scheme)) {
+      scheme = categoryScheme ?? undefined;
+    }
+    const extracted: ActivityGroup | null = code && scheme && scheme !== "not_applicable"
+      ? { scheme, code, common_name: null }
+      : null;
+
+    // THE cross-check. Whatever the model said, the authoritative table gets
+    // the last word, and any disagreement is surfaced rather than resolved.
+    const { group, source, conflict } = reconcileGroup(name, extracted);
+    if (conflict) conflicts.push(conflict);
+    if (!group) unresolved.add(`activity_group:${name}`);
+
+    const concentration = parseNumber(a?.concentration);
+    if (concentration === null) unresolved.add(`concentration:${name}`);
+
+    actives.push({
+      name,
+      concentration,
+      concentration_unit: parseString(a?.concentration_unit),
+      activity_group: group,
+      group_source: source,
+      identity_source: "ai_interpretation",
+    });
+  }
+
+  if (!actives.length) unresolved.add("active_ingredients");
+
+  const registrationNumber = parseString(parsed?.registration_number);
+  const countryCode = countryCodeFor(country);
+  if (!registrationNumber) unresolved.add("registration_number");
+  if (!countryCode) unresolved.add("country");
+
+  const registration = registrationNumber || countryCode
+    ? {
+      country_code: countryCode,
+      scheme: registrationNumber ? registrationSchemeFor(country) : null,
+      registration_number: registrationNumber,
+      registrant: parseString(parsed?.registrant),
+      registered_product_name: parseString(parsed?.product_name),
+      label_reference: parseString(parsed?.label_reference),
+      label_version: parseString(parsed?.label_version),
+    }
+    : null;
+
+  const registeredUses = normaliseRegisteredUses(parsed?.registered_uses);
+  if (!registeredUses.length) unresolved.add("registered_uses");
+
+  const sources: any[] = [
+    {
+      kind: "ai_interpretation",
+      name: `Model extraction (${OPENAI_MODEL})`,
+      reference: null,
+      retrieved_at: new Date().toISOString(),
+    },
+  ];
+  // Only cite the authoritative table when it actually contributed something.
+  if (actives.some((a) => a.group_source === "authoritative_classification")) {
+    sources.push({
+      kind: "authoritative_classification",
+      name: `VineTrack activity group reference v${ACTIVITY_GROUP_TABLE_VERSION} (FRAC/HRAC/IRAC)`,
+      reference: null,
+      retrieved_at: new Date().toISOString(),
+    });
+  }
+
+  let status: string;
+  if (conflicts.length) {
+    status = "conflict";
+  } else if (!actives.length) {
+    status = "unverified";
+  } else {
+    status = "partially_verified";
+  }
+
+  const schemeUsed = actives
+    .map((a) => a.activity_group?.scheme)
+    .find((s: string | undefined) => s && s !== "not_applicable") ?? null;
+
+  return {
+    product_name: parseString(parsed?.product_name),
+    product_category: productCategory ?? "",
+    form_type: parseString(parsed?.form_type),
+    registration,
+    active_ingredients: actives,
+    // Bare codes for the queryable column: ["3", "11"] — never ["3 + 11"].
+    activity_groups: Array.from(
+      new Set(
+        actives
+          .map((a) => a.activity_group?.code)
+          .filter((c: string | undefined): c is string => Boolean(c)),
+      ),
+    ),
+    activity_group_scheme: schemeUsed,
+    registered_uses: registeredUses,
+    label_rate_bases: Array.from(
+      new Set(
+        registeredUses.flatMap((u) => u.rates.map((r: any) => r.basis)),
+      ),
+    ),
+    verification: {
+      status,
+      sources,
+      conflicts,
+      unresolved_fields: Array.from(unresolved).sort(),
+      verified_at: null,
+    },
+    activity_group_table_version: ACTIVITY_GROUP_TABLE_VERSION,
+    schema_version: 1,
+  };
 }
 
 function extractJSON(text: string): any {
@@ -344,6 +719,35 @@ Deno.serve(async (req: Request) => {
       const raw = await callOpenAI(system, user, apiKey);
       const parsed = extractJSON(raw);
       return json(normalizeSearchResults(parsed));
+    }
+
+    if (action === "structured") {
+      const productName = typeof body?.productName === "string"
+        ? body.productName.trim()
+        : "";
+      if (!productName) return json({ error: "Missing productName" }, 400);
+      if (productName.length > 200) {
+        return json({ error: "productName too long" }, 400);
+      }
+      const { system, user } = buildStructuredPrompt(productName, country);
+      const raw = await callOpenAI(system, user, apiKey);
+      const parsed = extractJSON(raw);
+      const structured = buildStructuredResponse(parsed, country);
+      // Validate the label URL exactly as `info` does; a hallucinated label
+      // link is worse than none, because it looks like evidence.
+      const labelRef = structured.registration?.label_reference;
+      if (labelRef) {
+        const ok = !isPlaceholderURL(labelRef) &&
+          looksLikeLabelURL(labelRef) &&
+          await isURLReachable(labelRef);
+        if (!ok) {
+          structured.registration.label_reference = null;
+          structured.verification.unresolved_fields = Array.from(
+            new Set([...structured.verification.unresolved_fields, "label_reference"]),
+          ).sort();
+        }
+      }
+      return json(structured);
     }
 
     if (action === "info") {

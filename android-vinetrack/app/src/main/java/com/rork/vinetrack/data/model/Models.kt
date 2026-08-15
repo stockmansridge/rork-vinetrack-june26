@@ -1,5 +1,16 @@
 package com.rork.vinetrack.data.model
 
+import com.rork.vinetrack.data.chemical.ChemicalActiveIngredient
+import com.rork.vinetrack.data.chemical.ChemicalDataSource
+import com.rork.vinetrack.data.chemical.ChemicalIntelligence
+import com.rork.vinetrack.data.chemical.ChemicalLineSnapshot
+import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
+import com.rork.vinetrack.data.chemical.ChemicalRegistration
+import com.rork.vinetrack.data.chemical.ChemicalRegistrationScheme
+import com.rork.vinetrack.data.chemical.ChemicalResistanceProfile
+import com.rork.vinetrack.data.chemical.ChemicalVerification
+import com.rork.vinetrack.data.chemical.ChemicalVerificationConflict
+import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
 import com.rork.vinetrack.data.spray.SprayApplicationSnapshot
 import com.rork.vinetrack.data.spray.SprayProductRateBasis
 import kotlinx.serialization.SerialName
@@ -1449,7 +1460,30 @@ data class SprayChemical(
      */
     val rateBasis: String? = null,
     val savedChemicalId: String? = null,
+    /**
+     * Resistance-relevant facts about this product frozen at application time
+     * (Chemical Intelligence, sql/194).
+     *
+     * Null on legacy lines and on lines whose product has no structured
+     * intelligence yet — an honest absence. Historical resistance analysis reads
+     * THIS, never the current `SavedChemical`, so correcting a chemical three
+     * years from now cannot silently restate what was actually applied.
+     */
+    val chemicalSnapshot: ChemicalLineSnapshot? = null,
 ) {
+    /**
+     * Activity group codes as recorded AT APPLICATION TIME, e.g. `["3", "11"]`.
+     *
+     * Empty for a line applied before its product was structured — a meaningful
+     * answer ("VineTrack did not know"), and never a reason to go and read the
+     * chemical's present-day classification instead.
+     */
+    val recordedActivityGroupCodes: List<String>
+        get() = chemicalSnapshot?.activityGroupCodes ?: emptyList()
+
+    /** Whether this line can take part in historical resistance analysis. */
+    val hasResistanceSnapshot: Boolean get() = chemicalSnapshot?.hasResistanceData == true
+
     /**
      * The basis to calculate against, defaulting a legacy line to
      * [SprayProductRateBasis.WHOLE_BLOCK_AREA].
@@ -1814,6 +1848,33 @@ data class SavedChemical(
     @SerialName("inventory_unit") val inventoryUnit: String = "",
     @SerialName("application_notes") val applicationNotes: String = "",
     @SerialName("is_active") val isActive: Boolean = true,
+    // ---- Chemical Intelligence (sql/194) ----
+    // Structured, verification-aware chemical information. THESE — not
+    // [chemicalGroup] — are the resistance authority. The scalar
+    // `active_ingredient` / `chemical_group` fields above stay exactly where
+    // they are for old app builds and the existing API, and are written as
+    // DERIVED projections of these whenever they are present.
+    @SerialName("active_ingredients") val activeIngredients: List<ChemicalActiveIngredient>? = null,
+    /** Derived, queryable group codes: `["3", "11"]` — never `["3 + 11"]`. */
+    @SerialName("activity_groups") val activityGroups: List<String>? = null,
+    @SerialName("activity_group_scheme") val activityGroupScheme: String? = null,
+    @SerialName("registration_country") val registrationCountry: String? = null,
+    @SerialName("registration_scheme") val registrationScheme: String? = null,
+    @SerialName("registration_number") val registrationNumber: String? = null,
+    val registrant: String? = null,
+    @SerialName("registered_product_name") val registeredProductName: String? = null,
+    @SerialName("label_reference") val labelReference: String? = null,
+    @SerialName("label_version") val labelVersion: String? = null,
+    @SerialName("verification_status") val verificationStatusRaw: String? = null,
+    @SerialName("verification_sources") val verificationSources: List<ChemicalDataSource>? = null,
+    @SerialName("verification_conflicts")
+    val verificationConflicts: List<ChemicalVerificationConflict>? = null,
+    @SerialName("verification_unresolved_fields") val verificationUnresolvedFields: List<String>? = null,
+    @SerialName("verified_at") val verifiedAt: String? = null,
+    @SerialName("registered_uses") val registeredUses: List<ChemicalRegisteredUse>? = null,
+    @SerialName("label_rate_bases") val labelRateBases: List<String>? = null,
+    @SerialName("activity_group_table_version") val activityGroupTableVersion: Int? = null,
+    @SerialName("intelligence_schema_version") val intelligenceSchemaVersion: Int? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     val displayName: String get() = name.trim().takeIf { it.isNotBlank() } ?: "Chemical"
@@ -1843,6 +1904,121 @@ data class SavedChemical(
      */
     val costPerUnit: Double?
         get() = purchase?.costPerBaseUnit?.let { it * chemicalUnitToBase(unit, 1.0) }
+
+    // ---- Chemical Intelligence access ----
+
+    /**
+     * Structured intelligence as STORED, or null when this chemical has none.
+     *
+     * Prefer [resolvedIntelligence] for reading; use this only when it matters
+     * whether real structured data actually exists.
+     */
+    val storedIntelligence: ChemicalIntelligence?
+        get() {
+            val actives = activeIngredients ?: emptyList()
+            val uses = registeredUses ?: emptyList()
+            val hasRegistration = !registrationNumber.isNullOrBlank() ||
+                !registrationCountry.isNullOrBlank()
+            if (actives.isEmpty() && uses.isEmpty() && !hasRegistration) return null
+            return ChemicalIntelligence(
+                activeIngredients = actives,
+                registration = if (hasRegistration) {
+                    ChemicalRegistration.of(
+                        countryCode = registrationCountry.orEmpty(),
+                        scheme = ChemicalRegistrationScheme.from(registrationScheme),
+                        registrationNumber = registrationNumber,
+                        registrant = registrant,
+                        registeredProductName = registeredProductName,
+                        labelReference = labelReference,
+                        labelVersion = labelVersion,
+                    )
+                } else {
+                    null
+                },
+                verification = ChemicalVerification(
+                    status = ChemicalVerificationStatus.from(verificationStatusRaw),
+                    sources = verificationSources ?: emptyList(),
+                    verifiedAt = verifiedAt,
+                    conflicts = verificationConflicts ?: emptyList(),
+                    unresolvedFields = verificationUnresolvedFields ?: emptyList(),
+                ),
+                registeredUses = uses,
+                productCategory = productCategory,
+                activityGroupTableVersion = activityGroupTableVersion ?: 0,
+                schemaVersion = intelligenceSchemaVersion ?: 0,
+            )
+        }
+
+    /**
+     * Structured intelligence, falling back to a CANDIDATE reading of the legacy
+     * scalar fields when none has been stored.
+     *
+     * The fallback is explicitly `NEEDS_MATCH` and sourced `LEGACY_RECORD`, so it
+     * can populate the audit and pre-fill the verification screen while being
+     * structurally incapable of passing as verified.
+     */
+    val resolvedIntelligence: ChemicalIntelligence
+        get() = storedIntelligence?.takeIf { !it.isEmpty }
+            ?: ChemicalIntelligence.legacySeed(
+                activeIngredientText = activeIngredient,
+                chemicalGroupText = chemicalGroup,
+                modeOfActionText = modeOfAction,
+                productCategory = productCategory,
+                manufacturer = manufacturer,
+                countryCode = registrationCountry.orEmpty(),
+            )
+
+    /** The trust level to DISPLAY for this chemical. */
+    val verificationStatus: ChemicalVerificationStatus
+        get() = resolvedIntelligence.resolvedVerificationStatus
+
+    /**
+     * Machine-readable group codes, e.g. `["3", "11"]`.
+     *
+     * Empty when nothing dependable is known — the honest answer, and the reason
+     * nothing in VineTrack may fall back to splitting [chemicalGroup] on "+".
+     */
+    val activityGroupCodes: List<String> get() = resolvedIntelligence.activityGroupCodes
+
+    /**
+     * The contract handed to the future Resistance Rules Engine.
+     *
+     * The engine consumes this and nothing else — no `SavedChemical`, no
+     * `"Group 3 + 11"` parsing, no label scraping.
+     */
+    fun resistanceProfile(): ChemicalResistanceProfile {
+        val intel = resolvedIntelligence
+        return ChemicalResistanceProfile(
+            productId = id,
+            productName = name,
+            registrationIdentityKey = intel.registration?.identityKey,
+            countryCode = intel.registration?.countryCode.orEmpty(),
+            activeIngredients = intel.activeIngredients,
+            activityGroups = intel.activityGroups,
+            verificationStatus = intel.resolvedVerificationStatus,
+            registeredUses = intel.registeredUses,
+            labelRateBases = intel.labelRateBases,
+            sourceVersion = "${intel.schemaVersion}.${intel.activityGroupTableVersion}",
+        )
+    }
+
+    /**
+     * The legacy scalar values this chemical should PERSIST, derived from its
+     * structured intelligence.
+     *
+     * Applied on save so `chemical_group` stays a faithful `"3 + 11"` mirror for
+     * old clients while never being the source of a calculation. Returns the
+     * existing values untouched when there is no intelligence, so a legacy
+     * chemical is never rewritten by the mere act of saving it.
+     */
+    val legacyProjection: Pair<String, String>
+        get() {
+            val intel = storedIntelligence?.takeIf { !it.isEmpty }
+                ?: return activeIngredient to chemicalGroup
+            val actives = intel.legacyActiveIngredient
+            val groups = intel.legacyChemicalGroup
+            return (actives.ifEmpty { activeIngredient }) to (groups.ifEmpty { chemicalGroup })
+        }
 }
 
 /**

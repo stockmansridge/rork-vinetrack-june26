@@ -1,5 +1,12 @@
 package com.rork.vinetrack.data
 
+import com.rork.vinetrack.data.chemical.AuthoritativeActivityGroups
+import com.rork.vinetrack.data.chemical.ChemicalActiveIngredient
+import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
+import com.rork.vinetrack.data.chemical.ChemicalIntelligence
+import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
+import com.rork.vinetrack.data.chemical.ChemicalRegistration
+import com.rork.vinetrack.data.chemical.ChemicalVerification
 import io.ktor.client.request.headers
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -65,6 +72,76 @@ class ChemicalInfoService {
         val defaultUnit: String get() = if (isLiquid) "Litres" else "Kg"
     }
 
+    /**
+     * The structured payload returned by the `structured` lookup action.
+     *
+     * Deliberately a transport type: converted into [ChemicalIntelligence] via
+     * [intelligence] so everything downstream reads one model.
+     */
+    @Serializable
+    data class ChemicalStructuredLookup(
+        @SerialName("product_name") val productName: String? = null,
+        @SerialName("product_category") val productCategory: String? = null,
+        @SerialName("form_type") val formType: String? = null,
+        val registration: ChemicalRegistration? = null,
+        @SerialName("active_ingredients")
+        val activeIngredients: List<ChemicalActiveIngredient> = emptyList(),
+        @SerialName("activity_groups") val activityGroups: List<String> = emptyList(),
+        @SerialName("registered_uses") val registeredUses: List<ChemicalRegisteredUse> = emptyList(),
+        @SerialName("label_rate_bases") val labelRateBases: List<String> = emptyList(),
+        val verification: ChemicalVerification = ChemicalVerification(),
+        @SerialName("activity_group_table_version") val activityGroupTableVersion: Int = 0,
+        @SerialName("schema_version") val schemaVersion: Int = 0,
+    ) {
+        /**
+         * Converts the lookup into the single structured model.
+         *
+         * Every active's group is re-reconciled against the ON-DEVICE
+         * authoritative table as well as the server's. That is not redundant: a
+         * device running a newer classification table than the deployed edge
+         * function still catches a disagreement, and a stale server response can
+         * never quietly install a group the app itself would reject.
+         */
+        fun intelligence(): ChemicalIntelligence {
+            var verification = this.verification
+            val actives = activeIngredients.map { active ->
+                val outcome = AuthoritativeActivityGroups.reconcile(
+                    activeName = active.name,
+                    extracted = active.activityGroup,
+                    extractedSource = active.groupSource
+                        ?: ChemicalDataSourceKind.AI_INTERPRETATION,
+                )
+                outcome.conflict?.let { verification = verification.addingConflict(it) }
+                active.copy(activityGroup = outcome.group, groupSource = outcome.source)
+            }
+
+            if (verification.sources.none {
+                    it.kind == ChemicalDataSourceKind.AUTHORITATIVE_CLASSIFICATION
+                } && actives.any { it.hasAuthoritativeGroup }
+            ) {
+                verification = verification.copy(
+                    sources = verification.sources + AuthoritativeActivityGroups.source(),
+                )
+            }
+
+            return ChemicalIntelligence(
+                activeIngredients = actives,
+                registration = registration,
+                verification = verification,
+                registeredUses = registeredUses,
+                productCategory = productCategory.orEmpty(),
+                activityGroupTableVersion = maxOf(
+                    activityGroupTableVersion,
+                    AuthoritativeActivityGroups.TABLE_VERSION,
+                ),
+                schemaVersion = maxOf(
+                    schemaVersion,
+                    ChemicalIntelligence.CURRENT_SCHEMA_VERSION,
+                ),
+            )
+        }
+    }
+
     @Serializable
     private data class EdgeError(val error: String? = null)
 
@@ -96,6 +173,33 @@ class ChemicalInfoService {
             val data = postEdge(payload)
             try {
                 SupabaseClient.json.decodeFromString<ChemicalInfoResponse>(data)
+            } catch (e: Exception) {
+                throw LookupException("AI returned an unexpected response. Please try again.")
+            }
+        }
+
+    /**
+     * Structured Chemical Intelligence lookup.
+     *
+     * Returns actives, groups, registration, registered uses and label rate
+     * bases as MACHINE-READABLE fields, plus the verification evidence behind
+     * them. The server cross-checks every extracted activity group against the
+     * authoritative FRAC/HRAC/IRAC table before replying, so a disagreement
+     * arrives as a conflict rather than a silently overwritten value.
+     *
+     * The result is never verified: the lookup can identify a candidate and
+     * classify its chemistry, but confirming product identity is a human step.
+     */
+    suspend fun lookupStructured(productName: String, country: String): ChemicalStructuredLookup =
+        withContext(Dispatchers.IO) {
+            val payload = buildMap {
+                put("action", "structured")
+                put("productName", productName)
+                if (country.isNotBlank()) put("country", country)
+            }
+            val data = postEdge(payload)
+            try {
+                SupabaseClient.json.decodeFromString<ChemicalStructuredLookup>(data)
             } catch (e: Exception) {
                 throw LookupException("AI returned an unexpected response. Please try again.")
             }

@@ -232,6 +232,14 @@ nonisolated struct SprayChemical: Codable, Identifiable, Sendable, Hashable {
     /// from a saved chemical. Enables reliable cost lookup/fallback later if
     /// the snapshot in `costPerUnit` is missing.
     var savedChemicalId: UUID?
+    /// Resistance-relevant facts about this product frozen at application time
+    /// (Chemical Intelligence, sql/194).
+    ///
+    /// `nil` on legacy lines and on lines whose product has no structured
+    /// intelligence yet — an honest absence. Historical resistance analysis
+    /// reads THIS, never the current `SavedChemical`, so correcting a chemical
+    /// three years from now cannot silently restate what was actually applied.
+    var chemicalSnapshot: ChemicalLineSnapshot?
 
     /// Whether this chemical line has a usable cost per unit snapshot.
     var hasCost: Bool { costPerUnit > 0 }
@@ -266,7 +274,7 @@ nonisolated struct SprayChemical: Codable, Identifiable, Sendable, Hashable {
         unit.rawValue
     }
 
-    init(id: UUID = UUID(), name: String = "", volumePerTank: Double = 0, ratePerHa: Double = 0, ratePer100L: Double = 0, costPerUnit: Double = 0, unit: ChemicalUnit = .litres, rateBasis: SprayProductRateBasis? = nil, savedChemicalId: UUID? = nil) {
+    init(id: UUID = UUID(), name: String = "", volumePerTank: Double = 0, ratePerHa: Double = 0, ratePer100L: Double = 0, costPerUnit: Double = 0, unit: ChemicalUnit = .litres, rateBasis: SprayProductRateBasis? = nil, savedChemicalId: UUID? = nil, chemicalSnapshot: ChemicalLineSnapshot? = nil) {
         self.id = id
         self.name = name
         self.volumePerTank = volumePerTank
@@ -276,10 +284,12 @@ nonisolated struct SprayChemical: Codable, Identifiable, Sendable, Hashable {
         self.unit = unit
         self.rateBasis = rateBasis
         self.savedChemicalId = savedChemicalId
+        self.chemicalSnapshot = chemicalSnapshot
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
         case id, name, volumePerTank, ratePerHa, ratePer100L, costPerUnit, unit, rateBasis, savedChemicalId
+        case chemicalSnapshot
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -304,6 +314,24 @@ nonisolated struct SprayChemical: Codable, Identifiable, Sendable, Hashable {
             rateBasis = nil
         }
         savedChemicalId = try container.decodeIfPresent(UUID.self, forKey: .savedChemicalId)
+        // Additive and tolerant: a line written before Chemical Intelligence
+        // simply has no snapshot, and a malformed one degrades to nil rather
+        // than failing the whole spray record.
+        chemicalSnapshot = try? container.decodeIfPresent(ChemicalLineSnapshot.self, forKey: .chemicalSnapshot)
+    }
+
+    /// Activity group codes as recorded AT APPLICATION TIME, e.g. `["3", "11"]`.
+    ///
+    /// Empty for a line applied before its product was structured — which is a
+    /// meaningful answer ("VineTrack did not know"), and never a reason to go
+    /// and read the chemical's present-day classification instead.
+    nonisolated var recordedActivityGroupCodes: [String] {
+        chemicalSnapshot?.activityGroupCodes ?? []
+    }
+
+    /// Whether this line can take part in historical resistance analysis.
+    nonisolated var hasResistanceSnapshot: Bool {
+        chemicalSnapshot?.hasResistanceData ?? false
     }
 }
 
