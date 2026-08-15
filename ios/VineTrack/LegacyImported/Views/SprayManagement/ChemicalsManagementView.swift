@@ -1,27 +1,88 @@
 import SwiftUI
 
+/// Filter for the Chemical Store's verification audit.
+///
+/// Exists so a grower can work through "12 chemicals need verification"
+/// incrementally instead of being handed a wall of unmatched records. The
+/// counts come from `resolvedVerificationStatus`, not the stored column, so a
+/// record that has lost its evidence shows up in the right bucket immediately.
+private enum ChemicalVerificationFilter: String, CaseIterable, Identifiable {
+    case all
+    case needsMatch
+    case conflict
+    case unverified
+    case verified
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .needsMatch: return "Needs match"
+        case .conflict: return "Conflict"
+        case .unverified: return "Unverified"
+        case .verified: return "Verified"
+        }
+    }
+
+    func matches(_ status: ChemicalVerificationStatus) -> Bool {
+        switch self {
+        case .all: return true
+        case .needsMatch: return status == .needsMatch
+        case .conflict: return status == .conflict
+        case .unverified: return status == .unverified
+        // Partially verified belongs with verified here: both mean the product
+        // HAS been matched, which is the distinction a cleanup pass cares about.
+        case .verified: return status == .verified || status == .partiallyVerified
+        }
+    }
+}
+
 struct ChemicalsManagementView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.accessControl) private var accessControl
     @State private var showAddSheet: Bool = false
     @State private var editingChemical: SavedChemical?
+    @State private var matchingChemical: SavedChemical?
     @State private var searchText: String = ""
+    @State private var filter: ChemicalVerificationFilter = .all
     @State private var deleteCoordinator = ChemicalDeleteCoordinator()
 
     private var canManageSetup: Bool { accessControl?.canManageSetup ?? false }
 
     private var filteredChemicals: [SavedChemical] {
-        guard !searchText.trimmingCharacters(in: .whitespaces).isEmpty else {
-            return store.savedChemicals
+        var list = store.savedChemicals.filter { filter.matches($0.verificationStatus) }
+        let trimmed = searchText.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty {
+            list = list.filter { chem in
+                let combined = "\(chem.name) \(chem.activeIngredient) \(chem.chemicalGroup) \(chem.manufacturer) \(chem.problem) \(chem.modeOfAction)"
+                return combined.localizedStandardContains(trimmed)
+            }
         }
-        return store.savedChemicals.filter { chem in
-            let combined = "\(chem.name) \(chem.activeIngredient) \(chem.chemicalGroup) \(chem.manufacturer) \(chem.problem) \(chem.modeOfAction)"
-            return combined.localizedStandardContains(searchText)
-        }
+        return list
+    }
+
+    private func count(for filter: ChemicalVerificationFilter) -> Int {
+        store.savedChemicals.filter { filter.matches($0.verificationStatus) }.count
+    }
+
+    private var needsAttentionCount: Int {
+        count(for: .needsMatch) + count(for: .conflict)
     }
 
     var body: some View {
         List {
+            if needsAttentionCount > 0 {
+                Section {
+                    Label(
+                        "\(needsAttentionCount) chemical\(needsAttentionCount == 1 ? "" : "s") need verification",
+                        systemImage: "exclamationmark.circle"
+                    )
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(VineyardTheme.warning)
+                }
+            }
+
             if !canManageSetup && !filteredChemicals.isEmpty {
                 Section {
                     Label("Setup data is managed by vineyard owners and managers.", systemImage: "lock.fill")
@@ -29,6 +90,7 @@ struct ChemicalsManagementView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
             ForEach(filteredChemicals) { chemical in
                 Group {
                     if canManageSetup {
@@ -39,6 +101,16 @@ struct ChemicalsManagementView: View {
                         }
                     } else {
                         ChemicalDetailRow(chemical: chemical)
+                    }
+                }
+                .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                    if canManageSetup, chemical.verificationStatus != .verified {
+                        Button {
+                            matchingChemical = chemical
+                        } label: {
+                            Label("Match & Verify", systemImage: "checkmark.seal")
+                        }
+                        .tint(VineyardTheme.info)
                     }
                 }
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -57,6 +129,32 @@ struct ChemicalsManagementView: View {
         .navigationTitle("Chemicals")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, prompt: "Search chemicals...")
+        .safeAreaInset(edge: .top) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(ChemicalVerificationFilter.allCases) { option in
+                        let isSelected = filter == option
+                        Button {
+                            filter = option
+                        } label: {
+                            Text("\(option.label) (\(count(for: option)))")
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(isSelected
+                                            ? VineyardTheme.info.opacity(0.18)
+                                            : Color(.secondarySystemBackground))
+                                .foregroundStyle(isSelected ? VineyardTheme.info : .secondary)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+            .contentMargins(.horizontal, 16)
+            .background(.bar)
+        }
         .toolbar {
             if canManageSetup {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -75,10 +173,21 @@ struct ChemicalsManagementView: View {
                 } description: {
                     Text("Add chemicals to quickly select them in spray records.")
                 }
+            } else if filteredChemicals.isEmpty {
+                ContentUnavailableView {
+                    Label("Nothing here", systemImage: "line.3.horizontal.decrease.circle")
+                } description: {
+                    Text("No chemicals match this filter.")
+                }
             }
         }
         .sheet(isPresented: $showAddSheet) {
-            EditSavedChemicalSheet(chemical: nil)
+            // Adding starts with identification rather than a blank form: the
+            // structured record is only worth having if the product is known.
+            ChemicalMatchFlowView()
+        }
+        .sheet(item: $matchingChemical) { chem in
+            ChemicalMatchFlowView(existing: chem, prefillQuery: chem.name)
         }
         .sheet(item: $editingChemical) { chem in
             EditSavedChemicalSheet(chemical: chem)
@@ -98,14 +207,28 @@ struct ChemicalDetailRow: View {
         chemical.rates.filter { $0.basis == .per100Litres }
     }
 
+    /// Group text for the row.
+    ///
+    /// Derived from structured actives whenever they exist, so a verified
+    /// mixture shows `FRAC 3 + 11` built from its actives. Only a record with
+    /// no structured data falls back to the old free-text column.
+    private var groupDisplay: String {
+        let groups = chemical.resolvedIntelligence.activityGroups
+        if !groups.isEmpty { return groups.legacyGroupProjection }
+        return chemical.chemicalGroup
+    }
+
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 6) {
-                Text(chemical.name)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(.primary)
+                HStack(spacing: 6) {
+                    Text(chemical.name)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.primary)
+                    ChemicalVerificationBadge(status: chemical.verificationStatus, compact: true)
+                }
 
-                if chemical.category != nil || !chemical.chemicalGroup.isEmpty || !chemical.problem.isEmpty {
+                if chemical.category != nil || !groupDisplay.isEmpty || !chemical.problem.isEmpty {
                     HStack(spacing: 6) {
                         if let category = chemical.category {
                             Text(category.label)
@@ -118,8 +241,8 @@ struct ChemicalDetailRow: View {
                                 .foregroundStyle(category.isFertiliser ? VineyardTheme.leafGreen : VineyardTheme.info)
                                 .clipShape(Capsule())
                         }
-                        if !chemical.chemicalGroup.isEmpty {
-                            Text(chemical.chemicalGroup)
+                        if !groupDisplay.isEmpty {
+                            Text(groupDisplay)
                                 .font(.caption2.weight(.semibold))
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
