@@ -45,9 +45,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.ChemicalInfoService
-import com.rork.vinetrack.data.SavedChemicalRepository
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
+import com.rork.vinetrack.data.chemical.ChemicalStoreMatching
 import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -446,16 +446,11 @@ internal fun ChemicalMatchFlowSheet(
                                 // share a name and be different registrations, and
                                 // the same registration is the same product however
                                 // it was typed.
-                                val key = intel.registration?.identityKey
-                                duplicateOf = if (key != null) {
-                                    state.savedChemicals.firstOrNull { chem ->
-                                        chem.id != existing?.id &&
-                                            chem.resolvedIntelligence.registration
-                                                ?.identityKey == key
-                                    }
-                                } else {
-                                    null
-                                }
+                                duplicateOf = ChemicalStoreMatching.findByRegistrationIdentity(
+                                    chemicals = state.savedChemicals,
+                                    registration = intel.registration,
+                                    excludingId = existing?.id,
+                                )
                                 step = MatchStep.CONFIRM
                             }) { Text("Continue") }
                         }
@@ -539,7 +534,7 @@ internal fun ChemicalMatchFlowSheet(
                                         saving = true
                                         vm.updateSavedChemical(
                                             dup.id,
-                                            chemicalInputFrom(dup, productName, intel),
+                                            ChemicalStoreMatching.inputFor(dup, productName, intel),
                                         ) { ok ->
                                             saving = false
                                             if (ok) onDismiss()
@@ -557,7 +552,7 @@ internal fun ChemicalMatchFlowSheet(
                                 onClick = {
                                     if (saving) return@Button
                                     saving = true
-                                    val input = chemicalInputFrom(existing, productName, intel)
+                                    val input = ChemicalStoreMatching.inputFor(existing, productName, intel)
                                     if (existing == null) {
                                         vm.createSavedChemical(input) { ok ->
                                             saving = false
@@ -601,57 +596,6 @@ internal fun ChemicalMatchFlowSheet(
     LaunchedEffect(Unit) {
         if (prefillQuery.trim().isNotEmpty() && results.isEmpty()) runSearch()
     }
-}
-
-/**
- * Builds the repository input for a confirmed structured record.
- *
- * When [existing] is present every unrelated field is carried across untouched —
- * matching a legacy chemical must not quietly reset its rates, costing or pack
- * data. The legacy `active_ingredient` / `chemical_group` scalars are written as
- * DERIVED mirrors of the structured data so old clients keep rendering something
- * familiar; nothing reads them back for a resistance decision.
- */
-private fun chemicalInputFrom(
-    existing: SavedChemical?,
-    productName: String,
-    intel: ChemicalIntelligence,
-): SavedChemicalRepository.ChemicalInput {
-    val projection = intel.legacyChemicalGroup
-    val activeProjection = intel.legacyActiveIngredient
-    return SavedChemicalRepository.ChemicalInput(
-        name = productName.trim().ifBlank { existing?.name.orEmpty() },
-        unit = existing?.unit ?: "Litres",
-        ratePerHa = existing?.ratePerHa ?: 0.0,
-        rates = existing?.rates ?: emptyList(),
-        activeIngredient = activeProjection.ifBlank { existing?.activeIngredient },
-        chemicalGroup = projection.ifBlank { existing?.chemicalGroup },
-        use = existing?.use,
-        problem = existing?.problem,
-        manufacturer = intel.registration?.registrant?.takeIf { it.isNotBlank() }
-            ?: existing?.manufacturer,
-        notes = existing?.notes,
-        modeOfAction = existing?.modeOfAction,
-        labelUrl = intel.registration?.labelReference?.takeIf { it.isNotBlank() }
-            ?: existing?.labelUrl,
-        productUrl = existing?.productUrl,
-        purchase = existing?.purchase,
-        productCategory = intel.productCategory.ifBlank { existing?.productCategory.orEmpty() },
-        productForm = existing?.productForm.orEmpty(),
-        packSize = existing?.packSize,
-        packUnit = existing?.packUnit.orEmpty(),
-        pricePerPack = existing?.pricePerPack,
-        density = existing?.density,
-        nitrogenPercent = existing?.nitrogenPercent,
-        phosphorusPercent = existing?.phosphorusPercent,
-        potassiumPercent = existing?.potassiumPercent,
-        analysisBasis = existing?.analysisBasis ?: "elemental",
-        organicCertified = existing?.organicCertified ?: false,
-        inventoryQuantity = existing?.inventoryQuantity,
-        inventoryUnit = existing?.inventoryUnit.orEmpty(),
-        applicationNotes = existing?.applicationNotes.orEmpty(),
-        intelligence = intel,
-    )
 }
 
 @Composable

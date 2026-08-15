@@ -43,6 +43,7 @@ import com.rork.vinetrack.data.chemical.ChemicalVerification
 import com.rork.vinetrack.data.chemical.ChemicalVerificationConflict
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
 import com.rork.vinetrack.data.chemical.legacyGroupProjection
+import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 
@@ -505,6 +506,51 @@ fun ChemicalIdentityView(
 
         if (productCategory.isNotBlank()) {
             ChemicalLabelledLine("Type", productCategory.replaceFirstChar { it.uppercase() })
+        }
+    }
+}
+
+/**
+ * The one-line intelligence summary shown under a product name in a picker.
+ *
+ * Renders the actives summary, the DERIVED group projection, and the trust badge.
+ * Deliberately read-only and non-blocking: an unverified product must still be
+ * sprayable today, because refusing to record a real spray would push the
+ * operator to write it down somewhere VineTrack can never see. The badge is the
+ * signal; the future Resistance Check is what will act on it.
+ *
+ * Legacy `chemicalGroup` text appears only when there is no structured group at
+ * all, and is visibly marked as unstructured so it is never mistaken for
+ * confirmed chemistry.
+ */
+@Composable
+fun ChemicalPickerIntelligenceRow(
+    chemical: SavedChemical,
+    modifier: Modifier = Modifier,
+) {
+    val vine = LocalVineColors.current
+    val intel = chemical.resolvedIntelligence
+    val actives = intel.activeIngredients.filter { it.name.isNotBlank() }
+    val structuredGroups = intel.activityGroups
+    val activeSummary = actives.joinToString(" + ") { it.displayLabel }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        if (activeSummary.isNotBlank()) {
+            Text(activeSummary, fontSize = 11.sp, color = vine.textSecondary, maxLines = 2)
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ChemicalVerificationBadge(chemical.verificationStatus, compact = true)
+            if (structuredGroups.isNotEmpty()) {
+                // e.g. "FRAC 3 + 11" — derived from the actives, never parsed back.
+                ChemicalPill(
+                    "${structuredGroups.first().scheme.label} ${structuredGroups.legacyGroupProjection()}",
+                    VineColors.Olive,
+                )
+            } else if (chemical.chemicalGroup.isNotBlank()) {
+                ChemicalPill("Group ${chemical.chemicalGroup} (unstructured)", VineColors.Stone)
+            }
         }
     }
 }

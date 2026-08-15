@@ -106,6 +106,7 @@ import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_100L
 import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_HECTARE
 import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.chemical.ChemicalLineSnapshot
 import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.data.model.chemicalUnitFromBase
 import com.rork.vinetrack.data.model.resolveSprayTrip
@@ -651,6 +652,18 @@ fun SprayCalculatorScreen(
                 chosenSprayRate = chosenRate,
                 rateBases = chemLines.mapNotNull { line ->
                     productAreaBasis[line.uid]?.let { line.chemicalId to it }
+                }.toMap(),
+                // Chemical Intelligence frozen at save time (sql/194). The store is
+                // read HERE, once, so the historical line keeps today's chemistry
+                // even after the product is re-classified tomorrow.
+                snapshots = chemLines.mapNotNull { line ->
+                    val chem = state.savedChemicals.firstOrNull { it.id == line.chemicalId }
+                        ?: return@mapNotNull null
+                    ChemicalLineSnapshot.capture(
+                        intelligence = chem.resolvedIntelligence,
+                        legacyChemicalGroup = chem.chemicalGroup,
+                        capturedAt = java.time.Instant.now().toString(),
+                    )?.let { chem.id to it }
                 }.toMap(),
             ),
             // Projection of the SAME plan the Review step displayed. The 17
@@ -2307,7 +2320,15 @@ private fun CalcChemicalLineCard(
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 savedChemicals.forEach { saved ->
                     DropdownMenuItem(
-                        text = { Text(saved.displayName, fontSize = 13.sp) },
+                        text = {
+                            Column {
+                                Text(saved.displayName, fontSize = 13.sp)
+                                // Actives, derived group and trust state (sql/194).
+                                // Never blocks selection: an unverified product is
+                                // still a real product the operator is spraying.
+                                com.rork.vinetrack.ui.components.ChemicalPickerIntelligenceRow(saved)
+                            }
+                        },
                         onClick = {
                             if (line.chemicalId != saved.id) {
                                 line.chemicalId = saved.id

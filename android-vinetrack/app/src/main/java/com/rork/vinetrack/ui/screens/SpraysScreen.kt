@@ -1316,6 +1316,16 @@ private class ChemicalDraft(
     costPerUnit: String,
     unit: String,
     savedChemicalId: String?,
+    /**
+     * The Chemical Intelligence snapshot this line was LOADED with (sql/194).
+     *
+     * Kept verbatim while the line still points at the same product, so editing
+     * an old spray's weather or notes cannot quietly re-date its chemistry to
+     * today's classification.
+     */
+    val loadedSnapshot: com.rork.vinetrack.data.chemical.ChemicalLineSnapshot? = null,
+    /** The product this line was loaded against, to detect a re-pick. */
+    val loadedSavedChemicalId: String? = savedChemicalId,
 ) {
     var name by mutableStateOf(name)
     var ratePerHa by mutableStateOf(ratePerHa)
@@ -1383,7 +1393,7 @@ private fun SpraySheet(
 
     fun buildInput(): SprayRecordRepository.SprayInput {
         val iso = Instant.ofEpochMilli(dateMs).toString()
-        val tankModels = tanks.mapIndexed { idx, t -> t.toModel(idx + 1) }
+        val tankModels = tanks.mapIndexed { idx, t -> t.toModel(idx + 1, state.savedChemicals) }
         return SprayRecordRepository.SprayInput(
             date = iso,
             startTime = if (isEdit) existing?.startTime ?: iso else iso,
@@ -1746,6 +1756,8 @@ private fun ChemicalNameField(
                             Column {
                                 Text(saved.displayName)
                                 if (sub.isNotEmpty()) Text(sub, fontSize = 12.sp, color = LocalVineColors.current.textSecondary)
+                                // Actives, derived group and trust state (sql/194).
+                                com.rork.vinetrack.ui.components.ChemicalPickerIntelligenceRow(saved)
                             }
                         },
                         onClick = {
@@ -2051,9 +2063,14 @@ private fun SprayChemical.toDraft(): ChemicalDraft = ChemicalDraft(
     costPerUnit = costPerUnit.takeIf { it > 0 }?.let { trimNum(it) } ?: "",
     unit = unit,
     savedChemicalId = savedChemicalId,
+    loadedSnapshot = chemicalSnapshot,
+    loadedSavedChemicalId = savedChemicalId,
 )
 
-private fun TankDraft.toModel(number: Int): SprayTank = SprayTank(
+private fun TankDraft.toModel(
+    number: Int,
+    savedChemicals: List<com.rork.vinetrack.data.model.SavedChemical>,
+): SprayTank = SprayTank(
     id = id,
     tankNumber = number,
     waterVolume = waterVolume.toDoubleSafe() ?: 0.0,
@@ -2062,19 +2079,47 @@ private fun TankDraft.toModel(number: Int): SprayTank = SprayTank(
     rowApplications = rowApplications,
     chemicals = chemicals
         .filter { it.name.isNotBlank() || it.ratePerHa.isNotBlank() || it.volumePerTank.isNotBlank() }
-        .map { it.toModel() },
+        .map { it.toModel(savedChemicals) },
 )
 
-private fun ChemicalDraft.toModel(): SprayChemical = SprayChemical(
-    id = id,
-    name = name.trim(),
-    volumePerTank = volumePerTank.toDoubleSafe() ?: 0.0,
-    ratePerHa = ratePerHa.toDoubleSafe() ?: 0.0,
-    ratePer100L = ratePer100L,
-    costPerUnit = costPerUnit.toDoubleSafe() ?: 0.0,
-    unit = unit,
-    savedChemicalId = savedChemicalId,
-)
+/**
+ * Project a draft line back to its model, freezing Chemical Intelligence.
+ *
+ * An untouched line keeps the snapshot it was loaded with; a newly picked or
+ * re-pointed product is captured fresh from the Chemical Store. Either way the
+ * spray record carries the chemistry as it stood when that product was chosen,
+ * never as it stands the next time the record happens to be opened.
+ */
+private fun ChemicalDraft.toModel(
+    savedChemicals: List<com.rork.vinetrack.data.model.SavedChemical>,
+): SprayChemical {
+    val linkUnchanged = savedChemicalId != null && savedChemicalId == loadedSavedChemicalId
+    val snapshot = if (linkUnchanged && loadedSnapshot != null) {
+        loadedSnapshot
+    } else {
+        savedChemicalId
+            ?.let { id -> savedChemicals.firstOrNull { it.id == id } }
+            ?.let { chem ->
+                com.rork.vinetrack.data.chemical.ChemicalLineSnapshot.capture(
+                    intelligence = chem.resolvedIntelligence,
+                    legacyChemicalGroup = chem.chemicalGroup,
+                    capturedAt = Instant.now().toString(),
+                )
+            }
+            ?: loadedSnapshot.takeIf { linkUnchanged }
+    }
+    return SprayChemical(
+        id = id,
+        name = name.trim(),
+        volumePerTank = volumePerTank.toDoubleSafe() ?: 0.0,
+        ratePerHa = ratePerHa.toDoubleSafe() ?: 0.0,
+        ratePer100L = ratePer100L,
+        costPerUnit = costPerUnit.toDoubleSafe() ?: 0.0,
+        unit = unit,
+        savedChemicalId = savedChemicalId,
+        chemicalSnapshot = snapshot,
+    )
+}
 
 private fun String.numericFilter(): String = filter { c -> c.isDigit() || c == '.' || c == ',' }
 

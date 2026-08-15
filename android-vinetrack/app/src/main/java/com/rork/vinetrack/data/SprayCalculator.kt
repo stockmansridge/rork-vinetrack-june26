@@ -1,5 +1,6 @@
 package com.rork.vinetrack.data
 
+import com.rork.vinetrack.data.chemical.ChemicalLineSnapshot
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.SprayChemical
 import com.rork.vinetrack.data.model.SprayTank
@@ -212,6 +213,16 @@ object SprayCalculator {
          * saved until the choice has actually been made.
          */
         rateBases: Map<String, com.rork.vinetrack.data.spray.SprayProductRateBasis> = emptyMap(),
+        /**
+         * The Chemical Intelligence to FREEZE onto each product line, keyed by
+         * saved-chemical id (sql/194).
+         *
+         * Captured by the caller from the Chemical Store at save time, because
+         * the calculator is pure and must not read the store itself. A line whose
+         * product has no structured intelligence is absent here and stays
+         * honestly null rather than carrying invented chemistry.
+         */
+        snapshots: Map<String, ChemicalLineSnapshot> = emptyMap(),
     ): List<SprayTank> {
         val totalTanks = result.totalTanks
         if (totalTanks <= 0) {
@@ -255,6 +266,9 @@ object SprayCalculator {
                             ).raw
                     },
                     savedChemicalId = cr.savedChemicalId,
+                    // Freeze today's chemistry onto the line. Re-classifying the
+                    // product later must never restate what was applied here.
+                    chemicalSnapshot = cr.savedChemicalId?.let { snapshots[it] },
                 )
             }
             SprayTank(
