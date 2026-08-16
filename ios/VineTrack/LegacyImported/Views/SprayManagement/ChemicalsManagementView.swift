@@ -50,11 +50,29 @@ struct ChemicalsManagementView: View {
     @State private var showAddSheet: Bool = false
     @State private var editingChemical: SavedChemical?
     @State private var matchingChemical: SavedChemical?
+    @State private var reverifyingChemical: SavedChemical?
     @State private var searchText: String = ""
     @State private var filter: ChemicalVerificationFilter = .all
     @State private var deleteCoordinator = ChemicalDeleteCoordinator()
 
     private var canManageSetup: Bool { accessControl?.canManageSetup ?? false }
+
+    /// The country a re-check would be keyed on, from the vineyard profile.
+    private var countryCode: String {
+        ChemicalRegistration.normaliseCountry(
+            ChemicalInfoService.resolveCountry(vineyardCountry: store.selectedVineyard?.country)
+        )
+    }
+
+    /// Whether Re-verify belongs on this row.
+    ///
+    /// The answer comes straight from the domain. Duplicating the eligibility
+    /// rule here would let the button and the behaviour drift apart, and the
+    /// interesting case — a legacy record with a registration number but no
+    /// match — is exactly the one a hand-written UI check gets wrong.
+    private func canReverify(_ chemical: SavedChemical) -> Bool {
+        ChemicalReverification.isOffered(for: chemical, fallbackCountry: countryCode)
+    }
 
     private var filteredChemicals: [SavedChemical] {
         var list = store.savedChemicals.filter { filter.matches($0.verificationStatus) }
@@ -110,13 +128,27 @@ struct ChemicalsManagementView: View {
                     }
                 }
                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                    if canManageSetup, chemical.verificationStatus != .verified {
-                        Button {
-                            matchingChemical = chemical
-                        } label: {
-                            Label("Match & Verify", systemImage: "checkmark.seal")
+                    if canManageSetup {
+                        // Re-verify for records VineTrack can already identify;
+                        // Match & Verify for the ones it cannot. A legacy record
+                        // with nothing but a typed name has no identity to
+                        // re-check, so the domain sends it to Match & Verify
+                        // instead of quietly running a brand-name search.
+                        if canReverify(chemical) {
+                            Button {
+                                reverifyingChemical = chemical
+                            } label: {
+                                Label("Re-verify", systemImage: "arrow.triangle.2.circlepath")
+                            }
+                            .tint(VineyardTheme.info)
+                        } else if chemical.verificationStatus != .verified {
+                            Button {
+                                matchingChemical = chemical
+                            } label: {
+                                Label("Match & Verify", systemImage: "checkmark.seal")
+                            }
+                            .tint(VineyardTheme.info)
                         }
-                        .tint(VineyardTheme.info)
                     }
                 }
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -194,6 +226,9 @@ struct ChemicalsManagementView: View {
         }
         .sheet(item: $matchingChemical) { chem in
             ChemicalMatchFlowView(existing: chem, prefillQuery: chem.name)
+        }
+        .sheet(item: $reverifyingChemical) { chem in
+            ChemicalReverifyFlowView(chemical: chem)
         }
         .sheet(item: $editingChemical) { chem in
             EditSavedChemicalSheet(chemical: chem)

@@ -236,6 +236,7 @@ struct EditSavedChemicalSheet: View {
     @State private var inventoryText: String = ""
     @State private var applicationNotes: String = ""
     @State private var showAILookup: Bool = false
+    @State private var showReverify: Bool = false
     @State private var aiLoading: Bool = false
     @State private var aiError: String?
     @State private var linkAlertMessage: String?
@@ -339,6 +340,9 @@ struct EditSavedChemicalSheet: View {
                     aiSection
                 }
                 productSection
+                if chemical != nil {
+                    reverifySection
+                }
                 detailsSection
                 ratesSection
                 if productCategory?.isFertiliser == true {
@@ -358,6 +362,15 @@ struct EditSavedChemicalSheet: View {
             .sheet(isPresented: $showAILookup) {
                 ChemicalAILookupSheet(initialQuery: name) { result in
                     Task { await applyAIResult(result) }
+                }
+            }
+            .sheet(isPresented: $showReverify) {
+                if let chemical {
+                    // Closing this form after a successful re-verification is not
+                    // cosmetic. These @State fields were captured from the record
+                    // at init, so a Save afterwards would write the pre-check
+                    // values straight back over the update just accepted.
+                    ChemicalReverifyFlowView(chemical: chemical) { dismiss() }
                 }
             }
             .toolbar {
@@ -550,6 +563,49 @@ struct EditSavedChemicalSheet: View {
             Text("Details")
         } footer: {
             Text("Use Label URL only for the official product label, preferably a PDF. Product pages may be used for manufacturer or marketing information, but are never shown as the official label.")
+        }
+    }
+
+    /// Re-verify Chemical, or an honest explanation of why it is not available.
+    ///
+    /// Eligibility and the reason string both come from `ChemicalReverification`.
+    /// The UI asks the domain rather than re-deriving the rule, so the action can
+    /// never appear on a record the flow would refuse to run on.
+    private var reverifySection: some View {
+        let country = ChemicalRegistration.normaliseCountry(
+            ChemicalInfoService.resolveCountry(vineyardCountry: store.selectedVineyard?.country)
+        )
+        let offered = chemical.map {
+            ChemicalReverification.isOffered(for: $0, fallbackCountry: country)
+        } ?? false
+        let reason = chemical.flatMap {
+            ChemicalReverification.unavailableReason(for: $0, fallbackCountry: country)
+        }
+        return Section {
+            if let chemical {
+                HStack {
+                    Text("Verification")
+                    Spacer()
+                    ChemicalVerificationBadge(status: chemical.verificationStatus)
+                }
+            }
+            if offered {
+                Button {
+                    showReverify = true
+                } label: {
+                    Label("Re-verify Chemical", systemImage: "arrow.triangle.2.circlepath")
+                }
+            } else if let reason {
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Chemical Intelligence")
+        } footer: {
+            Text(offered
+                 ? "Re-checks this product against the register using the registration details VineTrack already holds. Nothing is changed until you review and accept it."
+                 : "Products without registration details are identified through Match & Verify first.")
         }
     }
 

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -56,6 +58,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import com.rork.vinetrack.data.chemical.ChemicalEditOutcome
 import com.rork.vinetrack.data.chemical.ChemicalEditReconciler
+import com.rork.vinetrack.data.chemical.ChemicalRegistration
+import com.rork.vinetrack.data.chemical.ChemicalReverification
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
 import com.rork.vinetrack.data.chemical.legacyGroupProjection
 import com.rork.vinetrack.ui.components.ChemicalVerificationBadge
@@ -124,6 +128,17 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
     /** Non-null when running the Search → Match → Verify → Confirm wizard. */
     var matchingNew by remember { mutableStateOf(false) }
     var matching by remember { mutableStateOf<SavedChemical?>(null) }
+    /** Non-null when re-checking an already-identified product. */
+    var reverifying by remember { mutableStateOf<SavedChemical?>(null) }
+
+    /** The country a re-check would be keyed on, from the vineyard profile. */
+    val countryCode: String = remember(state.selectedVineyardId, state.vineyards) {
+        ChemicalRegistration.normaliseCountry(
+            ChemicalInfoService.resolveCountry(
+                state.vineyards.firstOrNull { it.id == state.selectedVineyardId }?.country,
+            ),
+        )
+    }
 
     // Counts come from each record's resolved verification status, so a stale
     // stored status can never inflate the "Verified" tally.
@@ -313,9 +328,17 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                         chemical = chem,
                         canManage = canManage,
                         canViewFinancials = canViewFinancials,
+                        // Eligibility is the domain's call, never the UI's.
+                        // Duplicating the rule here would let the button and the
+                        // behaviour drift apart, and the interesting case — a
+                        // legacy record holding a registration number but never
+                        // matched — is exactly the one a hand-written check gets
+                        // wrong.
+                        canReverify = ChemicalReverification.isOffered(chem, countryCode),
                         onEdit = { if (canManage) editing = chem },
                         onDelete = { if (canManage) pendingDelete = chem },
                         onMatchVerify = { if (canManage) matching = chem },
+                        onReverify = { if (canManage) reverifying = chem },
                     )
                 }
             }
@@ -344,12 +367,21 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             onEnterManually = { matching = null; editing = chem },
         )
     }
+    reverifying?.let { chem ->
+        ChemicalReverifySheet(
+            vm = vm,
+            state = state,
+            chemical = chem,
+            onDismiss = { reverifying = null },
+        )
+    }
     if (creating) {
         ChemicalFormSheet(
             vm = vm,
             existing = null,
             canViewFinancials = canViewFinancials,
             onDismiss = { creating = false },
+            state = state,
         )
     }
     editing?.let { chem ->
@@ -358,6 +390,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             existing = chem,
             canViewFinancials = canViewFinancials,
             onDismiss = { editing = null },
+            state = state,
         )
     }
     pendingDelete?.let { chem ->
@@ -420,9 +453,11 @@ private fun ChemicalRow(
     chemical: SavedChemical,
     canManage: Boolean,
     canViewFinancials: Boolean,
+    canReverify: Boolean,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onMatchVerify: () -> Unit,
+    onReverify: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     val fmt = LocalRegionFormatter.current
@@ -493,9 +528,24 @@ private fun ChemicalRow(
                         fontWeight = FontWeight.Medium,
                     )
                 }
-                // Progressive cleanup: anything not already matched offers the
-                // wizard straight from the row it appears on.
-                if (canManage && status != ChemicalVerificationStatus.VERIFIED &&
+                // Re-verify for records VineTrack can already identify;
+                // Match & Verify for the ones it cannot. A legacy product with
+                // nothing but a typed name has no identity to re-check, so the
+                // domain sends it to Match & Verify rather than quietly running a
+                // fresh brand-name search under a re-verification label.
+                if (canManage && canReverify) {
+                    TextButton(
+                        onClick = onReverify,
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                    ) {
+                        Text(
+                            "Re-verify Chemical",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = ChemTint,
+                        )
+                    }
+                } else if (canManage && status != ChemicalVerificationStatus.VERIFIED &&
                     status != ChemicalVerificationStatus.PARTIALLY_VERIFIED
                 ) {
                     TextButton(
@@ -595,11 +645,18 @@ internal fun ChemicalFormSheet(
     existing: SavedChemical?,
     canViewFinancials: Boolean,
     onDismiss: () -> Unit,
+    /**
+     * Needed only to offer Re-verify Chemical, which requires the vineyard's
+     * country. Optional so callers that add a brand-new product — which can never
+     * be re-verified — do not have to supply it.
+     */
+    state: AppUiState? = null,
 ) {
     val vine = LocalVineColors.current
     val uriHandler = LocalUriHandler.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val isEdit = existing != null
+    var showReverify by remember { mutableStateOf(false) }
 
     val existingPerHaId = existing?.rates?.firstOrNull { it.basis == CHEMICAL_RATE_PER_HECTARE }?.id
     val existingPer100LId = existing?.rates?.firstOrNull { it.basis == CHEMICAL_RATE_PER_100L }?.id
@@ -795,6 +852,19 @@ internal fun ChemicalFormSheet(
         if (isEdit) vm.updateSavedChemical(existing!!.id, input, cb) else vm.createSavedChemical(input, cb)
     }
 
+    if (showReverify && existing != null && state != null) {
+        // Closing this form after a successful re-verification is not cosmetic.
+        // These fields were captured from the record when the sheet opened, so a
+        // Save afterwards would write the pre-check values straight back over the
+        // update the operator just accepted.
+        ChemicalReverifySheet(
+            vm = vm,
+            state = state,
+            chemical = existing,
+            onDismiss = { showReverify = false; onDismiss() },
+        )
+    }
+
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
             modifier = Modifier
@@ -842,6 +912,58 @@ internal fun ChemicalFormSheet(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            // Re-verify Chemical, or an honest explanation of why it is not
+            // available. Both the eligibility and the reason come from
+            // ChemicalReverification, so this action can never appear on a record
+            // the flow would refuse to run on.
+            if (existing != null && state != null) {
+                val reverifyCountry = ChemicalRegistration.normaliseCountry(
+                    ChemicalInfoService.resolveCountry(
+                        state.vineyards
+                            .firstOrNull { it.id == state.selectedVineyardId }?.country,
+                    ),
+                )
+                SectionLabel("Chemical intelligence")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        "Verification",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                        modifier = Modifier.width(96.dp),
+                    )
+                    ChemicalVerificationBadge(existing.verificationStatus)
+                }
+                if (ChemicalReverification.isOffered(existing, reverifyCountry)) {
+                    OutlinedButton(
+                        onClick = { showReverify = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(
+                            Icons.Filled.Sync,
+                            contentDescription = null,
+                            tint = ChemTint,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Text("Re-verify Chemical")
+                    }
+                    Text(
+                        "Re-checks this product against the register using the registration " +
+                            "details VineTrack already holds. Nothing is changed until you " +
+                            "review and accept it.",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
+                } else {
+                    ChemicalReverification.unavailableReason(existing, reverifyCountry)?.let {
+                        Text(it, fontSize = 11.sp, color = vine.textSecondary)
+                    }
+                }
+            }
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 listOf("Liquid", "Solid").forEachIndexed { index, f ->
                     SegmentedButton(
