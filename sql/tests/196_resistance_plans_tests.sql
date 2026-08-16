@@ -86,6 +86,7 @@ declare
   v_pos     jsonb;
   v_t1      timestamptz := now() - interval '2 hours';
   v_t2      timestamptz := now() - interval '1 hour';
+  v_base    timestamptz;
 
   -- A realistic plan document: 3 -> 7 -> 11, one product per position, the
   -- middle one fulfilled by a real Chemical Store product.
@@ -548,14 +549,33 @@ begin
 
   -- =====================================================================
   -- T17. Stale-write guard (the conflict strategy)
+  --
+  -- Timestamps are derived from what is ACTUALLY STORED, not from the fixture
+  -- constants. T15 writes client_updated_at = now(), and in Postgres now() is
+  -- TRANSACTION-START time, so it is newer than both v_t1 and v_t2. A
+  -- hard-coded v_t2 "newer edit" here was therefore itself stale and was
+  -- correctly skipped by the guard — which then failed the NEXT assertion and
+  -- blamed the replay, making a working guard look broken. Anchoring on the
+  -- stored value keeps this case independent of what earlier cases left behind.
   -- =====================================================================
+  select client_updated_at into v_base
+  from public.resistance_plans where id = p1;
+  if v_base is null then
+    raise exception 'T17: precondition — client_updated_at must be set to test staleness';
+  end if;
+
   update public.resistance_plans
-     set notes = 'newer edit', client_updated_at = v_t2
+     set notes = 'newer edit', client_updated_at = v_base + interval '1 minute'
    where id = p1;
+  -- Asserted separately so a skipped SET-UP write can never be misreported as
+  -- a guard failure below.
+  if (select notes from public.resistance_plans where id = p1) <> 'newer edit' then
+    raise exception 'T17: precondition — the newer edit was itself skipped';
+  end if;
 
   -- Older replay from a device that was offline: SKIPPED, silently.
   update public.resistance_plans
-     set notes = 'stale offline replay', client_updated_at = v_t1
+     set notes = 'stale offline replay', client_updated_at = v_base - interval '2 hours'
    where id = p1;
   if (select notes from public.resistance_plans where id = p1) <> 'newer edit' then
     raise exception 'T17: a stale offline replay overwrote a newer edit';
@@ -563,7 +583,7 @@ begin
 
   -- Equal timestamp (idempotent re-send) is applied.
   update public.resistance_plans
-     set notes = 'same-stamp resend', client_updated_at = v_t2
+     set notes = 'same-stamp resend', client_updated_at = v_base + interval '1 minute'
    where id = p1;
   if (select notes from public.resistance_plans where id = p1) <> 'same-stamp resend' then
     raise exception 'T17: an idempotent re-send was rejected';
@@ -571,7 +591,7 @@ begin
 
   -- Newer wins.
   update public.resistance_plans
-     set notes = 'newest', client_updated_at = now()
+     set notes = 'newest', client_updated_at = v_base + interval '2 minutes'
    where id = p1;
   if (select notes from public.resistance_plans where id = p1) <> 'newest' then
     raise exception 'T17: a newer write was skipped';
