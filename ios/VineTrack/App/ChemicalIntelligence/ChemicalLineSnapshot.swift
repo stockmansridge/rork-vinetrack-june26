@@ -84,6 +84,41 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         case capturedAt = "captured_at"
     }
 
+    /// One wire format for `captured_at` on both platforms: an ISO-8601 string.
+    ///
+    /// Encoded explicitly rather than left to the ambient `JSONEncoder` date
+    /// strategy, because the snapshot travels inside `tanks` JSONB that Android
+    /// also writes. A Swift-default `978307200.5` next to Kotlin's
+    /// `"2026-08-15T…Z"` would be two shapes for the same fact in one column.
+    nonisolated static let capturedAtFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    nonisolated static func parseCapturedAt(_ raw: String) -> Date? {
+        if let date = capturedAtFormatter.date(from: raw) { return date }
+        return ISO8601DateFormatter().date(from: raw)
+    }
+
+    nonisolated func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(savedChemicalId, forKey: .savedChemicalId)
+        try c.encodeIfPresent(productName, forKey: .productName)
+        try c.encode(activeIngredients, forKey: .activeIngredients)
+        try c.encode(activityGroupCodes, forKey: .activityGroupCodes)
+        try c.encode(verificationStatus.rawValue, forKey: .verificationStatus)
+        try c.encodeIfPresent(registrationIdentityKey, forKey: .registrationIdentityKey)
+        try c.encodeIfPresent(countryCode, forKey: .countryCode)
+        try c.encode(schemaVersion, forKey: .schemaVersion)
+        try c.encode(activityGroupTableVersion, forKey: .activityGroupTableVersion)
+        try c.encodeIfPresent(legacyChemicalGroup, forKey: .legacyChemicalGroup)
+        try c.encodeIfPresent(
+            capturedAt.map { Self.capturedAtFormatter.string(from: $0) },
+            forKey: .capturedAt
+        )
+    }
+
     nonisolated init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         savedChemicalId = try c.decodeIfPresent(String.self, forKey: .savedChemicalId)
@@ -97,7 +132,14 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
         activityGroupTableVersion = try c.decodeIfPresent(Int.self, forKey: .activityGroupTableVersion) ?? 0
         legacyChemicalGroup = try c.decodeIfPresent(String.self, forKey: .legacyChemicalGroup)
-        capturedAt = try c.decodeIfPresent(Date.self, forKey: .capturedAt)
+        // Accept the ISO-8601 string this type now writes, and still read a
+        // numeric/strategy-decoded date so snapshots already persisted by an
+        // earlier build keep loading.
+        if let raw = try? c.decodeIfPresent(String.self, forKey: .capturedAt) {
+            capturedAt = Self.parseCapturedAt(raw)
+        } else {
+            capturedAt = try? c.decodeIfPresent(Date.self, forKey: .capturedAt)
+        }
     }
 
     /// Whether this snapshot carries anything the Resistance Engine could use.

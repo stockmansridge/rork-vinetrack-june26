@@ -95,6 +95,9 @@ struct SprayCalculatorView: View {
     // Prefill (duplicate / template)
     private let prefillRecord: SprayRecord?
     @State private var prefillApplied: Bool = false
+    /// Template/duplicate products that no longer resolve to a saved chemical.
+    /// Surfaced so a missing product is a visible gap, never a silent one.
+    @State private var unresolvedPrefillProducts: [String] = []
 
     init(prefillRecord: SprayRecord? = nil) {
         self.prefillRecord = prefillRecord
@@ -534,10 +537,29 @@ struct SprayCalculatorView: View {
 
         if let firstTank = r.tanks.first {
             var lines: [ChemicalLine] = []
+            var unresolved: [String] = []
             for chem in firstTank.chemicals {
-                guard let saved = store.savedChemicals.first(where: {
-                    $0.name.caseInsensitiveCompare(chem.name) == .orderedSame
-                }) else { continue }
+                // Resolve the product the TEMPLATE POINTS AT, not the chemistry
+                // it was recorded with. A template is configuration: reusing it
+                // in November must pick up November's classification, so only
+                // the identity is carried across and the snapshot is captured
+                // fresh at save time by `chemicalSnapshot(for:)`.
+                let (saved, _) = ChemicalSnapshotCapture.resolve(
+                    savedChemicalId: chem.savedChemicalId,
+                    productName: chem.name,
+                    registrationIdentityKey: chem.chemicalSnapshot?.registrationIdentityKey,
+                    in: store.savedChemicals
+                )
+                guard let saved else {
+                    // The calculator can only price a line against a saved
+                    // chemical, so an unresolvable product cannot become a
+                    // line here. Name it instead of dropping it in silence —
+                    // an operator who can see what went missing can re-add it;
+                    // one who can't will ship a spray with a hole in it.
+                    let name = chem.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    unresolved.append(name.isEmpty ? "Unnamed product" : name)
+                    continue
+                }
                 let basis: RateBasis = chem.ratePer100L > 0 ? .per100Litres : .perHectare
                 let rate = saved.rates.first(where: { $0.basis == basis }) ?? saved.rates.first
                 lines.append(
@@ -549,6 +571,7 @@ struct SprayCalculatorView: View {
                 )
             }
             chemicalLines = lines
+            unresolvedPrefillProducts = unresolved
         }
     }
 
@@ -2672,17 +2695,11 @@ struct SprayCalculatorView: View {
     /// Returns `nil` for a product with nothing structured, so a line stays
     /// honestly empty rather than implying knowledge that never existed.
     private func chemicalSnapshot(for chemResult: ChemicalCalculationResult) -> ChemicalLineSnapshot? {
-        guard let savedId = chemResult.savedChemicalId,
-              let chemical = store.savedChemicals.first(where: { $0.id == savedId })
-        else { return nil }
-        return ChemicalLineSnapshot.capture(
-            from: chemical.chemicalIntelligence,
-            legacyChemicalGroup: chemical.chemicalGroup,
-            // uuidString, not the UUID: the snapshot's key must serialise
-            // identically to Android's so one JSON shape covers both platforms.
-            savedChemicalId: savedId.uuidString,
-            productName: chemical.name
-        )
+        ChemicalSnapshotCapture.captureForNewApplication(
+            savedChemicalId: chemResult.savedChemicalId,
+            productName: chemResult.chemicalName,
+            library: store.savedChemicals
+        ).snapshot
     }
 
     private func buildSprayTanks(result: SprayCalculationResult, tankCapacity: Double) -> [SprayTank] {

@@ -477,6 +477,11 @@ struct SprayProgramCSVService {
     static func importRows(_ rows: [ImportedSprayRow], into store: MigratedDataStore, paddocks: [Paddock]) -> Int {
         guard let vid = store.selectedVineyardId else { return 0 }
         var imported = 0
+        // Read the Chemical Store ONCE, here, so every line in the file is
+        // frozen against the same library state — and so an import that runs for
+        // a while can't straddle a mid-import edit.
+        let library = store.savedChemicals
+        let importedAt = Date()
 
         for row in rows {
             let tripId = UUID()
@@ -500,13 +505,26 @@ struct SprayProgramCSVService {
             store.updateTrip(endedTrip)
 
             let sprayChemicals = row.chemicals.map { chem in
-                SprayChemical(
+                // An imported row is a NEW application, so it earns the same
+                // chemistry a calculator spray would — but only when the product
+                // resolves deterministically. A CSV name that matches nothing,
+                // or matches two library entries, stays unresolved rather than
+                // borrowing some other product's actives and groups.
+                let resolution = ChemicalSnapshotCapture.captureForNewApplication(
+                    savedChemicalId: nil,
+                    productName: chem.name,
+                    library: library,
+                    at: importedAt
+                )
+                return SprayChemical(
                     name: chem.name,
                     volumePerTank: chem.unit.toBase(chem.amountPerTank),
                     ratePerHa: chem.unit.toBase(chem.ratePerHa),
                     ratePer100L: chem.unit.toBase(chem.ratePer100L),
                     costPerUnit: chem.costPerUnit,
-                    unit: chem.unit
+                    unit: chem.unit,
+                    savedChemicalId: resolution.savedChemicalId,
+                    chemicalSnapshot: resolution.snapshot
                 )
             }
 

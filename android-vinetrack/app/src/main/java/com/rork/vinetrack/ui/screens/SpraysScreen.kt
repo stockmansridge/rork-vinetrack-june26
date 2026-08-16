@@ -1393,7 +1393,13 @@ private fun SpraySheet(
 
     fun buildInput(): SprayRecordRepository.SprayInput {
         val iso = Instant.ofEpochMilli(dateMs).toString()
-        val tankModels = tanks.mapIndexed { idx, t -> t.toModel(idx + 1, state.savedChemicals) }
+        // Anything that is not an edit of an existing record is a NEW
+        // application — a fresh sheet or a template instantiation — so its
+        // chemistry is captured from the Chemical Store as it stands now rather
+        // than inherited from whatever the template was configured with.
+        val tankModels = tanks.mapIndexed { idx, t ->
+            t.toModel(idx + 1, state.savedChemicals, refreshSnapshots = !isEdit)
+        }
         return SprayRecordRepository.SprayInput(
             date = iso,
             startTime = if (isEdit) existing?.startTime ?: iso else iso,
@@ -2070,6 +2076,7 @@ private fun SprayChemical.toDraft(): ChemicalDraft = ChemicalDraft(
 private fun TankDraft.toModel(
     number: Int,
     savedChemicals: List<com.rork.vinetrack.data.model.SavedChemical>,
+    refreshSnapshots: Boolean,
 ): SprayTank = SprayTank(
     id = id,
     tankNumber = number,
@@ -2079,36 +2086,46 @@ private fun TankDraft.toModel(
     rowApplications = rowApplications,
     chemicals = chemicals
         .filter { it.name.isNotBlank() || it.ratePerHa.isNotBlank() || it.volumePerTank.isNotBlank() }
-        .map { it.toModel(savedChemicals) },
+        .map { it.toModel(savedChemicals, refreshSnapshots) },
 )
 
 /**
  * Project a draft line back to its model, freezing Chemical Intelligence.
  *
- * An untouched line keeps the snapshot it was loaded with; a newly picked or
- * re-pointed product is captured fresh from the Chemical Store. Either way the
- * spray record carries the chemistry as it stood when that product was chosen,
- * never as it stands the next time the record happens to be opened.
+ * Two different jobs, decided by [refreshSnapshots]:
+ *
+ *  * **Editing an existing record** (`false`). An untouched line keeps the
+ *    snapshot it was loaded with, so fixing a spray's wind speed or notes
+ *    cannot quietly re-date its chemistry to today's classification. Only a
+ *    newly picked or re-pointed product is captured fresh.
+ *  * **Creating a NEW application** (`true`), which is what instantiating a
+ *    template is. The template is configuration, not evidence: its recorded
+ *    chemistry is discarded and the CURRENT Chemical Store record is frozen
+ *    instead. A template built in September when a product was FRAC 11 must
+ *    snapshot FRAC 3 if the product was legitimately re-verified by November.
  */
 private fun ChemicalDraft.toModel(
     savedChemicals: List<com.rork.vinetrack.data.model.SavedChemical>,
+    refreshSnapshots: Boolean,
 ): SprayChemical {
     val linkUnchanged = savedChemicalId != null && savedChemicalId == loadedSavedChemicalId
-    val snapshot = if (linkUnchanged && loadedSnapshot != null) {
-        loadedSnapshot
-    } else {
-        savedChemicalId
-            ?.let { id -> savedChemicals.firstOrNull { it.id == id } }
-            ?.let { chem ->
-                com.rork.vinetrack.data.chemical.ChemicalLineSnapshot.capture(
-                    intelligence = chem.resolvedIntelligence,
-                    legacyChemicalGroup = chem.chemicalGroup,
-                    savedChemicalId = chem.id,
-                    productName = chem.name,
-                    capturedAt = Instant.now().toString(),
-                )
-            }
-            ?: loadedSnapshot.takeIf { linkUnchanged }
+    val fresh = com.rork.vinetrack.data.chemical.ChemicalSnapshotCapture
+        .captureForNewApplication(
+            savedChemicalId = savedChemicalId,
+            productName = name.trim(),
+            legacyChemicalGroup = loadedSnapshot?.legacyChemicalGroup.orEmpty(),
+            registrationIdentityKey = loadedSnapshot?.registrationIdentityKey,
+            library = savedChemicals,
+            capturedAt = Instant.now().toString(),
+        )
+    val snapshot = when {
+        // New application: today's chemistry, or an honest nothing.
+        refreshSnapshots -> fresh.snapshot
+        // Existing record, same product: history stays frozen.
+        linkUnchanged && loadedSnapshot != null -> loadedSnapshot
+        // Existing record, product re-pointed: capture what was just chosen.
+        fresh.isResolved -> fresh.snapshot
+        else -> loadedSnapshot.takeIf { linkUnchanged }
     }
     return SprayChemical(
         id = id,

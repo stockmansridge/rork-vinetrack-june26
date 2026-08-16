@@ -106,7 +106,7 @@ import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_100L
 import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_HECTARE
 import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.Paddock
-import com.rork.vinetrack.data.chemical.ChemicalLineSnapshot
+import com.rork.vinetrack.data.chemical.ChemicalSnapshotCapture
 import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.data.model.chemicalUnitFromBase
 import com.rork.vinetrack.data.model.resolveSprayTrip
@@ -657,15 +657,17 @@ fun SprayCalculatorScreen(
                 // read HERE, once, so the historical line keeps today's chemistry
                 // even after the product is re-classified tomorrow.
                 snapshots = chemLines.mapNotNull { line ->
-                    val chem = state.savedChemicals.firstOrNull { it.id == line.chemicalId }
-                        ?: return@mapNotNull null
-                    ChemicalLineSnapshot.capture(
-                        intelligence = chem.resolvedIntelligence,
-                        legacyChemicalGroup = chem.chemicalGroup,
-                        savedChemicalId = chem.id,
-                        productName = chem.name,
-                        capturedAt = java.time.Instant.now().toString(),
-                    )?.let { chem.id to it }
+                    ChemicalSnapshotCapture
+                        .captureForNewApplication(
+                            savedChemicalId = line.chemicalId,
+                            productName = null,
+                            library = state.savedChemicals,
+                            // Stamped with the record's own instant, so the
+                            // chemistry and the application share one clock.
+                            capturedAt = iso,
+                        )
+                        .snapshot
+                        ?.let { line.chemicalId to it }
                 }.toMap(),
             ),
             // Projection of the SAME plan the Review step displayed. The 17

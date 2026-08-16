@@ -18,6 +18,7 @@ import com.rork.vinetrack.data.AppConfig
 import com.rork.vinetrack.data.BackendError
 import com.rork.vinetrack.data.VineTrackAccessRepository
 import com.rork.vinetrack.data.VintageResolver
+import com.rork.vinetrack.data.chemical.ChemicalSnapshotCapture
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import com.rork.vinetrack.data.subscription.EntitlementVerificationStore
 import com.rork.vinetrack.data.subscription.PaywallPackageUi
@@ -10365,6 +10366,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _ui.update { it.copy(sprayBusy = true, sprayError = null) }
             val paddocks = _ui.value.paddocks
+            // Read the Chemical Store ONCE, here, so every line in the file is
+            // frozen against the same library state — and so an import that runs
+            // for a while can't straddle a mid-import edit.
+            val library = _ui.value.savedChemicals
             var imported = 0
             var failed = 0
             val createdTrips = ArrayList<Trip>()
@@ -10391,6 +10396,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         createdTrips.add(trip)
 
                         val chemicals = row.chemicals.map { chem ->
+                            // An imported row is a NEW application, so it earns
+                            // the same chemistry a calculator spray would — but
+                            // only when the product resolves deterministically.
+                            // The importer already linked names that matched
+                            // exactly and uniquely; an ambiguous or unmatched
+                            // name stays unresolved rather than borrowing some
+                            // other product's actives and groups.
+                            val resolution = ChemicalSnapshotCapture.captureForNewApplication(
+                                savedChemicalId = chem.savedChemicalId,
+                                productName = chem.name,
+                                library = library,
+                                capturedAt = iso,
+                            )
                             com.rork.vinetrack.data.model.SprayChemical(
                                 id = java.util.UUID.randomUUID().toString(),
                                 name = chem.name,
@@ -10399,7 +10417,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                 ratePer100L = chem.ratePer100L,
                                 costPerUnit = chem.costPerUnit,
                                 unit = chem.unit,
-                                savedChemicalId = chem.savedChemicalId,
+                                savedChemicalId = resolution.savedChemicalId ?: chem.savedChemicalId,
+                                chemicalSnapshot = resolution.snapshot,
                             )
                         }
                         val tank = com.rork.vinetrack.data.model.SprayTank(
