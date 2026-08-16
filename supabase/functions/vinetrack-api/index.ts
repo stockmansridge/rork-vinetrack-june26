@@ -750,6 +750,12 @@ interface SprayRow {
   // inferred from the products in the tank.
   targets: string[] | null;
   spray_head_target: string | null;
+  // Block attribution (sql/195). Null on every record written before that
+  // migration, meaning "blocks not recorded" — such records MUST NOT be shown
+  // against the vineyard's current blocks, nor have attribution inferred from
+  // row numbers, block-name similarity or geometry.
+  block_ids: string[] | null;
+  application_blocks: unknown;
   created_at: string; updated_at: string;
 }
 
@@ -763,6 +769,7 @@ const SPRAY_COLUMNS =
   "carrier_volume_basis, total_carrier_litres, carrier_litres_per_hectare, " +
   "dilute_litres_per_100m, applied_litres_per_100m, concentration_factor, " +
   "targets, spray_head_target, " +
+  "block_ids, application_blocks, " +
   "created_at, updated_at";
 
 interface TankJson {
@@ -910,6 +917,18 @@ function mapSpraySummary(row: SprayRow, idx: MachineIndex) {
     // grower who tank mixes a nutrient with a fungicide has one target, not two,
     // and only the operator knows which.
     targets: Array.isArray(row.targets) ? row.targets : null,
+    // WHICH blocks this application actually treated (sql/195).
+    //
+    // null = blocks not recorded (record predates sql/195). That is NOT "all
+    // blocks" and NOT "no blocks": it is unknown, and a consumer must present it
+    // as such rather than substituting the vineyard's current blocks.
+    //
+    // `block_ids` is the stable identity and the thing to filter on.
+    // `application_blocks` carries the per-block display name and geometry
+    // snapshot for rendering, including for blocks since renamed or deleted.
+    // Names are for display only — never match on them.
+    block_ids: Array.isArray(row.block_ids) ? row.block_ids : null,
+    application_blocks: Array.isArray(row.application_blocks) ? row.application_blocks : null,
     tank_count: tanks.length,
     product_names: totals.productNames,
     average_speed_kmh: row.average_speed ?? null,

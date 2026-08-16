@@ -48,6 +48,17 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
     // record predates the migration, [] means the operator recorded none.
     let targets: [String]?
     let sprayHeadTarget: String?
+    // sql/195 block attribution — WHICH blocks this application treated.
+    //
+    // `applicationBlocks` is the authoritative structured snapshot and the only
+    // one the client writes. `blockIds` is a Postgres uuid[] DERIVED from it by
+    // trigger; it is read here for queries and diagnostics but never authored,
+    // so the queryable ids can never disagree with the per-block geometry.
+    //
+    // nil in both means BLOCKS NOT RECORDED (a pre-195 record) — never "all
+    // blocks" and never the vineyard's current blocks.
+    let applicationBlocks: [SprayApplicationBlockSnapshot]?
+    let blockIds: [UUID]?
     let createdBy: UUID?
     let updatedBy: UUID?
     let createdAt: Date?
@@ -99,6 +110,8 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
         case concentrationFactor = "concentration_factor"
         case targets
         case sprayHeadTarget = "spray_head_target"
+        case applicationBlocks = "application_blocks"
+        case blockIds = "block_ids"
         case createdBy = "created_by"
         case updatedBy = "updated_by"
         case createdAt = "created_at"
@@ -162,6 +175,15 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
     /// instead of leaving a stale claim on the record.
     let targets: [String]?
     let sprayHeadTarget: String?
+    /// sql/195 block attribution. Encoded even when nil so correcting a spray's
+    /// selection actually clears the previous attribution rather than leaving a
+    /// block on the record that the operator has since removed.
+    ///
+    /// `block_ids` is deliberately ABSENT from this payload: the database derives
+    /// it from this array on every write, which is what guarantees the queryable
+    /// ids always match the per-block geometry. A client that authored it could
+    /// claim to have treated a block the calculation never saw.
+    let applicationBlocks: [SprayApplicationBlockSnapshot]?
     let createdBy: UUID?
     let clientUpdatedAt: Date
 
@@ -208,6 +230,7 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
         case concentrationFactor = "concentration_factor"
         case targets
         case sprayHeadTarget = "spray_head_target"
+        case applicationBlocks = "application_blocks"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
     }
@@ -266,6 +289,10 @@ extension BackendSprayRecord {
             concentrationFactor: geometry?.concentrationFactor,
             targets: geometry?.targets?.map(\.rawValue),
             sprayHeadTarget: geometry?.sprayHeadTarget?.rawValue,
+            // Templates keep block IDENTITY (reusable intent) and lose the
+            // per-block geometry outputs — `templateConfiguration()` above has
+            // already applied that rule, so this is a straight read.
+            applicationBlocks: geometry?.blocks,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
         )
@@ -332,7 +359,12 @@ extension BackendSprayRecord {
             // stored-but-unrecognised array stays [] (recorded) not nil (never
             // recorded), preserving the distinction the planner relies on.
             targets: targets.map { $0.compactMap(SprayTarget.from) },
-            sprayHeadTarget: SprayHeadTarget.from(sprayHeadTarget)
+            sprayHeadTarget: SprayHeadTarget.from(sprayHeadTarget),
+            // Read back VERBATIM. A record whose attribution is null stays null
+            // — it must never acquire the vineyard's current blocks, which is
+            // precisely the guess that would make "blocks not recorded" look
+            // like "no resistance issue on this block".
+            blocks: applicationBlocks
         )
         return snapshot.isEmpty ? nil : snapshot
     }

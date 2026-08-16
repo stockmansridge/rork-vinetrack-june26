@@ -26,12 +26,20 @@ import Foundation
 ///
 /// BLOCK ATTRIBUTION
 ///
-/// Spray records do not currently record which blocks they covered. `SprayTank` carries
-/// `rowApplications`, but `TankRowApplication` holds only `id`, `startRow` and `endRow`
-/// — no block reference — on BOTH platforms, and it is never constructed with block
-/// linkage. Rather than guess, this adapter requires the caller to supply `blockIds`. A
-/// record with no blocks yields no events and is reported in
-/// `Result.unattributedToBlockRecordIds` so the omission is visible.
+/// Since sql/195 a spray record states which blocks it treated, on the frozen
+/// application snapshot (`applicationGeometry.blocks`). This adapter reads that
+/// directly — no caller-supplied resolver, no inference. One spray attributed to blocks
+/// A and C becomes two events sharing the spray's application ID.
+///
+/// Records written BEFORE sql/195 carry `nil` attribution, which means "blocks not
+/// recorded" and nothing else. Such a record produces NO events and is reported in
+/// `Result.unresolvedBlockApplications` with everything a caller needs to judge whether
+/// it could have mattered. It is never assigned to a block: not by row number, not by
+/// name similarity, not by current geometry, not by "the vineyard only has one block".
+///
+/// `TankRowApplication` still holds only `id`, `startRow` and `endRow` on both platforms.
+/// Row numbers are not unique across blocks and carry no block reference, so they remain
+/// unusable as attribution and are not consulted.
 ///
 /// Mirrors `ResistanceEventSource.kt` on Android.
 nonisolated enum ResistanceEventSource {
@@ -51,7 +59,13 @@ nonisolated enum ResistanceEventSource {
         /// Nil means targets were never recorded (pre-sql/193). An empty array means
         /// recorded as targeting nothing. Those are different facts.
         nonisolated var targets: [ResistanceDisease]?
-        nonisolated var blockIds: [String]
+        /// The blocks this application treated. `nil` means NEVER RECORDED (a pre-sql/195
+        /// record); a populated array means recorded. These are different facts and are
+        /// kept apart for the same reason `targets` is: silence must not read as "none".
+        ///
+        /// An empty array is normalised to `nil` on construction, because "treated no
+        /// blocks" is not a state a real application can be in.
+        nonisolated var blockIds: [String]?
         nonisolated var products: [ResistanceProductLine]
 
         nonisolated init(
@@ -62,7 +76,7 @@ nonisolated enum ResistanceEventSource {
             isDeleted: Bool = false,
             hasEndTime: Bool,
             targets: [ResistanceDisease]?,
-            blockIds: [String],
+            blockIds: [String]?,
             products: [ResistanceProductLine]
         ) {
             self.recordId = recordId
@@ -77,6 +91,36 @@ nonisolated enum ResistanceEventSource {
         }
     }
 
+    /// A real application that cannot be placed on any block, carried with enough
+    /// context for a caller to decide whether it could have changed a block's answer.
+    ///
+    /// This exists because of a specific, dangerous subtlety: an unattributed spray
+    /// happened SOMEWHERE in this vineyard. It is not irrelevant — it is unplaceable.
+    /// A block-specific evaluation that quietly ignored these could report "no issue
+    /// detected" for a block whose history is genuinely unknown. Carrying the season,
+    /// the declared targets and the frozen chemistry lets the caller say "historical
+    /// block attribution is incomplete" precisely when it matters, instead of either
+    /// crying wolf on every vineyard with legacy data or staying silent.
+    nonisolated struct UnresolvedBlockApplication: Sendable, Hashable {
+        nonisolated var applicationId: String
+        nonisolated var vineyardId: String
+        nonisolated var appliedAtEpochMs: Int64
+        nonisolated var seasonId: String
+        nonisolated var kind: ResistanceEventKind
+        /// What the operator declared this spray was for, when they declared it.
+        nonisolated var targets: [ResistanceDisease]
+        nonisolated var targetsRecorded: Bool
+        nonisolated var products: [ResistanceProductLine]
+
+        /// True when this application could bear on the given disease.
+        ///
+        /// Unrecorded targets count as possibly-relevant: the spray may well have been
+        /// for this disease and nothing establishes otherwise.
+        nonisolated func mayConcern(_ disease: ResistanceDisease) -> Bool {
+            !targetsRecorded || targets.contains(disease)
+        }
+    }
+
     /// Events plus an explicit account of everything that did NOT become an event.
     ///
     /// The exclusions are returned rather than logged because a resistance report built
@@ -87,11 +131,35 @@ nonisolated enum ResistanceEventSource {
         nonisolated var deletedRecordIds: [String]
         nonisolated var templateRecordIds: [String]
         nonisolated var undatedRecordIds: [String]
-        nonisolated var unattributedToBlockRecordIds: [String]
+        /// Real applications whose treated blocks were never recorded.
+        nonisolated var unresolvedBlockApplications: [UnresolvedBlockApplication]
+
+        /// Record ids of the unresolved applications, in chronological order.
+        nonisolated var unattributedToBlockRecordIds: [String] {
+            unresolvedBlockApplications.map(\.applicationId)
+        }
+
+        /// True when any real application in this history cannot be placed on a block.
+        /// A block-specific clean result must be qualified when this is true and the
+        /// unresolved applications could concern the disease being evaluated.
+        nonisolated var hasUnresolvedBlockAttribution: Bool {
+            !unresolvedBlockApplications.isEmpty
+        }
+
+        /// The unresolved applications that could bear on `disease` in `seasonId`.
+        nonisolated func unresolvedApplications(
+            concerning disease: ResistanceDisease,
+            seasonId: String? = nil
+        ) -> [UnresolvedBlockApplication] {
+            unresolvedBlockApplications.filter { application in
+                application.mayConcern(disease)
+                    && (seasonId == nil || application.seasonId == seasonId)
+            }
+        }
 
         nonisolated var hasExclusions: Bool {
             !deletedRecordIds.isEmpty || !templateRecordIds.isEmpty
-                || !undatedRecordIds.isEmpty || !unattributedToBlockRecordIds.isEmpty
+                || !undatedRecordIds.isEmpty || !unresolvedBlockApplications.isEmpty
         }
     }
 
@@ -103,7 +171,7 @@ nonisolated enum ResistanceEventSource {
         var deleted: [String] = []
         var templates: [String] = []
         var undated: [String] = []
-        var unattributed: [String] = []
+        var unresolved: [UnresolvedBlockApplication] = []
 
         for input in inputs {
             if input.isDeleted {
@@ -118,17 +186,31 @@ nonisolated enum ResistanceEventSource {
                 undated.append(input.recordId)
                 continue
             }
-            var seenBlocks: Set<String> = []
-            let blockIds = input.blockIds.filter { seenBlocks.insert($0).inserted }
-            if blockIds.isEmpty {
-                unattributed.append(input.recordId)
-                continue
-            }
-
             let kind: ResistanceEventKind = input.hasEndTime ? .actual : .planned
             let targetsRecorded = input.targets != nil
             let diseases = input.targets ?? []
             let seasonId = seasonCalendar.season(epochMs: epochMs).id
+
+            var seenBlocks: Set<String> = []
+            let blockIds = (input.blockIds ?? []).filter { seenBlocks.insert($0).inserted }
+            if blockIds.isEmpty {
+                // Unplaceable, NOT irrelevant. Reported with full context so a
+                // block-specific evaluation can qualify its answer rather than
+                // pretending this spray never happened.
+                unresolved.append(
+                    UnresolvedBlockApplication(
+                        applicationId: input.recordId,
+                        vineyardId: input.vineyardId,
+                        appliedAtEpochMs: epochMs,
+                        seasonId: seasonId,
+                        kind: kind,
+                        targets: diseases,
+                        targetsRecorded: targetsRecorded,
+                        products: input.products
+                    )
+                )
+                continue
+            }
 
             for blockId in blockIds {
                 events.append(
@@ -155,7 +237,11 @@ nonisolated enum ResistanceEventSource {
             deletedRecordIds: deleted,
             templateRecordIds: templates,
             undatedRecordIds: undated,
-            unattributedToBlockRecordIds: unattributed
+            unresolvedBlockApplications: unresolved.sorted {
+                $0.appliedAtEpochMs != $1.appliedAtEpochMs
+                    ? $0.appliedAtEpochMs < $1.appliedAtEpochMs
+                    : $0.applicationId < $1.applicationId
+            }
         )
     }
 
@@ -184,12 +270,19 @@ nonisolated enum ResistanceEventSource {
         }
     }
 
-    /// Builds an `Input` from a real spray record plus the block attribution and
-    /// deletion state only the caller can supply.
+    /// Builds an `Input` from a real spray record.
+    ///
+    /// Block attribution and declared targets both come from the record's own frozen
+    /// application snapshot, so a normal record needs nothing from the caller but its
+    /// deletion state (which the iOS model does not carry — see the type docs).
+    ///
+    /// `blockIdsOverride` exists for one legitimate case: an import or migration path
+    /// that has established attribution from a genuinely authoritative external source.
+    /// It is NOT a hook for inferring blocks from row numbers or names.
     nonisolated static func input(
         from record: SprayRecord,
-        blockIds: [String],
-        isDeleted: Bool = false
+        isDeleted: Bool = false,
+        blockIdsOverride: [String]? = nil
     ) -> Input {
         Input(
             recordId: record.id.uuidString,
@@ -203,7 +296,8 @@ nonisolated enum ResistanceEventSource {
             targets: record.applicationGeometry?.targets.map { targets in
                 targets.compactMap { ResistanceDisease.fromSprayTargetRaw($0.rawValue) }
             },
-            blockIds: blockIds,
+            // Block attribution (sql/195), read verbatim from the record. Nil stays nil.
+            blockIds: blockIdsOverride ?? record.applicationGeometry?.blocks?.blockIds,
             products: productLines(from: record)
         )
     }

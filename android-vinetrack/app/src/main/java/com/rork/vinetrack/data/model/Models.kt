@@ -11,6 +11,7 @@ import com.rork.vinetrack.data.chemical.ChemicalResistanceProfile
 import com.rork.vinetrack.data.chemical.ChemicalVerification
 import com.rork.vinetrack.data.chemical.ChemicalVerificationConflict
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
+import com.rork.vinetrack.data.spray.SprayApplicationBlockSnapshot
 import com.rork.vinetrack.data.spray.SprayApplicationSnapshot
 import com.rork.vinetrack.data.spray.SprayProductRateBasis
 import kotlinx.serialization.SerialName
@@ -1606,6 +1607,18 @@ data class SprayRecord(
     // explicitly none. NEVER inferred from the products in the tank.
     @SerialName("targets") val targets: List<String>? = null,
     @SerialName("spray_head_target") val sprayHeadTarget: String? = null,
+    // sql/195 block attribution — WHICH blocks this application actually treated.
+    //
+    // [applicationBlocks] is the authoritative structured snapshot and the only
+    // one the client writes. [blockIds] is a Postgres uuid[] DERIVED from it by
+    // trigger; it is read for queries and diagnostics but never authored, so the
+    // queryable ids can never disagree with the per-block geometry.
+    //
+    // Null in both means BLOCKS NOT RECORDED (a pre-195 record) — never "all
+    // blocks" and never the vineyard's current blocks.
+    @SerialName("application_blocks")
+    val applicationBlocks: List<SprayApplicationBlockSnapshot>? = null,
+    @SerialName("block_ids") val blockIds: List<String>? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
@@ -1641,6 +1654,7 @@ data class SprayRecord(
             concentrationFactor = concentrationFactor,
             targets = targets,
             sprayHeadTarget = sprayHeadTarget,
+            blocks = applicationBlocks,
         )
 
     /** User-facing label: the spray reference, else operation type, else a fallback. */

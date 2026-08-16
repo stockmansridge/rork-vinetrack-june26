@@ -103,7 +103,42 @@ data class SprayApplicationSnapshot(
      * spreader pass legitimately carries null.
      */
     val sprayHeadTarget: SprayHeadTarget? = null,
+
+    // ------------------------------------------------ block attribution (195)
+
+    /**
+     * WHICH blocks this application actually treated, in selection order.
+     *
+     * The per-block breakdown of the aggregate geometry above: these blocks'
+     * gross areas sum to [grossAreaHa] and their row lengths to
+     * [canonicalRowLengthMetres], because both are projected from the same
+     * resolved geometry list. That is what makes "calculated from A+C but
+     * recorded as A+B" unrepresentable rather than merely tested for.
+     *
+     * Null means BLOCKS NOT RECORDED — a record written before sql/195. It never
+     * means all blocks, no blocks, the vineyard's current blocks, or the block
+     * containing matching row numbers. An empty list is not a valid state and is
+     * normalised to null on every path, mirroring the sql/195 constraint.
+     */
+    val blocks: List<SprayApplicationBlockSnapshot>? = null,
 ) {
+
+    /**
+     * The treated blocks' stable ids, in selection order. Empty when the record
+     * predates block attribution — test [hasRecordedBlocks] to tell "unknown"
+     * apart from anything else.
+     */
+    val treatedBlockIds: List<String>
+        get() = blocks?.blockIds ?: emptyList()
+
+    /**
+     * True when this application's treated blocks were genuinely recorded.
+     *
+     * False means unknown, and the UI must say "Blocks not recorded" rather than
+     * showing the vineyard's current blocks as if they were historical.
+     */
+    val hasRecordedBlocks: Boolean
+        get() = blocks?.isNotEmpty() == true
 
     /**
      * True when no field carries a value — the shape a pre-sql/191 record reads
@@ -119,7 +154,8 @@ data class SprayApplicationSnapshot(
             carrierVolumeBasis == null && totalCarrierLitres == null &&
             carrierLitresPerHectare == null && diluteLitresPer100m == null &&
             appliedLitresPer100m == null && concentrationFactor == null &&
-            targets == null && sprayHeadTarget == null
+            targets == null && sprayHeadTarget == null &&
+            blocks == null
 
     /**
      * True when the operator's target selection was genuinely recorded, so the
@@ -164,6 +200,23 @@ data class SprayApplicationSnapshot(
      * [geometryQuality], [totalCarrierLitres], and [carrierLitresPerHectare] in
      * `l_per_100m` mode, where it is derived from row spacing.
      */
+    /**
+     * This snapshot with its block attribution replaced, every calculated value
+     * left untouched.
+     *
+     * The one supported way to record or CORRECT which blocks an application
+     * treated without disturbing the arithmetic. Used by manual spray entry, where
+     * the operator states the blocks directly and there is no guided calculation to
+     * project from.
+     *
+     * Returns null when the result carries nothing at all, so "never recorded"
+     * keeps its single representation.
+     */
+    fun withBlocks(blocks: List<SprayApplicationBlockSnapshot>?): SprayApplicationSnapshot? {
+        val updated = copy(blocks = SprayApplicationBlockSnapshot.normalised(blocks))
+        return if (updated.isEmpty) null else updated
+    }
+
     fun templateConfiguration(): SprayApplicationSnapshot? {
         // In L/ha mode the per-hectare figure IS the operator's entered rate and
         // is reusable. In L/100 m mode it was derived from row spacing, so it is
@@ -197,6 +250,13 @@ data class SprayApplicationSnapshot(
             // mildew bunch-line spray" is exactly what a template is for.
             targets = targets,
             sprayHeadTarget = sprayHeadTarget,
+            // Block IDENTITY is reusable intent — "my powdery spray on the home
+            // blocks" is exactly what a template is for — but the per-block AREAS
+            // and ROW LENGTHS are outputs and must be recalculated, for the same
+            // reason the aggregates above are cleared. The operator can still
+            // change the selection in the Blocks step, and the new spray freezes
+            // whatever they finally chose.
+            blocks = blocks?.map { it.identityOnly },
         )
         return if (configuration.isEmpty) null else configuration
     }
@@ -239,6 +299,11 @@ data class SprayApplicationSnapshot(
                 diluteLitresPer100m = positive(plan.carrier.diluteLitresPer100Metres),
                 appliedLitresPer100m = positive(plan.carrier.appliedLitresPer100Metres),
                 concentrationFactor = positive(plan.carrier.concentrationFactor),
+                // Attribution is projected from the SAME resolved geometry list
+                // the aggregates above were summed from. There is no separate
+                // list of selected blocks to fall out of step with the
+                // calculation.
+                blocks = SprayApplicationBlockSnapshot.project(plan.geometry.blocks),
             )
 
         /**
@@ -270,6 +335,7 @@ data class SprayApplicationSnapshot(
             concentrationFactor: Double?,
             targets: List<String>? = null,
             sprayHeadTarget: String? = null,
+            blocks: List<SprayApplicationBlockSnapshot>? = null,
         ): SprayApplicationSnapshot? {
             val snapshot = SprayApplicationSnapshot(
                 // sql/193 deliberately puts NO value CHECK on `targets` so the
@@ -297,6 +363,11 @@ data class SprayApplicationSnapshot(
                 diluteLitresPer100m = diluteLitresPer100m,
                 appliedLitresPer100m = appliedLitresPer100m,
                 concentrationFactor = concentrationFactor,
+                // Read back VERBATIM. A record whose attribution is null stays
+                // null — it must never acquire the vineyard's current blocks,
+                // which is precisely the guess that would make "blocks not
+                // recorded" look like "no resistance issue on this block".
+                blocks = SprayApplicationBlockSnapshot.normalised(blocks),
             )
             return if (snapshot.isEmpty) null else snapshot
         }

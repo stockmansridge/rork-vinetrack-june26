@@ -101,6 +101,19 @@ enum class SprayGeometryUnavailable(val raw: String, val message: String) {
  */
 data class SprayBlockInput(
     val blockId: String,
+    /**
+     * The block's display name AT THE TIME OF THE APPLICATION.
+     *
+     * Carried through the geometry contract — rather than looked up separately
+     * when the record is saved — for one specific reason: it makes block
+     * ATTRIBUTION a projection of the very same list the geometry was calculated
+     * from. A spray whose treated area was computed from blocks A+C therefore
+     * cannot be persisted as having treated A+B, because there is no second list
+     * to disagree with. See [SprayApplicationBlockSnapshot].
+     *
+     * Display only. Identity is [blockId] and never the name.
+     */
+    val blockName: String? = null,
     /** Gross block area in hectares. Null/non-positive means unmapped. */
     val grossAreaHectares: Double?,
     /** Summed length of mapped rows, when the block actually has rows. */
@@ -129,6 +142,7 @@ data class SprayBlockInput(
             val hasRows = !paddock.rows.isNullOrEmpty()
             return SprayBlockInput(
                 blockId = paddock.id,
+                blockName = paddock.name,
                 grossAreaHectares = paddock.areaHectares,
                 mappedRowLengthMetres = if (hasRows) paddock.totalRowLengthMetres else null,
                 operatorRowLengthOverrideMetres = paddock.rowLengthOverride,
@@ -142,6 +156,8 @@ data class SprayBlockInput(
 /** Resolved geometry for ONE block. */
 data class SprayBlockGeometry(
     val blockId: String,
+    /** Display-name snapshot carried through from the input. Never identity. */
+    val blockName: String? = null,
     val grossAreaHectares: Double,
     /** Applicable row/trellis length. Null when it could not be resolved. */
     val rowLengthMetres: Double?,
@@ -283,6 +299,7 @@ object SprayGeometryResolver {
             reason: SprayGeometryUnavailable? = null,
         ) = SprayBlockGeometry(
             blockId = input.blockId,
+            blockName = input.blockName,
             grossAreaHectares = area,
             rowLengthMetres = length,
             rowSpacingMetres = spacing,

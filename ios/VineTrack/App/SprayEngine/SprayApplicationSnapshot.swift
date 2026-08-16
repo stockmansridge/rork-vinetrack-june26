@@ -72,6 +72,22 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
     let appliedLitresPer100m: Double?
     let concentrationFactor: Double?
 
+    // MARK: Block attribution (sql/195)
+
+    /// WHICH blocks this application actually treated, in selection order.
+    ///
+    /// The per-block breakdown of the aggregate geometry above: these blocks'
+    /// gross areas sum to `grossAreaHa` and their row lengths to
+    /// `canonicalRowLengthMetres`, because both are projected from the same
+    /// resolved geometry array. That is what makes "calculated from A+C but
+    /// recorded as A+B" unrepresentable rather than merely tested for.
+    ///
+    /// `nil` means BLOCKS NOT RECORDED — a record written before sql/195. It
+    /// never means all blocks, no blocks, the vineyard's current blocks, or the
+    /// block containing matching row numbers. `[]` is not a valid state and is
+    /// normalised to `nil` on every path, mirroring the sql/195 constraint.
+    let blocks: [SprayApplicationBlockSnapshot]?
+
     // MARK: Application intent (sql/193)
     //
     // Unlike every field above these are not calculated outputs — they are what
@@ -105,7 +121,19 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
             && carrierLitresPerHectare == nil && diluteLitresPer100m == nil
             && appliedLitresPer100m == nil && concentrationFactor == nil
             && targets == nil && sprayHeadTarget == nil
+            && blocks == nil
     }
+
+    /// The treated blocks' stable ids, in selection order. Empty when the
+    /// record predates block attribution — test `hasRecordedBlocks` to tell
+    /// "unknown" apart from anything else.
+    var treatedBlockIds: [String] { blocks?.blockIds ?? [] }
+
+    /// True when this application's treated blocks were genuinely recorded.
+    ///
+    /// False means unknown, and the UI must say "Blocks not recorded" rather
+    /// than showing the vineyard's current blocks as if they were historical.
+    var hasRecordedBlocks: Bool { blocks?.isEmpty == false }
 
     /// True when the operator's target selection was genuinely recorded, so the
     /// UI can distinguish "unknown (historical)" from "none selected".
@@ -173,9 +201,52 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
             appliedLitresPer100m: appliedLitresPer100m,
             concentrationFactor: concentrationFactor,
             targets: targets,
-            sprayHeadTarget: sprayHeadTarget
+            sprayHeadTarget: sprayHeadTarget,
+            // Block IDENTITY is reusable intent — "my powdery spray on the home
+            // blocks" is exactly what a template is for — but the per-block
+            // AREAS and ROW LENGTHS are outputs and must be recalculated, for
+            // the same reason the aggregates above are cleared. The operator can
+            // still change the selection in the Blocks step, and the new spray
+            // freezes whatever they finally chose.
+            blocks: blocks?.map(\.identityOnly)
         )
         return configuration.isEmpty ? nil : configuration
+    }
+
+    /// This snapshot with its block attribution replaced, every calculated value
+    /// left untouched.
+    ///
+    /// The one supported way to record or CORRECT which blocks an application
+    /// treated without disturbing the arithmetic. Used by the manual Spray Record
+    /// form, where the operator states the blocks directly and there is no guided
+    /// calculation to project from.
+    ///
+    /// Returns `nil` when the result carries nothing at all, so "never recorded"
+    /// keeps its single representation.
+    func withBlocks(_ blocks: [SprayApplicationBlockSnapshot]?) -> SprayApplicationSnapshot? {
+        let updated = SprayApplicationSnapshot(
+            grossAreaHa: grossAreaHa,
+            treatedAreaHa: treatedAreaHa,
+            applicationMode: applicationMode,
+            treatedAreaMethod: treatedAreaMethod,
+            bandWidthTotalMetres: bandWidthTotalMetres,
+            bandWidthLeftMetres: bandWidthLeftMetres,
+            bandWidthRightMetres: bandWidthRightMetres,
+            canonicalRowLengthMetres: canonicalRowLengthMetres,
+            rowSpacingMetres: rowSpacingMetres,
+            geometrySource: geometrySource,
+            geometryQuality: geometryQuality,
+            carrierVolumeBasis: carrierVolumeBasis,
+            totalCarrierLitres: totalCarrierLitres,
+            carrierLitresPerHectare: carrierLitresPerHectare,
+            diluteLitresPer100m: diluteLitresPer100m,
+            appliedLitresPer100m: appliedLitresPer100m,
+            concentrationFactor: concentrationFactor,
+            targets: targets,
+            sprayHeadTarget: sprayHeadTarget,
+            blocks: blocks
+        )
+        return updated.isEmpty ? nil : updated
     }
 
     // MARK: - Projection from the canonical engine result
@@ -211,6 +282,11 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         self.geometrySource = plan.geometry.source
         self.geometryQuality = plan.geometry.quality
 
+        // Attribution is projected from the SAME resolved geometry array the
+        // aggregates above were summed from. There is no separate list of
+        // selected blocks to fall out of step with the calculation.
+        self.blocks = SprayApplicationBlockSnapshot.project(plan.geometry.blocks)
+
         self.carrierVolumeBasis = plan.carrier.basis
         self.totalCarrierLitres = Self.nonNegative(plan.carrier.totalLitres)
         self.carrierLitresPerHectare = Self.nonNegative(plan.carrier.litresPerHectare)
@@ -241,10 +317,12 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         appliedLitresPer100m: Double? = nil,
         concentrationFactor: Double? = nil,
         targets: [SprayTarget]? = nil,
-        sprayHeadTarget: SprayHeadTarget? = nil
+        sprayHeadTarget: SprayHeadTarget? = nil,
+        blocks: [SprayApplicationBlockSnapshot]? = nil
     ) {
         self.targets = targets.map(Self.normalisedTargets)
         self.sprayHeadTarget = sprayHeadTarget
+        self.blocks = SprayApplicationBlockSnapshot.normalised(blocks)
         self.grossAreaHa = grossAreaHa
         self.treatedAreaHa = treatedAreaHa
         self.applicationMode = applicationMode
@@ -297,6 +375,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         case carrierVolumeBasis, totalCarrierLitres, carrierLitresPerHectare
         case diluteLitresPer100m, appliedLitresPer100m, concentrationFactor
         case targets, sprayHeadTarget
+        case blocks
     }
 
     /// Tolerant decode: an unrecognised enum value (for example a
@@ -335,6 +414,16 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         }
         sprayHeadTarget = SprayHeadTarget.from(
             try? container.decodeIfPresent(String.self, forKey: .sprayHeadTarget)
+        )
+
+        // Block attribution (sql/195). Absent ⇒ nil ⇒ "blocks not recorded",
+        // which is exactly what every pre-195 record must keep reading as. A
+        // present-but-malformed array is also treated as unknown rather than
+        // partially trusted: attributing a spray to SOME of the blocks it
+        // treated would understate a per-block resistance history, and an
+        // honest "not recorded" is the safer of the two wrong answers.
+        blocks = SprayApplicationBlockSnapshot.normalised(
+            try? container.decodeIfPresent([SprayApplicationBlockSnapshot].self, forKey: .blocks)
         )
     }
 }

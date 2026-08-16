@@ -30,6 +30,12 @@ struct SprayRecordFormView: View {
     @State private var numberOfFansJets: String
     @State private var averageSpeedText: String
     @State private var tanks: [SprayTank]
+    /// The blocks this application treated (sql/195).
+    ///
+    /// The manual form is a full creation path, so it must record attribution too
+    /// — otherwise it stays a way to keep producing sprays that no per-block
+    /// resistance history can ever account for.
+    @State private var selectedBlockIds: Set<UUID>
     @State private var expandedTankId: UUID?
     /// Which product line is currently choosing a Saved Chemical.
     @State private var picker: ChemicalPickerTarget?
@@ -63,12 +69,48 @@ struct SprayRecordFormView: View {
         _numberOfFansJets = State(initialValue: r?.numberOfFansJets ?? "")
         _averageSpeedText = State(initialValue: r?.averageSpeed.map { String(format: "%.1f", $0) } ?? "")
         _tanks = State(initialValue: r?.tanks ?? [SprayTank(tankNumber: 1)])
+        // An existing record's own recorded attribution wins. A record that never
+        // recorded any is left EMPTY rather than pre-filled from the trip: quietly
+        // adopting the trip's blocks on a historical edit would manufacture
+        // attribution nobody stated. A NEW record starts from the trip selection,
+        // which the operator can change before saving.
+        let recordedBlocks = r?.applicationGeometry?.blocks?.compactMap { UUID(uuidString: $0.blockId) }
+        if let recordedBlocks, !recordedBlocks.isEmpty {
+            _selectedBlockIds = State(initialValue: Set(recordedBlocks))
+        } else if r == nil {
+            _selectedBlockIds = State(initialValue: Set(paddockIds))
+        } else {
+            _selectedBlockIds = State(initialValue: [])
+        }
+    }
+
+    /// Blocks available to attribute this spray to, in stable display order.
+    private var availableBlocks: [Paddock] {
+        guard let vineyardId = store.selectedVineyardId else { return [] }
+        return store.paddocks
+            .filter { $0.vineyardId == vineyardId }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// The attribution to persist, built through the SAME canonical geometry path
+    /// the guided calculator uses.
+    ///
+    /// Routing it through `SprayGeometryResolver` rather than assembling ids by
+    /// hand is deliberate: it keeps one definition of what a treated block's
+    /// recorded geometry is, so a manually entered spray and a calculated one are
+    /// never two different shapes of the same fact.
+    private var attributionBlocks: [SprayApplicationBlockSnapshot]? {
+        let selected = availableBlocks.filter { selectedBlockIds.contains($0.id) }
+        guard !selected.isEmpty else { return nil }
+        let geometry = SprayGeometryResolver.resolve(selected.map { SprayBlockInput.from(paddock: $0) })
+        return SprayApplicationBlockSnapshot.project(geometry.blocks)
     }
 
     var body: some View {
         NavigationStack {
             Form {
                 referenceSection
+                blocksSection
                 weatherSection
                 tankCountSection
                 ForEach(Array(tanks.enumerated()), id: \.element.id) { idx, _ in
@@ -525,6 +567,51 @@ struct SprayRecordFormView: View {
         }
     }
 
+    /// Treated blocks. Multi-select, because one application legitimately covers
+    /// several blocks and must stay ONE spray record.
+    private var blocksSection: some View {
+        Section {
+            if availableBlocks.isEmpty {
+                Text("No blocks available for this vineyard.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(availableBlocks) { block in
+                    Button {
+                        if selectedBlockIds.contains(block.id) {
+                            selectedBlockIds.remove(block.id)
+                        } else {
+                            selectedBlockIds.insert(block.id)
+                        }
+                    } label: {
+                        HStack {
+                            Text(block.name)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            if selectedBlockIds.contains(block.id) {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.tint)
+                                    .accessibilityLabel("Selected")
+                            }
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Blocks treated")
+        } footer: {
+            // Stated plainly rather than blocked. An existing record whose blocks
+            // were never recorded must not be forced into a fabricated selection
+            // just to let someone correct a wind speed — but the consequence is
+            // named so it is a choice, not an accident.
+            if selectedBlockIds.isEmpty {
+                Text("Blocks not recorded. This spray will not appear in any block's history.")
+            } else {
+                Text("^[\(selectedBlockIds.count) block](inflect: true) recorded for this application.")
+            }
+        }
+    }
+
     private func saveRecord() {
         // Only a NEW record captures chemistry. Editing an existing spray keeps
         // its frozen snapshots verbatim: re-capturing on save would rewrite
@@ -553,7 +640,15 @@ struct SprayRecordFormView: View {
             machineId: machineId,
             tractorId: tractorId,
             sprayEquipmentId: sprayEquipmentId,
-            isTemplate: existingRecord?.isTemplate ?? false
+            isTemplate: existingRecord?.isTemplate ?? false,
+            // Attribution is recorded here, and the rest of any existing frozen
+            // snapshot is carried through verbatim. Rebuilding the snapshot from
+            // scratch would wipe the calculated geometry off a record that was
+            // originally produced by the guided calculator, so only the block
+            // attribution is replaced — an explicit factual correction (§16),
+            // never a recomputation from today's vineyard.
+            applicationGeometry: (existingRecord?.applicationGeometry ?? SprayApplicationSnapshot())
+                .withBlocks(attributionBlocks)
         )
         if existingRecord != nil {
             store.updateSprayRecord(record)

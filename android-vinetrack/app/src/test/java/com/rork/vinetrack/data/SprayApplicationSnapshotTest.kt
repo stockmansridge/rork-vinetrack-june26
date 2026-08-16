@@ -105,6 +105,10 @@ class SprayApplicationSnapshotTest {
         diluteLitresPer100m = geometry?.diluteLitresPer100m,
         appliedLitresPer100m = geometry?.appliedLitresPer100m,
         concentrationFactor = geometry?.concentrationFactor,
+        // sql/195 block attribution travels with the rest of the snapshot, exactly
+        // as the repository writes it. Omitting it here would let a record round
+        // trip lose which blocks were treated and still pass.
+        applicationBlocks = geometry?.blocks,
     )
 
     // ------------------------------------------------------- banded persistence

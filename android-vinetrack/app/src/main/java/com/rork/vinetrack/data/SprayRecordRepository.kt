@@ -3,6 +3,7 @@ package com.rork.vinetrack.data
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.SprayTank
+import com.rork.vinetrack.data.spray.SprayApplicationBlockSnapshot
 import com.rork.vinetrack.data.spray.SprayApplicationSnapshot
 import io.ktor.client.call.body
 import io.ktor.client.request.headers
@@ -81,6 +82,13 @@ class SprayRecordRepository(private val session: SessionStore) {
         // never recorded, an empty list means the operator recorded none.
         @SerialName("targets") val targets: List<String>? = null,
         @SerialName("spray_head_target") val sprayHeadTarget: String? = null,
+        // sql/195 block attribution. `block_ids` is deliberately ABSENT: the
+        // database derives it from this array on every write, which is what
+        // guarantees the queryable ids always match the per-block geometry. A
+        // client that authored it could claim to have treated a block the
+        // calculation never saw.
+        @SerialName("application_blocks")
+        val applicationBlocks: List<SprayApplicationBlockSnapshot>? = null,
         @SerialName("created_by") val createdBy: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
@@ -133,6 +141,12 @@ class SprayRecordRepository(private val session: SessionStore) {
         // stored spray head target instead of leaving a stale claim on the record.
         @SerialName("targets") val targets: List<String>? = null,
         @SerialName("spray_head_target") val sprayHeadTarget: String? = null,
+        // sql/195 block attribution. Always sent — including as an explicit null
+        // — so correcting a spray's selection actually clears the previous
+        // attribution rather than leaving a block on the record the operator has
+        // since removed. `block_ids` stays absent; the trigger owns it.
+        @SerialName("application_blocks")
+        val applicationBlocks: List<SprayApplicationBlockSnapshot>? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
@@ -249,6 +263,10 @@ class SprayRecordRepository(private val session: SessionStore) {
                 concentrationFactor = geometry?.concentrationFactor,
                 targets = geometry?.targets?.map { it.raw },
                 sprayHeadTarget = geometry?.sprayHeadTarget?.raw,
+                // Templates keep block IDENTITY (reusable intent) and lose the
+                // per-block geometry outputs — `geometryToPersist()` has already
+                // applied that rule, so this is a straight read.
+                applicationBlocks = geometry?.blocks,
                 createdBy = session.userId,
                 clientUpdatedAt = now,
             )
@@ -316,6 +334,7 @@ class SprayRecordRepository(private val session: SessionStore) {
                 concentrationFactor = geometry?.concentrationFactor,
                 targets = geometry?.targets?.map { it.raw },
                 sprayHeadTarget = geometry?.sprayHeadTarget?.raw,
+                applicationBlocks = geometry?.blocks,
                 clientUpdatedAt = clientUpdatedAt ?: nowIso(),
             )
             val response = SupabaseClient.http.patch(SupabaseClient.restUrl("spray_records?id=eq.$id")) {

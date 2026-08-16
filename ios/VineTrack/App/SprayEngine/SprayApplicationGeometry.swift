@@ -57,6 +57,17 @@ nonisolated enum SprayGeometryUnavailable: String, Sendable, Codable {
 /// store. Use `SprayBlockInput.from(paddock:)` for live data.
 nonisolated struct SprayBlockInput: Sendable, Hashable {
     let blockId: String
+    /// The block's display name AT THE TIME OF THE APPLICATION.
+    ///
+    /// Carried through the geometry contract — rather than looked up separately
+    /// when the record is saved — for one specific reason: it makes block
+    /// ATTRIBUTION a projection of the very same array the geometry was
+    /// calculated from. A spray whose treated area was computed from blocks A+C
+    /// therefore cannot be persisted as having treated A+B, because there is no
+    /// second list to disagree with. See `SprayApplicationBlockSnapshot`.
+    ///
+    /// Display only. Identity is `blockId` and never the name.
+    let blockName: String?
     /// Gross block area in hectares. `nil`/non-positive means unmapped.
     let grossAreaHectares: Double?
     /// Summed length of mapped rows, when the block actually has rows.
@@ -69,6 +80,7 @@ nonisolated struct SprayBlockInput: Sendable, Hashable {
 
     init(
         blockId: String,
+        blockName: String? = nil,
         grossAreaHectares: Double?,
         mappedRowLengthMetres: Double? = nil,
         operatorRowLengthOverrideMetres: Double? = nil,
@@ -76,6 +88,7 @@ nonisolated struct SprayBlockInput: Sendable, Hashable {
         rowCount: Int? = nil
     ) {
         self.blockId = blockId
+        self.blockName = blockName
         self.grossAreaHectares = grossAreaHectares
         self.mappedRowLengthMetres = mappedRowLengthMetres
         self.operatorRowLengthOverrideMetres = operatorRowLengthOverrideMetres
@@ -87,6 +100,8 @@ nonisolated struct SprayBlockInput: Sendable, Hashable {
 /// Resolved geometry for ONE block.
 nonisolated struct SprayBlockGeometry: Sendable, Hashable {
     let blockId: String
+    /// Display-name snapshot carried through from the input. Never identity.
+    let blockName: String?
     let grossAreaHectares: Double
     /// Applicable row/trellis length. `nil` when it could not be resolved.
     let rowLengthMetres: Double?
@@ -95,6 +110,28 @@ nonisolated struct SprayBlockGeometry: Sendable, Hashable {
     let source: SprayGeometrySource
     let quality: SprayGeometryQuality
     let unavailableReason: SprayGeometryUnavailable?
+
+    init(
+        blockId: String,
+        blockName: String? = nil,
+        grossAreaHectares: Double,
+        rowLengthMetres: Double?,
+        rowSpacingMetres: Double?,
+        rowCount: Int?,
+        source: SprayGeometrySource,
+        quality: SprayGeometryQuality,
+        unavailableReason: SprayGeometryUnavailable? = nil
+    ) {
+        self.blockId = blockId
+        self.blockName = blockName
+        self.grossAreaHectares = grossAreaHectares
+        self.rowLengthMetres = rowLengthMetres
+        self.rowSpacingMetres = rowSpacingMetres
+        self.rowCount = rowCount
+        self.source = source
+        self.quality = quality
+        self.unavailableReason = unavailableReason
+    }
 
     var isUsable: Bool { rowLengthMetres != nil && quality != .incomplete }
 }
@@ -213,6 +250,7 @@ nonisolated enum SprayGeometryResolver {
         ) -> SprayBlockGeometry {
             SprayBlockGeometry(
                 blockId: input.blockId,
+                blockName: input.blockName,
                 grossAreaHectares: area,
                 rowLengthMetres: length,
                 rowSpacingMetres: spacing,
@@ -259,6 +297,7 @@ extension SprayBlockInput {
         let mapped: Double? = paddock.rows.isEmpty ? nil : paddock.totalRowLengthMetres
         return SprayBlockInput(
             blockId: paddock.id.uuidString,
+            blockName: paddock.name,
             grossAreaHectares: paddock.areaHectares,
             mappedRowLengthMetres: mapped,
             operatorRowLengthOverrideMetres: paddock.rowLengthOverride,
