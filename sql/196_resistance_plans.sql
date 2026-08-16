@@ -383,10 +383,25 @@ end $$;
 -- An id matching NO paddock at all is ALLOWED — that is how a plan survives
 -- the deletion of one of its blocks (header). Only ids belonging to a
 -- DIFFERENT vineyard are rejected.
+--
+-- SECURITY DEFINER IS LOAD-BEARING — DO NOT REMOVE.
+-- public.paddocks has RLS (paddocks_select_members / is_vineyard_member, see
+-- sql/005). Without security definer this function runs as the caller, so the
+-- lookup below is RLS-filtered and a paddock in a vineyard the caller cannot
+-- see returns NO ROWS. The guard would then accept precisely the write it
+-- exists to reject, and would only ever catch foreign blocks from vineyards
+-- the caller is already a member of — the harmless case. Regression covered by
+-- T9, which runs as `authenticated` and not as the table owner.
+--
+-- Reading all paddocks here leaks nothing: the only output is a rejection for
+-- an id the caller itself supplied, with no vineyard name, owner or attribute
+-- disclosed. A trigger-returning function also cannot be invoked directly.
 -- ---------------------------------------------------------------------------
 create or replace function public.resistance_plans_validate_block_vineyard()
 returns trigger
 language plpgsql
+security definer
+set search_path = public
 as $$
 declare
   v_foreign uuid;
@@ -402,7 +417,7 @@ begin
   limit 1;
 
   if v_foreign is not null then
-    raise exception 'Block % belongs to a different vineyard', v_foreign
+    raise exception 'Block % does not belong to this vineyard', v_foreign
       using errcode = '23514';
   end if;
 
