@@ -1151,6 +1151,7 @@ private struct NewHomeTabView: View {
         // vineyard roles. The view resolves the caller's capabilities via
         // get_irrigation_capabilities, and the server enforces every action.
         case "irrigation_records": IrrigationRecordsView()
+        case "resistance_planner": ResistancePlannerView()
         default: EmptyView()
         }
     }
@@ -1175,6 +1176,7 @@ private struct NewHomeTabView: View {
         case "Yield Determination": return "Pruning bud-load"
         case "Pruning Tracker": return "Row progress & crew rates"
         case "Irrigation Records": return "Water applied, valves & blocks"
+        case "Resistance Planner": return "Season FRAC rotation"
         case "Fertiliser Calculator": return "Rates, packs & costs"
         case "Manage Users": return "Team & roles"
         case "Vineyard Setup": return "Blocks & rows"

@@ -135,6 +135,16 @@ enum OperationalToolCatalog {
             icon: "drop.circle.fill",
             tint: .cyan
         ),
+        // A dedicated planning tool, deliberately its own tile rather than a screen
+        // inside the Spray Calculator: the rotation is decided weeks before a tank is
+        // filled, and the individual sprays are drawn from the plan, not the reverse.
+        OperationalTool(
+            id: "resistance_planner",
+            title: "Resistance Planner",
+            subtitle: "Season FRAC rotation",
+            icon: "shield.lefthalf.filled",
+            tint: .purple
+        ),
     ]
 
     static let defaultOrder: [String] = all.map(\.id)
