@@ -56,8 +56,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import com.rork.vinetrack.data.chemical.ChemicalActivityGroup
+import com.rork.vinetrack.data.chemical.ChemicalActivityGroupScheme
 import com.rork.vinetrack.data.chemical.ChemicalEditOutcome
-import com.rork.vinetrack.data.chemical.ChemicalEditReconciler
+import com.rork.vinetrack.data.chemical.ChemicalManualEntry
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalReverification
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
@@ -697,6 +699,22 @@ internal fun ChemicalFormSheet(
     var containerUnitMenu by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var showAI by remember { mutableStateOf(false) }
+    var showChemistryEditor by remember { mutableStateOf(false) }
+    // The country a manual entry defaults to, from the vineyard profile. Applied
+    // only when the record does not already name one, so an imported product's
+    // own country is never overwritten on open.
+    val manualCountry = ChemicalRegistration.normaliseCountry(
+        ChemicalInfoService.resolveCountry(
+            state?.vineyards?.firstOrNull { it.id == state.selectedVineyardId }?.country,
+        ),
+    )
+    // The structured chemistry the operator is authoring. This replaces the three
+    // free-text chemistry boxes this form used to carry. Held here rather than
+    // inside the editor sheet so the edits survive that sheet closing and are
+    // written by this form's own Save, keeping one Save button for the product.
+    var chemistryDraft by remember(existing?.id) {
+        mutableStateOf(ChemicalManualEntry.draft(existing, manualCountry))
+    }
     var aiLoading by remember { mutableStateOf(false) }
     var aiError by remember { mutableStateOf<String?>(null) }
 
@@ -748,23 +766,22 @@ internal fun ChemicalFormSheet(
      * pure legacy record already resolves to Needs Match on read, so there is no
      * false trust there to protect.
      */
-    val editOutcome: ChemicalEditOutcome? = remember(
-        existing?.id,
-        activeIngredient,
-        chemicalGroup,
-        modeOfAction,
-        manufacturer,
-        category,
-    ) {
-        existing?.storedIntelligence?.takeIf { !it.isEmpty }?.let { stored ->
-            ChemicalEditReconciler.reconcileLegacyEdit(
-                existing = stored,
-                activeIngredientText = activeIngredient.trim(),
-                chemicalGroupText = chemicalGroup.trim(),
-                modeOfActionText = modeOfAction.trim(),
-                productCategory = category,
-                registrantText = manufacturer.trim(),
-            )
+    val editOutcome: ChemicalEditOutcome? = remember(existing?.id, chemistryDraft) {
+        // A record whose chemistry section was never opened has nothing structured
+        // to write, and must be saved without touching the intelligence columns —
+        // otherwise editing a price on a legacy chemical would materialise its
+        // free-text seed as its first structured write.
+        val proposed = ChemicalManualEntry.proposedIntelligence(
+            chemistryDraft,
+            existing?.storedIntelligence,
+        )
+        if (proposed.isEmpty) {
+            null
+        } else {
+            val resolved = ChemicalManualEntry.outcome(chemistryDraft, existing?.storedIntelligence)
+            // An unchanged structured record must not be rewritten by the act of
+            // saving a note: identical intelligence means nothing to store.
+            if (existing?.storedIntelligence == resolved.intelligence) null else resolved
         }
     }
 
@@ -812,17 +829,35 @@ internal fun ChemicalFormSheet(
                 )
             } else null
         } else null
+        // Legacy scalars are now OUTPUTS of the structured record. They are
+        // rewritten only when there is structured chemistry to derive them from, so
+        // a record that has never been structured keeps its original text and is
+        // not blanked by the act of saving it.
+        val structured = editOutcome?.intelligence
+            ?: existing?.storedIntelligence?.takeIf {
+                !ChemicalManualEntry.proposedIntelligence(
+                    chemistryDraft,
+                    existing.storedIntelligence,
+                ).isEmpty
+            }
+        val legacyActive = structured?.legacyActiveIngredient?.ifBlank { null }
+            ?: activeIngredient.trim().ifBlank { null }
+        val legacyGroup = structured?.legacyChemicalGroup?.ifBlank { null }
+            ?: chemicalGroup.trim().ifBlank { null }
         val input = SavedChemicalRepository.ChemicalInput(
             name = trimmedName,
             unit = unit,
             ratePerHa = perHaDisplay,
             rates = rates,
-            activeIngredient = activeIngredient.trim().ifBlank { null },
-            chemicalGroup = chemicalGroup.trim().ifBlank { null },
+            activeIngredient = legacyActive,
+            chemicalGroup = legacyGroup,
             use = use.trim().ifBlank { null },
             problem = problem.trim().ifBlank { null },
             manufacturer = manufacturer.trim().ifBlank { null },
             notes = notes.trim().ifBlank { null },
+            // Mode of action is no longer an editable chemistry input — the group is
+            // structured per active now — so whatever the record already held is
+            // carried through untouched rather than dropped.
             modeOfAction = modeOfAction.trim().ifBlank { null },
             labelUrl = labelUrl.trim().ifBlank { null },
             productUrl = productUrl.trim().ifBlank { null },
@@ -850,6 +885,15 @@ internal fun ChemicalFormSheet(
         )
         val cb: (Boolean) -> Unit = { ok -> saving = false; if (ok) onDismiss() }
         if (isEdit) vm.updateSavedChemical(existing!!.id, input, cb) else vm.createSavedChemical(input, cb)
+    }
+
+    if (showChemistryEditor) {
+        ChemicalManualEditorSheet(
+            draft = chemistryDraft,
+            existing = existing?.storedIntelligence,
+            onDraftChange = { chemistryDraft = it },
+            onDismiss = { showChemistryEditor = false },
+        )
     }
 
     if (showReverify && existing != null && state != null) {
@@ -1088,31 +1132,129 @@ internal fun ChemicalFormSheet(
                 )
             }
 
-            SectionLabel("Details")
-            OutlinedTextField(
-                value = activeIngredient,
-                onValueChange = { activeIngredient = it },
-                label = { Text("Active ingredient") },
-                placeholder = { Text("e.g. Glyphosate 360 g/L") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = chemicalGroup,
-                    onValueChange = { chemicalGroup = it },
-                    label = { Text("Chemical group") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
+            // ---- Active ingredients ----
+            // This is what replaced the `Active ingredient` and `Chemical group`
+            // boxes. It shows each active with its own group, the derived
+            // product-level summary, and how many label rates and uses are on
+            // record, then hands off to the structured editor for the real work.
+            val structuredActives = chemistryDraft.actives.filter { it.name.isNotBlank() }
+            val groupSummary = ChemicalManualEntry.groupSummary(chemistryDraft)
+            val labelRateCount = chemistryDraft.productRates.size +
+                chemistryDraft.uses.sumOf { it.rates.size }
+            SectionLabel("Active ingredients")
+            if (structuredActives.isEmpty()) {
+                Text(
+                    "No active ingredients recorded",
+                    fontSize = 14.sp,
+                    color = vine.textSecondary,
                 )
-                OutlinedTextField(
-                    value = modeOfAction,
-                    onValueChange = { modeOfAction = it },
-                    label = { Text("MOA") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
+            } else {
+                structuredActives.forEach { active ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                active.name,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = vine.textPrimary,
+                            )
+                            if (active.concentrationText.isNotBlank()) {
+                                Text(
+                                    "${active.concentrationText} ${active.concentrationUnit?.label.orEmpty()}",
+                                    fontSize = 11.sp,
+                                    color = vine.textSecondary,
+                                )
+                            }
+                        }
+                        val code = ChemicalActivityGroup.normaliseCode(active.groupCode)
+                        val scheme = active.scheme
+                        if (scheme != null &&
+                            scheme != ChemicalActivityGroupScheme.NOT_APPLICABLE &&
+                            code.isNotEmpty()
+                        ) {
+                            ChemChip("${scheme.label} $code")
+                        } else {
+                            Text("No group", fontSize = 11.sp, color = vine.textSecondary)
+                        }
+                    }
+                }
+            }
+            if (groupSummary.isNotEmpty()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Product groups",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        groupSummary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary,
+                    )
+                }
+            }
+            if (labelRateCount > 0 || chemistryDraft.uses.isNotEmpty()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Label rates & uses",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        "$labelRateCount rate${if (labelRateCount == 1) "" else "s"} · " +
+                            "${chemistryDraft.uses.size} use" +
+                            if (chemistryDraft.uses.size == 1) "" else "s",
+                        fontSize = 13.sp,
+                        color = vine.textSecondary,
+                    )
+                }
+            }
+            OutlinedButton(
+                onClick = { showChemistryEditor = true },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    Icons.Filled.Science,
+                    contentDescription = null,
+                    tint = ChemTint,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    if (structuredActives.isEmpty()) "Enter chemistry & identity"
+                    else "Edit chemistry & identity",
                 )
             }
+            // A legacy record's free-text chemistry, shown read-only so the
+            // operator can see what the old columns hold while they restate it as
+            // structure. Nothing calculates from these strings.
+            if (structuredActives.isEmpty() &&
+                (activeIngredient.isNotBlank() || chemicalGroup.isNotBlank())
+            ) {
+                Text("Recorded as text", fontSize = 11.sp, color = vine.textSecondary)
+                Text(
+                    listOf(activeIngredient, chemicalGroup)
+                        .filter { it.isNotBlank() }
+                        .joinToString(" · "),
+                    fontSize = 12.sp,
+                    color = vine.textSecondary,
+                )
+            }
+            Text(
+                "Each active ingredient carries its own resistance group, so a two-active " +
+                    "product belongs to both groups independently. Anything you enter " +
+                    "yourself stays unverified until Match & Verify or Re-verify confirms it.",
+                fontSize = 11.sp,
+                color = vine.textSecondary,
+            )
+
+            SectionLabel("Details")
             // States the trust consequence of a resistance-critical correction
             // without blocking it. Absent unless verification actually falls.
             editOutcome?.warning?.let { warning ->

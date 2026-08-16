@@ -280,7 +280,12 @@ object ChemicalEditReconciler {
                 concentrationUnit = prior?.concentrationUnit,
                 activityGroup = if (names.size == codes.size) codes[index] else prior?.activityGroup,
                 groupSource = ChemicalDataSourceKind.MANUAL_ENTRY,
-                identitySource = ChemicalDataSourceKind.MANUAL_ENTRY,
+                // The free-text box never held the concentration, so an active whose
+                // name still matches has not had its IDENTITY restated — only its
+                // group. Inheriting the prior identity provenance is what keeps a
+                // looked-up product identified after a hand-edited group, instead of
+                // the record forgetting a register ever confirmed which product it is.
+                identitySource = prior?.identitySource ?: ChemicalDataSourceKind.MANUAL_ENTRY,
             )
         }
     }

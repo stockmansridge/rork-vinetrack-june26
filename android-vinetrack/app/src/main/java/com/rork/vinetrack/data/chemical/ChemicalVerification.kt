@@ -58,6 +58,17 @@ enum class ChemicalDataSourceKind(val raw: String, val label: String) {
             VITICULTURE_REFERENCE, AI_INTERPRETATION, MANUAL_ENTRY, LEGACY_RECORD -> false
         }
 
+    /**
+     * Whether this source is the record telling us about itself rather than
+     * anything outside VineTrack having been consulted.
+     *
+     * A manually typed value and a value read out of an old free-text column are
+     * both statements by the operator's own installation. Neither is proof of
+     * anything, which is why a hand-entered registration number cannot make a
+     * product's identity authoritative.
+     */
+    val isSelfReported: Boolean get() = this == MANUAL_ENTRY || this == LEGACY_RECORD
+
     /** Higher wins when two sources disagree about the same field. */
     val precedence: Int
         get() = when (this) {

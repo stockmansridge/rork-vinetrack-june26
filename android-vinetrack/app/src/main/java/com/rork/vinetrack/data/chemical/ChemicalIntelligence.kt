@@ -59,8 +59,38 @@ data class ChemicalIntelligence(
     val resolvedVerificationStatus: ChemicalVerificationStatus
         get() = verification.resolvedStatus(
             actives = activeIngredients,
-            hasRegistration = registration?.isAuthoritativeIdentity == true,
+            hasRegistration = hasEvidencedRegistration,
         )
+
+    /**
+     * Whether this record's registered identity is backed by something other than
+     * the operator's own typing.
+     *
+     * [ChemicalRegistration.isAuthoritativeIdentity] is a check on SHAPE: a
+     * register, a number and a country. That shape is exactly what an operator
+     * produces by typing an APVMA number into the manual editor, and on its own it
+     * would promote a hand-entered product to Partially Verified, leaving the
+     * record citing the operator as evidence for the operator's own claim.
+     *
+     * So the identity only counts once something outside this installation has
+     * been consulted: either a cited source, or an active whose identity a
+     * register established. A registration typed by hand is still stored, still
+     * shown, and is still the strongest thing Match & Verify and Re-verify lead
+     * with when they go looking. It simply is not treated as proof until one of
+     * them comes back.
+     *
+     * The per-active [ChemicalActiveIngredient.identitySource] is consulted as well
+     * as the cited sources because a manual edit to an active's GROUP legitimately
+     * withdraws the record's authoritative citations while leaving the registered
+     * identity itself untouched. That product is still identified; only its
+     * chemistry became the operator's own claim.
+     */
+    val hasEvidencedRegistration: Boolean
+        get() = registration?.isAuthoritativeIdentity == true &&
+            (
+                verification.sources.any { !it.kind.isSelfReported } ||
+                    activeIngredients.any { it.identitySource?.isSelfReported == false }
+                )
 
     /** Whether the future Resistance Engine may use these groups unqualified. */
     val isResistanceDependable: Boolean get() = resolvedVerificationStatus.isResistanceDependable

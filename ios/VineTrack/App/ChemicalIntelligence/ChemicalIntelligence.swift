@@ -101,8 +101,38 @@ nonisolated struct ChemicalIntelligence: Codable, Sendable, Hashable {
     nonisolated var resolvedVerificationStatus: ChemicalVerificationStatus {
         verification.resolvedStatus(
             actives: activeIngredients,
-            hasRegistration: registration?.isAuthoritativeIdentity ?? false
+            hasRegistration: hasEvidencedRegistration
         )
+    }
+
+    /// Whether this record's registered identity is backed by something other
+    /// than the operator's own typing.
+    ///
+    /// `ChemicalRegistration.isAuthoritativeIdentity` is a check on SHAPE — a
+    /// register, a number and a country. That shape is exactly what an operator
+    /// produces by typing "APVMA 12345" into the manual editor, and on its own it
+    /// would promote a hand-entered product to Partially Verified: the record
+    /// would end up citing the operator as evidence for the operator's own claim.
+    ///
+    /// So the identity only counts once something outside this installation has
+    /// been consulted: either a cited source, or an active whose identity a
+    /// register established. A registration typed by hand is still stored, still
+    /// shown, and still the strongest thing Match & Verify and Re-verify lead with
+    /// when they go looking — it simply is not treated as proof until one of them
+    /// comes back.
+    ///
+    /// The per-active `identitySource` is consulted as well as the cited sources
+    /// because a manual edit to an active's GROUP legitimately withdraws the
+    /// record's authoritative citations while leaving the registered identity
+    /// itself untouched. That product is still identified; only its chemistry
+    /// became the operator's own claim.
+    nonisolated var hasEvidencedRegistration: Bool {
+        guard registration?.isAuthoritativeIdentity ?? false else { return false }
+        if verification.sources.contains(where: { !$0.kind.isSelfReported }) { return true }
+        return activeIngredients.contains { active in
+            guard let source = active.identitySource else { return false }
+            return !source.isSelfReported
+        }
     }
 
     /// Whether the future Resistance Engine may use these groups without

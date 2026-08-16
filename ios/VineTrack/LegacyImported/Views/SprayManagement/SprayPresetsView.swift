@@ -237,6 +237,14 @@ struct EditSavedChemicalSheet: View {
     @State private var applicationNotes: String = ""
     @State private var showAILookup: Bool = false
     @State private var showReverify: Bool = false
+    /// The structured chemistry the operator is authoring.
+    ///
+    /// This replaces the three free-text chemistry boxes this form used to
+    /// carry. It is held here rather than inside the structured editor so the
+    /// edits survive that sheet closing and are written by this form's own Save,
+    /// keeping one Save button for the whole product.
+    @State private var chemistryDraft: ChemicalManualDraft = ChemicalManualDraft()
+    @State private var showChemistryEditor: Bool = false
     @State private var aiLoading: Bool = false
     @State private var aiError: String?
     @State private var linkAlertMessage: String?
@@ -285,6 +293,10 @@ struct EditSavedChemicalSheet: View {
                 _containerUnit = State(initialValue: c.unit)
             }
 
+            _chemistryDraft = State(initialValue: ChemicalManualEntry.draft(
+                from: c,
+                fallbackCountry: ""
+            ))
             _productCategory = State(initialValue: c.category)
             _packSizeText = State(initialValue: c.packSize.map { Self.formatRate($0) } ?? "")
             _packPriceText = State(initialValue: c.pricePerPack.map { Self.formatRate($0) } ?? "")
@@ -299,6 +311,10 @@ struct EditSavedChemicalSheet: View {
         } else {
             self.existingPerHaRateId = nil
             self.existingPer100LRateId = nil
+            _chemistryDraft = State(initialValue: ChemicalManualEntry.draft(
+                from: nil,
+                fallbackCountry: ""
+            ))
         }
     }
 
@@ -314,23 +330,47 @@ struct EditSavedChemicalSheet: View {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Re-resolved verification for the chemistry currently typed into this form.
-    ///
-    /// `nil` when nothing resistance-critical has moved — which is the common
-    /// case, and the reason editing a price, a note or the stock on hand never
-    /// disturbs a verified product. Only records that actually HOLD structured
-    /// intelligence are reconciled: a pure legacy chemical already resolves to
-    /// Needs Match on read, so there is no false trust there to protect.
-    private var editOutcome: ChemicalEditOutcome? {
-        guard let stored = chemical?.chemicalIntelligence, !stored.isEmpty else { return nil }
-        return ChemicalEditReconciler.reconcileLegacyEdit(
-            existing: stored,
-            activeIngredientText: activeIngredient.trimmingCharacters(in: .whitespacesAndNewlines),
-            chemicalGroupText: chemicalGroup.trimmingCharacters(in: .whitespacesAndNewlines),
-            modeOfActionText: modeOfAction.trimmingCharacters(in: .whitespacesAndNewlines),
-            productCategory: productCategory?.rawValue ?? "",
-            registrantText: manufacturer.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// The country a manual entry defaults to, from the vineyard profile.
+    private var resolvedCountry: String {
+        ChemicalRegistration.normaliseCountry(
+            ChemicalInfoService.resolveCountry(vineyardCountry: store.selectedVineyard?.country)
         )
+    }
+
+    /// Whether the operator has authored any structured chemistry in this form.
+    ///
+    /// A record whose chemistry section was never opened has nothing structured
+    /// to write, and must be saved without touching the intelligence columns —
+    /// otherwise editing a price on a legacy chemical would materialise its
+    /// free-text seed as its first structured write.
+    private var hasAuthoredChemistry: Bool {
+        !ChemicalManualEntry
+            .proposedIntelligence(from: chemistryDraft, existing: chemical?.chemicalIntelligence)
+            .isEmpty
+    }
+
+    /// Re-resolved verification for the structured chemistry in this form.
+    ///
+    /// The draft goes through `ChemicalManualEntry`, which reconciles it as
+    /// `.manualEntry` evidence: authoritative citations for values the operator
+    /// changed are withdrawn, each active's group is cross-checked against the
+    /// reference table, and the status is re-derived. Nothing here decides what
+    /// the status becomes.
+    ///
+    /// `nil` when there is no structured chemistry to write, which is what keeps
+    /// a price-only edit from disturbing verification at all.
+    private var editOutcome: ChemicalEditOutcome? {
+        guard hasAuthoredChemistry else { return nil }
+        let outcome = ChemicalManualEntry.outcome(
+            for: chemistryDraft,
+            existing: chemical?.chemicalIntelligence
+        )
+        // An unchanged structured record must not be rewritten by the act of
+        // saving a note: identical intelligence means there is nothing to store.
+        if let stored = chemical?.chemicalIntelligence, stored == outcome.intelligence {
+            return nil
+        }
+        return outcome
     }
 
     var body: some View {
@@ -340,6 +380,7 @@ struct EditSavedChemicalSheet: View {
                     aiSection
                 }
                 productSection
+                chemistrySection
                 if chemical != nil {
                     reverifySection
                 }
@@ -362,6 +403,20 @@ struct EditSavedChemicalSheet: View {
             .sheet(isPresented: $showAILookup) {
                 ChemicalAILookupSheet(initialQuery: name) { result in
                     Task { await applyAIResult(result) }
+                }
+            }
+            .sheet(isPresented: $showChemistryEditor) {
+                ChemicalManualEditorView(
+                    draft: $chemistryDraft,
+                    existing: chemical?.chemicalIntelligence
+                )
+            }
+            .onAppear {
+                // The vineyard's country is the sensible default, but it is only
+                // applied when the record does not already name one — an imported
+                // product's own country must never be overwritten on open.
+                if chemistryDraft.countryCode.isEmpty {
+                    chemistryDraft.countryCode = resolvedCountry
                 }
             }
             .sheet(isPresented: $showReverify) {
@@ -518,14 +573,101 @@ struct EditSavedChemicalSheet: View {
         }
     }
 
+    /// The product's chemistry, as structure rather than as free text.
+    ///
+    /// This section is what replaced the `Active Ingredient` and `Chemical Group`
+    /// boxes. It shows each active with its own group, the derived product-level
+    /// summary, and how many label rates and uses are on record — then hands off
+    /// to the structured editor for the actual work.
+    private var chemistrySection: some View {
+        let actives = chemistryDraft.actives.filter {
+            !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let summary = ChemicalManualEntry.groupSummary(chemistryDraft)
+        let rateCount = chemistryDraft.productRates.count
+            + chemistryDraft.uses.reduce(0) { $0 + $1.rates.count }
+        return Section {
+            if actives.isEmpty {
+                Label("No active ingredients recorded", systemImage: "flask")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(actives) { active in
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(active.name)
+                                .font(.subheadline.weight(.medium))
+                            if !active.concentrationText.isEmpty {
+                                Text("\(active.concentrationText) \(active.concentrationUnit?.label ?? "")")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        if let scheme = active.scheme, scheme != .notApplicable,
+                           !ChemicalActivityGroup.normaliseCode(active.groupCode).isEmpty {
+                            Text("\(scheme.label) \(ChemicalActivityGroup.normaliseCode(active.groupCode))")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(VineyardTheme.olive.opacity(0.12))
+                                .foregroundStyle(VineyardTheme.olive)
+                                .clipShape(Capsule())
+                        } else {
+                            Text("No group")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
+
+            if !summary.isEmpty {
+                LabeledContent("Product groups") {
+                    Text(summary).font(.subheadline.weight(.semibold))
+                }
+            }
+            if rateCount > 0 || !chemistryDraft.uses.isEmpty {
+                LabeledContent("Label rates & uses") {
+                    Text("\(rateCount) rate\(rateCount == 1 ? "" : "s") · "
+                         + "\(chemistryDraft.uses.count) use\(chemistryDraft.uses.count == 1 ? "" : "s")")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Button {
+                showChemistryEditor = true
+            } label: {
+                Label(
+                    actives.isEmpty ? "Enter Chemistry & Identity" : "Edit Chemistry & Identity",
+                    systemImage: "square.and.pencil"
+                )
+            }
+
+            // A legacy record's free-text chemistry, shown read-only so the
+            // operator can see what the old columns hold while they restate it as
+            // structure. Nothing calculates from these strings.
+            if actives.isEmpty, !activeIngredient.isEmpty || !chemicalGroup.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Recorded as text")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text([activeIngredient, chemicalGroup].filter { !$0.isEmpty }
+                        .joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("Active Ingredients")
+        } footer: {
+            Text("Each active ingredient carries its own resistance group, so a two-active product belongs to both groups independently. Anything you enter yourself stays unverified until Match & Verify or Re-verify confirms it.")
+        }
+    }
+
     private var detailsSection: some View {
         Section {
-            LabeledField(label: "Active Ingredient") {
-                TextField("e.g. Glyphosate 360 g/L", text: $activeIngredient)
-            }
-            LabeledField(label: "Chemical Group") {
-                TextField("e.g. Group M", text: $chemicalGroup)
-            }
             LabeledField(label: "Use / Problem") {
                 TextField("e.g. Fungicide", text: $use)
             }
@@ -534,9 +676,6 @@ struct EditSavedChemicalSheet: View {
             }
             LabeledField(label: "Manufacturer") {
                 TextField("e.g. Syngenta", text: $manufacturer)
-            }
-            LabeledField(label: "Mode of Action (MOA)") {
-                TextField("e.g. 11", text: $modeOfAction)
             }
             if let warning = editOutcome?.warning {
                 verificationWarning(warning)
@@ -845,16 +984,31 @@ struct EditSavedChemicalSheet: View {
         let productForm = formType == .liquid ? "liquid" : "solid"
         let packUnit = formType == .liquid ? "L" : "kg"
 
+        // Legacy scalars are now OUTPUTS of the structured record. They are
+        // rewritten only when there is structured chemistry to derive them from,
+        // so a record that has never been structured keeps its original text and
+        // is not blanked by the act of saving it.
+        let outcome = editOutcome
+        let structured = outcome?.intelligence
+            ?? (hasAuthoredChemistry ? chemical?.chemicalIntelligence : nil)
+        let projectedActive = structured?.legacyActiveIngredient ?? ""
+        let projectedGroup = structured?.legacyChemicalGroup ?? ""
+        let legacyActive = projectedActive.isEmpty ? activeIngredient : projectedActive
+        let legacyGroup = projectedGroup.isEmpty ? chemicalGroup : projectedGroup
+
         if var existing = chemical {
             existing.name = name
             existing.unit = unit
-            existing.chemicalGroup = chemicalGroup
+            existing.chemicalGroup = legacyGroup
             existing.use = use
             existing.manufacturer = manufacturer
             existing.notes = notes
             existing.problem = problem
             existing.ratePerHa = perHaDisplay
-            existing.activeIngredient = activeIngredient
+            existing.activeIngredient = legacyActive
+            // Mode of action is no longer an editable chemistry input — the group
+            // is structured per active now — so whatever the record already held
+            // is carried through untouched rather than dropped.
             existing.modeOfAction = modeOfAction
             existing.labelURL = labelURL
             existing.productURL = productURL
@@ -880,7 +1034,7 @@ struct EditSavedChemicalSheet: View {
             // changed, so a hand-edited group cannot leave a stale `verified`
             // status or an authoritative citation for the OLD value behind.
             // Left untouched on an unrelated edit.
-            if let outcome = editOutcome {
+            if let outcome {
                 existing.chemicalIntelligence = outcome.intelligence
             }
             store.updateSavedChemical(existing)
@@ -889,12 +1043,12 @@ struct EditSavedChemicalSheet: View {
                 name: name,
                 ratePerHa: perHaDisplay,
                 unit: unit,
-                chemicalGroup: chemicalGroup,
+                chemicalGroup: legacyGroup,
                 use: use,
                 manufacturer: manufacturer,
                 notes: notes,
                 problem: problem,
-                activeIngredient: activeIngredient,
+                activeIngredient: legacyActive,
                 rates: rates,
                 purchase: purchase,
                 labelURL: labelURL,
@@ -913,7 +1067,11 @@ struct EditSavedChemicalSheet: View {
                 organicCertified: organicCertified,
                 inventoryQuantity: parseOptional(inventoryText),
                 inventoryUnit: parseOptional(inventoryText) != nil ? "packs" : "",
-                applicationNotes: applicationNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+                applicationNotes: applicationNotes.trimmingCharacters(in: .whitespacesAndNewlines),
+                // A manually created product is born structured. Its status is
+                // whatever `ChemicalManualEntry` reconciled it to — Unverified,
+                // or Conflict where the reference table positively disagrees.
+                chemicalIntelligence: outcome?.intelligence
             )
             store.addSavedChemical(new)
         }
