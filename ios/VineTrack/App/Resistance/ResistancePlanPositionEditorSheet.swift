@@ -153,7 +153,7 @@ struct ResistancePlanPositionEditorSheet: View {
                                 Text(option.candidate.productName)
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(.primary)
-                                Text(availabilityMark(option.candidate.availability))
+                                Text(option.candidate.availability.plannerMark)
                                     .font(.caption)
                             }
                             Text(option.candidate.groups.displayLabel)
@@ -184,16 +184,6 @@ struct ResistancePlanPositionEditorSheet: View {
         } footer: {
             Text("Optional. A product adds identity and verification state; the resistance result comes from the group structure either way.")
                 .font(.caption2)
-        }
-    }
-
-    private func availabilityMark(_ availability: ChemicalIntelligenceAvailability) -> String {
-        switch availability {
-        case .availableVerified: return "✓ Verified"
-        case .availablePartiallyVerified: return "◐ Partially Verified"
-        case .availableUnverified: return "◌ Unverified"
-        case .conflict: return "⚠ Conflict"
-        case .unavailable: return "— No chemistry"
         }
     }
 

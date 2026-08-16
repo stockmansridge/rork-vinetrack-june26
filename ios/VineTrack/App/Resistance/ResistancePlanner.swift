@@ -308,6 +308,14 @@ nonisolated enum ResistancePlanner {
     nonisolated static let unsupportedJurisdictionMessage =
         "Resistance planning is not yet configured for this vineyard's jurisdiction."
 
+    /// Shown whenever the engine reports `ResistanceMixtureRequirement.unknown`.
+    ///
+    /// Held here rather than typed into each platform's view so iOS and Android cannot
+    /// drift into wording one softer than the other. The UI must never decide for itself
+    /// that two FRAC groups in a tank satisfy a mixture requirement.
+    nonisolated static let mixtureUnconfirmedLabel =
+        "Mixture requirement cannot be fully confirmed"
+
     /// One day, for spacing synthetic planned timestamps.
     private nonisolated static let dayMs: Int64 = 86_400_000
 
@@ -819,6 +827,24 @@ nonisolated enum ResistancePlanner {
     /// Namespaced so a planned position can never collide with a real spray record id.
     nonisolated static func plannedApplicationId(planId: String, positionId: String) -> String {
         "plan:\(planId):position:\(positionId)"
+    }
+}
+
+nonisolated extension ChemicalIntelligenceAvailability {
+    /// Verification mark for a product's chemistry.
+    ///
+    /// Lives in the domain rather than in each platform's view so the two phones cannot
+    /// drift to different symbols for the same evidence state — a grower comparing an
+    /// iPhone and an Android in the same shed must not see one product marked differently
+    /// on each.
+    nonisolated var plannerMark: String {
+        switch self {
+        case .availableVerified: return "✓ Verified"
+        case .availablePartiallyVerified: return "◐ Partially Verified"
+        case .availableUnverified: return "○ Unverified"
+        case .conflict: return "⚠ Conflict"
+        case .unavailable: return "— No chemistry"
+        }
     }
 }
 

@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.Opacity
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Scale
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material.icons.filled.WaterDrop
@@ -145,6 +146,20 @@ object OperationalToolCatalog {
             icon = Icons.Filled.WaterDrop,
             tint = VineColors.Cyan,
             route = ToolRoute.IrrigationRecords,
+        ),
+        // A dedicated planning tool, deliberately its own tile rather than a screen
+        // inside the Spray Calculator: the rotation is decided weeks before a tank is
+        // filled, and the individual sprays are drawn from the plan, not the reverse.
+        //
+        // `id` matches iOS exactly so a saved layout, and the SQL 159 preference row
+        // behind it, mean the same thing on both platforms.
+        OperationalToolDefinition(
+            id = "resistance_planner",
+            title = "Resistance Planner",
+            subtitle = "Season FRAC rotation",
+            icon = Icons.Filled.Shield,
+            tint = VineColors.Purple,
+            route = ToolRoute.ResistancePlanner,
         ),
     )
 

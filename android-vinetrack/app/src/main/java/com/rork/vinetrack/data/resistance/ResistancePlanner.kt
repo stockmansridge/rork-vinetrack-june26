@@ -295,6 +295,15 @@ object ResistancePlanner {
     const val UNSUPPORTED_JURISDICTION_MESSAGE =
         "Resistance planning is not yet configured for this vineyard's jurisdiction."
 
+    /**
+     * Shown whenever the engine reports [ResistanceMixtureRequirement.UNKNOWN].
+     *
+     * Held here rather than typed into each platform's view so iOS and Android cannot
+     * drift into wording one softer than the other. The UI must never decide for itself
+     * that two FRAC groups in a tank satisfy a mixture requirement.
+     */
+    const val MIXTURE_UNCONFIRMED_LABEL = "Mixture requirement cannot be fully confirmed"
+
     /** One day, for spacing synthetic planned timestamps. */
     private const val DAY_MS: Long = 86_400_000
 

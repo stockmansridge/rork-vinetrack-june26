@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.PrecisionManufacturing
 import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Sync
@@ -91,6 +92,7 @@ enum class ToolRoute(
     FertiliserCalculator("Fertiliser Calculator", "Rates, packs & costs", Icons.Filled.Grain, VineColors.LeafGreen, ToolGroup.Operations),
     PruningTracker("Pruning Tracker", "Row progress & crew rates", Icons.Filled.ContentCut, VineColors.Cyan, ToolGroup.Operations),
     IrrigationRecords("Irrigation Records", "Water applied, valves & blocks", Icons.Filled.WaterDrop, VineColors.Cyan, ToolGroup.Operations),
+    ResistancePlanner("Resistance Planner", "Season FRAC rotation", Icons.Filled.Shield, VineColors.Purple, ToolGroup.Operations),
     CustomiseTools("Customise Tools", "Reorder or hide Operational Tools", Icons.Filled.DashboardCustomize, VineColors.Indigo, ToolGroup.Operations),
     Equipment("Equipment", "Tractors, machines, spray & fuel", Icons.Filled.PrecisionManufacturing, VineColors.EarthBrown, ToolGroup.Records),
     TeamAccess("Team & Access", "Manage members and invitations", Icons.Filled.Group, VineColors.Info, ToolGroup.Account),

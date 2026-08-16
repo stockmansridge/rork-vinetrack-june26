@@ -62,6 +62,7 @@ import com.rork.vinetrack.ui.screens.PinCategoryLauncherScreen
 import com.rork.vinetrack.ui.screens.PinsScreen
 import com.rork.vinetrack.ui.screens.PinsViewMode
 import com.rork.vinetrack.ui.screens.RegionUnitsSettingsScreen
+import com.rork.vinetrack.ui.screens.ResistancePlannerScreen
 import com.rork.vinetrack.ui.screens.RolesPermissionsScreen
 import com.rork.vinetrack.ui.screens.SettingsScreen
 import com.rork.vinetrack.ui.screens.SetupWizardScreen
@@ -433,6 +434,7 @@ private fun ToolHost(
         ToolRoute.FertiliserCalculator -> FertiliserCalculatorScreen(vm, state, modifier, onBack, onOpenProducts = { onOpenTool(ToolRoute.SprayManagement) })
         ToolRoute.PruningTracker -> PruningTrackerScreen(vm, state, modifier, onBack, onOpenWorkTasks = { onOpenTool(ToolRoute.WorkTasks) })
         ToolRoute.IrrigationRecords -> IrrigationRecordsScreen(vm, state, modifier, onBack)
+        ToolRoute.ResistancePlanner -> ResistancePlannerScreen(vm, state, modifier, onBack)
         ToolRoute.CustomiseTools -> CustomiseToolsScreen(vm, state, modifier, onBack = onBack)
         ToolRoute.Equipment -> EquipmentScreen(vm, state, modifier, onBack, onOpenFuelLog = { onOpenTool(ToolRoute.FuelLog) })
         ToolRoute.TeamAccess -> TeamAccessScreen(vm, state, modifier, onBack = onBack, onOpenTool = onOpenTool)
