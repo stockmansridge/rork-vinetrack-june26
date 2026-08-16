@@ -4,8 +4,12 @@
 portal) CONSUMES it.** The portal must not invent a competing block-attribution
 schema, add its own columns, or write the derived projection.
 
-Status: migration written, **NOT applied**. Apply `sql/195_spray_block_attribution.sql`
-then run `sql/tests/195_spray_block_attribution_tests.sql`.
+Status: **APPLIED to production** (`tbafuqwruefgkbyxrxyb`).
+`sql/tests/195_spray_block_attribution_tests.sql` **PASSED**. No further migration
+is expected for this contract.
+
+`vinetrack-api` source exposes the fields but **has not been confirmed deployed** —
+see [Read API](#read-api).
 
 ---
 
@@ -158,6 +162,55 @@ explicit column list:
 ```bash
 supabase functions deploy vinetrack-api --project-ref <ref>
 ```
+
+---
+
+## Display rule for names (implement this exactly)
+
+Both mobile clients resolve a treated block's label with one deterministic rule.
+The portal must match it, or the same application will read differently in two
+places:
+
+```text
+1. The id still resolves to a live block  -> that block's CURRENT name
+2. The id no longer resolves              -> the STORED blockName snapshot
+3. Neither is available                   -> "Unknown block"
+```
+
+Step 1 is deliberately the *current* name: after a rename, that is what the
+operator will find in the app today, so showing the old snapshot would send them
+looking for a block that no longer appears anywhere. The snapshot exists for step
+2 — an archived block whose name would otherwise be lost. Readability must not
+depend on the block still existing.
+
+When attribution is `null`, show **"Blocks not recorded"**. Never the vineyard's
+current blocks.
+
+**Note on id casing:** iOS writes `UUID.uuidString` (uppercase); Postgres and
+Android use lowercase. The same block legitimately appears in both spellings, so
+compare ids **case-insensitively**. This is normalisation of one identity, not name
+matching.
+
+---
+
+## Machine-readable exports
+
+The mobile CSV exports add two **export-only** columns, deliberately absent from
+the re-importable template (no operator should be typing uuids into a
+spreadsheet):
+
+- `Block IDs` — stable identity, the column to join on.
+- `Blocks` — human names, resolved by the rule above.
+
+Multi-value cells use `"; "` (semicolon + space), not a comma: these are CSV
+files, and a comma inside a cell forces quoting and invites splitting on the wrong
+character. A semicolon cannot occur in a uuid, so the ID cell stays unambiguously
+splittable.
+
+Both cells are **empty** when attribution was never recorded — emptiness is how
+every other never-recorded spray field is already exported, and a parser must not
+have to string-match English prose. The `"Blocks not recorded"` wording is for
+human-facing surfaces (PDF, screen) only.
 
 ---
 

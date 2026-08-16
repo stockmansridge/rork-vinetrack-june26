@@ -92,18 +92,52 @@ struct SprayRecordFormView: View {
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    /// The attribution to persist, built through the SAME canonical geometry path
-    /// the guided calculator uses.
+    /// What this record already says it treated. Nil means "blocks not recorded".
+    private var recordedBlocks: [SprayApplicationBlockSnapshot]? {
+        existingRecord?.applicationGeometry?.blocks
+    }
+
+    /// Blocks the operator can choose from: every live block in the vineyard, plus
+    /// any block this record already attributes that no longer exists.
     ///
-    /// Routing it through `SprayGeometryResolver` rather than assembling ids by
-    /// hand is deliberate: it keeps one definition of what a treated block's
-    /// recorded geometry is, so a manually entered spray and a calculated one are
-    /// never two different shapes of the same fact.
+    /// The second group matters — an archived block must stay visible and stay
+    /// selected, or editing the wind speed would quietly drop it from a compliance
+    /// record.
+    private var blockChoices: [SprayFormBlockChoice] {
+        let live = availableBlocks.map {
+            SprayFormBlockChoice(id: $0.id, name: $0.name, isLive: true)
+        }
+        let liveIds = Set(live.map { $0.id.uuidString.lowercased() })
+        let missing = (recordedBlocks ?? []).compactMap { block -> SprayFormBlockChoice? in
+            guard !liveIds.contains(block.blockId.lowercased()),
+                  let uuid = UUID(uuidString: block.blockId) else { return nil }
+            return SprayFormBlockChoice(id: uuid, name: block.displayName, isLive: false)
+        }
+        return live + missing
+    }
+
+    /// The selection as ordered ids. `selectedBlockIds` is a `Set`, so the order is
+    /// taken from the displayed list to keep two saves of the same selection
+    /// byte-identical.
+    private var orderedSelectedBlockIds: [String] {
+        blockChoices
+            .filter { selectedBlockIds.contains($0.id) }
+            .map { $0.id.uuidString }
+    }
+
+    /// The attribution to persist.
+    ///
+    /// Delegated to `SprayManualBlockAttribution` so the three rules that decide
+    /// what a compliance record says — preserve verbatim, project fresh, carry a
+    /// deleted block forward — are unit tested rather than only verified by eye,
+    /// and are identical on Android.
     private var attributionBlocks: [SprayApplicationBlockSnapshot]? {
-        let selected = availableBlocks.filter { selectedBlockIds.contains($0.id) }
-        guard !selected.isEmpty else { return nil }
-        let geometry = SprayGeometryResolver.resolve(selected.map { SprayBlockInput.from(paddock: $0) })
-        return SprayApplicationBlockSnapshot.project(geometry.blocks)
+        SprayManualBlockAttribution.resolve(
+            selectedBlockIds: orderedSelectedBlockIds,
+            recordedBlocks: recordedBlocks,
+            availableBlocks: availableBlocks,
+            isEdit: existingRecord != nil
+        )
     }
 
     var body: some View {
@@ -571,12 +605,12 @@ struct SprayRecordFormView: View {
     /// several blocks and must stay ONE spray record.
     private var blocksSection: some View {
         Section {
-            if availableBlocks.isEmpty {
+            if blockChoices.isEmpty {
                 Text("No blocks available for this vineyard.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(availableBlocks) { block in
+                ForEach(blockChoices) { block in
                     Button {
                         if selectedBlockIds.contains(block.id) {
                             selectedBlockIds.remove(block.id)
@@ -585,8 +619,18 @@ struct SprayRecordFormView: View {
                         }
                     } label: {
                         HStack {
-                            Text(block.name)
-                                .foregroundStyle(.primary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(block.name)
+                                    .foregroundStyle(.primary)
+                                if !block.isLive {
+                                    // Attributed, but the block is gone. Kept and kept
+                                    // selected: a completed spray is a compliance
+                                    // document, not a view of today's vineyard.
+                                    Text("No longer in this vineyard · kept for history")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                             Spacer()
                             if selectedBlockIds.contains(block.id) {
                                 Image(systemName: "checkmark")
@@ -605,9 +649,24 @@ struct SprayRecordFormView: View {
             // just to let someone correct a wind speed — but the consequence is
             // named so it is a choice, not an accident.
             if selectedBlockIds.isEmpty {
-                Text("Blocks not recorded. This spray will not appear in any block's history.")
+                if existingRecord != nil, recordedBlocks == nil {
+                    // A historical record. Saving other changes keeps it silent —
+                    // nobody is asked to invent where a 2019 spray went.
+                    Text(
+                        "\(SprayBlockAttributionDisplay.notRecorded). Saving other changes keeps it " +
+                        "that way — select blocks only to record a correction you know to be factual."
+                    )
+                } else {
+                    Text(
+                        "\(SprayBlockAttributionDisplay.notRecorded). This spray will not appear in " +
+                        "any block's history."
+                    )
+                }
             } else {
-                Text("^[\(selectedBlockIds.count) block](inflect: true) recorded for this application.")
+                Text(
+                    "^[\(selectedBlockIds.count) block](inflect: true) recorded by ID, so renaming a " +
+                    "block later keeps this record intact."
+                )
             }
         }
     }
@@ -647,8 +706,10 @@ struct SprayRecordFormView: View {
             // originally produced by the guided calculator, so only the block
             // attribution is replaced — an explicit factual correction (§16),
             // never a recomputation from today's vineyard.
-            applicationGeometry: (existingRecord?.applicationGeometry ?? SprayApplicationSnapshot())
-                .withBlocks(attributionBlocks)
+            applicationGeometry: SprayManualBlockAttribution.geometryToPersist(
+                existing: existingRecord?.applicationGeometry,
+                blocks: attributionBlocks
+            )
         )
         if existingRecord != nil {
             store.updateSprayRecord(record)
@@ -657,4 +718,14 @@ struct SprayRecordFormView: View {
         }
         dismiss()
     }
+}
+
+/// One selectable block in the manual spray form.
+///
+/// `isLive` is false for a block this record already attributes that no longer
+/// exists in the vineyard, which must still be shown and must stay selected.
+private struct SprayFormBlockChoice: Identifiable {
+    let id: UUID
+    let name: String
+    let isLive: Bool
 }

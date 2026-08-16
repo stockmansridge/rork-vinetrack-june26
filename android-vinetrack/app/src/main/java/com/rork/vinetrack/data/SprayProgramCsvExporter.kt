@@ -7,6 +7,7 @@ import androidx.core.content.FileProvider
 import com.rork.vinetrack.data.model.FuelPurchase
 import com.rork.vinetrack.data.model.OperatorCategory
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.spray.SprayBlockAttributionDisplay
 import com.rork.vinetrack.data.model.SprayChemical
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.Trip
@@ -72,6 +73,21 @@ object SprayProgramCsvExporter {
      */
     private val summaryHeaders: List<String> = listOf("Total Chemical Cost", "Cost Per Ha")
 
+    /**
+     * sql/195 block attribution. EXPORT-ONLY — deliberately absent from
+     * [templateHeaders], because the template is filled in by hand and no operator
+     * should be typing uuids into a spreadsheet.
+     *
+     * `Block IDs` is the stable identity a consumer joins on; `Blocks` is for
+     * people. Both are EMPTY for a record whose attribution was never recorded —
+     * emptiness is how every other never-recorded field is already exported, and a
+     * parser must not have to string-match English prose. Never populated from the
+     * linked trip or the vineyard's current blocks.
+     *
+     * Non-financial, so emitted for every role.
+     */
+    private val blockAttributionHeaders: List<String> = listOf("Block IDs", "Blocks")
+
     /** Export-only row-coverage + tank fill-timer columns (ignored by importer). */
     private val coverageHeaders: List<String> = listOf(
         "Tracking Pattern", "Paths Planned", "Paths Completed", "Paths Skipped", "Paths Not Complete",
@@ -103,6 +119,7 @@ object SprayProgramCsvExporter {
     private fun exportHeaders(includeCostings: Boolean): List<String> = buildList {
         addAll(coreHeaders)
         if (includeCostings) addAll(summaryHeaders)
+        addAll(blockAttributionHeaders)
         addAll(coverageHeaders)
         if (includeCostings) addAll(costRollupHeaders)
     }
@@ -316,6 +333,13 @@ object SprayProgramCsvExporter {
                 row.add(if (record.hasCostData) String.format(Locale.US, "%.2f", record.totalChemicalCost) else "")
                 row.add(record.costPerHectare?.let { String.format(Locale.US, "%.2f", it) } ?: "")
             }
+
+            // Block attribution. Read from the persisted snapshot only — never
+            // reconstructed from the linked trip, the row coverage or the current
+            // vineyard geometry.
+            val treatedBlocks = record.applicationGeometry?.blocks
+            row.add(SprayBlockAttributionDisplay.idsCell(treatedBlocks))
+            row.add(SprayBlockAttributionDisplay.namesCell(treatedBlocks, paddocks))
 
             // Row-coverage columns — populated only for planned trips; blank otherwise.
             if (trip != null && trip.hasRowPlan) {

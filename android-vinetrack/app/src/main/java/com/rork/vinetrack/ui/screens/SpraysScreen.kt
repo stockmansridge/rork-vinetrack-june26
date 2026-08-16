@@ -69,6 +69,7 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -132,6 +133,10 @@ import com.rork.vinetrack.data.model.resolveTripWorkTask
 import com.rork.vinetrack.data.model.sprayRecordStatus
 import com.rork.vinetrack.data.model.sprayOperationTypes
 import com.rork.vinetrack.data.model.windDirectionOptions
+import com.rork.vinetrack.data.spray.SprayApplicationBlockSnapshot
+import com.rork.vinetrack.data.spray.SprayBlockAttributionDisplay
+import com.rork.vinetrack.data.spray.SprayManualBlockAttribution
+import com.rork.vinetrack.data.spray.blockIds
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.TripSyncBadge
@@ -1378,6 +1383,43 @@ private fun SpraySheet(
         mutableStateListOf<TankDraft>().apply { addAll(initial) }
     }
 
+    // ---------------------------------------------------- block attribution (195)
+    //
+    // What this record ACTUALLY says it treated, read straight off the stored
+    // snapshot. Null means "blocks not recorded" (a pre-sql/195 record) and is the
+    // seed for nothing: the selection below starts EMPTY in that case rather than
+    // acquiring the vineyard's current blocks.
+    val recordedBlocks: List<SprayApplicationBlockSnapshot>? =
+        remember(existing) { existing?.applicationGeometry?.blocks }
+
+    // Seeded ONLY from genuinely recorded attribution, or from a template's
+    // intended block identity. Never from all blocks, the vineyard's current
+    // blocks, or anything inferred from row numbers.
+    val selectedBlockIds = remember {
+        mutableStateListOf<String>().apply { recordedBlocks?.let { addAll(it.blockIds) } }
+    }
+
+    // Blocks the operator can choose from: every live block in the vineyard, plus
+    // any block this record already attributes that no longer exists. The second
+    // group matters — an archived block must stay visible and stay selected, or
+    // editing the wind speed would quietly drop it from a compliance record.
+    val blockChoices: List<SprayBlockChoice> = remember(state.paddocks, recordedBlocks) {
+        val live = state.paddocks.map { SprayBlockChoice(it.id, it.name, isLive = true) }
+        val liveIds = live.map { it.id }.toSet()
+        val missing = recordedBlocks.orEmpty()
+            .filterNot { liveIds.contains(it.blockId) }
+            .map { SprayBlockChoice(it.blockId, it.displayName, isLive = false) }
+        live + missing
+    }
+
+    // A template may name a block that has since been deleted. Surface it instead
+    // of silently substituting another block.
+    val missingTemplateBlockCount: Int = remember(fromTemplate, recordedBlocks, state.paddocks) {
+        if (!fromTemplate) 0 else recordedBlocks.orEmpty().count { block ->
+            state.paddocks.none { it.id == block.blockId }
+        }
+    }
+
     var operationMenu by remember { mutableStateOf(false) }
     var windMenu by remember { mutableStateOf(false) }
     var machineMenu by remember { mutableStateOf(false) }
@@ -1420,6 +1462,22 @@ private fun SpraySheet(
             tripId = tripId,
             isTemplate = isTemplate,
             tanks = tankModels,
+            // Carry the EXISTING calculation snapshot through verbatim and replace
+            // only the attribution. Before this the manual sheet sent no geometry
+            // at all, so editing a calculator-produced record wiped its whole
+            // sql/191 snapshot — treated area, band widths, row length and all.
+            //
+            // Both rules live in `SprayManualBlockAttribution` so they are unit
+            // tested against real fixtures rather than only exercised by tapping.
+            applicationGeometry = SprayManualBlockAttribution.geometryToPersist(
+                existing = existing?.applicationGeometry,
+                blocks = SprayManualBlockAttribution.resolve(
+                    selectedBlockIds = selectedBlockIds.toList(),
+                    recordedBlocks = recordedBlocks,
+                    availableBlocks = state.paddocks,
+                    isEdit = isEdit,
+                ),
+            ),
         )
     }
 
@@ -1486,6 +1544,102 @@ private fun SpraySheet(
             OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.Schedule, contentDescription = null, modifier = Modifier.size(18.dp))
                 Text("  " + (formatSprayDate(dateMs) ?: "Pick date"))
+            }
+
+            // Blocks treated (sql/195). Identity is the block id; the label is only
+            // ever a label.
+            SectionHeader(
+                if (isTemplate) "Blocks · intended" else "Blocks treated",
+                onLight = true,
+            )
+            if (blockChoices.isEmpty()) {
+                Text(
+                    "No blocks in this vineyard yet.",
+                    fontSize = 13.sp,
+                    color = vine.textSecondary,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    blockChoices.forEach { choice ->
+                        val checked = selectedBlockIds.contains(choice.id)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    if (checked) {
+                                        selectedBlockIds.remove(choice.id)
+                                    } else {
+                                        selectedBlockIds.add(choice.id)
+                                    }
+                                }
+                                .padding(vertical = 2.dp),
+                        ) {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = { wantsChecked ->
+                                    if (wantsChecked) {
+                                        selectedBlockIds.add(choice.id)
+                                    } else {
+                                        selectedBlockIds.remove(choice.id)
+                                    }
+                                },
+                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    choice.name,
+                                    fontSize = 15.sp,
+                                    color = vine.textPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (!choice.isLive) {
+                                    // Attributed, but the block is gone. Kept and kept
+                                    // selected: a completed spray is a compliance
+                                    // document, not a view of today's vineyard.
+                                    Text(
+                                        "No longer in this vineyard · kept for history",
+                                        fontSize = 11.sp,
+                                        color = vine.textSecondary,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (missingTemplateBlockCount > 0) {
+                    Text(
+                        if (missingTemplateBlockCount == 1) {
+                            "1 template block is no longer available — review the selection before saving."
+                        } else {
+                            "$missingTemplateBlockCount template blocks are no longer available — " +
+                                "review the selection before saving."
+                        },
+                        fontSize = 12.sp,
+                        color = VineColors.Warning,
+                    )
+                }
+
+                // Footer wording. The empty case is deliberately different for a
+                // historical record than for a new one: an operator fixing a typo on
+                // a 2019 spray is not being asked to invent where it went.
+                val footer: String = when {
+                    selectedBlockIds.isNotEmpty() ->
+                        "${selectedBlockIds.size} selected · recorded against these blocks by ID, " +
+                            "so renaming a block later keeps this record intact."
+                    isEdit && recordedBlocks == null ->
+                        "${SprayBlockAttributionDisplay.NOT_RECORDED}. Saving other changes keeps it " +
+                            "that way — select blocks only to record a correction you know to be factual."
+                    isTemplate ->
+                        "No blocks chosen. The operator picks blocks when creating a spray from this " +
+                            "template."
+                    else ->
+                        "${SprayBlockAttributionDisplay.NOT_RECORDED}. This spray will not appear in " +
+                            "any block's history."
+                }
+                Text(footer, fontSize = 12.sp, color = vine.textSecondary)
             }
 
             // Weather
@@ -2143,6 +2297,18 @@ private fun ChemicalDraft.toModel(
 private fun String.numericFilter(): String = filter { c -> c.isDigit() || c == '.' || c == ',' }
 
 private fun String.toDoubleSafe(): Double? = replace(',', '.').trim().takeIf { it.isNotBlank() }?.toDoubleOrNull()
+
+/**
+ * One selectable block in the manual spray form.
+ *
+ * [isLive] is false for a block this record already attributes that no longer
+ * exists in the vineyard, which must still be shown and must stay selected.
+ */
+private data class SprayBlockChoice(
+    val id: String,
+    val name: String,
+    val isLive: Boolean,
+)
 
 private fun formatSprayDate(epochMs: Long?): String? {
     epochMs ?: return null

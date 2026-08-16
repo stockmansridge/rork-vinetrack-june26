@@ -19,6 +19,7 @@ import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.resolveSprayEquipmentName
 import com.rork.vinetrack.data.model.SprayEquipment
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
+import com.rork.vinetrack.data.spray.SprayBlockAttributionDisplay
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -190,6 +191,29 @@ object SprayRecordPdfExporter {
         }
         trip?.paddockName?.takeIf { it.isNotBlank() }?.let {
             text(s, "Block: $it", bodyPaint)
+        }
+
+        // Blocks Treated — the AUTHORITATIVE sql/195 attribution.
+        //
+        // Deliberately separate from the line above, which is the linked TRIP's
+        // block label and describes where the machine drove. This section states
+        // which blocks the APPLICATION treated, which is what a compliance reader
+        // and a resistance strategy need.
+        //
+        // A record whose attribution was never recorded says exactly that. It never
+        // falls back to the vineyard's current blocks: naming a block that may never
+        // have been sprayed would be worse than admitting the record is silent.
+        sectionHeader(s, "Blocks Treated")
+        val treatedBlocks = SprayBlockAttributionDisplay.resolve(
+            record.applicationGeometry?.blocks,
+            paddocks,
+        )
+        if (treatedBlocks == null) {
+            text(s, SprayBlockAttributionDisplay.NOT_RECORDED, bodyPaint)
+        } else {
+            for (block in treatedBlocks) {
+                text(s, "\u2022 ${block.name}", bodyPaint)
+            }
         }
 
         // Trip Information

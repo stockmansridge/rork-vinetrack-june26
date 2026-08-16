@@ -69,6 +69,16 @@ struct SprayProgramCSVService {
         // (owner/manager). Supervisors and operators MUST receive
         // `includeCostings: false` so cost data never leaves the app for them.
         var headers = templateHeaders
+        // sql/195 block attribution. EXPORT-ONLY — deliberately not added to
+        // `templateHeaders`, because the template is filled in by hand and no
+        // operator should be typing uuids into a spreadsheet. `Block IDs` is the
+        // stable identity a consumer joins on; `Blocks` is for people. Both are
+        // empty for a record whose attribution was never recorded — emptiness is
+        // how every other never-recorded field is already exported, and a parser
+        // must not have to string-match English prose.
+        //
+        // Non-financial, so they are emitted for every role.
+        headers.append(contentsOf: ["Block IDs", "Blocks"])
         if includeCostings {
             headers.append(contentsOf: [
                 "active_hours",
@@ -137,6 +147,13 @@ struct SprayProgramCSVService {
                     row.append(contentsOf: ["", "", "", "", "", ""])
                 }
             }
+
+            // Block attribution. Read from the persisted snapshot only — never
+            // reconstructed from the linked trip, the row coverage or the current
+            // vineyard geometry.
+            let treatedBlocks = record.applicationGeometry?.blocks
+            row.append(escapeCSV(SprayBlockAttributionDisplay.idsCell(treatedBlocks)))
+            row.append(escapeCSV(SprayBlockAttributionDisplay.namesCell(treatedBlocks, paddocks: paddocks)))
 
             if includeCostings {
                 if let trip = trip {

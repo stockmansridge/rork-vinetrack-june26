@@ -119,6 +119,29 @@ struct SprayRecordPDFService {
                 drawText("\(formatter.blockTermCapitalised): \(paddockName)", font: bodyFont, color: .black)
             }
 
+            // Blocks Treated — the AUTHORITATIVE sql/195 attribution.
+            //
+            // Deliberately separate from the line above, which is the linked
+            // TRIP's block label and describes where the machine drove. This
+            // section states which blocks the APPLICATION treated, which is what a
+            // compliance reader and a resistance strategy need.
+            //
+            // A record whose attribution was never recorded says exactly that. It
+            // never falls back to the vineyard's current blocks: naming a block
+            // that may never have been sprayed would be worse than admitting the
+            // record is silent.
+            drawSectionHeader("\(formatter.blockTermCapitalised)s Treated")
+            if let treatedBlocks = SprayBlockAttributionDisplay.resolve(
+                record.applicationGeometry?.blocks,
+                paddocks: paddocks
+            ) {
+                for block in treatedBlocks {
+                    drawText("\u{2022} \(block.name)", font: bodyFont, color: .black)
+                }
+            } else {
+                drawText(SprayBlockAttributionDisplay.notRecorded, font: bodyFont, color: .darkGray)
+            }
+
             // Trip Info
             if let trip = trip {
                 drawSectionHeader("Trip Information")
