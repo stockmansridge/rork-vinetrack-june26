@@ -393,7 +393,42 @@ struct SprayRecordFormView: View {
         }
     }
 
+    /// Freeze Chemical Intelligence onto the lines of a manually entered spray.
+    ///
+    /// A spray typed in here is every bit as real an application as one built in
+    /// the Spray Calculator, so it must not be left chemistry-less purely because
+    /// of which screen the operator used. This form has no product picker, so the
+    /// only deterministic evidence available is the typed name: an exact,
+    /// unique library match links and freezes today's chemistry, and anything
+    /// else — a blank, a typo, a genuinely off-library product, an ambiguous
+    /// name — stays honestly unresolved instead of being guessed at.
+    private func tanksWithCapturedChemistry() -> [SprayTank] {
+        let library = store.savedChemicals
+        let capturedAt = Date()
+        return tanks.map { tank in
+            var tank = tank
+            tank.chemicals = tank.chemicals.map { chemical in
+                var chemical = chemical
+                let resolution = ChemicalSnapshotCapture.captureForNewApplication(
+                    savedChemicalId: chemical.savedChemicalId,
+                    productName: chemical.name,
+                    library: library,
+                    at: capturedAt
+                )
+                chemical.savedChemicalId = resolution.savedChemicalId ?? chemical.savedChemicalId
+                chemical.chemicalSnapshot = resolution.snapshot
+                return chemical
+            }
+            return tank
+        }
+    }
+
     private func saveRecord() {
+        // Only a NEW record captures chemistry. Editing an existing spray keeps
+        // its frozen snapshots verbatim: re-capturing on save would rewrite
+        // history with today's Chemical Store every time someone corrected a
+        // wind speed. This mirrors Android's `refreshSnapshots = !isEdit`.
+        let tanksToSave = existingRecord == nil ? tanksWithCapturedChemistry() : tanks
         let record = SprayRecord(
             id: existingRecord?.id ?? UUID(),
             tripId: tripId,
@@ -406,7 +441,7 @@ struct SprayRecordFormView: View {
             windDirection: windDirection,
             humidity: Double(humidityText),
             sprayReference: sprayReference,
-            tanks: tanks,
+            tanks: tanksToSave,
             notes: notes,
             numberOfFansJets: numberOfFansJets,
             averageSpeed: Double(averageSpeedText),
