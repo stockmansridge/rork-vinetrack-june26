@@ -33,6 +33,34 @@
 --   T15 Per-block history query uses the GIN index and isolates blocks
 --   T16 Templates (is_template = true) may carry intended block identity
 --   T17 All fixtures discarded by the final ROLLBACK
+--   T18 VINEYARD ISOLATION UNDER RLS (added by sql/197): the T11 case again,
+--       but as `authenticated` with a caller who CANNOT SEE the foreign block
+--
+-- ---------------------------------------------------------------------------
+-- WHY T11 WAS NOT ENOUGH, AND WHY T18 EXISTS  (read before editing this file)
+-- ---------------------------------------------------------------------------
+-- T1-T17 run as the migration/table OWNER. A table owner BYPASSES row level
+-- security. That is fine for shape, constraint and derivation tests, but it
+-- makes any test of a CROSS-TABLE VALIDATION FUNCTION unsound.
+--
+-- `spray_records_validate_block_vineyard()` answers "does this block belong to
+-- another vineyard?" by reading `public.paddocks`, which is RLS-protected. Under
+-- owner rights that read sees everything and the guard works. Under
+-- `authenticated` — what every real caller is — the read is filtered by the
+-- paddocks SELECT policy, so for a caller who is not a member of the foreign
+-- vineyard it returned NO ROW and the foreign block was ACCEPTED.
+--
+-- T11 passed against that live vulnerability for exactly this reason: it only
+-- ever proved the guard works for a caller who could already see the block.
+-- sql/197 fixed the function (added `security definer`); T18 is the test that
+-- can actually detect the regression if anyone ever removes it again.
+--
+-- RULE FOR THIS SUITE AND ANY FUTURE ONE: if a trigger or CHECK function reads
+-- a DIFFERENT RLS-protected table to reject a cross-entity reference, it MUST
+-- be tested with `set_config('role','authenticated',true)` and a user who
+-- genuinely LACKS access to the row being validated against — and the test must
+-- first assert that the caller cannot see that row, so it cannot pass for the
+-- wrong reason. An owner-role test of such a function proves nothing.
 --
 -- Expected final output:
 --   NOTICE: SQL 195 spray block attribution tests: ALL PASSED
@@ -412,6 +440,107 @@ begin
     raise exception 'T16 FAILED: template froze a per-block row length: %', v_txt;
   end if;
 
+  raise notice 'SQL 195 tests T1-T16 passed';
+end$$;
+
+-- =====================================================================
+-- T18. VINEYARD ISOLATION UNDER ACTIVE RLS  (added by sql/197)
+--
+-- Self-contained: its own vineyards, users and blocks, so it cannot disturb or
+-- depend on the fixtures above. Requires sql/197 to be applied.
+--
+-- The full matrix for this guard lives in
+-- sql/tests/197_fix_spray_block_vineyard_guard_tests.sql. This is the single
+-- regression sentinel kept inside the block-attribution suite itself, so a
+-- developer running "the 195 tests" cannot reintroduce the hole unnoticed.
+-- =====================================================================
+do $$
+declare
+  v_a      uuid := gen_random_uuid();
+  v_b      uuid := gen_random_uuid();
+  b_mine   uuid := gen_random_uuid();
+  b_theirs uuid := gen_random_uuid();
+  u_a      uuid;
+  v_cnt    integer;
+  v_state  text;
+  v_secdef boolean;
+begin
+  select p.prosecdef into v_secdef
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public'
+     and p.proname = 'spray_records_validate_block_vineyard';
+
+  if not coalesce(v_secdef, false) then
+    raise exception
+      'T18 FAILED: spray_records_validate_block_vineyard() is not SECURITY DEFINER — apply sql/197_fix_spray_block_vineyard_guard.sql. Under caller rights RLS hides foreign paddocks from this guard and cross-vineyard block ids are silently accepted.';
+  end if;
+
+  perform set_config('role', 'postgres', true);
+
+  insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
+                          email_confirmed_at, created_at, updated_at)
+  values (gen_random_uuid(), '00000000-0000-0000-0000-000000000000',
+          'authenticated', 'authenticated', 't195-t18@test.local', 'x',
+          now(), now(), now());
+  select id into u_a from auth.users where email = 't195-t18@test.local';
+
+  insert into public.profiles (id, email) values (u_a, 't195-t18@test.local')
+  on conflict (id) do nothing;
+
+  insert into public.vineyards (id, name) values
+    (v_a, 'T195 T18 Mine'), (v_b, 'T195 T18 Theirs');
+
+  -- Member of A ONLY. This is the whole point of the test.
+  insert into public.vineyard_members (vineyard_id, user_id, role)
+  values (v_a, u_a, 'manager');
+
+  insert into public.paddocks (id, vineyard_id, name) values
+    (b_mine,   v_a, 'T195 T18 My Block'),
+    (b_theirs, v_b, 'T195 T18 Their Block');
+
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', u_a::text, 'role', 'authenticated')::text, true);
+  perform set_config('role', 'authenticated', true);
+
+  -- Precondition: RLS must genuinely hide the foreign block from this caller,
+  -- otherwise this degenerates into T11 and proves nothing new.
+  select count(*) into v_cnt from public.paddocks where id = b_theirs;
+  if v_cnt <> 0 then
+    raise exception 'T18 FAILED: precondition — the foreign block must be invisible to this caller, saw % row(s)', v_cnt;
+  end if;
+
+  -- A legitimate own-vineyard write still works.
+  insert into public.spray_records (
+    id, vineyard_id, date, spray_reference, operation_type, tanks, application_blocks
+  ) values (
+    gen_random_uuid(), v_a, now(), 'T195 T18 legit', 'Foliar Spray', '[]'::jsonb,
+    jsonb_build_array(jsonb_build_object('blockId', b_mine::text))
+  );
+
+  -- The invisible foreign block must STILL be rejected.
+  v_state := null;
+  begin
+    insert into public.spray_records (
+      id, vineyard_id, date, spray_reference, operation_type, tanks, application_blocks
+    ) values (
+      gen_random_uuid(), v_a, now(), 'T195 T18 foreign', 'Foliar Spray', '[]'::jsonb,
+      jsonb_build_array(jsonb_build_object('blockId', b_theirs::text))
+    );
+  exception when others then
+    v_state := sqlstate;
+  end;
+
+  if v_state is null then
+    raise exception
+      'T18 FAILED: a cross-vineyard block hidden by RLS was ACCEPTED — the guard cannot see foreign paddocks (sql/197 regression).';
+  end if;
+  if v_state <> '23514' then
+    raise exception 'T18 FAILED: expected errcode 23514, got %', v_state;
+  end if;
+
+  perform set_config('role', 'postgres', true);
+  raise notice 'T18 passed (cross-vineyard block rejected under active RLS)';
   raise notice 'SQL 195 spray block attribution tests: ALL PASSED';
 end$$;
 
