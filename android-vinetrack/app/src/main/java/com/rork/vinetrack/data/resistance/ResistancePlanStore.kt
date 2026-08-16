@@ -2,106 +2,105 @@ package com.rork.vinetrack.data.resistance
 
 import android.content.Context
 import android.util.Log
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.Json
 
 /**
- * Local storage for Resistance Plans.
+ * SharedPreferences-backed local cache for Resistance Plans.
  *
- * WHY LOCAL FOR v1 (audited before writing any SQL):
+ * This is the OFFLINE CACHE and OUTBOX behind [ResistancePlanRepository], not the source
+ * of truth — the server (`public.resistance_plans`, sql/196) is. It keeps three things
+ * per vineyard:
  *
- * VineTrack's synced domain objects each have a dedicated Supabase table plus a
- * repository, RLS policies and sync plumbing (`SprayRecordRepository`,
- * `PaddockRepository`, and so on). There is NO generic per-vineyard JSON document table
- * to borrow, and the nearest planning-shaped stores — the Operational Tools layout,
- * button templates, fertiliser defaults, GDD settings — are either user-preference tables
- * with fixed columns or local-only stores. None of them can host a plan without a
- * migration.
+ *   1. every plan, INCLUDING soft-deleted tombstones, so a delete can propagate;
+ *   2. the set of plan ids with unpushed local changes (the outbox);
+ *   3. a one-time flag recording that Planner v1's local-only plans have been adopted.
  *
- * So a plan cannot be synced today without new SQL, and this task explicitly must not
- * apply a production migration. The tradeoff of staying local, stated plainly: a plan
- * does not follow the grower to another device, is not visible to a colleague, and is
- * lost if the app is reinstalled. That is a real limitation for a tool whose whole
- * purpose is season-long planning, which is why the proposed schema is reported for
- * approval rather than deferred.
- *
- * The model is already shaped for that move — serializable, vineyard-scoped, stable
- * position ids, stamped ruleset version — so adopting the table is a repository swap
- * behind this same interface, not a redesign.
+ * The storage key is unchanged from Planner v1 (`resistance_plans_v1_<vineyardId>`) on
+ * purpose: that is what lets an existing user's plans be FOUND and adopted rather than
+ * orphaned in a key nothing reads any more.
  *
  * Mirrors `ResistancePlanStore.swift` on iOS.
  */
-class ResistancePlanStore(context: Context) {
+class ResistancePlanStore(context: Context) : ResistancePlanLocalStore {
 
-    private val prefs = context.getSharedPreferences("resistance_plans", Context.MODE_PRIVATE)
+    private val prefs = context.applicationContext
+        .getSharedPreferences("resistance_plans", Context.MODE_PRIVATE)
+
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    private val _plans = MutableStateFlow<List<ResistancePlan>>(emptyList())
+    private fun plansKey(vineyardId: String) = "resistance_plans_v1_$vineyardId"
+    private fun pendingKey(vineyardId: String) = "resistance_plans_pending_v1_$vineyardId"
+    private fun adoptedKey(vineyardId: String) = "resistance_plans_adopted_v1_$vineyardId"
 
-    /** Plans for the currently loaded vineyard, newest first. */
-    val plans: StateFlow<List<ResistancePlan>> = _plans.asStateFlow()
-
-    private var vineyardId: String? = null
-
-    private fun storageKey(vineyardId: String) = "resistance_plans_v1_$vineyardId"
-
-    fun load(vineyardId: String) {
-        this.vineyardId = vineyardId
-        val raw = prefs.getString(storageKey(vineyardId), null)
-        if (raw == null) {
-            _plans.value = emptyList()
-            return
-        }
-        _plans.value = try {
+    override fun loadAll(vineyardId: String): List<ResistancePlan> {
+        val raw = prefs.getString(plansKey(vineyardId), null) ?: return emptyList()
+        return try {
             json.decodeFromString<List<ResistancePlan>>(raw)
-                .sortedByDescending { it.updatedAtEpochMs }
         } catch (error: Exception) {
             // A decode failure must not wipe the grower's plans. The stored blob is left
-            // untouched so a later app version with a migration can still read it.
-            Log.w(TAG, "Could not read stored plans: ${error.message}")
+            // untouched so a later app version can still read it, and the server copy is
+            // unaffected either way.
+            Log.w(TAG, "Could not read cached plans: ${error.message}")
             emptyList()
         }
     }
 
-    /** Plans for a season and disease, newest first. */
-    fun plans(seasonId: String, disease: ResistanceDisease): List<ResistancePlan> =
-        _plans.value.filter { it.seasonId == seasonId && it.disease == disease }
-
-    fun save(plan: ResistancePlan) {
-        val vineyard = vineyardId ?: return
-        val existing = _plans.value.toMutableList()
-        val index = existing.indexOfFirst { it.id == plan.id }
-        if (index >= 0) existing[index] = plan else existing.add(plan)
-        _plans.value = existing.sortedByDescending { it.updatedAtEpochMs }
-        persist(vineyard)
-    }
-
-    fun delete(planId: String) {
-        val vineyard = vineyardId ?: return
-        _plans.value = _plans.value.filterNot { it.id == planId }
-        persist(vineyard)
-    }
-
-    private fun persist(vineyardId: String) {
+    override fun saveAll(vineyardId: String, plans: List<ResistancePlan>) {
         try {
             prefs.edit()
-                .putString(storageKey(vineyardId), json.encodeToString(_plans.value))
+                .putString(plansKey(vineyardId), json.encodeToString(plans))
                 .apply()
         } catch (error: Exception) {
-            Log.w(TAG, "Could not save plans: ${error.message}")
+            Log.w(TAG, "Could not cache plans: ${error.message}")
         }
+    }
+
+    override fun loadPending(vineyardId: String): Set<String> =
+        prefs.getStringSet(pendingKey(vineyardId), emptySet())?.toSet() ?: emptySet()
+
+    override fun savePending(vineyardId: String, ids: Set<String>) {
+        prefs.edit().putStringSet(pendingKey(vineyardId), ids).apply()
+    }
+
+    override fun isAdopted(vineyardId: String): Boolean =
+        prefs.getBoolean(adoptedKey(vineyardId), false)
+
+    override fun markAdopted(vineyardId: String) {
+        prefs.edit().putBoolean(adoptedKey(vineyardId), true).apply()
     }
 
     companion object {
         private const val TAG = "ResistancePlanStore"
+    }
+}
 
-        /**
-         * Shown wherever plans are listed, so the local-only limitation is never a
-         * surprise discovered by losing work.
-         */
-        const val LOCAL_ONLY_NOTICE =
-            "Resistance plans are saved on this device only. They do not yet sync between devices or to other users."
+/**
+ * In-memory [ResistancePlanLocalStore] for tests and previews.
+ *
+ * Lives in production source rather than the test source set so the iOS mirror and any
+ * future preview/demo mode use exactly the same cache semantics the repository is tested
+ * against — a test-only fake that drifts from the real store proves nothing.
+ */
+class InMemoryResistancePlanLocalStore : ResistancePlanLocalStore {
+    private val plans = mutableMapOf<String, List<ResistancePlan>>()
+    private val pending = mutableMapOf<String, Set<String>>()
+    private val adopted = mutableSetOf<String>()
+
+    override fun loadAll(vineyardId: String): List<ResistancePlan> = plans[vineyardId] ?: emptyList()
+
+    override fun saveAll(vineyardId: String, plans: List<ResistancePlan>) {
+        this.plans[vineyardId] = plans
+    }
+
+    override fun loadPending(vineyardId: String): Set<String> = pending[vineyardId] ?: emptySet()
+
+    override fun savePending(vineyardId: String, ids: Set<String>) {
+        pending[vineyardId] = ids
+    }
+
+    override fun isAdopted(vineyardId: String): Boolean = adopted.contains(vineyardId)
+
+    override fun markAdopted(vineyardId: String) {
+        adopted.add(vineyardId)
     }
 }

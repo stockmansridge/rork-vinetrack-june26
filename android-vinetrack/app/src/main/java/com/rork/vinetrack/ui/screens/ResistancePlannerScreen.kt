@@ -55,19 +55,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.rork.vinetrack.data.SupabaseClient
+import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.resistance.ResistanceDisease
 import com.rork.vinetrack.data.resistance.ResistanceEventSource
 import com.rork.vinetrack.data.resistance.ResistanceJurisdiction
 import com.rork.vinetrack.data.resistance.ResistancePlan
 import com.rork.vinetrack.data.resistance.ResistancePlanChemicalSource
 import com.rork.vinetrack.data.resistance.ResistancePlanPositionStatus
+import com.rork.vinetrack.data.resistance.ResistancePlanRepository
 import com.rork.vinetrack.data.resistance.ResistancePlanStore
+import com.rork.vinetrack.data.resistance.ResistancePlanSyncState
 import com.rork.vinetrack.data.resistance.ResistancePlanner
 import com.rork.vinetrack.data.resistance.ResistancePlannerPosition
 import com.rork.vinetrack.data.resistance.ResistancePlannerPresentation
 import com.rork.vinetrack.data.resistance.ResistancePlannerUiState
 import com.rork.vinetrack.data.resistance.ResistanceRulesets
 import com.rork.vinetrack.data.resistance.ResistanceSeasonCalendar
+import com.rork.vinetrack.data.resistance.SupabaseResistancePlanRemote
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
@@ -103,7 +109,20 @@ fun ResistancePlannerScreen(
 ) {
     val context = LocalContext.current
     val vine = LocalVineColors.current
-    val planStore = remember { ResistancePlanStore(context) }
+
+    // Server-authoritative with a local cache. The remote is attached only when Supabase
+    // is configured; without it the repository degrades to a device-local cache rather
+    // than failing, so the Planner still works for a signed-out or offline grower.
+    val session = remember { SessionStore(context) }
+    val planRepository = remember(session) {
+        ResistancePlanRepository(
+            local = ResistancePlanStore(context),
+            remote = if (SupabaseClient.isConfigured) SupabaseResistancePlanRemote(session) else null,
+            currentUserId = { session.userId },
+        )
+    }
+    val plans by planRepository.plans.collectAsStateWithLifecycle()
+    val syncState by planRepository.syncState.collectAsStateWithLifecycle()
 
     val vineyard = state.selectedVineyard
     val vineyardId = state.selectedVineyardId
@@ -144,13 +163,18 @@ fun ResistancePlannerScreen(
     }
 
     LaunchedEffect(vineyardId) {
-        vineyardId?.let { planStore.load(it) }
+        val id = vineyardId ?: return@LaunchedEffect
+        // Cache first so the screen paints immediately, then reconcile with the server.
+        // A plan the grower saved on another device appears once the pull lands; nothing
+        // on this screen waits for the network to become interactive.
+        planRepository.load(id)
+        planRepository.sync(id)
     }
 
     /** Loads the saved plan for the selected season and disease, or prepares a new one. */
     fun reloadPlan() {
         val id = vineyardId ?: return
-        plan = planStore.plans(season.id, disease).firstOrNull()
+        plan = planRepository.plans(season.id, disease).firstOrNull()
             ?: ResistancePlan(
                 vineyardId = id,
                 seasonId = season.id,
@@ -178,7 +202,9 @@ fun ResistancePlannerScreen(
             .current(updated.jurisdiction, updated.crop, updated.disease)
             ?.let { updated = updated.stampingRuleset(it.id, it.rulesetVersion) }
         plan = updated
-        planStore.save(updated)
+        // Local commit + outbox. Returns immediately, works offline, and never blocks the
+        // edit the grower just made on a network round trip.
+        planRepository.save(updated)
     }
 
     val activePlan = plan
@@ -220,19 +246,30 @@ fun ResistancePlannerScreen(
         state.paddocks.sortedBy { it.name.lowercase() }.map { it.id to it.name }
     }
 
-    val ui: ResistancePlannerUiState? = remember(evaluation, activePlan, blockNames, currentSeasonStartYear) {
-        if (activePlan == null || evaluation == null) {
-            null
-        } else {
-            ResistancePlannerPresentation.state(
-                plan = activePlan,
-                evaluation = evaluation,
-                blockNames = blockNames,
-                currentSeasonStartYear = currentSeasonStartYear,
-                formatDate = formatDate,
-            )
+    val syncNotice = remember(syncState) {
+        when (syncState) {
+            ResistancePlanSyncState.LOCAL_ONLY -> ResistancePlanRepository.LOCAL_ONLY_NOTICE
+            ResistancePlanSyncState.SYNCED -> ResistancePlanRepository.SYNCED_NOTICE
+            ResistancePlanSyncState.PENDING_UPLOAD -> ResistancePlanRepository.PENDING_NOTICE
+            ResistancePlanSyncState.FAILED -> ResistancePlanRepository.FAILED_NOTICE
         }
     }
+
+    val ui: ResistancePlannerUiState? =
+        remember(evaluation, activePlan, blockNames, currentSeasonStartYear, syncNotice) {
+            if (activePlan == null || evaluation == null) {
+                null
+            } else {
+                ResistancePlannerPresentation.state(
+                    plan = activePlan,
+                    evaluation = evaluation,
+                    blockNames = blockNames,
+                    currentSeasonStartYear = currentSeasonStartYear,
+                    syncNotice = syncNotice,
+                    formatDate = formatDate,
+                )
+            }
+        }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -686,9 +723,9 @@ private fun PlannedPositionsCard(
         }
 
         Spacer(Modifier.height(4.dp))
-        // Local-only persistence is stated where plans are edited, so the limitation is
-        // never a surprise discovered by losing work.
-        Text(ui.localOnlyNotice, fontSize = 11.sp, color = vine.textSecondary)
+        // Where this plan actually lives is stated where plans are edited, so neither the
+        // sharing nor the offline queue is a surprise discovered by losing work.
+        Text(ui.syncNotice, fontSize = 11.sp, color = vine.textSecondary)
     }
 }
 

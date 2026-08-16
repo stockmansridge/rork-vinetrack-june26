@@ -171,7 +171,14 @@ data class ResistancePlannerUiState(
     val positionsEmptyLabel: String?,
     val totals: List<ResistancePlannerTotals>,
     val strategy: ResistancePlannerStrategy?,
-    val localOnlyNotice: String,
+    /**
+     * Sync/storage explanation shown under the plan. Supplied by the caller from the
+     * repository's live sync state rather than being a constant, because "saved on this
+     * device only" stopped being true once plans sync — and a stale reassurance about
+     * where a season's work lives is exactly the kind of thing a grower would rely on
+     * right before losing it.
+     */
+    val syncNotice: String,
 )
 
 object ResistancePlannerPresentation {
@@ -242,6 +249,7 @@ object ResistancePlannerPresentation {
         blockNames: List<Pair<String, String>>,
         currentSeasonStartYear: Int,
         registry: ResistanceRulesetRegistry = ResistanceRulesets.registry,
+        syncNotice: String = ResistancePlanRepository.SYNCED_NOTICE,
         formatDate: (Long) -> String,
     ): ResistancePlannerUiState {
         val resolve: (String) -> String = { id -> blockName(id, blockNames) }
@@ -272,7 +280,7 @@ object ResistancePlannerPresentation {
                 positionsEmptyLabel = null,
                 totals = emptyList(),
                 strategy = null,
-                localOnlyNotice = ResistancePlanStore.LOCAL_ONLY_NOTICE,
+                syncNotice = syncNotice,
             )
         }
 
@@ -325,7 +333,7 @@ object ResistancePlannerPresentation {
                 emptyList()
             },
             strategy = if (hasBlocks) strategy(evaluation, plan, registry) else null,
-            localOnlyNotice = ResistancePlanStore.LOCAL_ONLY_NOTICE,
+            syncNotice = syncNotice,
         )
     }
 

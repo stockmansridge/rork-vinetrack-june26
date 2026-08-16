@@ -12,6 +12,7 @@ import com.rork.vinetrack.data.resistance.ResistanceJurisdiction
 import com.rork.vinetrack.data.resistance.ResistanceMixtureRequirement
 import com.rork.vinetrack.data.resistance.ResistancePlan
 import com.rork.vinetrack.data.resistance.ResistancePlanPositionStatus
+import com.rork.vinetrack.data.resistance.ResistancePlanRepository
 import com.rork.vinetrack.data.resistance.ResistancePlanStore
 import com.rork.vinetrack.data.resistance.ResistancePlannedChemistrySource
 import com.rork.vinetrack.data.resistance.ResistancePlannedPosition
@@ -791,13 +792,41 @@ class ResistancePlannerPresentationTest {
     }
 
     @Test
-    fun `the local-only limitation is stated where plans are edited`() {
+    fun `the storage reality is stated where plans are edited`() {
         val state = ui(plan())
 
-        assertEquals(ResistancePlanStore.LOCAL_ONLY_NOTICE, state.localOnlyNotice)
-        assertTrue(state.localOnlyNotice.contains("this device only"))
-        // Must not imply sync exists.
-        assertTrue(state.localOnlyNotice.contains("do not yet sync"))
+        // Plans now sync, so the default notice must say THAT. Leaving the Planner v1
+        // "this device only" wording in place would be a false reassurance in the
+        // opposite direction: a grower would think their work was private to the device
+        // when in fact the whole team can see and edit it.
+        assertEquals(ResistancePlanRepository.SYNCED_NOTICE, state.syncNotice)
+        assertTrue(state.syncNotice.contains("vineyard team"))
+        assertFalse(state.syncNotice.contains("do not yet sync"))
+    }
+
+    @Test
+    fun `the caller's live sync state is what reaches the screen`() {
+        // Pending, failed and local-only each have their own wording, and the screen must
+        // render whichever one the repository is actually reporting — telling a grower
+        // with an unsynced queue that everything is shared would be the worst of the four.
+        val subject = plan()
+        val request = ResistancePlanner.Request(
+            plan = subject,
+            season = season,
+            seasonCalendar = calendar,
+            events = emptyList(),
+            unresolvedApplications = emptyList(),
+        )
+        val pending = ResistancePlannerPresentation.state(
+            plan = subject,
+            evaluation = ResistancePlanner.evaluate(request),
+            blockNames = blockNames,
+            currentSeasonStartYear = season.startYear,
+            syncNotice = ResistancePlanRepository.PENDING_NOTICE,
+            formatDate = formatDate,
+        )
+        assertEquals(ResistancePlanRepository.PENDING_NOTICE, pending.syncNotice)
+        assertTrue(pending.syncNotice.contains("will upload"))
     }
 
     @Test

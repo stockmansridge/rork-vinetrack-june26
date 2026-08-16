@@ -20,10 +20,29 @@ nonisolated enum ResistancePlannedChemistrySource: String, Codable, Sendable, Ha
 /// differently (`coformulationSignatures` vs `componentGroups`), and flattening them
 /// here would make the Planner unable to express a co-formulation rule at all.
 nonisolated struct ResistancePlannedProduct: Codable, Sendable, Hashable, Identifiable {
+
+    /// Wire contract. Snake_case and a flat `group_codes` array, byte-identical to
+    /// Android's `@SerialName` keys, because this JSON is the shared
+    /// `resistance_plans.positions` document — a plan authored on an iPhone is
+    /// decoded by an Android device and (later) the portal from the same bytes.
+    /// Swift's default `CodingKeys` would have emitted `savedChemicalId` and a
+    /// nested `{"groups":{"codes":[...]}}` object, neither of which Android can
+    /// read.
+    nonisolated enum CodingKeys: String, CodingKey {
+        case id
+        case groupCodes = "group_codes"
+        case source
+        case savedChemicalId = "saved_chemical_id"
+        case productName = "product_name"
+        case chemicalAvailability = "chemical_availability"
+        case registeredForPlannedDisease = "registered_for_planned_disease"
+    }
+
     nonisolated var id: String
-    /// The groups this single product carries. More than one code means a
+    /// The groups this single product carries, stored as raw codes so the wire
+    /// shape is a plain array on both platforms. More than one code means a
     /// co-formulation, not a tank mix.
-    nonisolated var groups: ResistanceGroupSignature
+    nonisolated var groupCodes: [String]
     nonisolated var source: ResistancePlannedChemistrySource
     nonisolated var savedChemicalId: String?
     nonisolated var productName: String?
@@ -39,6 +58,14 @@ nonisolated struct ResistancePlannedProduct: Codable, Sendable, Hashable, Identi
     /// this field exists to prevent.
     nonisolated var registeredForPlannedDisease: Bool?
 
+    /// Normalised signature. Derived rather than stored so a stored code order can
+    /// never change an evaluation — exactly the guarantee Android gets from its
+    /// own `groups` getter.
+    nonisolated var groups: ResistanceGroupSignature {
+        get { ResistanceGroupSignature.of(groupCodes) }
+        set { groupCodes = newValue.codes }
+    }
+
     nonisolated init(
         id: String = UUID().uuidString,
         groups: ResistanceGroupSignature,
@@ -49,7 +76,7 @@ nonisolated struct ResistancePlannedProduct: Codable, Sendable, Hashable, Identi
         registeredForPlannedDisease: Bool? = nil
     ) {
         self.id = id
-        self.groups = groups
+        self.groupCodes = groups.codes
         self.source = source
         self.savedChemicalId = savedChemicalId
         self.productName = productName
@@ -93,8 +120,19 @@ nonisolated struct ResistancePlannedProduct: Codable, Sendable, Hashable, Identi
 /// carries no tank or volume, and cannot be mistaken for history because the engine
 /// only ever sees it as `.planned` or `.candidate`.
 nonisolated struct ResistancePlannedPosition: Codable, Sendable, Hashable, Identifiable {
+
+    /// Wire contract — snake_case, identical to Android. See
+    /// `ResistancePlannedProduct.CodingKeys`.
+    nonisolated enum CodingKeys: String, CodingKey {
+        case id
+        case products
+        case targetDateEpochMs = "target_date_epoch_ms"
+        case growthStage = "growth_stage"
+        case note
+    }
+
     /// Stable identity, generated once and preserved across reorders, edits and
-    /// (later) persistence.
+    /// persistence.
     ///
     /// This is the seam for plan-vs-actual comparison. When a real spray is eventually
     /// associated with a planned position, it will point at this id — which is why the
@@ -171,6 +209,28 @@ nonisolated struct ResistancePlannedPosition: Codable, Sendable, Hashable, Ident
 /// `Codable` and carries a vineyard id, stable position ids and the governing ruleset
 /// version specifically so it can move to server storage without a shape change.
 nonisolated struct ResistancePlan: Codable, Sendable, Hashable, Identifiable {
+
+    /// Wire contract — snake_case, identical to Android, and identical to the
+    /// `resistance_plans` column names so the row and the document agree.
+    nonisolated enum CodingKeys: String, CodingKey {
+        case id
+        case vineyardId = "vineyard_id"
+        case seasonId = "season_id"
+        case seasonStartYear = "season_start_year"
+        case disease
+        case jurisdiction
+        case crop
+        case blockIds = "block_ids"
+        case positions
+        case notes
+        case rulesetId = "ruleset_id"
+        case rulesetVersion = "ruleset_version"
+        case createdBy = "created_by"
+        case createdAtEpochMs = "created_at_epoch_ms"
+        case updatedAtEpochMs = "updated_at_epoch_ms"
+        case deletedAtEpochMs = "deleted_at_epoch_ms"
+    }
+
     nonisolated var id: String
     nonisolated var vineyardId: String
     /// Season identity, e.g. `"2026/27"` — never a bare calendar year, because an
@@ -196,8 +256,16 @@ nonisolated struct ResistancePlan: Codable, Sendable, Hashable, Identifiable {
     /// instead of a plan whose meaning changed while nobody was looking.
     nonisolated var rulesetId: String?
     nonisolated var rulesetVersion: String?
+    /// Author, for attribution. NOT a visibility scope: plans are vineyard data and
+    /// every authorised member sees them (see `resistance_plans` RLS). Scoping
+    /// visibility to the creator would mean the manager who wrote the season plan is
+    /// the only person who can open it, which defeats the purpose of a shared plan.
+    nonisolated var createdBy: String?
     nonisolated var createdAtEpochMs: Int64
     nonisolated var updatedAtEpochMs: Int64
+    /// Soft-delete tombstone. A deleted plan is retained so the delete propagates to
+    /// other devices instead of the row silently reappearing on their next push.
+    nonisolated var deletedAtEpochMs: Int64?
 
     nonisolated init(
         id: String = UUID().uuidString,
@@ -212,8 +280,10 @@ nonisolated struct ResistancePlan: Codable, Sendable, Hashable, Identifiable {
         notes: String? = nil,
         rulesetId: String? = nil,
         rulesetVersion: String? = nil,
+        createdBy: String? = nil,
         createdAtEpochMs: Int64,
-        updatedAtEpochMs: Int64
+        updatedAtEpochMs: Int64,
+        deletedAtEpochMs: Int64? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -227,6 +297,8 @@ nonisolated struct ResistancePlan: Codable, Sendable, Hashable, Identifiable {
         self.notes = notes
         self.rulesetId = rulesetId
         self.rulesetVersion = rulesetVersion
+        self.createdBy = createdBy
+        self.deletedAtEpochMs = deletedAtEpochMs
         self.createdAtEpochMs = createdAtEpochMs
         self.updatedAtEpochMs = updatedAtEpochMs
     }
@@ -320,6 +392,9 @@ nonisolated struct ResistancePlan: Codable, Sendable, Hashable, Identifiable {
         else { return false }
         return current.rulesetVersion != stamped
     }
+
+    /// True when this plan has been archived/soft-deleted.
+    nonisolated var isDeleted: Bool { deletedAtEpochMs != nil }
 
     nonisolated func position(id positionId: String) -> ResistancePlannedPosition? {
         positions.first { $0.id == positionId }

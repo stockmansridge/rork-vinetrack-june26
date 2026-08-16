@@ -1,5 +1,14 @@
 package com.rork.vinetrack.data.resistance
 
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+
 /**
  * The versioned, data-driven representation of a published resistance-management
  * strategy.
@@ -25,6 +34,7 @@ package com.rork.vinetrack.data.resistance
  * Australian operator can legitimately manage a New Zealand vineyard, and the
  * Australian maximum-use rules must not follow the phone across the Tasman.
  */
+@Serializable(with = ResistanceJurisdictionSerializer::class)
 enum class ResistanceJurisdiction(val raw: String, val label: String) {
     AUSTRALIA("AU", "Australia"),
     NEW_ZEALAND("NZ", "New Zealand"),
@@ -48,6 +58,7 @@ enum class ResistanceJurisdiction(val raw: String, val label: String) {
 }
 
 /** The crop a strategy is written for. */
+@Serializable(with = ResistanceCropSerializer::class)
 enum class ResistanceCrop(val raw: String, val label: String) {
     GRAPE("grape", "Grape"),
 }
@@ -60,6 +71,7 @@ enum class ResistanceCrop(val raw: String, val label: String) {
  * vocabulary (sql/193) so disease attribution comes from what the operator
  * declared the spray was FOR — never from the chemistry in the tank.
  */
+@Serializable(with = ResistanceDiseaseSerializer::class)
 enum class ResistanceDisease(
     val raw: String,
     val label: String,
@@ -75,6 +87,95 @@ enum class ResistanceDisease(
             return entries.firstOrNull { it.sprayTargetRaw == trimmed }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Wire serialisers for the three domain enums.
+//
+// WHY THESE EXIST: these enums are persisted inside a Resistance Plan, and a plan is a
+// SHARED document (`resistance_plans`, sql/196) read by iOS, Android and later the
+// portal. kotlinx's default enum encoding uses the Kotlin CONSTANT NAME, so without
+// these a plan written on Android carried "POWDERY_MILDEW" while iOS wrote
+// "powdery_mildew" — the same plan would simply fail to decode on the other phone, and
+// the grower would be told their plan was empty. The `raw` values are the canonical wire
+// vocabulary and already match the sql/193 spray-target vocabulary in the database.
+//
+// DECODING IS DELIBERATELY TOLERANT of the legacy uppercase constant name. Planner v1
+// already wrote plans into local storage using the default encoding, and those plans are
+// about to be adopted and uploaded. Rejecting the old spelling would make every existing
+// Android plan fail to decode and be reported as "no plans" — destroying the grower's
+// season during the very migration meant to rescue it. Encoding is always canonical, so
+// a cache heals itself on the first save.
+// ---------------------------------------------------------------------------
+
+private fun <T> decodeEnumTolerantly(
+    raw: String,
+    entries: List<T>,
+    rawOf: (T) -> String,
+    nameOf: (T) -> String,
+    fallback: T?,
+    typeName: String,
+): T {
+    val trimmed = raw.trim()
+    return entries.firstOrNull { rawOf(it).equals(trimmed, ignoreCase = true) }
+        ?: entries.firstOrNull { nameOf(it).equals(trimmed, ignoreCase = true) }
+        ?: fallback
+        ?: throw SerializationException("$typeName has no value matching '$raw'")
+}
+
+object ResistanceJurisdictionSerializer : KSerializer<ResistanceJurisdiction> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ResistanceJurisdiction", PrimitiveKind.STRING)
+
+    override fun serialize(encoder: Encoder, value: ResistanceJurisdiction) =
+        encoder.encodeString(value.raw)
+
+    override fun deserialize(decoder: Decoder): ResistanceJurisdiction = decodeEnumTolerantly(
+        raw = decoder.decodeString(),
+        entries = ResistanceJurisdiction.entries,
+        rawOf = { it.raw },
+        nameOf = { it.name },
+        // An unrecognised country must never inherit another country's strategy.
+        fallback = ResistanceJurisdiction.UNKNOWN,
+        typeName = "ResistanceJurisdiction",
+    )
+}
+
+object ResistanceCropSerializer : KSerializer<ResistanceCrop> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ResistanceCrop", PrimitiveKind.STRING)
+
+    override fun serialize(encoder: Encoder, value: ResistanceCrop) =
+        encoder.encodeString(value.raw)
+
+    override fun deserialize(decoder: Decoder): ResistanceCrop = decodeEnumTolerantly(
+        raw = decoder.decodeString(),
+        entries = ResistanceCrop.entries,
+        rawOf = { it.raw },
+        nameOf = { it.name },
+        fallback = ResistanceCrop.GRAPE,
+        typeName = "ResistanceCrop",
+    )
+}
+
+object ResistanceDiseaseSerializer : KSerializer<ResistanceDisease> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("ResistanceDisease", PrimitiveKind.STRING)
+
+    override fun serialize(encoder: Encoder, value: ResistanceDisease) =
+        encoder.encodeString(value.raw)
+
+    override fun deserialize(decoder: Decoder): ResistanceDisease = decodeEnumTolerantly(
+        raw = decoder.decodeString(),
+        entries = ResistanceDisease.entries,
+        rawOf = { it.raw },
+        nameOf = { it.name },
+        // No silent fallback: guessing a disease would attach the wrong strategy to a
+        // whole season. A disease this build does not know about must fail loudly rather
+        // than quietly become powdery mildew.
+        fallback = null,
+        typeName = "ResistanceDisease",
+    )
 }
 
 // ---------------------------------------------------------------------------

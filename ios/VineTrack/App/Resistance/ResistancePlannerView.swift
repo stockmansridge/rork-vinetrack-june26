@@ -12,7 +12,10 @@ import SwiftUI
 struct ResistancePlannerView: View {
     @Environment(MigratedDataStore.self) private var store
 
-    @State private var planStore = ResistancePlanStore()
+    /// Server-authoritative with a local cache. The remote is attached only when Supabase
+    /// is configured; without it the repository degrades to a device-local cache rather
+    /// than failing, so the Planner still works for a signed-out or offline grower.
+    @State private var planRepository = ResistancePlannerView.makeRepository()
     @State private var seasonStartYear: Int = 0
     @State private var disease: ResistanceDisease = .powderyMildew
     @State private var plan: ResistancePlan?
@@ -435,7 +438,9 @@ struct ResistancePlannerView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Text(ResistancePlanStore.localOnlyNotice)
+            // Where this plan actually lives is stated where plans are edited, so neither
+            // the sharing nor the offline queue is a surprise discovered by losing work.
+            Text(planRepository.syncState.notice)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -717,15 +722,30 @@ struct ResistancePlannerView: View {
             seasonStartYear = seasonCalendar.season(epochMs: nowMs).startYear
         }
         if let vineyardId = store.selectedVineyardId?.uuidString {
-            planStore.load(vineyardId: vineyardId)
+            // Cache first so the screen paints immediately, then reconcile with the
+            // server. A plan saved on another device appears once the pull lands; nothing
+            // on this screen waits for the network to become interactive.
+            planRepository.load(vineyardId: vineyardId)
+            Task {
+                await planRepository.sync(vineyardId: vineyardId)
+                reloadPlan()
+            }
         }
         reloadPlan()
+    }
+
+    private static func makeRepository() -> ResistancePlanRepository {
+        let provider = SupabaseClientProvider.shared
+        return ResistancePlanRepository(
+            local: ResistancePlanStore(),
+            remote: provider.isConfigured ? SupabaseResistancePlanRepository(provider: provider) : nil
+        )
     }
 
     /// Loads the saved plan for the selected season and disease, or prepares a new one.
     private func reloadPlan() {
         guard let vineyardId = store.selectedVineyardId?.uuidString else { return }
-        let existing = planStore.plans(seasonId: season.id, disease: disease).first
+        let existing = planRepository.plans(seasonId: season.id, disease: disease).first
         plan = existing ?? ResistancePlan(
             vineyardId: vineyardId,
             seasonId: season.id,
@@ -762,7 +782,9 @@ struct ResistancePlannerView: View {
             updated = updated.stampingRuleset(id: ruleset.id, version: ruleset.rulesetVersion)
         }
         plan = updated
-        planStore.save(updated)
+        // Local commit + outbox. Returns immediately, works offline, and never blocks the
+        // edit the grower just made on a network round trip.
+        planRepository.save(updated)
         recompute()
     }
 

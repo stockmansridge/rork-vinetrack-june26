@@ -200,9 +200,24 @@ data class ResistancePlan(
      */
     @SerialName("ruleset_id") val rulesetId: String? = null,
     @SerialName("ruleset_version") val rulesetVersion: String? = null,
+    /**
+     * Author, for attribution. NOT a visibility scope: plans are vineyard data and
+     * every authorised member sees them (see `resistance_plans` RLS). Scoping
+     * visibility to the creator would mean the manager who wrote the season plan is
+     * the only person who can open it, which defeats the purpose of a shared plan.
+     */
+    @SerialName("created_by") val createdBy: String? = null,
     @SerialName("created_at_epoch_ms") val createdAtEpochMs: Long,
     @SerialName("updated_at_epoch_ms") val updatedAtEpochMs: Long,
+    /**
+     * Soft-delete tombstone. A deleted plan is retained so the delete propagates to
+     * other devices instead of the row silently reappearing on their next push.
+     */
+    @SerialName("deleted_at_epoch_ms") val deletedAtEpochMs: Long? = null,
 ) {
+
+    /** True when this plan has been archived/soft-deleted. */
+    val isDeleted: Boolean get() = deletedAtEpochMs != null
 
     // -----------------------------------------------------------------------
     // Editing
