@@ -637,7 +637,10 @@ begin
   insert into public.saved_chemicals (id, vineyard_id, name)
   values (ch1, v_vy, 'T196 Chemical');
 
-  insert into public.spray_records (id, vineyard_id, date, chemicals)
+  -- Chemical lines live in the `tanks` JSONB (sql/007) — there is no `chemicals`
+  -- column on spray_records. Only the columns this test actually needs are set:
+  -- the point is that the ROW survives, not what it contains.
+  insert into public.spray_records (id, vineyard_id, date, tanks)
   values (sr1, v_vy, now(), '[]'::jsonb);
 
   -- Soft delete, then a genuine hard delete as a privileged role: neither may
