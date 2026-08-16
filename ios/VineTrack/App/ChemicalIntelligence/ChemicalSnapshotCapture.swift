@@ -61,11 +61,19 @@ nonisolated enum ChemicalSnapshotCapture {
     /// An exact name that matches two or more library entries is treated as
     /// ambiguous and left unresolved — picking "the first one" would attach one
     /// product's chemistry to another product's spray.
+    /// - Parameter allowNameMatch: whether an exact unique NAME may establish the
+    ///   link. `true` for importers, which have nothing but a name column.
+    ///   `false` for screens where the operator either picked a product from the
+    ///   Chemical Store or explicitly chose to enter one by hand — there a typed
+    ///   string is a deliberate manual entry, and quietly binding it to a library
+    ///   record would attach that record's chemistry to a product the operator
+    ///   never selected.
     static func resolve(
         savedChemicalId: UUID?,
         productName: String?,
         registrationIdentityKey: String? = nil,
-        in library: [SavedChemical]
+        in library: [SavedChemical],
+        allowNameMatch: Bool = true
     ) -> (chemical: SavedChemical?, match: MatchKind) {
         // 1. Explicit identity always wins, including for archived products: a
         //    spray applied from an archived record still happened.
@@ -84,7 +92,7 @@ nonisolated enum ChemicalSnapshotCapture {
 
         // 3. Exact, unique display name.
         let name = (productName ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if !name.isEmpty {
+        if allowNameMatch, !name.isEmpty {
             let matches = library.filter {
                 $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
                     .caseInsensitiveCompare(name) == .orderedSame
@@ -133,13 +141,15 @@ nonisolated enum ChemicalSnapshotCapture {
         legacyChemicalGroup: String = "",
         registrationIdentityKey: String? = nil,
         library: [SavedChemical],
-        at date: Date = Date()
+        at date: Date = Date(),
+        allowNameMatch: Bool = true
     ) -> Resolution {
         let (chemical, match) = resolve(
             savedChemicalId: savedChemicalId,
             productName: productName,
             registrationIdentityKey: registrationIdentityKey,
-            in: library
+            in: library,
+            allowNameMatch: allowNameMatch
         )
         if let chemical {
             return Resolution(

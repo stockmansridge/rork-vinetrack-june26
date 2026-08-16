@@ -31,6 +31,15 @@ struct SprayRecordFormView: View {
     @State private var averageSpeedText: String
     @State private var tanks: [SprayTank]
     @State private var expandedTankId: UUID?
+    /// Which product line is currently choosing a Saved Chemical.
+    @State private var picker: ChemicalPickerTarget?
+
+    /// Identifies the line a picker sheet is editing.
+    private struct ChemicalPickerTarget: Identifiable, Hashable {
+        let tankIndex: Int
+        let chemicalIndex: Int
+        var id: String { "\(tankIndex)-\(chemicalIndex)" }
+    }
 
     init(tripId: UUID, paddockIds: [UUID], existingRecord: SprayRecord? = nil) {
         self.tripId = tripId
@@ -85,11 +94,40 @@ struct SprayRecordFormView: View {
                 }
             }
         }
+        .sheet(item: $picker) { target in
+            SprayLineChemicalPicker(
+                selectedId: tanks[target.tankIndex].chemicals[target.chemicalIndex].savedChemicalId
+            ) { chosen in
+                bind(chosen, at: target)
+            }
+        }
         .onAppear {
             if expandedTankId == nil, let first = tanks.first {
                 expandedTankId = first.id
             }
         }
+    }
+
+    /// Bind a line to a picked Saved Chemical, or release it back to manual.
+    ///
+    /// Choosing a product overwrites the typed name with the store's name, so the
+    /// record shows the product that was actually selected. Choosing "enter
+    /// manually" clears the identifier and leaves the typed name intact.
+    private func bind(_ chosen: SavedChemical?, at target: ChemicalPickerTarget) {
+        guard tanks.indices.contains(target.tankIndex),
+              tanks[target.tankIndex].chemicals.indices.contains(target.chemicalIndex)
+        else { return }
+        var line = tanks[target.tankIndex].chemicals[target.chemicalIndex]
+        if let chosen {
+            line.savedChemicalId = chosen.id
+            line.name = chosen.name
+            if line.ratePerHa == 0, chosen.ratePerHa > 0 {
+                line.ratePerHa = chosen.ratePerHa
+            }
+        } else {
+            line.savedChemicalId = nil
+        }
+        tanks[target.tankIndex].chemicals[target.chemicalIndex] = line
     }
 
     private var referenceSection: some View {
@@ -233,20 +271,7 @@ struct SprayRecordFormView: View {
         ForEach(tanks[tIdx].chemicals.indices, id: \.self) { cIdx in
             let chemId = tanks[tIdx].chemicals[cIdx].id
             VStack(spacing: 8) {
-                HStack {
-                    TextField("Chemical name", text: Binding(
-                        get: { tanks[tIdx].chemicals[cIdx].name },
-                        set: { tanks[tIdx].chemicals[cIdx].name = $0 }
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.subheadline)
-                    Button(role: .destructive) {
-                        tanks[tIdx].chemicals.removeAll { $0.id == chemId }
-                    } label: {
-                        Image(systemName: "trash").font(.caption)
-                    }
-                    .buttonStyle(.borderless)
-                }
+                chemicalIdentityRow(tIdx: tIdx, cIdx: cIdx, chemId: chemId)
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Rate/Ha").font(.caption).foregroundStyle(.secondary)
@@ -270,6 +295,79 @@ struct SprayRecordFormView: View {
                 }
             }
             .padding(.vertical, 4)
+        }
+    }
+
+    /// The Saved Chemical a line is bound to, or `nil` for a manual product.
+    ///
+    /// Resolved by IDENTIFIER only, so a product renamed in the store still
+    /// resolves and a typed look-alike name never does.
+    private func boundChemical(_ line: SprayChemical) -> SavedChemical? {
+        guard let id = line.savedChemicalId else { return nil }
+        return store.savedChemicals.first { $0.id == id }
+    }
+
+    /// The product identity row: either a picked Saved Chemical, or an explicit
+    /// manual product.
+    ///
+    /// The two states look deliberately different. A grower needs to see at a
+    /// glance which lines carry real chemistry and which are off-library entries
+    /// that resistance analysis will not be able to assess.
+    @ViewBuilder
+    private func chemicalIdentityRow(tIdx: Int, cIdx: Int, chemId: UUID) -> some View {
+        let line = tanks[tIdx].chemicals[cIdx]
+        if let bound = boundChemical(line) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(bound.name)
+                        .font(.subheadline.weight(.medium))
+                    ChemicalVerificationBadge(status: bound.verificationStatus)
+                    Button("Change product") {
+                        picker = ChemicalPickerTarget(tankIndex: tIdx, chemicalIndex: cIdx)
+                    }
+                    .font(.caption)
+                    .buttonStyle(.borderless)
+                }
+                Spacer()
+                Button(role: .destructive) {
+                    tanks[tIdx].chemicals.removeAll { $0.id == chemId }
+                } label: {
+                    Image(systemName: "trash").font(.caption)
+                }
+                .buttonStyle(.borderless)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Button {
+                        picker = ChemicalPickerTarget(tankIndex: tIdx, chemicalIndex: cIdx)
+                    } label: {
+                        Label("Select Chemical", systemImage: "magnifyingglass")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .buttonStyle(.borderless)
+                    Spacer()
+                    Button(role: .destructive) {
+                        tanks[tIdx].chemicals.removeAll { $0.id == chemId }
+                    } label: {
+                        Image(systemName: "trash").font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                }
+                TextField("Or type a product not in your Chemical Store", text: Binding(
+                    get: { tanks[tIdx].chemicals[cIdx].name },
+                    set: { tanks[tIdx].chemicals[cIdx].name = $0 }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .font(.subheadline)
+                if !line.name.trimmingCharacters(in: .whitespaces).isEmpty {
+                    // Stated plainly rather than blocked: an urgent field record
+                    // must never be held up by a missing library entry.
+                    Text("Recorded as an unverified product. Add it to your Chemical Store to include it in resistance tracking.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
@@ -397,11 +495,14 @@ struct SprayRecordFormView: View {
     ///
     /// A spray typed in here is every bit as real an application as one built in
     /// the Spray Calculator, so it must not be left chemistry-less purely because
-    /// of which screen the operator used. This form has no product picker, so the
-    /// only deterministic evidence available is the typed name: an exact,
-    /// unique library match links and freezes today's chemistry, and anything
-    /// else — a blank, a typo, a genuinely off-library product, an ambiguous
-    /// name — stays honestly unresolved instead of being guessed at.
+    /// of which screen the operator used.
+    ///
+    /// Name matching is deliberately DISABLED. Every line is either bound to a
+    /// Saved Chemical the operator picked — where the identifier is the evidence —
+    /// or it is an explicit manual product, where a typed string is a deliberate
+    /// off-library entry. Quietly resolving `"Amistar"` to `"Amistar 250 SC"`
+    /// would attach one product's verified chemistry to a different product's
+    /// spray, which is worse than recording the application honestly unresolved.
     private func tanksWithCapturedChemistry() -> [SprayTank] {
         let library = store.savedChemicals
         let capturedAt = Date()
@@ -413,9 +514,10 @@ struct SprayRecordFormView: View {
                     savedChemicalId: chemical.savedChemicalId,
                     productName: chemical.name,
                     library: library,
-                    at: capturedAt
+                    at: capturedAt,
+                    allowNameMatch: false
                 )
-                chemical.savedChemicalId = resolution.savedChemicalId ?? chemical.savedChemicalId
+                chemical.savedChemicalId = resolution.savedChemicalId
                 chemical.chemicalSnapshot = resolution.snapshot
                 return chemical
             }
