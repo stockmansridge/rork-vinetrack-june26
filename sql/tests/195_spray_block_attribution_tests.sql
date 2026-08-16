@@ -44,6 +44,7 @@ begin;
 do $$
 begin
   if to_regprocedure('public.spray_block_attribution_is_valid(jsonb)') is null
+     or to_regprocedure('public.spray_block_ids_are_valid(uuid[])') is null
      or to_regprocedure('public.spray_records_derive_block_ids()') is null
      or to_regprocedure('public.spray_records_validate_block_vineyard()') is null then
     raise exception 'SQL 195 not applied — run sql/195_spray_block_attribution.sql first.';

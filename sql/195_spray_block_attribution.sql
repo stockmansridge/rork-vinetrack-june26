@@ -112,6 +112,39 @@ comment on function public.spray_block_attribution_is_valid(jsonb) is
   'True when a spray_records.application_blocks value is NULL, or a non-empty JSONB array whose every element is an object with a parseable uuid blockId. An EMPTY array is invalid: absence of attribution is spelled NULL, never [].';
 
 -- ---------------------------------------------------------------------------
+-- 2b. Validation of the uuid[] projection.
+--
+-- Lives in a function for a hard reason, not a stylistic one: a CHECK constraint
+-- may not contain a subquery, and "no duplicates" over an array needs `unnest`,
+-- which is a subquery in expression position. Postgres rejects that outright
+-- (0A000). Wrapping it in an IMMUTABLE function is the supported way to express
+-- a set-based predicate over a single row's array column, and it keeps this rule
+-- stated once next to the JSONB rule above.
+-- ---------------------------------------------------------------------------
+create or replace function public.spray_block_ids_are_valid(p_ids uuid[])
+returns boolean
+language sql
+immutable
+parallel safe
+set search_path = public
+as $$
+  select
+    case
+      when p_ids is null then true
+      when coalesce(cardinality(p_ids), 0) = 0 then false
+      else (
+        select count(*) = cardinality(p_ids)          -- no NULL elements
+           and count(distinct b) = cardinality(p_ids) -- no duplicates
+          from unnest(p_ids) as u(b)
+         where b is not null
+      )
+    end
+$$;
+
+comment on function public.spray_block_ids_are_valid(uuid[]) is
+  'True when a spray_records.block_ids value is NULL, or a non-empty uuid[] with no NULL elements and no duplicates. Implemented as a function because a CHECK constraint cannot contain the subquery (unnest) that a duplicate test requires.';
+
+-- ---------------------------------------------------------------------------
 -- 3. Constraints. Every one is NULL-tolerant so existing rows validate
 --    unchanged, and each is added conditionally so re-running is safe.
 -- ---------------------------------------------------------------------------
@@ -136,16 +169,7 @@ begin
   ) then
     alter table public.spray_records
       add constraint spray_records_block_ids_check
-      check (
-        block_ids is null
-        or (
-          array_length(block_ids, 1) >= 1
-          and array_position(block_ids, null) is null
-          and array_length(block_ids, 1) = (
-            select count(distinct b) from unnest(block_ids) as u(b)
-          )
-        )
-      );
+      check (public.spray_block_ids_are_valid(block_ids));
   end if;
 
   -- The two columns are recorded together or not at all. Prevents a row that
@@ -311,6 +335,7 @@ commit;
 --   alter table public.spray_records
 --     drop column if exists block_ids,
 --     drop column if exists application_blocks;
+--   drop function if exists public.spray_block_ids_are_valid(uuid[]);
 --   drop function if exists public.spray_block_attribution_is_valid(jsonb);
 -- commit;
 --
