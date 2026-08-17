@@ -12,6 +12,7 @@ import com.rork.vinetrack.data.resistance.ResistancePlanSyncState
 import com.rork.vinetrack.data.resistance.ResistancePlannedChemistrySource
 import com.rork.vinetrack.data.resistance.ResistancePlannedPosition
 import com.rork.vinetrack.data.resistance.ResistancePlannedProduct
+import com.rork.vinetrack.data.sync.VersionedWriteOutcome
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -43,8 +44,14 @@ class ResistancePlanRepositoryTest {
      *  - vineyard isolation on read;
      *  - whole-document upsert keyed on plan id (so a repeated push is idempotent);
      *  - `created_by` write-once (the sql/196 attribution guard);
-     *  - the sql/185 STALE-WRITE GUARD: an upsert whose updatedAt is older than the
-     *    stored row's is silently skipped, exactly as the trigger does.
+     *  - the sql/198 REVISION GUARD: `base_revision` must equal the stored
+     *    `server_revision` or the write is refused with a conflict; every accepted write
+     *    advances `server_revision` by one and returns the authoritative row.
+     *
+     * Deliberately does NOT compare `updatedAtEpochMs` to decide staleness. That is the
+     * whole point of sql/198: a device clock says WHEN someone edited, not WHICH version
+     * they based it on. A fake that still arbitrated on timestamps would keep passing the
+     * clock-skew tests for the wrong reason and hide a regression in the real contract.
      */
     private class FakeServer(
         var failNextUpsert: Boolean = false,
@@ -79,33 +86,65 @@ class ResistancePlanRepositoryTest {
             return rows.values.filter { it.vineyardId == vineyardId }
         }
 
-        override suspend fun upsert(plans: List<ResistancePlan>) {
+        override suspend fun upsert(
+            plans: List<ResistancePlan>,
+        ): List<VersionedWriteOutcome<ResistancePlan>> {
             if (failNextUpsert) {
                 failNextUpsert = false
                 throw IllegalStateException("offline")
             }
             lagSnapshot = rows.values.toList()
             upsertCalls++
-            for (plan in plans) {
+            return plans.map { plan ->
                 upsertedIds += plan.id
                 val existing = rows[plan.id]
-                if (existing != null && plan.updatedAtEpochMs < existing.updatedAtEpochMs) {
-                    // sql/185: a late offline replay must not overwrite a newer edit.
-                    continue
+                if (existing != null && plan.serverRevision != existing.serverRevision) {
+                    // sql/198: base_revision does not match the row's current version.
+                    // Raised as an OUTCOME, never an exception — a thrown conflict gets
+                    // counted as a transport failure and blindly retried.
+                    return@map VersionedWriteOutcome.Conflict(
+                        rowId = plan.id,
+                        baseRevision = plan.serverRevision,
+                        serverRevision = existing.serverRevision,
+                    )
                 }
-                rows[plan.id] = plan.copy(
+                // The server issues the next revision. Whatever the client sent in
+                // server_revision is irrelevant — that is what makes the token unforgeable.
+                val nextRevision = (existing?.serverRevision ?: 0L) + 1L
+                val stored = plan.copy(
                     // sql/196 attribution guard: created_by is write-once.
                     createdBy = existing?.createdBy ?: plan.createdBy,
                     // The server owns the tombstone; an upsert never sets it.
                     deletedAtEpochMs = existing?.deletedAtEpochMs,
+                    serverRevision = nextRevision,
                 )
+                rows[plan.id] = stored
+                VersionedWriteOutcome.Applied(stored)
             }
+        }
+
+        /** Simulates another device/portal saving over the row, advancing the revision. */
+        fun writeAsOtherDevice(plan: ResistancePlan) {
+            val existing = rows[plan.id]
+            rows[plan.id] = plan.copy(
+                createdBy = existing?.createdBy ?: plan.createdBy,
+                deletedAtEpochMs = existing?.deletedAtEpochMs,
+                serverRevision = (existing?.serverRevision ?: 0L) + 1L,
+            )
+        }
+
+        /** Seeds a row exactly as a pre-sql/198 client left it: no revision at all. */
+        fun seedLegacyRow(plan: ResistancePlan) {
+            rows[plan.id] = plan.copy(serverRevision = null)
         }
 
         override suspend fun softDelete(planId: String) {
             softDeleteCalls++
             val existing = rows[planId] ?: return
-            rows[planId] = existing.copy(deletedAtEpochMs = existing.updatedAtEpochMs + 1)
+            rows[planId] = existing.copy(
+                deletedAtEpochMs = existing.updatedAtEpochMs + 1,
+                serverRevision = (existing.serverRevision ?: 0L) + 1L,
+            )
         }
     }
 
@@ -455,13 +494,17 @@ class ResistancePlanRepositoryTest {
 
         assertTrue("sync should have completed", result.isSuccess)
         assertEquals("newer local", repository.plans.value.single().notes)
-        assertEquals(1, result.keptLocal)
-        assertEquals("the kept plan must stay queued", 1, repository.pendingCount())
+        // Now detected by REVISION, not by comparing device clocks: the lagging replica
+        // returns an older `server_revision` than the one this device just had confirmed.
+        assertEquals(1, result.staleRemoteIgnored)
+        assertEquals("no conflict — the write was accepted", 0, result.conflicted)
+        assertEquals("a confirmed write must not stay queued", 0, repository.pendingCount())
 
         // And the next pass, reading a caught-up replica, converges without losing the edit.
         assertTrue(repository.sync(vineyard).isSuccess)
         assertEquals("newer local", repository.plans.value.single().notes)
         assertEquals(0, repository.pendingCount())
+        assertEquals(ResistancePlanSyncState.SYNCED, repository.syncState.value)
     }
 
     @Test

@@ -251,7 +251,11 @@ fun ResistancePlannerScreen(
             ResistancePlanSyncState.LOCAL_ONLY -> ResistancePlanRepository.LOCAL_ONLY_NOTICE
             ResistancePlanSyncState.SYNCED -> ResistancePlanRepository.SYNCED_NOTICE
             ResistancePlanSyncState.PENDING_UPLOAD -> ResistancePlanRepository.PENDING_NOTICE
+            ResistancePlanSyncState.SYNCING -> ResistancePlanRepository.SYNCING_NOTICE
             ResistancePlanSyncState.FAILED -> ResistancePlanRepository.FAILED_NOTICE
+            // Never FAILED_NOTICE: a conflict cannot be fixed by retrying, so telling the
+            // grower it "will retry" would promise something that deterministically fails.
+            ResistancePlanSyncState.CONFLICT -> ResistancePlanRepository.CONFLICT_NOTICE
         }
     }
 

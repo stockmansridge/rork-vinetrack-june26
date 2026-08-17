@@ -11827,16 +11827,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         viewModelScope.launch {
             try {
-                val saved = pruningYieldSettingsRepo.upsertSettings(item, now)
-                // NULL = the sql/185 stale-write guard kept a newer edit from
-                // another device — pull the authoritative row instead.
-                if (saved != null) {
-                    reconcilePruningYieldSettings(saved)
-                } else {
-                    runCatching {
-                        pruningYieldSettingsRepo.listSettings(item.vineyardId)
-                            .firstOrNull { it.paddockId == item.paddockId }
-                            ?.let { reconcilePruningYieldSettings(it) }
+                when (val outcome = pruningYieldSettingsRepo.upsertSettings(item, now)) {
+                    // The authoritative row, carrying the NEW server_revision. Reconciling it
+                    // is what teaches this device which version its edit became; without it
+                    // the next save would resend the old base_revision and be refused.
+                    is com.rork.vinetrack.data.sync.VersionedWriteOutcome.Applied ->
+                        reconcilePruningYieldSettings(outcome.row)
+                    // sql/198 REVISION_CONFLICT: another device or the portal saved since this
+                    // device last read the block. Fetch the server's current values so BOTH
+                    // versions exist, then queue the local edit as CONFLICT rather than
+                    // retrying — the same stale base_revision would be refused every time.
+                    is com.rork.vinetrack.data.sync.VersionedWriteOutcome.Conflict -> {
+                        runCatching {
+                            pruningYieldSettingsRepo.listSettings(item.vineyardId)
+                                .firstOrNull { it.paddockId == item.paddockId }
+                                ?.let { reconcilePruningYieldSettings(it) }
+                        }
+                        pruningYieldSettingsSync.enqueueConflicted(item, now)
                     }
                 }
             } catch (e: BackendError.Unauthorized) {

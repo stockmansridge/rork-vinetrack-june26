@@ -1,9 +1,15 @@
 import Foundation
 import Observation
 
-/// Server contract for Resistance Plans (`public.resistance_plans`, sql/196).
+/// A Resistance Plan write the server refused because the row had moved on (sql/198).
+typealias ResistancePlanConflict = SyncRevisionConflict<ResistancePlan>
+
+/// Table name used in conflict records and audit trails.
+nonisolated let resistancePlansEntity: String = "resistance_plans"
+
+/// Server contract for Resistance Plans (`public.resistance_plans`, sql/196 + sql/198).
 ///
-/// Deliberately narrow: fetch the vineyard slice, upsert whole plan documents, tombstone
+/// Deliberately narrow: fetch the vineyard slice, write whole plan documents, tombstone
 /// one plan. The Planner UI never sees this type — it talks to `ResistancePlanRepository`
 /// — so a screen can never issue an ad-hoc query or depend on network availability to
 /// render.
@@ -17,8 +23,21 @@ protocol ResistancePlanRemote: Sendable {
     /// arriving in a pull. Hiding them would make the deleted plan look merely absent,
     /// and this device would helpfully push it back.
     func fetchAll(vineyardId: String) async throws -> [ResistancePlan]
-    /// Upsert whole plan documents. Idempotent on plan id.
-    func upsert(_ plans: [ResistancePlan]) async throws
+
+    /// Versioned whole-document write, ONE OUTCOME PER PLAN.
+    ///
+    /// Per-plan outcomes rather than one batch result because conflicts are per-row: a
+    /// single multi-row statement is one transaction, so one conflicting plan would abort
+    /// the write of every other plan in the batch and strand edits that had nothing wrong
+    /// with them. Plans are a handful per vineyard per season — correctness is worth the
+    /// extra round trips.
+    ///
+    /// Each returned outcome is either `.applied` carrying the authoritative server row
+    /// (with its NEW `server_revision`) or `.conflict`. Implementations MUST NOT throw for
+    /// a conflict — a thrown conflict gets counted as a transport failure and blindly
+    /// retried.
+    func upsert(_ plans: [ResistancePlan]) async throws -> [VersionedWriteOutcome<ResistancePlan>]
+
     /// Tombstone one plan via the sql/196 soft-delete RPC.
     func softDelete(planId: String) async throws
 }
@@ -32,10 +51,19 @@ nonisolated struct ResistancePlanSyncResult: Sendable, Equatable {
     /// Remote plans ignored because a newer local edit is still pending.
     nonisolated var keptLocal: Int = 0
     nonisolated var deletesPushed: Int = 0
+    /// Plans the server refused on revision grounds. NOT failures: the pass itself
+    /// succeeded, and these plans are queued with both versions preserved.
+    nonisolated var conflicted: Int = 0
+    /// Remote rows ignored because they were OLDER than a revision this device has already
+    /// had confirmed — read-after-write replica lag, decided by revision and never a clock.
+    nonisolated var staleRemoteIgnored: Int = 0
     /// Non-nil when the pass could not complete. Local state is always still usable.
     nonisolated var failure: String?
 
     nonisolated var isSuccess: Bool { failure == nil }
+
+    /// True when this pass produced or left behind an unresolved conflict.
+    nonisolated var hasConflicts: Bool { conflicted > 0 }
 }
 
 /// Where the plans currently on screen came from. Drives the sync badge in the plan list.
@@ -46,8 +74,16 @@ nonisolated enum ResistancePlanSyncState: String, Sendable, Hashable {
     case synced
     /// Local changes are waiting to upload.
     case pendingUpload
+    /// A push is in flight.
+    case syncing
     /// The last sync attempt failed. Plans remain readable and editable.
     case failed
+    /// Someone else edited a plan this device had also edited. Both versions are kept.
+    ///
+    /// Distinct from `.failed` because the remedies are opposites: a failure wants a retry,
+    /// a conflict CANNOT be fixed by retrying — the same `base_revision` will be refused
+    /// every time — and needs a person to choose a version.
+    case conflict
 
     /// Operator-facing explanation. Identical wording to Android.
     nonisolated var notice: String {
@@ -59,20 +95,29 @@ nonisolated enum ResistancePlanSyncState: String, Sendable, Hashable {
             return "Resistance plans are shared with your vineyard team and sync across devices."
         case .pendingUpload:
             return "Changes are saved on this device and will upload when you are back online."
+        case .syncing:
+            return "Syncing resistance plans…"
         case .failed:
             return "Could not sync resistance plans. Your changes are saved on this device and will retry."
+        case .conflict:
+            // Deliberately NOT "sync failed — retry": retrying is the one thing that cannot
+            // work here, and offering it would train the grower to tap a button that
+            // silently does nothing.
+            return "Changes need review. This plan was also edited on another device — "
+                + "both versions are saved, so you can choose which one to keep."
         }
     }
 }
 
 /// Offline-first, server-authoritative repository for Resistance Plans.
 ///
-/// ARCHITECTURE (audited against VineTrack's existing sync patterns before writing): this
-/// follows the same shape as `PickingRecordSyncService` and the pruning services — a local
-/// cache, an id-keyed outbox of pending writes, push-then-pull, and `client_updated_at`
-/// last-write-wins arbitrated by the sql/185 stale-write trigger. No new sync framework was
-/// invented, and the Planner UI's dependency direction is unchanged: it holds a repository,
-/// never a Supabase client.
+/// CONCURRENCY (sql/198): the authority for "is this edit stale?" is the server-issued
+/// `server_revision`, never a device clock. Each cached plan remembers the revision it was
+/// based on; an update sends that as `base_revision`; the server either applies the write
+/// and advances the revision, or raises REVISION_CONFLICT. Wall-clock timestamps remain
+/// ONLY for display, audit and "when did the grower edit this" — they no longer decide who
+/// wins, because a clock records WHEN someone edited and not WHICH version they started
+/// from.
 ///
 /// WHY WRITES NEVER WAIT FOR THE SERVER: a grower plans a season standing in a block with
 /// no signal. Every mutation commits to the local cache first and returns immediately; the
@@ -94,9 +139,14 @@ final class ResistancePlanRepository {
     private(set) var plans: [ResistancePlan] = []
     private(set) var syncState: ResistancePlanSyncState
     private(set) var isLoaded: Bool = false
+    /// Unresolved conflicts, both versions intact. Exposed so a future review screen can
+    /// present them; nothing here resolves a conflict automatically.
+    private(set) var conflicts: [ResistancePlanConflict] = []
 
     private let local: any ResistancePlanLocalStore
     private let remote: (any ResistancePlanRemote)?
+    /// Device clock. Still used — for the grower's edit time, which is real metadata — but
+    /// NOT for deciding whether a write is stale. See the type doc.
     private let clock: @Sendable () -> Int64
     private let currentUserId: @Sendable () -> String?
     private var vineyardId: String?
@@ -123,6 +173,7 @@ final class ResistancePlanRepository {
     func load(vineyardId: String) {
         self.vineyardId = vineyardId
         isLoaded = true
+        conflicts = local.loadConflicts(vineyardId: vineyardId)
         publish(allCached(vineyardId))
         refreshSyncState()
     }
@@ -134,6 +185,11 @@ final class ResistancePlanRepository {
 
     func plan(id planId: String) -> ResistancePlan? { plans.first { $0.id == planId } }
 
+    /// The unresolved conflict for a plan, if any.
+    func conflict(id planId: String) -> ResistancePlanConflict? {
+        conflicts.first { $0.rowId == planId }
+    }
+
     // MARK: - Mutations — always local-first
 
     /// Create or update a plan.
@@ -141,11 +197,18 @@ final class ResistancePlanRepository {
     /// Commits locally and enqueues the id. Works identically online and offline; the
     /// caller gets no error to handle and no spinner to show, because nothing about the
     /// grower's edit depends on connectivity.
+    ///
+    /// The cached `server_revision` is re-stamped from the cache rather than trusted from
+    /// the incoming plan. The revision is SERVER state: if an editor, a stale view or a
+    /// copied value could carry a different number into a save, this device would end up
+    /// asserting a `base_revision` it never actually read.
     func save(_ plan: ResistancePlan) {
         guard let vineyard = vineyardId else { return }
+        let cached = allCached(vineyard)
         var stamped = plan
         if stamped.createdBy == nil { stamped.createdBy = currentUserId() }
-        let merged = allCached(vineyard).filter { $0.id != stamped.id } + [stamped]
+        stamped.serverRevision = cached.first { $0.id == stamped.id }?.serverRevision
+        let merged = cached.filter { $0.id != stamped.id } + [stamped]
         local.saveAll(vineyardId: vineyard, plans: merged)
         local.savePending(vineyardId: vineyard, ids: local.loadPending(vineyardId: vineyard).union([stamped.id]))
         publish(merged)
@@ -193,12 +256,59 @@ final class ResistancePlanRepository {
         refreshSyncState()
     }
 
+    // MARK: - Conflict resolution — explicit, never automatic
+
+    /// Resolve a conflict by keeping THIS device's authored plan.
+    ///
+    /// Rebases the local document onto the server's current revision, so the next push
+    /// carries a `base_revision` the server will accept. The document itself is untouched —
+    /// this is the grower saying "my version is the one I want", not a merge.
+    func resolveKeepingLocal(id planId: String) {
+        guard let vineyard = vineyardId else { return }
+        guard let conflict = conflicts.first(where: { $0.rowId == planId }) else { return }
+        var rebased = conflict.localPending
+        rebased.serverRevision = conflict.serverRevision ?? conflict.localPending.serverRevision
+        let updated = allCached(vineyard).map { $0.id == planId ? rebased : $0 }
+        local.saveAll(vineyardId: vineyard, plans: updated)
+        local.savePending(vineyardId: vineyard, ids: local.loadPending(vineyardId: vineyard).union([planId]))
+        clearConflicts(vineyard, ids: [planId])
+        publish(updated)
+        refreshSyncState(force: true)
+    }
+
+    /// Resolve a conflict by accepting the server's version and DISCARDING the local edit.
+    ///
+    /// Only ever called from an explicit user choice. Nothing in this repository decides
+    /// this on the grower's behalf, and in particular never by comparing timestamps: both
+    /// versions descend from the same revision, so "later" says nothing about which one is
+    /// right (see sql/198 rationale).
+    func resolveKeepingServer(id planId: String) {
+        guard let vineyard = vineyardId else { return }
+        guard let conflict = conflicts.first(where: { $0.rowId == planId }) else { return }
+        let updated: [ResistancePlan]
+        if let serverCopy = conflict.serverCurrent {
+            updated = allCached(vineyard).map { $0.id == planId ? serverCopy : $0 }
+        } else {
+            updated = allCached(vineyard)
+        }
+        local.saveAll(vineyardId: vineyard, plans: updated)
+        // Dequeued: the local edit has been deliberately abandoned, so there is nothing left
+        // to push.
+        local.savePending(
+            vineyardId: vineyard,
+            ids: local.loadPending(vineyardId: vineyard).subtracting([planId])
+        )
+        clearConflicts(vineyard, ids: [planId])
+        publish(updated)
+        refreshSyncState(force: true)
+    }
+
     // MARK: - Sync
 
     /// One sync pass: adopt legacy local plans, push the outbox, pull and merge.
     ///
     /// Order matters. Pushing BEFORE pulling means a local edit is offered to the server
-    /// (and arbitrated by the sql/185 stale-write guard) before any remote version can
+    /// (and arbitrated by the sql/198 revision guard) before any remote version can
     /// overwrite the cache, so an offline edit is never discarded by the very sync that was
     /// supposed to deliver it.
     @discardableResult
@@ -214,6 +324,7 @@ final class ResistancePlanRepository {
         var pushed = 0
         var deletesPushed = 0
         do {
+            syncState = .syncing
             // Captured BEFORE the push and used for the merge decision below. The outbox is
             // deliberately NOT cleared until after the pull has been merged: a read that
             // lands on a lagging replica can return the pre-push row, and if the outbox were
@@ -221,49 +332,102 @@ final class ResistancePlanRepository {
             // edit the grower is looking at.
             let pending = local.loadPending(vineyardId: vineyardId)
             var remainingPending = pending
+            // Ids the server ACCEPTED this pass, mapped to the authoritative row it
+            // returned. Those rows carry the new `server_revision`, which is the only way
+            // this device learns what version its edit became.
+            var applied: [String: ResistancePlan] = [:]
+            var conflictedRevisions: [String: (base: Int64?, server: Int64?)] = [:]
+
             if !pending.isEmpty {
                 let cached = allCached(vineyardId)
                 let toPush = cached.filter { pending.contains($0.id) }
 
-                // Upsert the full document for every pending plan, tombstoned or not. The
+                // Write the full document for every pending plan, tombstoned or not. The
                 // tombstone must reach the server as a row update first, so a plan created
                 // AND deleted while offline still exists to be soft-deleted.
                 let live = toPush.filter { !$0.isDeleted }
                 if !live.isEmpty {
-                    try await server.upsert(live)
-                    pushed = live.count
+                    for outcome in try await server.upsert(live) {
+                        switch outcome {
+                        case .applied(let row):
+                            applied[row.id] = row
+                            pushed += 1
+                        case .conflict(let rowId, let base, let serverRevision):
+                            conflictedRevisions[rowId] = (base, serverRevision)
+                        }
+                    }
                 }
                 for tombstoned in toPush.filter({ $0.isDeleted }) {
                     var revived = tombstoned
                     revived.deletedAtEpochMs = nil
-                    try await server.upsert([revived])
+                    let outcomes = try await server.upsert([revived])
+                    if case .conflict(_, let base, let serverRevision) = outcomes.first {
+                        // A delete that lost a race is still a conflict: the other device's
+                        // edit may be exactly what the grower would want to keep.
+                        conflictedRevisions[tombstoned.id] = (base, serverRevision)
+                        continue
+                    }
                     try await server.softDelete(planId: tombstoned.id)
                     deletesPushed += 1
+                    applied.removeValue(forKey: tombstoned.id)
+                    remainingPending.remove(tombstoned.id)
                 }
 
-                // Only ids we actually attempted are dropped. An id that vanished from the
+                // Only ids the server ACCEPTED are dropped from the outbox. A conflicted id
+                // stays queued — its edit exists nowhere else. An id that vanished from the
                 // cache is dropped too, so a deleted-then-purged plan cannot wedge the
                 // outbox forever.
-                let attempted = Set(toPush.map { $0.id })
                 let orphans = pending.subtracting(Set(cached.map { $0.id }))
-                remainingPending = pending.subtracting(attempted).subtracting(orphans)
+                remainingPending = remainingPending
+                    .subtracting(Set(applied.keys))
+                    .subtracting(orphans)
             }
 
             if adopted > 0 { local.markAdopted(vineyardId: vineyardId) }
 
+            // Apply the authoritative returned rows immediately. This is what teaches the
+            // cache its new `server_revision`; without it the next edit would resend the OLD
+            // base_revision and be refused for no reason.
+            if !applied.isEmpty {
+                local.saveAll(
+                    vineyardId: vineyardId,
+                    plans: allCached(vineyardId).map { applied[$0.id] ?? $0 }
+                )
+            }
+
             let remotePlans = try await server.fetchAll(vineyardId: vineyardId)
+            // Plans whose local copy must survive the pull: still-queued edits (never
+            // offered, or offered and refused). A just-accepted plan is NOT in this set —
+            // its server row is the authority now.
+            let keepLocalIds = pending
+                .subtracting(Set(applied.keys))
+                .union(Set(conflictedRevisions.keys))
             let merge = Self.merge(
                 local: allCached(vineyardId),
                 remote: remotePlans,
-                pending: pending
+                keepLocalIds: keepLocalIds
             )
             local.saveAll(vineyardId: vineyardId, plans: merge.plans)
+
+            // Record conflicts with BOTH documents. The server copy comes from the pull we
+            // just did, so the grower can see what the other device actually saved.
+            if !conflictedRevisions.isEmpty {
+                recordConflicts(
+                    vineyardId: vineyardId,
+                    revisions: conflictedRevisions,
+                    localById: Dictionary(merge.plans.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new }),
+                    remoteById: Dictionary(remotePlans.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+                )
+            }
+
             // Safe to shrink the outbox only now that the pull has been reconciled. A plan
             // whose newer local copy was kept stays queued, so the next pass retries it
             // instead of leaving this device permanently ahead of the server.
             local.savePending(
                 vineyardId: vineyardId,
-                ids: remainingPending.union(merge.keptLocalIds)
+                ids: remainingPending
+                    .union(merge.keptLocalIds)
+                    .union(Set(conflictedRevisions.keys))
             )
             publish(merge.plans)
             // `force` because a pass that has just SUCCEEDED must be able to clear a
@@ -276,11 +440,14 @@ final class ResistancePlanRepository {
                 pulled: merge.acceptedRemote,
                 adopted: adopted,
                 keptLocal: merge.keptLocal,
-                deletesPushed: deletesPushed
+                deletesPushed: deletesPushed,
+                conflicted: conflictedRevisions.count,
+                staleRemoteIgnored: merge.staleRemoteIgnored
             )
         } catch {
-            // Everything stays in the cache and in the outbox. The grower keeps working;
-            // the next successful pass replays.
+            // Everything stays in the cache and in the outbox. The grower keeps working; the
+            // next successful pass replays. A conflict never arrives here — the remote
+            // returns it as an outcome precisely so it cannot be mistaken for this.
             syncState = .failed
             return ResistancePlanSyncResult(
                 pushed: pushed,
@@ -317,25 +484,69 @@ final class ResistancePlanRepository {
         return existing.count
     }
 
+    private func recordConflicts(
+        vineyardId: String,
+        revisions: [String: (base: Int64?, server: Int64?)],
+        localById: [String: ResistancePlan],
+        remoteById: [String: ResistancePlan]
+    ) {
+        let now = clock()
+        var existing = Dictionary(
+            local.loadConflicts(vineyardId: vineyardId).map { ($0.rowId, $0) },
+            uniquingKeysWith: { _, new in new }
+        )
+        for (planId, pair) in revisions {
+            guard let localPlan = localById[planId] else { continue }
+            existing[planId] = ResistancePlanConflict(
+                rowId: planId,
+                entity: resistancePlansEntity,
+                localPending: localPlan,
+                serverCurrent: remoteById[planId],
+                baseRevision: pair.base,
+                serverRevision: pair.server ?? remoteById[planId]?.serverRevision,
+                detectedAtEpochMs: now
+            )
+        }
+        let all = Array(existing.values)
+        local.saveConflicts(vineyardId: vineyardId, conflicts: all)
+        conflicts = all
+    }
+
+    private func clearConflicts(_ vineyard: String, ids: Set<String>) {
+        let remaining = local.loadConflicts(vineyardId: vineyard).filter { !ids.contains($0.rowId) }
+        local.saveConflicts(vineyardId: vineyard, conflicts: remaining)
+        conflicts = remaining
+    }
+
     nonisolated struct MergeOutcome: Sendable {
         nonisolated var plans: [ResistancePlan]
         nonisolated var acceptedRemote: Int
         nonisolated var keptLocal: Int
         nonisolated var keptLocalIds: Set<String> = []
+        nonisolated var staleRemoteIgnored: Int = 0
     }
 
-    /// Whole-document last-write-wins.
+    /// Whole-document reconciliation, arbitrated by REVISION.
     ///
-    /// A remote plan is adopted UNLESS this device still holds an unpushed edit that is
-    /// strictly newer. Position arrays are NEVER merged element-by-element: there is no
-    /// defensible automatic reconciliation of "A moved the Group 11 spray earlier" against
-    /// "B removed that spray", and any row-wise merge could produce a spray sequence that
-    /// neither operator authored and then present it as resistance-compliant. Losing the
-    /// older edit is visible and recoverable; inventing a third plan is not.
+    /// Two independent reasons to keep the local copy:
+    ///
+    ///   1. `keepLocalIds` — the grower has an edit the server has not accepted. It exists on
+    ///      this device and nowhere else, so a pull must not paint over it.
+    ///   2. The remote row is at an OLDER revision than one this device has already had
+    ///      confirmed. That is read-after-write replica lag, and it used to be detected by
+    ///      comparing device timestamps — which failed in exactly the case it mattered,
+    ///      because a slow phone's "newer" edit looks older than the row it just wrote.
+    ///      Revisions are monotonic and server-issued, so the comparison is now sound.
+    ///
+    /// Position arrays are NEVER merged element-by-element: there is no defensible automatic
+    /// reconciliation of "A moved the Group 11 spray earlier" against "B removed that
+    /// spray", and any row-wise merge could produce a spray sequence that neither operator
+    /// authored and then present it as resistance-compliant. Preserving both authored
+    /// documents is recoverable; inventing a third plan is not.
     nonisolated static func merge(
         local: [ResistancePlan],
         remote: [ResistancePlan],
-        pending: Set<String>
+        keepLocalIds: Set<String>
     ) -> MergeOutcome {
         var order: [String] = local.map { $0.id }
         var byId: [String: ResistancePlan] = Dictionary(
@@ -344,14 +555,16 @@ final class ResistancePlanRepository {
         )
 
         var accepted = 0
+        var staleRemote = 0
         var keptIds: Set<String> = []
         for row in remote {
             let mine = byId[row.id]
-            let hasNewerLocalEdit = mine != nil
-                && pending.contains(row.id)
-                && (mine?.updatedAtEpochMs ?? 0) > row.updatedAtEpochMs
-            if hasNewerLocalEdit {
+            if mine != nil, keepLocalIds.contains(row.id) {
                 keptIds.insert(row.id)
+                continue
+            }
+            if let mine, Self.isRemoteBehind(mine: mine, row: row) {
+                staleRemote += 1
                 continue
             }
             if byId[row.id] == nil { order.append(row.id) }
@@ -362,8 +575,21 @@ final class ResistancePlanRepository {
             plans: order.compactMap { byId[$0] },
             acceptedRemote: accepted,
             keptLocal: keptIds.count,
-            keptLocalIds: keptIds
+            keptLocalIds: keptIds,
+            staleRemoteIgnored: staleRemote
         )
+    }
+
+    /// True when the pulled row is at a strictly OLDER server revision than the copy this
+    /// device already holds — i.e. the read went to a replica that has not caught up.
+    ///
+    /// Returns false when either side has no revision: a legacy row (written by an old
+    /// client, or cached before sql/198) is NOT evidence of lag, and treating an unknown
+    /// revision as "behind" would make such rows permanently unpullable.
+    nonisolated static func isRemoteBehind(mine: ResistancePlan, row: ResistancePlan) -> Bool {
+        guard let localRevision = mine.serverRevision else { return false }
+        guard let remoteRevision = row.serverRevision else { return false }
+        return remoteRevision < localRevision
     }
 
     // MARK: - Internals
@@ -377,6 +603,10 @@ final class ResistancePlanRepository {
     private func refreshSyncState(force: Bool = false) {
         guard let vineyard = vineyardId else { return }
         guard remote != nil else { syncState = .localOnly; return }
+        // A conflict outranks every other state. It is the only one that needs a person, and
+        // showing "will retry" over the top of it would promise something the app cannot
+        // deliver: the same base_revision is refused every time.
+        if !conflicts.isEmpty { syncState = .conflict; return }
         // A local edit must not silently downgrade a `.failed` badge to `.pendingUpload`:
         // the last attempt really did fail, and the grower should keep seeing that until a
         // pass actually succeeds.
@@ -389,4 +619,7 @@ final class ResistancePlanRepository {
         guard let vineyard = vineyardId else { return 0 }
         return local.loadPending(vineyardId: vineyard).count
     }
+
+    /// Unresolved-conflict count, for the plan list badge.
+    func conflictCount() -> Int { conflicts.count }
 }

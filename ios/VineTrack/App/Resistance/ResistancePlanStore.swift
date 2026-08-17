@@ -18,6 +18,12 @@ protocol ResistancePlanLocalStore: AnyObject, Sendable {
     /// Whether the one-time adoption of Planner v1 local-only plans has completed.
     func isAdopted(vineyardId: String) -> Bool
     func markAdopted(vineyardId: String)
+    /// Unresolved revision conflicts, with BOTH authored documents intact.
+    ///
+    /// Persisted rather than in-memory: a conflict means the grower's version exists nowhere
+    /// but this device, so it has to survive the app being killed.
+    func loadConflicts(vineyardId: String) -> [ResistancePlanConflict]
+    func saveConflicts(vineyardId: String, conflicts: [ResistancePlanConflict])
 }
 
 /// `UserDefaults`-backed local cache and outbox for Resistance Plans.
@@ -45,6 +51,7 @@ final class ResistancePlanStore: ResistancePlanLocalStore, @unchecked Sendable {
     private func plansKey(_ vineyardId: String) -> String { "resistance_plans_v1_\(vineyardId)" }
     private func pendingKey(_ vineyardId: String) -> String { "resistance_plans_pending_v1_\(vineyardId)" }
     private func adoptedKey(_ vineyardId: String) -> String { "resistance_plans_adopted_v1_\(vineyardId)" }
+    private func conflictsKey(_ vineyardId: String) -> String { "resistance_plans_conflicts_v1_\(vineyardId)" }
 
     func loadAll(vineyardId: String) -> [ResistancePlan] {
         guard let data = defaults.data(forKey: plansKey(vineyardId)) else { return [] }
@@ -83,6 +90,31 @@ final class ResistancePlanStore: ResistancePlanLocalStore, @unchecked Sendable {
     func markAdopted(vineyardId: String) {
         defaults.set(true, forKey: adoptedKey(vineyardId))
     }
+
+    /// Conflicts are PERSISTED, not held in memory.
+    ///
+    /// A conflict means the grower's authored plan exists nowhere except this device. If it
+    /// lived only in RAM, backgrounding the app would destroy the very copy the conflict
+    /// exists to protect, and the "Changes need review" badge would come back pointing at
+    /// nothing.
+    func loadConflicts(vineyardId: String) -> [ResistancePlanConflict] {
+        guard let data = defaults.data(forKey: conflictsKey(vineyardId)) else { return [] }
+        do {
+            return try JSONDecoder().decode([ResistancePlanConflict].self, from: data)
+        } catch {
+            print("[ResistancePlanStore] Could not read stored conflicts: \(error.localizedDescription)")
+            return []
+        }
+    }
+
+    func saveConflicts(vineyardId: String, conflicts: [ResistancePlanConflict]) {
+        do {
+            let data = try JSONEncoder().encode(conflicts)
+            defaults.set(data, forKey: conflictsKey(vineyardId))
+        } catch {
+            print("[ResistancePlanStore] Could not store conflicts: \(error.localizedDescription)")
+        }
+    }
 }
 
 /// In-memory local store for tests and previews.
@@ -94,6 +126,7 @@ final class InMemoryResistancePlanLocalStore: ResistancePlanLocalStore, @uncheck
     private var plans: [String: [ResistancePlan]] = [:]
     private var pending: [String: Set<String>] = [:]
     private var adopted: Set<String> = []
+    private var conflicts: [String: [ResistancePlanConflict]] = [:]
 
     func loadAll(vineyardId: String) -> [ResistancePlan] { plans[vineyardId] ?? [] }
 
@@ -106,4 +139,12 @@ final class InMemoryResistancePlanLocalStore: ResistancePlanLocalStore, @uncheck
     func isAdopted(vineyardId: String) -> Bool { adopted.contains(vineyardId) }
 
     func markAdopted(vineyardId: String) { adopted.insert(vineyardId) }
+
+    func loadConflicts(vineyardId: String) -> [ResistancePlanConflict] {
+        conflicts[vineyardId] ?? []
+    }
+
+    func saveConflicts(vineyardId: String, conflicts: [ResistancePlanConflict]) {
+        self.conflicts[vineyardId] = conflicts
+    }
 }

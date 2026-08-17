@@ -372,6 +372,21 @@ object PendingWriteStatus {
     /** Successfully applied on the server; safe to remove. */
     const val SYNCED = "synced"
 
+    /**
+     * The server refused the write because the row had moved on (sql/198
+     * REVISION_CONFLICT). Needs a person, NOT a retry.
+     *
+     * Distinct from [FAILED] because the remedies are opposites: a failed write should be
+     * replayed, whereas replaying a conflicted write resends the same stale `base_revision`
+     * and is refused every single time. Folding this into FAILED would produce a retry loop
+     * that burns battery and can never converge; folding it into BLOCKED would hide that
+     * the user's authored value is still here and still recoverable.
+     */
+    const val CONFLICT = "conflict"
+
     /** Statuses that still count toward the "waiting to sync" total. */
-    val unresolved: Set<String> = setOf(PENDING, IN_PROGRESS, FAILED, BLOCKED)
+    val unresolved: Set<String> = setOf(PENDING, IN_PROGRESS, FAILED, BLOCKED, CONFLICT)
+
+    /** Statuses a replay loop may pick up. Deliberately excludes [CONFLICT]. */
+    val retryable: Set<String> = setOf(PENDING, FAILED)
 }

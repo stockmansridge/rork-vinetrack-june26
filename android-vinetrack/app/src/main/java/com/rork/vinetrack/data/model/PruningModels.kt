@@ -167,6 +167,16 @@ data class PruningBlockSetup(
     val rowCountOverride: Int? = null,
     val estimatedLabourHours: Double? = null,
     val notes: String = "",
+    /**
+     * Server-issued revision (sql/198) this local copy was based on. SERVER STATE, not an
+     * editable setup field — no screen may author it.
+     *
+     * Null means the server has never issued one: queued offline, or a row that predates
+     * revisions. Legitimate state, never treated as corruption, and never fabricated — a
+     * made-up number would be sent as `base_revision` and either be refused forever or match
+     * by luck and overwrite an edit this device never saw.
+     */
+    val serverRevision: Long? = null,
 )
 
 /** One day's recorded pruning work on a block (one press of Complete Today). */

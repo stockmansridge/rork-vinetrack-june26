@@ -2,6 +2,8 @@ package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.PruningYieldSettings
+import com.rork.vinetrack.data.sync.SyncRevisionContract
+import com.rork.vinetrack.data.sync.VersionedWriteOutcome
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
@@ -29,6 +31,8 @@ import kotlinx.serialization.Serializable
  */
 class PruningYieldSettingsRepository(private val session: SessionStore) {
 
+    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
     @Serializable
     private data class SettingsUpsert(
         val id: String,
@@ -44,22 +48,37 @@ class PruningYieldSettingsRepository(private val session: SessionStore) {
         @SerialName("vines_per_ha") val vinesPerHa: Double?,
         @SerialName("bunch_weight_grams") val bunchWeightGrams: Double,
         @SerialName("created_by") val createdBy: String? = null,
+        /**
+         * When the grower edited. METADATA under sql/198 — clamped to server `now()` and no
+         * longer the concurrency authority. Still sent: the legacy trigger path needs it,
+         * and the sql/181 soft-delete resurrection trigger uses a CHANGE in this value to
+         * detect a genuine client upsert. That is a change-detector, not an ordering
+         * comparison, and removing the field would break un-deleting a block's settings.
+         */
         @SerialName("client_updated_at") val clientUpdatedAt: String,
+        /**
+         * The version this edit was based on — THE concurrency authority (sql/198). Omitted
+         * (null) when this device has never been issued one, which sql/198 reads as a create.
+         */
+        @SerialName("base_revision") val baseRevision: Long? = null,
     )
 
     /**
-     * Upsert a block's saved configuration. Shared by the online save flow and
-     * the offline replay ([PruningYieldSettingsSync]) so the values are
-     * preserved byte-for-byte. Returns the server row, or NULL when the
-     * sql/185 stale-write guard silently ignored the write because another
-     * device/portal already saved a NEWER configuration (the empty
-     * `return=representation` body is the guard's signature) — callers must
-     * treat the newer server value as authoritative, never retry.
+     * Upsert a block's saved configuration under the sql/198 revision contract.
+     *
+     * Shared by the online save flow and the offline replay ([PruningYieldSettingsSync]) so
+     * the values are preserved byte-for-byte.
+     *
+     * Returns [VersionedWriteOutcome.Applied] with the authoritative server row (carrying
+     * its NEW `server_revision`), or [VersionedWriteOutcome.Conflict] when another device or
+     * the portal has saved since this device last read the row. A conflict is NEVER thrown:
+     * a thrown conflict gets classified as a transport failure and retried forever with the
+     * same stale `base_revision`.
      */
     suspend fun upsertSettings(
         settings: PruningYieldSettings,
         clientUpdatedAt: String,
-    ): PruningYieldSettings? = withContext(Dispatchers.IO) {
+    ): VersionedWriteOutcome<PruningYieldSettings> = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val body = SettingsUpsert(
@@ -76,6 +95,7 @@ class PruningYieldSettingsRepository(private val session: SessionStore) {
             bunchWeightGrams = settings.bunchWeightGrams,
             createdBy = session.userId,
             clientUpdatedAt = clientUpdatedAt,
+            baseRevision = settings.serverRevision,
         )
         val response = SupabaseClient.http.post(
             SupabaseClient.restUrl("pruning_yield_settings?on_conflict=vineyard_id,paddock_id"),
@@ -83,17 +103,42 @@ class PruningYieldSettingsRepository(private val session: SessionStore) {
             authHeaders(token)
             headers {
                 append("Prefer", "resolution=merge-duplicates")
+                // Mandatory, not an optimisation: the response body is the only place the
+                // new `server_revision` appears, and without it the next edit would resend
+                // the previous base_revision and be refused for no reason.
                 append("Prefer", "return=representation")
             }
             contentType(ContentType.Application.Json)
             setBody(body)
         }
+        val text = response.bodyAsText()
         when {
-            // Success with an empty representation = the stale-write guard
-            // skipped the UPDATE (sql/185) — a newer edit already won.
-            response.status.isSuccess() -> response.body<List<PruningYieldSettings>>().firstOrNull()
+            response.status.isSuccess() -> {
+                val row = runCatching { json.decodeFromString<List<PruningYieldSettings>>(text) }
+                    .getOrDefault(emptyList())
+                    .firstOrNull()
+                if (row == null) {
+                    // A 2xx with an EMPTY representation is the legacy silent-skip signature
+                    // (a BEFORE UPDATE trigger returning NULL). It used to be reported as
+                    // success, which is exactly how a grower's calculator settings vanished.
+                    // Surfaced as a conflict so the local value is kept.
+                    VersionedWriteOutcome.Conflict(
+                        rowId = settings.id,
+                        baseRevision = settings.serverRevision,
+                        serverRevision = null,
+                    )
+                } else {
+                    VersionedWriteOutcome.Applied(row)
+                }
+            }
+            SyncRevisionContract.isRevisionConflict(response.status.value, text) ->
+                VersionedWriteOutcome.Conflict(
+                    rowId = settings.id,
+                    baseRevision = SyncRevisionContract.baseRevisionFrom(text) ?: settings.serverRevision,
+                    serverRevision = SyncRevisionContract.serverRevisionFrom(text),
+                )
             response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
-            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            else -> throw BackendError.Server(response.status.value, text)
         }
     }
 

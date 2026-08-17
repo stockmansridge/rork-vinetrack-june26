@@ -6,9 +6,12 @@ import Testing
 /// Persistence, offline and multi-device tests for `ResistancePlanRepository`.
 ///
 /// The fake server below is not a rubber stamp: it enforces the same rules sql/196 and
-/// sql/185 enforce (vineyard isolation, whole-document upsert, tombstone-on-RPC, write-once
-/// attribution and the stale-write guard). A fake that accepted everything would let a
-/// conflict bug pass here and only surface as a lost season plan in a vineyard.
+/// sql/198 enforce (vineyard isolation, whole-document upsert, tombstone-on-RPC, write-once
+/// attribution and the REVISION guard). A fake that accepted everything would let a conflict
+/// bug pass here and only surface as a lost season plan in a vineyard.
+///
+/// It arbitrates on `server_revision` and never on a device clock — see sql/198. A fake that
+/// still compared timestamps would keep passing the clock-skew tests for the wrong reason.
 ///
 /// Mirrors `ResistancePlanRepositoryTest.kt` on Android case for case.
 @MainActor
@@ -23,6 +26,14 @@ struct ResistancePlanRepositoryTests {
         var softDeleteCalls = 0
         var failNextUpsert = false
         var failNextFetch = false
+        /// Serve the NEXT read from the state captured before the last write.
+        ///
+        /// Models read-after-write replica lag: the push genuinely succeeded, but the
+        /// follow-up read lands on a replica that has not caught up and returns the PREVIOUS
+        /// row. That stale row must never overwrite the newer edit the grower is looking at.
+        var serveStaleReadNext = false
+        private var lagSnapshot: [ResistancePlan] = []
+        var baseRevisionsSent: [Int64?] = []
 
         struct Offline: Error, LocalizedError {
             var errorDescription: String? { "offline" }
@@ -30,16 +41,32 @@ struct ResistancePlanRepositoryTests {
 
         func fetchAll(vineyardId: String) async throws -> [ResistancePlan] {
             if failNextFetch { failNextFetch = false; throw Offline() }
+            if serveStaleReadNext {
+                serveStaleReadNext = false
+                return lagSnapshot.filter { $0.vineyardId == vineyardId }
+            }
             return rows.values.filter { $0.vineyardId == vineyardId }
         }
 
-        func upsert(_ plans: [ResistancePlan]) async throws {
+        func upsert(_ plans: [ResistancePlan]) async throws -> [VersionedWriteOutcome<ResistancePlan>] {
             if failNextUpsert { failNextUpsert = false; throw Offline() }
+            lagSnapshot = Array(rows.values)
             upsertCalls += 1
+            var outcomes: [VersionedWriteOutcome<ResistancePlan>] = []
             for plan in plans {
+                baseRevisionsSent.append(plan.serverRevision)
                 let existing = rows[plan.id]
-                if let existing, plan.updatedAtEpochMs < existing.updatedAtEpochMs {
-                    // sql/185: a late offline replay must not overwrite a newer edit.
+                if let existing, plan.serverRevision != existing.serverRevision {
+                    // sql/198: base_revision does not match the row's current version.
+                    // Returned as an OUTCOME, never thrown — a thrown conflict gets counted
+                    // as a transport failure and blindly retried.
+                    outcomes.append(
+                        .conflict(
+                            rowId: plan.id,
+                            baseRevision: plan.serverRevision,
+                            serverRevision: existing.serverRevision
+                        )
+                    )
                     continue
                 }
                 var stored = plan
@@ -47,8 +74,13 @@ struct ResistancePlanRepositoryTests {
                 stored.createdBy = existing?.createdBy ?? plan.createdBy
                 // The server owns the tombstone; an upsert never sets it.
                 stored.deletedAtEpochMs = existing?.deletedAtEpochMs
+                // The server issues the next revision. Whatever the client sent is
+                // irrelevant — that is what makes the token unforgeable.
+                stored.serverRevision = (existing?.serverRevision ?? 0) + 1
                 rows[plan.id] = stored
+                outcomes.append(.applied(stored))
             }
+            return outcomes
         }
 
         func softDelete(planId: String) async throws {
@@ -56,7 +88,25 @@ struct ResistancePlanRepositoryTests {
             guard let existing = rows[planId] else { return }
             var tombstoned = existing
             tombstoned.deletedAtEpochMs = existing.updatedAtEpochMs + 1
+            tombstoned.serverRevision = (existing.serverRevision ?? 0) + 1
             rows[planId] = tombstoned
+        }
+
+        /// Another device or the portal saves over the row, advancing the revision.
+        func writeAsOtherDevice(planId: String, notes: String, atEpochMs: Int64) {
+            guard let existing = rows[planId] else { return }
+            var updated = existing
+            updated.notes = notes
+            updated.updatedAtEpochMs = atEpochMs
+            updated.serverRevision = (existing.serverRevision ?? 0) + 1
+            rows[planId] = updated
+        }
+
+        /// Seeds a row exactly as a pre-sql/198 client left it: no revision at all.
+        func seedLegacyRow(_ plan: ResistancePlan) {
+            var legacy = plan
+            legacy.serverRevision = nil
+            rows[plan.id] = legacy
         }
     }
 
@@ -338,19 +388,27 @@ struct ResistancePlanRepositoryTests {
         #expect(deviceA.plans[0].notes == "B online at T2")
     }
 
-    @Test func newerLocalEditIsKeptWhenRemoteCopyIsOlder() async {
+    @Test func aLaggingReplicaReadCannotOverwriteARevisionNewerConfirmedWrite() async {
         let server = FakeServer()
-        let repository = makeRepo(server: server)
+        let clock = Clock()
+        let repository = makeRepo(server: server, clock: clock)
         repository.load(vineyardId: vineyard)
         repository.save(makePlan(id: "p", updatedAt: 1_000))
         await repository.sync(vineyardId: vineyard)
 
-        server.failNextUpsert = true
-        repository.save(repository.plans[0].settingNotes("newer local", atEpochMs: 5_000))
+        // The push succeeds, but the pull in the same pass lands on a LAGGING REPLICA and
+        // returns the pre-push row. Detected by REVISION now, not by comparing device
+        // clocks — which is what makes it work even on a device whose clock runs backwards.
+        clock.now = 1_000
+        server.serveStaleReadNext = true
+        repository.save(repository.plans[0].settingNotes("newer local", atEpochMs: 1_000))
         let result = await repository.sync(vineyardId: vineyard)
 
         #expect(repository.plans[0].notes == "newer local")
-        #expect(result.keptLocal == 1)
+        #expect(result.staleRemoteIgnored == 1)
+        #expect(result.conflicted == 0)
+        #expect(repository.plans[0].serverRevision == 2)
+        #expect(repository.pendingCount() == 0)
     }
 
     @Test func positionArraysFromTwoDevicesAreNeverMergedElementWise() async {

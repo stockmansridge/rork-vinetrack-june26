@@ -30,6 +30,7 @@ nonisolated struct BackendResistancePlan: Codable, Sendable {
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
         case clientUpdatedAt = "client_updated_at"
+        case serverRevision = "server_revision"
     }
 
     nonisolated var id: String
@@ -49,6 +50,10 @@ nonisolated struct BackendResistancePlan: Codable, Sendable {
     nonisolated var updatedAt: Date?
     nonisolated var deletedAt: Date?
     nonisolated var clientUpdatedAt: Date?
+    /// Server-issued revision (sql/198). Optional for tolerance, not because the column is:
+    /// a row from a path that did not project it, or a response from a pre-198 environment,
+    /// must decode rather than throw.
+    nonisolated var serverRevision: Int64?
 
     nonisolated func toPlan() -> ResistancePlan {
         ResistancePlan(
@@ -66,12 +71,11 @@ nonisolated struct BackendResistancePlan: Codable, Sendable {
             rulesetVersion: rulesetVersion,
             createdBy: createdBy,
             createdAtEpochMs: Self.epoch(createdAt) ?? 0,
-            // The plan's authoritative edit time is the CLIENT stamp when present: it is
-            // what the next conflict comparison uses, so falling back to the server's
-            // `updated_at` (which moves on every unrelated server-side touch) would make a
-            // remote row look newer than the edit it actually represents.
+            // The grower's edit time, for display and ordering in the list. No longer a
+            // concurrency signal — `serverRevision` is.
             updatedAtEpochMs: Self.epoch(clientUpdatedAt) ?? Self.epoch(updatedAt) ?? 0,
-            deletedAtEpochMs: Self.epoch(deletedAt)
+            deletedAtEpochMs: Self.epoch(deletedAt),
+            serverRevision: serverRevision
         )
     }
 
@@ -81,10 +85,17 @@ nonisolated struct BackendResistancePlan: Codable, Sendable {
     }
 }
 
-/// Upsert payload. Server-owned columns (`created_at`, `updated_at`, `deleted_at`) are
-/// deliberately absent: only the client's own edit stamp is sent, and it carries the plan's
-/// real edit time so a late offline replay is honestly dated and correctly rejected by the
-/// sql/185 stale-write guard.
+/// Upsert payload.
+///
+/// Server-owned columns (`created_at`, `updated_at`, `deleted_at`, `server_revision`) are
+/// deliberately absent. Two fields carry timing/version information and they do different
+/// jobs — conflating them is the bug sql/198 exists to remove:
+///
+///   * `base_revision` — the `server_revision` this edit was based on. THE CONCURRENCY
+///     AUTHORITY. Sent only for a plan the server has already issued a revision for.
+///   * `client_updated_at` — when the grower edited. Metadata for display and audit. Still
+///     sent (the legacy trigger path needs it) but it no longer decides anything, and the
+///     server now clamps it to `now()` so a fast device clock cannot lock other writers out.
 nonisolated struct BackendResistancePlanUpsert: Encodable, Sendable {
     nonisolated enum CodingKeys: String, CodingKey {
         case id
@@ -101,6 +112,7 @@ nonisolated struct BackendResistancePlanUpsert: Encodable, Sendable {
         case rulesetVersion = "ruleset_version"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
+        case baseRevision = "base_revision"
     }
 
     nonisolated var id: String
@@ -117,6 +129,13 @@ nonisolated struct BackendResistancePlanUpsert: Encodable, Sendable {
     nonisolated var rulesetVersion: String?
     nonisolated var createdBy: String?
     nonisolated var clientUpdatedAt: Date
+    /// The version this edit was based on, or nil for a plan the server has never seen.
+    ///
+    /// Nil is meaningful, not missing: sql/198 reads an absent `base_revision` as a create.
+    /// Inventing a number here (0, or 1, or "probably 1") would assert a version this device
+    /// never read, and would either be refused forever or match by luck and overwrite an
+    /// edit nobody here has seen.
+    nonisolated var baseRevision: Int64?
 
     nonisolated init(from plan: ResistancePlan, createdBy fallbackCreatedBy: String?) {
         self.id = plan.id
@@ -133,6 +152,33 @@ nonisolated struct BackendResistancePlanUpsert: Encodable, Sendable {
         self.rulesetVersion = plan.rulesetVersion
         self.createdBy = plan.createdBy ?? fallbackCreatedBy
         self.clientUpdatedAt = Date(timeIntervalSince1970: Double(plan.updatedAtEpochMs) / 1000)
+        self.baseRevision = plan.serverRevision
+    }
+
+    /// Explicit encoding so `base_revision` is OMITTED rather than sent as JSON null when
+    /// this device has no revision.
+    ///
+    /// The distinction matters under `merge-duplicates`: an omitted column keeps its stored
+    /// value, while an explicit null would write null. sql/198 stores `base_revision` as null
+    /// anyway, so both happen to be safe today — but relying on that would make this payload
+    /// silently wrong the moment the column's semantics change.
+    nonisolated func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(vineyardId, forKey: .vineyardId)
+        try c.encode(seasonId, forKey: .seasonId)
+        try c.encodeIfPresent(seasonStartYear, forKey: .seasonStartYear)
+        try c.encode(disease, forKey: .disease)
+        try c.encode(jurisdiction, forKey: .jurisdiction)
+        try c.encode(crop, forKey: .crop)
+        try c.encodeIfPresent(blockIds, forKey: .blockIds)
+        try c.encode(positions, forKey: .positions)
+        try c.encodeIfPresent(notes, forKey: .notes)
+        try c.encodeIfPresent(rulesetId, forKey: .rulesetId)
+        try c.encodeIfPresent(rulesetVersion, forKey: .rulesetVersion)
+        try c.encodeIfPresent(createdBy, forKey: .createdBy)
+        try c.encode(clientUpdatedAt, forKey: .clientUpdatedAt)
+        try c.encodeIfPresent(baseRevision, forKey: .baseRevision)
     }
 }
 
@@ -169,15 +215,56 @@ final class SupabaseResistancePlanRepository: ResistancePlanRemote {
         return rows.map { $0.toPlan() }
     }
 
-    func upsert(_ plans: [ResistancePlan]) async throws {
+    /// One request PER PLAN, deliberately.
+    ///
+    /// A multi-row upsert is a single transaction, so one REVISION_CONFLICT would abort the
+    /// write of every other plan in the batch — edits that were perfectly valid would be
+    /// stranded because an unrelated plan lost a race. Plans are a handful per vineyard per
+    /// season, so the extra round trips cost little and buy per-row conflict isolation.
+    func upsert(_ plans: [ResistancePlan]) async throws -> [VersionedWriteOutcome<ResistancePlan>] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        guard !plans.isEmpty else { return }
+        guard !plans.isEmpty else { return [] }
         let userId = currentUserId()
-        let payload = plans.map { BackendResistancePlanUpsert(from: $0, createdBy: userId) }
-        try await provider.client
-            .from("resistance_plans")
-            .upsert(payload, onConflict: "id")
-            .execute()
+        var outcomes: [VersionedWriteOutcome<ResistancePlan>] = []
+        for plan in plans {
+            outcomes.append(try await write(plan, createdBy: userId))
+        }
+        return outcomes
+    }
+
+    private func write(
+        _ plan: ResistancePlan,
+        createdBy userId: String?
+    ) async throws -> VersionedWriteOutcome<ResistancePlan> {
+        let payload = BackendResistancePlanUpsert(from: plan, createdBy: userId)
+        do {
+            // `.select()` asks for the representation back. It is NOT decoration: the
+            // response body is the only place the new `server_revision` appears. Without it
+            // this device could never learn what version its own edit became, would resend
+            // the previous `base_revision` on the next edit, and would be refused forever.
+            let rows: [BackendResistancePlan] = try await provider.client
+                .from("resistance_plans")
+                .upsert(payload, onConflict: "id")
+                .select()
+                .execute()
+                .value
+            guard let row = rows.first else {
+                // A success with NO row is the legacy silent-skip signature (a BEFORE UPDATE
+                // trigger returning NULL). Under sql/198 a versioned write cannot land here
+                // — it raises instead — but an old-path write still can, and reporting it as
+                // success is precisely the bug that lost growers' edits. Surfaced as a
+                // conflict so the local copy is kept.
+                return .conflict(rowId: plan.id, baseRevision: plan.serverRevision, serverRevision: nil)
+            }
+            return .applied(row.toPlan())
+        } catch {
+            guard SyncRevisionContract.isRevisionConflict(error) else { throw error }
+            return .conflict(
+                rowId: plan.id,
+                baseRevision: SyncRevisionContract.baseRevision(from: error) ?? plan.serverRevision,
+                serverRevision: SyncRevisionContract.serverRevision(from: error)
+            )
+        }
     }
 
     func softDelete(planId: String) async throws {

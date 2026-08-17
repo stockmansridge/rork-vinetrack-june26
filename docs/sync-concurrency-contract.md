@@ -1,7 +1,8 @@
 # VineTrack sync concurrency contract
 
-Status: **Stage 1 authored (sql/198), not yet applied.** Read this before touching any
-sync path, and before adding a `client_updated_at` comparison anywhere.
+Status: **Stage 1 LIVE (sql/198 applied and tested). Stage 2 (mobile adoption) implemented.**
+Read this before touching any sync path, and before adding a `client_updated_at` comparison
+anywhere.
 
 ---
 
@@ -107,14 +108,68 @@ The slow-device defect **cannot** be fixed for a released client: it sends nothi
 distinguishes "late replay of an old edit" from "new edit made on a slow phone". Only a
 `base_revision` can. Hence the staged rollout:
 
-- **Stage 1** — `sql/198`. Additive; no client change required; safe to apply alone.
-- **Stage 2** — iOS and Android send `base_revision` and handle `REVISION_CONFLICT`.
-  Cannot ship before Stage 1 is live in production, because the column would not exist.
-- **Stage 3** — once `sync_discarded_writes` shows no legacy-path traffic, delete the
-  timestamp branch from `reject_stale_client_write()`.
+- **Stage 1 — DONE.** `sql/198` applied and its test suite run in production.
+- **Stage 2 — DONE.** iOS and Android send `base_revision`, request the row back, and handle
+  `REVISION_CONFLICT`. This could not have shipped before Stage 1: a client that sends
+  `base_revision` to a database without the column gets a hard `PGRST204` on every write.
+- **Stage 3 — NOT STARTED.** Once `sync_discarded_writes` shows no legacy-path traffic,
+  delete the timestamp branch from `reject_stale_client_write()`. Check that table before
+  assuming the old path is dead — released clients in the field still use it.
 
-Do not collapse these stages. A client that sends `base_revision` to a database without
-the column gets a hard `PGRST204` error on every write.
+## Client implementation (Stage 2, shipped)
+
+One shared helper per platform — `SyncRevisionContract.kt` and `SyncRevisionContract.swift`
+— owns conflict detection and revision parsing for ALL versioned entities. Three subtly
+different PT409 parsers is how one of them ends up classifying a conflict as a network error
+and silently dropping an edit, so there is exactly one.
+
+Rules the repositories follow, and which any new versioned entity must also follow:
+
+- **`server_revision` is server state, not content.** Cached alongside each record and
+  re-stamped from the cache on every local save, so a stale view model or a copied object
+  cannot assert a version the device never read.
+- **Never fabricate a revision.** A record the server has not yet accepted carries `null`,
+  and `base_revision` is then omitted — which sql/198 reads as a create. A made-up number
+  would either be refused forever or match by luck and overwrite an unseen edit.
+- **Never compute `base + 1`.** The new revision is taken from the returned row. Any actor
+  (portal, RPC, maintenance) can advance a row, so the increment is not the client's to
+  predict.
+- **`return=representation` is mandatory.** The response body is the only place the new
+  `server_revision` appears. With `return=minimal` a device could never learn what version
+  its own edit became and would resend the previous `base_revision` forever.
+- **One request per row.** A multi-row upsert is one transaction, so a single conflict would
+  abort every other row in the batch and strand valid edits.
+- **A conflict is not an exception.** It is returned as an outcome
+  (`VersionedWriteOutcome.Applied` / `.Conflict`), because a thrown conflict gets counted as
+  a transport failure and blindly retried.
+- **Replica lag is decided by revision.** A pulled row at a strictly older `server_revision`
+  than one this device has had confirmed is ignored. The old timestamp version of this check
+  failed in exactly the case that mattered: on a slow phone the newer edit looks older than
+  the row it just wrote.
+- **A 2xx with an empty representation is treated as a conflict, never a success.** That is
+  the legacy silent-skip signature, and reporting it as success is the original defect.
+
+### Sync states
+
+`synced`, `pendingUpload`, `syncing`, `failed`, `conflict`. `conflict` outranks the others
+and is deliberately NOT worded as "sync failed — retry", because retrying is the one thing
+that cannot work: the same `base_revision` is refused every time. Wording shipped:
+
+> Changes need review. This plan was also edited on another device — both versions are
+> saved, so you can choose which one to keep.
+
+For the queued pruning writes the same idea is a `PendingWriteStatus.CONFLICT`, excluded
+from `PendingWriteStatus.retryable` so the replay loop cannot pick it up.
+
+### Conflict durability
+
+A conflict record stores the **whole local document, the whole server document, and both
+revisions** — persisted, not in memory. A `hasConflict = true` flag would tell the grower
+something went wrong having already destroyed the plan they wrote, which is worse than the
+silent loss this contract exists to fix. Resolution is explicit
+(`resolveKeepingLocal` / `resolveKeepingServer`); nothing resolves a conflict by comparing
+timestamps, because both versions descend from the same revision and device time cannot
+adjudicate authorship.
 
 ## What the Lovable portal must send
 

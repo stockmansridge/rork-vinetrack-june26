@@ -31,6 +31,7 @@ class ResistancePlanStore(context: Context) : ResistancePlanLocalStore {
     private fun plansKey(vineyardId: String) = "resistance_plans_v1_$vineyardId"
     private fun pendingKey(vineyardId: String) = "resistance_plans_pending_v1_$vineyardId"
     private fun adoptedKey(vineyardId: String) = "resistance_plans_adopted_v1_$vineyardId"
+    private fun conflictsKey(vineyardId: String) = "resistance_plans_conflicts_v1_$vineyardId"
 
     override fun loadAll(vineyardId: String): List<ResistancePlan> {
         val raw = prefs.getString(plansKey(vineyardId), null) ?: return emptyList()
@@ -69,6 +70,34 @@ class ResistancePlanStore(context: Context) : ResistancePlanLocalStore {
         prefs.edit().putBoolean(adoptedKey(vineyardId), true).apply()
     }
 
+    /**
+     * Conflicts are PERSISTED, not held in memory.
+     *
+     * A conflict means the grower's authored plan exists nowhere except this device. If it
+     * lived only in RAM, backgrounding the app would destroy the very copy the conflict
+     * exists to protect, and the "Changes need review" badge would come back pointing at
+     * nothing.
+     */
+    override fun loadConflicts(vineyardId: String): List<ResistancePlanConflict> {
+        val raw = prefs.getString(conflictsKey(vineyardId), null) ?: return emptyList()
+        return try {
+            json.decodeFromString<List<ResistancePlanConflict>>(raw)
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not read stored conflicts: ${error.message}")
+            emptyList()
+        }
+    }
+
+    override fun saveConflicts(vineyardId: String, conflicts: List<ResistancePlanConflict>) {
+        try {
+            prefs.edit()
+                .putString(conflictsKey(vineyardId), json.encodeToString(conflicts))
+                .apply()
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not store conflicts: ${error.message}")
+        }
+    }
+
     companion object {
         private const val TAG = "ResistancePlanStore"
     }
@@ -85,6 +114,7 @@ class InMemoryResistancePlanLocalStore : ResistancePlanLocalStore {
     private val plans = mutableMapOf<String, List<ResistancePlan>>()
     private val pending = mutableMapOf<String, Set<String>>()
     private val adopted = mutableSetOf<String>()
+    private val conflicts = mutableMapOf<String, List<ResistancePlanConflict>>()
 
     override fun loadAll(vineyardId: String): List<ResistancePlan> = plans[vineyardId] ?: emptyList()
 
@@ -102,5 +132,12 @@ class InMemoryResistancePlanLocalStore : ResistancePlanLocalStore {
 
     override fun markAdopted(vineyardId: String) {
         adopted.add(vineyardId)
+    }
+
+    override fun loadConflicts(vineyardId: String): List<ResistancePlanConflict> =
+        conflicts[vineyardId] ?: emptyList()
+
+    override fun saveConflicts(vineyardId: String, conflicts: List<ResistancePlanConflict>) {
+        this.conflicts[vineyardId] = conflicts
     }
 }

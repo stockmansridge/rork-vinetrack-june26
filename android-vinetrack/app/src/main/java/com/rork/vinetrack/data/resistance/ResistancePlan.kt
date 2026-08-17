@@ -214,10 +214,38 @@ data class ResistancePlan(
      * other devices instead of the row silently reappearing on their next push.
      */
     @SerialName("deleted_at_epoch_ms") val deletedAtEpochMs: Long? = null,
+    /**
+     * The `server_revision` (sql/198) this local copy was based on. SERVER STATE, not
+     * editable plan content — no editor, screen or mutator may set it.
+     *
+     * NULL means "the server has never issued a revision for this plan": either it was
+     * created offline and has not landed yet, or it is a cached copy from before revisions
+     * existed. Null is a legitimate state and is never treated as corruption — and a fake
+     * revision is NEVER manufactured to fill it, because a made-up number would be sent as
+     * `base_revision` and would either be refused forever or, worse, match by luck and
+     * overwrite an edit this device never saw.
+     *
+     * Default `null` also keeps every plan cached by an older build decodable.
+     */
+    @SerialName("server_revision") val serverRevision: Long? = null,
 ) {
 
     /** True when this plan has been archived/soft-deleted. */
     val isDeleted: Boolean get() = deletedAtEpochMs != null
+
+    /**
+     * True when this plan has never been accepted by the server, so a versioned write
+     * must be a CREATE rather than an update of a known revision.
+     */
+    val isUnsynced: Boolean get() = serverRevision == null
+
+    /**
+     * Records the revision the server issued for this document.
+     *
+     * Separate from every content mutator on purpose: the revision is not an edit, so
+     * stamping it must never touch [updatedAtEpochMs] and must never enqueue the plan.
+     */
+    fun stampingServerRevision(revision: Long?): ResistancePlan = copy(serverRevision = revision)
 
     // -----------------------------------------------------------------------
     // Editing

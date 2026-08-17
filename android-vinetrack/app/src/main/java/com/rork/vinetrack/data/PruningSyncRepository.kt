@@ -8,6 +8,8 @@ import com.rork.vinetrack.data.model.PruningBlockSetup
 import com.rork.vinetrack.data.model.PruningEntry
 import com.rork.vinetrack.data.model.PruningSeasonIds
 import com.rork.vinetrack.data.model.PruningSegment
+import com.rork.vinetrack.data.sync.SyncRevisionContract
+import com.rork.vinetrack.data.sync.VersionedWriteOutcome
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
@@ -88,6 +90,11 @@ class PruningSyncRepository(private val session: SessionStore) {
         val status: String = "active",
         @SerialName("deleted_at") val deletedAt: String? = null,
         @SerialName("updated_at") val updatedAt: String? = null,
+        /**
+         * Server-issued revision (sql/198). Nullable for tolerance, not because the column
+         * is: a response from a path that did not project it must decode rather than throw.
+         */
+        @SerialName("server_revision") val serverRevision: Long? = null,
     ) {
         /** Archived on the portal — must not keep showing as an active setup. */
         val isArchived: Boolean get() = status.equals("archived", ignoreCase = true)
@@ -105,6 +112,7 @@ class PruningSyncRepository(private val session: SessionStore) {
             rowCountOverride = manualRowCount,
             estimatedLabourHours = estimatedLabourHours,
             notes = notes.orEmpty(),
+            serverRevision = serverRevision,
         )
     }
 
@@ -123,7 +131,17 @@ class PruningSyncRepository(private val session: SessionStore) {
         @SerialName("estimated_labour_hours") val estimatedLabourHours: Double? = null,
         val notes: String,
         @SerialName("created_by") val createdBy: String? = null,
+        /**
+         * When the grower edited. METADATA under sql/198 — clamped to server `now()` and no
+         * longer the concurrency authority. Still sent for display, audit and the legacy
+         * trigger path used by older released clients.
+         */
         @SerialName("client_updated_at") val clientUpdatedAt: String,
+        /**
+         * The version this edit was based on — THE concurrency authority (sql/198). Omitted
+         * when this device has never been issued one, which sql/198 reads as a create.
+         */
+        @SerialName("base_revision") val baseRevision: Long? = null,
     )
 
     @Serializable
@@ -580,16 +598,21 @@ class PruningSyncRepository(private val session: SessionStore) {
     // MARK: Writes
 
     /**
-     * Upsert a block's season setup. [clientUpdatedAt] defaults to now for
-     * direct online saves; the offline replay passes the ORIGINAL edit time
-     * so the sql/185 stale-write guard can drop a late replay that would
-     * otherwise overwrite a newer edit from another device/portal (the
-     * skipped write returns success with no row — nothing to parse here).
+     * Upsert a block's season setup under the sql/198 revision contract.
+     *
+     * Returns [VersionedWriteOutcome.Applied] with the authoritative server row (carrying
+     * its NEW `server_revision`), or [VersionedWriteOutcome.Conflict] when another device or
+     * the portal has saved since this device last read the season. A conflict is NEVER
+     * thrown: a thrown conflict gets classified as a transport failure and retried forever
+     * with the same stale `base_revision`.
+     *
+     * [clientUpdatedAt] defaults to now for direct online saves; the offline replay passes
+     * the ORIGINAL edit time. It is metadata either way now — `base_revision` decides.
      */
     suspend fun upsertSeason(
         setup: PruningBlockSetup,
         clientUpdatedAt: String = Instant.now().toString(),
-    ) = withContext(Dispatchers.IO) {
+    ): VersionedWriteOutcome<PruningBlockSetup> = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val body = SeasonUpsert(
@@ -607,14 +630,49 @@ class PruningSyncRepository(private val session: SessionStore) {
             notes = setup.notes,
             createdBy = session.userId,
             clientUpdatedAt = clientUpdatedAt,
+            baseRevision = setup.serverRevision,
         )
         val response = SupabaseClient.http.post(SupabaseClient.restUrl("pruning_seasons?on_conflict=id")) {
             authHeaders(token)
-            headers { append("Prefer", "resolution=merge-duplicates") }
+            headers {
+                // return=representation is mandatory, not an optimisation: the response body
+                // is the only place the new `server_revision` appears, and without it the
+                // next edit would resend the previous base_revision and be refused.
+                append("Prefer", "resolution=merge-duplicates,return=representation")
+            }
             contentType(ContentType.Application.Json)
             setBody(listOf(body))
         }
-        requireSuccess(response)
+        val text = response.bodyAsText()
+        when {
+            response.status.isSuccess() -> {
+                val row = runCatching { resultJson.decodeFromString<List<SeasonRow>>(text) }
+                    .getOrDefault(emptyList())
+                    .firstOrNull()
+                if (row == null) {
+                    // A 2xx with an EMPTY representation is the legacy silent-skip signature
+                    // (a BEFORE UPDATE trigger returning NULL). It used to be reported as
+                    // success — precisely how a grower's season setup vanished. Surfaced as a
+                    // conflict so the local values are kept and queued.
+                    VersionedWriteOutcome.Conflict(
+                        rowId = setup.id,
+                        baseRevision = setup.serverRevision,
+                        serverRevision = null,
+                    )
+                } else {
+                    VersionedWriteOutcome.Applied(row.toModel())
+                }
+            }
+            SyncRevisionContract.isRevisionConflict(response.status.value, text) ->
+                VersionedWriteOutcome.Conflict(
+                    rowId = setup.id,
+                    baseRevision = SyncRevisionContract.baseRevisionFrom(text) ?: setup.serverRevision,
+                    serverRevision = SyncRevisionContract.serverRevisionFrom(text),
+                )
+            response.status.value == 401 || response.status.value == 403 ->
+                throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, text)
+        }
     }
 
     /**

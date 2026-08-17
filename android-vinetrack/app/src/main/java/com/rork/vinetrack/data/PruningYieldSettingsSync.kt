@@ -5,6 +5,7 @@ import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import com.rork.vinetrack.data.model.PruningYieldSettings
+import com.rork.vinetrack.data.sync.VersionedWriteOutcome
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -66,6 +67,25 @@ class PruningYieldSettingsSync(
     }
 
     /**
+     * Queue a save the server REFUSED on revision grounds (sql/198).
+     *
+     * Kept, not dropped: the grower's values exist nowhere else, so discarding the write
+     * would be the silent data loss the revision contract exists to end. Marked
+     * [PendingWriteStatus.CONFLICT] rather than FAILED so [replayAll] will not pick it up —
+     * replaying it would resend the same stale `base_revision` and be refused every time.
+     */
+    fun enqueueConflicted(settings: PruningYieldSettings, clientUpdatedAt: String): PendingWrite {
+        val write = enqueue(settings, clientUpdatedAt)
+        pending.updateStatus(
+            write.id,
+            PendingWriteStatus.CONFLICT,
+            "These calculator settings were also changed on another device. " +
+                "Both versions are saved — open the block to review.",
+        )
+        return write
+    }
+
+    /**
      * Replay every retry-eligible queued save. [onSynced] fires with the
      * server row so the caller can reconcile the authoritative record (and
      * its converged id) into state.
@@ -76,7 +96,9 @@ class PruningYieldSettingsSync(
             val candidates = pending.list().filter {
                 it.entityType == PendingEntityType.PRUNING_YIELD_SETTINGS &&
                     it.opType == PendingOpType.UPDATE &&
-                    (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
+                    // CONFLICT is deliberately absent: a conflicted write cannot be fixed by
+                    // replaying it, so picking it up here would be an infinite retry loop.
+                    PendingWriteStatus.retryable.contains(it.status)
             }
             for (write in candidates) {
                 pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
@@ -88,13 +110,28 @@ class PruningYieldSettingsSync(
                     continue
                 }
                 try {
-                    val saved = settingsRepo.upsertSettings(payload.settings, payload.clientUpdatedAt)
-                    pending.remove(write.id)
-                    // NULL = the sql/185 stale-write guard ignored this replay
-                    // because another device already saved a NEWER value — the
-                    // marker is resolved and the newer server row (delivered by
-                    // the next pull) stays authoritative. Never retried.
-                    if (saved != null) onSynced(saved)
+                    when (
+                        val outcome =
+                            settingsRepo.upsertSettings(payload.settings, payload.clientUpdatedAt)
+                    ) {
+                        is VersionedWriteOutcome.Applied -> {
+                            pending.remove(write.id)
+                            // The authoritative row carries the NEW server_revision, which is
+                            // the only way this device learns what version its edit became.
+                            onSynced(outcome.row)
+                        }
+                        is VersionedWriteOutcome.Conflict -> {
+                            // NOT removed and NOT retried. The queued values are the grower's
+                            // only copy of this edit; the server's current values arrive with
+                            // the next pull, so both survive for an explicit review.
+                            pending.updateStatus(
+                                write.id,
+                                PendingWriteStatus.CONFLICT,
+                                "These calculator settings were also changed on another " +
+                                    "device. Both versions are saved — open the block to review.",
+                            )
+                        }
+                    }
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to sync calculator settings.")
                 } catch (e: BackendError.Server) {

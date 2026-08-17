@@ -229,6 +229,7 @@ nonisolated struct ResistancePlan: Codable, Sendable, Hashable, Identifiable {
         case createdAtEpochMs = "created_at_epoch_ms"
         case updatedAtEpochMs = "updated_at_epoch_ms"
         case deletedAtEpochMs = "deleted_at_epoch_ms"
+        case serverRevision = "server_revision"
     }
 
     nonisolated var id: String
@@ -266,6 +267,18 @@ nonisolated struct ResistancePlan: Codable, Sendable, Hashable, Identifiable {
     /// Soft-delete tombstone. A deleted plan is retained so the delete propagates to
     /// other devices instead of the row silently reappearing on their next push.
     nonisolated var deletedAtEpochMs: Int64?
+    /// The `server_revision` (sql/198) this local copy was based on. SERVER STATE, not
+    /// editable plan content — no editor, screen or mutator may set it.
+    ///
+    /// Nil means "the server has never issued a revision for this plan": either it was
+    /// created offline and has not landed yet, or it is a cached copy from before revisions
+    /// existed. Nil is a legitimate state and is never treated as corruption — and a fake
+    /// revision is NEVER manufactured to fill it, because a made-up number would be sent as
+    /// `base_revision` and would either be refused forever or, worse, match by luck and
+    /// overwrite an edit this device never saw.
+    ///
+    /// Optional also keeps every plan cached by an older build decodable.
+    nonisolated var serverRevision: Int64?
 
     nonisolated init(
         id: String = UUID().uuidString,
@@ -283,7 +296,8 @@ nonisolated struct ResistancePlan: Codable, Sendable, Hashable, Identifiable {
         createdBy: String? = nil,
         createdAtEpochMs: Int64,
         updatedAtEpochMs: Int64,
-        deletedAtEpochMs: Int64? = nil
+        deletedAtEpochMs: Int64? = nil,
+        serverRevision: Int64? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -301,6 +315,7 @@ nonisolated struct ResistancePlan: Codable, Sendable, Hashable, Identifiable {
         self.deletedAtEpochMs = deletedAtEpochMs
         self.createdAtEpochMs = createdAtEpochMs
         self.updatedAtEpochMs = updatedAtEpochMs
+        self.serverRevision = serverRevision
     }
 
     // MARK: - Editing
@@ -395,6 +410,20 @@ nonisolated struct ResistancePlan: Codable, Sendable, Hashable, Identifiable {
 
     /// True when this plan has been archived/soft-deleted.
     nonisolated var isDeleted: Bool { deletedAtEpochMs != nil }
+
+    /// True when this plan has never been accepted by the server, so a versioned write must
+    /// be a CREATE rather than an update of a known revision.
+    nonisolated var isUnsynced: Bool { serverRevision == nil }
+
+    /// Records the revision the server issued for this document.
+    ///
+    /// Separate from every content mutator on purpose: the revision is not an edit, so
+    /// stamping it must never touch `updatedAtEpochMs` and must never enqueue the plan.
+    nonisolated func stampingServerRevision(_ revision: Int64?) -> ResistancePlan {
+        var copy = self
+        copy.serverRevision = revision
+        return copy
+    }
 
     nonisolated func position(id positionId: String) -> ResistancePlannedPosition? {
         positions.first { $0.id == positionId }

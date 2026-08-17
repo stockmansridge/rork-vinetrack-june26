@@ -30,6 +30,16 @@ data class PruningYieldSettings(
     @SerialName("vines_per_ha") val vinesPerHa: Double? = null,
     @SerialName("bunch_weight_grams") val bunchWeightGrams: Double = PruningYieldDefaults.BUNCH_WEIGHT_GRAMS,
     @SerialName("deleted_at") val deletedAt: String? = null,
+    /**
+     * Server-issued revision (sql/198). SERVER STATE, not an editable input — which is why
+     * [inputsEqual] ignores it: a revision change is not an edit and must never make an
+     * autosave look dirty.
+     *
+     * Null means the server has never issued one for this block: created offline, or a row
+     * that predates revisions. Legitimate state, never treated as corruption, and never
+     * filled with a fabricated number.
+     */
+    @SerialName("server_revision") val serverRevision: Long? = null,
 ) {
     /**
      * Value equality on the user-editable inputs only (identity/timestamps

@@ -3,6 +3,8 @@ package com.rork.vinetrack.data.resistance
 import com.rork.vinetrack.data.BackendError
 import com.rork.vinetrack.data.SupabaseClient
 import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.data.sync.SyncRevisionContract
+import com.rork.vinetrack.data.sync.VersionedWriteOutcome
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
@@ -22,7 +24,7 @@ import java.time.Instant
 
 /**
  * Server implementation of [ResistancePlanRemote] against `public.resistance_plans`
- * (sql/196), mirroring `SupabaseResistancePlanRepository.swift`.
+ * (sql/196 + sql/198), mirroring `SupabaseResistancePlanRepository.swift`.
  *
  * The wire row is a FLAT projection of the plan: the ordered `positions` document goes
  * across as JSONB exactly as both clients serialise it, and every other field is a
@@ -30,10 +32,15 @@ import java.time.Instant
  * nowhere else — the domain model stays in epoch ms on both platforms so plan arithmetic
  * never depends on a timezone.
  *
- * `client_updated_at` carries the plan's own `updated_at_epoch_ms`. That is what makes
- * the sql/185 stale-write trigger able to reject a late offline replay: the timestamp
- * the server compares is the moment the GROWER edited, not the moment the request
- * happened to arrive.
+ * CONCURRENCY (sql/198). Two fields, two different jobs, and conflating them is the bug
+ * this class was rewritten to remove:
+ *
+ *  * `base_revision` — the `server_revision` this edit was based on. THE CONCURRENCY
+ *    AUTHORITY. Sent only for a plan the server has already issued a revision for.
+ *  * `client_updated_at` — when the grower edited. Metadata for display and audit. Still
+ *    sent (old clients and the legacy trigger path need it) but it no longer decides
+ *    anything, and the server now clamps it to `now()` so a fast device clock cannot lock
+ *    other writers out of the row.
  */
 class SupabaseResistancePlanRemote(
     private val session: SessionStore,
@@ -64,6 +71,17 @@ class SupabaseResistancePlanRemote(
         @SerialName("updated_at") val updatedAt: String? = null,
         @SerialName("deleted_at") val deletedAt: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String? = null,
+        /**
+         * Server-issued revision (sql/198). Nullable for tolerance, not because the column
+         * is: a row written through a path that did not project it, or a response from a
+         * pre-198 environment, must decode rather than throw.
+         */
+        @SerialName("server_revision") val serverRevision: Long? = null,
+        /**
+         * The version this write is based on. WRITE-ONLY — sql/198 always stores NULL, so
+         * it never comes back and must never be read back.
+         */
+        @SerialName("base_revision") val baseRevision: Long? = null,
     )
 
     @Serializable
@@ -85,25 +103,67 @@ class SupabaseResistancePlanRemote(
             }
         }
 
-    override suspend fun upsert(plans: List<ResistancePlan>) = withContext(Dispatchers.IO) {
-        if (plans.isEmpty()) return@withContext
+    /**
+     * One request PER PLAN, deliberately.
+     *
+     * A multi-row upsert is a single transaction, so one REVISION_CONFLICT would abort the
+     * write of every other plan in the batch — edits that were perfectly valid would be
+     * stranded because an unrelated plan lost a race. Plans are a handful per vineyard per
+     * season, so the extra round trips cost little and buy per-row conflict isolation.
+     */
+    override suspend fun upsert(
+        plans: List<ResistancePlan>,
+    ): List<VersionedWriteOutcome<ResistancePlan>> = withContext(Dispatchers.IO) {
+        plans.map { writeOne(it) }
+    }
+
+    private suspend fun writeOne(plan: ResistancePlan): VersionedWriteOutcome<ResistancePlan> {
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val body = plans.map { it.toRow() }
         val response = SupabaseClient.http.post(SupabaseClient.restUrl("resistance_plans")) {
             authHeaders(token)
             headers {
                 // merge-duplicates so an edit and a create use one code path, exactly
                 // like every other synced VineTrack entity.
-                append("Prefer", "resolution=merge-duplicates,return=minimal")
+                //
+                // return=representation, NOT return=minimal: the response body is the only
+                // place the new `server_revision` appears. With `minimal` this device could
+                // never learn what version its own edit became, would resend the previous
+                // base_revision on the next edit, and would be refused forever. This is the
+                // one place where an extra payload is not optional.
+                append("Prefer", "resolution=merge-duplicates,return=representation")
             }
             contentType(ContentType.Application.Json)
-            setBody(body)
+            setBody(listOf(plan.toRow()))
         }
-        if (!response.status.isSuccess()) {
-            if (response.status.value == 401 || response.status.value == 403) {
-                throw BackendError.Unauthorized
+        val body = response.bodyAsText()
+        return when {
+            response.status.isSuccess() -> {
+                val rows = runCatching { json.decodeFromString<List<Row>>(body) }.getOrDefault(emptyList())
+                val row = rows.firstOrNull()
+                if (row == null) {
+                    // A 2xx with NO row is the legacy silent-skip signature (a BEFORE
+                    // UPDATE trigger returning NULL). Under sql/198 a versioned write
+                    // cannot land here — it raises instead — but an old-path write still
+                    // can, and reporting it as success is precisely the bug that lost
+                    // growers' edits. Surfaced as a conflict so the local copy is kept.
+                    VersionedWriteOutcome.Conflict(
+                        rowId = plan.id,
+                        baseRevision = plan.serverRevision,
+                        serverRevision = null,
+                    )
+                } else {
+                    VersionedWriteOutcome.Applied(row.toPlan())
+                }
             }
-            throw BackendError.Server(response.status.value, response.bodyAsText())
+            SyncRevisionContract.isRevisionConflict(response.status.value, body) ->
+                VersionedWriteOutcome.Conflict(
+                    rowId = plan.id,
+                    baseRevision = SyncRevisionContract.baseRevisionFrom(body) ?: plan.serverRevision,
+                    serverRevision = SyncRevisionContract.serverRevisionFrom(body),
+                )
+            response.status.value == 401 || response.status.value == 403 ->
+                throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, body)
         }
     }
 
@@ -142,10 +202,19 @@ class SupabaseResistancePlanRemote(
         rulesetId = rulesetId,
         rulesetVersion = rulesetVersion,
         createdBy = createdBy ?: session.userId,
-        // created_at / updated_at / deleted_at are server-owned. Only the client's own
-        // edit stamp is sent, and it is the plan's real edit time so a late replay is
-        // honestly dated and correctly rejected if it is stale.
+        // created_at / updated_at / deleted_at are server-owned.
+        //
+        // client_updated_at is the grower's real edit time. It is METADATA now: sql/198
+        // clamps it to server now() and no longer lets it decide who wins.
         clientUpdatedAt = isoFrom(updatedAtEpochMs),
+        // base_revision is the concurrency authority, and is sent ONLY when this device
+        // actually knows a server revision. For a never-synced plan it stays null, which
+        // sql/198 reads as a create — inventing a number here (0, or 1, or "probably 1")
+        // would assert a version this device never read.
+        //
+        // server_revision is NOT sent: it is server-owned and the bump trigger overwrites
+        // whatever a client supplies, so sending it would be a lie with no effect.
+        baseRevision = serverRevision,
     )
 
     private fun Row.toPlan(): ResistancePlan = ResistancePlan(
@@ -165,12 +234,11 @@ class SupabaseResistancePlanRemote(
         rulesetVersion = rulesetVersion,
         createdBy = createdBy,
         createdAtEpochMs = epochFrom(createdAt) ?: 0L,
-        // The plan's authoritative edit time is the client stamp when present: it is what
-        // the conflict comparison uses on the next pass, so falling back to the server's
-        // updated_at (which moves on every unrelated server-side touch) would make a
-        // remote row look newer than it is.
+        // The grower's edit time, for display and ordering in the list. No longer a
+        // concurrency signal — `serverRevision` is.
         updatedAtEpochMs = epochFrom(clientUpdatedAt) ?: epochFrom(updatedAt) ?: 0L,
         deletedAtEpochMs = epochFrom(deletedAt),
+        serverRevision = serverRevision,
     )
 
     private fun isoFrom(epochMs: Long): String = Instant.ofEpochMilli(epochMs).toString()

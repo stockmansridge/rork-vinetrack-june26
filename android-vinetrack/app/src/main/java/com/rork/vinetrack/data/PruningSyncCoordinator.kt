@@ -4,6 +4,8 @@ import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
+import com.rork.vinetrack.data.sync.RevisionConflictException
+import com.rork.vinetrack.data.sync.VersionedWriteOutcome
 import com.rork.vinetrack.data.model.PruningActivityCanonical
 import com.rork.vinetrack.data.model.PruningActivityDraft
 import com.rork.vinetrack.data.model.PruningActivityLabourLine
@@ -531,10 +533,23 @@ class PruningSyncCoordinator(
                 // the replay time — the sql/185 stale-write guard must be able
                 // to drop this write if another device saved a newer setup
                 // while this one was offline (conflict-order safety).
-                repo.upsertSeason(
-                    setup,
-                    clientUpdatedAt = java.time.Instant.ofEpochMilli(write.createdAt).toString(),
-                )
+                when (
+                    val outcome = repo.upsertSeason(
+                        setup,
+                        clientUpdatedAt = java.time.Instant.ofEpochMilli(write.createdAt).toString(),
+                    )
+                ) {
+                    is VersionedWriteOutcome.Applied -> Unit
+                    // sql/198 REVISION_CONFLICT. Rethrown so [replayPass] can mark the write
+                    // CONFLICT and LEAVE IT QUEUED: the grower's setup exists nowhere else,
+                    // and replaying it would resend the same stale base_revision forever.
+                    is VersionedWriteOutcome.Conflict -> throw RevisionConflictException(
+                        rowId = outcome.rowId,
+                        entity = "pruning_seasons",
+                        baseRevision = outcome.baseRevision,
+                        serverRevision = outcome.serverRevision,
+                    )
+                }
             }
             // conflictIsSuccess = false: `record_pruning_entry` guards every
             // insert with ON CONFLICT, so a 409 here is a REAL failure (e.g.
@@ -900,13 +915,26 @@ class PruningSyncCoordinator(
     ) {
         val candidates = pending.list().filter {
             it.entityType == entityType && it.opType == opType &&
-                (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
+                // CONFLICT is deliberately absent: a conflicted write cannot be fixed by
+                // replaying it, so picking it up here would be an infinite retry loop.
+                PendingWriteStatus.retryable.contains(it.status)
         }
         for (write in candidates) {
             pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
             try {
                 action(write)
                 pending.remove(write.id)
+            } catch (conflict: RevisionConflictException) {
+                // NOT removed and NOT retried. This is the one failure mode where the queued
+                // payload is the user's only copy of their edit, so it has to survive; the
+                // server's current values arrive with the next pull, leaving both versions
+                // available for an explicit review.
+                pending.updateStatus(
+                    write.id,
+                    PendingWriteStatus.CONFLICT,
+                    "This was also changed on another device. Both versions are saved — " +
+                        "open the block to review.",
+                )
             } catch (_: BackendError.Unauthorized) {
                 retryOrBlock(write, "Sign-in needed to sync pruning work.")
             } catch (e: BackendError.Server) {
