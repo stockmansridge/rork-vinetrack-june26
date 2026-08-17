@@ -195,6 +195,16 @@ worse than the silent loss this contract exists to fix. Resolution is explicit
 timestamps, because both versions descend from the same revision and device time cannot
 adjudicate authorship.
 
+A conflicted plan also **leaves the push set while it stays queued**. Both halves matter:
+queued, because the authored document exists nowhere but this device; out of the push set,
+because replaying it resends the same stale `base_revision`, which the server refuses every
+time — a retry loop that burns battery and can never converge. The plan re-enters the push
+set only through explicit resolution (keep-local rebases it onto the server's revision;
+keep-server dequeues it). This was the one rule the first executed run of the Android suite
+caught both platforms violating — the sync pass filtered the outbox by pending ids alone and
+re-offered conflicted plans on every pass; both repositories now exclude ids with a recorded
+conflict when building the push set.
+
 The two pruning entities persist the same guarantee with less duplication, because their
 local authored copy already lives in a persisted store of its own:
 

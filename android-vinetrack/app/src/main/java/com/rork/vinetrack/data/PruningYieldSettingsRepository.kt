@@ -15,6 +15,8 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -59,7 +61,14 @@ class PruningYieldSettingsRepository(private val session: SessionStore) : Prunin
         /**
          * The version this edit was based on — THE concurrency authority (sql/198). Omitted
          * (null) when this device has never been issued one, which sql/198 reads as a create.
+         *
+         * `EncodeDefault(NEVER)` makes the omission STRUCTURAL — the key disappears when
+         * the value is the null default, under ANY encoder configuration — instead of an
+         * accident of the shared client's `explicitNulls = false`. Mirrors the iOS codec's
+         * `encodeIfPresent` and the season upsert in [PruningSyncRepository].
          */
+        @OptIn(ExperimentalSerializationApi::class)
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
         @SerialName("base_revision") val baseRevision: Long? = null,
     )
 

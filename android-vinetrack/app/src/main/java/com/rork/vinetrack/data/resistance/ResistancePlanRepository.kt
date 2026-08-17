@@ -353,6 +353,11 @@ class ResistancePlanRepository(
      * (and arbitrated by the sql/198 revision guard) before any remote version can
      * overwrite the cache, so an offline edit is never discarded by the very sync that
      * was supposed to deliver it.
+     *
+     * The push set is the outbox MINUS plans with an unresolved conflict: those stay
+     * queued (their authored document exists nowhere else) but are not re-offered,
+     * because the same stale `base_revision` would be refused on every pass. Explicit
+     * resolution is what returns them to the push set.
      */
     suspend fun sync(vineyardId: String): ResistancePlanSyncResult {
         val server = remote ?: return ResistancePlanSyncResult(failure = null).also {
@@ -381,7 +386,16 @@ class ResistancePlanRepository(
 
             if (pending.isNotEmpty()) {
                 val cached = allCached(vineyardId)
-                val toPush = cached.filter { pending.contains(it.id) }
+                // A plan with an UNRESOLVED CONFLICT is not re-offered. Replaying it would
+                // resend the same stale `base_revision`, which the server refuses every
+                // time — a retry loop that burns battery, keeps the badge flickering and
+                // can never converge. The plan STAYS QUEUED (its authored edit exists
+                // nowhere else); it re-enters the push set only when an explicit
+                // resolution either rebases it (keep local) or dequeues it (keep server).
+                val conflictedIds = local.loadConflicts(vineyardId).map { it.rowId }.toSet()
+                val toPush = cached.filter {
+                    pending.contains(it.id) && !conflictedIds.contains(it.id)
+                }
 
                 // Write the full document for every pending plan, tombstoned or not.
                 // The tombstone must reach the server as a row update first, so a plan

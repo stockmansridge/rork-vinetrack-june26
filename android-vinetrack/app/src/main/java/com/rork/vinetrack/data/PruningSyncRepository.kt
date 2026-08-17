@@ -24,6 +24,8 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -150,7 +152,16 @@ class PruningSyncRepository(private val session: SessionStore) {
         /**
          * The version this edit was based on — THE concurrency authority (sql/198). Omitted
          * when this device has never been issued one, which sql/198 reads as a create.
+         *
+         * `EncodeDefault(NEVER)` makes the omission STRUCTURAL — the key disappears when
+         * the value is the null default, under ANY encoder configuration — instead of an
+         * accident of the shared client's `explicitNulls = false`. A `"base_revision":
+         * null` on the wire would be a claim about a version this device was never issued,
+         * and any future encoder with explicit nulls (like [rpcJson] above) would silently
+         * start making that claim. Mirrors the iOS codec, which uses `encodeIfPresent`.
          */
+        @OptIn(ExperimentalSerializationApi::class)
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
         @SerialName("base_revision") val baseRevision: Long? = null,
     ) {
         companion object {

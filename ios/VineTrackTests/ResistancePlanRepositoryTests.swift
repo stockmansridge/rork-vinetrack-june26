@@ -378,14 +378,29 @@ struct ResistancePlanRepositoryTests {
         #expect(await deviceB.sync(vineyardId: vineyard).isSuccess)
         #expect(server.rows["shared"]?.notes == "B online at T2")
 
-        // A reconnects and replays its older edit: the guard skips it.
-        await deviceA.sync(vineyardId: vineyard)
+        // A reconnects and replays its older edit: the sql/198 revision guard refuses it.
+        let replay = await deviceA.sync(vineyardId: vineyard)
         #expect(
             server.rows["shared"]?.notes == "B online at T2",
             "a late offline replay overwrote a newer edit"
         )
-        // And A converges on the authoritative version rather than keeping its own.
+        // The refusal is a CONFLICT, not a silent skip. A's authored edit exists nowhere
+        // else, so it stays queued and on screen while both versions are preserved for an
+        // explicit choice — converging automatically would be the auto-resolution the
+        // contract forbids (deciding by "T2 > T1" is exactly the clock arbitration sql/198
+        // removed).
+        #expect(replay.conflicted == 1)
+        #expect(deviceA.syncState == .conflict)
+        #expect(deviceA.pendingCount() == 1)
+        #expect(deviceA.plans[0].notes == "A offline at T1")
+        let conflict = deviceA.conflict(id: "shared")
+        #expect(conflict?.localPending.notes == "A offline at T1")
+        #expect(conflict?.serverCurrent?.notes == "B online at T2")
+
+        // Convergence happens the only legitimate way: the grower chooses.
+        deviceA.resolveKeepingServer(id: "shared")
         #expect(deviceA.plans[0].notes == "B online at T2")
+        #expect(deviceA.pendingCount() == 0)
     }
 
     @Test func aLaggingReplicaReadCannotOverwriteARevisionNewerConfirmedWrite() async {
@@ -425,12 +440,24 @@ struct ResistancePlanRepositoryTests {
         deviceA.save(deviceA.plans[0].removingPosition(id: "pos-2", atEpochMs: 2_000))
         await deviceA.sync(vineyardId: vineyard)
         deviceB.save(deviceB.plans[0].movingPositionUp(id: "pos-3", atEpochMs: 3_000))
-        await deviceB.sync(vineyardId: vineyard)
+        let bResult = await deviceB.sync(vineyardId: vineyard)
+
+        // B's reorder was based on the original three-position document, which A's
+        // removal superseded — the server refuses the write outright rather than splicing.
+        #expect(bResult.conflicted == 1)
 
         await deviceA.sync(vineyardId: vineyard)
-        // B's document won outright. Critically it is one of the two AUTHORED sequences,
-        // not a spliced third one like [pos-1, pos-3] that nobody chose.
-        #expect(deviceA.plans[0].positions.map(\.id) == ["pos-1", "pos-3", "pos-2"])
+        // Every copy anywhere is one of the two AUTHORED sequences. The server and A hold
+        // A's document; B still shows its own, with both versions preserved in the
+        // conflict record. A spliced third sequence that nobody chose exists nowhere.
+        let authoredByA = ["pos-1", "pos-3"]
+        let authoredByB = ["pos-1", "pos-3", "pos-2"]
+        #expect(server.rows["shared"]?.positions.map(\.id) == authoredByA)
+        #expect(deviceA.plans[0].positions.map(\.id) == authoredByA)
+        #expect(deviceB.plans[0].positions.map(\.id) == authoredByB)
+        let conflict = deviceB.conflict(id: "shared")
+        #expect(conflict?.localPending.positions.map(\.id) == authoredByB)
+        #expect(conflict?.serverCurrent?.positions.map(\.id) == authoredByA)
     }
 
     // MARK: - Delete / archive

@@ -463,16 +463,33 @@ class ResistancePlanRepositoryTest {
         assertTrue(deviceB.sync(vineyard).isSuccess)
         assertEquals("B online at T2", server.rows["shared"]?.notes)
 
-        // A reconnects and replays its older edit: the guard skips it.
-        deviceA.sync(vineyard)
+        // A reconnects and replays its older edit: the sql/198 revision guard refuses it.
+        val replay = deviceA.sync(vineyard)
         assertEquals(
             "a late offline replay overwrote a newer edit",
             "B online at T2",
             server.rows["shared"]?.notes,
         )
 
-        // And A converges on the authoritative version rather than keeping its own.
+        // The refusal is a CONFLICT, not a silent skip. A's authored edit exists nowhere
+        // else, so it stays queued and on screen while both versions are preserved for an
+        // explicit choice — converging automatically would be the auto-resolution the
+        // contract forbids (deciding by "T2 > T1" is exactly the clock arbitration sql/198
+        // removed).
+        assertEquals(1, replay.conflicted)
+        assertEquals(ResistancePlanSyncState.CONFLICT, deviceA.syncState.value)
+        assertEquals(1, deviceA.pendingCount())
+        assertEquals("A offline at T1", deviceA.plans.value.single().notes)
+        val conflict = deviceA.conflict("shared")
+        assertNotNull(conflict)
+        assertEquals("A offline at T1", conflict!!.localPending.notes)
+        assertEquals("B online at T2", conflict.serverCurrent?.notes)
+
+        // Convergence happens the only legitimate way: the grower chooses.
+        deviceA.resolveKeepingServer("shared")
         assertEquals("B online at T2", deviceA.plans.value.single().notes)
+        assertEquals(0, deviceA.pendingCount())
+        assertEquals(0, deviceA.conflictCount())
     }
 
     @Test
@@ -523,13 +540,25 @@ class ResistancePlanRepositoryTest {
         deviceA.save(deviceA.plans.value.single().removingPosition("pos-2", 2_000L))
         deviceA.sync(vineyard)
         deviceB.save(deviceB.plans.value.single().movingPositionUp("pos-3", 3_000L))
-        deviceB.sync(vineyard)
+        val bResult = deviceB.sync(vineyard)
+
+        // B's reorder was based on the original three-position document, which A's
+        // removal superseded — the server refuses the write outright rather than splicing.
+        assertEquals(1, bResult.conflicted)
 
         deviceA.sync(vineyard)
-        val winner = deviceA.plans.value.single().positions.map { it.id }
-        // B's document won outright. Critically it is one of the two AUTHORED sequences,
-        // not a spliced third one like [pos-1, pos-3] that nobody chose.
-        assertEquals(listOf("pos-1", "pos-3", "pos-2"), winner)
+        // Every copy anywhere is one of the two AUTHORED sequences. The server and A hold
+        // A's document; B still shows its own, with both versions preserved in the
+        // conflict record. A spliced third sequence that nobody chose exists nowhere.
+        val authoredByA = listOf("pos-1", "pos-3")
+        val authoredByB = listOf("pos-1", "pos-3", "pos-2")
+        assertEquals(authoredByA, server.rows["shared"]?.positions?.map { it.id })
+        assertEquals(authoredByA, deviceA.plans.value.single().positions.map { it.id })
+        assertEquals(authoredByB, deviceB.plans.value.single().positions.map { it.id })
+        val conflict = deviceB.conflict("shared")
+        assertNotNull(conflict)
+        assertEquals(authoredByB, conflict!!.localPending.positions.map { it.id })
+        assertEquals(authoredByA, conflict.serverCurrent?.positions?.map { it.id })
     }
 
     // ==================================================================
