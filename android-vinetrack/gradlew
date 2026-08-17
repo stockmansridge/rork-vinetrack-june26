@@ -162,6 +162,41 @@ if ! "$cygwin" && ! "$darwin" && ! "$nonstop" ; then
     esac
 fi
 
+# ---------------------------------------------------------------------------
+# One-time script-compilation cache repair (Rork).
+#
+# Build machines here can be killed mid-write (time caps), and Gradle never
+# re-validates caches it generated itself. A half-written
+# caches/<ver>/generated-gradle-jars/gradle-api-<ver>.jar or kotlin-dsl
+# compiled-script store then crashes every later build during settings-script
+# ANALYSIS (KotlinFrontEndException "Exception while analyzing expression"),
+# deterministically, before any task runs. The previous cure — bumping the
+# wrapper to move cache namespaces — is spent (8.14.3 is the last 8.14.x).
+#
+# So the launcher clears exactly the script-compilation caches ONCE per
+# machine per buster value below. These rebuild in seconds. The big
+# caches/<ver>/transforms store is deliberately NOT cleared: re-instrumenting
+# every dependency jar costs minutes, which on a time-capped machine risks the
+# very mid-write kill that causes this corruption.
+#
+# To force another one-time clear on all machines, change the buster value.
+# Every operation is best-effort; this block must never break a launch.
+RORK_SCRIPT_CACHE_BUSTER=r1-settings-script-analyzer-crash
+rork_guh="${GRADLE_USER_HOME:-${HOME:-}/.gradle}"
+if [ "$rork_guh" != "/.gradle" ]; then
+    rork_marker="$rork_guh/.rork-script-cache-buster"
+    if [ "$( cat "$rork_marker" 2>/dev/null )" != "$RORK_SCRIPT_CACHE_BUSTER" ]; then
+        for rork_dir in "$rork_guh"/caches/*/kotlin-dsl \
+                        "$rork_guh"/caches/*/scripts \
+                        "$rork_guh"/caches/*/generated-gradle-jars; do
+            [ -e "$rork_dir" ] && rm -rf "$rork_dir" 2>/dev/null
+        done
+        mkdir -p "$rork_guh" 2>/dev/null || true
+    printf '%s' "$RORK_SCRIPT_CACHE_BUSTER" > "$rork_marker" 2>/dev/null || true
+    fi
+fi
+# ---------------------------------------------------------------------------
+
 # Collect all arguments for the java command, stacking in reverse order:
 #   * args from the command line
 #   * the main class name
