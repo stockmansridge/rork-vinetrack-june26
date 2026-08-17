@@ -20,9 +20,10 @@ import java.util.UUID
  * enqueues through [enqueue], the outbox stays empty and [pendingCount] is 0.
  * No replay, retry, or backoff logic lives here.
  */
-class PendingWriteRepository(context: Context) {
+class PendingWriteRepository(private val store: PendingWriteStoring) {
 
-    private val store = PendingWriteStore(context)
+    /** Production entry point — persists to SharedPreferences via [PendingWriteStore]. */
+    constructor(context: Context) : this(PendingWriteStore(context))
 
     private val _writes = MutableStateFlow(store.load())
     /** Live view of every persisted pending write. */

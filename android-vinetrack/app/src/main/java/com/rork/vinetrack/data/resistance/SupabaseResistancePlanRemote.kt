@@ -3,7 +3,7 @@ package com.rork.vinetrack.data.resistance
 import com.rork.vinetrack.data.BackendError
 import com.rork.vinetrack.data.SupabaseClient
 import com.rork.vinetrack.data.auth.SessionStore
-import com.rork.vinetrack.data.sync.SyncRevisionContract
+import com.rork.vinetrack.data.sync.VersionedWriteClassifier
 import com.rork.vinetrack.data.sync.VersionedWriteOutcome
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
@@ -135,35 +135,20 @@ class SupabaseResistancePlanRemote(
             contentType(ContentType.Application.Json)
             setBody(listOf(plan.toRow()))
         }
-        val body = response.bodyAsText()
-        return when {
-            response.status.isSuccess() -> {
-                val rows = runCatching { json.decodeFromString<List<Row>>(body) }.getOrDefault(emptyList())
-                val row = rows.firstOrNull()
-                if (row == null) {
-                    // A 2xx with NO row is the legacy silent-skip signature (a BEFORE
-                    // UPDATE trigger returning NULL). Under sql/198 a versioned write
-                    // cannot land here — it raises instead — but an old-path write still
-                    // can, and reporting it as success is precisely the bug that lost
-                    // growers' edits. Surfaced as a conflict so the local copy is kept.
-                    VersionedWriteOutcome.Conflict(
-                        rowId = plan.id,
-                        baseRevision = plan.serverRevision,
-                        serverRevision = null,
-                    )
-                } else {
-                    VersionedWriteOutcome.Applied(row.toPlan())
-                }
-            }
-            SyncRevisionContract.isRevisionConflict(response.status.value, body) ->
-                VersionedWriteOutcome.Conflict(
-                    rowId = plan.id,
-                    baseRevision = SyncRevisionContract.baseRevisionFrom(body) ?: plan.serverRevision,
-                    serverRevision = SyncRevisionContract.serverRevisionFrom(body),
-                )
-            response.status.value == 401 || response.status.value == 403 ->
-                throw BackendError.Unauthorized
-            else -> throw BackendError.Server(response.status.value, body)
+        // Classification lives in ONE place for every versioned entity: retry policy hangs
+        // off it, and a second hand-rolled copy is how a conflict eventually gets reported
+        // as a success. A 2xx with no returned row is treated as a conflict there — the
+        // legacy silent-skip signature, and precisely the bug that lost growers' edits.
+        return VersionedWriteClassifier.classify(
+            rowId = plan.id,
+            baseRevision = plan.serverRevision,
+            status = response.status.value,
+            body = response.bodyAsText(),
+        ) { text ->
+            runCatching { json.decodeFromString<List<Row>>(text) }
+                .getOrDefault(emptyList())
+                .firstOrNull()
+                ?.toPlan()
         }
     }
 

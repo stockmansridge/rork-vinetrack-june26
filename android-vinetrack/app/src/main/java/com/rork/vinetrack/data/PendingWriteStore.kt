@@ -18,7 +18,7 @@ import kotlinx.serialization.json.Json
  * This store is intentionally low-level (whole-list read/replace). All callers
  * must go through [PendingWriteRepository]; nothing should touch this directly.
  */
-class PendingWriteStore(context: Context) {
+class PendingWriteStore(context: Context) : PendingWriteStoring {
 
     private val prefs = context.applicationContext
         .getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE)
@@ -27,18 +27,18 @@ class PendingWriteStore(context: Context) {
     private val serializer = ListSerializer(PendingWrite.serializer())
 
     /** Read all persisted pending writes (empty list on first run or parse error). */
-    fun load(): List<PendingWrite> {
+    override fun load(): List<PendingWrite> {
         val raw = prefs.getString(KEY_WRITES, null) ?: return emptyList()
         return runCatching { json.decodeFromString(serializer, raw) }.getOrDefault(emptyList())
     }
 
     /** Persist the full outbox, replacing any previous contents. */
-    fun save(writes: List<PendingWrite>) {
+    override fun save(writes: List<PendingWrite>) {
         prefs.edit { putString(KEY_WRITES, json.encodeToString(serializer, writes)) }
     }
 
     /** Clear the entire outbox (used by tooling / future sign-out cleanup). */
-    fun clear() {
+    override fun clear() {
         prefs.edit { remove(KEY_WRITES) }
     }
 

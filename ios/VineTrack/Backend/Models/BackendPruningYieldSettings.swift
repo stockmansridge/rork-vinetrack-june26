@@ -19,6 +19,12 @@ nonisolated struct BackendPruningYieldSettings: Codable, Sendable, Identifiable 
     let updatedAt: Date?
     let deletedAt: Date?
     let clientUpdatedAt: Date?
+    /// Server-issued revision (sql/198). SERVER STATE, never authored by a screen.
+    ///
+    /// Optional for tolerance, not because the column is: a row last written by a
+    /// pre-sql/198 client, or a response from a path that did not project the column, must
+    /// DECODE rather than throw. A decode failure here would take out the whole pull.
+    let serverRevision: Int64?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -37,6 +43,7 @@ nonisolated struct BackendPruningYieldSettings: Codable, Sendable, Identifiable 
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
         case clientUpdatedAt = "client_updated_at"
+        case serverRevision = "server_revision"
     }
 }
 

@@ -38,20 +38,39 @@ object SyncRevisionContract {
     private val lenientJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
     /**
+     * SQLSTATEs PostgREST ALSO maps to 409, which are emphatically not revision conflicts.
+     *
+     * `23505` (unique_violation) is the dangerous one: a duplicate key means nobody edited
+     * concurrently, the write is simply invalid, and telling the grower "this was also
+     * changed on another device — both versions are saved" sends them hunting for a second
+     * version that does not exist, while the real cause goes unreported.
+     */
+    private val nonRevisionConflictCodes: List<String> = listOf("23505", "23503", "23514", "23502")
+
+    /**
      * Whether a failed response is a revision conflict rather than a transport,
      * auth or server failure.
      *
-     * Deliberately tolerant. A 409 whose body did not survive, and a
-     * REVISION_CONFLICT that arrived with some other status, are both still
-     * conflicts — and misclassifying either one as "sync failed" would send the
-     * app into a blind retry loop that can never succeed, because the same stale
-     * `base_revision` will be rejected every time.
+     * Tolerant, but only in the safe direction:
+     *  - the sql/198 marker in the body is CONCLUSIVE whatever the status, because a gateway
+     *    or proxy can rewrite a status code while the message travels in the body;
+     *  - a bare 409 with no usable body IS treated as a conflict — with no evidence either
+     *    way, the fail-safe reading is the one that keeps the grower's edit queued;
+     *  - a 409 that EXPLAINS ITSELF as something else (unique / foreign-key / check / not-null
+     *    violation) is NOT a conflict.
+     *
+     * The two mistakes cost very different amounts, which is why the default leans this way:
+     * a conflict misread as a transport failure is retried forever with the same stale
+     * `base_revision` and can never converge, whereas a failure misread as a conflict merely
+     * asks a human to look at something.
      */
     fun isRevisionConflict(status: Int, body: String?): Boolean {
         val text = body ?: ""
         if (text.contains(CONFLICT_MESSAGE)) return true
         if (text.contains(CONFLICT_SQLSTATE)) return true
-        return status == 409
+        if (status != 409) return false
+        // A 409 naming a different SQLSTATE is that error, not a stale-revision refusal.
+        return nonRevisionConflictCodes.none { text.contains(it) }
     }
 
     /**

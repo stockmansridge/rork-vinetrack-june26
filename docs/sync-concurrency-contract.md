@@ -209,6 +209,42 @@ should stay as they are.
 
 ## Verification
 
+### Before a client release may be called revision-safe
+
+All four of these must be GREEN, from an actual test run:
+
+1. `sql/tests/198_sync_concurrency_revisions_tests.sql`
+2. Android revision tests — `PruningYieldSettingsRevisionSyncTest`,
+   `PruningSeasonRevisionSyncTest`, `ResistancePlanRevisionSyncTest`,
+   `ResistancePlanRepositoryTest`
+3. iOS revision tests — `ResistancePlanRevisionSyncTests`, `ResistancePlanRepositoryTests`
+4. The cross-platform parity fixture — `SyncRevisionParityTest` (Android) AND
+   `SyncRevisionParityTests` (iOS)
+
+The parity fixture is listed separately on purpose. The per-platform suites each prove their
+own platform behaves; only the paired fixture proves the two platforms make the SAME decision
+about the same server response. Two clients drifting apart here is not cosmetic — one of them
+would report a refused write as saved.
+
+### A build is not a test run
+
+**Compiling the app target is NOT equivalent to executing the unit tests, and must never be
+reported as if it were.** `runChecks` (Android `assembleRelease`, iOS app-target build) proves
+the code compiles. It executes no assertion, and on iOS it does not even compile the test
+target — a type error inside the test files will not surface. Every claim of the form "the
+revision contract is verified" requires the four green runs above.
+
+When reporting status, state authored counts and executed counts separately. "Authored but
+unexecuted" is an honest and useful state; "green" applied to an unexecuted suite is not.
+
+### Editing the parity fixture
+
+Never change a fixture constant on one platform alone. `SyncRevisionParityTest.Fixture` and
+its Swift mirror carry identical literals — row ids, revisions, PostgREST bodies. If one
+changes without the other, the fixtures still pass and the parity guarantee is silently void.
+
+### SQL test-role requirement
+
 - `sql/tests/198_sync_concurrency_revisions_tests.sql` — rollback-only, every write test
   runs as `authenticated` with RLS active.
 - Owner-role tests are **not** sufficient for these functions: the guard writes to the

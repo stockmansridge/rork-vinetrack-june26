@@ -25,6 +25,14 @@ nonisolated enum SyncRevisionContract {
     /// PostgREST maps SQLSTATE class `PT` to an HTTP status; `PT409` -> 409 Conflict.
     nonisolated static let conflictSQLState = "PT409"
 
+    /// SQLSTATEs PostgREST ALSO maps to 409, which are emphatically not revision conflicts.
+    ///
+    /// `23505` (unique_violation) is the dangerous one: a duplicate key means nobody edited
+    /// concurrently, the write is simply invalid, and telling the grower "this was also
+    /// changed on another device — both versions are saved" sends them hunting for a second
+    /// version that does not exist while the real cause goes unreported.
+    nonisolated static let nonRevisionConflictCodes: [String] = ["23505", "23503", "23514", "23502"]
+
     /// Whether an error from a write is a revision conflict rather than a transport, auth
     /// or server failure.
     ///
@@ -34,10 +42,32 @@ nonisolated enum SyncRevisionContract {
     /// never succeed, because the same stale `base_revision` will be rejected every time.
     nonisolated static func isRevisionConflict(_ error: any Error) -> Bool {
         if error is SyncRevisionConflictError { return true }
-        let text = describe(error)
+        return isRevisionConflict(status: nil, body: describe(error))
+    }
+
+    /// Status-and-body form, mirroring `SyncRevisionContract.kt` exactly so both platforms
+    /// reach the same verdict for the same server response. Asserted by
+    /// `SyncRevisionParityTests` against the same literal fixtures Android uses.
+    ///
+    /// Tolerant, but only in the safe direction:
+    ///  - the sql/198 marker in the body is CONCLUSIVE whatever the status, because a gateway
+    ///    or proxy can rewrite a status code while the message travels in the body;
+    ///  - a bare 409 with no usable body IS treated as a conflict — with no evidence either
+    ///    way, the fail-safe reading keeps the grower's edit queued;
+    ///  - a 409 that EXPLAINS ITSELF as something else (unique / foreign-key / check /
+    ///    not-null violation) is NOT a conflict.
+    ///
+    /// The two mistakes cost very different amounts, which is why the default leans this way:
+    /// a conflict misread as a transport failure is retried forever with the same stale
+    /// `base_revision` and can never converge, whereas a failure misread as a conflict merely
+    /// asks a human to look at something.
+    nonisolated static func isRevisionConflict(status: Int?, body: String?) -> Bool {
+        let text = body ?? ""
         if text.contains(conflictMessage) { return true }
         if text.contains(conflictSQLState) { return true }
-        return false
+        guard status == 409 else { return false }
+        // A 409 naming a different SQLSTATE is that error, not a stale-revision refusal.
+        return !nonRevisionConflictCodes.contains { text.contains($0) }
     }
 
     /// The server's current revision, read out of the PostgREST error body.
@@ -52,6 +82,18 @@ nonisolated enum SyncRevisionContract {
     /// The `base_revision` the server rejected, echoed back for diagnostics.
     nonisolated static func baseRevision(from error: any Error) -> Int64? {
         detailValue(describe(error), key: "base_revision")
+    }
+
+    /// The server's current revision, read straight out of a raw response body.
+    nonisolated static func serverRevision(fromBody body: String?) -> Int64? {
+        guard let body else { return nil }
+        return detailValue(body, key: "server_revision")
+    }
+
+    /// The `base_revision` the server rejected, read straight out of a raw response body.
+    nonisolated static func baseRevision(fromBody body: String?) -> Int64? {
+        guard let body else { return nil }
+        return detailValue(body, key: "base_revision")
     }
 
     /// Best-effort textual form of an arbitrary error, so the PostgREST body can be

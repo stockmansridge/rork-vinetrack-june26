@@ -2,7 +2,7 @@ package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.PruningYieldSettings
-import com.rork.vinetrack.data.sync.SyncRevisionContract
+import com.rork.vinetrack.data.sync.VersionedWriteClassifier
 import com.rork.vinetrack.data.sync.VersionedWriteOutcome
 import io.ktor.client.call.body
 import io.ktor.client.request.get
@@ -29,7 +29,7 @@ import kotlinx.serialization.Serializable
  * block converge on a single record. RLS scopes everything to vineyard
  * membership (operator+ write; owner/manager/supervisor delete).
  */
-class PruningYieldSettingsRepository(private val session: SessionStore) {
+class PruningYieldSettingsRepository(private val session: SessionStore) : PruningYieldSettingsWriting {
 
     private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 
@@ -75,7 +75,7 @@ class PruningYieldSettingsRepository(private val session: SessionStore) {
      * a thrown conflict gets classified as a transport failure and retried forever with the
      * same stale `base_revision`.
      */
-    suspend fun upsertSettings(
+    override suspend fun upsertSettings(
         settings: PruningYieldSettings,
         clientUpdatedAt: String,
     ): VersionedWriteOutcome<PruningYieldSettings> = withContext(Dispatchers.IO) {
@@ -111,34 +111,18 @@ class PruningYieldSettingsRepository(private val session: SessionStore) {
             contentType(ContentType.Application.Json)
             setBody(body)
         }
-        val text = response.bodyAsText()
-        when {
-            response.status.isSuccess() -> {
-                val row = runCatching { json.decodeFromString<List<PruningYieldSettings>>(text) }
-                    .getOrDefault(emptyList())
-                    .firstOrNull()
-                if (row == null) {
-                    // A 2xx with an EMPTY representation is the legacy silent-skip signature
-                    // (a BEFORE UPDATE trigger returning NULL). It used to be reported as
-                    // success, which is exactly how a grower's calculator settings vanished.
-                    // Surfaced as a conflict so the local value is kept.
-                    VersionedWriteOutcome.Conflict(
-                        rowId = settings.id,
-                        baseRevision = settings.serverRevision,
-                        serverRevision = null,
-                    )
-                } else {
-                    VersionedWriteOutcome.Applied(row)
-                }
-            }
-            SyncRevisionContract.isRevisionConflict(response.status.value, text) ->
-                VersionedWriteOutcome.Conflict(
-                    rowId = settings.id,
-                    baseRevision = SyncRevisionContract.baseRevisionFrom(text) ?: settings.serverRevision,
-                    serverRevision = SyncRevisionContract.serverRevisionFrom(text),
-                )
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
-            else -> throw BackendError.Server(response.status.value, text)
+        // ONE shared classifier for every versioned entity — retry policy depends on this
+        // decision, and a second hand-rolled copy is how a refused write eventually gets
+        // reported as saved. An empty 2xx representation is a conflict there, not a success.
+        VersionedWriteClassifier.classify(
+            rowId = settings.id,
+            baseRevision = settings.serverRevision,
+            status = response.status.value,
+            body = response.bodyAsText(),
+        ) { text ->
+            runCatching { json.decodeFromString<List<PruningYieldSettings>>(text) }
+                .getOrDefault(emptyList())
+                .firstOrNull()
         }
     }
 

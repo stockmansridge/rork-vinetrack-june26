@@ -9,6 +9,7 @@ import com.rork.vinetrack.data.model.PruningEntry
 import com.rork.vinetrack.data.model.PruningSeasonIds
 import com.rork.vinetrack.data.model.PruningSegment
 import com.rork.vinetrack.data.sync.SyncRevisionContract
+import com.rork.vinetrack.data.sync.VersionedWriteClassifier
 import com.rork.vinetrack.data.sync.VersionedWriteOutcome
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
@@ -116,8 +117,17 @@ class PruningSyncRepository(private val session: SessionStore) {
         )
     }
 
+    /**
+     * Wire payload for a versioned season write.
+     *
+     * `internal` rather than private so the encoding contract itself is testable: whether
+     * `base_revision` is present, and whether it is omitted rather than sent as null for a
+     * row the server has never versioned. That distinction is the difference between sql/198
+     * reading the write as an edit-of-N and reading it as a create, so it is asserted
+     * directly on the real encoder rather than inferred from repository behaviour.
+     */
     @Serializable
-    private data class SeasonUpsert(
+    internal data class SeasonUpsert(
         val id: String,
         @SerialName("vineyard_id") val vineyardId: String,
         @SerialName("paddock_id") val paddockId: String,
@@ -142,7 +152,39 @@ class PruningSyncRepository(private val session: SessionStore) {
          * when this device has never been issued one, which sql/198 reads as a create.
          */
         @SerialName("base_revision") val baseRevision: Long? = null,
-    )
+    ) {
+        companion object {
+            /**
+             * The one mapping from a local setup to a versioned season write.
+             *
+             * `baseRevision` is taken from [PruningBlockSetup.serverRevision] and nothing
+             * else — never derived, never incremented, never defaulted to zero. A fabricated
+             * value would either be refused forever or match by luck and silently overwrite
+             * an edit this device never saw.
+             */
+            fun from(
+                setup: PruningBlockSetup,
+                clientUpdatedAt: String,
+                createdBy: String?,
+            ): SeasonUpsert = SeasonUpsert(
+                id = setup.id,
+                vineyardId = setup.vineyardId,
+                paddockId = setup.paddockId,
+                seasonYear = setup.seasonYear,
+                startDate = setup.startDate,
+                dueDate = setup.dueDate,
+                pruningMethod = setup.method,
+                assignedCrew = setup.crew,
+                workingDays = setup.workingDays,
+                manualRowCount = setup.rowCountOverride,
+                estimatedLabourHours = setup.estimatedLabourHours,
+                notes = setup.notes,
+                createdBy = createdBy,
+                clientUpdatedAt = clientUpdatedAt,
+                baseRevision = setup.serverRevision,
+            )
+        }
+    }
 
     @Serializable
     data class EntryRow(
@@ -615,23 +657,7 @@ class PruningSyncRepository(private val session: SessionStore) {
     ): VersionedWriteOutcome<PruningBlockSetup> = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val body = SeasonUpsert(
-            id = setup.id,
-            vineyardId = setup.vineyardId,
-            paddockId = setup.paddockId,
-            seasonYear = setup.seasonYear,
-            startDate = setup.startDate,
-            dueDate = setup.dueDate,
-            pruningMethod = setup.method,
-            assignedCrew = setup.crew,
-            workingDays = setup.workingDays,
-            manualRowCount = setup.rowCountOverride,
-            estimatedLabourHours = setup.estimatedLabourHours,
-            notes = setup.notes,
-            createdBy = session.userId,
-            clientUpdatedAt = clientUpdatedAt,
-            baseRevision = setup.serverRevision,
-        )
+        val body = SeasonUpsert.from(setup, clientUpdatedAt, session.userId)
         val response = SupabaseClient.http.post(SupabaseClient.restUrl("pruning_seasons?on_conflict=id")) {
             authHeaders(token)
             headers {
@@ -643,35 +669,19 @@ class PruningSyncRepository(private val session: SessionStore) {
             contentType(ContentType.Application.Json)
             setBody(listOf(body))
         }
-        val text = response.bodyAsText()
-        when {
-            response.status.isSuccess() -> {
-                val row = runCatching { resultJson.decodeFromString<List<SeasonRow>>(text) }
-                    .getOrDefault(emptyList())
-                    .firstOrNull()
-                if (row == null) {
-                    // A 2xx with an EMPTY representation is the legacy silent-skip signature
-                    // (a BEFORE UPDATE trigger returning NULL). It used to be reported as
-                    // success — precisely how a grower's season setup vanished. Surfaced as a
-                    // conflict so the local values are kept and queued.
-                    VersionedWriteOutcome.Conflict(
-                        rowId = setup.id,
-                        baseRevision = setup.serverRevision,
-                        serverRevision = null,
-                    )
-                } else {
-                    VersionedWriteOutcome.Applied(row.toModel())
-                }
-            }
-            SyncRevisionContract.isRevisionConflict(response.status.value, text) ->
-                VersionedWriteOutcome.Conflict(
-                    rowId = setup.id,
-                    baseRevision = SyncRevisionContract.baseRevisionFrom(text) ?: setup.serverRevision,
-                    serverRevision = SyncRevisionContract.serverRevisionFrom(text),
-                )
-            response.status.value == 401 || response.status.value == 403 ->
-                throw BackendError.Unauthorized
-            else -> throw BackendError.Server(response.status.value, text)
+        // ONE shared classifier for every versioned entity — retry policy depends on this
+        // decision, and a second hand-rolled copy is how a refused write eventually gets
+        // reported as saved. An empty 2xx representation is a conflict there, not a success.
+        VersionedWriteClassifier.classify(
+            rowId = setup.id,
+            baseRevision = setup.serverRevision,
+            status = response.status.value,
+            body = response.bodyAsText(),
+        ) { text ->
+            runCatching { resultJson.decodeFromString<List<SeasonRow>>(text) }
+                .getOrDefault(emptyList())
+                .firstOrNull()
+                ?.toModel()
         }
     }
 

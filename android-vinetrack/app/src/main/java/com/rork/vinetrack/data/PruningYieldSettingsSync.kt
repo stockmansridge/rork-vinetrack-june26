@@ -26,7 +26,7 @@ import kotlinx.serialization.json.Json
  * the soft-delete RPC exists server-side for administrative cleanup.
  */
 class PruningYieldSettingsSync(
-    private val settingsRepo: PruningYieldSettingsRepository,
+    private val settingsRepo: PruningYieldSettingsWriting,
     private val pending: PendingWriteRepository,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }

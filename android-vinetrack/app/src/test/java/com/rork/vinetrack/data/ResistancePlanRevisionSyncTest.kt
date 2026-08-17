@@ -545,6 +545,63 @@ class ResistancePlanRevisionSyncTest {
         assertEquals(0, result.conflicted)
     }
 
+    @Test
+    fun `normal merging resumes once the replica catches up`() = runBlocking {
+        val server = RevisionServer()
+        val repository = repo(server)
+        repository.load(vineyard)
+        repository.save(plan(notes = "first"))
+        repository.sync(vineyard)
+
+        // The confirmed write is at revision 2 while the replica still serves revision 1.
+        now = 1_000L
+        server.serveStaleReadNext = true
+        repository.save(repository.plans.value.single().settingNotes("confirmed second", now))
+        val lagged = repository.sync(vineyard)
+        assertEquals(1, lagged.staleRemoteIgnored)
+        assertEquals(2L, repository.plans.value.single().serverRevision)
+
+        // The replica catches up AND another device has since written, so the row is now at
+        // revision 3. A read at-or-ahead of what this device has confirmed must be merged
+        // normally — the lag guard is a guard, not a permanent refusal to accept remote state.
+        server.writeAsOtherDevice("plan-1", notes = "third from elsewhere", atEpochMs = 2L)
+        assertEquals(3L, server.rows.getValue("plan-1").serverRevision)
+        val caughtUp = repository.sync(vineyard)
+
+        assertTrue(caughtUp.isSuccess)
+        assertEquals("a caught-up read is not stale", 0, caughtUp.staleRemoteIgnored)
+        assertEquals(0, caughtUp.conflicted)
+        assertEquals(
+            "normal merging must resume",
+            "third from elsewhere",
+            repository.plans.value.single().notes,
+        )
+        assertEquals(3L, repository.plans.value.single().serverRevision)
+
+        // ...and note the local clock was pinned to the PAST throughout. Under the old
+        // timestamp guard the remote row looked newer than a local edit made after it, which
+        // is precisely how the stale replica row used to win.
+        assertEquals(1_000L, now)
+    }
+
+    @Test
+    fun `an equal revision read is merged rather than rejected as stale`() = runBlocking {
+        val server = RevisionServer()
+        val repository = repo(server)
+        repository.load(vineyard)
+        repository.save(plan(notes = "first"))
+        repository.sync(vineyard)
+        assertEquals(1L, repository.plans.value.single().serverRevision)
+
+        // A read at EXACTLY the confirmed revision is the normal steady state, not lag.
+        // Treating it as stale would stop the device ever accepting remote state again.
+        val result = repository.sync(vineyard)
+
+        assertTrue(result.isSuccess)
+        assertEquals(0, result.staleRemoteIgnored)
+        assertEquals(1L, repository.plans.value.single().serverRevision)
+    }
+
     // ==================================================================
     // 10. Restart durability
     // ==================================================================
