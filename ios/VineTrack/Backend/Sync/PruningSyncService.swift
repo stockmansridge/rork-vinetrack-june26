@@ -36,6 +36,28 @@ final class PruningSyncService {
         lastActivityReconciliation = nil
     }
 
+    // MARK: sql/198 season revision conflicts
+
+    /// Seasons whose last write the server REFUSED on revision grounds. The grower's authored
+    /// values are still queued; nothing here resolves a conflict automatically.
+    var conflictedSeasonIds: Set<UUID> { seasonMetadata.conflictedIds }
+
+    /// The unresolved conflict for a season, if any. Survives app restarts.
+    func seasonRevisionConflict(id: UUID) -> SyncRevisionConflictMark? {
+        seasonMetadata.revisionConflict(for: id)
+    }
+
+    /// RE-FETCHES the server's current row for a conflicted season.
+    ///
+    /// Deliberately a fresh read rather than a stored side-by-side copy: a cached "server
+    /// version" starts drifting the moment it is written, and a review screen showing a stale
+    /// server copy is worse than one that fetches. The LOCAL authored copy is the half that
+    /// must survive, and that lives in ``PruningStore`` plus the queue.
+    func serverCopyOfSeason(id: UUID, vineyardId: UUID) async -> PruningBlockSetup? {
+        guard let remote = try? await repository.fetchSeasons(vineyardId: vineyardId, since: nil) else { return nil }
+        return remote.first { $0.id == id }?.toPruningBlockSetup()
+    }
+
     var pendingUpsertCount: Int {
         seasonMetadata.pendingUpserts.count + entryMetadata.pendingUpserts.count
             + editMetadata.pendingUpserts.count + activityMetadata.pendingUpserts.count
@@ -385,54 +407,90 @@ final class PruningSyncService {
 
     // MARK: Push
 
+    /// Pushes queued season setups under the sql/198 revision contract.
+    ///
+    /// ONE REQUEST PER SEASON. The batch upsert this replaced was a single transaction, so a
+    /// single conflicting season would have aborted every other season's write in the same
+    /// call — valid edits stranded because an unrelated block lost a race.
     private func pushSeasons(vineyardId: UUID) async throws {
         let createdBy = auth?.userId
         let dirty = seasonMetadata.pendingUpserts
         if !dirty.isEmpty {
             let byId = Dictionary(pruningStore.setups.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-            var payloads: [BackendPruningSeasonUpsert] = []
-            var pushed: [UUID] = []
+            let conflicted = seasonMetadata.conflictedIds
             var orphans: [UUID] = []
+            var firstRetryableError: Error?
             for (id, ts) in dirty {
                 // Reclaim queue entries with no local season — they can never
                 // upload and used to sit in the queue forever.
                 guard let item = byId[id] else { orphans.append(id); continue }
-                payloads.append(BackendPruningSeason.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
-                pushed.append(id)
-            }
-            seasonMetadata.clearDirty(orphans)
-            SyncIssueCenter.shared.clearIssues(orphans)
-            if !payloads.isEmpty {
+                // A conflicted write is NEVER auto-retried: it would resend the same stale
+                // `base_revision` and be refused every single time. It waits for a person.
+                if conflicted.contains(id) { continue }
                 do {
-                    try await repository.upsertSeasons(payloads)
-                    seasonMetadata.clearDirty(pushed)
-                    SyncIssueCenter.shared.clearIssues(pushed)
+                    switch try await repository.upsertSeason(item, createdBy: createdBy, clientUpdatedAt: ts) {
+                    case let .applied(row):
+                        // The returned representation carries the NEW `server_revision` — the
+                        // only way this device learns what version its own edit became. Never
+                        // base + 1.
+                        pruningStore.applyRemoteSeasonUpsert(row)
+                        seasonMetadata.setObservedRevision(row.serverRevision, for: id)
+                        seasonMetadata.clearDirty([id])
+                        SyncIssueCenter.shared.clearIssues([id])
+                    case let .conflict(_, base, server):
+                        // NOT cleared, NOT marked synced, NOT retried, and the queued local
+                        // values are NOT replaced by the server's. The grower's edit exists
+                        // nowhere else; the server's current row is re-read on demand.
+                        seasonMetadata.markRevisionConflict(id, baseRevision: base, serverRevision: server)
+                        SyncIssueCenter.shared.recordFailure(
+                            id: id,
+                            entity: "Pruning Seasons",
+                            detail: SyncFailureDetail(
+                                kind: .permanent,
+                                reasonCode: "revision_conflict",
+                                friendlyMessage: "This block setup was also changed on another device. Both versions are saved — open the block to review.",
+                                technicalDetail: "pruning_seasons row=\(id.uuidString) base_revision=\(base.map(String.init) ?? "none") server_revision=\(server.map(String.init) ?? "unknown")"
+                            ),
+                            queuedAt: ts,
+                            payloadKeys: [],
+                            vineyardId: vineyardId
+                        )
+                        print("[PruningSync] season \(id) REVISION_CONFLICT (base \(base.map(String.init) ?? "none") vs server \(server.map(String.init) ?? "unknown")) — kept queued for review")
+                    }
                 } catch {
                     let message = String(describing: error).lowercased()
                     if message.contains("pruning_seasons_active_unique") || message.contains("duplicate key") || message.contains("23505") {
-                        // A different-id ACTIVE season already exists on the
-                        // server for the same vineyard + block + year (e.g.
-                        // created from the portal). Keeping these dirty would
-                        // wedge the queue forever — drop the local copy and
-                        // let the pull adopt the server's canonical row.
-                        seasonMetadata.clearDirty(pushed)
-                        SyncIssueCenter.shared.clearIssues(pushed)
-                        print("[PruningSync] season push hit the active-season unique index — adopting the server row instead")
-                    } else {
-                        // Isolate: one bad season must not block the others.
-                        let result = await SyncQueuePush.run(
-                            entity: "Pruning Seasons",
-                            ids: pushed,
-                            payloads: payloads,
-                            queuedAt: dirty,
-                            vineyardId: vineyardId
-                        ) { try await repository.upsertSeasons($0) }
-                        seasonMetadata.clearDirty(result.uploaded)
-                        if let error = result.firstRetryableError { throw error }
+                        // A different-id ACTIVE season already exists on the server for the
+                        // same vineyard + block + year (e.g. created from the portal). This is
+                        // NOT a revision conflict — nobody raced this edit — so it must not be
+                        // reported as one. Keeping it dirty would wedge the queue forever, so
+                        // drop the local copy and let the pull adopt the canonical server row.
+                        seasonMetadata.clearDirty([id])
+                        SyncIssueCenter.shared.clearIssues([id])
+                        print("[PruningSync] season \(id) hit the active-season unique index — adopting the server row instead")
+                        continue
+                    }
+                    // Isolate: one bad season must not block the others.
+                    let detail = BackendErrorDiagnostics.classify(error, endpoint: "Pruning Seasons")
+                    SyncIssueCenter.shared.recordFailure(
+                        id: id,
+                        entity: "Pruning Seasons",
+                        detail: detail,
+                        queuedAt: ts,
+                        payloadKeys: SyncQueuePush.payloadKeys(
+                            BackendPruningSeason.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts)
+                        ),
+                        vineyardId: vineyardId
+                    )
+                    if detail.kind == .retryable, firstRetryableError == nil {
+                        firstRetryableError = SyncPushError(entity: "Pruning Seasons", detail: detail)
                     }
                 }
             }
+            seasonMetadata.clearDirty(orphans)
+            SyncIssueCenter.shared.clearIssues(orphans)
             SyncIssueCenter.shared.notePending(entity: "Pruning Seasons", count: seasonMetadata.pendingUpserts.count)
+            if let firstRetryableError { throw firstRetryableError }
         }
         for (id, _) in seasonMetadata.pendingDeletes {
             do {
@@ -929,8 +987,14 @@ final class PruningSyncService {
             if !missing.isEmpty {
                 let now = Date()
                 let createdBy = auth?.userId
-                let payloads = missing.map { BackendPruningSeason.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now) }
-                try? await repository.upsertSeasons(payloads)
+                // Per row: a conflict on one seeded season must not abort the others. A refused
+                // seed simply stays local and is retried by the normal push path.
+                for setup in missing {
+                    if case let .applied(row) = try? await repository.upsertSeason(setup, createdBy: createdBy, clientUpdatedAt: now) {
+                        pruningStore.applyRemoteSeasonUpsert(row)
+                        seasonMetadata.setObservedRevision(row.serverRevision, for: row.id)
+                    }
+                }
             }
             if remote.isEmpty { return }
         }
@@ -945,11 +1009,31 @@ final class PruningSyncService {
                 seasonMetadata.clearDeleted([item.id])
                 continue
             }
-            if let pendingAt = seasonMetadata.pendingUpserts[item.id] {
-                let remoteAt = item.clientUpdatedAt ?? item.updatedAt ?? .distantPast
-                if pendingAt > remoteAt { continue }
+            // sql/198: the SERVER's revision decides what is current — never a device clock.
+            // The `client_updated_at` comparison that used to live here is gone, because a
+            // phone with a slow clock had its perfectly valid edit discarded and a phone with
+            // a fast clock locked every other device out until real time caught up.
+            //
+            // A row with an unacknowledged local edit keeps its local copy. The queued write
+            // still carries `base_revision`, so the SERVER decides whether that edit is stale
+            // when it is pushed — this pull must not pre-empt that by overwriting the authored
+            // values first.
+            if seasonMetadata.pendingUpserts[item.id] != nil { continue }
+            // An unresolved conflict means the grower's authored setup exists ONLY on this
+            // device. Applying the server row here would destroy it.
+            if seasonMetadata.conflictedIds.contains(item.id) { continue }
+            // Replica lag: a read served by a replica still on an older revision must not
+            // overwrite a newer state this device has already had confirmed. Normal merging
+            // resumes as soon as the replica reports the confirmed revision or later.
+            if SyncRevisionContract.isRemoteBehind(
+                observed: seasonMetadata.observedRevision(for: item.id),
+                remote: item.serverRevision
+            ) {
+                print("[PruningSync] season \(item.id) pull ignored: replica at revision \(item.serverRevision.map(String.init) ?? "none") is behind confirmed \(seasonMetadata.observedRevision(for: item.id).map(String.init) ?? "none")")
+                continue
             }
             pruningStore.applyRemoteSeasonUpsert(item.toPruningBlockSetup())
+            seasonMetadata.setObservedRevision(item.serverRevision, for: item.id)
             seasonMetadata.clearDirty([item.id])
         }
     }

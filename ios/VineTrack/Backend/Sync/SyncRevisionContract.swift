@@ -96,6 +96,25 @@ nonisolated enum SyncRevisionContract {
         return detailValue(body, key: "base_revision")
     }
 
+    /// True when a PULLED row is at a strictly OLDER revision than the copy this device
+    /// already holds — i.e. the read was served by a replica that has not caught up.
+    ///
+    /// This is the read-side half of the contract, and it is a REVISION comparison for the
+    /// same reason the write side is: a confirmed write returns revision N, and a replica
+    /// still serving N-1 would otherwise be applied over it and silently undo the edit the
+    /// server had already accepted. A timestamp cannot tell those apart.
+    ///
+    /// Returns false when EITHER side has no revision. A legacy row (written by a
+    /// pre-sql/198 client, or cached before this device understood revisions) is not
+    /// evidence of lag, and treating an unknown revision as "behind" would make such rows
+    /// permanently unpullable — the row would freeze at whatever this device last cached.
+    ///
+    /// Mirrors `isRemoteBehind` in `ResistancePlanRepository.kt` on Android.
+    nonisolated static func isRemoteBehind(observed: Int64?, remote: Int64?) -> Bool {
+        guard let observed, let remote else { return false }
+        return remote < observed
+    }
+
     /// Best-effort textual form of an arbitrary error, so the PostgREST body can be
     /// inspected whichever SDK layer wrapped it.
     nonisolated static func describe(_ error: any Error) -> String {
@@ -168,6 +187,31 @@ nonisolated struct SyncRevisionConflict<Payload: Codable & Sendable>: Codable, S
     /// The revision the server was actually at when it refused the write.
     nonisolated var serverRevision: Int64?
     nonisolated var detectedAtEpochMs: Int64
+}
+
+/// A durable marker that one row's write was refused on revision grounds.
+///
+/// Deliberately small: it records THAT a conflict happened and which revisions were
+/// involved, not the two payloads. The local authored payload already lives in the entity's
+/// own persisted store (and stays queued), and the server's current copy is re-fetched on
+/// demand — so nothing here needs to duplicate either one, and there is no second copy to
+/// drift out of date.
+///
+/// Persisted rather than held in memory because a conflict means the grower's edit exists
+/// NOWHERE but this device. An in-memory flag would clear on the next launch, leaving a
+/// queued write that is silently never retried and never reviewed.
+nonisolated struct SyncRevisionConflictMark: Codable, Sendable, Equatable {
+    /// The revision the refused edit was based on.
+    nonisolated var baseRevision: Int64?
+    /// The revision the server had actually reached.
+    nonisolated var serverRevision: Int64?
+    nonisolated var detectedAt: Date
+
+    nonisolated init(baseRevision: Int64?, serverRevision: Int64?, detectedAt: Date = Date()) {
+        self.baseRevision = baseRevision
+        self.serverRevision = serverRevision
+        self.detectedAt = detectedAt
+    }
 }
 
 /// Outcome of one versioned write. An enum so a caller cannot forget the conflict branch.

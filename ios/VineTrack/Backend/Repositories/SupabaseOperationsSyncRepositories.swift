@@ -499,13 +499,58 @@ final class SupabasePruningYieldSettingsSyncRepository: PruningYieldSettingsSync
         return try await q.order("updated_at", ascending: true).execute().value
     }
 
-    func upsertMany(_ items: [BackendPruningYieldSettingsUpsert]) async throws {
+    func upsertSettings(
+        _ settings: PruningYieldSettings,
+        createdBy: UUID?,
+        clientUpdatedAt: Date
+    ) async throws -> VersionedWriteOutcome<PruningYieldSettings> {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        guard !items.isEmpty else { return }
-        // ONE saved configuration per block: conflict target is the
-        // (vineyard_id, paddock_id) unique key, NOT the row id, so two devices
-        // that minted different ids for the same block converge on one record.
-        try await provider.client.from("pruning_yield_settings").upsert(items, onConflict: "vineyard_id,paddock_id").execute()
+        let payload = BackendPruningYieldSettings.upsert(
+            from: settings,
+            createdBy: createdBy,
+            clientUpdatedAt: clientUpdatedAt
+        )
+        do {
+            // ONE saved configuration per block: conflict target is the
+            // (vineyard_id, paddock_id) unique key, NOT the row id, so two devices
+            // that minted different ids for the same block converge on one record.
+            //
+            // `.select()` asks for the representation back. It is NOT decoration: the response
+            // body is the only place the new `server_revision` appears, and it is also how this
+            // device learns which id the block converged on.
+            let response = try await provider.client
+                .from("pruning_yield_settings")
+                .upsert(payload, onConflict: "vineyard_id,paddock_id")
+                .select()
+                .execute()
+            return try VersionedWriteClassifier.classify(
+                rowId: settings.id.uuidString,
+                baseRevision: settings.serverRevision,
+                status: response.status,
+                body: String(data: response.data, encoding: .utf8)
+            ) { text in
+                guard let row = VersionedRepresentation.first(in: text) else { return nil }
+                var applied = settings
+                // Adopt the server's id: with a non-primary-key conflict target the surviving
+                // row can legitimately be one another device minted.
+                if let id = row.id { applied.id = id }
+                applied.serverRevision = row.serverRevision
+                return applied
+            }
+        } catch let error as VersionedWriteError {
+            throw error
+        } catch {
+            // supabase-swift raises for a non-2xx, so a PT409 arrives here rather than as a
+            // status. Routed through the SAME classifier as the raw-status path.
+            if let outcome: VersionedWriteOutcome<PruningYieldSettings> = VersionedWriteClassifier.conflict(
+                rowId: settings.id.uuidString,
+                baseRevision: settings.serverRevision,
+                from: error
+            ) {
+                return outcome
+            }
+            throw error
+        }
     }
 
     func softDelete(id: UUID) async throws {

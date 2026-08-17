@@ -116,6 +116,30 @@ distinguishes "late replay of an old edit" from "new edit made on a slow phone".
   delete the timestamp branch from `reject_stale_client_write()`. Check that table before
   assuming the old path is dead — released clients in the field still use it.
 
+## Implementation matrix
+
+Which concurrency authority each client actually uses per table. "Revision" means the client
+sends `base_revision`, requests the row back, adopts the returned `server_revision`, and
+handles `REVISION_CONFLICT` explicitly. "Timestamp" means it still relies on
+`client_updated_at` ordering and therefore still carries the clock-skew defects.
+
+| Entity | Android | iOS |
+| --- | --- | --- |
+| Resistance Plans | Revision | Revision |
+| Pruning Seasons | Revision | Revision |
+| Pruning Yield Settings | Revision | Revision |
+
+A cell may only be changed to "Revision" once the PRODUCTION write path on that platform
+actually sends `base_revision` and classifies `REVISION_CONFLICT` — not when tests exist, and
+not when the model merely carries the field. An inaccurate cell here is worse than no table:
+it is the thing a future reader will trust instead of re-reading the code.
+
+On iOS the two pruning entities were migrated after Resistance Plans, in
+`SupabasePruningSyncRepository.upsertSeason` and
+`SupabasePruningYieldSettingsSyncRepository.upsertSettings`. Both route every response through
+the shared `VersionedWriteClassifier`, and both pull paths now decide staleness by revision
+(`SyncRevisionContract.isRemoteBehind`) instead of comparing `client_updated_at`.
+
 ## Client implementation (Stage 2, shipped)
 
 One shared helper per platform — `SyncRevisionContract.kt` and `SyncRevisionContract.swift`
@@ -163,13 +187,30 @@ from `PendingWriteStatus.retryable` so the replay loop cannot pick it up.
 
 ### Conflict durability
 
-A conflict record stores the **whole local document, the whole server document, and both
-revisions** — persisted, not in memory. A `hasConflict = true` flag would tell the grower
-something went wrong having already destroyed the plan they wrote, which is worse than the
-silent loss this contract exists to fix. Resolution is explicit
+For Resistance Plans a conflict record stores the **whole local document, the whole server
+document, and both revisions** — persisted, not in memory. A `hasConflict = true` flag would
+tell the grower something went wrong having already destroyed the plan they wrote, which is
+worse than the silent loss this contract exists to fix. Resolution is explicit
 (`resolveKeepingLocal` / `resolveKeepingServer`); nothing resolves a conflict by comparing
 timestamps, because both versions descend from the same revision and device time cannot
 adjudicate authorship.
+
+The two pruning entities persist the same guarantee with less duplication, because their
+local authored copy already lives in a persisted store of its own:
+
+- the **queued write stays queued** (`pendingUpserts` keeps its entry), so the grower's
+  authored values survive a restart — that is the half that exists nowhere else;
+- a persisted `SyncRevisionConflictMark` (both revisions plus a detection time) records that
+  the row is conflicted, so the state survives a cold launch rather than clearing on relaunch
+  and leaving a queued write nobody ever retries or reviews;
+- the **server copy is re-fetched on demand** (`serverCopyOfSeason`,
+  `serverCopyOfSettings`) rather than stored side by side. A cached "server version" starts
+  drifting the moment it is written, and a review screen showing a stale server copy is worse
+  than one that fetches.
+
+On both platforms a conflicted row is excluded from the replay candidate set, and a pull is
+forbidden from overwriting it — either rule alone would be insufficient: replay would refuse
+forever, and a pull would destroy the authored edit.
 
 ## What the Lovable portal must send
 
@@ -207,6 +248,28 @@ They are lower risk because the outcome is reported, not swallowed. Tracked, not
 Ordinary display timestamps (`created_at`, `updated_at`, `date`) are out of scope and
 should stay as they are.
 
+### `client_updated_at` still has a NON-concurrency job on `pruning_yield_settings`
+
+This one is easy to "clean up" and break. The `sql/181` resurrection trigger un-deletes a
+soft-deleted block configuration when a client upsert arrives whose `client_updated_at` is
+**distinct from** the stored value:
+
+```sql
+if tg_op = 'UPDATE' and new.client_updated_at is distinct from old.client_updated_at then
+  new.deleted_at := null;
+```
+
+That is a **change detector**, not an ordering comparison. Dropping the field, sending it as
+null, or freezing it to a constant would silently stop un-deleting a block's settings — the row
+would stay soft-deleted and the grower's saved values would look permanently gone. The soft‑
+delete RPC deliberately does not touch `client_updated_at`, which is what keeps the two
+behaviours independent.
+
+So the rule is: **remove timestamp ORDERING as the concurrency authority, not every use of the
+timestamp.** iOS therefore still encodes `client_updated_at` unconditionally on every pruning
+yield-settings write, and `PruningYieldSettingsRevisionSyncTests` asserts both that it is
+present and non-null, and that two successive edits send different values.
+
 ## Verification
 
 ### Before a client release may be called revision-safe
@@ -217,9 +280,11 @@ All four of these must be GREEN, from an actual test run:
 2. Android revision tests — `PruningYieldSettingsRevisionSyncTest`,
    `PruningSeasonRevisionSyncTest`, `ResistancePlanRevisionSyncTest`,
    `ResistancePlanRepositoryTest`
-3. iOS revision tests — `ResistancePlanRevisionSyncTests`, `ResistancePlanRepositoryTests`
+3. iOS revision tests — `ResistancePlanRevisionSyncTests`, `ResistancePlanRepositoryTests`,
+   `PruningSeasonRevisionSyncTests`, `PruningYieldSettingsRevisionSyncTests`
 4. The cross-platform parity fixture — `SyncRevisionParityTest` (Android) AND
-   `SyncRevisionParityTests` (iOS)
+   `SyncRevisionParityTests` (iOS), whose final section asserts that all THREE entities
+   classify the same canonical server responses identically
 
 The parity fixture is listed separately on purpose. The per-platform suites each prove their
 own platform behaves; only the paired fixture proves the two platforms make the SAME decision

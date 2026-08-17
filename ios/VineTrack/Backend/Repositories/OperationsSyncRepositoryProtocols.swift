@@ -66,6 +66,19 @@ protocol PickingRecordSyncRepositoryProtocol: Sendable {
 
 protocol PruningYieldSettingsSyncRepositoryProtocol: Sendable {
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendPruningYieldSettings]
-    func upsertMany(_ items: [BackendPruningYieldSettingsUpsert]) async throws
+    /// Upserts ONE block's calculator configuration under the sql/198 revision contract.
+    ///
+    /// One request per block, deliberately: a multi-row upsert is a single transaction, so one
+    /// REVISION_CONFLICT would abort every other block's write in the batch.
+    ///
+    /// Returns ``VersionedWriteOutcome/applied(_:)`` carrying the authoritative row (with its
+    /// NEW `server_revision`, and the id the block converged on), or
+    /// ``VersionedWriteOutcome/conflict(rowId:baseRevision:serverRevision:)``. A conflict is
+    /// NEVER thrown — a thrown conflict is retried forever with the same stale `base_revision`.
+    func upsertSettings(
+        _ settings: PruningYieldSettings,
+        createdBy: UUID?,
+        clientUpdatedAt: Date
+    ) async throws -> VersionedWriteOutcome<PruningYieldSettings>
     func softDelete(id: UUID) async throws
 }

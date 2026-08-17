@@ -39,6 +39,12 @@ nonisolated struct BackendPruningSeason: Codable, Sendable, Identifiable {
     let updatedAt: Date?
     let deletedAt: Date?
     let clientUpdatedAt: Date?
+    /// Server-issued revision (sql/198). SERVER STATE, never authored by a screen.
+    ///
+    /// Optional for tolerance, not because the column is: a row last written by a
+    /// pre-sql/198 client, or a response from a path that did not project the column, must
+    /// DECODE rather than throw. A decode failure here would take out the whole season pull.
+    let serverRevision: Int64?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -58,6 +64,7 @@ nonisolated struct BackendPruningSeason: Codable, Sendable, Identifiable {
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
         case clientUpdatedAt = "client_updated_at"
+        case serverRevision = "server_revision"
     }
 }
 
@@ -75,7 +82,18 @@ nonisolated struct BackendPruningSeasonUpsert: Encodable, Sendable {
     let estimatedLabourHours: Double?
     let notes: String
     let createdBy: UUID?
+    /// When the grower edited. METADATA under sql/198 — clamped to server `now()` and no
+    /// longer the concurrency authority. Still sent for display, audit and the legacy
+    /// trigger path used by older released clients.
     let clientUpdatedAt: Date
+    /// The version this edit was based on — THE concurrency authority (sql/198).
+    ///
+    /// Omitted from the JSON when nil (synthesized `encodeIfPresent`), which sql/198 reads
+    /// as a create. Sending an explicit null would be a different statement, and sending a
+    /// fabricated number would either be refused forever or match by luck and overwrite an
+    /// edit this device never saw. Asserted directly on this encoder by
+    /// `PruningSeasonRevisionSyncTests`.
+    let baseRevision: Int64?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -92,10 +110,16 @@ nonisolated struct BackendPruningSeasonUpsert: Encodable, Sendable {
         case notes
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
+        case baseRevision = "base_revision"
     }
 }
 
 extension BackendPruningSeason {
+    /// The ONE mapping from a local setup to a versioned season write.
+    ///
+    /// `baseRevision` is taken from ``PruningBlockSetup/serverRevision`` and nothing else —
+    /// never derived, never incremented, never defaulted. Mirrors `SeasonUpsert.from` on
+    /// Android.
     static func upsert(from setup: PruningBlockSetup, createdBy: UUID?, clientUpdatedAt: Date) -> BackendPruningSeasonUpsert {
         BackendPruningSeasonUpsert(
             id: setup.id,
@@ -111,7 +135,8 @@ extension BackendPruningSeason {
             estimatedLabourHours: setup.estimatedLabourHours,
             notes: setup.notes,
             createdBy: createdBy,
-            clientUpdatedAt: clientUpdatedAt
+            clientUpdatedAt: clientUpdatedAt,
+            baseRevision: setup.serverRevision
         )
     }
 
@@ -128,7 +153,8 @@ extension BackendPruningSeason {
             workingDays: workingDays ?? [1, 2, 3, 4, 5],
             rowCountOverride: manualRowCount,
             estimatedLabourHours: estimatedLabourHours,
-            notes: notes ?? ""
+            notes: notes ?? "",
+            serverRevision: serverRevision
         )
     }
 }

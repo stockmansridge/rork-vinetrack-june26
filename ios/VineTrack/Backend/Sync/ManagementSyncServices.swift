@@ -13,6 +13,19 @@ final class ManagementSyncMetadata {
         var lastSyncByVineyard: [UUID: Date] = [:]
         var pendingUpserts: [UUID: Date] = [:]
         var pendingDeletes: [UUID: Date] = [:]
+        /// Rows the server REFUSED on sql/198 revision grounds.
+        ///
+        /// OPTIONAL, not a defaulted non-optional: Swift's synthesized `Codable` ignores
+        /// property defaults and THROWS on a missing key, so a non-optional here would fail
+        /// to decode every already-persisted state file and silently reset the outbox of
+        /// every existing install — losing exactly the queued work this contract protects.
+        var revisionConflicts: [UUID: SyncRevisionConflictMark]?
+        /// Last `server_revision` this device has actually observed per row.
+        ///
+        /// The read-side anchor: a pull carrying an OLDER revision came from a replica that
+        /// has not caught up, and must not overwrite a newer confirmed local state. Optional
+        /// for the same decode-compatibility reason.
+        var observedRevisions: [UUID: Int64]?
     }
 
     init(key: String, persistence: PersistenceStore = .shared) {
@@ -23,6 +36,55 @@ final class ManagementSyncMetadata {
 
     var pendingUpserts: [UUID: Date] { state.pendingUpserts }
     var pendingDeletes: [UUID: Date] { state.pendingDeletes }
+
+    // MARK: - sql/198 revision state
+
+    /// Rows with an unresolved revision conflict. Excluded from replay by every caller:
+    /// replaying one resends the same stale `base_revision` and is refused every time.
+    var conflictedIds: Set<UUID> { Set((state.revisionConflicts ?? [:]).keys) }
+
+    func revisionConflict(for id: UUID) -> SyncRevisionConflictMark? {
+        state.revisionConflicts?[id]
+    }
+
+    /// Records a refused write. The pending upsert is deliberately NOT cleared: the grower's
+    /// authored values are still queued and are the only copy of that edit.
+    func markRevisionConflict(_ id: UUID, baseRevision: Int64?, serverRevision: Int64?, at date: Date = Date()) {
+        var conflicts = state.revisionConflicts ?? [:]
+        conflicts[id] = SyncRevisionConflictMark(
+            baseRevision: baseRevision,
+            serverRevision: serverRevision,
+            detectedAt: date
+        )
+        state.revisionConflicts = conflicts
+        save()
+    }
+
+    func clearRevisionConflicts(_ ids: [UUID]) {
+        guard !ids.isEmpty, var conflicts = state.revisionConflicts, !conflicts.isEmpty else { return }
+        let before = conflicts.count
+        for id in ids { conflicts.removeValue(forKey: id) }
+        guard conflicts.count != before else { return }
+        state.revisionConflicts = conflicts
+        save()
+    }
+
+    func observedRevision(for id: UUID) -> Int64? { state.observedRevisions?[id] }
+
+    /// Records the revision this device now holds for a row. A nil revision (legacy row, or a
+    /// server predating sql/198) clears the anchor rather than storing a fake one.
+    func setObservedRevision(_ revision: Int64?, for id: UUID) {
+        var revisions = state.observedRevisions ?? [:]
+        if let revision {
+            guard revisions[id] != revision else { return }
+            revisions[id] = revision
+        } else {
+            guard revisions[id] != nil else { return }
+            revisions.removeValue(forKey: id)
+        }
+        state.observedRevisions = revisions
+        save()
+    }
 
     func lastSync(for vineyardId: UUID) -> Date? { state.lastSyncByVineyard[vineyardId] }
 
@@ -45,6 +107,11 @@ final class ManagementSyncMetadata {
     func clearDirty(_ ids: [UUID]) {
         guard !ids.isEmpty else { return }
         for id in ids { state.pendingUpserts.removeValue(forKey: id) }
+        // A row with nothing queued has no unresolved conflict left to review.
+        if var conflicts = state.revisionConflicts, !conflicts.isEmpty {
+            for id in ids { conflicts.removeValue(forKey: id) }
+            state.revisionConflicts = conflicts
+        }
         save()
     }
 

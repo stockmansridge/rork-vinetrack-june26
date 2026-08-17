@@ -22,6 +22,14 @@ nonisolated struct PruningYieldSettings: Codable, Identifiable, Hashable {
     var vinesPerHa: Double?
     var bunchWeightGrams: Double
     var updatedAt: Date
+    /// Server-issued concurrency token (sql/198). SERVER STATE — persisted so the next edit
+    /// can assert it as `base_revision`, but NEVER authored by a screen or an editor.
+    ///
+    /// Nil means "this device has never been issued a revision for this block", which
+    /// sql/198 reads as a create. It is left nil rather than defaulted to 0 or 1 on purpose:
+    /// a fabricated revision either gets refused forever or matches by luck and silently
+    /// overwrites an edit this device never saw.
+    var serverRevision: Int64?
 
     init(
         id: UUID = UUID(),
@@ -35,7 +43,8 @@ nonisolated struct PruningYieldSettings: Codable, Identifiable, Hashable {
         canesPerVine: Double = PruningYieldDefaults.canesPerVine,
         vinesPerHa: Double? = nil,
         bunchWeightGrams: Double = PruningYieldDefaults.bunchWeightGrams,
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        serverRevision: Int64? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -49,10 +58,15 @@ nonisolated struct PruningYieldSettings: Codable, Identifiable, Hashable {
         self.vinesPerHa = vinesPerHa
         self.bunchWeightGrams = bunchWeightGrams
         self.updatedAt = updatedAt
+        self.serverRevision = serverRevision
     }
 
     /// Value equality on the user-editable inputs only (identity, vineyard,
-    /// block and timestamps ignored). Used to skip no-op autosaves.
+    /// block, timestamps and the server revision ignored). Used to skip no-op autosaves.
+    ///
+    /// `serverRevision` is excluded deliberately: a pull that only advances the revision is
+    /// not a user-visible change, and counting it as one would fire an autosave that writes
+    /// the same values back and burns a revision on every sync.
     func inputsEqual(to other: PruningYieldSettings) -> Bool {
         pruneMethod == other.pruneMethod
             && bunchesPerBud == other.bunchesPerBud

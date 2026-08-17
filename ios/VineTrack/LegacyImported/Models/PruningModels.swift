@@ -136,6 +136,14 @@ nonisolated struct PruningBlockSetup: Codable, Identifiable, Sendable, Hashable 
     var rowCountOverride: Int?
     var estimatedLabourHours: Double?
     var notes: String
+    /// Server-issued concurrency token (sql/198). SERVER STATE — persisted so the next edit
+    /// can assert it as `base_revision`, but NEVER authored by a screen or an editor.
+    ///
+    /// Nil means "this device has never been issued a revision for this season", which
+    /// sql/198 reads as a create. Left nil rather than defaulted to 0 or 1 on purpose: a
+    /// fabricated revision either gets refused forever or matches by luck and silently
+    /// overwrites an edit this device never saw.
+    var serverRevision: Int64?
 
     init(
         id: UUID? = nil,
@@ -149,7 +157,8 @@ nonisolated struct PruningBlockSetup: Codable, Identifiable, Sendable, Hashable 
         workingDays: [Int] = [1, 2, 3, 4, 5],
         rowCountOverride: Int? = nil,
         estimatedLabourHours: Double? = nil,
-        notes: String = ""
+        notes: String = "",
+        serverRevision: Int64? = nil
     ) {
         self.id = id ?? PruningSeasonId.make(vineyardId: vineyardId, paddockId: paddockId, seasonYear: seasonYear)
         self.seasonYear = seasonYear
@@ -163,6 +172,7 @@ nonisolated struct PruningBlockSetup: Codable, Identifiable, Sendable, Hashable 
         self.rowCountOverride = rowCountOverride
         self.estimatedLabourHours = estimatedLabourHours
         self.notes = notes
+        self.serverRevision = serverRevision
     }
 }
 

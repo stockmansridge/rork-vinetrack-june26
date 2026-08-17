@@ -118,10 +118,20 @@ final class PruningStore {
         setups.first { $0.paddockId == paddockId && $0.seasonYear == PruningSeasonId.seasonYear(for: date) }
     }
 
+    /// Saves a LOCAL user edit of a block's season setup.
+    ///
+    /// The server revision is re-stamped from the cached row and never taken from the incoming
+    /// value. `server_revision` is server state: an editor that built a fresh
+    /// ``PruningBlockSetup`` (revision nil) would otherwise downgrade a synced season to
+    /// "unversioned" and have its write read as a create, and a stale copy held by a screen
+    /// could smuggle an OLD revision back in and be refused forever. Screens author values;
+    /// only the server authors revisions.
     func upsertSetup(_ setup: PruningBlockSetup) {
-        applySeasonUpsert(setup)
+        var item = setup
+        item.serverRevision = setups.first { $0.id == setup.id }?.serverRevision
+        applySeasonUpsert(item)
         persistSetups()
-        onSeasonChanged?(setup.id)
+        onSeasonChanged?(item.id)
     }
 
     // MARK: Entries

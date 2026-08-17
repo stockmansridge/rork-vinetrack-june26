@@ -403,4 +403,215 @@ struct SyncRevisionParityTests {
         guard let remote, let known else { return false }
         return remote < known
     }
+
+    // MARK: - 12. ALL THREE ENTITIES, one contract
+
+    /// Canonical `pruning_seasons` row at ``Fixture/acceptedRevision``.
+    private static let seasonRow = """
+    [{"id":"9f8e7d6c-5b4a-4392-8271-0a1b2c3d4e5f",
+      "vineyard_id":"11111111-1111-4111-8111-111111111111",
+      "paddock_id":"22222222-2222-4222-8222-222222222222",
+      "season_year":2026,"pruning_method":"spur","assigned_crew":"Crew A",
+      "working_days":[1,2,3,4,5],"notes":"","status":"active",
+      "client_updated_at":"2026-08-17T02:00:00Z","server_revision":8}]
+    """
+
+    /// Canonical `resistance_plans` row at ``Fixture/acceptedRevision``.
+    private static let planRow = """
+    [{"id":"9f8e7d6c-5b4a-4392-8271-0a1b2c3d4e5f",
+      "vineyard_id":"11111111-1111-4111-8111-111111111111",
+      "season_id":"2026/27","season_start_year":2026,
+      "disease":"powdery_mildew","jurisdiction":"australia","crop":"grape",
+      "client_updated_at":"2026-08-17T02:00:00Z","server_revision":8}]
+    """
+
+    /// The three entity names on the sql/198 contract, used to label parity failures.
+    private enum Entity: String, CaseIterable {
+        case resistancePlans = "resistance_plans"
+        case pruningSeasons = "pruning_seasons"
+        case pruningYieldSettings = "pruning_yield_settings"
+
+        /// The canonical 2xx representation for this entity, all at the same revision.
+        var representation: String {
+            switch self {
+            case .resistancePlans: return SyncRevisionParityTests.planRow
+            case .pruningSeasons: return SyncRevisionParityTests.seasonRow
+            case .pruningYieldSettings: return Fixture.settingsRow
+            }
+        }
+    }
+
+    /// Classifies a response for one entity through the REAL shared classifier, using only the
+    /// revision-relevant decode every production repository performs.
+    ///
+    /// Deliberately entity-agnostic: the whole point of this section is that the DECISION does
+    /// not vary by entity. If one entity ever needs its own classification branch, this test is
+    /// where that shows up.
+    private func classifyForParity(
+        entity: Entity,
+        baseRevision: Int64?,
+        status: Int,
+        body: String?
+    ) throws -> VersionedWriteOutcome<Int64?> {
+        try VersionedWriteClassifier.classify(
+            rowId: Fixture.rowId,
+            baseRevision: baseRevision,
+            status: status,
+            body: body
+        ) { text in
+            guard let row = VersionedRepresentation.first(in: text) else { return nil }
+            return row.serverRevision
+        }
+    }
+
+    @Test("All three entities classify the canonical PT409 identically")
+    func allEntitiesAgreeOnConflict() throws {
+        for entity in Entity.allCases {
+            let outcome = try classifyForParity(
+                entity: entity,
+                baseRevision: Fixture.observedRevision,
+                status: 409,
+                body: Fixture.conflictBody
+            )
+            let parts = try #require(conflictParts(outcome), "\(entity.rawValue) must classify PT409 as a conflict")
+            #expect(parts.base == Fixture.observedRevision, "\(entity.rawValue) base revision")
+            #expect(parts.server == Fixture.conflictingServerRevision, "\(entity.rawValue) server revision")
+        }
+    }
+
+    @Test("All three entities accept the canonical success and adopt the same revision")
+    func allEntitiesAgreeOnSuccess() throws {
+        for entity in Entity.allCases {
+            let outcome = try classifyForParity(
+                entity: entity,
+                baseRevision: Fixture.observedRevision,
+                status: 200,
+                body: entity.representation
+            )
+            let revision = try #require(appliedRow(outcome), "\(entity.rawValue) must apply a valid representation")
+            #expect(revision == Fixture.acceptedRevision, "\(entity.rawValue) adopts the server's revision")
+        }
+    }
+
+    @Test("All three entities treat an empty 2xx as a refused write")
+    func allEntitiesAgreeOnEmptyRepresentation() throws {
+        for entity in Entity.allCases {
+            let outcome = try classifyForParity(
+                entity: entity,
+                baseRevision: Fixture.observedRevision,
+                status: 200,
+                body: Fixture.emptyRepresentation
+            )
+            #expect(conflictParts(outcome) != nil, "\(entity.rawValue) must not report an empty 2xx as saved")
+        }
+    }
+
+    @Test("All three entities refuse to call a unique violation a revision conflict")
+    func allEntitiesAgreeOnNonRevisionConflict() {
+        for entity in Entity.allCases {
+            #expect(throws: VersionedWriteError.self, "\(entity.rawValue) must throw, not conflict") {
+                _ = try classifyForParity(
+                    entity: entity,
+                    baseRevision: Fixture.observedRevision,
+                    status: 409,
+                    body: Fixture.uniqueViolationBody
+                )
+            }
+        }
+    }
+
+    @Test("All three production encoders omit base_revision for an unsynced row")
+    func allEntitiesOmitBaseRevisionWhenUnsynced() throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let stamp = Date(timeIntervalSince1970: 1_786_000_000)
+
+        let plan = ResistancePlan(
+            id: Fixture.rowId,
+            vineyardId: Fixture.vineyardId,
+            seasonId: "2026/27",
+            seasonStartYear: 2026,
+            disease: .powderyMildew,
+            jurisdiction: .australia,
+            crop: .grape
+        )
+        let season = PruningBlockSetup(
+            id: UUID(uuidString: Fixture.rowId)!,
+            vineyardId: UUID(uuidString: Fixture.vineyardId)!,
+            paddockId: UUID(uuidString: Fixture.paddockId)!,
+            seasonYear: 2026
+        )
+        let settings = PruningYieldSettings(
+            id: UUID(uuidString: Fixture.rowId)!,
+            vineyardId: UUID(uuidString: Fixture.vineyardId)!,
+            paddockId: UUID(uuidString: Fixture.paddockId)!
+        )
+
+        let encoded: [(String, String)] = [
+            (Entity.resistancePlans.rawValue, String(decoding: try encoder.encode(BackendResistancePlanUpsert(from: plan, createdBy: nil)), as: UTF8.self)),
+            (Entity.pruningSeasons.rawValue, String(decoding: try encoder.encode(BackendPruningSeason.upsert(from: season, createdBy: nil, clientUpdatedAt: stamp)), as: UTF8.self)),
+            (Entity.pruningYieldSettings.rawValue, String(decoding: try encoder.encode(BackendPruningYieldSettings.upsert(from: settings, createdBy: nil, clientUpdatedAt: stamp)), as: UTF8.self)),
+        ]
+
+        for (name, text) in encoded {
+            // OMITTED, not null and not 0 — sql/198 reads an absent base_revision as a create.
+            #expect(!text.contains("base_revision"), "\(name) must omit base_revision when unsynced")
+        }
+    }
+
+    @Test("All three production encoders send the observed revision verbatim once synced")
+    func allEntitiesSendBaseRevisionWhenSynced() throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let stamp = Date(timeIntervalSince1970: 1_786_000_000)
+
+        var plan = ResistancePlan(
+            id: Fixture.rowId,
+            vineyardId: Fixture.vineyardId,
+            seasonId: "2026/27",
+            seasonStartYear: 2026,
+            disease: .powderyMildew,
+            jurisdiction: .australia,
+            crop: .grape
+        )
+        plan.serverRevision = Fixture.observedRevision
+        var season = PruningBlockSetup(
+            id: UUID(uuidString: Fixture.rowId)!,
+            vineyardId: UUID(uuidString: Fixture.vineyardId)!,
+            paddockId: UUID(uuidString: Fixture.paddockId)!,
+            seasonYear: 2026
+        )
+        season.serverRevision = Fixture.observedRevision
+        var settings = PruningYieldSettings(
+            id: UUID(uuidString: Fixture.rowId)!,
+            vineyardId: UUID(uuidString: Fixture.vineyardId)!,
+            paddockId: UUID(uuidString: Fixture.paddockId)!
+        )
+        settings.serverRevision = Fixture.observedRevision
+
+        let encoded: [(String, String)] = [
+            (Entity.resistancePlans.rawValue, String(decoding: try encoder.encode(BackendResistancePlanUpsert(from: plan, createdBy: nil)), as: UTF8.self)),
+            (Entity.pruningSeasons.rawValue, String(decoding: try encoder.encode(BackendPruningSeason.upsert(from: season, createdBy: nil, clientUpdatedAt: stamp)), as: UTF8.self)),
+            (Entity.pruningYieldSettings.rawValue, String(decoding: try encoder.encode(BackendPruningYieldSettings.upsert(from: settings, createdBy: nil, clientUpdatedAt: stamp)), as: UTF8.self)),
+        ]
+
+        for (name, text) in encoded {
+            #expect(text.contains("\"base_revision\":7"), "\(name) must assert the observed revision")
+            // The metadata stamp still travels on every entity: it is display/audit data, and on
+            // pruning_yield_settings the sql/181 resurrection trigger detects a genuine client
+            // write by that value CHANGING. It simply no longer decides who wins.
+            #expect(text.contains("client_updated_at"), "\(name) must still send client_updated_at")
+        }
+    }
+
+    @Test("All three entities share one replica-lag rule")
+    func allEntitiesShareTheLagRule() {
+        // Every entity calls the SAME helper, so there is one ordering primitive rather than
+        // three. Asserted through the production function, not a local copy.
+        #expect(SyncRevisionContract.isRemoteBehind(observed: Fixture.acceptedRevision, remote: Fixture.observedRevision))
+        #expect(!SyncRevisionContract.isRemoteBehind(observed: Fixture.acceptedRevision, remote: Fixture.acceptedRevision))
+        #expect(!SyncRevisionContract.isRemoteBehind(observed: Fixture.acceptedRevision, remote: Fixture.conflictingServerRevision))
+        #expect(!SyncRevisionContract.isRemoteBehind(observed: nil, remote: Fixture.observedRevision))
+        #expect(!SyncRevisionContract.isRemoteBehind(observed: Fixture.acceptedRevision, remote: nil))
+    }
 }

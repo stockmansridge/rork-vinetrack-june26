@@ -64,7 +64,18 @@ nonisolated struct BackendPruningYieldSettingsUpsert: Encodable, Sendable {
     let vinesPerHa: Double?
     let bunchWeightGrams: Double
     let createdBy: UUID?
+    /// When the grower edited. METADATA under sql/198 — clamped to server `now()` and no
+    /// longer the concurrency authority. Still SENT, and removing it would be a real
+    /// regression: the sql/181 resurrection trigger detects a genuine client upsert by this
+    /// value CHANGING (`new.client_updated_at is distinct from old.client_updated_at`) and
+    /// un-deletes a soft-deleted block configuration on that basis. That is a
+    /// change-detector, not an ordering comparison.
     let clientUpdatedAt: Date
+    /// The version this edit was based on — THE concurrency authority (sql/198).
+    ///
+    /// Omitted from the JSON when nil, which sql/198 reads as a create. Never derived,
+    /// never incremented, never defaulted.
+    let baseRevision: Int64?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -80,6 +91,7 @@ nonisolated struct BackendPruningYieldSettingsUpsert: Encodable, Sendable {
         case bunchWeightGrams = "bunch_weight_grams"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
+        case baseRevision = "base_revision"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -97,11 +109,18 @@ nonisolated struct BackendPruningYieldSettingsUpsert: Encodable, Sendable {
         try c.encode(vinesPerHa, forKey: .vinesPerHa)
         try c.encode(bunchWeightGrams, forKey: .bunchWeightGrams)
         try c.encodeIfPresent(createdBy, forKey: .createdBy)
+        // ALWAYS encoded: the sql/181 resurrection trigger keys off this value changing.
         try c.encode(clientUpdatedAt, forKey: .clientUpdatedAt)
+        // encodeIfPresent, NOT encode: a row this device has never been issued a revision
+        // for must OMIT the key so sql/198 reads the write as a create. An explicit null is
+        // a different statement to the server.
+        try c.encodeIfPresent(baseRevision, forKey: .baseRevision)
     }
 }
 
 extension BackendPruningYieldSettings {
+    /// The ONE mapping from a local configuration to a versioned write. `baseRevision` comes
+    /// from ``PruningYieldSettings/serverRevision`` and nothing else.
     static func upsert(from settings: PruningYieldSettings, createdBy: UUID?, clientUpdatedAt: Date) -> BackendPruningYieldSettingsUpsert {
         BackendPruningYieldSettingsUpsert(
             id: settings.id,
@@ -116,7 +135,8 @@ extension BackendPruningYieldSettings {
             vinesPerHa: settings.vinesPerHa,
             bunchWeightGrams: settings.bunchWeightGrams,
             createdBy: createdBy,
-            clientUpdatedAt: clientUpdatedAt
+            clientUpdatedAt: clientUpdatedAt,
+            baseRevision: settings.serverRevision
         )
     }
 
@@ -133,7 +153,11 @@ extension BackendPruningYieldSettings {
             canesPerVine: canesPerVine ?? PruningYieldDefaults.canesPerVine,
             vinesPerHa: vinesPerHa,
             bunchWeightGrams: bunchWeightGrams ?? PruningYieldDefaults.bunchWeightGrams,
-            updatedAt: clientUpdatedAt ?? updatedAt ?? Date()
+            updatedAt: clientUpdatedAt ?? updatedAt ?? Date(),
+            // Carried through so the NEXT edit can assert it as `base_revision`. Nil for a
+            // legacy row, which sql/198 then treats as a create — correct, and the row
+            // becomes versioned from that write on.
+            serverRevision: serverRevision
         )
     }
 }

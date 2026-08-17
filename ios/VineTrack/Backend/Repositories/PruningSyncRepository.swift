@@ -7,7 +7,21 @@ protocol PruningSyncRepositoryProtocol: Sendable {
     /// Completed quarters are always fetched in full — they are the single
     /// source of truth for progress and re-attribution must see everything.
     func fetchSegments(vineyardId: UUID) async throws -> [BackendPruningSegment]
-    func upsertSeasons(_ items: [BackendPruningSeasonUpsert]) async throws
+    /// Upserts ONE block season setup under the sql/198 revision contract.
+    ///
+    /// One request per season, deliberately: a multi-row upsert is a single transaction, so
+    /// one REVISION_CONFLICT would abort the write of every other season in the batch and
+    /// strand edits that were perfectly valid.
+    ///
+    /// Returns ``VersionedWriteOutcome/applied(_:)`` carrying the authoritative row (with its
+    /// NEW `server_revision`), or ``VersionedWriteOutcome/conflict(rowId:baseRevision:serverRevision:)``.
+    /// A conflict is NEVER thrown: a thrown conflict is classified as a transport failure and
+    /// retried forever with the same stale `base_revision`, which can never succeed.
+    func upsertSeason(
+        _ setup: PruningBlockSetup,
+        createdBy: UUID?,
+        clientUpdatedAt: Date
+    ) async throws -> VersionedWriteOutcome<PruningBlockSetup>
     /// Records (or idempotently replays) an entry through `record_pruning_entry`.
     /// The result carries the CANONICAL season the server resolved from the
     /// entry date (sql/161) — callers must adopt it.
@@ -102,10 +116,54 @@ final class SupabasePruningSyncRepository: PruningSyncRepositoryProtocol {
             .value
     }
 
-    func upsertSeasons(_ items: [BackendPruningSeasonUpsert]) async throws {
+    func upsertSeason(
+        _ setup: PruningBlockSetup,
+        createdBy: UUID?,
+        clientUpdatedAt: Date
+    ) async throws -> VersionedWriteOutcome<PruningBlockSetup> {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        guard !items.isEmpty else { return }
-        try await provider.client.from("pruning_seasons").upsert(items, onConflict: "id").execute()
+        let payload = BackendPruningSeason.upsert(from: setup, createdBy: createdBy, clientUpdatedAt: clientUpdatedAt)
+        do {
+            // `.select()` asks for the representation back. It is NOT decoration: the response
+            // body is the only place the new `server_revision` appears. Without it this device
+            // could never learn what version its own edit became, would resend the previous
+            // `base_revision` on the next edit, and would be refused forever.
+            let response = try await provider.client
+                .from("pruning_seasons")
+                .upsert(payload, onConflict: "id")
+                .select()
+                .execute()
+            // ONE shared classifier for every versioned entity. Retry policy hangs off this
+            // decision, and a second hand-rolled copy is how a refused write eventually gets
+            // reported as saved.
+            return try VersionedWriteClassifier.classify(
+                rowId: setup.id.uuidString,
+                baseRevision: setup.serverRevision,
+                status: response.status,
+                body: String(data: response.data, encoding: .utf8)
+            ) { text in
+                guard let row = VersionedRepresentation.first(in: text) else { return nil }
+                // The server accepted these values, so the row holds what was just sent; only
+                // the server-issued revision is adopted from the response.
+                var applied = setup
+                applied.serverRevision = row.serverRevision
+                return applied
+            }
+        } catch let error as VersionedWriteError {
+            throw error
+        } catch {
+            // supabase-swift raises for a non-2xx, so a PT409 arrives here rather than as a
+            // status. Routed through the SAME classifier so the SDK path and the raw-status
+            // path cannot disagree about what a REVISION_CONFLICT means.
+            if let outcome: VersionedWriteOutcome<PruningBlockSetup> = VersionedWriteClassifier.conflict(
+                rowId: setup.id.uuidString,
+                baseRevision: setup.serverRevision,
+                from: error
+            ) {
+                return outcome
+            }
+            throw error
+        }
     }
 
     func recordEntry(_ params: RecordPruningEntryParams) async throws -> RecordPruningEntryResult {

@@ -37,6 +37,28 @@ final class PruningYieldSettingsSyncService {
         store.onPruningYieldSettingsDeleted = { [weak self] id in self?.metadata.markDeleted(id, at: Date()) }
     }
 
+    // MARK: sql/198 revision conflicts
+
+    /// Block configurations whose last write the server REFUSED on revision grounds. The
+    /// grower's authored values are still queued; nothing here resolves a conflict
+    /// automatically.
+    var conflictedIds: Set<UUID> { metadata.conflictedIds }
+
+    /// The unresolved conflict for a block configuration, if any. Survives app restarts.
+    func revisionConflict(id: UUID) -> SyncRevisionConflictMark? {
+        metadata.revisionConflict(for: id)
+    }
+
+    /// RE-FETCHES the server's current row for a conflicted block configuration.
+    ///
+    /// Deliberately a fresh read rather than a stored side-by-side copy: a cached "server
+    /// version" starts drifting the moment it is written. The LOCAL authored copy is the half
+    /// that must survive, and that lives in the store plus the queue.
+    func serverCopyOfSettings(id: UUID, vineyardId: UUID) async -> PruningYieldSettings? {
+        guard let remote = try? await repository.fetch(vineyardId: vineyardId, since: nil) else { return nil }
+        return remote.first { $0.id == id && $0.deletedAt == nil }?.toPruningYieldSettings()
+    }
+
     func syncForSelectedVineyard() async {
         guard let store, let auth, auth.isSignedIn,
               let vineyardId = store.selectedVineyardId else { return }
@@ -60,32 +82,75 @@ final class PruningYieldSettingsSyncService {
         }
     }
 
+    /// Pushes queued block configurations under the sql/198 revision contract.
+    ///
+    /// ONE REQUEST PER BLOCK. The batch upsert this replaced was a single transaction, so one
+    /// conflicting block would have aborted every other block's write in the same call.
     private func push(vineyardId: UUID) async throws {
         guard let store else { return }
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
             let byId = Dictionary(store.pruningYieldSettings.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
-            var payloads: [BackendPruningYieldSettingsUpsert] = []
-            var pushed: [UUID] = []
+            let conflicted = metadata.conflictedIds
             var orphans: [UUID] = []
+            var firstRetryableError: Error?
             for (id, ts) in dirty {
                 guard let item = byId[id] else { orphans.append(id); continue }
-                payloads.append(BackendPruningYieldSettings.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
-                pushed.append(id)
+                // A conflicted write is NEVER auto-retried: it would resend the same stale
+                // `base_revision` and be refused every single time. It waits for a person.
+                if conflicted.contains(id) { continue }
+                do {
+                    switch try await repository.upsertSettings(item, createdBy: createdBy, clientUpdatedAt: ts) {
+                    case let .applied(row):
+                        // The returned representation carries the NEW `server_revision` (and the
+                        // id the block converged on) — the only way this device learns what
+                        // version its own edit became. Never base + 1.
+                        store.applyRemotePruningYieldSettingsUpsert(row)
+                        metadata.setObservedRevision(row.serverRevision, for: row.id)
+                        metadata.clearDirty([id])
+                        SyncIssueCenter.shared.clearIssues([id])
+                    case let .conflict(_, base, server):
+                        // NOT cleared, NOT marked synced, NOT retried, and the queued local
+                        // values are NOT replaced by the server's.
+                        metadata.markRevisionConflict(id, baseRevision: base, serverRevision: server)
+                        SyncIssueCenter.shared.recordFailure(
+                            id: id,
+                            entity: "Pruning Yield Settings",
+                            detail: SyncFailureDetail(
+                                kind: .permanent,
+                                reasonCode: "revision_conflict",
+                                friendlyMessage: "These calculator settings were also changed on another device. Both versions are saved — open the block to review.",
+                                technicalDetail: "pruning_yield_settings row=\(id.uuidString) base_revision=\(base.map(String.init) ?? "none") server_revision=\(server.map(String.init) ?? "unknown")"
+                            ),
+                            queuedAt: ts,
+                            payloadKeys: [],
+                            vineyardId: vineyardId
+                        )
+                        print("[PruningYieldSettingsSync] block config \(id) REVISION_CONFLICT (base \(base.map(String.init) ?? "none") vs server \(server.map(String.init) ?? "unknown")) — kept queued for review")
+                    }
+                } catch {
+                    // Isolate: one bad configuration must not block the others.
+                    let detail = BackendErrorDiagnostics.classify(error, endpoint: "Pruning Yield Settings")
+                    SyncIssueCenter.shared.recordFailure(
+                        id: id,
+                        entity: "Pruning Yield Settings",
+                        detail: detail,
+                        queuedAt: ts,
+                        payloadKeys: SyncQueuePush.payloadKeys(
+                            BackendPruningYieldSettings.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts)
+                        ),
+                        vineyardId: vineyardId
+                    )
+                    if detail.kind == .retryable, firstRetryableError == nil {
+                        firstRetryableError = SyncPushError(entity: "Pruning Yield Settings", detail: detail)
+                    }
+                }
             }
             metadata.clearDirty(orphans)
             SyncIssueCenter.shared.clearIssues(orphans)
-            let result = await SyncQueuePush.run(
-                entity: "Pruning Yield Settings",
-                ids: pushed,
-                payloads: payloads,
-                queuedAt: dirty,
-                vineyardId: vineyardId
-            ) { try await repository.upsertMany($0) }
-            metadata.clearDirty(result.uploaded)
             SyncIssueCenter.shared.notePending(entity: "Pruning Yield Settings", count: metadata.pendingUpserts.count)
-            if let error = result.firstRetryableError { throw error }
+            if let firstRetryableError { throw firstRetryableError }
         }
         for (id, _) in metadata.pendingDeletes {
             do {
@@ -116,18 +181,28 @@ final class PruningYieldSettingsSyncService {
             if !missing.isEmpty {
                 let now = Date()
                 let createdBy = auth?.userId
-                let payloads = missing.map { BackendPruningYieldSettings.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now) }
-                do {
-                    try await repository.upsertMany(payloads)
-                    metadata.clearDirty(missing.map { $0.id })
-                    #if DEBUG
-                    print("[PruningYieldSettingsSync] initial seed pushed \(payloads.count) local row(s) missing remotely")
-                    #endif
-                } catch {
-                    #if DEBUG
-                    print("[PruningYieldSettingsSync] initial seed push failed: \(error.localizedDescription)")
-                    #endif
+                var seeded = 0
+                // Per row: a conflict on one seeded block must not abort the others. A refused
+                // seed simply stays local and is retried by the normal push path.
+                for item in missing {
+                    do {
+                        if case let .applied(row) = try await repository.upsertSettings(item, createdBy: createdBy, clientUpdatedAt: now) {
+                            store.applyRemotePruningYieldSettingsUpsert(row)
+                            metadata.setObservedRevision(row.serverRevision, for: row.id)
+                            metadata.clearDirty([item.id])
+                            seeded += 1
+                        }
+                    } catch {
+                        #if DEBUG
+                        print("[PruningYieldSettingsSync] initial seed push failed for \(item.id): \(error.localizedDescription)")
+                        #endif
+                    }
                 }
+                #if DEBUG
+                if seeded > 0 {
+                    print("[PruningYieldSettingsSync] initial seed pushed \(seeded) local row(s) missing remotely")
+                }
+                #endif
             }
             if remote.isEmpty { return }
         }
@@ -136,11 +211,28 @@ final class PruningYieldSettingsSyncService {
                 store.applyRemotePruningYieldSettingsDelete(item.id)
                 metadata.clearDirty([item.id]); metadata.clearDeleted([item.id]); continue
             }
-            if let pendingAt = metadata.pendingUpserts[item.id] {
-                let remoteAt = item.clientUpdatedAt ?? item.updatedAt ?? .distantPast
-                if pendingAt > remoteAt { continue }
+            // sql/198: the SERVER's revision decides what is current — never a device clock.
+            // The `client_updated_at` comparison that used to live here is gone, because a
+            // phone with a slow clock had its perfectly valid edit discarded and a phone with
+            // a fast clock locked every other device out until real time caught up.
+            //
+            // A row with an unacknowledged local edit keeps its local copy: the queued write
+            // still carries `base_revision`, so the SERVER decides whether that edit is stale.
+            if metadata.pendingUpserts[item.id] != nil { continue }
+            // An unresolved conflict means the grower's authored settings exist ONLY on this
+            // device. Applying the server row here would destroy them.
+            if metadata.conflictedIds.contains(item.id) { continue }
+            // Replica lag: a read served by a replica still on an older revision must not
+            // overwrite a newer state this device has already had confirmed.
+            if SyncRevisionContract.isRemoteBehind(
+                observed: metadata.observedRevision(for: item.id),
+                remote: item.serverRevision
+            ) {
+                print("[PruningYieldSettingsSync] block config \(item.id) pull ignored: replica at revision \(item.serverRevision.map(String.init) ?? "none") is behind confirmed \(metadata.observedRevision(for: item.id).map(String.init) ?? "none")")
+                continue
             }
             store.applyRemotePruningYieldSettingsUpsert(item.toPruningYieldSettings())
+            metadata.setObservedRevision(item.serverRevision, for: item.id)
             metadata.clearDirty([item.id])
         }
     }

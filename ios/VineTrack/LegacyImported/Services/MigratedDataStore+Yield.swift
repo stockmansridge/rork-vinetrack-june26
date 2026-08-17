@@ -168,6 +168,12 @@ extension MigratedDataStore {
     /// Upsert the ONE saved configuration for the settings' block. When the
     /// block already has a record the existing row id is kept (stable identity
     /// for sync), so editing never duplicates a block's configuration.
+    ///
+    /// The server revision is re-stamped from the cached row alongside the id and never taken
+    /// from the incoming value. `server_revision` is server state: the calculator screen builds
+    /// a fresh ``PruningYieldSettings`` from its input fields (revision nil), which would
+    /// otherwise downgrade a synced block to "unversioned" and have its write read as a create.
+    /// Screens author values; only the server authors revisions.
     func savePruningYieldSettings(_ settings: PruningYieldSettings) {
         guard let vineyardId = selectedVineyardId else { return }
         var item = settings
@@ -175,8 +181,10 @@ extension MigratedDataStore {
         item.updatedAt = Date()
         if let idx = pruningYieldSettings.firstIndex(where: { $0.paddockId == item.paddockId }) {
             item.id = pruningYieldSettings[idx].id
+            item.serverRevision = pruningYieldSettings[idx].serverRevision
             pruningYieldSettings[idx] = item
         } else {
+            item.serverRevision = nil
             pruningYieldSettings.append(item)
         }
         yieldRepo.savePruningSettingsSlice(pruningYieldSettings, for: vineyardId)
