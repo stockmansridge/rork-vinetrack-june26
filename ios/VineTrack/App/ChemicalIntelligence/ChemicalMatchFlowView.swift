@@ -36,6 +36,12 @@ struct ChemicalMatchFlowView: View {
 
     @State private var showManualEntry: Bool = false
 
+    /// An existing store record that already carries the candidate's exact
+    /// registration identity. Computed when the operator continues to the
+    /// confirm step; saving then updates that record instead of adding a
+    /// second copy. Mirrors the Android match sheet's duplicate guard.
+    @State private var duplicateOf: SavedChemical?
+
     init(existing: SavedChemical? = nil, prefillQuery: String = "") {
         self.existing = existing
         self.prefillQuery = prefillQuery
@@ -334,7 +340,18 @@ struct ChemicalMatchFlowView: View {
 
                 Section {
                     Button("Back") { step = .match }
-                    Button("Continue") { step = .confirm }
+                    Button("Continue") {
+                        // Duplicate prevention keys off registration identity,
+                        // never name similarity: two products can share a name
+                        // and be different registrations, and the same
+                        // registration is the same product however it was typed.
+                        duplicateOf = ChemicalStoreMatching.findByRegistrationIdentity(
+                            in: store.savedChemicals,
+                            registration: intel.registration,
+                            excludingId: existing?.id
+                        )
+                        step = .confirm
+                    }
                 }
             }
         }
@@ -371,14 +388,34 @@ struct ChemicalMatchFlowView: View {
                     }
                 }
 
+                if let duplicate = duplicateOf {
+                    Section {
+                        Label("Already in Chemical Store", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(VineyardTheme.warning)
+                        Text("“\(duplicate.name)” already has this exact registration identity. Update that record instead of adding a second copy.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button {
+                            save(intel, into: duplicate)
+                            dismiss()
+                        } label: {
+                            Text("Update existing record")
+                                .frame(maxWidth: .infinity)
+                                .fontWeight(.semibold)
+                        }
+                    }
+                }
+
                 Section {
-                    Button {
-                        save(intel)
-                        dismiss()
-                    } label: {
-                        Text(existing == nil ? "Add to Chemical Store" : "Save Chemical")
-                            .frame(maxWidth: .infinity)
-                            .fontWeight(.semibold)
+                    if duplicateOf == nil {
+                        Button {
+                            save(intel)
+                            dismiss()
+                        } label: {
+                            Text(existing == nil ? "Add to Chemical Store" : "Save Chemical")
+                                .frame(maxWidth: .infinity)
+                                .fontWeight(.semibold)
+                        }
                     }
                     Button("Back") { step = .verify }
                 } footer: {
@@ -440,8 +477,14 @@ struct ChemicalMatchFlowView: View {
         }
     }
 
-    private func save(_ intel: ChemicalIntelligence) {
-        var chemical = existing ?? SavedChemical(
+    /// Writes the confirmed intelligence onto a record.
+    ///
+    /// `target` is the duplicate the operator chose to update in place of
+    /// adding a second copy; otherwise the record being matched (legacy
+    /// cleanup) or a brand-new one. Non-chemistry fields on an updated record
+    /// — pack size, price, inventory — are untouched, mirroring Android.
+    private func save(_ intel: ChemicalIntelligence, into target: SavedChemical? = nil) {
+        var chemical = target ?? existing ?? SavedChemical(
             vineyardId: store.selectedVineyard?.id ?? UUID()
         )
         let name = intel.registration?.registeredProductName
@@ -465,7 +508,7 @@ struct ChemicalMatchFlowView: View {
         chemical.activeIngredient = projection.activeIngredient
         chemical.chemicalGroup = projection.chemicalGroup
 
-        if existing == nil {
+        if target == nil && existing == nil {
             store.addSavedChemical(chemical)
         } else {
             store.updateSavedChemical(chemical)

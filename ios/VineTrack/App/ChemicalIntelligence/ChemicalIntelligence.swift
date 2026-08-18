@@ -237,16 +237,56 @@ nonisolated struct ChemicalIntelligence: Codable, Sendable, Hashable {
 
     /// Splits a legacy free-text active ingredient field into candidate names.
     ///
-    /// Handles `"Tebuconazole 200 g/L + Azoxystrobin 120 g/L"` and the `&`, `,`
-    /// and `/` variants people type. Concentrations are stripped from the name
-    /// but deliberately NOT parsed into `concentration`: a legacy string is not
-    /// evidence of a label value.
+    /// Handles `"Tebuconazole 200 g/L + Azoxystrobin 120 g/L"` and the `&`,
+    /// `;`, `·` and word-`and` variants people type. A comma is a separator
+    /// ONLY when it does not sit between two digits, so `"2,4-D"` keeps its
+    /// locant comma and `"1,000,000 CFU/g"` never spawns a phantom active.
+    /// Concentrations are stripped from the name but deliberately NOT parsed
+    /// into `concentration`: a legacy string is not evidence of a label value.
+    /// Mirrors Android `ChemicalIntelligence.splitActiveNames` exactly.
     static func splitActiveNames(_ raw: String) -> [String] {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
-        let parts = trimmed.components(separatedBy: CharacterSet(charactersIn: "+&,;"))
+
+        var pieces: [String] = []
+        var current = ""
+        let characters = Array(trimmed)
+        for (index, character) in characters.enumerated() {
+            if character == "+" || character == "&" || character == ";" || character == "·" {
+                pieces.append(current)
+                current = ""
+                continue
+            }
+            if character == "," {
+                let previous = current.last
+                let next = index + 1 < characters.count ? characters[index + 1] : nil
+                // A comma BETWEEN digits is a thousands separator or a chemical
+                // locant ("2,4-D"), never a list separator.
+                if let previous, let next, previous.isNumber, next.isNumber {
+                    current.append(character)
+                } else {
+                    pieces.append(current)
+                    current = ""
+                }
+                continue
+            }
+            current.append(character)
+        }
+        pieces.append(current)
+
+        // The word "and" between names is also a separator; applied after the
+        // character scan so protected commas survive.
+        let wordSplit = pieces.flatMap { piece in
+            piece.replacingOccurrences(
+                of: #"\s+and\s+"#,
+                with: "\n",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .components(separatedBy: "\n")
+        }
+
         var out: [String] = []
-        for part in parts {
+        for part in wordSplit {
             let name = stripConcentration(part)
             guard !name.isEmpty else { continue }
             out.append(name)

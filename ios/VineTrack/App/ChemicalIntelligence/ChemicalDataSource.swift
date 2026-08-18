@@ -79,6 +79,45 @@ nonisolated enum ChemicalDataSourceKind: String, Codable, Sendable, CaseIterable
     }
 }
 
+/// Tolerant reader for timestamps that cross the wire as ISO-8601 STRINGS.
+///
+/// The `chemical-info-lookup` edge function and the web portal write
+/// `retrieved_at` / `verified_at` as ISO-8601 strings, while backend decoders
+/// configured with a date strategy hand the same keys through as `Date`s. A
+/// plain `JSONDecoder` — which is what the lookup transport uses — would throw
+/// on the string form and take the WHOLE structured lookup down with it
+/// (Android reads these as plain strings and never had the problem). A
+/// timestamp is never worth failing a chemical record over, so this decodes
+/// both forms and degrades to `nil` instead of throwing.
+nonisolated enum ChemicalWireDate {
+    nonisolated static let fractionalFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    nonisolated static let plainFormatter = ISO8601DateFormatter()
+
+    /// Parses ISO-8601 with or without fractional seconds.
+    static func parse(_ raw: String) -> Date? {
+        fractionalFormatter.date(from: raw) ?? plainFormatter.date(from: raw)
+    }
+
+    /// Decodes a timestamp key that may be an ISO-8601 string, a native date
+    /// (when the decoder has a date strategy), `null`, or absent.
+    static func decode<K: CodingKey>(
+        from container: KeyedDecodingContainer<K>,
+        key: K
+    ) -> Date? {
+        // `try?` flattens the optional: `raw` is non-nil only when the key
+        // held an actual string. Absent/null/non-string all fall through.
+        if let raw = try? container.decodeIfPresent(String.self, forKey: key) {
+            return parse(raw)
+        }
+        return (try? container.decodeIfPresent(Date.self, forKey: key)) ?? nil
+    }
+}
+
 /// One cited source behind a chemical's information.
 nonisolated struct ChemicalDataSource: Codable, Sendable, Hashable, Identifiable {
     let kind: ChemicalDataSourceKind
@@ -121,7 +160,10 @@ nonisolated struct ChemicalDataSource: Codable, Sendable, Hashable, Identifiable
         let ref = try c.decodeIfPresent(String.self, forKey: .reference)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         reference = (ref?.isEmpty ?? true) ? nil : ref
-        retrievedAt = try c.decodeIfPresent(Date.self, forKey: .retrievedAt)
+        // The edge function writes this as an ISO-8601 string; backend decoders
+        // with a date strategy deliver a Date. Both must decode, and neither
+        // may fail the source list.
+        retrievedAt = ChemicalWireDate.decode(from: c, key: .retrievedAt)
     }
 }
 

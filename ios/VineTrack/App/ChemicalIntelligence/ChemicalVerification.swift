@@ -173,7 +173,9 @@ nonisolated struct ChemicalVerification: Codable, Sendable, Hashable {
         // downward is the only safe direction for a trust claim.
         status = ChemicalVerificationStatus(rawValue: raw) ?? .unverified
         sources = try c.decodeIfPresent([ChemicalDataSource].self, forKey: .sources) ?? []
-        verifiedAt = try c.decodeIfPresent(Date.self, forKey: .verifiedAt)
+        // ISO-8601 string on the wire (edge function/portal), Date under a
+        // strategy-configured decoder, or null — all must decode.
+        verifiedAt = ChemicalWireDate.decode(from: c, key: .verifiedAt)
         conflicts = try c.decodeIfPresent([ChemicalVerificationConflict].self, forKey: .conflicts) ?? []
         unresolvedFields = try c.decodeIfPresent([String].self, forKey: .unresolvedFields) ?? []
     }

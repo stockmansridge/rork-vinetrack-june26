@@ -190,13 +190,47 @@ data class ChemicalIntelligence(
         /**
          * Splits a legacy free-text active ingredient field into candidate names.
          *
-         * Concentrations are stripped from the name but deliberately NOT parsed
-         * into `concentration`: a legacy string is not evidence of a label value.
+         * Handles the `+`, `&`, `;`, `·` and word-`and` variants people type. A
+         * comma is a separator ONLY when it does not sit between two digits, so
+         * `"2,4-D"` keeps its locant comma and `"1,000,000 CFU/g"` never spawns
+         * a phantom active. Concentrations are stripped from the name but
+         * deliberately NOT parsed into `concentration`: a legacy string is not
+         * evidence of a label value. Mirrors iOS `splitActiveNames` exactly.
          */
         fun splitActiveNames(raw: String): List<String> {
             val trimmed = raw.trim()
             if (trimmed.isEmpty()) return emptyList()
-            return trimmed.split('+', '&', ',', ';')
+
+            val pieces = mutableListOf<String>()
+            val current = StringBuilder()
+            trimmed.forEachIndexed { index, character ->
+                when {
+                    character == '+' || character == '&' || character == ';' || character == '·' -> {
+                        pieces.add(current.toString())
+                        current.setLength(0)
+                    }
+                    character == ',' -> {
+                        val previous = current.lastOrNull()
+                        val next = trimmed.getOrNull(index + 1)
+                        // A comma BETWEEN digits is a thousands separator or a
+                        // chemical locant ("2,4-D"), never a list separator.
+                        if (previous?.isDigit() == true && next?.isDigit() == true) {
+                            current.append(character)
+                        } else {
+                            pieces.add(current.toString())
+                            current.setLength(0)
+                        }
+                    }
+                    else -> current.append(character)
+                }
+            }
+            pieces.add(current.toString())
+
+            // The word "and" between names is also a separator; applied after
+            // the character scan so protected commas survive intact.
+            val andSeparator = Regex("\\s+and\\s+", RegexOption.IGNORE_CASE)
+            return pieces
+                .flatMap { it.split(andSeparator) }
                 .map { stripConcentration(it) }
                 .filter { it.isNotEmpty() }
         }

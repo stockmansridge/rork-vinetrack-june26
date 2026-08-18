@@ -13,6 +13,8 @@ Sources of truth (in order):
 
 If this document and the code ever disagree, the code wins — fix the document.
 
+See also: `docs/chemical-custodia-parity-fixture.md` (the pinned cross-platform lookup regression fixture — Custodia, AU:apvma:66541) and `docs/master-chemical-catalogue-design.md` (proposed shared catalogue design; no schema applied yet).
+
 ---
 
 ## 1. Storage map
