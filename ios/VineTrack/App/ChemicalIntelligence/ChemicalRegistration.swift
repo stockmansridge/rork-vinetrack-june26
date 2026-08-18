@@ -138,6 +138,16 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
         return "\(countryCode):\(schemeKey):\(registrationNumber.uppercased())"
     }
 
+    /// ISO code → the display name the vineyard picker uses, for jurisdiction
+    /// messaging ("Registered for Australia — current vineyard is New Zealand").
+    /// Falls back to the (normalised) code itself so an unmapped country still
+    /// reads honestly rather than blocking the message.
+    static func displayName(forCountryCode code: String) -> String {
+        let normalised = normaliseCountry(code)
+        guard !normalised.isEmpty else { return "" }
+        return displayNamesByCode[normalised] ?? normalised
+    }
+
     static func normaliseCountry(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
@@ -189,6 +199,37 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
         "united states of america": "US",
         "usa": "US",
         "uruguay": "UY"
+    ]
+
+    /// Reverse of `countryCodesByName` for the CANONICAL picker names only
+    /// (aliases like "uk" or "usa" have one display name each). Identical
+    /// table on Android.
+    private static let displayNamesByCode: [String: String] = [
+        "AU": "Australia",
+        "AR": "Argentina",
+        "AT": "Austria",
+        "BR": "Brazil",
+        "CA": "Canada",
+        "CL": "Chile",
+        "CN": "China",
+        "FR": "France",
+        "DE": "Germany",
+        "GR": "Greece",
+        "HU": "Hungary",
+        "IN": "India",
+        "IL": "Israel",
+        "IT": "Italy",
+        "JP": "Japan",
+        "MX": "Mexico",
+        "NZ": "New Zealand",
+        "PT": "Portugal",
+        "RO": "Romania",
+        "ZA": "South Africa",
+        "ES": "Spain",
+        "CH": "Switzerland",
+        "GB": "United Kingdom",
+        "US": "United States",
+        "UY": "Uruguay"
     ]
 
     private static func trimmed(_ value: String?) -> String? {

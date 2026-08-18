@@ -7,6 +7,7 @@ import com.rork.vinetrack.data.chemical.ChemicalConcentrationUnit
 import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
+import com.rork.vinetrack.data.chemical.ChemicalJurisdictionSuitability
 import com.rork.vinetrack.data.chemical.ChemicalLabelRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalRegistrationScheme
@@ -534,6 +535,72 @@ class ChemicalCustodiaParityTest {
         assertEquals("FR", ChemicalRegistration.normaliseCountry("France"))
         assertEquals("AU", ChemicalRegistration.normaliseCountry("au"))
         assertEquals("", ChemicalRegistration.normaliseCountry(""))
+    }
+
+    // ---- Saved Chemical jurisdiction suitability (registration vs vineyard) --
+
+    @Test
+    fun `an AU-registered saved chemical in an NZ vineyard is a mismatch that keeps identity and chemistry`() {
+        val chemical = savedChemical("chem-custodia", "Custodia", intelligence())
+        assertEquals(
+            ChemicalJurisdictionSuitability.Mismatch("AU", "NZ"),
+            ChemicalJurisdiction.suitability(chemical, "New Zealand"),
+        )
+
+        // Identity is preserved — never re-keyed toward the vineyard.
+        assertEquals("AU:apvma:66541", chemical.resolvedIntelligence.registration?.identityKey)
+        // Chemistry (FRAC 3 + 11) is a scientific classification and survives.
+        assertEquals(listOf("3", "11"), chemical.activityGroupCodes)
+
+        // Re-verify still keys the AU registration…
+        val plan = ChemicalReverification.plan(chemical, "NZ")
+        assertEquals("AU", plan.countryCode)
+        // …and its AU evidence still reads MISMATCH for NZ afterwards — an AU
+        // re-check can never produce "verified for NZ".
+        assertEquals(
+            ChemicalJurisdictionSuitability.Mismatch("AU", "NZ"),
+            ChemicalJurisdiction.suitability(plan.countryCode, "NZ"),
+        )
+        // And NZ can never auto-match the AU payload as fresh evidence either.
+        assertNotNull(ChemicalJurisdiction.rejectionReason(decodeLookup(), "NZ"))
+    }
+
+    @Test
+    fun `the inverse holds - a GB registration in an AU vineyard is the same mismatch`() {
+        val gb = decodeGBLookup()
+        assertEquals(
+            ChemicalJurisdictionSuitability.Mismatch("GB", "AU"),
+            ChemicalJurisdiction.suitability(gb.registration?.countryCode, "Australia"),
+        )
+        assertEquals("GB:other:16393", gb.registration?.identityKey)
+    }
+
+    @Test
+    fun `suitability is compatible at home and unknown when either side has no country`() {
+        val auChemical = savedChemical("chem-custodia", "Custodia", intelligence())
+        assertEquals(
+            ChemicalJurisdictionSuitability.Compatible,
+            ChemicalJurisdiction.suitability(auChemical, "Australia"),
+        )
+        assertEquals(
+            ChemicalJurisdictionSuitability.Unknown,
+            ChemicalJurisdiction.suitability(auChemical, null),
+        )
+        assertEquals(
+            ChemicalJurisdictionSuitability.Unknown,
+            ChemicalJurisdiction.suitability(auChemical, "   "),
+        )
+        // A legacy/manual record with no registration country is UNKNOWN — not
+        // a mismatch banner on every hand-typed product.
+        val manual = SavedChemical(id = "chem-manual", vineyardId = "vineyard-1", name = "Mystery Mix")
+        assertEquals(
+            ChemicalJurisdictionSuitability.Unknown,
+            ChemicalJurisdiction.suitability(manual, "Australia"),
+        )
+        // Display names for the banner copy resolve from the same table.
+        assertEquals("Australia", ChemicalRegistration.displayNameForCountryCode("AU"))
+        assertEquals("New Zealand", ChemicalRegistration.displayNameForCountryCode("nz"))
+        assertEquals("United Kingdom", ChemicalRegistration.displayNameForCountryCode("GB"))
     }
 
     companion object {

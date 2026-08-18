@@ -121,10 +121,10 @@ struct ChemicalsManagementView: View {
                         Button {
                             editingChemical = chemical
                         } label: {
-                            ChemicalDetailRow(chemical: chemical)
+                            ChemicalDetailRow(chemical: chemical, vineyardCountry: countryCode)
                         }
                     } else {
-                        ChemicalDetailRow(chemical: chemical)
+                        ChemicalDetailRow(chemical: chemical, vineyardCountry: countryCode)
                     }
                 }
                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
@@ -239,6 +239,9 @@ struct ChemicalsManagementView: View {
 
 struct ChemicalDetailRow: View {
     let chemical: SavedChemical
+    /// The vineyard's country, for marking foreign-registered products. Empty
+    /// (the default) renders no jurisdiction mark — suitability is unknown.
+    var vineyardCountry: String = ""
 
     private var ratesPerHa: [ChemicalRate] {
         chemical.rates.filter { $0.basis == .perHectare }
@@ -267,6 +270,19 @@ struct ChemicalDetailRow: View {
                         .font(.body.weight(.medium))
                         .foregroundStyle(.primary)
                     ChemicalVerificationBadge(status: chemical.verificationStatus, compact: true)
+                }
+
+                // A verified FOREIGN registration must never read as verified
+                // for this vineyard: its label facts belong to another country's
+                // law. Identity and chemistry still stand — only label authority
+                // is marked as not applicable here.
+                if case .mismatch(let registration, let vineyard) = ChemicalJurisdiction.suitability(
+                    for: chemical, vineyardCountry: vineyardCountry
+                ) {
+                    ChemicalJurisdictionChip(
+                        registrationCountry: registration,
+                        vineyardCountry: vineyard
+                    )
                 }
 
                 if chemical.category != nil || !groupDisplay.isEmpty || !chemical.problem.isEmpty {

@@ -727,6 +727,19 @@ struct EditSavedChemicalSheet: View {
                     Spacer()
                     ChemicalVerificationBadge(status: chemical.verificationStatus)
                 }
+                // Registration identity vs the CURRENT vineyard's jurisdiction.
+                // The record keeps its own country — it is never re-keyed — but
+                // a foreign label must never read as valid vineyard guidance.
+                if case .mismatch(let registration, let vineyard) = ChemicalJurisdiction.suitability(
+                    for: chemical, vineyardCountry: country
+                ) {
+                    ChemicalJurisdictionMismatchBanner(
+                        registrationCountry: registration,
+                        vineyardCountry: vineyard
+                    )
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                }
             }
             if offered {
                 Button {

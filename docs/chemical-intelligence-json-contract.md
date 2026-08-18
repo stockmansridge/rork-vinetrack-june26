@@ -466,3 +466,37 @@ identical table in `ChemicalRegistration.normaliseCountry`).
    country is only a fallback when the record carries none, and the check is
    refused entirely when neither exists. Re-verification never re-keys a
    record to a different country's label.
+
+### 12.4 Saved Chemical jurisdiction suitability (computed, never stored)
+
+Rules 1–5 stop foreign data getting IN. This rule governs what an
+already-saved record may CLAIM when the vineyard's country differs from the
+record's own `registration.country_code` (e.g. an `AU:apvma:66541` product
+viewed from an NZ vineyard):
+
+- Suitability is computed on read — `compatible` (countries match),
+  `mismatch` (both known, different) or `unknown` (either side has no
+  country). Nothing is persisted and the record is NEVER re-keyed. Both apps
+  compute it in `ChemicalJurisdiction.suitability`; the portal must mirror
+  it.
+- On `mismatch`, identity and chemistry stand — name, actives,
+  concentrations, FRAC/HRAC/IRAC groups and the original registration
+  identity — but the record's registered uses, label rates, withholding
+  periods, re-entry statements and label restrictions are NOT
+  vineyard-authoritative. Present them as another jurisdiction's label
+  ("Registered for Australia — current vineyard is New Zealand", "Verify a
+  New Zealand registration before using label-specific guidance"). Never
+  silently substitute another country's registration; never hard-block the
+  product — the requirement is no false label authority, not a fake
+  regulatory stop.
+- Re-verify on a mismatched record re-checks its OWN registration (rule 5) —
+  useful for confirming what the product IS — but its result must never be
+  presented as "verified for this vineyard".
+- `unknown` is not a mismatch: legacy/manual records without a registration
+  country show no banner (they already carry no label authority), and a
+  vineyard without a country stays fail-closed per rule 1.
+- Resistance chemistry is unaffected by suitability: FRAC/HRAC/IRAC groups
+  keep feeding resistance tracking regardless of label country. Only
+  country-scoped registration logic (e.g. which products a published
+  national strategy may recommend) keys on jurisdiction, and it does so
+  separately.

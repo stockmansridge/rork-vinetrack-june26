@@ -334,6 +334,72 @@ struct ChemicalRegisteredUsesView: View {
     }
 }
 
+/// Full-width jurisdiction warning: this product is registered under another
+/// country's law than the vineyard it is being viewed in.
+///
+/// Identity and chemistry stand — the record is never re-keyed — but its
+/// registered uses, label rates, withholding and re-entry periods are not
+/// vineyard-authoritative. Mirrors `ChemicalJurisdictionMismatchBanner` on
+/// Android.
+struct ChemicalJurisdictionMismatchBanner: View {
+    let registrationCountry: String
+    let vineyardCountry: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(
+                ChemicalJurisdiction.mismatchHeadline(
+                    registrationCountry: registrationCountry,
+                    vineyardCountry: vineyardCountry
+                ),
+                systemImage: "globe"
+            )
+            .font(.caption.weight(.bold))
+            .foregroundStyle(VineyardTheme.warning)
+
+            Text(ChemicalJurisdiction.mismatchGuidance(
+                registrationCountry: registrationCountry,
+                vineyardCountry: vineyardCountry
+            ))
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(VineyardTheme.warning.opacity(0.08))
+        .clipShape(.rect(cornerRadius: 10))
+    }
+}
+
+/// Compact foreign-label mark shown next to the trust badge in lists and
+/// pickers — e.g. "AU label — not NZ".
+///
+/// Deliberately NOT a block: the product stays selectable (there may be a
+/// legitimate local reason to use it), but its label information can never
+/// silently read as valid for this vineyard's jurisdiction.
+struct ChemicalJurisdictionChip: View {
+    let registrationCountry: String
+    let vineyardCountry: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "globe")
+                .font(.caption2.weight(.semibold))
+            Text("\(registrationCountry) label — not \(vineyardCountry)")
+                .font(.caption2.weight(.semibold))
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(VineyardTheme.warning.opacity(0.12))
+        .foregroundStyle(VineyardTheme.warning)
+        .clipShape(Capsule())
+        .accessibilityLabel(Text(ChemicalJurisdiction.mismatchHeadline(
+            registrationCountry: registrationCountry,
+            vineyardCountry: vineyardCountry
+        )))
+    }
+}
+
 /// Product identity block used by both Match and Verify.
 struct ChemicalIdentityView: View {
     let productName: String

@@ -685,4 +685,60 @@ struct ChemicalCustodiaParityTests {
         #expect(ChemicalRegistration.normaliseCountry("au") == "AU")
         #expect(ChemicalRegistration.normaliseCountry("") == "")
     }
+
+    // MARK: - Saved Chemical jurisdiction suitability (registration vs vineyard)
+
+    @Test("An AU-registered Saved Chemical in an NZ vineyard is a MISMATCH that keeps identity and chemistry")
+    func savedChemicalSuitabilityAUinNZ() throws {
+        let chemical = SavedChemical(name: "Custodia", chemicalIntelligence: try intelligence())
+        #expect(
+            ChemicalJurisdiction.suitability(for: chemical, vineyardCountry: "New Zealand")
+                == .mismatch(registrationCountry: "AU", vineyardCountry: "NZ")
+        )
+
+        // Identity is preserved — never re-keyed toward the vineyard.
+        #expect(chemical.resolvedIntelligence.registration?.identityKey == "AU:apvma:66541")
+        // Chemistry (FRAC 3 + 11) is a scientific classification and survives.
+        #expect(chemical.activityGroupCodes == ["3", "11"])
+
+        // Re-verify still keys the AU registration…
+        let plan = ChemicalReverification.plan(for: chemical, fallbackCountry: "NZ")
+        #expect(plan.countryCode == "AU")
+        // …and its AU evidence still reads MISMATCH for NZ afterwards — an AU
+        // re-check can never produce "verified for NZ".
+        #expect(
+            ChemicalJurisdiction.suitability(registrationCountry: plan.countryCode, vineyardCountry: "NZ")
+                == .mismatch(registrationCountry: "AU", vineyardCountry: "NZ")
+        )
+        // And NZ can never auto-match the AU payload as fresh evidence either.
+        #expect(ChemicalJurisdiction.rejectionReason(for: try decodeLookup(), requestCountry: "NZ") != nil)
+    }
+
+    @Test("The inverse holds: a GB registration in an AU vineyard is the same mismatch")
+    func savedChemicalSuitabilityGBinAU() throws {
+        let gb = try decodeGBLookup()
+        #expect(
+            ChemicalJurisdiction.suitability(
+                registrationCountry: gb.registration?.countryCode,
+                vineyardCountry: "Australia"
+            ) == .mismatch(registrationCountry: "GB", vineyardCountry: "AU")
+        )
+        #expect(gb.registration?.identityKey == "GB:other:16393")
+    }
+
+    @Test("Suitability is COMPATIBLE at home and UNKNOWN when either side has no country")
+    func savedChemicalSuitabilityBaseline() throws {
+        let auChemical = SavedChemical(name: "Custodia", chemicalIntelligence: try intelligence())
+        #expect(ChemicalJurisdiction.suitability(for: auChemical, vineyardCountry: "Australia") == .compatible)
+        #expect(ChemicalJurisdiction.suitability(for: auChemical, vineyardCountry: nil) == .unknown)
+        #expect(ChemicalJurisdiction.suitability(for: auChemical, vineyardCountry: "   ") == .unknown)
+        // A legacy/manual record with no registration country is UNKNOWN — not
+        // a mismatch banner on every hand-typed product.
+        let manual = SavedChemical(name: "Mystery Mix", chemicalIntelligence: nil)
+        #expect(ChemicalJurisdiction.suitability(for: manual, vineyardCountry: "Australia") == .unknown)
+        // Display names for the banner copy resolve from the same table.
+        #expect(ChemicalRegistration.displayName(forCountryCode: "AU") == "Australia")
+        #expect(ChemicalRegistration.displayName(forCountryCode: "nz") == "New Zealand")
+        #expect(ChemicalRegistration.displayName(forCountryCode: "GB") == "United Kingdom")
+    }
 }

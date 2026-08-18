@@ -268,3 +268,13 @@ them — see JSON contract §12.3):
    platforms ("United Kingdom"/"uk" → GB, "Australia" → AU); an unmapped
    name can never equal a server-stamped ISO code, so the gate fails closed
    for it.
+6. Saved Chemical suitability is COMPUTED, never stored
+   (`ChemicalJurisdiction.suitability`, JSON contract §12.4): the AU record
+   (`AU:apvma:66541`) viewed from an NZ vineyard reads `mismatch(AU, NZ)` —
+   identity and FRAC 3 + 11 chemistry retained, AU uses/rates/WHP/re-entry
+   NOT treated as NZ-authoritative, and re-verifying it (which stays keyed
+   to AU) can never produce "verified for NZ". The inverse GB-in-AU case
+   reads `mismatch(GB, AU)`.
+7. `compatible` requires both countries known and equal; `unknown` (legacy
+   record without a registration country, or vineyard country unset) shows
+   no mismatch banner but also establishes no label authority.

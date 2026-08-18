@@ -398,6 +398,18 @@ struct SprayRecordFormView: View {
                     Text(bound.name)
                         .font(.subheadline.weight(.medium))
                     ChemicalVerificationBadge(status: bound.verificationStatus)
+                    // A foreign registration on a spray line: the product record
+                    // is usable, but its label rates/WHP/re-entry are another
+                    // jurisdiction's law — marked so they never read as valid
+                    // recommendations for this vineyard's spray.
+                    if case .mismatch(let registration, let vineyard) = ChemicalJurisdiction.suitability(
+                        for: bound, vineyardCountry: store.selectedVineyard?.country ?? ""
+                    ) {
+                        ChemicalJurisdictionChip(
+                            registrationCountry: registration,
+                            vineyardCountry: vineyard
+                        )
+                    }
                     Button("Change product") {
                         picker = ChemicalPickerTarget(tankIndex: tIdx, chemicalIndex: cIdx)
                     }

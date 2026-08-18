@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Adjust
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Help
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Warning
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.chemical.ChemicalActiveIngredient
 import com.rork.vinetrack.data.chemical.ChemicalActivityGroup
+import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
 import com.rork.vinetrack.data.chemical.ChemicalLabelRate
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
@@ -98,6 +100,93 @@ fun ChemicalVerificationBadge(
         if (!compact) {
             Text(status.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = tint)
         }
+    }
+}
+
+/**
+ * Full-width jurisdiction warning: this product is registered under another
+ * country's law than the vineyard it is being viewed in.
+ *
+ * Identity and chemistry stand — the record is never re-keyed — but its
+ * registered uses, label rates, withholding and re-entry periods are not
+ * vineyard-authoritative. Mirrors the iOS `ChemicalJurisdictionMismatchBanner`.
+ */
+@Composable
+fun ChemicalJurisdictionMismatchBanner(
+    registrationCountry: String,
+    vineyardCountry: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(VineColors.Warning.copy(alpha = 0.08f))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                Icons.Filled.Public,
+                contentDescription = null,
+                tint = VineColors.Warning,
+                modifier = Modifier.size(14.dp),
+            )
+            Text(
+                ChemicalJurisdiction.mismatchHeadline(registrationCountry, vineyardCountry),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = VineColors.Warning,
+            )
+        }
+        Text(
+            ChemicalJurisdiction.mismatchGuidance(registrationCountry, vineyardCountry),
+            fontSize = 11.sp,
+            color = LocalVineColors.current.textSecondary,
+        )
+    }
+}
+
+/**
+ * Compact foreign-label mark shown next to the trust badge in lists and
+ * pickers — e.g. "AU label — not NZ".
+ *
+ * Deliberately NOT a block: the product stays selectable (there may be a
+ * legitimate local reason to use it), but its label information can never
+ * silently read as valid for this vineyard's jurisdiction.
+ */
+@Composable
+fun ChemicalJurisdictionChip(
+    registrationCountry: String,
+    vineyardCountry: String,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(VineColors.Warning.copy(alpha = 0.12f))
+            .padding(horizontal = 7.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            Icons.Filled.Public,
+            contentDescription = ChemicalJurisdiction.mismatchHeadline(
+                registrationCountry,
+                vineyardCountry,
+            ),
+            tint = VineColors.Warning,
+            modifier = Modifier.size(12.dp),
+        )
+        Text(
+            "$registrationCountry label — not $vineyardCountry",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = VineColors.Warning,
+        )
     }
 }
 

@@ -92,6 +92,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDatePickerState
+import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
+import com.rork.vinetrack.data.chemical.ChemicalJurisdictionSuitability
+import com.rork.vinetrack.ui.components.ChemicalJurisdictionChip
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -112,6 +115,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.ChemicalInfoService
 import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.SprayProgramCsvExporter
 import com.rork.vinetrack.data.SprayProgramCsvImporter
@@ -1717,6 +1721,11 @@ private fun SpraySheet(
                     savedChemicals = state.savedChemicals,
                     savedSprayPresets = state.savedSprayPresets,
                     fmt = state.regionFormatter,
+                    // The vineyard's jurisdiction, for marking foreign-registered
+                    // products in the chemical picker — never from device locale.
+                    vineyardCountry = ChemicalInfoService.resolveCountry(
+                        state.vineyards.firstOrNull { it.id == state.selectedVineyardId }?.country,
+                    ),
                     onRemove = { tanks.removeAt(idx) },
                 )
             }
@@ -1869,6 +1878,7 @@ private fun ChemicalNameField(
     savedChemicals: List<com.rork.vinetrack.data.model.SavedChemical>,
     canEditCost: Boolean,
     fmt: RegionFormatter,
+    vineyardCountry: String = "",
     onRemove: () -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
@@ -1918,6 +1928,18 @@ private fun ChemicalNameField(
                                 if (sub.isNotEmpty()) Text(sub, fontSize = 12.sp, color = LocalVineColors.current.textSecondary)
                                 // Actives, derived group and trust state (sql/194).
                                 com.rork.vinetrack.ui.components.ChemicalPickerIntelligenceRow(saved)
+                                // Foreign-registered products stay pickable —
+                                // chemistry is what resistance tracking needs — but
+                                // their label facts are marked as another
+                                // jurisdiction's, never this vineyard's guidance.
+                                val suitability =
+                                    ChemicalJurisdiction.suitability(saved, vineyardCountry)
+                                if (suitability is ChemicalJurisdictionSuitability.Mismatch) {
+                                    ChemicalJurisdictionChip(
+                                        suitability.registrationCountry,
+                                        suitability.vineyardCountry,
+                                    )
+                                }
                             }
                         },
                         onClick = {
@@ -1949,6 +1971,7 @@ private fun TankEditor(
     savedChemicals: List<com.rork.vinetrack.data.model.SavedChemical>,
     savedSprayPresets: List<com.rork.vinetrack.data.model.SavedSprayPreset>,
     fmt: RegionFormatter,
+    vineyardCountry: String = "",
     onRemove: () -> Unit,
 ) {
     val vine = LocalVineColors.current
@@ -2046,6 +2069,7 @@ private fun TankEditor(
                 savedChemicals = savedChemicals,
                 canEditCost = canEditCost,
                 fmt = fmt,
+                vineyardCountry = vineyardCountry,
                 onRemove = { tank.chemicals.removeAt(ci) },
             )
             Spacer(Modifier.height(6.dp))

@@ -22,6 +22,13 @@ struct SprayLineChemicalPicker: View {
 
     @State private var query: String = ""
 
+    /// The vineyard's jurisdiction, for marking foreign-registered products.
+    /// Display only — selection stays possible; the mark prevents a foreign
+    /// label silently reading as valid guidance for this vineyard's sprays.
+    private var vineyardCountry: String {
+        ChemicalInfoService.resolveCountry(vineyardCountry: store.selectedVineyard?.country)
+    }
+
     /// Active products for the selected vineyard, plus whatever is already bound
     /// even if it has since been archived — a line must not silently lose its
     /// product because the store was tidied up.
@@ -123,6 +130,17 @@ struct SprayLineChemicalPicker: View {
                             .foregroundStyle(VineyardTheme.olive)
                             .clipShape(Capsule())
                     }
+                }
+                // Foreign-registered products stay pickable — chemistry is what
+                // resistance tracking needs — but their label facts are marked
+                // as another jurisdiction's, never this vineyard's guidance.
+                if case .mismatch(let registration, let vineyard) = ChemicalJurisdiction.suitability(
+                    for: chemical, vineyardCountry: vineyardCountry
+                ) {
+                    ChemicalJurisdictionChip(
+                        registrationCountry: registration,
+                        vineyardCountry: vineyard
+                    )
                 }
             }
             Spacer()

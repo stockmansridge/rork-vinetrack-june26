@@ -119,6 +119,19 @@ data class ChemicalRegistration(
             labelVersion = labelVersion?.trim()?.takeIf { it.isNotEmpty() },
         )
 
+        /**
+         * ISO code → the display name the vineyard picker uses, for
+         * jurisdiction messaging ("Registered for Australia — current vineyard
+         * is New Zealand"). Falls back to the (normalised) code itself so an
+         * unmapped country still reads honestly rather than blocking the
+         * message.
+         */
+        fun displayNameForCountryCode(code: String): String {
+            val normalised = normaliseCountry(code)
+            if (normalised.isEmpty()) return ""
+            return DISPLAY_NAMES_BY_CODE[normalised] ?: normalised
+        }
+
         /** Accepts both a code and a display name; stores the code. */
         fun normaliseCountry(raw: String): String {
             val trimmed = raw.trim()
@@ -171,6 +184,39 @@ data class ChemicalRegistration(
             "united states of america" to "US",
             "usa" to "US",
             "uruguay" to "UY",
+        )
+
+        /**
+         * Reverse of [COUNTRY_CODES_BY_NAME] for the CANONICAL picker names
+         * only (aliases like "uk" or "usa" have one display name each).
+         * Identical table on iOS.
+         */
+        private val DISPLAY_NAMES_BY_CODE: Map<String, String> = mapOf(
+            "AU" to "Australia",
+            "AR" to "Argentina",
+            "AT" to "Austria",
+            "BR" to "Brazil",
+            "CA" to "Canada",
+            "CL" to "Chile",
+            "CN" to "China",
+            "FR" to "France",
+            "DE" to "Germany",
+            "GR" to "Greece",
+            "HU" to "Hungary",
+            "IN" to "India",
+            "IL" to "Israel",
+            "IT" to "Italy",
+            "JP" to "Japan",
+            "MX" to "Mexico",
+            "NZ" to "New Zealand",
+            "PT" to "Portugal",
+            "RO" to "Romania",
+            "ZA" to "South Africa",
+            "ES" to "Spain",
+            "CH" to "Switzerland",
+            "GB" to "United Kingdom",
+            "US" to "United States",
+            "UY" to "Uruguay",
         )
     }
 }

@@ -127,6 +127,20 @@ struct ChemicalReverifyFlowView: View {
             if let registrant = plan.registrant, !registrant.isEmpty {
                 LabeledContent("Registrant", value: registrant)
             }
+            // Re-checking a foreign registration is still useful — it confirms
+            // what the product IS — but it must never read as verifying the
+            // product FOR this vineyard's jurisdiction.
+            if case .mismatch(let registration, let vineyard) = ChemicalJurisdiction.suitability(
+                registrationCountry: plan.countryCode,
+                vineyardCountry: countryCode
+            ) {
+                Text(ChemicalJurisdiction.reverifyForeignNote(
+                    registrationCountry: registration,
+                    vineyardCountry: vineyard
+                ))
+                .font(.caption)
+                .foregroundStyle(VineyardTheme.warning)
+            }
         } header: {
             Text("Checking against")
         } footer: {

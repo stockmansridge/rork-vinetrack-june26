@@ -1,5 +1,22 @@
 import Foundation
 
+/// Where a Saved Chemical's registration stands relative to the vineyard
+/// jurisdiction it is being used in.
+///
+/// COMPUTED, never persisted — a record's registration identity is never
+/// re-keyed by moving vineyards, and nothing here writes to the record.
+nonisolated enum ChemicalJurisdictionSuitability: Equatable, Sendable {
+    /// Registered in the vineyard's own country — its label facts apply here.
+    case compatible
+    /// Registered under ANOTHER country's law. Name, actives and activity
+    /// groups stand; registered uses, label rates, withholding periods,
+    /// re-entry statements and restrictions are NOT vineyard-authoritative.
+    case mismatch(registrationCountry: String, vineyardCountry: String)
+    /// One side has no country — a legacy/manual record, or an unset vineyard.
+    /// No label authority can be established either way.
+    case unknown
+}
+
 /// Jurisdiction enforcement for chemical lookups — the cross-country gate.
 ///
 /// Product registration is country-scoped law. An AU label's rates,
@@ -60,5 +77,58 @@ nonisolated enum ChemicalJurisdiction {
         }
 
         return nil
+    }
+
+    // MARK: - Saved Chemical suitability (registration identity vs vineyard)
+
+    /// Compare a stored registration's country with the CURRENT vineyard's.
+    ///
+    /// This is the read-side counterpart of `rejectionReason`: rejection stops
+    /// foreign payloads being consumed; suitability stops an already-saved
+    /// foreign registration being read as label authority for this vineyard.
+    static func suitability(
+        registrationCountry: String?,
+        vineyardCountry: String?
+    ) -> ChemicalJurisdictionSuitability {
+        let registration = ChemicalRegistration.normaliseCountry(registrationCountry ?? "")
+        let vineyard = ChemicalRegistration.normaliseCountry(vineyardCountry ?? "")
+        guard !registration.isEmpty, !vineyard.isEmpty else { return .unknown }
+        return registration == vineyard
+            ? .compatible
+            : .mismatch(registrationCountry: registration, vineyardCountry: vineyard)
+    }
+
+    /// Suitability of a Saved Chemical for the vineyard it is being viewed in.
+    static func suitability(
+        for chemical: SavedChemical,
+        vineyardCountry: String?
+    ) -> ChemicalJurisdictionSuitability {
+        suitability(
+            registrationCountry: chemical.resolvedIntelligence.registration?.countryCode,
+            vineyardCountry: vineyardCountry
+        )
+    }
+
+    /// "Registered for Australia — current vineyard is New Zealand"
+    static func mismatchHeadline(registrationCountry: String, vineyardCountry: String) -> String {
+        let registration = ChemicalRegistration.displayName(forCountryCode: registrationCountry)
+        let vineyard = ChemicalRegistration.displayName(forCountryCode: vineyardCountry)
+        return "Registered for \(registration) — current vineyard is \(vineyard)"
+    }
+
+    /// The banner body: what stands, what does not, and what to do next.
+    static func mismatchGuidance(registrationCountry: String, vineyardCountry: String) -> String {
+        let registration = ChemicalRegistration.displayName(forCountryCode: registrationCountry)
+        let vineyard = ChemicalRegistration.displayName(forCountryCode: vineyardCountry)
+        return "Verify a \(vineyard) registration before using label-specific guidance. The \(registration) label's registered uses, rates, withholding and re-entry periods are not valid for this vineyard. Product name, actives and activity groups are unaffected."
+    }
+
+    /// Shown on Re-verify when the record's registration country differs from
+    /// the vineyard's: the re-check is still useful — it confirms what the
+    /// product IS — but it can never read as "verified for this vineyard".
+    static func reverifyForeignNote(registrationCountry: String, vineyardCountry: String) -> String {
+        let registration = ChemicalRegistration.displayName(forCountryCode: registrationCountry)
+        let vineyard = ChemicalRegistration.displayName(forCountryCode: vineyardCountry)
+        return "Re-checking confirms the \(registration) registration this record holds. It does not verify this product for \(vineyard) — verify a \(vineyard) registration before using label-specific guidance here."
     }
 }

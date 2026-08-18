@@ -48,6 +48,7 @@ import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalIntelligenceChange
 import com.rork.vinetrack.data.chemical.ChemicalIntelligenceDiff
 import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
+import com.rork.vinetrack.data.chemical.ChemicalJurisdictionSuitability
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalReverification
 import com.rork.vinetrack.data.chemical.ChemicalReverifyFlow
@@ -278,6 +279,21 @@ internal fun ChemicalReverifySheet(
                         ChemicalLabelledLine("Registrant", it)
                     }
                     Text(plan.strength.detail, fontSize = 11.sp, color = vine.textSecondary)
+                    // Re-checking a foreign registration is still useful — it
+                    // confirms what the product IS — but it must never read as
+                    // verifying the product FOR this vineyard's jurisdiction.
+                    val vineyardSuitability =
+                        ChemicalJurisdiction.suitability(plan.countryCode, countryCode)
+                    if (vineyardSuitability is ChemicalJurisdictionSuitability.Mismatch) {
+                        Text(
+                            ChemicalJurisdiction.reverifyForeignNote(
+                                vineyardSuitability.registrationCountry,
+                                vineyardSuitability.vineyardCountry,
+                            ),
+                            fontSize = 11.sp,
+                            color = VineColors.Warning,
+                        )
+                    }
                 }
 
                 is ReverifyPhase.Current -> {

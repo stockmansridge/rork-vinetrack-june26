@@ -59,11 +59,15 @@ import androidx.compose.material3.TopAppBarDefaults
 import com.rork.vinetrack.data.chemical.ChemicalActivityGroup
 import com.rork.vinetrack.data.chemical.ChemicalActivityGroupScheme
 import com.rork.vinetrack.data.chemical.ChemicalEditOutcome
+import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
+import com.rork.vinetrack.data.chemical.ChemicalJurisdictionSuitability
 import com.rork.vinetrack.data.chemical.ChemicalManualEntry
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalReverification
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
 import com.rork.vinetrack.data.chemical.legacyGroupProjection
+import com.rork.vinetrack.ui.components.ChemicalJurisdictionChip
+import com.rork.vinetrack.ui.components.ChemicalJurisdictionMismatchBanner
 import com.rork.vinetrack.ui.components.ChemicalVerificationBadge
 import com.rork.vinetrack.ui.components.chemicalVerificationTint
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
@@ -337,6 +341,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                         // matched — is exactly the one a hand-written check gets
                         // wrong.
                         canReverify = ChemicalReverification.isOffered(chem, countryCode),
+                        vineyardCountry = countryCode,
                         onEdit = { if (canManage) editing = chem },
                         onDelete = { if (canManage) pendingDelete = chem },
                         onMatchVerify = { if (canManage) matching = chem },
@@ -456,6 +461,7 @@ private fun ChemicalRow(
     canManage: Boolean,
     canViewFinancials: Boolean,
     canReverify: Boolean,
+    vineyardCountry: String,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onMatchVerify: () -> Unit,
@@ -478,6 +484,17 @@ private fun ChemicalRow(
                         fontSize = 16.sp,
                     )
                     ChemicalVerificationBadge(status, compact = true)
+                }
+                // A verified FOREIGN registration must never read as verified
+                // for this vineyard: its label facts belong to another country's
+                // law. Identity and chemistry still stand — only label authority
+                // is marked as not applicable here.
+                val suitability = ChemicalJurisdiction.suitability(chemical, vineyardCountry)
+                if (suitability is ChemicalJurisdictionSuitability.Mismatch) {
+                    ChemicalJurisdictionChip(
+                        suitability.registrationCountry,
+                        suitability.vineyardCountry,
+                    )
                 }
                 // Active ingredient leads the subtitle (matches iOS ChemicalDetailRow);
                 // manufacturer follows when present.
@@ -980,6 +997,16 @@ internal fun ChemicalFormSheet(
                         modifier = Modifier.width(96.dp),
                     )
                     ChemicalVerificationBadge(existing.verificationStatus)
+                }
+                // Registration identity vs the CURRENT vineyard's jurisdiction.
+                // The record keeps its own country — it is never re-keyed — but
+                // a foreign label must never read as valid vineyard guidance.
+                val formSuitability = ChemicalJurisdiction.suitability(existing, reverifyCountry)
+                if (formSuitability is ChemicalJurisdictionSuitability.Mismatch) {
+                    ChemicalJurisdictionMismatchBanner(
+                        formSuitability.registrationCountry,
+                        formSuitability.vineyardCountry,
+                    )
                 }
                 if (ChemicalReverification.isOffered(existing, reverifyCountry)) {
                     OutlinedButton(
