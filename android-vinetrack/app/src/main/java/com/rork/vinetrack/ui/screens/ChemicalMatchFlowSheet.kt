@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.ChemicalInfoService
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
+import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalStoreMatching
 import com.rork.vinetrack.data.model.SavedChemical
@@ -171,6 +172,18 @@ internal fun ChemicalMatchFlowSheet(
         scope.launch {
             try {
                 val lookup = service.lookupStructured(result.name, countryCode)
+                // Jurisdiction gate: a payload registered in another country —
+                // or a master row keyed to one — is refused OUTRIGHT, exactly
+                // like a failed lookup. Foreign label rates, WHP, re-entry
+                // statements and uses must never be convertible, saveable or
+                // linkable here.
+                val rejection = ChemicalJurisdiction.rejectionReason(lookup, countryCode)
+                if (rejection != null) {
+                    masterMatch = null
+                    intelligence = null
+                    structuredError = rejection
+                    return@launch
+                }
                 // Master-served lookups carry the catalogue reference the
                 // saved record retains (sql/199). AI-sourced lookups carry none.
                 masterMatch = if (lookup.isMasterMatch) lookup.master else null
@@ -234,7 +247,10 @@ internal fun ChemicalMatchFlowSheet(
                     )
                     Button(
                         onClick = { runSearch() },
-                        enabled = query.trim().isNotEmpty() && !searching,
+                        // No vineyard country -> no jurisdiction -> fail closed.
+                        // The hint above says what to set; searching a guessed
+                        // national register would verify the wrong label.
+                        enabled = query.trim().isNotEmpty() && !searching && countryCode.isNotBlank(),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         if (searching) {

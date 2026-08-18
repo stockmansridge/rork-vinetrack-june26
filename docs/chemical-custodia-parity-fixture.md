@@ -196,3 +196,75 @@ Required outcomes, pinned by the same two suites:
    served to lookups until an admin re-confirms APVMA PubCRIS currency and
    approves it (Stage 2 review). The `master_revision: 4` above is a test
    value exercising drift detection, not the seeded row's revision (which is 1).
+
+## 6. Cross-jurisdiction counter-fixture (GB Custodia, MAPP 16393)
+
+The SAME brand name registered under a DIFFERENT country's label law. Both
+test suites carry this payload byte-identically (`CUSTODIA_GB_FIXTURE_JSON` /
+`custodiaGBFixtureJSON`) — cereal uses only, a different rate (2 L/ha), a
+numeric re-entry period (48 h) and a different WHP (35 days), none of which
+exist on the AU label:
+
+```json
+{
+  "product_name": "Custodia",
+  "product_category": "fungicide",
+  "form_type": "liquid",
+  "registration": {
+    "country_code": "GB",
+    "scheme": "other",
+    "registration_number": "16393",
+    "registrant": "Adama Agricultural Solutions UK Ltd",
+    "registered_product_name": "Custodia"
+  },
+  "active_ingredients": [
+    { "name": "Azoxystrobin", "concentration": 120, "concentration_unit": "g/L",
+      "activity_group": { "scheme": "frac", "code": "11", "common_name": "QoI / Strobilurin" },
+      "group_source": "authoritative_classification", "identity_source": "ai_interpretation" },
+    { "name": "Tebuconazole", "concentration": 200, "concentration_unit": "g/L",
+      "activity_group": { "scheme": "frac", "code": "3", "common_name": "DMI / Triazole" },
+      "group_source": "authoritative_classification", "identity_source": "ai_interpretation" }
+  ],
+  "activity_groups": ["11", "3"],
+  "activity_group_scheme": "frac",
+  "registered_uses": [
+    { "crop": "Winter wheat", "target_raw": "Septoria leaf blotch",
+      "rates": [ { "label": "Standard", "basis": "per_hectare", "value": 2, "unit": "L" } ],
+      "withholding_period_days": 35, "re_entry_period_hours": 48,
+      "restrictions": "Latest application before grain milky ripe (GS 71). Maximum 2 applications per crop." }
+  ],
+  "label_rate_bases": ["per_hectare"],
+  "verification": { "status": "partially_verified", "sources": […], "conflicts": [],
+    "unresolved_fields": ["label_reference", "label_version"], "verified_at": null },
+  "activity_group_table_version": 1,
+  "schema_version": 1
+}
+```
+
+A master-served variant exists too (suffix swap as in §5) with
+`"registration_identity_key": "GB:other:16393"`, master id
+`b1638c93-2026-4b77-8642-b88f16393002`, revision 2.
+
+Required outcomes, pinned by the same two suites (the portal must reproduce
+them — see JSON contract §12.3):
+
+1. The vineyard's country (`vineyards.country`) is the ONLY lookup
+   jurisdiction. Never the device/browser locale — with no vineyard country,
+   search fails closed and NOTHING from a lookup is consumable or verifiable.
+2. For an AU vineyard, this GB payload is rejected OUTRIGHT by the
+   jurisdiction gate (`ChemicalJurisdiction`, both platforms) — handled
+   exactly like a failed lookup, so the GB rates, WHP (35), re-entry (48 h)
+   and winter-wheat uses can never be converted, previewed, saved, linked or
+   verified. The same payload passes for a GB vineyard: the block is
+   jurisdiction, not decode.
+3. The GB MASTER envelope can never become a master match for an AU vineyard
+   — rejected before `isMasterMatch` is ever consulted, so neither the GB
+   link nor the GB chemistry can be threaded into a save. Equally the AU
+   master envelope is rejected for an NZ vineyard.
+4. Re-verify keys on the record's own registration country (`AU:apvma:66541`
+   stays AU even when the vineyard fallback says NZ); with no country
+   anywhere it is refused, never guessed.
+5. Country display names normalise to ISO codes identically on both
+   platforms ("United Kingdom"/"uk" → GB, "Australia" → AU); an unmapped
+   name can never equal a server-stamped ISO code, so the gate fails closed
+   for it.

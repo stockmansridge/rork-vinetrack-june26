@@ -258,26 +258,17 @@ nonisolated enum ChemicalLookupError: Error, LocalizedError, Sendable {
 
 nonisolated struct ChemicalInfoService: Sendable {
 
-    /// Resolves the country to use for AI localization.
-    /// Prefers the explicit vineyard country; falls back to the device/user
-    /// locale region (e.g. "AU", "NZ", "US") so AI search is always localized.
+    /// Resolves the jurisdiction country for chemical lookups.
+    ///
+    /// The vineyard profile is the ONLY source. Product registration is
+    /// country-scoped law, and the phone's locale says where the DEVICE is set
+    /// up, not where the vines grow — an AU-region phone managing an NZ
+    /// vineyard must never silently check the APVMA register. When the
+    /// vineyard has no country this returns empty and the lookup flows fail
+    /// closed (search disabled, re-verify refused, nothing verifiable) instead
+    /// of guessing. Mirrors the Android `ChemicalInfoService.resolveCountry`.
     static func resolveCountry(vineyardCountry: String?) -> String {
-        let trimmed = (vineyardCountry ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { return trimmed }
-        if #available(iOS 16.0, *) {
-            if let region = Locale.current.region?.identifier, !region.isEmpty {
-                if let localized = Locale.current.localizedString(forRegionCode: region), !localized.isEmpty {
-                    return localized
-                }
-                return region
-            }
-        } else if let code = Locale.current.regionCode, !code.isEmpty {
-            if let localized = Locale.current.localizedString(forRegionCode: code), !localized.isEmpty {
-                return localized
-            }
-            return code
-        }
-        return ""
+        (vineyardCountry ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func searchChemicals(query: String, country: String = "") async throws -> [ChemicalSearchResult] {

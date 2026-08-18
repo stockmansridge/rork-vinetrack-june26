@@ -18,7 +18,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import java.util.Locale
 
 /**
  * AI-assisted chemical lookup, mirroring the iOS `ChemicalInfoService`. Talks to
@@ -269,17 +268,17 @@ class ChemicalInfoService {
 
     companion object {
         /**
-         * Resolve the localization country: prefer the explicit vineyard country,
-         * else the device region's display name (e.g. "Australia"). Mirrors the
-         * iOS `ChemicalInfoService.resolveCountry`.
+         * Resolves the jurisdiction country for chemical lookups.
+         *
+         * The vineyard profile is the ONLY source. Product registration is
+         * country-scoped law, and the device locale says where the PHONE is
+         * set up, not where the vines grow — an AU-region phone managing an
+         * NZ vineyard must never silently check the APVMA register. When the
+         * vineyard has no country this returns empty and the lookup flows
+         * fail closed (search disabled, re-verify refused, nothing
+         * verifiable) instead of guessing. Mirrors the iOS
+         * `ChemicalInfoService.resolveCountry`.
          */
-        fun resolveCountry(vineyardCountry: String?): String {
-            val trimmed = vineyardCountry?.trim().orEmpty()
-            if (trimmed.isNotEmpty()) return trimmed
-            val region = Locale.getDefault().country
-            if (region.isBlank()) return ""
-            val display = Locale("", region).getDisplayCountry(Locale.ENGLISH)
-            return display.ifBlank { region }
-        }
+        fun resolveCountry(vineyardCountry: String?): String = vineyardCountry?.trim().orEmpty()
     }
 }

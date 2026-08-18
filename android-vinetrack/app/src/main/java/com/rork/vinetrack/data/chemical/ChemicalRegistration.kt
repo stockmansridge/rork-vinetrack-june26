@@ -123,12 +123,54 @@ data class ChemicalRegistration(
         fun normaliseCountry(raw: String): String {
             val trimmed = raw.trim()
             if (trimmed.isEmpty()) return ""
+            // Known display names and aliases FIRST, so "uk" and "United
+            // Kingdom" both land on the ISO code ("GB") rather than an
+            // accidental 2-letter uppercase. Then accept a bare code as-is.
+            COUNTRY_CODES_BY_NAME[trimmed.lowercase()]?.let { return it }
             if (trimmed.length == 2) return trimmed.uppercase()
-            return when (trimmed.lowercase()) {
-                "australia" -> "AU"
-                "new zealand", "newzealand", "aotearoa" -> "NZ"
-                else -> trimmed.uppercase()
-            }
+            return trimmed.uppercase()
         }
+
+        /**
+         * Display-name → ISO 3166-1 alpha-2 for every country the vineyard
+         * profile picker offers, plus common aliases. Identical table on iOS.
+         *
+         * An unknown name falls through UPPERCASED, which can never equal a
+         * server-stamped ISO code — so the jurisdiction gate fails closed for
+         * unmapped countries instead of mis-matching them.
+         */
+        private val COUNTRY_CODES_BY_NAME: Map<String, String> = mapOf(
+            "australia" to "AU",
+            "argentina" to "AR",
+            "austria" to "AT",
+            "brazil" to "BR",
+            "canada" to "CA",
+            "chile" to "CL",
+            "china" to "CN",
+            "france" to "FR",
+            "germany" to "DE",
+            "greece" to "GR",
+            "hungary" to "HU",
+            "india" to "IN",
+            "israel" to "IL",
+            "italy" to "IT",
+            "japan" to "JP",
+            "mexico" to "MX",
+            "new zealand" to "NZ",
+            "newzealand" to "NZ",
+            "aotearoa" to "NZ",
+            "portugal" to "PT",
+            "romania" to "RO",
+            "south africa" to "ZA",
+            "spain" to "ES",
+            "switzerland" to "CH",
+            "united kingdom" to "GB",
+            "great britain" to "GB",
+            "uk" to "GB",
+            "united states" to "US",
+            "united states of america" to "US",
+            "usa" to "US",
+            "uruguay" to "UY",
+        )
     }
 }

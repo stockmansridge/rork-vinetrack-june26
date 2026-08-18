@@ -6,9 +6,11 @@ import com.rork.vinetrack.data.chemical.ChemicalActivityGroupScheme
 import com.rork.vinetrack.data.chemical.ChemicalConcentrationUnit
 import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
+import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
 import com.rork.vinetrack.data.chemical.ChemicalLabelRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalRegistrationScheme
+import com.rork.vinetrack.data.chemical.ChemicalReverification
 import com.rork.vinetrack.data.chemical.ChemicalSnapshotCapture
 import com.rork.vinetrack.data.chemical.ChemicalStoreMatching
 import com.rork.vinetrack.data.chemical.ChemicalVerification
@@ -438,6 +440,102 @@ class ChemicalCustodiaParityTest {
         assertEquals("AU:apvma:91636", forteIntelligence().registration?.identityKey)
     }
 
+    // ---- Jurisdiction: the same brand name overseas (GB Custodia) ----------
+    // See docs/chemical-custodia-parity-fixture.md §6 for the counter-fixture.
+
+    private fun decodeGBLookup(): ChemicalInfoService.ChemicalStructuredLookup =
+        json.decodeFromString(CUSTODIA_GB_FIXTURE_JSON)
+
+    private fun decodeGBMasterLookup(): ChemicalInfoService.ChemicalStructuredLookup =
+        json.decodeFromString(
+            CUSTODIA_GB_FIXTURE_JSON.trim().dropLast(1) + GB_MASTER_ENVELOPE_SUFFIX,
+        )
+
+    @Test
+    fun `an AU vineyard can never consume the GB labels rates WHP re-entry or uses`() {
+        val gb = decodeGBLookup()
+        // The GB label is genuinely different label law — exactly what must
+        // not leak into an AU vineyard's records.
+        assertEquals("GB:other:16393", gb.registration?.identityKey)
+        assertEquals(1, gb.registeredUses.size)
+        assertEquals("Winter wheat", gb.registeredUses[0].crop)
+        assertEquals(35, gb.registeredUses[0].withholdingPeriodDays)
+        assertEquals(48, gb.registeredUses[0].reEntryPeriodHours)
+        assertEquals(2.0, gb.registeredUses[0].rates[0].value!!, 0.0)
+
+        // AU vineyard: refused OUTRIGHT — handled exactly like a failed
+        // lookup, so nothing is converted, previewed, saved or linked.
+        val reason = ChemicalJurisdiction.rejectionReason(gb, "AU")
+        assertNotNull(reason)
+        assertTrue(reason!!.contains("GB"))
+
+        // The SAME payload in its own jurisdiction is served normally — the
+        // block is jurisdiction, not decode.
+        assertNull(ChemicalJurisdiction.rejectionReason(gb, "GB"))
+        // And the AU payload keeps passing for an AU vineyard.
+        assertNull(ChemicalJurisdiction.rejectionReason(decodeLookup(), "AU"))
+
+        // The two labels differ precisely where cross-consumption would be
+        // dangerous — which is why the gate exists.
+        val au = intelligence()
+        assertEquals(28, au.registeredUses[0].withholdingPeriodDays)
+        assertNull(au.registeredUses[0].reEntryPeriodHours)
+    }
+
+    @Test
+    fun `a cross-country master envelope can never become a master match`() {
+        val gbMaster = decodeGBMasterLookup()
+        // It DECODES as a master row…
+        assertTrue(gbMaster.isMasterMatch)
+        // …but an AU flow refuses it before anything reads isMasterMatch, so
+        // the GB link and GB chemistry can never be threaded into a save.
+        assertNotNull(ChemicalJurisdiction.rejectionReason(gbMaster, "AU"))
+        assertNull(ChemicalJurisdiction.rejectionReason(gbMaster, "GB"))
+
+        val auMaster = decodeMasterLookup()
+        assertNull(ChemicalJurisdiction.rejectionReason(auMaster, "AU"))
+        assertNotNull(ChemicalJurisdiction.rejectionReason(auMaster, "NZ"))
+    }
+
+    @Test
+    fun `a missing vineyard country fails closed nothing consumable nothing guessed`() {
+        assertNotNull(ChemicalJurisdiction.rejectionReason(decodeLookup(), ""))
+        assertNotNull(ChemicalJurisdiction.rejectionReason(decodeMasterLookup(), "   "))
+        // The lookup country comes from the vineyard alone — never the device
+        // locale. An AU-region phone must not check the register for an
+        // unset-country vineyard.
+        assertEquals("", ChemicalInfoService.resolveCountry(null))
+        assertEquals("", ChemicalInfoService.resolveCountry("   "))
+        assertEquals("Australia", ChemicalInfoService.resolveCountry("Australia"))
+    }
+
+    @Test
+    fun `re-verify keys on the records own registration country never the vineyard fallback`() {
+        val chemical = savedChemical("chem-custodia", "Custodia", intelligence())
+        val plan = ChemicalReverification.plan(chemical, "NZ")
+        assertEquals("AU", plan.countryCode)
+        assertEquals("AU:apvma:66541", plan.identityKey)
+        // And with no country anywhere, re-verification is refused, not guessed.
+        val unidentified = SavedChemical(
+            id = "chem-x",
+            vineyardId = "vineyard-1",
+            name = "Mystery Mix",
+        )
+        assertFalse(ChemicalReverification.isOffered(unidentified, ""))
+    }
+
+    @Test
+    fun `vineyard display names normalise to the ISO jurisdiction codes the wire uses`() {
+        assertEquals("AU", ChemicalRegistration.normaliseCountry("Australia"))
+        assertEquals("NZ", ChemicalRegistration.normaliseCountry("New Zealand"))
+        assertEquals("GB", ChemicalRegistration.normaliseCountry("United Kingdom"))
+        assertEquals("GB", ChemicalRegistration.normaliseCountry("uk"))
+        assertEquals("US", ChemicalRegistration.normaliseCountry("United States"))
+        assertEquals("FR", ChemicalRegistration.normaliseCountry("France"))
+        assertEquals("AU", ChemicalRegistration.normaliseCountry("au"))
+        assertEquals("", ChemicalRegistration.normaliseCountry(""))
+    }
+
     companion object {
         /**
          * The shared `action=structured` edge-function response for "Custodia"
@@ -525,6 +623,88 @@ class ChemicalCustodiaParityTest {
             "master_revision": 4,
             "catalogue_status": "approved",
             "registration_identity_key": "AU:apvma:66541"
+          }
+        }
+        """.trimIndent()
+
+        /**
+         * The UK-registered "Custodia" (MAPP 16393) — the same brand name under
+         * a DIFFERENT country's label law: cereal uses only, a different rate,
+         * a numeric re-entry period and a different WHP. Identical string on
+         * iOS. An AU vineyard lookup must never consume ANY of it.
+         */
+        val CUSTODIA_GB_FIXTURE_JSON: String = """
+        {
+          "product_name": "Custodia",
+          "product_category": "fungicide",
+          "form_type": "liquid",
+          "registration": {
+            "country_code": "GB",
+            "scheme": "other",
+            "registration_number": "16393",
+            "registrant": "Adama Agricultural Solutions UK Ltd",
+            "registered_product_name": "Custodia"
+          },
+          "active_ingredients": [
+            {
+              "name": "Azoxystrobin",
+              "concentration": 120,
+              "concentration_unit": "g/L",
+              "activity_group": { "scheme": "frac", "code": "11", "common_name": "QoI / Strobilurin" },
+              "group_source": "authoritative_classification",
+              "identity_source": "ai_interpretation"
+            },
+            {
+              "name": "Tebuconazole",
+              "concentration": 200,
+              "concentration_unit": "g/L",
+              "activity_group": { "scheme": "frac", "code": "3", "common_name": "DMI / Triazole" },
+              "group_source": "authoritative_classification",
+              "identity_source": "ai_interpretation"
+            }
+          ],
+          "activity_groups": ["11", "3"],
+          "activity_group_scheme": "frac",
+          "registered_uses": [
+            {
+              "crop": "Winter wheat",
+              "target_raw": "Septoria leaf blotch",
+              "rates": [
+                { "label": "Standard", "basis": "per_hectare", "value": 2, "unit": "L" }
+              ],
+              "withholding_period_days": 35,
+              "re_entry_period_hours": 48,
+              "restrictions": "Latest application before grain milky ripe (GS 71). Maximum 2 applications per crop."
+            }
+          ],
+          "label_rate_bases": ["per_hectare"],
+          "verification": {
+            "status": "partially_verified",
+            "sources": [
+              { "kind": "ai_interpretation", "name": "Model extraction (gpt-4o)", "retrieved_at": "2026-08-18T00:00:00Z" },
+              { "kind": "authoritative_classification", "name": "VineTrack activity group reference v1 (FRAC/HRAC/IRAC)", "retrieved_at": "2026-08-18T00:00:00Z" }
+            ],
+            "conflicts": [],
+            "unresolved_fields": ["label_reference", "label_version"],
+            "verified_at": null
+          },
+          "activity_group_table_version": 1,
+          "schema_version": 1
+        }
+        """.trimIndent()
+
+        /**
+         * Master-served variant of the GB payload — an approved GB catalogue
+         * row. Identical on iOS.
+         */
+        val GB_MASTER_ENVELOPE_SUFFIX: String = """
+        ,
+          "match_source": "master",
+          "master": {
+            "master_chemical_id": "b1638c93-2026-4b77-8642-b88f16393002",
+            "master_revision": 2,
+            "catalogue_status": "approved",
+            "registration_identity_key": "GB:other:16393"
           }
         }
         """.trimIndent()

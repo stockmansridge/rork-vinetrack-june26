@@ -47,6 +47,7 @@ import com.rork.vinetrack.data.chemical.ChemicalEditOutcome
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalIntelligenceChange
 import com.rork.vinetrack.data.chemical.ChemicalIntelligenceDiff
+import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalReverification
 import com.rork.vinetrack.data.chemical.ChemicalReverifyFlow
@@ -156,9 +157,18 @@ internal fun ChemicalReverifySheet(
         phase = ReverifyPhase.Checking
         scope.launch {
             try {
-                val candidate = service
-                    .lookupStructured(plan.lookupQuery, plan.countryCode)
-                    .intelligence()
+                val lookup = service.lookupStructured(plan.lookupQuery, plan.countryCode)
+                // Jurisdiction gate: the candidate must belong to the SAME
+                // country the plan was keyed on (the record's own registration
+                // country, vineyard only as fallback). A cross-country answer
+                // is a failed check, never a diff — re-verification must not
+                // re-key a record to a different country's label.
+                val rejection = ChemicalJurisdiction.rejectionReason(lookup, plan.countryCode)
+                if (rejection != null) {
+                    phase = ReverifyPhase.Failed(rejection)
+                    return@launch
+                }
+                val candidate = lookup.intelligence()
                 phase = when (
                     val result = ChemicalReverifyFlow.resolve(
                         chemical = chemical,

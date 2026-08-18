@@ -402,6 +402,17 @@ struct ChemicalReverifyFlowView: View {
         do {
             let lookup = try await ChemicalInfoService()
                 .lookupStructured(productName: plan.lookupQuery, country: plan.countryCode)
+            // Jurisdiction gate: the candidate must belong to the SAME country
+            // the plan was keyed on (the record's own registration country,
+            // vineyard only as fallback). A cross-country answer is a failed
+            // check, never a diff — re-verification must not re-key a record
+            // to a different country's label.
+            if let reason = ChemicalJurisdiction.rejectionReason(
+                for: lookup, requestCountry: plan.countryCode
+            ) {
+                phase = .failed(reason)
+                return
+            }
             switch ChemicalReverifyFlow.resolve(
                 chemical: chemical,
                 candidate: lookup.intelligence()

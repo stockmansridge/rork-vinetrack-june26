@@ -118,7 +118,10 @@ struct ChemicalMatchFlowView: View {
                         Text("Search")
                     }
                 }
-                .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty || isSearching)
+                // No vineyard country -> no jurisdiction -> fail closed. The
+                // footer below tells the operator what to set; searching a
+                // guessed national register would verify the wrong label.
+                .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty || isSearching || countryCode.isEmpty)
             } header: {
                 Text("Search for product")
             } footer: {
@@ -472,6 +475,18 @@ struct ChemicalMatchFlowView: View {
         do {
             let lookup = try await ChemicalInfoService()
                 .lookupStructured(productName: result.name, country: countryCode)
+            // Jurisdiction gate: a payload registered in another country — or
+            // a master row keyed to one — is refused OUTRIGHT, exactly like a
+            // failed lookup. Foreign label rates, WHP, re-entry statements and
+            // uses must never be convertible, saveable or linkable here.
+            if let reason = ChemicalJurisdiction.rejectionReason(
+                for: lookup, requestCountry: countryCode
+            ) {
+                masterMatch = nil
+                intelligence = nil
+                structuredError = reason
+                return
+            }
             // Master-served lookups carry the catalogue reference the saved
             // record retains (sql/199). AI-sourced lookups carry none.
             masterMatch = lookup.isMasterMatch ? lookup.master : nil

@@ -141,14 +141,55 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
     static func normaliseCountry(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
-        // Accept both a code and a display name; store the code.
-        if trimmed.count == 2 { return trimmed.uppercased() }
-        switch trimmed.lowercased() {
-        case "australia": return "AU"
-        case "new zealand", "newzealand", "aotearoa": return "NZ"
-        default: return trimmed.uppercased()
+        // Known display names and aliases FIRST, so "uk" and "United Kingdom"
+        // both land on the ISO code ("GB") rather than an accidental 2-letter
+        // uppercase. Then accept a bare code as-is.
+        if let code = ChemicalRegistration.countryCodesByName[trimmed.lowercased()] {
+            return code
         }
+        if trimmed.count == 2 { return trimmed.uppercased() }
+        return trimmed.uppercased()
     }
+
+    /// Display-name → ISO 3166-1 alpha-2 for every country the vineyard
+    /// profile picker offers, plus common aliases. Identical table on Android.
+    ///
+    /// An unknown name falls through UPPERCASED, which can never equal a
+    /// server-stamped ISO code — so the jurisdiction gate fails closed for
+    /// unmapped countries instead of mis-matching them.
+    private static let countryCodesByName: [String: String] = [
+        "australia": "AU",
+        "argentina": "AR",
+        "austria": "AT",
+        "brazil": "BR",
+        "canada": "CA",
+        "chile": "CL",
+        "china": "CN",
+        "france": "FR",
+        "germany": "DE",
+        "greece": "GR",
+        "hungary": "HU",
+        "india": "IN",
+        "israel": "IL",
+        "italy": "IT",
+        "japan": "JP",
+        "mexico": "MX",
+        "new zealand": "NZ",
+        "newzealand": "NZ",
+        "aotearoa": "NZ",
+        "portugal": "PT",
+        "romania": "RO",
+        "south africa": "ZA",
+        "spain": "ES",
+        "switzerland": "CH",
+        "united kingdom": "GB",
+        "great britain": "GB",
+        "uk": "GB",
+        "united states": "US",
+        "united states of america": "US",
+        "usa": "US",
+        "uruguay": "UY"
+    ]
 
     private static func trimmed(_ value: String?) -> String? {
         let t = value?.trimmingCharacters(in: .whitespacesAndNewlines)

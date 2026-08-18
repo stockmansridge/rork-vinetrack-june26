@@ -429,3 +429,40 @@ Write rules (portal MUST honour, mirroring both apps):
 
 Pinned by the master-envelope cases in `ChemicalCustodiaParityTests.swift` /
 `ChemicalCustodiaParityTest.kt` and by `sql/tests/199_master_chemical_catalogue_tests.sql`.
+
+### 12.3 Jurisdiction rules (country scoping — portal MUST honour)
+
+The vineyard's country (`vineyards.country`, set in the vineyard profile) is
+the authoritative jurisdiction for every chemical lookup. No schema change is
+involved: the column has existed since sql/001, and both apps and the portal
+read the same value. Display names normalise to ISO 3166-1 alpha-2 before
+comparison ("Australia" → `AU`, "United Kingdom"/"uk" → `GB`; both apps use an
+identical table in `ChemicalRegistration.normaliseCountry`).
+
+1. Pass the vineyard's country on EVERY `chemical-info-lookup` call (`country`
+   body field, all actions). NEVER substitute the browser or device locale —
+   the locale says where the machine is set up, not where the vines grow. A
+   missing vineyard country fails CLOSED: search is disabled with a "set your
+   vineyard's country" prompt, and nothing can be verified.
+2. The server scopes master-catalogue matching to that country (the identity
+   key embeds it; name/alias matching filters on `registration_country`, and
+   the served row is re-checked against the requested country) and stamps the
+   AI extraction's `registration.country_code` with the REQUESTED country —
+   the AI's own country claims are never trusted. With no country supplied it
+   returns `"country"` in `verification.unresolved_fields` and no master
+   match is possible.
+3. Clients still gate every `action=structured` response before consuming it
+   (both apps route through `ChemicalJurisdiction`; the portal must mirror
+   it): reject when the country prefix of `master.registration_identity_key`
+   differs from the vineyard country, or when `registration.country_code` is
+   non-empty and differs. A rejected response is handled exactly like a
+   failed lookup — nothing converted, previewed, saved or linked.
+4. Consequently a cross-country row can never become a master match, and a
+   foreign label's rates, withholding periods, re-entry statements or
+   registered uses can never enter a Saved Chemical. Pinned by the GB
+   Custodia counter-fixture (`GB:other:16393`) in both parity suites (§10)
+   and `docs/chemical-custodia-parity-fixture.md` §6.
+5. Re-verify keys on the RECORD's own registration country; the vineyard
+   country is only a fallback when the record carries none, and the check is
+   refused entirely when neither exists. Re-verification never re-keys a
+   record to a different country's label.

@@ -505,4 +505,184 @@ struct ChemicalCustodiaParityTests {
         #expect(forteIntelligence().registration?.identityKey != master.registrationIdentityKey)
         #expect(forteIntelligence().registration?.identityKey == "AU:apvma:91636")
     }
+
+    // MARK: - Jurisdiction: the same brand name overseas (GB Custodia)
+
+    /// The UK-registered "Custodia" (MAPP 16393) — the same brand name under a
+    /// DIFFERENT country's label law: cereal uses only, a different rate, a
+    /// numeric re-entry period and a different WHP. Identical string on
+    /// Android. An AU vineyard lookup must never consume ANY of it.
+    static let custodiaGBFixtureJSON = """
+    {
+      "product_name": "Custodia",
+      "product_category": "fungicide",
+      "form_type": "liquid",
+      "registration": {
+        "country_code": "GB",
+        "scheme": "other",
+        "registration_number": "16393",
+        "registrant": "Adama Agricultural Solutions UK Ltd",
+        "registered_product_name": "Custodia"
+      },
+      "active_ingredients": [
+        {
+          "name": "Azoxystrobin",
+          "concentration": 120,
+          "concentration_unit": "g/L",
+          "activity_group": { "scheme": "frac", "code": "11", "common_name": "QoI / Strobilurin" },
+          "group_source": "authoritative_classification",
+          "identity_source": "ai_interpretation"
+        },
+        {
+          "name": "Tebuconazole",
+          "concentration": 200,
+          "concentration_unit": "g/L",
+          "activity_group": { "scheme": "frac", "code": "3", "common_name": "DMI / Triazole" },
+          "group_source": "authoritative_classification",
+          "identity_source": "ai_interpretation"
+        }
+      ],
+      "activity_groups": ["11", "3"],
+      "activity_group_scheme": "frac",
+      "registered_uses": [
+        {
+          "crop": "Winter wheat",
+          "target_raw": "Septoria leaf blotch",
+          "rates": [
+            { "label": "Standard", "basis": "per_hectare", "value": 2, "unit": "L" }
+          ],
+          "withholding_period_days": 35,
+          "re_entry_period_hours": 48,
+          "restrictions": "Latest application before grain milky ripe (GS 71). Maximum 2 applications per crop."
+        }
+      ],
+      "label_rate_bases": ["per_hectare"],
+      "verification": {
+        "status": "partially_verified",
+        "sources": [
+          { "kind": "ai_interpretation", "name": "Model extraction (gpt-4o)", "retrieved_at": "2026-08-18T00:00:00Z" },
+          { "kind": "authoritative_classification", "name": "VineTrack activity group reference v1 (FRAC/HRAC/IRAC)", "retrieved_at": "2026-08-18T00:00:00Z" }
+        ],
+        "conflicts": [],
+        "unresolved_fields": ["label_reference", "label_version"],
+        "verified_at": null
+      },
+      "activity_group_table_version": 1,
+      "schema_version": 1
+    }
+    """
+
+    /// Master-served variant of the GB payload — an approved GB catalogue row.
+    /// Identical on Android.
+    static let gbMasterEnvelopeSuffix = """
+    ,
+      "match_source": "master",
+      "master": {
+        "master_chemical_id": "b1638c93-2026-4b77-8642-b88f16393002",
+        "master_revision": 2,
+        "catalogue_status": "approved",
+        "registration_identity_key": "GB:other:16393"
+      }
+    }
+    """
+
+    static var custodiaGBMasterEnvelopeJSON: String {
+        let base = custodiaGBFixtureJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(base.dropLast()) + gbMasterEnvelopeSuffix
+    }
+
+    private func decodeGBLookup() throws -> ChemicalStructuredLookup {
+        try JSONDecoder().decode(
+            ChemicalStructuredLookup.self,
+            from: Data(Self.custodiaGBFixtureJSON.utf8)
+        )
+    }
+
+    private func decodeGBMasterLookup() throws -> ChemicalStructuredLookup {
+        try JSONDecoder().decode(
+            ChemicalStructuredLookup.self,
+            from: Data(Self.custodiaGBMasterEnvelopeJSON.utf8)
+        )
+    }
+
+    @Test("An AU vineyard can never consume the GB label's rates, WHP, re-entry or uses")
+    func auNeverConsumesGBLabel() throws {
+        let gb = try decodeGBLookup()
+        // The GB label is genuinely different label law — exactly what must
+        // not leak into an AU vineyard's records.
+        #expect(gb.registration?.identityKey == "GB:other:16393")
+        #expect(gb.registeredUses.count == 1)
+        #expect(gb.registeredUses[0].crop == "Winter wheat")
+        #expect(gb.registeredUses[0].withholdingPeriodDays == 35)
+        #expect(gb.registeredUses[0].reEntryPeriodHours == 48)
+        #expect(gb.registeredUses[0].rates[0].value == 2)
+
+        // AU vineyard: refused OUTRIGHT — handled exactly like a failed
+        // lookup, so nothing is converted, previewed, saved or linked.
+        let reason = ChemicalJurisdiction.rejectionReason(for: gb, requestCountry: "AU")
+        #expect(reason != nil)
+        #expect(reason?.contains("GB") == true)
+
+        // The SAME payload in its own jurisdiction is served normally — the
+        // block is jurisdiction, not decode.
+        #expect(ChemicalJurisdiction.rejectionReason(for: gb, requestCountry: "GB") == nil)
+        // And the AU payload keeps passing for an AU vineyard.
+        #expect(ChemicalJurisdiction.rejectionReason(for: try decodeLookup(), requestCountry: "AU") == nil)
+
+        // The two labels differ precisely where cross-consumption would be
+        // dangerous — which is why the gate exists.
+        let au = try intelligence()
+        #expect(au.registeredUses[0].withholdingPeriodDays == 28)
+        #expect(au.registeredUses[0].reEntryPeriodHours == nil)
+    }
+
+    @Test("A cross-country master envelope can never become a master match")
+    func crossCountryMasterNeverMatches() throws {
+        let gbMaster = try decodeGBMasterLookup()
+        // It DECODES as a master row…
+        #expect(gbMaster.isMasterMatch)
+        // …but an AU flow refuses it before anything reads `isMasterMatch`,
+        // so the GB link and GB chemistry can never be threaded into a save.
+        #expect(ChemicalJurisdiction.rejectionReason(for: gbMaster, requestCountry: "AU") != nil)
+        #expect(ChemicalJurisdiction.rejectionReason(for: gbMaster, requestCountry: "GB") == nil)
+
+        let auMaster = try decodeMasterLookup()
+        #expect(ChemicalJurisdiction.rejectionReason(for: auMaster, requestCountry: "AU") == nil)
+        #expect(ChemicalJurisdiction.rejectionReason(for: auMaster, requestCountry: "NZ") != nil)
+    }
+
+    @Test("A missing vineyard country fails closed — nothing is consumable, nothing is guessed")
+    func missingCountryFailsClosed() throws {
+        #expect(ChemicalJurisdiction.rejectionReason(for: try decodeLookup(), requestCountry: "") != nil)
+        #expect(ChemicalJurisdiction.rejectionReason(for: try decodeMasterLookup(), requestCountry: "   ") != nil)
+        // The lookup country comes from the vineyard alone — never the device
+        // locale. An AU-region phone must not check the register for an
+        // unset-country vineyard.
+        #expect(ChemicalInfoService.resolveCountry(vineyardCountry: nil) == "")
+        #expect(ChemicalInfoService.resolveCountry(vineyardCountry: "   ") == "")
+        #expect(ChemicalInfoService.resolveCountry(vineyardCountry: "Australia") == "Australia")
+    }
+
+    @Test("Re-verify keys on the record's own registration country, never the vineyard fallback")
+    func reverifyPreservesRecordCountry() throws {
+        let chemical = SavedChemical(name: "Custodia", chemicalIntelligence: try intelligence())
+        let plan = ChemicalReverification.plan(for: chemical, fallbackCountry: "NZ")
+        #expect(plan.countryCode == "AU")
+        #expect(plan.identityKey == "AU:apvma:66541")
+        // And with no country anywhere, re-verification is refused, not guessed.
+        let unidentified = SavedChemical(name: "Mystery Mix", chemicalIntelligence: nil)
+        #expect(!ChemicalReverification.isOffered(for: unidentified, fallbackCountry: ""))
+    }
+
+    @Test("Vineyard display names normalise to the ISO jurisdiction codes the wire uses")
+    func displayNamesNormalise() {
+        #expect(ChemicalRegistration.normaliseCountry("Australia") == "AU")
+        #expect(ChemicalRegistration.normaliseCountry("New Zealand") == "NZ")
+        #expect(ChemicalRegistration.normaliseCountry("United Kingdom") == "GB")
+        #expect(ChemicalRegistration.normaliseCountry("uk") == "GB")
+        #expect(ChemicalRegistration.normaliseCountry("United States") == "US")
+        #expect(ChemicalRegistration.normaliseCountry("France") == "FR")
+        #expect(ChemicalRegistration.normaliseCountry("au") == "AU")
+        #expect(ChemicalRegistration.normaliseCountry("") == "")
+    }
 }

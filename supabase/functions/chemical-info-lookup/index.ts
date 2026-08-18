@@ -851,13 +851,21 @@ async function fetchApprovedMaster(
 ): Promise<any | null> {
   if (!masterConfigured() || !countryCode) return null;
 
+  // Belt-and-braces jurisdiction assertion: whatever the query matched, the
+  // row itself must belong to the requested country. Both query paths already
+  // scope by country (the identity key embeds it; the name path filters on
+  // registration_country), but a master row from another country must never
+  // be served even if a future query edit loosens one of them.
+  const inCountry = (row: any): boolean =>
+    String(row?.registration_country ?? "").trim().toUpperCase() === countryCode;
+
   if (registrationNumber && scheme) {
     const key = `${countryCode}:${scheme}:${registrationNumber.trim().toUpperCase()}`;
     const rows = await masterSelect(
       `select=*&review_status=eq.approved` +
         `&registration_identity_key=eq.${encodeURIComponent(key)}&limit=1`,
     );
-    if (rows && rows.length === 1) return rows[0];
+    if (rows && rows.length === 1 && inCountry(rows[0])) return rows[0];
   }
 
   const name = productName.trim();
@@ -869,7 +877,7 @@ async function fetchApprovedMaster(
       `&registration_country=eq.${encodeURIComponent(countryCode)}` +
       `&or=${encodeURIComponent(`(${nameExpr},${aliasExpr})`)}&limit=2`,
   );
-  if (!rows || rows.length !== 1) return null;
+  if (!rows || rows.length !== 1 || !inCountry(rows[0])) return null;
   return rows[0];
 }
 
