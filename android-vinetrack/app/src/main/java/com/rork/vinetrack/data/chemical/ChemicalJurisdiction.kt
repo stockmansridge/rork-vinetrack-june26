@@ -100,7 +100,6 @@ object ChemicalJurisdiction {
     }
 
     // ---- Saved Chemical suitability (registration identity vs vineyard) ----
-    // Computed on read; parity-pinned by ChemicalCustodiaParityTest §suitability.
 
     /**
      * Compare a stored registration's country with the CURRENT vineyard's.
