@@ -57,6 +57,10 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
     let labelRateBases: [String]?
     let activityGroupTableVersion: Int?
     let intelligenceSchemaVersion: Int?
+    // Master Chemical Catalogue link (sql/199). Nullable throughout so a
+    // backend that has not yet had sql/199 applied still decodes.
+    let masterChemicalId: UUID?
+    let masterSourceRevision: Int?
     let createdAt: Date?
     let updatedAt: Date?
     let deletedAt: Date?
@@ -115,6 +119,8 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         case labelRateBases = "label_rate_bases"
         case activityGroupTableVersion = "activity_group_table_version"
         case intelligenceSchemaVersion = "intelligence_schema_version"
+        case masterChemicalId = "master_chemical_id"
+        case masterSourceRevision = "master_source_revision"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
@@ -183,6 +189,10 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         self.labelRateBases = try? c.decodeIfPresent([String].self, forKey: .labelRateBases)
         self.activityGroupTableVersion = try? c.decodeIfPresent(Int.self, forKey: .activityGroupTableVersion)
         self.intelligenceSchemaVersion = try? c.decodeIfPresent(Int.self, forKey: .intelligenceSchemaVersion)
+        // Master catalogue link columns were added in sql/199 — tolerant for
+        // backends that predate them.
+        self.masterChemicalId = try? c.decodeIfPresent(UUID.self, forKey: .masterChemicalId)
+        self.masterSourceRevision = try? c.decodeIfPresent(Int.self, forKey: .masterSourceRevision)
         self.createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt)
         self.updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt)
         self.deletedAt = try c.decodeIfPresent(Date.self, forKey: .deletedAt)
@@ -244,6 +254,11 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
     let labelRateBases: [String]?
     let activityGroupTableVersion: Int?
     let intelligenceSchemaVersion: Int
+    // Master Chemical Catalogue link (sql/199). Optionals are OMITTED from the
+    // upsert payload when nil, so a device that never learned about the
+    // catalogue can never blank out a link the portal or another device set.
+    let masterChemicalId: UUID?
+    let masterSourceRevision: Int?
     let createdBy: UUID?
     let clientUpdatedAt: Date
 
@@ -300,6 +315,8 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
         case labelRateBases = "label_rate_bases"
         case activityGroupTableVersion = "activity_group_table_version"
         case intelligenceSchemaVersion = "intelligence_schema_version"
+        case masterChemicalId = "master_chemical_id"
+        case masterSourceRevision = "master_source_revision"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
     }
@@ -372,6 +389,8 @@ extension BackendSavedChemical {
             labelRateBases: intel?.labelRateBases.map(\.rawValue),
             activityGroupTableVersion: intel?.activityGroupTableVersion,
             intelligenceSchemaVersion: intel?.schemaVersion ?? 0,
+            masterChemicalId: c.masterChemicalId,
+            masterSourceRevision: c.masterSourceRevision,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
         )
@@ -455,7 +474,9 @@ extension BackendSavedChemical {
             inventoryUnit: inventoryUnit ?? "",
             applicationNotes: applicationNotes ?? "",
             isActive: isActive ?? true,
-            chemicalIntelligence: decodedIntelligence()
+            chemicalIntelligence: decodedIntelligence(),
+            masterChemicalId: masterChemicalId,
+            masterSourceRevision: masterSourceRevision
         )
     }
 }

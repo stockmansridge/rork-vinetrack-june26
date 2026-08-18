@@ -73,6 +73,23 @@ class ChemicalInfoService {
     }
 
     /**
+     * Reference to an approved Master Chemical Catalogue row (sql/199) that a
+     * structured lookup was served from. Mirrors iOS `ChemicalMasterMatch`.
+     *
+     * Carried through Match & Verify so the saved record can retain
+     * `master_chemical_id` plus the catalogue revision its chemistry was
+     * copied at (`master_source_revision`) — the provenance Re-verify later
+     * compares to surface “Updated verified information available”.
+     */
+    @Serializable
+    data class ChemicalMasterMatch(
+        @SerialName("master_chemical_id") val masterChemicalId: String = "",
+        @SerialName("master_revision") val masterRevision: Int = 1,
+        @SerialName("catalogue_status") val catalogueStatus: String? = null,
+        @SerialName("registration_identity_key") val registrationIdentityKey: String? = null,
+    )
+
+    /**
      * The structured payload returned by the `structured` lookup action.
      *
      * Deliberately a transport type: converted into [ChemicalIntelligence] via
@@ -92,7 +109,19 @@ class ChemicalInfoService {
         val verification: ChemicalVerification = ChemicalVerification(),
         @SerialName("activity_group_table_version") val activityGroupTableVersion: Int = 0,
         @SerialName("schema_version") val schemaVersion: Int = 0,
+        // ---- Additive sql/199 envelope (absent on pre-catalogue servers) ----
+        /** "master" | "ai_candidate" | "unresolved" | null (old server). */
+        @SerialName("match_source") val matchSource: String? = null,
+        /** Present only on master-served responses. */
+        val master: ChemicalMasterMatch? = null,
     ) {
+        /**
+         * True when this lookup was served from an APPROVED master catalogue
+         * row and carries the reference the saved record should retain.
+         */
+        val isMasterMatch: Boolean
+            get() = matchSource == "master" && master?.masterChemicalId?.isNotBlank() == true
+
         /**
          * Converts the lookup into the single structured model.
          *

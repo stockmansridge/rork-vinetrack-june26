@@ -149,6 +149,18 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
     /// mutating it or implying it has been verified.
     var chemicalIntelligence: ChemicalIntelligence?
 
+    // MARK: Master Chemical Catalogue (sql/199)
+
+    /// Link to the shared master catalogue product this record was derived
+    /// from. Set only by identity-exact flows — never name similarity, never
+    /// backfill. `nil` is valid forever: an unlinked chemical keeps working
+    /// exactly as before.
+    var masterChemicalId: UUID?
+    /// The master `catalogue_version` the structured chemistry was copied at.
+    /// A larger current master revision means “updated verified information
+    /// available” via Re-verify; master updates never rewrite this record.
+    var masterSourceRevision: Int?
+
     init(
         id: UUID = UUID(),
         vineyardId: UUID = UUID(),
@@ -183,7 +195,9 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         inventoryUnit: String = "",
         applicationNotes: String = "",
         isActive: Bool = true,
-        chemicalIntelligence: ChemicalIntelligence? = nil
+        chemicalIntelligence: ChemicalIntelligence? = nil,
+        masterChemicalId: UUID? = nil,
+        masterSourceRevision: Int? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -219,6 +233,8 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         self.applicationNotes = applicationNotes
         self.isActive = isActive
         self.chemicalIntelligence = chemicalIntelligence
+        self.masterChemicalId = masterChemicalId
+        self.masterSourceRevision = masterSourceRevision
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -230,6 +246,7 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         case analysisBasis, organicCertified, inventoryQuantity, inventoryUnit
         case applicationNotes, isActive
         case chemicalIntelligence
+        case masterChemicalId, masterSourceRevision
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -274,6 +291,10 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         // still loads and still works everywhere it did before.
         chemicalIntelligence = try? container.decodeIfPresent(
             ChemicalIntelligence.self, forKey: .chemicalIntelligence)
+        // Master catalogue link (sql/199): additive and tolerant — records
+        // saved before the catalogue existed simply have none.
+        masterChemicalId = try? container.decodeIfPresent(UUID.self, forKey: .masterChemicalId)
+        masterSourceRevision = try? container.decodeIfPresent(Int.self, forKey: .masterSourceRevision)
     }
 }
 

@@ -158,3 +158,41 @@ verify step):
 - On save, duplicate-check on the registration identity key before inserting a
   second "Custodia" for the same vineyard; offer "update existing" exactly as
   the apps do.
+
+## 5. Master catalogue envelope variant (sql/199)
+
+When this product is served from the APPROVED Master Chemical Catalogue, the
+response is the §2 payload with its closing brace replaced by (identical
+fragment in both test suites):
+
+```json
+,
+  "match_source": "master",
+  "master": {
+    "master_chemical_id": "c0570d1a-2026-4a66-9541-a99f66541001",
+    "master_revision": 4,
+    "catalogue_status": "approved",
+    "registration_identity_key": "AU:apvma:66541"
+  }
+}
+```
+
+Required outcomes, pinned by the same two suites:
+
+1. Decodes with each platform's standard lookup decoder; `match_source` of
+   `ai_candidate` / `unresolved` / absent never reads as a master match.
+2. The envelope is ADDITIVE — chemistry converts identically to §3, and the
+   evidence gate still rules (master-served is not verified-by-magic).
+3. Applying a master-served lookup stores `master_chemical_id` +
+   `master_source_revision` on the vineyard record; AI-sourced saves leave any
+   stored link untouched (columns omitted, never nulled). Vineyard commercial
+   edits (price, stock) never move the link; a later master revision is
+   detectable as `master_revision > master_source_revision` — resolved only
+   via Re-verify, never by silent rewrite.
+4. Custodia Forte (`AU:apvma:91636`) and UK Custodia (`GB:other:16393`) can
+   never inherit this master identity.
+5. `sql/199` seeds this fixture into `public.master_chemicals` as a
+   **candidate** (id `c0570d1a-2026-4a66-9541-a99f66541001`), so it is NEVER
+   served to lookups until an admin re-confirms APVMA PubCRIS currency and
+   approves it (Stage 2 review). The `master_revision: 4` above is a test
+   value exercising drift detection, not the seeded row's revision (which is 1).

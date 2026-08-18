@@ -87,6 +87,15 @@ class SavedChemicalRepository(private val session: SessionStore) {
          * destroy a previously verified record.
          */
         val intelligence: ChemicalIntelligence? = null,
+        /**
+         * Master Chemical Catalogue provenance (sql/199). Null means “leave
+         * the stored link untouched” — `explicitNulls = false` omits the
+         * columns from the write — so ordinary edits and AI-sourced re-matches
+         * never clear or invent provenance. Only a master-served match sets
+         * these, always together.
+         */
+        val masterChemicalId: String? = null,
+        val masterSourceRevision: Int? = null,
     )
 
     /**
@@ -180,6 +189,9 @@ class SavedChemicalRepository(private val session: SessionStore) {
         @SerialName("label_rate_bases") val labelRateBases: List<String>? = null,
         @SerialName("activity_group_table_version") val activityGroupTableVersion: Int? = null,
         @SerialName("intelligence_schema_version") val intelligenceSchemaVersion: Int? = null,
+        // --- Master Chemical Catalogue (sql/199) ---
+        @SerialName("master_chemical_id") val masterChemicalId: String? = null,
+        @SerialName("master_source_revision") val masterSourceRevision: Int? = null,
     )
 
     @Serializable
@@ -235,6 +247,9 @@ class SavedChemicalRepository(private val session: SessionStore) {
         @SerialName("label_rate_bases") val labelRateBases: List<String>? = null,
         @SerialName("activity_group_table_version") val activityGroupTableVersion: Int? = null,
         @SerialName("intelligence_schema_version") val intelligenceSchemaVersion: Int? = null,
+        // --- Master Chemical Catalogue (sql/199) ---
+        @SerialName("master_chemical_id") val masterChemicalId: String? = null,
+        @SerialName("master_source_revision") val masterSourceRevision: Int? = null,
     )
 
     @Serializable
@@ -313,6 +328,8 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 labelRateBases = intel.labelRateBases,
                 activityGroupTableVersion = intel.activityGroupTableVersion,
                 intelligenceSchemaVersion = intel.intelligenceSchemaVersion,
+                masterChemicalId = input.masterChemicalId,
+                masterSourceRevision = input.masterSourceRevision,
             )
             val response = SupabaseClient.http.post(SupabaseClient.restUrl("saved_chemicals")) {
                 authHeaders(token)
@@ -377,6 +394,8 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 labelRateBases = intel.labelRateBases,
                 activityGroupTableVersion = intel.activityGroupTableVersion,
                 intelligenceSchemaVersion = intel.intelligenceSchemaVersion,
+                masterChemicalId = input.masterChemicalId,
+                masterSourceRevision = input.masterSourceRevision,
             )
             val response = SupabaseClient.http.patch(SupabaseClient.restUrl("saved_chemicals?id=eq.$id")) {
                 authHeaders(token)

@@ -1,5 +1,6 @@
 package com.rork.vinetrack.data.chemical
 
+import com.rork.vinetrack.data.ChemicalInfoService
 import com.rork.vinetrack.data.SavedChemicalRepository
 import com.rork.vinetrack.data.model.SavedChemical
 
@@ -57,11 +58,18 @@ object ChemicalStoreMatching {
      * is the whole point when verifying a legacy record: matching a chemical must
      * upgrade its chemistry, not quietly discard the pack size, price and
      * inventory the grower has been maintaining for years.
+     *
+     * [master] is the sql/199 catalogue reference when the lookup was served
+     * from an APPROVED master row: the saved record then retains the master id
+     * and the catalogue revision its chemistry was copied at. Null (an
+     * AI-sourced match) leaves any stored link untouched — the write omits the
+     * columns entirely — so provenance is never cleared or invented here.
      */
     fun inputFor(
         existing: SavedChemical?,
         productName: String,
         intel: ChemicalIntelligence,
+        master: ChemicalInfoService.ChemicalMasterMatch? = null,
     ): SavedChemicalRepository.ChemicalInput {
         val groupProjection = intel.legacyChemicalGroup
         val activeProjection = intel.legacyActiveIngredient
@@ -97,6 +105,8 @@ object ChemicalStoreMatching {
             inventoryUnit = existing?.inventoryUnit.orEmpty(),
             applicationNotes = existing?.applicationNotes.orEmpty(),
             intelligence = intel,
+            masterChemicalId = master?.masterChemicalId?.takeIf { it.isNotBlank() },
+            masterSourceRevision = master?.takeIf { it.masterChemicalId.isNotBlank() }?.masterRevision,
         )
     }
 }

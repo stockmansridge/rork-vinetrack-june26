@@ -117,6 +117,13 @@ internal fun ChemicalMatchFlowSheet(
     var saving by remember { mutableStateOf(false) }
     /** Set when the confirmed registration identity already exists in the store. */
     var duplicateOf by remember { mutableStateOf<SavedChemical?>(null) }
+    /**
+     * Master catalogue reference when the structured lookup was served from an
+     * APPROVED master row (sql/199). Null on AI-sourced lookups.
+     */
+    var masterMatch by remember {
+        mutableStateOf<ChemicalInfoService.ChemicalMasterMatch?>(null)
+    }
     /** Set when matching a legacy record onto a materially different product. */
     var identityWarning by remember { mutableStateOf<String?>(null) }
 
@@ -163,11 +170,16 @@ internal fun ChemicalMatchFlowSheet(
         structuredError = null
         scope.launch {
             try {
-                intelligence = service.lookupStructured(result.name, countryCode).intelligence()
+                val lookup = service.lookupStructured(result.name, countryCode)
+                // Master-served lookups carry the catalogue reference the
+                // saved record retains (sql/199). AI-sourced lookups carry none.
+                masterMatch = if (lookup.isMasterMatch) lookup.master else null
+                intelligence = lookup.intelligence()
             } catch (e: Exception) {
                 // No silent downgrade to the old AI shape: treating an
                 // unstructured answer as if it were verified evidence is the
                 // exact failure this stage exists to prevent.
+                masterMatch = null
                 intelligence = null
                 structuredError = e.message
                     ?: "Structured lookup is unavailable. Retry, or enter the product manually."
@@ -475,6 +487,12 @@ internal fun ChemicalMatchFlowSheet(
                             "Registration",
                             intel.registration?.displayIdentifier ?: "Not confirmed",
                         )
+                        masterMatch?.let { master ->
+                            ChemicalLabelledLine(
+                                "Source",
+                                "Master catalogue · rev ${master.masterRevision}",
+                            )
+                        }
                         ChemicalLabelledLine(
                             "Actives",
                             intel.activeIngredients.takeIf { it.isNotEmpty() }
@@ -534,7 +552,9 @@ internal fun ChemicalMatchFlowSheet(
                                         saving = true
                                         vm.updateSavedChemical(
                                             dup.id,
-                                            ChemicalStoreMatching.inputFor(dup, productName, intel),
+                                            ChemicalStoreMatching.inputFor(
+                                                dup, productName, intel, masterMatch,
+                                            ),
                                         ) { ok ->
                                             saving = false
                                             if (ok) onDismiss()
@@ -552,7 +572,9 @@ internal fun ChemicalMatchFlowSheet(
                                 onClick = {
                                     if (saving) return@Button
                                     saving = true
-                                    val input = ChemicalStoreMatching.inputFor(existing, productName, intel)
+                                    val input = ChemicalStoreMatching.inputFor(
+                                        existing, productName, intel, masterMatch,
+                                    )
                                     if (existing == null) {
                                         vm.createSavedChemical(input) { ok ->
                                             saving = false

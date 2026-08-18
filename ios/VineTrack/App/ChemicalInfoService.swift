@@ -76,6 +76,48 @@ nonisolated struct ChemicalInfoResponse: Codable, Sendable {
     }
 }
 
+/// Reference to an approved Master Chemical Catalogue row (sql/199) that a
+/// structured lookup was served from.
+///
+/// Carried through Match & Verify so the saved record can retain
+/// `master_chemical_id` plus the catalogue revision its chemistry was copied
+/// at (`master_source_revision`) — the provenance Re-verify later compares to
+/// surface “Updated verified information available”. Never invented client
+/// side; only ever decoded from a `match_source: "master"` response.
+nonisolated struct ChemicalMasterMatch: Codable, Sendable, Hashable {
+    let masterChemicalId: UUID
+    let masterRevision: Int
+    let catalogueStatus: String?
+    let registrationIdentityKey: String?
+
+    nonisolated enum CodingKeys: String, CodingKey {
+        case masterChemicalId = "master_chemical_id"
+        case masterRevision = "master_revision"
+        case catalogueStatus = "catalogue_status"
+        case registrationIdentityKey = "registration_identity_key"
+    }
+
+    init(
+        masterChemicalId: UUID,
+        masterRevision: Int,
+        catalogueStatus: String? = nil,
+        registrationIdentityKey: String? = nil
+    ) {
+        self.masterChemicalId = masterChemicalId
+        self.masterRevision = masterRevision
+        self.catalogueStatus = catalogueStatus
+        self.registrationIdentityKey = registrationIdentityKey
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        masterChemicalId = try c.decode(UUID.self, forKey: .masterChemicalId)
+        masterRevision = try c.decodeIfPresent(Int.self, forKey: .masterRevision) ?? 1
+        catalogueStatus = try c.decodeIfPresent(String.self, forKey: .catalogueStatus)
+        registrationIdentityKey = try c.decodeIfPresent(String.self, forKey: .registrationIdentityKey)
+    }
+}
+
 /// The structured payload returned by the `structured` lookup action.
 ///
 /// Deliberately a transport type: it is converted into `ChemicalIntelligence`
@@ -92,6 +134,14 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
     let verification: ChemicalVerification
     let activityGroupTableVersion: Int
     let schemaVersion: Int
+    /// "master" | "ai_candidate" | "unresolved" | nil (pre-sql/199 server).
+    let matchSource: String?
+    /// Present only on master-served responses.
+    let master: ChemicalMasterMatch?
+
+    /// True when this lookup was served from an APPROVED master catalogue row
+    /// and carries the reference the saved record should retain.
+    var isMasterMatch: Bool { matchSource == "master" && master != nil }
 
     nonisolated enum CodingKeys: String, CodingKey {
         case productName = "product_name"
@@ -105,6 +155,8 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         case verification
         case activityGroupTableVersion = "activity_group_table_version"
         case schemaVersion = "schema_version"
+        case matchSource = "match_source"
+        case master
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -120,6 +172,11 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         verification = try c.decodeIfPresent(ChemicalVerification.self, forKey: .verification) ?? ChemicalVerification()
         activityGroupTableVersion = try c.decodeIfPresent(Int.self, forKey: .activityGroupTableVersion) ?? 0
         schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
+        // Additive sql/199 envelope — tolerant on both sides: an old server
+        // sends neither key, and a malformed master block degrades to nil
+        // (plain AI-candidate behaviour) rather than failing the lookup.
+        matchSource = try? c.decodeIfPresent(String.self, forKey: .matchSource)
+        master = try? c.decodeIfPresent(ChemicalMasterMatch.self, forKey: .master)
     }
 
     /// Converts the lookup into the single structured model.

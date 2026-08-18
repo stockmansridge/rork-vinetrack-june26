@@ -364,3 +364,68 @@ Two non-breaking asymmetries exist and are absorbed by the read rules:
 - `activity_groups` codes deliberately have **no** DB CHECK — the FRAC/HRAC/IRAC vocabulary grows annually; the typed enums in the apps are the enforcement point.
 - Any additive field in the JSONB objects requires: update both app models, keep decoding tolerant, bump `intelligence_schema_version`, and update this document in the same change.
 - Never repurpose or rename an existing key; historical snapshots in `tanks` are immutable evidence.
+
+## 12. Shared lookup envelope + master link columns (sql/199)
+
+Stage 1 of the Master Chemical Catalogue (`sql/199_master_chemical_catalogue.sql`)
+adds an ADDITIVE envelope to the `chemical-info-lookup` `action=structured`
+response and two additive columns on `saved_chemicals`. Everything in sections
+1–11 is unchanged; master rows reuse the §4 JSONB shapes byte-for-byte.
+
+### 12.1 Response envelope (`action=structured`)
+
+```json
+{
+  "...": "the full sql/194 structured payload, exactly as in §7",
+  "match_source": "master",
+  "master": {
+    "master_chemical_id": "c0570d1a-2026-4a66-9541-a99f66541001",
+    "master_revision": 4,
+    "catalogue_status": "approved",
+    "registration_identity_key": "AU:apvma:66541"
+  }
+}
+```
+
+- `match_source`: `"master"` (served from an APPROVED catalogue row — the AI
+  was never called) | `"ai_candidate"` (AI extraction, unchanged honesty
+  rules) | `"unresolved"` (AI established neither actives nor a registration
+  — route the operator to manual entry). Absent on pre-sql/199 servers; treat
+  absent as `ai_candidate` behaviour.
+- `master` is present ONLY when `match_source == "master"`. Lookup priority is
+  master → AI → manual; a known approved product must never go back through
+  the AI. Master matching is exact only: identity key when known, else exact
+  (case-insensitive) registered name or exact lower-cased alias that matches
+  EXACTLY ONE approved row for the country — never fuzzy, never substring.
+- `action=search` results may carry additive `source: "master"` and
+  `master_chemical_id` fields; approved master hits are listed first.
+- Old clients ignore all of this safely; every key is additive.
+
+### 12.2 New `saved_chemicals` columns
+
+| Column | Type | Meaning |
+|---|---|---|
+| `master_chemical_id` | `uuid` FK → `master_chemicals.id`, nullable | The catalogue product this record was derived from. |
+| `master_source_revision` | `integer`, nullable | `master_chemicals.catalogue_version` at the moment the chemistry was copied. |
+
+Write rules (portal MUST honour, mirroring both apps):
+
+1. Set BOTH columns together, and only when applying a `match_source:"master"`
+   lookup (`master.master_chemical_id` / `master.master_revision`).
+2. Every other write — vineyard edits, AI-sourced matches, manual entry —
+   OMITS both columns entirely (never writes `null`), so an existing link is
+   never cleared or invented. Vineyard-private fields (stock, price, supplier,
+   pack size, notes) never live on the master row.
+3. The vineyard record keeps its OWN sql/194 chemistry copy; nothing may
+   depend on a live join to `master_chemicals` for spray calculations.
+4. “Updated verified information available” = current
+   `master_chemicals.catalogue_version > saved.master_source_revision`;
+   resolution happens ONLY through the Re-verify diff flow — master updates
+   never rewrite vineyard rows or spray snapshots.
+5. Only `review_status = 'approved'` master rows are readable by normal users;
+   candidates/retired rows are admin-only (RLS-enforced, not a client filter).
+   Catalogue writes are system-admin only; `review_status` (catalogue
+   lifecycle) must never be conflated with `verification_status` (§5.1).
+
+Pinned by the master-envelope cases in `ChemicalCustodiaParityTests.swift` /
+`ChemicalCustodiaParityTest.kt` and by `sql/tests/199_master_chemical_catalogue_tests.sql`.

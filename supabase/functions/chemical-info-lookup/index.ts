@@ -6,10 +6,17 @@
 // Request (POST JSON):
 //   { "action": "search", "query": string, "country"?: string }
 //   { "action": "info",   "productName": string, "country"?: string }
+//   { "action": "structured", "productName": string, "country"?: string,
+//     "registrationNumber"?: string }   // optional identity hint (sql/199)
 //
 // Response 200 JSON shapes:
-//   action=search -> { results: ChemicalSearchResult[] }
+//   action=search -> { results: ChemicalSearchResult[] }  (approved master
+//                     catalogue hits are listed FIRST, tagged source:"master")
 //   action=info   -> ChemicalInfoResponse
+//   action=structured -> the sql/194 structured contract, plus (sql/199):
+//       match_source: "master" | "ai_candidate" | "unresolved"
+//       master?: { master_chemical_id, master_revision, catalogue_status,
+//                  registration_identity_key }        (master matches only)
 //
 // Errors return { error: string } with appropriate HTTP status.
 
@@ -760,6 +767,280 @@ function buildStructuredResponse(parsed: any, country: string): any {
   };
 }
 
+// ===========================================================================
+// Master Chemical Catalogue (sql/199) — approved-master-first lookup
+// ===========================================================================
+//
+// Lookup priority (Stage 1):
+//   1. APPROVED master catalogue row — by exact registration identity when a
+//      hint is supplied, else exact (case-insensitive) registered name or
+//      exact lower-cased alias, always country-scoped. A known approved
+//      product NEVER goes back through the AI.
+//   2. AI extraction (unchanged honesty rules) — tagged "ai_candidate", or
+//      "unresolved" when it established neither actives nor a registration.
+//   3. Manual structured entry (client-side, unchanged).
+//
+// Identity discipline mirrors the apps: only review_status='approved' rows are
+// served; a name/alias must match EXACTLY ONE row or the match is abandoned
+// ("custodia" can never reach "Custodia Forte"); aliases are exact whole-string
+// equality, never substrings.
+//
+// On an AI-path result carrying a complete registration identity, a CANDIDATE
+// master row is enqueued (service-role write, deduplicated on the identity
+// key, existing rows always win). Candidates are never served to lookups —
+// they exist so the catalogue grows from real demand and a human admin can
+// approve them against the register (sql/199 blocks approving AI provenance).
+//
+// EVERY catalogue call here is fail-open: any error (including sql/199 not yet
+// applied) falls through to the AI path, so "not in Master" can never become
+// "cannot look up".
+
+const MASTER_TABLE_URL = (() => {
+  const base = Deno.env.get("SUPABASE_URL") ?? "";
+  return base ? `${base.replace(/\/+$/, "")}/rest/v1/master_chemicals` : "";
+})();
+const MASTER_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+function masterConfigured(): boolean {
+  return Boolean(MASTER_TABLE_URL && MASTER_SERVICE_KEY);
+}
+
+function masterHeaders(): Record<string, string> {
+  return {
+    "apikey": MASTER_SERVICE_KEY,
+    "Authorization": `Bearer ${MASTER_SERVICE_KEY}`,
+    "Accept": "application/json",
+  };
+}
+
+/** PostgREST double-quoted value (for or=() expressions). */
+function pgQuote(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/** Escape LIKE/ILIKE wildcards so a product name is matched literally. */
+function escapeLike(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+async function masterSelect(query: string): Promise<any[] | null> {
+  if (!masterConfigured()) return null;
+  const res = await fetch(`${MASTER_TABLE_URL}?${query}`, { headers: masterHeaders() });
+  if (!res.ok) {
+    // Table absent (sql/199 not applied yet) or transient failure — the
+    // caller falls through to the AI path.
+    try { await res.body?.cancel(); } catch { /* ignore */ }
+    return null;
+  }
+  const rows = await res.json();
+  return Array.isArray(rows) ? rows : null;
+}
+
+/**
+ * Resolve the single approved master row for this request, or null.
+ *
+ * Identity hint first (deterministic), then exact name/alias — which must be
+ * UNIQUE among approved rows for that country or nothing is returned. Never
+ * fuzzy, never substring, never cross-country.
+ */
+async function fetchApprovedMaster(
+  productName: string,
+  countryCode: string,
+  registrationNumber: string,
+  scheme: string | null,
+): Promise<any | null> {
+  if (!masterConfigured() || !countryCode) return null;
+
+  if (registrationNumber && scheme) {
+    const key = `${countryCode}:${scheme}:${registrationNumber.trim().toUpperCase()}`;
+    const rows = await masterSelect(
+      `select=*&review_status=eq.approved` +
+        `&registration_identity_key=eq.${encodeURIComponent(key)}&limit=1`,
+    );
+    if (rows && rows.length === 1) return rows[0];
+  }
+
+  const name = productName.trim();
+  if (!name) return null;
+  const nameExpr = `registered_product_name.ilike.${pgQuote(escapeLike(name))}`;
+  const aliasExpr = `common_names.cs.{${pgQuote(name.toLowerCase())}}`;
+  const rows = await masterSelect(
+    `select=*&review_status=eq.approved` +
+      `&registration_country=eq.${encodeURIComponent(countryCode)}` +
+      `&or=${encodeURIComponent(`(${nameExpr},${aliasExpr})`)}&limit=2`,
+  );
+  if (!rows || rows.length !== 1) return null;
+  return rows[0];
+}
+
+/**
+ * Serve a master row in EXACTLY the structured contract every client already
+ * decodes, plus the additive master envelope. The row's own sql/194
+ * verification evidence (register/label provenance recorded at review time)
+ * travels with it — no AI source, no AI confidence.
+ */
+function buildMasterStructuredResponse(row: any): any {
+  return {
+    product_name: row.registered_product_name ?? null,
+    product_category: row.product_category ?? "",
+    form_type: row.form_type ?? null,
+    registration: {
+      country_code: row.registration_country ?? "",
+      scheme: row.registration_scheme ?? null,
+      registration_number: row.registration_number ?? null,
+      registrant: row.registrant ?? null,
+      registered_product_name: row.registered_product_name ?? null,
+      label_reference: row.label_reference ?? null,
+      label_version: row.label_version ?? null,
+    },
+    active_ingredients: Array.isArray(row.active_ingredients) ? row.active_ingredients : [],
+    activity_groups: Array.isArray(row.activity_groups) ? row.activity_groups : [],
+    activity_group_scheme: row.activity_group_scheme ?? null,
+    registered_uses: Array.isArray(row.registered_uses) ? row.registered_uses : [],
+    label_rate_bases: Array.isArray(row.label_rate_bases) ? row.label_rate_bases : [],
+    verification: {
+      status: row.verification_status ?? "unverified",
+      sources: Array.isArray(row.verification_sources) ? row.verification_sources : [],
+      conflicts: Array.isArray(row.verification_conflicts) ? row.verification_conflicts : [],
+      unresolved_fields: Array.isArray(row.verification_unresolved_fields)
+        ? row.verification_unresolved_fields
+        : [],
+      verified_at: row.verified_at ?? null,
+    },
+    activity_group_table_version: row.activity_group_table_version ?? ACTIVITY_GROUP_TABLE_VERSION,
+    schema_version: row.intelligence_schema_version ?? 1,
+    match_source: "master",
+    master: {
+      master_chemical_id: row.id,
+      master_revision: row.catalogue_version ?? 1,
+      catalogue_status: row.review_status ?? null,
+      registration_identity_key: row.registration_identity_key ?? null,
+    },
+  };
+}
+
+/**
+ * Enqueue an AI extraction as a CANDIDATE master row.
+ *
+ * Only a COMPLETE registration identity may enter the catalogue — an
+ * unregistered product has no provable identity to deduplicate on and stays a
+ * per-vineyard record. `resolution=ignore-duplicates` means an existing row
+ * (possibly approved) always wins; this write can never update or downgrade
+ * anything. Failures are logged and swallowed: enqueueing is a side effect,
+ * never part of the lookup's success.
+ */
+async function enqueueMasterCandidate(structured: any, requestedName: string): Promise<void> {
+  try {
+    if (!masterConfigured()) return;
+    const reg = structured?.registration;
+    const country = String(reg?.country_code ?? "").trim().toUpperCase();
+    const scheme = String(reg?.scheme ?? "").trim().toLowerCase();
+    const number = String(reg?.registration_number ?? "").trim();
+    if (!/^[A-Z]{2}$/.test(country) || !scheme || !number) return;
+
+    const productName = String(structured?.product_name ?? "").trim();
+    const names = new Set<string>();
+    if (productName) names.add(productName.toLowerCase());
+    const requested = requestedName.trim().toLowerCase();
+    if (requested) names.add(requested);
+
+    const res = await fetch(`${MASTER_TABLE_URL}?on_conflict=registration_identity_key`, {
+      method: "POST",
+      headers: {
+        ...masterHeaders(),
+        "Content-Type": "application/json",
+        "Prefer": "resolution=ignore-duplicates,return=minimal",
+      },
+      body: JSON.stringify({
+        registration_country: country,
+        registration_scheme: scheme,
+        registration_number: number,
+        registrant: reg?.registrant ?? null,
+        registered_product_name: productName || requestedName.trim(),
+        common_names: Array.from(names),
+        product_category: structured?.product_category || null,
+        form_type: structured?.form_type ?? null,
+        active_ingredients: structured?.active_ingredients ?? [],
+        activity_groups: structured?.activity_groups ?? [],
+        activity_group_scheme: structured?.activity_group_scheme ?? null,
+        registered_uses: structured?.registered_uses ?? [],
+        label_rate_bases: structured?.label_rate_bases ?? [],
+        label_reference: reg?.label_reference ?? null,
+        label_version: reg?.label_version ?? null,
+        verification_status: structured?.verification?.status ?? "unverified",
+        verification_sources: structured?.verification?.sources ?? [],
+        verification_conflicts: structured?.verification?.conflicts ?? [],
+        verification_unresolved_fields: structured?.verification?.unresolved_fields ?? [],
+        source_kind: "ai_interpretation",
+        retrieved_at: new Date().toISOString(),
+        review_status: "candidate",
+        activity_group_table_version: structured?.activity_group_table_version ??
+          ACTIVITY_GROUP_TABLE_VERSION,
+        intelligence_schema_version: structured?.schema_version ?? 1,
+      }),
+    });
+    try { await res.body?.cancel(); } catch { /* ignore */ }
+  } catch (err) {
+    console.error(
+      "master candidate enqueue skipped:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
+/**
+ * Approved master rows matching a human search, mapped to the search-result
+ * shape (additive `source`/`master_chemical_id` fields). Substring matching is
+ * fine HERE — this is a discovery listing a human picks from; identity is only
+ * ever established by the structured lookup's exact rules.
+ */
+async function searchMaster(query: string, countryCode: string): Promise<any[]> {
+  try {
+    if (!masterConfigured() || !countryCode) return [];
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const nameExpr = `registered_product_name.ilike.${pgQuote(`%${escapeLike(trimmed)}%`)}`;
+    const aliasExpr = `common_names.cs.{${pgQuote(trimmed.toLowerCase())}}`;
+    const rows = await masterSelect(
+      `select=*&review_status=eq.approved` +
+        `&registration_country=eq.${encodeURIComponent(countryCode)}` +
+        `&or=${encodeURIComponent(`(${nameExpr},${aliasExpr})`)}` +
+        `&order=registered_product_name.asc&limit=3`,
+    );
+    if (!rows) return [];
+    return rows.map((row: any) => {
+      const actives = Array.isArray(row.active_ingredients) ? row.active_ingredients : [];
+      const groups = Array.isArray(row.activity_groups) ? row.activity_groups : [];
+      const uses = Array.isArray(row.registered_uses) ? row.registered_uses : [];
+      const firstUse = uses[0] ?? null;
+      return {
+        name: String(row.registered_product_name ?? ""),
+        activeIngredient: actives
+          .map((a: any) => {
+            const conc = a?.concentration != null
+              ? ` ${a.concentration}${a?.concentration_unit ? ` ${a.concentration_unit}` : ""}`
+              : "";
+            return `${String(a?.name ?? "").trim()}${conc}`.trim();
+          })
+          .filter((s: string) => s)
+          .join(" + "),
+        chemicalGroup: groups.join(" + "),
+        brand: String(row.registrant ?? ""),
+        primaryUse: firstUse
+          ? [firstUse.target_raw, firstUse.crop ? `(${firstUse.crop})` : ""]
+            .filter(Boolean).join(" ")
+          : "",
+        modeOfAction: groups.join(" + "),
+        source: "master",
+        master_chemical_id: row.id,
+      };
+    }).filter((r: any) => r.name);
+  } catch (err) {
+    console.error("master search skipped:", err instanceof Error ? err.message : String(err));
+    return [];
+  }
+}
+
 function extractJSON(text: string): any {
   let cleaned = text
     .replace(/```json/gi, "")
@@ -1008,10 +1289,29 @@ Deno.serve(async (req: Request) => {
       if (query.length > 200) {
         return json({ error: "Query too long" }, 400);
       }
-      const { system, user } = buildSearchPrompt(query, country);
-      const raw = await callOpenAI(system, user, apiKey);
-      const parsed = extractJSON(raw);
-      return json(normalizeSearchResults(parsed));
+      // Master catalogue first (sql/199): approved, country-scoped rows lead
+      // the list. The AI still runs so unknown products keep surfacing — and
+      // if the AI provider fails, master hits alone are a valid answer.
+      const masterHits = await searchMaster(query, countryCodeFor(country));
+      try {
+        const { system, user } = buildSearchPrompt(query, country);
+        const raw = await callOpenAI(system, user, apiKey);
+        const parsed = extractJSON(raw);
+        const normalized = normalizeSearchResults(parsed);
+        if (masterHits.length) {
+          const seen = new Set(masterHits.map((m: any) => m.name.toLowerCase()));
+          normalized.results = [
+            ...masterHits,
+            ...normalized.results.filter(
+              (r: any) => !seen.has(String(r?.name ?? "").toLowerCase()),
+            ),
+          ];
+        }
+        return json(normalized);
+      } catch (err) {
+        if (masterHits.length) return json({ results: masterHits });
+        throw err;
+      }
     }
 
     if (action === "structured") {
@@ -1022,6 +1322,28 @@ Deno.serve(async (req: Request) => {
       if (productName.length > 200) {
         return json({ error: "productName too long" }, 400);
       }
+
+      // 1) Approved master catalogue (sql/199). A hit short-circuits the AI
+      //    entirely; any catalogue failure falls through to the AI unchanged.
+      const registrationNumber = typeof body?.registrationNumber === "string"
+        ? body.registrationNumber.trim()
+        : "";
+      try {
+        const masterRow = await fetchApprovedMaster(
+          productName,
+          countryCodeFor(country),
+          registrationNumber,
+          registrationSchemeFor(country),
+        );
+        if (masterRow) return json(buildMasterStructuredResponse(masterRow));
+      } catch (err) {
+        console.error(
+          "master lookup fell through:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+
+      // 2) AI extraction, exactly as before.
       const { system, user } = buildStructuredPrompt(productName, country);
       const raw = await callOpenAI(system, user, apiKey);
       const parsed = extractJSON(raw);
@@ -1040,6 +1362,19 @@ Deno.serve(async (req: Request) => {
           ).sort();
         }
       }
+      // Additive envelope: what kind of answer this is. "unresolved" means
+      // the AI established neither actives nor a registration — the client
+      // should route the operator to manual entry rather than pretending.
+      structured.match_source =
+        (structured.active_ingredients.length > 0 ||
+            structured.registration?.registration_number)
+          ? "ai_candidate"
+          : "unresolved";
+
+      // 3) Grow the catalogue: identity-complete AI results become CANDIDATE
+      //    rows for human review. Never blocks or fails the lookup.
+      await enqueueMasterCandidate(structured, productName);
+
       return json(structured);
     }
 

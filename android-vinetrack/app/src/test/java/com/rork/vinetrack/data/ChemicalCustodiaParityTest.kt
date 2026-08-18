@@ -56,6 +56,9 @@ class ChemicalCustodiaParityTest {
     private fun decodeLookup(): ChemicalInfoService.ChemicalStructuredLookup =
         json.decodeFromString(CUSTODIA_FIXTURE_JSON)
 
+    private fun decodeMasterLookup(): ChemicalInfoService.ChemicalStructuredLookup =
+        json.decodeFromString(CUSTODIA_FIXTURE_JSON.trim().dropLast(1) + MASTER_ENVELOPE_SUFFIX)
+
     private fun intelligence(): ChemicalIntelligence = decodeLookup().intelligence()
 
     /**
@@ -343,6 +346,98 @@ class ChemicalCustodiaParityTest {
         assertEquals(listOf("Sulfur"), ChemicalIntelligence.splitActiveNames("Sulfur 800 g/kg"))
     }
 
+    // ---- Master catalogue envelope (sql/199) ----------------------------------
+
+    @Test
+    fun `a master-served response decodes and carries the envelope`() {
+        val lookup = decodeMasterLookup()
+        assertEquals("master", lookup.matchSource)
+        assertTrue(lookup.isMasterMatch)
+
+        val master = lookup.master!!
+        assertEquals("c0570d1a-2026-4a66-9541-a99f66541001", master.masterChemicalId)
+        assertEquals(4, master.masterRevision)
+        assertEquals("approved", master.catalogueStatus)
+        assertEquals("AU:apvma:66541", master.registrationIdentityKey)
+
+        // The envelope is ADDITIVE: chemistry converts identically to the
+        // plain payload, and the evidence gate still rules — master-served is
+        // not verified-by-magic.
+        val intel = lookup.intelligence()
+        assertEquals(2, intel.activeIngredients.size)
+        assertEquals(listOf("3", "11"), intel.activityGroupCodes)
+        assertEquals("AU:apvma:66541", intel.registration?.identityKey)
+        assertEquals(ChemicalVerificationStatus.PARTIALLY_VERIFIED, intel.resolvedVerificationStatus)
+    }
+
+    @Test
+    fun `a payload without the envelope still decodes as before`() {
+        val lookup = decodeLookup()
+        assertNull(lookup.matchSource)
+        assertNull(lookup.master)
+        assertFalse(lookup.isMasterMatch)
+    }
+
+    @Test
+    fun `an ai_candidate envelope never reads as a master match`() {
+        val lookup = json.decodeFromString<ChemicalInfoService.ChemicalStructuredLookup>(
+            CUSTODIA_FIXTURE_JSON.trim().dropLast(1) + ", \"match_source\": \"ai_candidate\" }",
+        )
+        assertEquals("ai_candidate", lookup.matchSource)
+        assertFalse(lookup.isMasterMatch)
+    }
+
+    @Test
+    fun `a master-derived saved chemical retains link revision and chemistry copy`() {
+        val lookup = decodeMasterLookup()
+        val master = lookup.master!!
+        val chemical = savedChemical("chem-custodia", "Custodia", lookup.intelligence())
+            .copy(
+                masterChemicalId = master.masterChemicalId,
+                masterSourceRevision = master.masterRevision,
+            )
+
+        // The wire row carries the link in the sql/199 columns…
+        val encoded = json.encodeToString(SavedChemical.serializer(), chemical)
+        assertTrue(encoded.contains("\"master_chemical_id\":\"c0570d1a-2026-4a66-9541-a99f66541001\""))
+        assertTrue(encoded.contains("\"master_source_revision\":4"))
+
+        // …while the chemistry is the vineyard's OWN sql/194 copy — spray
+        // calculations never depend on a live join to the master row.
+        val restored = json.decodeFromString<SavedChemical>(encoded)
+        assertEquals(master.masterChemicalId, restored.masterChemicalId)
+        assertEquals(4, restored.masterSourceRevision)
+        assertEquals(2, restored.activeIngredients?.size)
+
+        // Vineyard-only commercial edits never move the link.
+        val edited = restored.copy(pricePerPack = 189.5, inventoryQuantity = 4.0)
+        assertEquals(master.masterChemicalId, edited.masterChemicalId)
+        assertEquals(4, edited.masterSourceRevision)
+
+        // Master moved to revision 5 → drift is detectable; nothing rewritten.
+        val updated = master.copy(masterRevision = 5)
+        assertTrue(updated.masterRevision > (edited.masterSourceRevision ?: 0))
+        assertEquals(4, edited.masterSourceRevision)
+
+        // The confirm-step input builder threads provenance for master matches…
+        val input = ChemicalStoreMatching.inputFor(null, "Custodia", lookup.intelligence(), master)
+        assertEquals(master.masterChemicalId, input.masterChemicalId)
+        assertEquals(4, input.masterSourceRevision)
+
+        // …and an AI-sourced save (no master) omits the columns entirely, so a
+        // stored link is preserved — never cleared, never invented.
+        val aiInput = ChemicalStoreMatching.inputFor(edited, "Custodia", lookup.intelligence())
+        assertNull(aiInput.masterChemicalId)
+        assertNull(aiInput.masterSourceRevision)
+    }
+
+    @Test
+    fun `custodia forte can never inherit the custodia master identity`() {
+        val master = decodeMasterLookup().master!!
+        assertNotEquals(master.registrationIdentityKey, forteIntelligence().registration?.identityKey)
+        assertEquals("AU:apvma:91636", forteIntelligence().registration?.identityKey)
+    }
+
     companion object {
         /**
          * The shared `action=structured` edge-function response for "Custodia"
@@ -415,6 +510,22 @@ class ChemicalCustodiaParityTest {
           },
           "activity_group_table_version": 1,
           "schema_version": 1
+        }
+        """.trimIndent()
+
+        /**
+         * Appended to the canonical payload (in place of its closing brace) to
+         * form the master-served variant (sql/199). Identical on iOS.
+         */
+        val MASTER_ENVELOPE_SUFFIX: String = """
+        ,
+          "match_source": "master",
+          "master": {
+            "master_chemical_id": "c0570d1a-2026-4a66-9541-a99f66541001",
+            "master_revision": 4,
+            "catalogue_status": "approved",
+            "registration_identity_key": "AU:apvma:66541"
+          }
         }
         """.trimIndent()
     }

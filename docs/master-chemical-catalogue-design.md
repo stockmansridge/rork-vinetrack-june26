@@ -1,10 +1,15 @@
-# Master Chemical Catalogue — design (PROPOSED, not applied)
+# Master Chemical Catalogue — design (Stage 1 implemented as sql/199)
 
-**Status:** Design document produced by the Chemical Lookup Parity audit (2026-08-18).
-**No database changes have been applied.** The SQL in section 6 is the exact proposed
-scope for a future migration (`sql/197_master_chemical_catalogue.sql`) and must be
-reviewed before it is created. The web portal (Lovable) must NOT invent its own
-catalogue schema — this document is the authority for the shared design.
+**Status:** Design produced by the Chemical Lookup Parity audit (2026-08-18);
+**Stage 1 implemented the same day as `sql/199_master_chemical_catalogue.sql`**
+— NOT 197: sql/197 (spray block attribution security repair) and sql/198
+(revision concurrency) were already taken; never reuse those numbers. Stage 1
+also ships the master-first `chemical-info-lookup` edge function and the
+iOS/Android response-envelope + link plumbing. Section 6 lists the deltas
+between the audit draft and the real migration. The web portal (Lovable) must
+NOT invent its own catalogue schema — `sql/199` and
+`docs/chemical-intelligence-json-contract.md` §12 are the authority for the
+shared contract.
 
 ---
 
@@ -90,11 +95,41 @@ changed" prompt.
 Offline: approved rows for the vineyard's country are a small dataset (hundreds).
 Apps may sync them with an `updated_at` cursor for offline lookup in a later stage.
 
-## 6. Proposed migration scope (`sql/197_master_chemical_catalogue.sql` — DRAFT, DO NOT APPLY without review)
+## 6. Migration scope — IMPLEMENTED as `sql/199_master_chemical_catalogue.sql`
 
 Purely additive. JSONB columns reuse the sql/194 wire shapes byte-for-byte
 (`docs/chemical-intelligence-json-contract.md` §4) so all existing encoders/decoders
 work unchanged.
+
+**Read `sql/199_master_chemical_catalogue.sql`, not the historical draft below.**
+Deltas shipped beyond the draft:
+
+- Master rows carry the FULL sql/194 verification contract
+  (`verification_status` + `verification_sources`/`_conflicts`/`_unresolved_fields`
+  + `verified_at`), deliberately separate from the `review_status` lifecycle —
+  the two are never conflated.
+- `catalogue_version` is a server-managed revision: triggers bump it exactly
+  when canonical content changes (client-supplied values are ignored — no
+  forgery, no skips), review/alias-only edits do not bump, and every revision
+  (INSERT included) appends a full row image to `master_chemical_versions`.
+  Provenance history can never be silently overwritten.
+- `saved_chemicals.master_source_revision` accompanies `master_chemical_id`:
+  the revision the vineyard's chemistry copy was taken at. Drift
+  (`master.catalogue_version > saved.master_source_revision`) powers
+  “Updated verified information available” in Re-verify.
+- Canonicalisation CHECKs: `registration_country` must be ISO-2 uppercase; the
+  generated identity key upper-cases and trims the registration number, so
+  padded/case-variant duplicates are impossible.
+- A referenced master row cannot be hard-deleted (plain FK, no cascade) —
+  retirement is the only exit once vineyards link to it.
+- Seed: exactly one row, the audited Custodia fixture (AU:apvma:66541), as a
+  **candidate** with provenance documented on the row. Approval is withheld
+  until an admin re-confirms currency in APVMA PubCRIS (Stage 2), so applying
+  the migration changes production lookup behaviour by exactly nothing.
+- Tests: `sql/tests/199_master_chemical_catalogue_tests.sql` — rollback-only,
+  RLS-active member/outsider/admin harness (identity uniqueness, approval
+  gate, revision/forgery, candidate isolation, link integrity, drift
+  detection, spray-snapshot immunity).
 
 ```sql
 begin;
@@ -233,9 +268,13 @@ apps and portal users never write the catalogue directly in stage 1.
 
 ## 8. Staged implementation (proposed)
 
-1. **Stage 1 — schema + server read.** Apply the migration; edge function
-   consults `master_chemicals` (approved) before AI and enqueues candidates on
-   miss. Apps unchanged.
+1. **Stage 1 — schema + server read. (IMPLEMENTED 2026-08-18)** `sql/199` +
+   master-first `chemical-info-lookup` (approved rows short-circuit the AI;
+   identity-complete AI results enqueue deduplicated candidates; every
+   catalogue call is fail-open so lookup never breaks) + both apps decode the
+   `match_source`/`master` envelope and retain
+   `master_chemical_id`/`master_source_revision` through save. Activation =
+   apply `sql/199`, then redeploy the edge function (safe in either order).
 2. **Stage 2 — admin review.** Portal admin screen: candidate queue, diff
    against register/label, approve / retire, version history.
 3. **Stage 3 — app integration.** Lookup priority in Match & Verify, populate

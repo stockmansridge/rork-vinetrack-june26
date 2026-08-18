@@ -1889,6 +1889,13 @@ data class SavedChemical(
     @SerialName("label_rate_bases") val labelRateBases: List<String>? = null,
     @SerialName("activity_group_table_version") val activityGroupTableVersion: Int? = null,
     @SerialName("intelligence_schema_version") val intelligenceSchemaVersion: Int? = null,
+    // ---- Master Chemical Catalogue (sql/199) ----
+    // Optional provenance link to the shared catalogue product this record was
+    // derived from, plus the catalogue revision its chemistry was copied at.
+    // Master updates never rewrite this row — Re-verify compares revisions and
+    // offers a diff instead. Null forever is valid (unlinked chemical).
+    @SerialName("master_chemical_id") val masterChemicalId: String? = null,
+    @SerialName("master_source_revision") val masterSourceRevision: Int? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     val displayName: String get() = name.trim().takeIf { it.isNotBlank() } ?: "Chemical"

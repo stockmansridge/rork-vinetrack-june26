@@ -41,6 +41,9 @@ struct ChemicalMatchFlowView: View {
     /// confirm step; saving then updates that record instead of adding a
     /// second copy. Mirrors the Android match sheet's duplicate guard.
     @State private var duplicateOf: SavedChemical?
+    /// Master catalogue reference when the structured lookup was served from
+    /// an APPROVED master row (sql/199). Nil on AI-sourced lookups.
+    @State private var masterMatch: ChemicalMasterMatch?
 
     init(existing: SavedChemical? = nil, prefillQuery: String = "") {
         self.existing = existing
@@ -370,6 +373,9 @@ struct ChemicalMatchFlowView: View {
                     summaryRow("Country", intel.registration?.countryCode ?? countryCode)
                     summaryRow("Registration",
                                intel.registration?.displayIdentifier ?? "Not confirmed")
+                    if let master = masterMatch {
+                        summaryRow("Source", "Master catalogue · rev \(master.masterRevision)")
+                    }
                     summaryRow("Actives", intel.activeIngredients.isEmpty
                                ? "None identified"
                                : intel.legacyActiveIngredient)
@@ -466,11 +472,15 @@ struct ChemicalMatchFlowView: View {
         do {
             let lookup = try await ChemicalInfoService()
                 .lookupStructured(productName: result.name, country: countryCode)
+            // Master-served lookups carry the catalogue reference the saved
+            // record retains (sql/199). AI-sourced lookups carry none.
+            masterMatch = lookup.isMasterMatch ? lookup.master : nil
             intelligence = lookup.intelligence()
         } catch {
             // No silent downgrade to the old AI shape: treating an unstructured
             // answer as if it were verified evidence is the exact failure this
             // stage exists to prevent.
+            masterMatch = nil
             intelligence = nil
             structuredError = (error as? LocalizedError)?.errorDescription
                 ?? "Structured lookup is unavailable. Retry, or enter the product manually."
@@ -501,6 +511,14 @@ struct ChemicalMatchFlowView: View {
             chemical.labelURL = LabelURLValidator.sanitize(reference)
         }
         chemical.chemicalIntelligence = intel
+        // Master catalogue provenance (sql/199): a master-served lookup links
+        // the record to the catalogue product at the revision its chemistry
+        // was copied from. An AI-sourced save leaves any existing link
+        // untouched — Re-verify owns drift resolution; nothing here guesses.
+        if let master = masterMatch {
+            chemical.masterChemicalId = master.masterChemicalId
+            chemical.masterSourceRevision = master.masterRevision
+        }
         // Legacy scalars are written as a DERIVED mirror so old clients and the
         // existing API keep rendering something familiar. Nothing reads them
         // back for a resistance decision.

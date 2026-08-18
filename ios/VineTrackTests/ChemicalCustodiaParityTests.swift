@@ -99,6 +99,34 @@ struct ChemicalCustodiaParityTests {
     }
     """
 
+    /// Appended to the canonical payload (in place of its closing brace) to
+    /// form the master-served variant (sql/199). Identical on Android.
+    static let masterEnvelopeSuffix = """
+    ,
+      "match_source": "master",
+      "master": {
+        "master_chemical_id": "c0570d1a-2026-4a66-9541-a99f66541001",
+        "master_revision": 4,
+        "catalogue_status": "approved",
+        "registration_identity_key": "AU:apvma:66541"
+      }
+    }
+    """
+
+    /// The SAME canonical payload as served from the approved master catalogue:
+    /// identical chemistry plus the additive envelope.
+    static var custodiaMasterEnvelopeJSON: String {
+        let base = custodiaFixtureJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(base.dropLast()) + masterEnvelopeSuffix
+    }
+
+    private func decodeMasterLookup() throws -> ChemicalStructuredLookup {
+        try JSONDecoder().decode(
+            ChemicalStructuredLookup.self,
+            from: Data(Self.custodiaMasterEnvelopeJSON.utf8)
+        )
+    }
+
     private func decodeLookup() throws -> ChemicalStructuredLookup {
         // A PLAIN decoder, exactly as `ChemicalInfoService.lookupStructured`
         // uses. This is the point: the wire payload must decode without any
@@ -352,5 +380,129 @@ struct ChemicalCustodiaParityTests {
         #expect(ChemicalIntelligence.splitActiveNames("Glyphosate, Simazine")
             == ["Glyphosate", "Simazine"])
         #expect(ChemicalIntelligence.splitActiveNames("Sulfur 800 g/kg") == ["Sulfur"])
+    }
+
+    // MARK: - Master catalogue envelope (sql/199)
+
+    @Test("A master-served response decodes with the same plain decoder and carries the envelope")
+    func masterEnvelopeDecodes() throws {
+        let lookup = try decodeMasterLookup()
+        #expect(lookup.matchSource == "master")
+        #expect(lookup.isMasterMatch)
+
+        let master = try #require(lookup.master)
+        #expect(master.masterChemicalId == UUID(uuidString: "c0570d1a-2026-4a66-9541-a99f66541001"))
+        #expect(master.masterRevision == 4)
+        #expect(master.catalogueStatus == "approved")
+        #expect(master.registrationIdentityKey == "AU:apvma:66541")
+
+        // The envelope is ADDITIVE: chemistry converts identically to the
+        // plain payload, and the evidence gate still rules — master-served is
+        // not verified-by-magic.
+        let intel = lookup.intelligence()
+        #expect(intel.activeIngredients.count == 2)
+        #expect(intel.activityGroupCodes == ["3", "11"])
+        #expect(intel.registration?.identityKey == "AU:apvma:66541")
+        #expect(intel.resolvedVerificationStatus == .partiallyVerified)
+    }
+
+    @Test("A payload without the envelope still decodes — old server, old behaviour")
+    func envelopeAbsentIsNotAMasterMatch() throws {
+        let lookup = try decodeLookup()
+        #expect(lookup.matchSource == nil)
+        #expect(lookup.master == nil)
+        #expect(!lookup.isMasterMatch)
+    }
+
+    @Test("An ai_candidate envelope never reads as a master match")
+    func aiCandidateEnvelopeIsNotAMasterMatch() throws {
+        let base = Self.custodiaFixtureJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        let payload = String(base.dropLast()) + ", \"match_source\": \"ai_candidate\" }"
+        let lookup = try JSONDecoder().decode(
+            ChemicalStructuredLookup.self, from: Data(payload.utf8))
+        #expect(lookup.matchSource == "ai_candidate")
+        #expect(!lookup.isMasterMatch)
+    }
+
+    @Test("A master-derived Saved Chemical retains the link, the revision and its own chemistry copy")
+    func masterLinkPersists() throws {
+        let lookup = try decodeMasterLookup()
+        let master = try #require(lookup.master)
+
+        var chemical = SavedChemical(name: "Custodia", chemicalIntelligence: lookup.intelligence())
+        chemical.masterChemicalId = master.masterChemicalId
+        chemical.masterSourceRevision = master.masterRevision
+
+        // The backend upsert carries the link in the sql/199 columns…
+        let upsert = BackendSavedChemical.upsert(
+            from: chemical, createdBy: nil, clientUpdatedAt: Date())
+        #expect(upsert.masterChemicalId == master.masterChemicalId)
+        #expect(upsert.masterSourceRevision == 4)
+        // …while the chemistry travels as the vineyard's OWN sql/194 copy —
+        // spray calculations never depend on a live join to the master row.
+        #expect(upsert.activeIngredients?.count == 2)
+        #expect(upsert.registrationNumber == "66541")
+
+        let wire = try JSONEncoder().encode(upsert)
+        let object = try #require(
+            try JSONSerialization.jsonObject(with: wire) as? [String: Any])
+        #expect((object["master_chemical_id"] as? String)?.lowercased()
+            == "c0570d1a-2026-4a66-9541-a99f66541001")
+        #expect(object["master_source_revision"] as? Int == 4)
+
+        // Local persistence round-trips the link.
+        let stored = try JSONDecoder().decode(
+            SavedChemical.self, from: JSONEncoder().encode(chemical))
+        #expect(stored.masterChemicalId == master.masterChemicalId)
+        #expect(stored.masterSourceRevision == 4)
+
+        // Vineyard-only commercial edits never move the link.
+        var edited = stored
+        edited.pricePerPack = 189.5
+        edited.inventoryQuantity = 4
+        #expect(edited.masterChemicalId == master.masterChemicalId)
+        #expect(edited.masterSourceRevision == 4)
+
+        // Master moved to revision 5 → drift is detectable; nothing rewritten.
+        let updated = ChemicalMasterMatch(
+            masterChemicalId: master.masterChemicalId,
+            masterRevision: 5,
+            catalogueStatus: "approved",
+            registrationIdentityKey: master.registrationIdentityKey)
+        #expect(updated.masterRevision > (edited.masterSourceRevision ?? 0))
+        #expect(edited.masterSourceRevision == 4)
+    }
+
+    @Test("Backend rows restore the master link tolerantly, including from pre-sql/199 backends")
+    func backendRowRestoresLink() throws {
+        let row = """
+        {"id":"11111111-1111-1111-1111-111111111111",
+         "vineyard_id":"22222222-2222-2222-2222-222222222222",
+         "name":"Custodia",
+         "master_chemical_id":"c0570d1a-2026-4a66-9541-a99f66541001",
+         "master_source_revision":4}
+        """
+        let backend = try JSONDecoder().decode(BackendSavedChemical.self, from: Data(row.utf8))
+        let chemical = backend.toSavedChemical()
+        #expect(chemical.masterChemicalId?.uuidString.lowercased()
+            == "c0570d1a-2026-4a66-9541-a99f66541001")
+        #expect(chemical.masterSourceRevision == 4)
+
+        // A backend WITHOUT sql/199 sends no link columns — nothing breaks.
+        let legacyRow = """
+        {"id":"11111111-1111-1111-1111-111111111111",
+         "vineyard_id":"22222222-2222-2222-2222-222222222222",
+         "name":"Custodia"}
+        """
+        let legacy = try JSONDecoder().decode(BackendSavedChemical.self, from: Data(legacyRow.utf8))
+        #expect(legacy.toSavedChemical().masterChemicalId == nil)
+        #expect(legacy.toSavedChemical().masterSourceRevision == nil)
+    }
+
+    @Test("Custodia Forte can never inherit the Custodia master identity")
+    func forteNeverInheritsMasterIdentity() throws {
+        let master = try #require(try decodeMasterLookup().master)
+        #expect(forteIntelligence().registration?.identityKey != master.registrationIdentityKey)
+        #expect(forteIntelligence().registration?.identityKey == "AU:apvma:91636")
     }
 }
