@@ -53,6 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rork.vinetrack.data.VineyardCountryCatalog
 import com.rork.vinetrack.data.model.Invitation
 import com.rork.vinetrack.ui.theme.VineColors
 
@@ -402,15 +403,9 @@ private fun CreateVineyardDialog(
     var isSaving by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Same wine-country list as the iOS EditVineyardSheet.
-    val wineCountries = remember {
-        listOf(
-            "Australia", "Argentina", "Austria", "Brazil", "Canada", "Chile", "China",
-            "France", "Germany", "Greece", "Hungary", "India", "Israel", "Italy",
-            "Japan", "Mexico", "New Zealand", "Portugal", "Romania", "South Africa",
-            "Spain", "Switzerland", "United Kingdom", "United States", "Uruguay",
-        )
-    }
+    // Canonical 30-country picker list — Supported Vineyard Countries
+    // Contract v1, same shared source as the iOS EditVineyardSheet.
+    val wineCountries = remember { VineyardCountryCatalog.displayNames }
 
     AlertDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },

@@ -1,5 +1,6 @@
 package com.rork.vinetrack.data.chemical
 
+import com.rork.vinetrack.data.VineyardCountryCatalog
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -146,77 +147,32 @@ data class ChemicalRegistration(
 
         /**
          * Display-name → ISO 3166-1 alpha-2 for every country the vineyard
-         * profile picker offers, plus common aliases. Identical table on iOS.
+         * profile picker offers ([VineyardCountryCatalog], Supported Vineyard
+         * Countries Contract v1), plus the approved convenience aliases.
+         * Identical resolution on iOS.
          *
          * An unknown name falls through UPPERCASED, which can never equal a
          * server-stamped ISO code — so the jurisdiction gate fails closed for
-         * unmapped countries instead of mis-matching them.
+         * unmapped countries instead of mis-matching them. No fuzzy matching.
          */
-        private val COUNTRY_CODES_BY_NAME: Map<String, String> = mapOf(
-            "australia" to "AU",
-            "argentina" to "AR",
-            "austria" to "AT",
-            "brazil" to "BR",
-            "canada" to "CA",
-            "chile" to "CL",
-            "china" to "CN",
-            "france" to "FR",
-            "germany" to "DE",
-            "greece" to "GR",
-            "hungary" to "HU",
-            "india" to "IN",
-            "israel" to "IL",
-            "italy" to "IT",
-            "japan" to "JP",
-            "mexico" to "MX",
-            "new zealand" to "NZ",
-            "newzealand" to "NZ",
-            "aotearoa" to "NZ",
-            "portugal" to "PT",
-            "romania" to "RO",
-            "south africa" to "ZA",
-            "spain" to "ES",
-            "switzerland" to "CH",
-            "united kingdom" to "GB",
-            "great britain" to "GB",
-            "uk" to "GB",
-            "united states" to "US",
-            "united states of america" to "US",
-            "usa" to "US",
-            "uruguay" to "UY",
-        )
+        private val COUNTRY_CODES_BY_NAME: Map<String, String> =
+            VineyardCountryCatalog.codesByLowercaseName + mapOf(
+                // Approved aliases only — each resolves to the SAME
+                // jurisdiction its canonical name does. Never add guessing.
+                "newzealand" to "NZ",
+                "aotearoa" to "NZ",
+                "great britain" to "GB",
+                "uk" to "GB",
+                "united states of america" to "US",
+                "usa" to "US",
+            )
 
         /**
-         * Reverse of [COUNTRY_CODES_BY_NAME] for the CANONICAL picker names
-         * only (aliases like "uk" or "usa" have one display name each).
-         * Identical table on iOS.
+         * ISO code → canonical picker display name (aliases like "uk" or
+         * "usa" have one display name each). Sourced from
+         * [VineyardCountryCatalog]; identical table on iOS.
          */
-        private val DISPLAY_NAMES_BY_CODE: Map<String, String> = mapOf(
-            "AU" to "Australia",
-            "AR" to "Argentina",
-            "AT" to "Austria",
-            "BR" to "Brazil",
-            "CA" to "Canada",
-            "CL" to "Chile",
-            "CN" to "China",
-            "FR" to "France",
-            "DE" to "Germany",
-            "GR" to "Greece",
-            "HU" to "Hungary",
-            "IN" to "India",
-            "IL" to "Israel",
-            "IT" to "Italy",
-            "JP" to "Japan",
-            "MX" to "Mexico",
-            "NZ" to "New Zealand",
-            "PT" to "Portugal",
-            "RO" to "Romania",
-            "ZA" to "South Africa",
-            "ES" to "Spain",
-            "CH" to "Switzerland",
-            "GB" to "United Kingdom",
-            "US" to "United States",
-            "UY" to "Uruguay",
-        )
+        private val DISPLAY_NAMES_BY_CODE: Map<String, String> =
+            VineyardCountryCatalog.displayNamesByCode
     }
 }

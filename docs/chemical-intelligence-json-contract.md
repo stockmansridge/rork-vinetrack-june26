@@ -437,7 +437,11 @@ the authoritative jurisdiction for every chemical lookup. No schema change is
 involved: the column has existed since sql/001, and both apps and the portal
 read the same value. Display names normalise to ISO 3166-1 alpha-2 before
 comparison ("Australia" → `AU`, "United Kingdom"/"uk" → `GB`; both apps use an
-identical table in `ChemicalRegistration.normaliseCountry`).
+identical table in `ChemicalRegistration.normaliseCountry`). The supported
+vineyard country set and alias rules are pinned in
+`docs/vineyard-country-contract.md` ("VineTrack Supported Vineyard Countries —
+Contract v1", 30 countries — note that vineyard-country support does NOT imply
+a wired chemical register for that country).
 
 1. Pass the vineyard's country on EVERY `chemical-info-lookup` call (`country`
    body field, all actions). NEVER substitute the browser or device locale —

@@ -162,75 +162,31 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
     }
 
     /// Display-name → ISO 3166-1 alpha-2 for every country the vineyard
-    /// profile picker offers, plus common aliases. Identical table on Android.
+    /// profile picker offers (`VineyardCountryCatalog`, Supported Vineyard
+    /// Countries Contract v1), plus the approved convenience aliases.
+    /// Identical resolution on Android.
     ///
     /// An unknown name falls through UPPERCASED, which can never equal a
     /// server-stamped ISO code — so the jurisdiction gate fails closed for
-    /// unmapped countries instead of mis-matching them.
-    private static let countryCodesByName: [String: String] = [
-        "australia": "AU",
-        "argentina": "AR",
-        "austria": "AT",
-        "brazil": "BR",
-        "canada": "CA",
-        "chile": "CL",
-        "china": "CN",
-        "france": "FR",
-        "germany": "DE",
-        "greece": "GR",
-        "hungary": "HU",
-        "india": "IN",
-        "israel": "IL",
-        "italy": "IT",
-        "japan": "JP",
-        "mexico": "MX",
-        "new zealand": "NZ",
-        "newzealand": "NZ",
-        "aotearoa": "NZ",
-        "portugal": "PT",
-        "romania": "RO",
-        "south africa": "ZA",
-        "spain": "ES",
-        "switzerland": "CH",
-        "united kingdom": "GB",
-        "great britain": "GB",
-        "uk": "GB",
-        "united states": "US",
-        "united states of america": "US",
-        "usa": "US",
-        "uruguay": "UY"
-    ]
+    /// unmapped countries instead of mis-matching them. No fuzzy matching.
+    private static let countryCodesByName: [String: String] = {
+        var map = VineyardCountryCatalog.codesByLowercasedName
+        // Approved aliases only — each resolves to the SAME jurisdiction its
+        // canonical name does. Never add guessing here.
+        map["newzealand"] = "NZ"
+        map["aotearoa"] = "NZ"
+        map["great britain"] = "GB"
+        map["uk"] = "GB"
+        map["united states of america"] = "US"
+        map["usa"] = "US"
+        return map
+    }()
 
-    /// Reverse of `countryCodesByName` for the CANONICAL picker names only
-    /// (aliases like "uk" or "usa" have one display name each). Identical
-    /// table on Android.
-    private static let displayNamesByCode: [String: String] = [
-        "AU": "Australia",
-        "AR": "Argentina",
-        "AT": "Austria",
-        "BR": "Brazil",
-        "CA": "Canada",
-        "CL": "Chile",
-        "CN": "China",
-        "FR": "France",
-        "DE": "Germany",
-        "GR": "Greece",
-        "HU": "Hungary",
-        "IN": "India",
-        "IL": "Israel",
-        "IT": "Italy",
-        "JP": "Japan",
-        "MX": "Mexico",
-        "NZ": "New Zealand",
-        "PT": "Portugal",
-        "RO": "Romania",
-        "ZA": "South Africa",
-        "ES": "Spain",
-        "CH": "Switzerland",
-        "GB": "United Kingdom",
-        "US": "United States",
-        "UY": "Uruguay"
-    ]
+    /// ISO code → canonical picker display name (aliases like "uk" or "usa"
+    /// have one display name each). Sourced from `VineyardCountryCatalog`;
+    /// identical table on Android.
+    private static let displayNamesByCode: [String: String] =
+        VineyardCountryCatalog.displayNamesByCode
 
     private static func trimmed(_ value: String?) -> String? {
         let t = value?.trimmingCharacters(in: .whitespacesAndNewlines)

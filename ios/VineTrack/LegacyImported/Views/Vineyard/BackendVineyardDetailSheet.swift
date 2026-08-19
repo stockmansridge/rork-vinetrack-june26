@@ -38,12 +38,10 @@ struct BackendVineyardDetailSheet: View {
         store.vineyards.first(where: { $0.id == initialVineyard.id }) ?? initialVineyard
     }
 
-    private static let wineCountries: [String] = [
-        "Australia", "Argentina", "Austria", "Brazil", "Canada", "Chile", "China",
-        "France", "Germany", "Greece", "Hungary", "India", "Israel", "Italy",
-        "Japan", "Mexico", "New Zealand", "Portugal", "Romania", "South Africa",
-        "Spain", "Switzerland", "United Kingdom", "United States", "Uruguay"
-    ]
+    /// Canonical 30-country vineyard picker list — Supported Vineyard
+    /// Countries Contract v1, single shared source (`VineyardCountryCatalog`);
+    /// identical on Android.
+    private static let wineCountries: [String] = VineyardCountryCatalog.displayNames
 
     var body: some View {
         NavigationStack {

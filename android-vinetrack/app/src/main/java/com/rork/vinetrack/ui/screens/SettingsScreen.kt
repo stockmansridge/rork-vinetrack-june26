@@ -105,6 +105,7 @@ import com.rork.vinetrack.data.MapDefaults
 import com.rork.vinetrack.data.MapPrefsStore
 import com.rork.vinetrack.data.OperationPrefsStore
 import com.rork.vinetrack.data.MapStyle
+import com.rork.vinetrack.data.VineyardCountryCatalog
 import com.rork.vinetrack.data.model.Vineyard
 import java.util.Locale
 import com.rork.vinetrack.ui.AppUiState
@@ -1258,12 +1259,12 @@ private fun InfoLine(icon: ImageVector, label: String, value: String, tint: Colo
     }
 }
 
-private val WINE_COUNTRIES: List<String> = listOf(
-    "Australia", "Argentina", "Austria", "Brazil", "Canada", "Chile", "China",
-    "France", "Germany", "Greece", "Hungary", "India", "Israel", "Italy",
-    "Japan", "Mexico", "New Zealand", "Portugal", "Romania", "South Africa",
-    "Spain", "Switzerland", "United Kingdom", "United States", "Uruguay",
-)
+/**
+ * Canonical 30-country vineyard picker list — Supported Vineyard Countries
+ * Contract v1, single shared source ([VineyardCountryCatalog]); identical on
+ * iOS.
+ */
+private val WINE_COUNTRIES: List<String> = VineyardCountryCatalog.displayNames
 
 private fun formatCreated(iso: String?): String? {
     iso ?: return null
