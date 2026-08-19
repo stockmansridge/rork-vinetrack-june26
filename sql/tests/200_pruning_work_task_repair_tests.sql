@@ -3,6 +3,13 @@
 -- Style matches sql/tests/190: temporary fixtures inside a rolled-back
 -- transaction, assertions via DO blocks. Requires an empty scratch schema or a
 -- disposable database — NEVER run against production data.
+--
+-- The SQL editor runs with no JWT, so auth.uid() is NULL and
+-- set_work_task_pruning_activity would raise 'Authentication required'. The
+-- fixture therefore creates a test manager, adds vineyard membership, and
+-- simulates the session via request.jwt.claims — exactly the sql/tests/190
+-- pattern. Superuser inserts bypass RLS; only auth.uid() is simulated, which
+-- is all the RPC checks (has_vineyard_role reads the membership row).
 -- =============================================================================
 
 begin;
@@ -30,10 +37,29 @@ declare
   v_source text;
   v_json jsonb;
 begin
-  select id into v_user from auth.users limit 1;
+  -- ---- fixture manager + simulated session ---------------------------------
+  insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
+                          email_confirmed_at, created_at, updated_at)
+  values (gen_random_uuid(), '00000000-0000-0000-0000-000000000000',
+          'authenticated', 'authenticated',
+          't200-mgr@test.local', 'x', now(), now(), now())
+  on conflict do nothing;
+  select id into v_user from auth.users where email = 't200-mgr@test.local';
+  insert into public.profiles (id, email) values (v_user, 't200-mgr@test.local')
+  on conflict (id) do nothing;
 
   insert into public.vineyards (id, name) values (v_vineyard, 'Repair Test Vineyard')
   on conflict (id) do nothing;
+  insert into public.vineyard_members (vineyard_id, user_id, role)
+  values (v_vineyard, v_user, 'manager')
+  on conflict do nothing;
+
+  -- Simulate an authenticated session so auth.uid() resolves inside the RPC.
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_user::text, 'role', 'authenticated')::text, true);
+  if auth.uid() is distinct from v_user then
+    raise exception 'Fixture: auth.uid() did not resolve to the test manager (got %). The RPC tests cannot run without a simulated session.', auth.uid();
+  end if;
 
   -- Activity A: operational only (no scalars, no 190-lines).
   insert into public.pruning_activities (
