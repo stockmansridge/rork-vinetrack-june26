@@ -72,11 +72,34 @@ struct PruningActivityReportView: View {
     /// to its own legacy activity value in `PruningActivityReport.rows(...)` —
     /// never both, so a total can't count the same labour twice.
     private var labourCosts: [UUID: Double] {
-        PieceRateCosting.effectiveCostsByWorkTask(
+        var costs = PieceRateCosting.effectiveCostsByWorkTask(
             tasks: store.workTasks,
             labourLines: store.workTaskLabourLines,
             includeCost: canViewCosting
         )
+        // sql/200: a multi-task activity reports the SUM of its linked tasks'
+        // canonical totals, overlaid on its PRIMARY (mirror) task key so the
+        // report engine stays single-keyed and counts each activity once.
+        for (mirror, aggregate) in multiTaskAggregates {
+            if canViewCosting, let cost = aggregate.cost { costs[mirror] = cost }
+        }
+        return costs
+    }
+
+    /// Per-activity Work Task aggregates for activities with MORE than one
+    /// linked task (sql/200), keyed by the activity's primary mirror task.
+    private var multiTaskAggregates: [UUID: PruningActivityTaskAggregate] {
+        guard let vineyardId else { return [:] }
+        let tasks = store.workTasks.filter { $0.vineyardId == vineyardId }
+        let linesByTask = PruningWorkTaskLink.linesByTask(store.workTaskLabourLines)
+        var result: [UUID: PruningActivityTaskAggregate] = [:]
+        for activity in pruningStore.activities(forVineyard: vineyardId) {
+            guard let mirror = activity.workTaskId else { continue }
+            let linked = PruningWorkTaskLink.linkedTasks(activity, tasks: tasks)
+            guard linked.count > 1 else { continue }
+            result[mirror] = PruningWorkTaskLink.aggregate(linked, linesByTask: linesByTask)
+        }
+        return result
     }
 
     /// SNAPSHOT vine quantities of the piece-rate jobs — the historical
@@ -88,7 +111,11 @@ struct PruningActivityReportView: View {
     /// Per-task person-hours — the authoritative labour hours for report rows
     /// whose linked task carries labour lines.
     private var labourHours: [UUID: Double] {
-        WorkTaskLabourCosting.hoursByWorkTask(store.workTaskLabourLines)
+        var hours = WorkTaskLabourCosting.hoursByWorkTask(store.workTaskLabourLines)
+        for (mirror, aggregate) in multiTaskAggregates {
+            if let h = aggregate.hours { hours[mirror] = h }
+        }
+        return hours
     }
 
     private var workTaskTitles: [UUID: String] {
@@ -97,6 +124,10 @@ struct PruningActivityReportView: View {
             let described = task.taskDescription?.trimmingCharacters(in: .whitespacesAndNewlines)
             titles[task.id] = (described?.isEmpty == false ? described : nil)
                 ?? (task.taskType.isEmpty ? "Work Task" : task.taskType)
+        }
+        // A multi-task activity's row names the derived set, not one task.
+        for (mirror, aggregate) in multiTaskAggregates where aggregate.taskCount > 1 {
+            titles[mirror] = "\(aggregate.taskCount) Work Tasks"
         }
         return titles
     }

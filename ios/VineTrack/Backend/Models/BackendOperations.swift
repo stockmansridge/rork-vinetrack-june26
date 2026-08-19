@@ -28,6 +28,8 @@ nonisolated struct BackendWorkTask: Codable, Sendable, Identifiable {
     let costingMethod: String?
     let pieceRatePerVine: Double?
     let pieceVineCount: Int?
+    // sql/200: originating pruning activity (0..N tasks per activity).
+    let pruningActivityId: UUID?
     let createdBy: UUID?
     let createdAt: Date?
     let updatedAt: Date?
@@ -58,6 +60,7 @@ nonisolated struct BackendWorkTask: Codable, Sendable, Identifiable {
         case costingMethod = "costing_method"
         case pieceRatePerVine = "piece_rate_per_vine"
         case pieceVineCount = "piece_vine_count"
+        case pruningActivityId = "pruning_activity_id"
         case createdBy = "created_by"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
@@ -95,6 +98,9 @@ nonisolated struct BackendWorkTaskUpsert: Encodable, Sendable {
     let costingMethod: String
     let pieceRatePerVine: Double?
     let pieceVineCount: Int?
+    // sql/200. Encoded only when non-nil so a pre-200 backend never sees the
+    // column and a task linked elsewhere is never cleared by an ordinary edit.
+    let pruningActivityId: UUID?
     let createdBy: UUID?
     let clientUpdatedAt: Date
 
@@ -122,6 +128,7 @@ nonisolated struct BackendWorkTaskUpsert: Encodable, Sendable {
         case costingMethod = "costing_method"
         case pieceRatePerVine = "piece_rate_per_vine"
         case pieceVineCount = "piece_vine_count"
+        case pruningActivityId = "pruning_activity_id"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
     }
@@ -151,6 +158,7 @@ nonisolated struct BackendWorkTaskUpsert: Encodable, Sendable {
         try c.encode(costingMethod, forKey: .costingMethod)
         try c.encode(pieceRatePerVine, forKey: .pieceRatePerVine)
         try c.encode(pieceVineCount, forKey: .pieceVineCount)
+        try c.encodeIfPresent(pruningActivityId, forKey: .pruningActivityId)
         try c.encodeIfPresent(createdBy, forKey: .createdBy)
         try c.encode(clientUpdatedAt, forKey: .clientUpdatedAt)
     }
@@ -184,6 +192,7 @@ extension BackendWorkTask {
             // to hourly writes NULLs so no stale agreement can be resurrected.
             pieceRatePerVine: t.isPieceRate ? t.pieceRatePerVine : nil,
             pieceVineCount: t.isPieceRate ? t.pieceVineCount : nil,
+            pruningActivityId: t.pruningActivityId,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
         )
@@ -214,7 +223,8 @@ extension BackendWorkTask {
             status: status,
             costingMethodRaw: costingMethod,
             pieceRatePerVine: pieceRatePerVine,
-            pieceVineCount: pieceVineCount
+            pieceVineCount: pieceVineCount,
+            pruningActivityId: pruningActivityId
         )
     }
 }

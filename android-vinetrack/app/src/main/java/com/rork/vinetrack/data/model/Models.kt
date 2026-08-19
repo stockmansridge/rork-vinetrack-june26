@@ -1053,6 +1053,13 @@ data class WorkTask(
     @SerialName("piece_rate_per_vine") val pieceRatePerVine: Double? = null,
     /** HISTORICAL SNAPSHOT of the vine quantity this job was costed on. */
     @SerialName("piece_vine_count") val pieceVineCount: Int? = null,
+    /**
+     * sql/200: the ORIGINATING pruning activity, when this task was created
+     * from (or linked to) one. A pruning activity may link 0..N work tasks;
+     * each task has 0..1 originating activity. Optional so every task cached
+     * before the repair decodes unchanged.
+     */
+    @SerialName("pruning_activity_id") val pruningActivityId: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     val startEpochMs: Long? get() = parseIsoToEpochMs(date)

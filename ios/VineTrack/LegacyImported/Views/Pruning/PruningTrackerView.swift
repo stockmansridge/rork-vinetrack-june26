@@ -209,7 +209,10 @@ struct PruningTrackerView: View {
             // never briefly persisted as an unpriced hourly record.
             costingMethodRaw: taskDraft.costingMethod.rawValue,
             pieceRatePerVine: isPieceRate ? taskDraft.ratePerVine : nil,
-            pieceVineCount: isPieceRate ? taskDraft.vineCount : nil
+            pieceVineCount: isPieceRate ? taskDraft.vineCount : nil,
+            // sql/200: the task is born linked to its originating activity, so
+            // the activity derives this task's cost from day one.
+            pruningActivityId: activity.id
         )
         let area = blocks.reduce(0.0) { $0 + $1.areaHectares }
         if area > 0 { task.areaHa = area }

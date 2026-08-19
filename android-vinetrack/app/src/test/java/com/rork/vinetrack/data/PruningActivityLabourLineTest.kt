@@ -403,7 +403,10 @@ class PruningActivityLabourLineTest {
     }
 
     @Test
-    fun `an activity own lines outrank the linked task lines`() {
+    fun `REPAIRED - the linked task own lines outrank legacy activity lines`() {
+        // Pruning Cost Model Repair (sql/200): Work Tasks are the single cost
+        // ledger. Legacy activity-owned lines become non-authoritative history
+        // the moment a linked task carries its own labour — never summed.
         val resolved = PruningActivityLabourCosting.resolve(
             task = hourlyTask(),
             activityLines = oneLine(),
@@ -411,9 +414,9 @@ class PruningActivityLabourLineTest {
             legacyHours = null,
             legacyRate = null,
         )
-        assertEquals(PruningActivityLabourCosting.Source.PRUNING_LABOUR_LINES, resolved.source)
-        // $480, NOT $480 + $250 = $730.
-        assertEquals(expectedOneLineCost, resolved.cost!!, eps)
+        assertEquals(PruningActivityLabourCosting.Source.WORK_TASK_LINES, resolved.source)
+        // $250 — NOT $480 (legacy lines) and NEVER $480 + $250 = $730.
+        assertEquals(250.0, resolved.cost!!, eps)
     }
 
     @Test

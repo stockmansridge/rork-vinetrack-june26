@@ -127,6 +127,26 @@ class WorkTaskRepository(private val session: SessionStore) {
     fun newId(): String = UUID.randomUUID().toString()
 
     /**
+     * sql/200: link (or unlink, with null) a work task to its ORIGINATING
+     * pruning activity. Raw JSON body because unlink must send an EXPLICIT
+     * null — the shared Json config omits nulls, which would make the patch a
+     * no-op. Requires sql/200 to be applied (adds the column).
+     */
+    suspend fun setPruningActivity(id: String, pruningActivityId: String?): WorkTask = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val value = pruningActivityId?.let { "\"$it\"" } ?: "null"
+        val body = "{\"pruning_activity_id\":$value,\"client_updated_at\":\"${nowIso()}\"}"
+        val response = SupabaseClient.http.patch(SupabaseClient.restUrl("work_tasks?id=eq.$id")) {
+            authHeaders(token)
+            headers { append("Prefer", "return=representation") }
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+        firstRow(response)
+    }
+
+    /**
      * Insert a work task. By default (online, live create) the id and
      * client_updated_at are minted here. The optional [id] / [clientUpdatedAt]
      * let the offline create queue ([WorkTaskCreateSync]) replay the original

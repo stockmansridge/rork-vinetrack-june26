@@ -158,26 +158,10 @@ fun PruningActivityEditorScreen(
      */
     workTaskDetail: (@Composable (taskId: String, onClose: () -> Unit) -> Unit)? = null,
     /**
-     * THE standard Work Task labour editor, injected by the caller. Rendered
-     * inside the Work Task card so labour is edited with the same component the
-     * Work Task screen uses — never a pruning-specific reimplementation.
-     *
-     * `suggestedVineCount` is the vines under the rows selected above, so a
-     * piece rate can be costed without re-entering a number the app knows.
+     * sql/200: persists a task-side link change (taskId, activityId-or-null).
+     * Costs live on WORK TASKS; this activity only DERIVES from linked tasks.
      */
-    labourSection: (@Composable (taskId: String, suggestedVineCount: Int) -> Unit)? = null,
-    /**
-     * THE labour surface of this ACTIVITY (sql/190), injected by the caller.
-     *
-     * Labour is PRUNING-OWNED: it belongs to the activity and is counted ONCE
-     * however many blocks the activity covers. A linked Work Task never gets a
-     * copy — it reads through to the same rows — so this is the only place
-     * labour is entered for a pruning job.
-     *
-     * `suggestedVineCount` is the vines under the rows selected above, so a
-     * piece rate can be costed without re-entering a number the app knows.
-     */
-    pruningLabourSection: (@Composable (suggestedVineCount: Int) -> Unit)? = null,
+    onSetTaskLink: ((String, String?) -> Unit)? = null,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -424,30 +408,22 @@ fun PruningActivityEditorScreen(
                     canCreate = onCreateWorkTask != null,
                     onLinkExisting = { showTaskPicker = true },
                     onCreate = { taskCreateDraft = PruningActivityTaskLink.createDraft(draft) },
-                    onOpen = { openTaskId = draft.workTaskId },
+                    onOpenTask = { openTaskId = it },
                     canOpen = workTaskDetail != null,
-                    onUnlink = { draft = PruningActivityTaskLink.unlink(draft) },
-                    labourSection = labourSection,
+                    onUnlinkTask = { task ->
+                        // Both records survive an unlink: the task remains a
+                        // standalone cost record; the activity stops deriving
+                        // from it. The legacy mirror promotes to the next task.
+                        onSetTaskLink?.invoke(task.id, null)
+                        if (draft.workTaskId == task.id) {
+                            val remaining = PruningActivityTaskLink
+                                .linkedTasks(draft, workTasks)
+                                .filter { it.id != task.id && it.pruningActivityId == draft.id }
+                            draft = draft.copy(workTaskId = remaining.firstOrNull()?.id)
+                        }
+                    },
+                    onUnlinkMissing = { draft = PruningActivityTaskLink.unlink(draft) },
                 )
-            }
-
-            // Labour — ALSO activity level, and the ONE place labour is
-            // entered for this job. Placed AFTER the Work Task card so the
-            // piece-rate choice on the labour sheet can see which task it is
-            // pricing, and after the blocks so the vine count is already known.
-            val pruningLabour = pruningLabourSection
-            if (pruningLabour != null) {
-                item(key = "activity-labour") {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(vine.cardBackground)
-                            .padding(16.dp),
-                    ) {
-                        pruningLabour(draft.totalEstimatedVines)
-                    }
-                }
             }
 
             // Combined summary — every block in this activity, before Save.
@@ -506,9 +482,12 @@ fun PruningActivityEditorScreen(
                 onDismiss = { showTaskPicker = false },
                 onSelect = { task ->
                     showTaskPicker = false
-                    // Only the parent's link changes — every allocation is carried
-                    // through untouched.
-                    draft = PruningActivityTaskLink.link(draft, task.id)
+                    // sql/200: persist the task-side origin link; the legacy
+                    // mirror fills only when empty. Allocations are untouched.
+                    onSetTaskLink?.invoke(task.id, draft.id)
+                    if (draft.workTaskId == null) {
+                        draft = PruningActivityTaskLink.link(draft, task.id)
+                    }
                 },
             )
         }
@@ -534,7 +513,11 @@ fun PruningActivityEditorScreen(
                     // The LIVE draft is passed, so the task's date, hours and
                     // blocks match what the operator is actually recording.
                     val created = onCreateWorkTask?.invoke(draft, pending)
-                    if (created != null) draft = PruningActivityTaskLink.link(draft, created)
+                    if (created != null && draft.workTaskId == null) {
+                        // First task also fills the legacy mirror (sql/200);
+                        // the task-side origin link is written by the creator.
+                        draft = PruningActivityTaskLink.link(draft, created)
+                    }
                     taskCreateDraft = null
                 },
             )
@@ -736,16 +719,6 @@ private fun PruningActivityFieldsCard(
                 )
             }
 
-            OutlinedTextField(
-                value = draft.labourHours?.let { fmt(it, 2) }.orEmpty(),
-                onValueChange = {
-                    onDraftChange(draft.copy(labourHours = it.replace(',', '.').toDoubleOrNull()))
-                },
-                label = { Text("Operational hours (optional)") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
             draft.durationHours?.let { hours ->
                 Text(
                     "Elapsed ${fmt(hours, 1)} h between start and finish — not multiplied by the crew size.",
@@ -753,14 +726,17 @@ private fun PruningActivityFieldsCard(
                     color = vine.textSecondary,
                 )
             }
-            // LEGACY ONLY, read-only: activities recorded before Work Task
-            // labour lines existed carry their own rate. It is never editable
-            // and never combined with labour-line totals.
-            if (canViewCosting && draft.hourlyRate != null) {
+            // LEGACY ONLY, read-only: activities recorded before the Work Task
+            // repair carry their own hours/rate. Never editable and never
+            // combined with Work Task totals — costs are edited on Work Tasks.
+            if (draft.labourHours != null || (canViewCosting && draft.hourlyRate != null)) {
                 Text(
-                    "Legacy activity rate ${fmt(draft.hourlyRate, 2)}/h" +
-                        (draft.labourCost?.let { " · ${fmt(it, 2)} recorded" } ?: "") +
-                        " — kept for history. New labour costs come from the linked Work Task.",
+                    listOfNotNull(
+                        draft.labourHours?.let { "${fmt(it, 1)} h" },
+                        draft.hourlyRate?.takeIf { canViewCosting }?.let { "${fmt(it, 2)}/h" },
+                        draft.labourCost?.takeIf { canViewCosting }?.let { "${fmt(it, 2)} recorded" },
+                    ).joinToString(" · ", prefix = "Legacy labour record: ") +
+                        " — read-only. Costs now live on the linked Work Tasks.",
                     fontSize = 11.sp,
                     color = VineColors.Warning,
                 )
@@ -800,185 +776,170 @@ private fun PruningActivityWorkTaskCard(
     canOpen: Boolean,
     onLinkExisting: () -> Unit,
     onCreate: () -> Unit,
-    onOpen: () -> Unit,
-    onUnlink: () -> Unit,
-    labourSection: (@Composable (taskId: String, suggestedVineCount: Int) -> Unit)?,
+    onOpenTask: (String) -> Unit,
+    onUnlinkTask: (WorkTask) -> Unit,
+    onUnlinkMissing: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val linked = PruningActivityTaskLink.linkedTask(draft, workTasks)
+    // sql/200: EVERY linked task — task-side origin links plus the legacy
+    // activity-side mirror, de-duplicated, in date order.
+    val linkedAll = PruningActivityTaskLink.linkedTasks(draft, workTasks)
     val unresolvable = PruningActivityTaskLink.hasUnresolvableLink(draft, workTasks)
-    val taskLines = remember(labourLines, draft.workTaskId) {
-        draft.workTaskId?.let { id -> labourLines.filter { it.workTaskId == id && it.deletedAt == null } }
-            .orEmpty()
+    val linesByTask = remember(labourLines) { PruningActivityTaskLink.linesByTask(labourLines) }
+    val aggregate = remember(linkedAll, linesByTask) {
+        PruningActivityTaskLink.aggregate(linkedAll, linesByTask)
     }
-    val totals = remember(taskLines) { WorkTaskLabourCosting.totals(taskLines) }
     PruningCard {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Labour & Work Task", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                Text("Work Tasks", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                 Spacer(Modifier.weight(1f))
-                if (linked != null || unresolvable) {
+                if (linkedAll.isNotEmpty() || unresolvable) {
                     Icon(
                         Icons.Filled.CheckCircle,
                         contentDescription = null,
-                        tint = if (unresolvable) VineColors.Warning else VineColors.LeafGreen,
+                        tint = if (unresolvable && linkedAll.isEmpty()) VineColors.Warning else VineColors.LeafGreen,
                         modifier = Modifier.size(16.dp),
                     )
                 }
             }
             Text(
-                when {
-                    linked == null -> "Entered once here for the whole activity, never per block."
-                    draft.totalEstimatedVines > 0 ->
-                        "Add labour to choose Hourly or Piece Rate. " +
-                            "${PieceRateCosting.vineCountLabel(draft.totalEstimatedVines)} vines are selected, " +
-                            "ready to cost at a rate per vine."
-                    else -> "Select rows above to cost this job at a rate per vine."
-                },
+                "Costs live on Work Tasks — add one per crew or cost arrangement. " +
+                    "This activity derives its labour hours and total cost from the tasks linked here.",
                 fontSize = 11.sp,
                 color = vine.textSecondary,
             )
 
-            when {
-                linked != null -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(VineColors.LeafGreen.copy(alpha = 0.10f))
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
+            if (linkedAll.isEmpty() && !unresolvable) {
+                Text("No cost recorded", fontSize = 13.sp, color = vine.textSecondary)
+            }
+            if (linkedAll.isEmpty() && unresolvable) {
+                // NEVER cleared silently: the link is real server state that
+                // this device simply hasn't pulled yet.
+                Text(
+                    "This activity is linked to a Work Task that hasn't reached this device yet. It stays linked — pull to refresh, or unlink deliberately.",
+                    fontSize = 12.sp,
+                    color = VineColors.Warning,
+                )
+                TextButton(onClick = onUnlinkMissing) {
+                    Text("Unlink missing task", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Destructive)
+                }
+            }
+            linkedAll.forEach { task ->
+                val lines = linesByTask[task.id].orEmpty()
+                val totals = WorkTaskLabourCosting.totals(lines)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(VineColors.LeafGreen.copy(alpha = 0.10f))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        task.displayLabel,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary,
+                    )
+                    Text(
+                        listOfNotNull(
+                            task.date?.takeIf { it.isNotBlank() }?.take(10),
+                            task.paddockName?.takeIf { it.isNotBlank() },
+                            if (task.isComplete) "Completed" else "To do",
+                        ).joinToString(" · "),
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                    )
+                    // The task's CANONICAL labour summary, under its chosen
+                    // costing method — piece-rate and hourly never combined.
+                    if (task.isPieceRate) {
                         Text(
-                            linked.displayLabel,
-                            fontSize = 14.sp,
+                            pieceRateSummaryLabel(task, totals.personHours, canViewCosting),
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = vine.textPrimary,
                         )
+                    } else {
                         Text(
                             listOfNotNull(
-                                linked.date?.takeIf { it.isNotBlank() }?.take(10),
-                                linked.paddockName?.takeIf { it.isNotBlank() },
-                                if (linked.isComplete) "Completed" else "To do",
+                                "${formatLabourHours(totals.personHours)} h",
+                                totals.cost
+                                    ?.takeIf { canViewCosting }
+                                    ?.let { formatLabourCurrency(it) },
+                                "${totals.lineCount} labour line${if (totals.lineCount == 1) "" else "s"}",
                             ).joinToString(" · "),
                             fontSize = 12.sp,
-                            color = vine.textSecondary,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (totals.isEmpty) VineColors.Warning else vine.textPrimary,
                         )
-                        // The task's labour summary, under its chosen costing
-                        // method — piece-rate and hourly figures are never
-                        // combined into one total.
-                        if (linked.isPieceRate) {
+                        if (totals.isEmpty) {
                             Text(
-                                pieceRateSummaryLabel(linked, totals.personHours, canViewCosting),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = vine.textPrimary,
+                                "No labour recorded yet — open the task to add labour lines.",
+                                fontSize = 11.sp,
+                                color = VineColors.Warning,
                             )
-                        } else {
-                            Text(
-                                listOfNotNull(
-                                    "${formatLabourHours(totals.personHours)} total person-hours",
-                                    totals.cost
-                                        ?.takeIf { canViewCosting }
-                                        ?.let { "labour cost ${formatLabourCurrency(it)}" },
-                                    "${totals.lineCount} labour line${if (totals.lineCount == 1) "" else "s"}",
-                                ).joinToString(" · "),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (totals.isEmpty) VineColors.Warning else vine.textPrimary,
-                            )
-                            if (totals.isEmpty) {
-                                Text(
-                                    "No labour recorded yet — add it below and choose hourly or piece rate.",
-                                    fontSize = 11.sp,
-                                    color = VineColors.Warning,
-                                )
-                            }
                         }
                     }
-                    // THE ONE labour surface for this activity. There is
-                    // deliberately no "Open task" shortcut: the Work Task editor
-                    // carries its own labour section, and offering both made it
-                    // look as though labour had to be entered twice.
-                    val section = labourSection
-                    val linkedId = draft.workTaskId
-                    if (section != null && linkedId != null) {
-                        HorizontalDivider(color = vine.cardBorder)
-                        section(linkedId, draft.totalEstimatedVines)
-                        HorizontalDivider(color = vine.cardBorder)
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = onLinkExisting) {
-                            Text("Change task", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
-                        }
-                        TextButton(onClick = onUnlink) {
-                            Text("Unlink", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Destructive)
-                        }
-                    }
-                    Text(
-                        "Unlinking leaves the Work Task and its labour intact — only this activity's link is removed.",
-                        fontSize = 11.sp,
-                        color = vine.textSecondary,
-                    )
-                }
-
-                unresolvable -> {
-                    // NEVER cleared silently: the link is real server state that
-                    // this device simply hasn't pulled yet.
-                    Text(
-                        "This activity is linked to a Work Task that hasn't reached this device yet. It stays linked — pull to refresh, or unlink deliberately.",
-                        fontSize = 12.sp,
-                        color = VineColors.Warning,
-                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (canOpen) {
-                            OutlinedButton(onClick = onOpen) {
-                                Text(
-                                    "Open task",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = VineColors.Primary,
-                                )
+                            TextButton(onClick = { onOpenTask(task.id) }) {
+                                Text("Open", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
                             }
                         }
-                        TextButton(onClick = onLinkExisting) {
-                            Text("Link another", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
-                        }
-                        TextButton(onClick = onUnlink) {
+                        TextButton(onClick = { onUnlinkTask(task) }) {
                             Text("Unlink", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Destructive)
-                        }
-                    }
-                }
-
-                else -> {
-                    Text("Not linked", fontSize = 13.sp, color = vine.textSecondary)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (canCreate) {
-                            Button(
-                                onClick = onCreate,
-                                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
-                            ) {
-                                Icon(
-                                    Icons.Filled.Add,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(15.dp),
-                                )
-                                Spacer(Modifier.width(5.dp))
-                                Text("Create Work Task", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
-                            }
-                        }
-                        OutlinedButton(onClick = onLinkExisting) {
-                            Text(
-                                "Link existing",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = VineColors.Primary,
-                            )
                         }
                     }
                 }
             }
+            if (!aggregate.isEmpty) {
+                // "2 Work Tasks · 22.0 labour hours · $810.00 total" — DERIVED.
+                Text(
+                    listOfNotNull(
+                        "${aggregate.taskCount} Work Task${if (aggregate.taskCount == 1) "" else "s"}",
+                        aggregate.hours?.let { "${formatLabourHours(it)} labour hours" },
+                        if (canViewCosting) {
+                            aggregate.cost?.let { "${formatLabourCurrency(it)} total" } ?: "cost not specified"
+                        } else {
+                            null
+                        },
+                    ).joinToString(" · ") + ". Edit costs inside each Work Task — this activity updates automatically.",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = vine.textPrimary,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (canCreate) {
+                    Button(
+                        onClick = onCreate,
+                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
+                    ) {
+                        Icon(
+                            Icons.Filled.Add,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(15.dp),
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        Text("Add Work Task", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                    }
+                }
+                OutlinedButton(onClick = onLinkExisting) {
+                    Text(
+                        "Link existing",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = VineColors.Primary,
+                    )
+                }
+            }
+            Text(
+                "Unlinking keeps the Work Task as a standalone cost record — only this activity's link is removed.",
+                fontSize = 11.sp,
+                color = vine.textSecondary,
+            )
         }
     }
 }

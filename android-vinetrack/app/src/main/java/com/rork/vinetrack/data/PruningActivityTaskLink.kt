@@ -9,6 +9,7 @@ import com.rork.vinetrack.data.model.PruningActivityDraft
 import com.rork.vinetrack.data.model.PruningRowRef
 import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskCostingMethod
+import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskPieceRateRow
 import kotlin.math.abs
 import kotlin.math.floor
@@ -153,6 +154,71 @@ object PruningActivityTaskLink {
      */
     fun hasUnresolvableLink(draft: PruningActivityDraft, tasks: List<WorkTask>): Boolean =
         draft.workTaskId != null && linkedTask(draft, tasks) == null
+
+    // ------------------------------------------------------------------
+    // 0..N linked tasks (sql/200) — the repaired cost model
+    // ------------------------------------------------------------------
+
+    /**
+     * DERIVED totals of an activity's linked Work Tasks (sql/200) — the ONE
+     * place the "2 Work Tasks · 22.0 h · $810" aggregate is computed.
+     */
+    data class TaskAggregate(
+        val taskCount: Int = 0,
+        /** Σ of the linked tasks' OWN labour-line hours. */
+        val hours: Double? = null,
+        /** Σ of the linked tasks' canonical costs. Null = not specified. */
+        val cost: Double? = null,
+    ) {
+        val isEmpty: Boolean get() = taskCount == 0
+    }
+
+    /**
+     * EVERY live Work Task linked to this activity: the task-side
+     * `pruningActivityId` links plus the legacy activity-side mirror
+     * ([PruningActivityDraft.workTaskId]), de-duplicated, in date order.
+     */
+    fun linkedTasks(draft: PruningActivityDraft, tasks: List<WorkTask>): List<WorkTask> =
+        tasks
+            .filter { it.deletedAt == null }
+            .filter { it.pruningActivityId == draft.id || it.id == draft.workTaskId }
+            .distinctBy { it.id }
+            .sortedWith(compareBy({ it.date.orEmpty() }, { it.id }))
+
+    /**
+     * Canonical cost of ONE task — its OWN record only: piece-rate snapshot
+     * total, else its own rated labour lines. Never the SQL 190 read-through,
+     * so summing tasks can never count the same legacy rows twice.
+     */
+    fun canonicalCost(task: WorkTask, lines: List<WorkTaskLabourLine>): Double? {
+        val live = lines.filter { it.deletedAt == null }
+        if (task.isPieceRate) return PieceRateCosting.resolve(task, live).cost
+        return WorkTaskLabourCosting.totalCost(live)
+    }
+
+    /** The task's own labour-line person-hours; null when it owns none. */
+    fun canonicalHours(task: WorkTask, lines: List<WorkTaskLabourLine>): Double? =
+        WorkTaskLabourCosting.totalPersonHours(lines.filter { it.deletedAt == null })
+            .takeIf { it > 0 }
+
+    /** Σ across the linked tasks — THE derived activity totals (sql/200). */
+    fun aggregate(
+        tasks: List<WorkTask>,
+        linesByTask: Map<String, List<WorkTaskLabourLine>>,
+    ): TaskAggregate {
+        var hours: Double? = null
+        var cost: Double? = null
+        for (task in tasks) {
+            val lines = linesByTask[task.id].orEmpty()
+            canonicalCost(task, lines)?.let { cost = (cost ?: 0.0) + it }
+            canonicalHours(task, lines)?.let { hours = (hours ?: 0.0) + it }
+        }
+        return TaskAggregate(taskCount = tasks.size, hours = hours, cost = cost)
+    }
+
+    /** Live labour lines grouped by task id, for [aggregate]. */
+    fun linesByTask(lines: List<WorkTaskLabourLine>): Map<String, List<WorkTaskLabourLine>> =
+        lines.filter { it.deletedAt == null }.groupBy { it.workTaskId }
 
     // MARK: Existing-task picker
 

@@ -165,11 +165,48 @@ fun PruningActivityReportScreen(
     // the unchanged labour-line behaviour. A record with neither falls back to
     // its own legacy activity value inside [PruningActivityReport.rows] — never
     // both, so no total double-counts.
-    val labourCosts = remember(workTasks, labourLines, canViewCosting) {
-        PieceRateCosting.effectiveCostsByWorkTask(workTasks, labourLines, includeCost = canViewCosting)
+    val labourCosts = remember(workTasks, labourLines, canViewCosting, auditEntries) {
+        val base = PieceRateCosting
+            .effectiveCostsByWorkTask(workTasks, labourLines, includeCost = canViewCosting)
+            .toMutableMap()
+        // sql/200: a multi-task activity reports the SUM of its linked tasks'
+        // canonical totals on its PRIMARY (mirror) task key, so the report
+        // stays single-keyed and counts each activity exactly once.
+        if (canViewCosting) {
+            val linesByTask = com.rork.vinetrack.data.PruningActivityTaskLink.linesByTask(labourLines)
+            val bySide = workTasks.filter { it.deletedAt == null && it.pruningActivityId != null }
+                .groupBy { it.pruningActivityId!! }
+            for (entry in auditEntries) {
+                val mirror = entry.workTaskId ?: continue
+                val activityId = entry.pruningActivityId ?: continue
+                val linked = (bySide[activityId].orEmpty() +
+                    workTasks.filter { it.id == mirror && it.deletedAt == null })
+                    .distinctBy { it.id }
+                if (linked.size <= 1) continue
+                com.rork.vinetrack.data.PruningActivityTaskLink
+                    .aggregate(linked, linesByTask).cost
+                    ?.let { base[mirror] = it }
+            }
+        }
+        base
     }
-    val labourHours = remember(labourLines) {
-        WorkTaskLabourCosting.hoursByWorkTask(labourLines)
+    val labourHours = remember(labourLines, workTasks, auditEntries) {
+        val base = WorkTaskLabourCosting.hoursByWorkTask(labourLines).toMutableMap()
+        val linesByTask = com.rork.vinetrack.data.PruningActivityTaskLink.linesByTask(labourLines)
+        val bySide = workTasks.filter { it.deletedAt == null && it.pruningActivityId != null }
+            .groupBy { it.pruningActivityId!! }
+        for (entry in auditEntries) {
+            val mirror = entry.workTaskId ?: continue
+            val activityId = entry.pruningActivityId ?: continue
+            val linked = (bySide[activityId].orEmpty() +
+                workTasks.filter { it.id == mirror && it.deletedAt == null })
+                .distinctBy { it.id }
+            if (linked.size <= 1) continue
+            com.rork.vinetrack.data.PruningActivityTaskLink
+                .aggregate(linked, linesByTask).hours
+                ?.let { base[mirror] = it }
+        }
+        base
     }
     // SNAPSHOT vine quantities of the piece-rate jobs — the historical
     // denominator behind each row's cost per vine.

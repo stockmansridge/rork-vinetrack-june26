@@ -97,6 +97,22 @@ nonisolated struct PruningWorkTaskLinkDraft: Equatable, Identifiable, Sendable {
 /// a real foreign key, so an activity referencing a Work Task created offline
 /// must WAIT for that task to reach the server. The link is never dropped to
 /// make the pruning upload succeed.
+/// DERIVED totals of an activity's linked Work Tasks (sql/200) — the ONE place
+/// the "2 Work Tasks · 22.0 h · $810" aggregate is computed, so the editor,
+/// the tracker and the report cannot drift.
+nonisolated struct PruningActivityTaskAggregate: Equatable, Sendable {
+    var taskCount: Int = 0
+    /// Σ of the linked tasks' OWN labour-line hours. Piece-rate tasks'
+    /// recorded hours are included as operational history.
+    var hours: Double?
+    /// Σ of the linked tasks' canonical costs (piece-rate snapshot total or
+    /// the task's own rated labour lines). nil = no linked task carries a
+    /// cost — never $0.00.
+    var cost: Double?
+
+    var isEmpty: Bool { taskCount == 0 }
+}
+
 nonisolated enum PruningWorkTaskLink {
     static let defaultTaskType = "Pruning"
 
@@ -126,6 +142,59 @@ nonisolated enum PruningWorkTaskLink {
     static func linkedTask(_ draft: PruningActivityDraft, tasks: [WorkTask]) -> WorkTask? {
         guard let id = draft.workTaskId else { return nil }
         return tasks.first { $0.id == id }
+    }
+
+    // MARK: 0..N linked tasks (sql/200)
+
+    /// EVERY live Work Task linked to this activity: the task-side
+    /// `pruningActivityId` links plus the legacy activity-side mirror
+    /// (`draft.workTaskId`), de-duplicated and in stable date order.
+    static func linkedTasks(_ draft: PruningActivityDraft, tasks: [WorkTask]) -> [WorkTask] {
+        var seen = Set<UUID>()
+        return tasks
+            .filter { $0.pruningActivityId == draft.id || $0.id == draft.workTaskId }
+            .filter { seen.insert($0.id).inserted }
+            .sorted { lhs, rhs in
+                if lhs.date != rhs.date { return lhs.date < rhs.date }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+    }
+
+    /// Canonical cost of ONE task — its OWN record only: piece-rate snapshot
+    /// total, else its own rated labour lines. Never the SQL 190 read-through,
+    /// so summing tasks can never count the same legacy rows twice.
+    static func canonicalCost(_ task: WorkTask, lines: [WorkTaskLabourLine]) -> Double? {
+        if task.isPieceRate { return task.pieceRateCost }
+        return WorkTaskLabourCosting.totalCost(lines)
+    }
+
+    /// The task's own labour-line person-hours; nil when it owns no hours.
+    static func canonicalHours(_ task: WorkTask, lines: [WorkTaskLabourLine]) -> Double? {
+        let hours = WorkTaskLabourCosting.totalPersonHours(lines)
+        return hours > 0 ? hours : nil
+    }
+
+    /// Σ across the linked tasks — THE derived activity totals (sql/200).
+    static func aggregate(
+        _ tasks: [WorkTask],
+        linesByTask: [UUID: [WorkTaskLabourLine]]
+    ) -> PruningActivityTaskAggregate {
+        var result = PruningActivityTaskAggregate(taskCount: tasks.count)
+        for task in tasks {
+            let lines = linesByTask[task.id] ?? []
+            if let cost = canonicalCost(task, lines: lines) {
+                result.cost = (result.cost ?? 0) + cost
+            }
+            if let hours = canonicalHours(task, lines: lines) {
+                result.hours = (result.hours ?? 0) + hours
+            }
+        }
+        return result
+    }
+
+    /// Live labour lines grouped by task, for the aggregate above.
+    static func linesByTask(_ lines: [WorkTaskLabourLine]) -> [UUID: [WorkTaskLabourLine]] {
+        Dictionary(grouping: lines, by: \.workTaskId)
     }
 
     /// True when the draft references a task this device cannot resolve — one

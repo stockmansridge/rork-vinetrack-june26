@@ -7319,6 +7319,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * creates the task already finalized (work that has already occurred, such
      * as a recorded pruning day).
      */
+    /**
+     * sql/200: link (or unlink, null) a work task to its originating pruning
+     * activity. Optimistic locally; the server patch is best-effort — an
+     * offline link keeps the activity-side mirror, so nothing is lost.
+     */
+    fun setWorkTaskPruningActivity(taskId: String, pruningActivityId: String?) {
+        _ui.update { st ->
+            st.copy(
+                workTasks = st.workTasks.map {
+                    if (it.id == taskId) it.copy(pruningActivityId = pruningActivityId) else it
+                },
+            )
+        }
+        if (!_ui.value.isOnline) return
+        viewModelScope.launch {
+            runCatching { workTaskRepo.setPruningActivity(taskId, pruningActivityId) }
+                .onFailure { android.util.Log.w("AppViewModel", "work task pruning link failed: ${it.message}") }
+        }
+    }
+
     fun createWorkTask(
         taskType: String,
         paddockIds: List<String>,

@@ -400,8 +400,12 @@ struct PruningActivityLabourLineTests {
         #expect(Self.close(ownCost, 250))
     }
 
-    @Test("An activity's own lines outrank the linked task's lines — precedence, not addition")
-    func activityLinesOutrankTaskLines() throws {
+    @Test("REPAIRED: the linked task's OWN lines outrank legacy activity lines — Work Task wins, never addition")
+    func taskLinesOutrankLegacyActivityLines() throws {
+        // Pruning Cost Model Repair (sql/200): Work Tasks are the single cost
+        // ledger. A legacy activity that owns 190-lines AND a linked task with
+        // its own labour resolves from the TASK — the activity lines become
+        // non-authoritative history.
         let resolved = PruningActivityLabourCosting.resolve(
             task: Self.hourlyTask(),
             activityLines: Self.oneLine(),
@@ -409,9 +413,10 @@ struct PruningActivityLabourLineTests {
             legacyHours: nil,
             legacyRate: nil
         )
-        #expect(resolved.source == .pruningLabourLines)
-        // $480, NOT $480 + $250 = $730.
-        #expect(Self.close(resolved.cost, Self.expectedOneLineCost))
+        #expect(resolved.source == .workTaskLines)
+        // $250 — NOT $480 (legacy lines), and NEVER $480 + $250 = $730.
+        #expect(Self.close(resolved.cost, 250))
+        #expect(resolved.cost != Self.expectedOneLineCost + 250)
     }
 
     @Test("With no lines of its own, the activity falls back to the linked task's lines")

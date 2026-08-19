@@ -118,8 +118,6 @@ import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.PendingSyncItem
 import com.rork.vinetrack.ui.components.BackNavIcon
-import com.rork.vinetrack.ui.components.PruningActivityLabourLineSheet
-import com.rork.vinetrack.ui.components.PruningActivityLabourLinesSection
 import com.rork.vinetrack.ui.components.WorkTaskCostingContext
 import com.rork.vinetrack.ui.components.WorkTaskLabourLineSheet
 import com.rork.vinetrack.ui.components.WorkTaskLabourLinesSection
@@ -386,7 +384,11 @@ fun PruningTrackerScreen(
                     pieceVineCount = taskDraft.vineCount,
                     pieceRateRows = snapshotRows,
                     labourSeed = PruningActivityTaskLink.labourSeed(taskDraft, activityDraft.date),
-                ) { }
+                ) { }.also { created ->
+                    // sql/200: the task is born linked to its originating
+                    // activity, so the activity derives its cost from day one.
+                    if (created != null) vm.setWorkTaskPruningActivity(created, activityDraft.id)
+                }
             },
             // Opens the linked task IN PLACE, so the draft's block and quarter
             // selections survive the round trip.
@@ -397,23 +399,10 @@ fun PruningTrackerScreen(
             } else {
                 null
             },
-            // THE standard Work Task labour editor — the same composable the
-            // Work Task screen renders, so labour is never edited through a
-            // pruning-specific implementation.
-            labourSection = null,
-            // THE labour surface for this activity (sql/190). Labour is
-            // PRUNING-OWNED: it belongs to the activity, is counted once however
-            // many blocks it covers, and a linked Work Task reads through to
-            // these same rows rather than holding a copy.
-            pruningLabourSection = { suggestedVineCount ->
-                PruningActivityOwnLabourSection(
-                    vm = vm,
-                    state = state,
-                    vineyardId = vineyardId,
-                    draft = openDraft,
-                    canViewCosting = canViewCosting,
-                    suggestedVineCount = suggestedVineCount,
-                )
+            // sql/200: costs live on WORK TASKS. The activity-owned labour
+            // editor is gone; link changes persist task-side through the VM.
+            onSetTaskLink = { taskId, activityId ->
+                vm.setWorkTaskPruningActivity(taskId, activityId)
             },
             onBack = { editorDraft = null },
             modifier = modifier,
@@ -3748,137 +3737,9 @@ private fun SetupDateRow(label: String, value: LocalDate?, onPick: () -> Unit, o
  * or duplicates them from the pruning draft. Nothing here can touch a pruning
  * allocation: it only ever calls the work-task labour paths.
  */
-/**
- * THE labour surface of a pruning ACTIVITY (sql/190).
- *
- * Labour is PRUNING-OWNED: these lines belong to the activity and are counted
- * ONCE however many blocks it covers. A linked Work Task never receives a copy
- * — it resolves through to the same rows — so the Pruning report and the Work
- * Task report show the same number from the same record.
- *
- * The piece-rate choice lives on this one sheet too, because piece rate is a
- * property of the linked Work Task (sql/188) rather than a labour type: it is
- * never recorded as a synthetic labour line.
- */
-@Composable
-private fun PruningActivityOwnLabourSection(
-    vm: AppViewModel,
-    state: AppUiState,
-    vineyardId: String,
-    draft: PruningActivityDraft,
-    canViewCosting: Boolean,
-    /** Vines under the rows selected above — the default piece-rate quantity. */
-    suggestedVineCount: Int = 0,
-) {
-    val activityId = draft.id
-    var addingLabour by remember(activityId) { mutableStateOf(false) }
-    var editLabour by remember(activityId) { mutableStateOf<PruningActivityLabourLine?>(null) }
-
-    LaunchedEffect(vineyardId) { vm.loadPruningLabourLines(vineyardId) }
-
-    // Pricing authority is deliberately split: supervisors and above may AGREE a
-    // rate in the field, but only owners/managers may review or change one.
-    val role = remember(state.currentRole) { TeamRole.from(state.currentRole) }
-    val linkedTask = state.workTasks.firstOrNull { it.id == draft.workTaskId }
-    val costingContext = remember(linkedTask, suggestedVineCount, role) {
-        linkedTask?.let {
-            WorkTaskCostingContext(
-                taskId = it.id,
-                method = it.resolvedCostingMethod,
-                suggestedVineCount = suggestedVineCount.takeIf { count -> count > 0 },
-                savedRatePerVine = it.pieceRatePerVine,
-                savedVineCount = it.pieceVineCount,
-                canEnterPricing = role.canEnterPricing,
-                canReviewPricing = role.canViewCosting,
-            )
-        }
-    }
-
-    val lines = remember(state.pruningActivityLabourLines, activityId) {
-        PruningActivityLabourCosting.linesFor(state.pruningActivityLabourLines, activityId)
-    }
-    val taskLines = remember(state.vineyardLabourLines, state.taskLabourLines, draft.workTaskId) {
-        val taskId = draft.workTaskId ?: return@remember emptyList<WorkTaskLabourLine>()
-        val byId = LinkedHashMap<String, WorkTaskLabourLine>()
-        state.vineyardLabourLines.orEmpty().forEach { byId[it.id] = it }
-        state.taskLabourLines.forEach { byId[it.id] = it }
-        byId.values.filter { it.workTaskId == taskId && it.deletedAt == null }
-    }
-    // Precedence, never addition — exactly one source contributes.
-    val resolved = remember(linkedTask, lines, taskLines, draft, canViewCosting) {
-        PruningActivityLabourCosting.resolve(
-            task = linkedTask,
-            activityLines = lines,
-            taskLines = taskLines,
-            legacyHours = draft.labourHours,
-            legacyRate = draft.hourlyRate,
-            includeCost = canViewCosting,
-        )
-    }
-
-    PruningActivityLabourLinesSection(
-        lines = lines,
-        resolved = resolved,
-        operatorCategories = state.operatorCategories,
-        canEdit = !draft.isReversed,
-        canViewCosting = canViewCosting,
-        isLoading = false,
-        legacyWorker = draft.worker,
-        legacyHours = draft.labourHours,
-        legacyRate = draft.hourlyRate,
-        onAdd = { addingLabour = true },
-        onEdit = { editLabour = it },
-        onConvertLegacy = { vm.convertPruningLegacyLabour(vineyardId, activityId) },
-        pieceRateVineCount = linkedTask?.pieceVineCount,
-        pieceRatePerVine = linkedTask?.pieceRatePerVine,
-    )
-
-    if (addingLabour || editLabour != null) {
-        val editing = editLabour
-        PruningActivityLabourLineSheet(
-            operatorCategories = state.operatorCategories,
-            existing = editing,
-            canViewCosting = canViewCosting,
-            isBusy = state.pruningLabourBusy,
-            onSave = { lineId, categoryId, workerType, workerCount, hoursPerWorker, hourlyRate, notes ->
-                vm.savePruningLabourLine(
-                    vineyardId = vineyardId,
-                    activityId = activityId,
-                    lineId = lineId,
-                    workDate = editing?.workDate ?: draft.date,
-                    operatorCategoryId = categoryId,
-                    workerType = workerType,
-                    workerCount = workerCount,
-                    hoursPerWorker = hoursPerWorker,
-                    hourlyRate = hourlyRate,
-                    notes = notes,
-                )
-                addingLabour = false
-                editLabour = null
-            },
-            onDelete = { lineId ->
-                vm.deletePruningLabourLine(vineyardId, activityId, lineId)
-                addingLabour = false
-                editLabour = null
-            },
-            onDismiss = { addingLabour = false; editLabour = null },
-            costingContext = costingContext,
-            // Piece rate is an agreement on the linked TASK (sql/188), never a
-            // labour line — so it is written to the task, not to these rows.
-            onSaveCosting = { method, ratePerVine, vineCount ->
-                draft.workTaskId?.let { linkedId ->
-                    vm.setWorkTaskCosting(
-                        taskId = linkedId,
-                        method = method,
-                        ratePerVine = ratePerVine,
-                        vineCount = vineCount,
-                    ) { }
-                }
-            },
-        )
-    }
-}
-
+// sql/200 REPAIR: the activity-owned labour surface (PruningActivityOwnLabourSection)
+// is GONE. Costs are recorded on linked WORK TASKS; the activity only derives
+// its totals from them. Legacy sql/190 rows stay readable through the resolver.
 @Composable
 private fun PruningLinkedTaskLabourSection(
     vm: AppViewModel,

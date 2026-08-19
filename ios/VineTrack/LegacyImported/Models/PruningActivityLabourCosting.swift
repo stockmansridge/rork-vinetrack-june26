@@ -5,14 +5,16 @@ import Foundation
 /// produce identical numbers from identical inputs; the unit suites on each side
 /// assert the same fixtures, and those fixtures match the SQL suite.
 ///
-/// ## Ownership
+/// ## Ownership — REPAIRED (sql/200)
 ///
-/// Labour is **PRUNING-OWNED**. A linked Work Task never gets a copy of these
-/// rows; it resolves *through* to them. One stored set, two readers, identical
-/// number — which is what stops the same money existing twice.
+/// **WORK TASKS own labour cost.** A pruning activity is an operational record
+/// that may link 0..N Work Tasks; its labour figures are DERIVED — the sum of
+/// the linked tasks' canonical totals. The activity-owned lines below are the
+/// DEPRECATED sql/190 legacy model: still readable (and still resolved for
+/// activities that have no task-owned cost), but never written by new UI.
 ///
-/// Labour belongs to the ACTIVITY and is counted ONCE regardless of how many
-/// blocks the activity covers. Nothing here is ever apportioned per block.
+/// Labour is counted ONCE per activity regardless of how many blocks it
+/// covers. Nothing here is ever apportioned per block.
 ///
 /// ## Hours vs cost — two deliberately different rules
 ///
@@ -118,9 +120,11 @@ nonisolated enum PruningActivityLabourCosting {
     /// report adding an activity's lines to a linked task's, or a piece-rate
     /// total to an hourly one.
     nonisolated enum Source: String, Sendable {
+        /// Σ of MULTIPLE linked Work Tasks' canonical totals (sql/200).
+        case workTasks
         /// A linked piece-rate task's snapshot total (sql/188).
         case pieceRate
-        /// The activity's OWN labour lines (sql/190).
+        /// The activity's OWN labour lines (sql/190) — DEPRECATED legacy read.
         case pruningLabourLines
         /// The linked hourly task's labour lines (sql/189).
         case workTaskLines
@@ -142,6 +146,10 @@ nonisolated enum PruningActivityLabourCosting {
         /// How many labour lines the ACTIVITY itself owns. 0 means the activity
         /// is legacy/single-crew and resolved further down the chain.
         var lineCount: Int
+        /// How many LIVE Work Tasks are linked (sql/200). The derived totals
+        /// sum exactly these tasks when `source == .workTasks` /
+        /// `.pieceRate` / `.workTaskLines`.
+        var taskCount: Int = 0
     }
 
     /// Effective HOURS of an activity — the Swift twin of
@@ -160,96 +168,124 @@ nonisolated enum PruningActivityLabourCosting {
     }
 
     /// **THE** effective labour cost and hours of one pruning activity —
-    /// the Swift twin of `pruning_activity_effective_labour_cost`.
+    /// the Swift twin of `pruning_activity_effective_labour_cost` as REPAIRED
+    /// by sql/200.
     ///
     /// Strict precedence, never addition:
     ///
-    /// 1. a linked **piece-rate** task → its snapshot total. No fallback: an
-    ///    unpriced piece-rate job is "not specified", and falling back to hours
-    ///    would report an HOURLY figure for a piece-rate job.
-    /// 2. the activity's **own rated labour lines** (sql/190),
-    /// 3. the linked **hourly task's** rated labour lines (sql/189),
-    /// 4. the activity's legacy `labour_hours × hourly_rate` (sql/166).
+    /// 1. the linked **Work Tasks'** canonical totals (sql/200) — Σ across the
+    ///    0..N linked tasks; each task contributes its OWN record only
+    ///    (piece-rate snapshot or its own labour lines),
+    /// 2. the activity's **own labour lines** (sql/190) — DEPRECATED legacy
+    ///    read for pre-repair records,
+    /// 3. the activity's legacy `labour_hours × hourly_rate` (sql/166).
     ///
     /// - Parameters:
-    ///   - task: the linked Work Task, when this device has it cached.
-    ///   - activityLines: the activity's OWN labour lines (already filtered).
-    ///   - taskLines: the LINKED task's labour lines (already filtered).
+    ///   - task: the legacy PRIMARY linked task (`draft.workTaskId` mirror).
+    ///   - activityLines: the activity's OWN legacy lines (already filtered).
+    ///   - taskLines: the PRIMARY task's labour lines (already filtered).
     ///   - legacyHours: historical `pruning_activities.labour_hours`.
     ///   - legacyRate: historical `pruning_activities.hourly_rate`.
     ///   - includeCost: false hides every monetary value for roles without
     ///     costing visibility. Hours are still returned.
+    ///   - linkedTasks: EVERY linked task (sql/200). When empty, the legacy
+    ///     single `task` is used so pre-repair callers keep working.
+    ///   - linesByTask: live labour lines grouped by task id for `linkedTasks`.
     static func resolve(
         task: WorkTask?,
         activityLines: [PruningActivityLabourLine],
         taskLines: [WorkTaskLabourLine],
         legacyHours: Double?,
         legacyRate: Double?,
-        includeCost: Bool = true
+        includeCost: Bool = true,
+        linkedTasks: [WorkTask] = [],
+        linesByTask: [UUID: [WorkTaskLabourLine]] = [:]
     ) -> Resolved {
         let lineCount = activityLines.count
-        // Hours are resolved ONCE, independently of the cost branch: a
-        // piece-rate job still records hours for productivity, and an unrated
-        // line is still work that was done.
         let ownHours = totalHours(activityLines)
 
-        // 1. A linked piece-rate task IS the cost.
-        if let task, task.isPieceRate {
-            let resolved = PieceRateCosting.resolve(task: task, labourLines: taskLines)
-            let hours = ownHours
-                ?? (resolved.hours > 0 ? resolved.hours : nil)
+        // The task SET: every linked task when supplied, else the legacy
+        // single mirror task.
+        var taskSet: [WorkTask] = linkedTasks
+        if taskSet.isEmpty, let task { taskSet = [task] }
+        var effectiveLines = linesByTask
+        if let task, effectiveLines[task.id] == nil, !taskLines.isEmpty {
+            effectiveLines[task.id] = taskLines
+        }
+
+        // 1. WORK TASKS FIRST (sql/200): the sum of the linked tasks' canonical
+        //    totals. Resolves whenever any linked task carries its own hours or
+        //    cost, so a legacy task that owns nothing still falls through to
+        //    the legacy rungs below.
+        let aggregate = PruningWorkTaskLink.aggregate(taskSet, linesByTask: effectiveLines)
+        if aggregate.cost != nil || aggregate.hours != nil {
+            let source: Source
+            if taskSet.count == 1, let only = taskSet.first {
+                source = only.isPieceRate ? .pieceRate : .workTaskLines
+            } else {
+                source = .workTasks
+            }
+            let hours = aggregate.hours
+                ?? ownHours
                 ?? legacyHours.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
             return Resolved(
-                source: .pieceRate,
+                source: source,
                 hours: hours,
-                cost: includeCost ? resolved.cost : nil,
+                cost: includeCost ? aggregate.cost : nil,
                 isLegacy: false,
-                lineCount: lineCount
+                lineCount: lineCount,
+                taskCount: taskSet.count
             )
         }
 
-        // 2. The activity's OWN rated labour lines.
+        // A single linked piece-rate task with NO agreed rate yet: the job is
+        // piece-priced and "not specified" — it must never fall back to an
+        // hourly figure.
+        if taskSet.count == 1, let only = taskSet.first, only.isPieceRate {
+            let hours = ownHours ?? legacyHours.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+            return Resolved(
+                source: .pieceRate,
+                hours: hours,
+                cost: nil,
+                isLegacy: false,
+                lineCount: lineCount,
+                taskCount: 1
+            )
+        }
+
+        // 2. DEPRECATED legacy read: the activity's OWN rated labour lines.
         if let cost = totalCost(activityLines) {
             return Resolved(
                 source: .pruningLabourLines,
                 hours: ownHours,
                 cost: includeCost ? cost : nil,
-                isLegacy: false,
-                lineCount: lineCount
+                isLegacy: true,
+                lineCount: lineCount,
+                taskCount: taskSet.count
             )
         }
 
-        // The activity owns lines but none of them carry a rate. Hours are real
-        // and reported; the cost is genuinely "not specified" — it must NOT fall
-        // through to a linked task or a legacy rate, because these lines ARE the
-        // labour record for this activity.
+        // The activity owns lines but none carry a rate: hours are real, the
+        // cost is genuinely "not specified" — never $0.00 and never a fallback.
         if lineCount > 0 {
             return Resolved(
                 source: .pruningLabourLines,
                 hours: ownHours,
                 cost: nil,
-                isLegacy: false,
-                lineCount: lineCount
+                isLegacy: true,
+                lineCount: lineCount,
+                taskCount: taskSet.count
             )
         }
 
-        // 3. The linked hourly task's rated labour lines.
-        if task != nil, !taskLines.isEmpty {
-            let hours = WorkTaskLabourCosting.totalPersonHours(taskLines)
-            return Resolved(
-                source: .workTaskLines,
-                hours: hours > 0 ? hours : nil,
-                cost: includeCost ? WorkTaskLabourCosting.totalCost(taskLines) : nil,
-                isLegacy: false,
-                lineCount: 0
-            )
-        }
-
-        // 4. The legacy scalar pair.
+        // 3. The legacy scalar pair.
         let hours = legacyHours.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
         let rate = legacyRate.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
         if hours == nil && rate == nil {
-            return Resolved(source: .none, hours: nil, cost: nil, isLegacy: false, lineCount: 0)
+            return Resolved(
+                source: .none, hours: nil, cost: nil, isLegacy: false,
+                lineCount: 0, taskCount: taskSet.count
+            )
         }
         var cost: Double?
         if includeCost, let hours, let rate { cost = hours * rate }
@@ -258,7 +294,8 @@ nonisolated enum PruningActivityLabourCosting {
             hours: hours,
             cost: cost,
             isLegacy: true,
-            lineCount: 0
+            lineCount: 0,
+            taskCount: taskSet.count
         )
     }
 

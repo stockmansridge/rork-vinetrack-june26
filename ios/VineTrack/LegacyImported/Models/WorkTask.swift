@@ -73,6 +73,12 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
     /// HISTORICAL SNAPSHOT of the vine quantity this job was costed on.
     var pieceVineCount: Int?
 
+    /// sql/200: the ORIGINATING pruning activity, when this task was created
+    /// from (or linked to) one. A pruning activity may link 0..N work tasks;
+    /// each task has 0..1 originating activity. Optional so every task cached
+    /// before the repair decodes unchanged.
+    var pruningActivityId: UUID?
+
     init(
         id: UUID = UUID(),
         vineyardId: UUID = UUID(),
@@ -97,7 +103,8 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         status: String? = nil,
         costingMethodRaw: String? = nil,
         pieceRatePerVine: Double? = nil,
-        pieceVineCount: Int? = nil
+        pieceVineCount: Int? = nil,
+        pruningActivityId: UUID? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -123,6 +130,7 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         self.costingMethodRaw = costingMethodRaw
         self.pieceRatePerVine = pieceRatePerVine
         self.pieceVineCount = pieceVineCount
+        self.pruningActivityId = pruningActivityId
     }
 
     /// How this task's labour cost is calculated (sql/188). Anything missing or
@@ -162,6 +170,7 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         case isArchived, archivedAt, archivedBy, isFinalized, finalizedAt, finalizedBy
         case startDate, endDate, areaHa, taskDescription, status
         case costingMethodRaw, pieceRatePerVine, pieceVineCount
+        case pruningActivityId
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -192,6 +201,7 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         costingMethodRaw = try c.decodeIfPresent(String.self, forKey: .costingMethodRaw)
         pieceRatePerVine = try c.decodeIfPresent(Double.self, forKey: .pieceRatePerVine)
         pieceVineCount = try c.decodeIfPresent(Int.self, forKey: .pieceVineCount)
+        pruningActivityId = try c.decodeIfPresent(UUID.self, forKey: .pruningActivityId)
     }
 }
 

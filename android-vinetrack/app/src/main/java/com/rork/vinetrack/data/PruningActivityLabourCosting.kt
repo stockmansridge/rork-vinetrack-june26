@@ -136,6 +136,9 @@ object PruningActivityLabourCosting {
      * total to an hourly one.
      */
     enum class Source {
+        /** Σ of MULTIPLE linked Work Tasks' canonical totals (sql/200). */
+        WORK_TASKS,
+
         /** A linked piece-rate task's snapshot total (sql/188). */
         PIECE_RATE,
 
@@ -168,6 +171,8 @@ object PruningActivityLabourCosting {
          * is legacy/single-crew and resolved further down the chain.
          */
         val lineCount: Int,
+        /** How many LIVE Work Tasks are linked (sql/200). */
+        val taskCount: Int = 0,
     )
 
     /**
@@ -209,72 +214,96 @@ object PruningActivityLabourCosting {
         legacyHours: Double?,
         legacyRate: Double?,
         includeCost: Boolean = true,
+        /** EVERY linked task (sql/200). Empty = fall back to the single [task]. */
+        linkedTasks: List<WorkTask> = emptyList(),
+        /** Live labour lines grouped by task id for [linkedTasks]. */
+        linesByTask: Map<String, List<WorkTaskLabourLine>> = emptyMap(),
     ): Resolved {
         val liveActivity = activityLines.filter { it.deletedAt == null }
         val liveTask = taskLines.filter { it.deletedAt == null }
         val lineCount = liveActivity.size
-        // Hours are resolved ONCE, independently of the cost branch: a
-        // piece-rate job still records hours for productivity, and an unrated
-        // line is still work that was done.
         val ownHours = totalHours(liveActivity)
 
-        // 1. A linked piece-rate task IS the cost.
-        if (task != null && task.isPieceRate) {
-            val resolved = PieceRateCosting.resolve(task, liveTask)
-            val hours = ownHours
-                ?: resolved.hours.takeIf { it > 0 }
+        // The task SET: every linked task when supplied, else the legacy
+        // single mirror task.
+        val taskSet = when {
+            linkedTasks.isNotEmpty() -> linkedTasks
+            task != null -> listOf(task)
+            else -> emptyList()
+        }
+        val effectiveLines = if (task != null && !linesByTask.containsKey(task.id) && liveTask.isNotEmpty()) {
+            linesByTask + (task.id to liveTask)
+        } else {
+            linesByTask
+        }
+
+        // 1. WORK TASKS FIRST (sql/200): the sum of the linked tasks' canonical
+        //    totals. Resolves whenever any linked task carries its own hours or
+        //    cost — the repaired authority.
+        val aggregate = PruningActivityTaskLink.aggregate(taskSet, effectiveLines)
+        if (aggregate.cost != null || aggregate.hours != null) {
+            val source = when {
+                taskSet.size == 1 && taskSet.first().isPieceRate -> Source.PIECE_RATE
+                taskSet.size == 1 -> Source.WORK_TASK_LINES
+                else -> Source.WORK_TASKS
+            }
+            val hours = aggregate.hours
+                ?: ownHours
                 ?: legacyHours?.takeIf { it.isFinite() && it > 0 }
             return Resolved(
-                source = Source.PIECE_RATE,
+                source = source,
                 hours = hours,
-                cost = if (includeCost) resolved.cost else null,
+                cost = if (includeCost) aggregate.cost else null,
                 isLegacy = false,
                 lineCount = lineCount,
+                taskCount = taskSet.size,
             )
         }
 
-        // 2. The activity's OWN rated labour lines.
+        // A single linked piece-rate task with NO agreed rate yet: the job is
+        // piece-priced and "not specified" — never an hourly fallback.
+        if (taskSet.size == 1 && taskSet.first().isPieceRate) {
+            val hours = ownHours ?: legacyHours?.takeIf { it.isFinite() && it > 0 }
+            return Resolved(
+                source = Source.PIECE_RATE,
+                hours = hours,
+                cost = null,
+                isLegacy = false,
+                lineCount = lineCount,
+                taskCount = 1,
+            )
+        }
+
+        // 2. DEPRECATED legacy read: the activity's OWN rated labour lines.
         totalCost(liveActivity)?.let { cost ->
             return Resolved(
                 source = Source.PRUNING_LABOUR_LINES,
                 hours = ownHours,
                 cost = if (includeCost) cost else null,
-                isLegacy = false,
+                isLegacy = true,
                 lineCount = lineCount,
+                taskCount = taskSet.size,
             )
         }
 
-        // The activity owns lines but none of them carry a rate. Hours are real
-        // and reported; the cost is genuinely "not specified" — it must NOT fall
-        // through to a linked task or a legacy rate, because these lines ARE the
-        // labour record for this activity.
+        // The activity owns lines but none carry a rate: hours are real, the
+        // cost is genuinely "not specified" — never $0.00 and never a fallback.
         if (lineCount > 0) {
             return Resolved(
                 source = Source.PRUNING_LABOUR_LINES,
                 hours = ownHours,
                 cost = null,
-                isLegacy = false,
+                isLegacy = true,
                 lineCount = lineCount,
+                taskCount = taskSet.size,
             )
         }
 
-        // 3. The linked hourly task's rated labour lines.
-        if (task != null && liveTask.isNotEmpty()) {
-            val hours = WorkTaskLabourCosting.totalPersonHours(liveTask)
-            return Resolved(
-                source = Source.WORK_TASK_LINES,
-                hours = hours.takeIf { it > 0 },
-                cost = if (includeCost) WorkTaskLabourCosting.totalCost(liveTask) else null,
-                isLegacy = false,
-                lineCount = 0,
-            )
-        }
-
-        // 4. The legacy scalar pair.
+        // 3. The legacy scalar pair.
         val hours = legacyHours?.takeIf { it.isFinite() && it > 0 }
         val rate = legacyRate?.takeIf { it.isFinite() && it > 0 }
         if (hours == null && rate == null) {
-            return Resolved(Source.NONE, null, null, isLegacy = false, lineCount = 0)
+            return Resolved(Source.NONE, null, null, isLegacy = false, lineCount = 0, taskCount = taskSet.size)
         }
         return Resolved(
             source = Source.ACTIVITY_HOURS,
@@ -282,6 +311,7 @@ object PruningActivityLabourCosting {
             cost = if (includeCost && hours != null && rate != null) hours * rate else null,
             isLegacy = true,
             lineCount = 0,
+            taskCount = taskSet.size,
         )
     }
 
