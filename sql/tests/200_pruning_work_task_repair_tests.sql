@@ -10,19 +10,10 @@ begin;
 -- Fixture identities
 -- vineyard V, activity A (two blocks), tasks T1 (hourly), T2 (hourly), T3
 -- (piece rate), plus a legacy activity L with 190-lines and no task.
-do $$
-declare
-  v uuid := '00000000-0000-4000-8000-00000000000v'::uuid;
-begin
-  -- placeholder guard so editors do not flag the block as empty
-  perform 1;
-exception when others then
-  null;
-end $$;
-
+--
 -- NOTE: these tests intentionally use the SAME assertion pattern as
 -- sql/tests/190_pruning_activity_labour_lines_tests.sql. Fixture UUIDs are
--- valid v4-shaped constants.
+-- valid v4-shaped hex constants.
 
 do $$
 declare
