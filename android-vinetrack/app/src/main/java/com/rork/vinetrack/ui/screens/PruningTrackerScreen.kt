@@ -384,11 +384,12 @@ fun PruningTrackerScreen(
                     pieceVineCount = taskDraft.vineCount,
                     pieceRateRows = snapshotRows,
                     labourSeed = PruningActivityTaskLink.labourSeed(taskDraft, activityDraft.date),
-                ) { }.also { created ->
-                    // sql/200: the task is born linked to its originating
-                    // activity, so the activity derives its cost from day one.
-                    if (created != null) vm.setWorkTaskPruningActivity(created, activityDraft.id)
-                }
+                    // sql/200: the task is BORN linked — the link rides the
+                    // create payload and its queued offline marker, so a
+                    // second or third task created offline keeps its link
+                    // through replay (never a separate post-create patch).
+                    pruningActivityId = activityDraft.id,
+                ) { }
             },
             // Opens the linked task IN PLACE, so the draft's block and quarter
             // selections survive the round trip.

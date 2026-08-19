@@ -762,9 +762,10 @@ private fun PruningActivityFieldsCard(
  * unlink it. Every action only rewrites the parent's link, so block and quarter
  * selections survive untouched.
  *
- * The linked task's labour lines are the AUTHORITATIVE labour record: task
+ * The linked tasks' labour lines are the AUTHORITATIVE labour record: task
  * title, status, total person-hours, total labour cost (subject to costing
- * permission), plus the standard labour editor injected via [labourSection].
+ * permission). Costs are edited INSIDE each Work Task (sql/200) — never on
+ * the activity.
  */
 @Composable
 private fun PruningActivityWorkTaskCard(
@@ -1722,6 +1723,22 @@ private fun PruningActivitySummaryCard(
     val linkedTask = remember(workTasks, draft.workTaskId) {
         PruningActivityTaskLink.linkedTask(draft, workTasks)
     }
+    // sql/200: EVERY linked task — task-side origin links plus the legacy
+    // mirror. With more than one, the summary shows the DERIVED aggregate of
+    // all of them, never just the primary/mirror task.
+    val linkedTasks = remember(workTasks, draft.id, draft.workTaskId) {
+        PruningActivityTaskLink.linkedTasks(draft, workTasks)
+    }
+    val multiTaskAggregate = remember(linkedTasks, labourLines) {
+        if (linkedTasks.size > 1) {
+            PruningActivityTaskLink.aggregate(
+                linkedTasks,
+                PruningActivityTaskLink.linesByTask(labourLines),
+            )
+        } else {
+            null
+        }
+    }
     // Labour is resolved with the task's COSTING METHOD applied first: a
     // piece-rate job is costed from its own snapshot (even with no labour lines
     // at all), an hourly job from its lines, and the historical activity value
@@ -1810,7 +1827,20 @@ private fun PruningActivitySummaryCard(
                 fontSize = 11.sp,
                 color = vine.textSecondary,
             )
-            Text(
+            if (multiTaskAggregate != null) {
+                // Multi-task activity: the combined figure — e.g.
+                // "2 Work Tasks · 22 h person-hours · labour cost $810".
+                Text(
+                    listOfNotNull(
+                        "${multiTaskAggregate.taskCount} Work Tasks",
+                        multiTaskAggregate.hours?.let { "${formatLabourHours(it)} person-hours" },
+                        multiTaskAggregate.cost?.takeIf { canViewCosting }
+                            ?.let { "labour cost ${formatLabourCurrency(it)}" },
+                    ).joinToString(" · ") + " — combined across every linked Work Task.",
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                )
+            } else Text(
                 when (labour.source) {
                     // The piece-rate record IS the labour-cost record. Hours,
                     // when present, are operational only and never move it.

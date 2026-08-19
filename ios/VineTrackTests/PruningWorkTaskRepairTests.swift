@@ -281,4 +281,54 @@ struct PruningWorkTaskRepairTests {
         let legacyDecoded = try JSONDecoder().decode(WorkTask.self, from: legacyData)
         #expect(legacyDecoded.pruningActivityId == nil)
     }
+
+    // MARK: - Offline linkage closeout: queued create → sync → aggregate
+
+    @Test("Offline: Task A and B created from one activity carry the link in the queued push payload and aggregate after sync")
+    func offlineCreatedTasksSurviveQueuedSync() throws {
+        // Device offline: both tasks are created from the same activity,
+        // exactly as the tracker creates them — BORN linked (sql/200).
+        let a = Self.task(Self.taskA, pruningActivityId: Self.activityId)
+        let b = Self.task(Self.taskB, pruningActivityId: Self.activityId, day: 5)
+
+        // 1. The queued sync path replays local tasks through
+        //    BackendWorkTask.upsert(from:) — the wire payload must carry
+        //    pruning_activity_id for BOTH tasks, not just the first.
+        for t in [a, b] {
+            let payload = BackendWorkTask.upsert(from: t, createdBy: nil, clientUpdatedAt: Date())
+            let object = try JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(payload)
+            ) as? [String: Any]
+            let wired = (object?["pruning_activity_id"] as? String)?.lowercased()
+            #expect(wired == Self.activityId.uuidString.lowercased())
+        }
+
+        // 2. Come online/sync: the server returns both rows with the same link…
+        let wire = """
+        [
+          {"id": "\(Self.taskA.uuidString)", "vineyard_id": "\(Self.vineyard.uuidString)",
+           "task_type": "Pruning", "costing_method": "hourly",
+           "pruning_activity_id": "\(Self.activityId.uuidString)"},
+          {"id": "\(Self.taskB.uuidString)", "vineyard_id": "\(Self.vineyard.uuidString)",
+           "task_type": "Pruning", "costing_method": "hourly",
+           "pruning_activity_id": "\(Self.activityId.uuidString)"}
+        ]
+        """
+        let synced = try JSONDecoder()
+            .decode([BackendWorkTask].self, from: Data(wire.utf8))
+            .map { $0.toWorkTask() }
+        #expect(synced.allSatisfy { $0.pruningActivityId == Self.activityId })
+
+        // 3. …and the activity aggregates them as TWO linked Work Tasks.
+        let linesByTask: [UUID: [WorkTaskLabourLine]] = [
+            Self.taskA: [Self.line(Self.taskA, workers: 2, hours: 7, rate: 35)],
+            Self.taskB: [Self.line(Self.taskB, workers: 1, hours: 8, rate: 40)],
+        ]
+        let linked = PruningWorkTaskLink.linkedTasks(Self.draft(), tasks: synced)
+        #expect(linked.count == 2)
+        let aggregate = PruningWorkTaskLink.aggregate(linked, linesByTask: linesByTask)
+        #expect(aggregate.taskCount == 2)
+        #expect(Self.close(aggregate.hours, 22))
+        #expect(Self.close(aggregate.cost, 810))
+    }
 }

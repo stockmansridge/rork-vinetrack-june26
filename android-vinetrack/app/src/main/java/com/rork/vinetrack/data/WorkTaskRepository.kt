@@ -29,7 +29,8 @@ import java.util.UUID
  * the signed-in user's vineyard role: owner/manager/supervisor/operator may
  * insert and update; only owner/manager/supervisor may soft-delete.
  *
- * Online-first — there is no local queue yet. Every mutation sends only the
+ * Online-first with queued replay for creates ([WorkTaskCreateSync]) and
+ * header updates ([WorkTaskUpdateSync]). Every mutation sends only the
  * columns Android edits, leaving the iOS-managed `resources` JSONB and the
  * Phase-16 costing fields (start_date, end_date, area_ha, description, …)
  * intact.
@@ -56,6 +57,10 @@ class WorkTaskRepository(private val session: SessionStore) {
         @SerialName("costing_method") val costingMethod: String = "hourly",
         @SerialName("piece_rate_per_vine") val pieceRatePerVine: Double? = null,
         @SerialName("piece_vine_count") val pieceVineCount: Int? = null,
+        // sql/200: the ORIGINATING pruning activity. Rides the insert itself so
+        // an offline-created task keeps its link through queued replay — there
+        // is no separate "link" call to lose. Null for ordinary tasks.
+        @SerialName("pruning_activity_id") val pruningActivityId: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
@@ -169,6 +174,9 @@ class WorkTaskRepository(private val session: SessionStore) {
         costingMethod: WorkTaskCostingMethod = WorkTaskCostingMethod.HOURLY,
         pieceRatePerVine: Double? = null,
         pieceVineCount: Int? = null,
+        // sql/200: originating pruning activity — carried by the create (and
+        // its offline replay), never patched on afterwards.
+        pruningActivityId: String? = null,
     ): WorkTask = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -193,6 +201,7 @@ class WorkTaskRepository(private val session: SessionStore) {
             pieceVineCount = pieceVineCount.takeIf {
                 costingMethod == WorkTaskCostingMethod.PIECE_RATE
             },
+            pruningActivityId = pruningActivityId,
             clientUpdatedAt = stamp,
         )
         val response = SupabaseClient.http.post(SupabaseClient.restUrl("work_tasks")) {

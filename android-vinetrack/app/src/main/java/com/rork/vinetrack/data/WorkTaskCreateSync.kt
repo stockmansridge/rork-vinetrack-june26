@@ -58,6 +58,14 @@ class WorkTaskCreateSync(
         val durationHours: Double,
         val notes: String,
         val isFinalized: Boolean = false,
+        /**
+         * sql/200: the ORIGINATING pruning activity. Stored IN the queued
+         * marker so a task created from an activity while offline replays WITH
+         * its link — the second and every subsequent task included (the
+         * activity-side mirror can only ever point at one). Default null keeps
+         * pre-repair queued markers decodable as plain unlinked creates.
+         */
+        val pruningActivityId: String? = null,
         val clientUpdatedAt: String,
     )
 
@@ -78,6 +86,7 @@ class WorkTaskCreateSync(
         notes: String?,
         clientUpdatedAt: String,
         isFinalized: Boolean = false,
+        pruningActivityId: String? = null,
     ): PendingWrite {
         pending.list()
             .filter {
@@ -97,6 +106,7 @@ class WorkTaskCreateSync(
             durationHours = durationHours,
             notes = notes ?: "",
             isFinalized = isFinalized,
+            pruningActivityId = pruningActivityId,
             clientUpdatedAt = clientUpdatedAt,
         )
         return pending.enqueue(
@@ -136,13 +146,19 @@ class WorkTaskCreateSync(
                 it.status != PendingWriteStatus.SYNCED
         }
         if (existing.isEmpty()) return false
-        // Preserve the vineyard scope captured when the create was first queued.
-        val vineyardId = existing
+        // Preserve the vineyard scope AND the originating-activity link
+        // (sql/200) captured when the create was first queued — an edit folded
+        // into a pending create must never strip the link the task was born with.
+        val original = existing
             .mapNotNull { runCatching { json.decodeFromString(Payload.serializer(), it.payloadJson) }.getOrNull() }
             .firstOrNull()
-            ?.vineyardId
             ?: return false
-        enqueue(id, vineyardId, paddockId, paddockName, date, taskType, durationHours, notes, clientUpdatedAt, isFinalized)
+        enqueue(
+            id, original.vineyardId, paddockId, paddockName, date, taskType,
+            durationHours, notes, clientUpdatedAt,
+            isFinalized = isFinalized,
+            pruningActivityId = original.pruningActivityId,
+        )
         return true
     }
 
@@ -188,6 +204,8 @@ class WorkTaskCreateSync(
                         id = payload.id,
                         clientUpdatedAt = payload.clientUpdatedAt,
                         isFinalized = payload.isFinalized,
+                        // sql/200: the link replays with the insert itself.
+                        pruningActivityId = payload.pruningActivityId,
                     )
                     pending.remove(write.id)
                     onSynced(created)

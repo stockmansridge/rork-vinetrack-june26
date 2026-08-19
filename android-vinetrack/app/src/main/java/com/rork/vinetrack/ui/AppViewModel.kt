@@ -7320,9 +7320,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * as a recorded pruning day).
      */
     /**
-     * sql/200: link (or unlink, null) a work task to its originating pruning
+     * sql/200: link (or unlink, null) an EXISTING work task to a pruning
      * activity. Optimistic locally; the server patch is best-effort — an
      * offline link keeps the activity-side mirror, so nothing is lost.
+     *
+     * Tasks CREATED from an activity never come through here: their link
+     * rides the create payload itself ([createWorkTask]'s `pruningActivityId`),
+     * so it survives the queued offline create — for the second and every
+     * subsequent task, not just the one the mirror can point at.
      */
     fun setWorkTaskPruningActivity(taskId: String, pruningActivityId: String?) {
         _ui.update { st ->
@@ -7365,6 +7370,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
          * exists — `work_task_labour_lines.work_task_id` is a real foreign key.
          */
         labourSeed: WorkTaskLabourSeed? = null,
+        /**
+         * sql/200: the ORIGINATING pruning activity. Carried IN the create —
+         * the optimistic row, the queued offline marker and the server insert
+         * alike — so a second (or Nth) task created offline keeps its link
+         * through replay; the activity-side mirror can only point at one.
+         */
+        pruningActivityId: String? = null,
         onResult: (Boolean) -> Unit,
     ): String? {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return null }
@@ -7390,13 +7402,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             costingMethod = costingMethod.storedValue,
             pieceRatePerVine = pieceRatePerVine.takeIf { costingMethod == WorkTaskCostingMethod.PIECE_RATE },
             pieceVineCount = pieceVineCount.takeIf { costingMethod == WorkTaskCostingMethod.PIECE_RATE },
+            pruningActivityId = pruningActivityId,
         )
         // Optimistic insert at the top — the operator sees the task straight away.
         _ui.update { it.copy(workTasks = listOf(optimistic) + it.workTasks, workTaskError = null) }
 
         // Known-offline: queue the create marker without touching the network.
         if (!_ui.value.isOnline) {
-            workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt, isFinalized = markCompleted)
+            workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt, isFinalized = markCompleted, pruningActivityId = pruningActivityId)
             // Join rows queue too — gated behind the header create until it syncs.
             reconcileWorkTaskPaddocks(id, vineyardId, paddockIds)
             // The labour line queues behind the header for the same reason.
@@ -7422,6 +7435,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     costingMethod = costingMethod,
                     pieceRatePerVine = pieceRatePerVine,
                     pieceVineCount = pieceVineCount,
+                    pruningActivityId = pruningActivityId,
                 )
                 // Preserve the completed flag on the reconciled row (the create
                 // endpoint inserts un-finalized; the finalize lands right after).
@@ -7469,7 +7483,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 // Transient network failure — keep the optimistic row and queue a
                 // create marker for automatic replay rather than rolling back.
-                workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt, isFinalized = markCompleted)
+                workTaskCreateSync.enqueue(id, vineyardId, paddockId, paddockName, date, trimmedType, durationHours, trimmedNotes, clientUpdatedAt, isFinalized = markCompleted, pruningActivityId = pruningActivityId)
                 // Join rows queue behind the now-pending header create.
                 reconcileWorkTaskPaddocks(id, vineyardId, paddockIds)
                 labourSeed?.let { seedLabourLine(id, it) }

@@ -190,4 +190,86 @@ class PruningWorkTaskRepairTest {
         )
         assertNull(legacy.pruningActivityId)
     }
+
+    // §closeout Offline linkage: queued create → replay → aggregate -----------
+
+    @Test
+    fun `offline queued create markers carry the activity link for every task`() {
+        val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        // Device offline: Task A and Task B are created from the SAME activity.
+        // Each queued WORK_TASK/CREATE marker must store the link so replay
+        // inserts it — there is no separate "link" call to lose.
+        listOf(taskA, taskB).forEach { id ->
+            val marker = WorkTaskCreateSync.Payload(
+                id = id,
+                vineyardId = vineyard,
+                paddockName = "Sauv Blanc",
+                date = "2026-08-10",
+                taskType = "Pruning",
+                durationHours = 7.0,
+                notes = "",
+                isFinalized = true,
+                pruningActivityId = activityId,
+                clientUpdatedAt = "2026-08-10T09:00:00Z",
+            )
+            val stored = json.encodeToString(WorkTaskCreateSync.Payload.serializer(), marker)
+            assertTrue(stored.contains("\"pruningActivityId\":\"$activityId\""))
+            assertEquals(
+                activityId,
+                json.decodeFromString(WorkTaskCreateSync.Payload.serializer(), stored).pruningActivityId,
+            )
+        }
+        // A marker queued BEFORE the repair (no field) still decodes — unlinked.
+        val legacy = json.decodeFromString(
+            WorkTaskCreateSync.Payload.serializer(),
+            """{"id":"$taskA","vineyardId":"$vineyard","paddockName":"","date":"2026-08-10",""" +
+                """"taskType":"Pruning","durationHours":7.0,"notes":"","clientUpdatedAt":"2026-08-10T09:00:00Z"}""",
+        )
+        assertNull(legacy.pruningActivityId)
+    }
+
+    @Test
+    fun `replayed inserts carry the link and the synced rows aggregate as two linked tasks`() {
+        val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        // The replay INSERT body (WorkTaskRepository.createWorkTask) carries the
+        // wire column, so the server row is born linked.
+        val insert = WorkTaskRepository.WorkTaskInsert(
+            id = taskA,
+            vineyardId = vineyard,
+            paddockName = "Sauv Blanc",
+            date = "2026-08-10",
+            taskType = "Pruning",
+            durationHours = 7.0,
+            notes = "",
+            pruningActivityId = activityId,
+            clientUpdatedAt = "2026-08-10T09:00:00Z",
+        )
+        assertTrue(
+            json.encodeToString(WorkTaskRepository.WorkTaskInsert.serializer(), insert)
+                .contains("\"pruning_activity_id\":\"$activityId\""),
+        )
+
+        // Come online/sync: the server returns BOTH tasks with the same link…
+        val a = json.decodeFromString(
+            WorkTask.serializer(),
+            """{"id":"$taskA","vineyard_id":"$vineyard","date":"2026-08-10T09:00:00Z",""" +
+                """"task_type":"Pruning","pruning_activity_id":"$activityId"}""",
+        )
+        val b = json.decodeFromString(
+            WorkTask.serializer(),
+            """{"id":"$taskB","vineyard_id":"$vineyard","date":"2026-08-10T13:00:00Z",""" +
+                """"task_type":"Pruning","pruning_activity_id":"$activityId"}""",
+        )
+        // …and the activity aggregates them as TWO linked Work Tasks.
+        val lines = mapOf(
+            taskA to listOf(line(taskA, 2, 7.0, 35.0)),
+            taskB to listOf(line(taskB, 1, 8.0, 40.0)),
+        )
+        val linked = PruningActivityTaskLink.linkedTasks(draft(), listOf(a, b))
+        assertEquals(2, linked.size)
+        val aggregate = PruningActivityTaskLink.aggregate(linked, lines)
+        assertEquals(2, aggregate.taskCount)
+        assertEquals(22.0, aggregate.hours!!, eps)
+        assertEquals(810.0, aggregate.cost!!, eps)
+    }
 }
