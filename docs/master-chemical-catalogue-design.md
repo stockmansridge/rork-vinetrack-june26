@@ -277,6 +277,15 @@ apps and portal users never write the catalogue directly in stage 1.
    apply `sql/199`, then redeploy the edge function (safe in either order).
 2. **Stage 2 — admin review.** Portal admin screen: candidate queue, diff
    against register/label, approve / retire, version history.
+   **AU authoritative ingestion shipped 2026-08-19** on top of Stages 1–2:
+   the `chemical-info-lookup` structured lookup now runs register-first
+   discovery for AU vineyards (APVMA PubCRIS extract via the source
+   registry), merges register evidence over the AI extraction with
+   structured conflicts, deduplicates candidates on the registration
+   identity (one candidate per registration, refresh by policy), and adds
+   the admin-only `master_refresh` action. Candidates only — approval stays
+   human; DATABASE CHANGES: NONE. Full trust model, evidence hierarchy,
+   cache and failure behaviour: `docs/master-chemical-ingestion.md`.
 3. **Stage 3 — app integration.** Lookup priority in Match & Verify, populate
    `master_chemical_id` on apply, `verified` promotion via approved-row
    provenance.

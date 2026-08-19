@@ -103,6 +103,14 @@ registers today: AU (APVMA) and NZ (ACVM / NZ EPA) — see
 `ChemicalRegistrationScheme.schemes(forCountryCode:)` /
 `schemesForCountry`, which return empty for every other code on purpose.
 
+Server-side authoritative INGESTION (register-first discovery that builds
+Master Catalogue candidates, Stage 3) is narrower still: only AU has an
+implemented source adapter (APVMA PubCRIS register extract); NZ/GB/US are
+declared future entries in the country source registry, and every other
+country has none. The vineyard's resolved country — never AI, never locale —
+selects the adapter, and a missing country runs no ingestion at all. See
+`docs/master-chemical-ingestion.md` §2.
+
 For a vineyard in any other supported country (e.g. IE), the expected
 chemical behaviour is:
 

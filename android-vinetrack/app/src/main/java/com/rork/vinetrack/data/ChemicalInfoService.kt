@@ -109,7 +109,13 @@ class ChemicalInfoService {
         @SerialName("activity_group_table_version") val activityGroupTableVersion: Int = 0,
         @SerialName("schema_version") val schemaVersion: Int = 0,
         // ---- Additive sql/199 envelope (absent on pre-catalogue servers) ----
-        /** "master" | "ai_candidate" | "unresolved" | null (old server). */
+        /**
+         * "master" | "authoritative_candidate" | "ai_candidate" |
+         * "unresolved" | null (old server). Stage 3 adds
+         * "authoritative_candidate": register-backed but NOT approved —
+         * handled exactly like an AI candidate everywhere except provenance
+         * display.
+         */
         @SerialName("match_source") val matchSource: String? = null,
         /** Present only on master-served responses. */
         val master: ChemicalMasterMatch? = null,
@@ -117,9 +123,16 @@ class ChemicalInfoService {
         /**
          * True when this lookup was served from an APPROVED master catalogue
          * row and carries the reference the saved record should retain.
+         *
+         * Stage 3 hardening: an automatically generated CANDIDATE must never
+         * read as a master match — a master block carrying a non-approved
+         * `catalogue_status` is rejected outright. A missing status reads as
+         * approved (pre-Stage-3 servers only ever served approved rows here).
          */
         val isMasterMatch: Boolean
-            get() = matchSource == "master" && master?.masterChemicalId?.isNotBlank() == true
+            get() = matchSource == "master" &&
+                master?.masterChemicalId?.isNotBlank() == true &&
+                (master?.catalogueStatus ?: "approved") == "approved"
 
         /**
          * Converts the lookup into the single structured model.

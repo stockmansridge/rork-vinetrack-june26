@@ -134,14 +134,25 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
     let verification: ChemicalVerification
     let activityGroupTableVersion: Int
     let schemaVersion: Int
-    /// "master" | "ai_candidate" | "unresolved" | nil (pre-sql/199 server).
+    /// "master" | "authoritative_candidate" | "ai_candidate" | "unresolved"
+    /// | nil (pre-sql/199 server). Stage 3 adds "authoritative_candidate":
+    /// register-backed but NOT approved — handled exactly like an AI
+    /// candidate everywhere except provenance display.
     let matchSource: String?
     /// Present only on master-served responses.
     let master: ChemicalMasterMatch?
 
     /// True when this lookup was served from an APPROVED master catalogue row
     /// and carries the reference the saved record should retain.
-    var isMasterMatch: Bool { matchSource == "master" && master != nil }
+    ///
+    /// Stage 3 hardening: an automatically generated CANDIDATE must never
+    /// read as a master match — a master block carrying a non-approved
+    /// `catalogue_status` is rejected outright. A missing status reads as
+    /// approved (pre-Stage-3 servers only ever served approved rows here).
+    var isMasterMatch: Bool {
+        matchSource == "master" && master != nil
+            && (master?.catalogueStatus ?? "approved") == "approved"
+    }
 
     nonisolated enum CodingKeys: String, CodingKey {
         case productName = "product_name"

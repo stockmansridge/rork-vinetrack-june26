@@ -1,6 +1,7 @@
 // Supabase Edge Function: chemical-info-lookup
 //
-// Server-side AI proxy for chemical search and product info lookup.
+// Server-side AI proxy for chemical search and product info lookup, plus the
+// Master Chemical Catalogue's authoritative ingestion pipeline (Stage 3).
 // Keeps the OpenAI API key off the device.
 //
 // Request (POST JSON):
@@ -8,321 +9,73 @@
 //   { "action": "info",   "productName": string, "country"?: string }
 //   { "action": "structured", "productName": string, "country"?: string,
 //     "registrationNumber"?: string }   // optional identity hint (sql/199)
+//   { "action": "master_refresh", "masterChemicalId": uuid,
+//     "apply"?: boolean }               // system admins only (Stage 3)
 //
 // Response 200 JSON shapes:
 //   action=search -> { results: ChemicalSearchResult[] }  (approved master
 //                     catalogue hits are listed FIRST, tagged source:"master")
 //   action=info   -> ChemicalInfoResponse
 //   action=structured -> the sql/194 structured contract, plus (sql/199):
-//       match_source: "master" | "ai_candidate" | "unresolved"
-//       master?: { master_chemical_id, master_revision, catalogue_status,
-//                  registration_identity_key }        (master matches only)
+//       match_source: "master" | "authoritative_candidate" | "ai_candidate"
+//                     | "unresolved"
+//       master?:    { master_chemical_id, master_revision, catalogue_status,
+//                     registration_identity_key }      (master matches only)
+//       candidate?: { master_chemical_id, candidate_revision,
+//                     catalogue_status: "candidate",
+//                     registration_identity_key }      (additive, Stage 3 —
+//                     NEVER a master match; approval is a human step)
+//       discovery?: { adapter, outcome, registration_identity_key?,
+//                     register_status?, error_category? }  (additive, Stage 3)
+//   action=master_refresh -> { outcome, changes[], applied, master }
+//     outcome: no_material_change | material_change | evidence_refreshed
+//              | conflict | source_unavailable
 //
 // Errors return { error: string } with appropriate HTTP status.
+//
+// See docs/master-chemical-ingestion.md for the ingestion trust model,
+// dedupe, cache and failure behaviour. Old clients ignore every additive
+// key; the pre-Stage-3 response contract is unchanged byte-for-byte on the
+// master / ai_candidate / unresolved paths.
 
 // deno-lint-ignore-file no-explicit-any
 
 // ---------------------------------------------------------------------------
-// Authoritative activity-group classification for common viticultural actives.
+// Authoritative activity-group classification — MOVED to
+// ingestion/activity_groups.ts (Stage 3) so the authoritative ingestion
+// module and its deno tests consult the SAME table as the AI cross-check.
 //
-// INLINED DELIBERATELY. Edge function deployment uploads only this entrypoint,
-// so a sibling module cannot be resolved by the bundler. Keep this block inside
-// index.ts — splitting it back out into its own file will break deployment.
-//
-// This is the server-side twin of the iOS `AuthoritativeActivityGroups` and the
-// Android `AuthoritativeActivityGroups` object. All three MUST agree — the whole
-// point is that a product's activity group has one answer, not three. When you
-// change one, change all three and bump ACTIVITY_GROUP_TABLE_VERSION.
-//
-// It exists so the AI extraction is never the only opinion in the room. Whatever
-// the model says an active's group is, it is checked against this table before
-// the response leaves the server, and a disagreement is returned as an explicit
-// conflict rather than silently overwritten.
-//
-// Activity group is a property of the ACTIVE, not of a brand, and it does not
-// vary by country — which is why this table has no country dimension while
-// product identity emphatically does.
+// Deployment note: `supabase functions deploy chemical-info-lookup`
+// (scripts/deploy-edge-functions.ps1 / .sh) bundles the full local module
+// graph — the same mechanism that already ships
+// vinetrack-webhook-dispatch/lib.ts and the _shared/email imports. Pasting
+// index.ts alone into the dashboard editor is NO LONGER a supported way to
+// deploy this function.
 // ---------------------------------------------------------------------------
 
-/** Bump whenever the table changes. Stamped onto every verification. */
-const ACTIVITY_GROUP_TABLE_VERSION = 1;
-
-type ActivityGroupScheme = "frac" | "hrac" | "irac" | "not_applicable";
-
-interface ActivityGroup {
-  scheme: ActivityGroupScheme;
-  code: string;
-  common_name?: string | null;
-}
-
-const frac = (code: string, name: string): ActivityGroup => ({
-  scheme: "frac",
-  code,
-  common_name: name,
-});
-const hrac = (code: string, name: string): ActivityGroup => ({
-  scheme: "hrac",
-  code,
-  common_name: name,
-});
-const irac = (code: string, name: string): ActivityGroup => ({
-  scheme: "irac",
-  code,
-  common_name: name,
-});
-
-const ACTIVITY_GROUP_TABLE: Record<string, ActivityGroup> = {
-  // ---- Fungicides (FRAC) ----
-  "tebuconazole": frac("3", "DMI / Triazole"),
-  "myclobutanil": frac("3", "DMI / Triazole"),
-  "penconazole": frac("3", "DMI / Triazole"),
-  "triadimenol": frac("3", "DMI / Triazole"),
-  "tetraconazole": frac("3", "DMI / Triazole"),
-  "difenoconazole": frac("3", "DMI / Triazole"),
-  "propiconazole": frac("3", "DMI / Triazole"),
-  "flutriafol": frac("3", "DMI / Triazole"),
-  "triflumizole": frac("3", "DMI / Imidazole"),
-  "prochloraz": frac("3", "DMI / Imidazole"),
-  "fenarimol": frac("3", "DMI / Pyrimidine"),
-  "metalaxyl": frac("4", "Phenylamide"),
-  "metalaxyl m": frac("4", "Phenylamide"),
-  "mefenoxam": frac("4", "Phenylamide"),
-  "benalaxyl": frac("4", "Phenylamide"),
-  "spiroxamine": frac("5", "Amine / Morpholine"),
-  "dimethomorph": frac("40", "CAA"),
-  "mandipropamid": frac("40", "CAA"),
-  "benthiavalicarb": frac("40", "CAA"),
-  "iprovalicarb": frac("40", "CAA"),
-  "carbendazim": frac("1", "MBC / Benzimidazole"),
-  "thiophanate methyl": frac("1", "MBC / Thiophanate"),
-  "iprodione": frac("2", "Dicarboximide"),
-  "procymidone": frac("2", "Dicarboximide"),
-  "cyprodinil": frac("9", "Anilinopyrimidine"),
-  "pyrimethanil": frac("9", "Anilinopyrimidine"),
-  "mepanipyrim": frac("9", "Anilinopyrimidine"),
-  "azoxystrobin": frac("11", "QoI / Strobilurin"),
-  "trifloxystrobin": frac("11", "QoI / Strobilurin"),
-  "pyraclostrobin": frac("11", "QoI / Strobilurin"),
-  "kresoxim methyl": frac("11", "QoI / Strobilurin"),
-  "famoxadone": frac("11", "QoI"),
-  "fenamidone": frac("11", "QoI"),
-  "fludioxonil": frac("12", "Phenylpyrrole"),
-  "quinoxyfen": frac("13", "Aza-naphthalene"),
-  "boscalid": frac("7", "SDHI"),
-  "fluopyram": frac("7", "SDHI"),
-  "fluxapyroxad": frac("7", "SDHI"),
-  "penthiopyrad": frac("7", "SDHI"),
-  "isopyrazam": frac("7", "SDHI"),
-  "benzovindiflupyr": frac("7", "SDHI"),
-  "pydiflumetofen": frac("7", "SDHI"),
-  "fenhexamid": frac("17", "Hydroxyanilide"),
-  "cyazofamid": frac("21", "QiI"),
-  "amisulbrom": frac("21", "QiI"),
-  "metrafenone": frac("U8", "Aryl-phenyl-ketone"),
-  "pyriofenone": frac("U8", "Aryl-phenyl-ketone"),
-  "cyflufenamid": frac("U6", "Phenyl-acetamide"),
-  "proquinazid": frac("13", "Quinazolinone"),
-  "fluazinam": frac("29", "Uncoupler"),
-  "ametoctradin": frac("45", "QoSI"),
-  "oxathiapiprolin": frac("49", "OSBPI"),
-  "fluopicolide": frac("43", "Benzamide"),
-  "zoxamide": frac("22", "Benzamide"),
-  "phosphorous acid": frac("P07", "Host defence induction"),
-  "phosphonic acid": frac("P07", "Host defence induction"),
-  "potassium phosphonate": frac("P07", "Host defence induction"),
-  "fosetyl aluminium": frac("P07", "Host defence induction"),
-  "fosetyl al": frac("P07", "Host defence induction"),
-  "sulfur": frac("M2", "Multi-site / Inorganic"),
-  "sulphur": frac("M2", "Multi-site / Inorganic"),
-  "copper hydroxide": frac("M1", "Multi-site / Copper"),
-  "copper oxychloride": frac("M1", "Multi-site / Copper"),
-  "cuprous oxide": frac("M1", "Multi-site / Copper"),
-  "tribasic copper sulfate": frac("M1", "Multi-site / Copper"),
-  "mancozeb": frac("M3", "Multi-site / Dithiocarbamate"),
-  "metiram": frac("M3", "Multi-site / Dithiocarbamate"),
-  "propineb": frac("M3", "Multi-site / Dithiocarbamate"),
-  "ziram": frac("M3", "Multi-site / Dithiocarbamate"),
-  "thiram": frac("M3", "Multi-site / Dithiocarbamate"),
-  "captan": frac("M4", "Multi-site / Phthalimide"),
-  "folpet": frac("M4", "Multi-site / Phthalimide"),
-  "chlorothalonil": frac("M5", "Multi-site / Chloronitrile"),
-  "dithianon": frac("M9", "Multi-site / Quinone"),
-
-  // ---- Herbicides (HRAC) ----
-  "glyphosate": hrac("G", "EPSP synthase inhibitor"),
-  "glufosinate": hrac("H", "Glutamine synthetase inhibitor"),
-  "glufosinate ammonium": hrac("H", "Glutamine synthetase inhibitor"),
-  "paraquat": hrac("D", "PSI electron diverter"),
-  "diquat": hrac("D", "PSI electron diverter"),
-  "simazine": hrac("C1", "PSII inhibitor"),
-  "diuron": hrac("C2", "PSII inhibitor"),
-  "amitrole": hrac("F3", "Carotenoid biosynthesis inhibitor"),
-  "oxyfluorfen": hrac("E", "PPO inhibitor"),
-  "carfentrazone": hrac("E", "PPO inhibitor"),
-  "flumioxazin": hrac("E", "PPO inhibitor"),
-  "haloxyfop": hrac("A", "ACCase inhibitor"),
-  "clethodim": hrac("A", "ACCase inhibitor"),
-  "fluazifop": hrac("A", "ACCase inhibitor"),
-  "sethoxydim": hrac("A", "ACCase inhibitor"),
-  "propyzamide": hrac("K1", "Microtubule assembly inhibitor"),
-  "pendimethalin": hrac("K1", "Microtubule assembly inhibitor"),
-  "trifluralin": hrac("K1", "Microtubule assembly inhibitor"),
-  "isoxaben": hrac("L", "Cellulose synthesis inhibitor"),
-  "indaziflam": hrac("L", "Cellulose synthesis inhibitor"),
-  "metsulfuron methyl": hrac("B", "ALS inhibitor"),
-  "chlorsulfuron": hrac("B", "ALS inhibitor"),
-  "imazapyr": hrac("B", "ALS inhibitor"),
-  "2,4 d": hrac("O", "Synthetic auxin"),
-  "mcpa": hrac("O", "Synthetic auxin"),
-  "triclopyr": hrac("O", "Synthetic auxin"),
-  "clopyralid": hrac("O", "Synthetic auxin"),
-  "pelargonic acid": hrac("Z", "Unknown / non-selective contact"),
-
-  // ---- Insecticides & miticides (IRAC) ----
-  "chlorpyrifos": irac("1B", "Organophosphate"),
-  "methomyl": irac("1A", "Carbamate"),
-  "alpha cypermethrin": irac("3A", "Pyrethroid"),
-  "bifenthrin": irac("3A", "Pyrethroid"),
-  "lambda cyhalothrin": irac("3A", "Pyrethroid"),
-  "deltamethrin": irac("3A", "Pyrethroid"),
-  "esfenvalerate": irac("3A", "Pyrethroid"),
-  "imidacloprid": irac("4A", "Neonicotinoid"),
-  "thiamethoxam": irac("4A", "Neonicotinoid"),
-  "acetamiprid": irac("4A", "Neonicotinoid"),
-  "clothianidin": irac("4A", "Neonicotinoid"),
-  "spinetoram": irac("5", "Spinosyn"),
-  "spinosad": irac("5", "Spinosyn"),
-  "abamectin": irac("6", "Avermectin"),
-  "emamectin benzoate": irac("6", "Avermectin"),
-  "buprofezin": irac("16", "Chitin biosynthesis inhibitor"),
-  "methoxyfenozide": irac("18", "Diacylhydrazine"),
-  "tebufenozide": irac("18", "Diacylhydrazine"),
-  "etoxazole": irac("10B", "Mite growth inhibitor"),
-  "clofentezine": irac("10A", "Mite growth inhibitor"),
-  "hexythiazox": irac("10A", "Mite growth inhibitor"),
-  "propargite": irac("12C", "METI / Sulfite ester"),
-  "fenbutatin oxide": irac("12B", "Organotin miticide"),
-  "bifenazate": irac("20D", "Mitochondrial complex III inhibitor"),
-  "chlorantraniliprole": irac("28", "Diamide"),
-  "cyantraniliprole": irac("28", "Diamide"),
-  "flubendiamide": irac("28", "Diamide"),
-  "sulfoxaflor": irac("4C", "Sulfoximine"),
-  "spirotetramat": irac("23", "Tetramic acid"),
-  "spirodiclofen": irac("23", "Tetronic acid"),
-  "pyriproxyfen": irac("7C", "Juvenile hormone mimic"),
-  "indoxacarb": irac("22A", "Oxadiazine"),
-  "bacillus thuringiensis": irac("11A", "Bt / Microbial disruptor"),
-};
-
-function normaliseActiveName(raw: string): string {
-  return raw.trim().toLowerCase().replace(/-/g, " ").replace(/\s+/g, " ");
-}
-
-/**
- * Strips the noise humans and AI put around a code so "Group 3", "group3" and
- * "11 (QoI / Strobilurin)" all reduce to a bare code.
- */
-function normaliseCode(raw: string): string {
-  let value = String(raw ?? "").trim().toUpperCase();
-  for (const prefix of ["GROUP ", "GROUP", "FRAC ", "HRAC ", "IRAC ", "MOA ", "CODE "]) {
-    if (value.startsWith(prefix)) value = value.slice(prefix.length).trim();
-  }
-  const paren = value.indexOf("(");
-  if (paren >= 0) value = value.slice(0, paren).trim();
-  return value.replace(/\s+/g, "");
-}
-
-/**
- * Look up an active's authoritative group.
- *
- * Returns null when the active is not in the table — which means UNKNOWN, never
- * "the extraction must be right". Callers must not read null as permission to
- * trust an unverified extraction.
- */
-function authoritativeGroup(activeName: string): ActivityGroup | null {
-  const key = normaliseActiveName(activeName);
-  if (!key) return null;
-  if (ACTIVITY_GROUP_TABLE[key]) return ACTIVITY_GROUP_TABLE[key];
-  // Salt/ester forms are written many ways ("glyphosate isopropylamine").
-  // Match the longest known active contained in the string so a formulation
-  // suffix does not lose the classification.
-  const candidates = Object.keys(ACTIVITY_GROUP_TABLE)
-    .filter((k) => k.length >= 5 && key.includes(k))
-    .sort((a, b) => b.length - a.length);
-  return candidates.length ? ACTIVITY_GROUP_TABLE[candidates[0]] : null;
-}
-
-interface GroupConflict {
-  field: string;
-  active_ingredient_name: string;
-  extracted_value: string;
-  authoritative_value: string;
-  extracted_source: string;
-  authoritative_source: string;
-}
-
-interface Reconciliation {
-  group: ActivityGroup | null;
-  /** Which source the returned group may be attributed to. */
-  source: string | null;
-  conflict: GroupConflict | null;
-}
-
-function displayLabel(g: ActivityGroup): string {
-  const scheme = g.scheme === "frac"
-    ? "FRAC"
-    : g.scheme === "hrac"
-    ? "HRAC"
-    : g.scheme === "irac"
-    ? "IRAC"
-    : "Not applicable";
-  return g.common_name ? `${scheme} ${g.code} (${g.common_name})` : `${scheme} ${g.code}`;
-}
-
-/**
- * Cross-check an extracted group against the authoritative table.
- *
- * This is the source-disagreement gate:
- *  - No authoritative opinion  -> keep the extraction, but it stays attributed
- *                                 to the AI, so it can never read as verified.
- *  - Agreement                 -> the authoritative group wins (same code,
- *                                 better source).
- *  - Disagreement              -> return the AUTHORITATIVE group PLUS a
- *                                 conflict. The extracted value never silently
- *                                 survives, and the product cannot be Verified
- *                                 until a human resolves it.
- */
-function reconcileGroup(
-  activeName: string,
-  extracted: ActivityGroup | null,
-): Reconciliation {
-  const authoritative = authoritativeGroup(activeName);
-  if (!authoritative) {
-    return {
-      group: extracted,
-      source: extracted ? "ai_interpretation" : null,
-      conflict: null,
-    };
-  }
-  if (!extracted || !extracted.code) {
-    return { group: authoritative, source: "authoritative_classification", conflict: null };
-  }
-  if (extracted.scheme === authoritative.scheme && extracted.code === authoritative.code) {
-    return { group: authoritative, source: "authoritative_classification", conflict: null };
-  }
-  return {
-    group: authoritative,
-    source: "authoritative_classification",
-    conflict: {
-      field: "activity_group",
-      active_ingredient_name: activeName,
-      extracted_value: displayLabel(extracted),
-      authoritative_value: displayLabel(authoritative),
-      extracted_source: "ai_interpretation",
-      authoritative_source: "authoritative_classification",
-    },
-  };
-}
+import {
+  ACTIVITY_GROUP_TABLE_VERSION,
+  type ActivityGroup,
+  type ActivityGroupScheme,
+  type GroupConflict,
+  normaliseCode,
+  reconcileGroup,
+} from "./ingestion/activity_groups.ts";
+import type { MasterOps, MasterRow } from "./ingestion/contract.ts";
+import {
+  buildCandidatePayload,
+  buildRegisterOnlyStructured,
+  candidateEnvelope,
+  discoverAuthoritative,
+  discoveryEnvelope,
+  ingestionLog,
+  mergeDiscoveryIntoStructured,
+  upsertCandidate,
+} from "./ingestion/ingest.ts";
+import {
+  buildCandidateRefreshPatch,
+  refreshMasterRow,
+} from "./ingestion/refresh.ts";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -928,73 +681,56 @@ function buildMasterStructuredResponse(row: any): any {
 }
 
 /**
- * Enqueue an AI extraction as a CANDIDATE master row.
- *
- * Only a COMPLETE registration identity may enter the catalogue — an
- * unregistered product has no provable identity to deduplicate on and stays a
- * per-vineyard record. `resolution=ignore-duplicates` means an existing row
- * (possibly approved) always wins; this write can never update or downgrade
- * anything. Failures are logged and swallowed: enqueueing is a side effect,
- * never part of the lookup's success.
+ * Live sql/199 catalogue operations for the ingestion orchestrator
+ * (ingestion/ingest.ts). Service-role PostgREST; every call is duplicate-safe
+ * and fail-open — catalogue writes are side effects, never part of the
+ * lookup's success. `updateCandidate` filters on review_status=candidate at
+ * the DATABASE, so automation can never touch an approved or retired row
+ * even if handed the wrong id.
  */
-async function enqueueMasterCandidate(structured: any, requestedName: string): Promise<void> {
-  try {
-    if (!masterConfigured()) return;
-    const reg = structured?.registration;
-    const country = String(reg?.country_code ?? "").trim().toUpperCase();
-    const scheme = String(reg?.scheme ?? "").trim().toLowerCase();
-    const number = String(reg?.registration_number ?? "").trim();
-    if (!/^[A-Z]{2}$/.test(country) || !scheme || !number) return;
-
-    const productName = String(structured?.product_name ?? "").trim();
-    const names = new Set<string>();
-    if (productName) names.add(productName.toLowerCase());
-    const requested = requestedName.trim().toLowerCase();
-    if (requested) names.add(requested);
-
+const masterOps: MasterOps = {
+  async selectByIdentityKey(identityKey: string): Promise<MasterRow | null> {
+    const rows = await masterSelect(
+      `select=*&registration_identity_key=eq.${encodeURIComponent(identityKey)}&limit=1`,
+    );
+    return rows && rows.length === 1 ? rows[0] as MasterRow : null;
+  },
+  async insertCandidate(payload): Promise<MasterRow | null> {
+    if (!masterConfigured()) return null;
     const res = await fetch(`${MASTER_TABLE_URL}?on_conflict=registration_identity_key`, {
       method: "POST",
       headers: {
         ...masterHeaders(),
         "Content-Type": "application/json",
-        "Prefer": "resolution=ignore-duplicates,return=minimal",
+        "Prefer": "resolution=ignore-duplicates,return=representation",
       },
-      body: JSON.stringify({
-        registration_country: country,
-        registration_scheme: scheme,
-        registration_number: number,
-        registrant: reg?.registrant ?? null,
-        registered_product_name: productName || requestedName.trim(),
-        common_names: Array.from(names),
-        product_category: structured?.product_category || null,
-        form_type: structured?.form_type ?? null,
-        active_ingredients: structured?.active_ingredients ?? [],
-        activity_groups: structured?.activity_groups ?? [],
-        activity_group_scheme: structured?.activity_group_scheme ?? null,
-        registered_uses: structured?.registered_uses ?? [],
-        label_rate_bases: structured?.label_rate_bases ?? [],
-        label_reference: reg?.label_reference ?? null,
-        label_version: reg?.label_version ?? null,
-        verification_status: structured?.verification?.status ?? "unverified",
-        verification_sources: structured?.verification?.sources ?? [],
-        verification_conflicts: structured?.verification?.conflicts ?? [],
-        verification_unresolved_fields: structured?.verification?.unresolved_fields ?? [],
-        source_kind: "ai_interpretation",
-        retrieved_at: new Date().toISOString(),
-        review_status: "candidate",
-        activity_group_table_version: structured?.activity_group_table_version ??
-          ACTIVITY_GROUP_TABLE_VERSION,
-        intelligence_schema_version: structured?.schema_version ?? 1,
-      }),
+      body: JSON.stringify(payload),
     });
-    try { await res.body?.cancel(); } catch { /* ignore */ }
-  } catch (err) {
-    console.error(
-      "master candidate enqueue skipped:",
-      err instanceof Error ? err.message : String(err),
+    if (!res.ok) {
+      try { await res.body?.cancel(); } catch { /* ignore */ }
+      return null;
+    }
+    const rows = await res.json().catch(() => null);
+    return Array.isArray(rows) && rows.length ? rows[0] as MasterRow : null;
+  },
+  async updateCandidate(id: string, patch: Record<string, any>): Promise<boolean> {
+    if (!masterConfigured()) return false;
+    const res = await fetch(
+      `${MASTER_TABLE_URL}?id=eq.${encodeURIComponent(id)}&review_status=eq.candidate`,
+      {
+        method: "PATCH",
+        headers: {
+          ...masterHeaders(),
+          "Content-Type": "application/json",
+          "Prefer": "return=minimal",
+        },
+        body: JSON.stringify(patch),
+      },
     );
-  }
-}
+    try { await res.body?.cancel(); } catch { /* ignore */ }
+    return res.ok;
+  },
+};
 
 /**
  * Approved master rows matching a human search, mapped to the search-result
@@ -1331,19 +1067,38 @@ Deno.serve(async (req: Request) => {
         return json({ error: "productName too long" }, 400);
       }
 
-      // 1) Approved master catalogue (sql/199). A hit short-circuits the AI
-      //    entirely; any catalogue failure falls through to the AI unchanged.
+      const startedAt = Date.now();
+      const countryCode = countryCodeFor(country);
+      const deps = { fetchFn: fetch, now: () => new Date() };
+
+      // 1) Approved master catalogue (sql/199), name/alias path. A hit
+      //    short-circuits EVERYTHING: the AI is never called and the
+      //    ingestion adapter is never invoked for a known approved product.
       const registrationNumber = typeof body?.registrationNumber === "string"
         ? body.registrationNumber.trim()
         : "";
       try {
         const masterRow = await fetchApprovedMaster(
           productName,
-          countryCodeFor(country),
+          countryCode,
           registrationNumber,
           registrationSchemeFor(country),
         );
-        if (masterRow) return json(buildMasterStructuredResponse(masterRow));
+        if (masterRow) {
+          console.log(ingestionLog({
+            jurisdiction: countryCode,
+            adapter: null,
+            outcome: "approved_master_name_hit",
+            identity: masterRow.registration_identity_key ?? null,
+            master: "existing_approved",
+            candidate: "none",
+            unresolvedCount: 0,
+            conflictCount: 0,
+            durationMs: Date.now() - startedAt,
+            cache: "none",
+          }));
+          return json(buildMasterStructuredResponse(masterRow));
+        }
       } catch (err) {
         console.error(
           "master lookup fell through:",
@@ -1351,11 +1106,109 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      // 2) AI extraction, exactly as before.
-      const { system, user } = buildStructuredPrompt(productName, country);
-      const raw = await callOpenAI(system, user, apiKey);
-      const parsed = extractJSON(raw);
-      const structured = buildStructuredResponse(parsed, country);
+      // 2) Authoritative discovery (Stage 3): the vineyard's jurisdiction —
+      //    and only the source REGISTRY — selects the adapter. Missing
+      //    country or unsupported jurisdiction fails closed to the AI path;
+      //    a register outage can never break the lookup.
+      let discovery = await discoverAuthoritative(
+        countryCode,
+        productName,
+        registrationNumber || null,
+        deps,
+      );
+
+      // 3) AI extraction (unchanged honesty rules). Fail-open in BOTH
+      //    directions: an AI outage cannot hide a register-resolved product,
+      //    and a register outage cannot break the AI lookup.
+      let structured: any = null;
+      let aiError: unknown = null;
+      try {
+        const { system, user } = buildStructuredPrompt(productName, country);
+        const raw = await callOpenAI(system, user, apiKey);
+        const parsed = extractJSON(raw);
+        structured = buildStructuredResponse(parsed, country);
+      } catch (err) {
+        aiError = err;
+      }
+
+      // 3b) The AI's extracted registration number may LOCATE a register row
+      //     the name search missed. It is only ever a pointer: the adapter
+      //     re-verifies number AND name against the register before anything
+      //     binds (AI assists discovery, never becomes authority).
+      if (
+        (discovery.outcome === "unresolved" || discovery.outcome === "ambiguous") &&
+        structured
+      ) {
+        const aiNumber = String(
+          structured?.registration?.registration_number ?? "",
+        ).trim();
+        if (/^\d{3,8}$/.test(aiNumber)) {
+          discovery = await discoverAuthoritative(
+            countryCode,
+            productName,
+            aiNumber,
+            deps,
+          );
+        }
+      }
+
+      const resolved = discovery.outcome === "resolved" && discovery.registration
+        ? discovery.registration
+        : null;
+
+      // 4) A discovery-resolved identity may already be an APPROVED master
+      //    the name path missed (unlisted alias). Serve it — an approved
+      //    product never re-enters ingestion.
+      if (resolved) {
+        try {
+          const byIdentity = await fetchApprovedMaster(
+            "",
+            countryCode,
+            resolved.registration_number,
+            resolved.scheme,
+          );
+          if (byIdentity) {
+            console.log(ingestionLog({
+              jurisdiction: countryCode,
+              adapter: discovery.adapter,
+              outcome: "approved_master_identity_hit",
+              identity: resolved.registration_identity_key,
+              master: "existing_approved",
+              candidate: "none",
+              unresolvedCount: 0,
+              conflictCount: 0,
+              durationMs: Date.now() - startedAt,
+              cache: discovery.cache,
+            }));
+            return json(buildMasterStructuredResponse(byIdentity));
+          }
+        } catch (err) {
+          console.error(
+            "identity master lookup fell through:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+
+      // 5) Neither the AI nor the register produced anything → the lookup
+      //    fails exactly as it always has.
+      if (!structured && !resolved) {
+        throw aiError instanceof Error
+          ? aiError
+          : new Error(String(aiError ?? "lookup failed"));
+      }
+
+      // 6) Merge register evidence over the extraction (the register wins on
+      //    register-asserted facts; disagreements become structured
+      //    conflicts), or build a register-only result when the AI was
+      //    unavailable. Facts no authoritative source provided stay
+      //    unresolved — never invented.
+      if (resolved) {
+        structured = structured
+          ? mergeDiscoveryIntoStructured(structured, resolved)
+          : buildRegisterOnlyStructured(resolved, ACTIVITY_GROUP_TABLE_VERSION);
+      }
+
       // Validate the label URL exactly as `info` does; a hallucinated label
       // link is worse than none, because it looks like evidence.
       const labelRef = structured.registration?.label_reference;
@@ -1370,18 +1223,71 @@ Deno.serve(async (req: Request) => {
           ).sort();
         }
       }
-      // Additive envelope: what kind of answer this is. "unresolved" means
-      // the AI established neither actives nor a registration — the client
-      // should route the operator to manual entry rather than pretending.
-      structured.match_source =
-        (structured.active_ingredients.length > 0 ||
-            structured.registration?.registration_number)
-          ? "ai_candidate"
-          : "unresolved";
 
-      // 3) Grow the catalogue: identity-complete AI results become CANDIDATE
-      //    rows for human review. Never blocks or fails the lookup.
-      await enqueueMasterCandidate(structured, productName);
+      // Additive envelope: what kind of answer this is. "unresolved" means
+      // neither actives nor a registration were established — the client
+      // should route the operator to manual entry rather than pretending.
+      // "authoritative_candidate" (set by the merge) is register-backed but
+      // NOT approved: clients must never treat it as a master match.
+      if (structured.match_source !== "authoritative_candidate") {
+        structured.match_source =
+          (structured.active_ingredients.length > 0 ||
+              structured.registration?.registration_number)
+            ? "ai_candidate"
+            : "unresolved";
+      }
+
+      // 7) Grow the catalogue: identity-complete results become CANDIDATE
+      //    rows — deduplicated on the registration identity (one candidate
+      //    per canonical registration, however many vineyards search it),
+      //    refreshed by policy, never auto-approved, never blocking the
+      //    lookup.
+      let candidateAction = "none";
+      let candidateRow: MasterRow | null = null;
+      const payload = buildCandidatePayload(
+        structured,
+        productName,
+        resolved,
+        new Date().toISOString(),
+        ACTIVITY_GROUP_TABLE_VERSION,
+      );
+      if (payload) {
+        const outcome = await upsertCandidate(masterOps, payload, Date.now());
+        candidateAction = outcome.reason
+          ? `${outcome.action}:${outcome.reason}`
+          : outcome.action;
+        if (
+          outcome.action === "approved_exists" &&
+          outcome.row &&
+          String(outcome.row.registration_country ?? "").toUpperCase() === countryCode
+        ) {
+          // The identity's row is already approved (an alias the name path
+          // missed, or a review that landed mid-request): serve the approved
+          // master, create nothing.
+          return json(buildMasterStructuredResponse(outcome.row));
+        }
+        if (outcome.row && outcome.row.review_status === "candidate") {
+          candidateRow = outcome.row;
+        }
+      }
+
+      if (candidateRow) structured.candidate = candidateEnvelope(candidateRow);
+      structured.discovery = discoveryEnvelope(discovery);
+
+      console.log(ingestionLog({
+        jurisdiction: countryCode,
+        adapter: discovery.adapter,
+        outcome: discovery.outcome,
+        identity: resolved?.registration_identity_key ??
+          candidateRow?.registration_identity_key ?? null,
+        master: "none",
+        candidate: candidateAction,
+        unresolvedCount: structured.verification?.unresolved_fields?.length ?? 0,
+        conflictCount: structured.verification?.conflicts?.length ?? 0,
+        durationMs: Date.now() - startedAt,
+        cache: discovery.cache,
+        errorCategory: discovery.error_category,
+      }));
 
       return json(structured);
     }
@@ -1399,6 +1305,88 @@ Deno.serve(async (req: Request) => {
       const parsed = extractJSON(raw);
       const normalized = await normalizeInfo(parsed);
       return json(normalized);
+    }
+
+    if (action === "master_refresh") {
+      // Stage 3 §G — re-check one master row against its jurisdiction's
+      // authoritative sources. System admins only. Approved rows are NEVER
+      // written here: the returned diff IS the reviewable update, applied
+      // (if accepted) through the existing admin write path, which the
+      // sql/199 triggers version. Candidate rows may be refreshed in place
+      // with apply:true. saved_chemicals is never touched.
+      if (!masterConfigured()) {
+        return json({ error: "Master catalogue not configured" }, 500);
+      }
+      const masterId = String(
+        body?.masterChemicalId ?? body?.master_chemical_id ?? "",
+      ).trim();
+      if (!masterId) return json({ error: "Missing masterChemicalId" }, 400);
+
+      const authHeader = req.headers.get("Authorization") ?? "";
+      const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+      const supabaseUrl = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
+      let isAdmin = false;
+      if (authHeader && anonKey && supabaseUrl) {
+        try {
+          const adminRes = await fetch(`${supabaseUrl}/rest/v1/rpc/is_system_admin`, {
+            method: "POST",
+            headers: {
+              "apikey": anonKey,
+              "Authorization": authHeader,
+              "Content-Type": "application/json",
+            },
+            body: "{}",
+          });
+          if (adminRes.ok) {
+            isAdmin = (await adminRes.json()) === true;
+          } else {
+            try { await adminRes.body?.cancel(); } catch { /* ignore */ }
+          }
+        } catch { isAdmin = false; }
+      }
+      if (!isAdmin) return json({ error: "Not authorised" }, 403);
+
+      const rows = await masterSelect(
+        `select=*&id=eq.${encodeURIComponent(masterId)}&limit=1`,
+      );
+      if (!rows || rows.length !== 1) {
+        return json({ error: "Master row not found" }, 404);
+      }
+      const row = rows[0] as MasterRow;
+      const result = await refreshMasterRow(row, {
+        fetchFn: fetch,
+        now: () => new Date(),
+      });
+
+      let applied = false;
+      if (body?.apply === true && row.review_status === "candidate") {
+        const patch = buildCandidateRefreshPatch(row, result, new Date().toISOString());
+        if (patch) applied = await masterOps.updateCandidate(row.id, patch);
+      }
+
+      console.log(JSON.stringify({
+        evt: "master_refresh",
+        jurisdiction: row.registration_country,
+        registration_identity: row.registration_identity_key,
+        review_status: row.review_status,
+        outcome: result.outcome,
+        changes: result.changes.length,
+        applied,
+        ...(result.error_category ? { error_category: result.error_category } : {}),
+      }));
+
+      return json({
+        outcome: result.outcome,
+        changes: result.changes,
+        applied,
+        master: {
+          master_chemical_id: row.id,
+          catalogue_status: row.review_status,
+          master_revision: row.catalogue_version ?? 1,
+          registration_identity_key: row.registration_identity_key ?? null,
+        },
+        ...(result.error_category ? { error_category: result.error_category } : {}),
+      });
     }
 
     return json({ error: "Unknown action" }, 400);

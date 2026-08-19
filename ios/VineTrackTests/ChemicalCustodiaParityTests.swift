@@ -424,6 +424,57 @@ struct ChemicalCustodiaParityTests {
         #expect(!lookup.isMasterMatch)
     }
 
+    @Test("An authoritative_candidate envelope never reads as a master match")
+    func authoritativeCandidateEnvelopeIsNotAMasterMatch() throws {
+        // Stage 3 ingestion: a register-backed lookup that is NOT yet approved
+        // carries the additive candidate/discovery blocks and a distinct
+        // match_source. It must decode with the standard decoder, keep its
+        // chemistry, and never present as an approved master result.
+        let base = Self.custodiaFixtureJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        let payload = String(base.dropLast()) + """
+        ,
+          "match_source": "authoritative_candidate",
+          "candidate": {
+            "master_chemical_id": "c0570d1a-2026-4a66-9541-a99f66541001",
+            "candidate_revision": 1,
+            "catalogue_status": "candidate",
+            "registration_identity_key": "AU:apvma:66541"
+          },
+          "discovery": { "adapter": "apvma", "outcome": "resolved", "registration_identity_key": "AU:apvma:66541" }
+        }
+        """
+        let lookup = try JSONDecoder().decode(
+            ChemicalStructuredLookup.self, from: Data(payload.utf8))
+        #expect(lookup.matchSource == "authoritative_candidate")
+        #expect(lookup.master == nil)
+        #expect(!lookup.isMasterMatch)
+        // The chemistry still converts — a useful candidate, never a master.
+        let intel = lookup.intelligence()
+        #expect(intel.activeIngredients.count == 2)
+        #expect(intel.resolvedVerificationStatus == .partiallyVerified)
+    }
+
+    @Test("A master envelope with a non-approved catalogue_status never reads as a master match")
+    func candidateStatusMasterEnvelopeIsNotAMasterMatch() throws {
+        let base = Self.custodiaFixtureJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+        let payload = String(base.dropLast()) + """
+        ,
+          "match_source": "master",
+          "master": {
+            "master_chemical_id": "c0570d1a-2026-4a66-9541-a99f66541001",
+            "master_revision": 1,
+            "catalogue_status": "candidate",
+            "registration_identity_key": "AU:apvma:66541"
+          }
+        }
+        """
+        let lookup = try JSONDecoder().decode(
+            ChemicalStructuredLookup.self, from: Data(payload.utf8))
+        #expect(lookup.matchSource == "master")
+        #expect(lookup.master?.catalogueStatus == "candidate")
+        #expect(!lookup.isMasterMatch)
+    }
+
     @Test("A master-derived Saved Chemical retains the link, the revision and its own chemistry copy")
     func masterLinkPersists() throws {
         let lookup = try decodeMasterLookup()

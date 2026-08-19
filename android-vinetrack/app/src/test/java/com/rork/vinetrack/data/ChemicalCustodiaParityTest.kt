@@ -391,6 +391,57 @@ class ChemicalCustodiaParityTest {
     }
 
     @Test
+    fun `an authoritative_candidate envelope never reads as a master match`() {
+        // Stage 3 ingestion: a register-backed lookup that is NOT yet approved
+        // carries the additive candidate/discovery blocks and a distinct
+        // match_source. It must decode with the standard decoder, keep its
+        // chemistry, and never present as an approved master result.
+        val suffix = """
+        ,
+          "match_source": "authoritative_candidate",
+          "candidate": {
+            "master_chemical_id": "c0570d1a-2026-4a66-9541-a99f66541001",
+            "candidate_revision": 1,
+            "catalogue_status": "candidate",
+            "registration_identity_key": "AU:apvma:66541"
+          },
+          "discovery": { "adapter": "apvma", "outcome": "resolved", "registration_identity_key": "AU:apvma:66541" }
+        }
+        """.trimIndent()
+        val lookup = json.decodeFromString<ChemicalInfoService.ChemicalStructuredLookup>(
+            CUSTODIA_FIXTURE_JSON.trim().dropLast(1) + suffix,
+        )
+        assertEquals("authoritative_candidate", lookup.matchSource)
+        assertNull(lookup.master)
+        assertFalse(lookup.isMasterMatch)
+        // The chemistry still converts — a useful candidate, never a master.
+        val intel = lookup.intelligence()
+        assertEquals(2, intel.activeIngredients.size)
+        assertEquals(ChemicalVerificationStatus.PARTIALLY_VERIFIED, intel.resolvedVerificationStatus)
+    }
+
+    @Test
+    fun `a master envelope with a non-approved catalogue_status never reads as a master match`() {
+        val suffix = """
+        ,
+          "match_source": "master",
+          "master": {
+            "master_chemical_id": "c0570d1a-2026-4a66-9541-a99f66541001",
+            "master_revision": 1,
+            "catalogue_status": "candidate",
+            "registration_identity_key": "AU:apvma:66541"
+          }
+        }
+        """.trimIndent()
+        val lookup = json.decodeFromString<ChemicalInfoService.ChemicalStructuredLookup>(
+            CUSTODIA_FIXTURE_JSON.trim().dropLast(1) + suffix,
+        )
+        assertEquals("master", lookup.matchSource)
+        assertEquals("candidate", lookup.master?.catalogueStatus)
+        assertFalse(lookup.isMasterMatch)
+    }
+
+    @Test
     fun `a master-derived saved chemical retains link revision and chemistry copy`() {
         val lookup = decodeMasterLookup()
         val master = lookup.master!!

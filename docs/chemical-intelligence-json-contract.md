@@ -388,10 +388,27 @@ response and two additive columns on `saved_chemicals`. Everything in sections
 ```
 
 - `match_source`: `"master"` (served from an APPROVED catalogue row — the AI
-  was never called) | `"ai_candidate"` (AI extraction, unchanged honesty
-  rules) | `"unresolved"` (AI established neither actives nor a registration
-  — route the operator to manual entry). Absent on pre-sql/199 servers; treat
-  absent as `ai_candidate` behaviour.
+  was never called) | `"authoritative_candidate"` (Stage 3 ingestion:
+  identity + register-backed facts resolved from the jurisdiction's official
+  register, but NOT approved — handled exactly like an AI candidate
+  everywhere except provenance display) | `"ai_candidate"` (AI extraction,
+  unchanged honesty rules) | `"unresolved"` (neither actives nor a
+  registration established — route the operator to manual entry). Absent on
+  pre-sql/199 servers; treat absent as `ai_candidate` behaviour. Unknown
+  values must degrade to `ai_candidate` behaviour — never to a master match.
+- `candidate` (additive, Stage 3): `{ master_chemical_id, candidate_revision,
+  catalogue_status: "candidate", registration_identity_key }` — present when
+  a sql/199 CANDIDATE row backs this lookup. It is review metadata only:
+  clients must NEVER treat it as a master match, never write
+  `saved_chemicals.master_chemical_id` from it, and both apps' parity suites
+  pin that a candidate (or any non-approved `catalogue_status` inside a
+  forged `master` block) can never read as `isMasterMatch`.
+- `discovery` (additive, Stage 3): `{ adapter, outcome,
+  registration_identity_key?, register_status?, error_category? }` — what
+  authoritative discovery did (`resolved` | `unresolved` | `ambiguous` |
+  `source_unavailable` | `not_supported` | `no_country`).
+  `source_unavailable` means the register could not be consulted — it is
+  never "product not registered". See `docs/master-chemical-ingestion.md`.
 - `master` is present ONLY when `match_source == "master"`. Lookup priority is
   master → AI → manual; a known approved product must never go back through
   the AI. Master matching is exact only: identity key when known, else exact
