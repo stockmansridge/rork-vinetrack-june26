@@ -25,6 +25,12 @@
 //   registrant           -> registration.registrant
 //   unresolved fields    -> verification.unresolved_fields
 //   conflicts            -> verification.conflicts
+//
+// Strict fail-closed contract (checked-but-unverified register consults):
+// when discovery.outcome is unresolved/ambiguous on a supported register,
+// match_source must be "unresolved" (never "ai_candidate"), every canonical
+// product field must be unresolved, and the AI reading may appear ONLY in
+// the clearly-non-authoritative `ai_suggestion` advisory beside `guidance`.
 
 const ENDPOINT = Deno.env.get("LOOKUP_ENDPOINT") ??
   "https://tbafuqwruefgkbyxrxyb.supabase.co/functions/v1/chemical-info-lookup";
@@ -91,6 +97,20 @@ async function verifyOne(jwt: string, productName: string): Promise<void> {
     );
   }
   line("ai_suggested_uses", body.ai_suggested_uses);
+  if (body.ai_suggestion && typeof body.ai_suggestion === "object") {
+    const s: Json = body.ai_suggestion;
+    line(
+      "ai_suggestion",
+      `present (product_name=${JSON.stringify(s.product_name ?? null)}, registrant=${
+        JSON.stringify(s.registrant ?? null)
+      }, actives=${Array.isArray(s.active_ingredients) ? s.active_ingredients.length : 0}, uses=${
+        Array.isArray(s.registered_uses) ? s.registered_uses.length : 0
+      })`,
+    );
+  } else {
+    line("ai_suggestion", body.ai_suggestion);
+  }
+  line("guidance", body.guidance);
   line("field_provenance", body.field_provenance);
   line("verification_status", body.verification?.status);
   line("unresolved_fields", body.verification?.unresolved_fields);

@@ -60,6 +60,15 @@
 //       ai_suggested_uses?: AI-read uses on a register-resolved product with
 //                     no label evidence — clearly-non-authoritative
 //                     suggestions; NEVER served as registered_uses
+//       ai_suggestion?: STRICT FAIL-CLOSED path only — when a supported
+//                     register was successfully consulted and identity stayed
+//                     unresolved/ambiguous, the ENTIRE AI reading (name,
+//                     registrant, chemistry, uses) moves here; every
+//                     canonical product field is served unresolved and
+//                     match_source is "unresolved", never "ai_candidate"
+//       guidance?:    operator-facing sentence on that fail-closed path
+//                     ("could not uniquely verify … refine the product name
+//                     or registration number")
 //   action=master_refresh -> { outcome, changes[], applied, master }
 //     outcome: no_material_change | material_change | evidence_refreshed
 //              | conflict | source_unavailable
@@ -106,6 +115,7 @@ import {
   ingestionLog,
   mergeDiscoveryIntoStructured,
   pruneAuthoritativelyResolvedFields,
+  quarantineUnverifiedAiFacts,
   upsertCandidate,
 } from "./ingestion/ingest.ts";
 import {
@@ -1217,12 +1227,17 @@ Deno.serve(async (req: Request) => {
       //    unresolved — never invented.
       //
       //    When the register was CONSULTED and did NOT verify (unresolved or
-      //    ambiguous — not an outage), the AI's registration identity claims
-      //    are DISCARDED rather than served: AI assists discovery, it never
-      //    establishes registration. Its number already had its chance to
-      //    verify as a pointer in 3b. Chemistry/category stay as clearly
-      //    AI-attributed suggestions (fertilisers/biostimulants legitimately
-      //    have no register entry); identity facts do not.
+      //    ambiguous — not an outage), the lookup FAILS CLOSED: the AI's
+      //    registration identity claims are DISCARDED (its number already had
+      //    its chance to verify as a pointer in 3b) and then EVERY remaining
+      //    AI-derived product fact — chemistry, registrant, category, uses,
+      //    rates, WHP — is quarantined into the clearly-non-authoritative
+      //    `ai_suggestion` advisory. The canonical fields serve unresolved:
+      //    "checked and could not uniquely verify" never looks like facts.
+      //    An outage (source_unavailable) or a never-consulted register
+      //    (not_supported / no_country) keeps the existing degraded-mode
+      //    behaviour — clearly-AI-attributed extraction — because "could not
+      //    check" is not "checked and unverified".
       let aiIdentityDiscarded: string | null = null;
       if (resolved) {
         structured = structured
@@ -1230,6 +1245,11 @@ Deno.serve(async (req: Request) => {
           : buildRegisterOnlyStructured(resolved, ACTIVITY_GROUP_TABLE_VERSION);
       } else if (structured) {
         aiIdentityDiscarded = discardUnverifiedAiIdentity(structured, discovery.outcome);
+        quarantineUnverifiedAiFacts(
+          structured,
+          discovery.outcome,
+          jurEnv.resolved_country_name,
+        );
       }
 
       // Per-field provenance for the non-merged paths (the merge computes its
@@ -1262,11 +1282,13 @@ Deno.serve(async (req: Request) => {
       }
 
       // Additive envelope: what kind of answer this is. "unresolved" means
-      // neither actives nor a registration were established — the client
-      // should route the operator to manual entry rather than pretending.
-      // "authoritative_candidate" (set by the merge) is register-backed but
-      // NOT approved: clients must never treat it as a master match.
-      if (structured.match_source !== "authoritative_candidate") {
+      // no product fact was established — the client should route the
+      // operator to manual entry rather than pretending. The merge sets
+      // "authoritative_candidate" (register-backed but NOT approved: clients
+      // must never treat it as a master match) and the fail-closed gate sets
+      // "unresolved"; only a path that set neither — outage / unsupported /
+      // no-country degraded mode — computes here, exactly as before.
+      if (!structured.match_source) {
         structured.match_source =
           (structured.active_ingredients.length > 0 ||
               structured.registration?.registration_number)

@@ -18,6 +18,15 @@
 //   R09 missing vineyard country       R10 Sprayseal regression (end to end)
 //   R11 AWRI variant protections stay in sync
 //   R12 unresolved_fields ↔ field_provenance coherence (contract invariant)
+//   R13 fail-closed: unresolved identity + plausible AI chemistry →
+//       canonical fields stay unresolved (AI quarantined to ai_suggestion)
+//   R14 fail-closed: ambiguous identity + plausible AI chemistry →
+//       canonical fields stay unresolved
+//   R15 resolved + AI disagreement → authoritative wins, conflict recorded,
+//       the gate never strips a resolved result
+//   R16 register unavailable / never consulted → degraded mode stays explicit
+//   R17 Custodia 320SC production regression (fail closed, Forte never borrowed)
+//   R18 Ridomil Gold production regression (ambiguous family fails closed)
 
 import {
   assert,
@@ -50,6 +59,7 @@ import {
   discoverAuthoritative,
   mergeDiscoveryIntoStructured,
   pruneAuthoritativelyResolvedFields,
+  quarantineUnverifiedAiFacts,
 } from "./ingest.ts";
 import { APVMA_RESOURCES, clearApvmaCache } from "./apvma.ts";
 import type { AdapterDeps } from "./contract.ts";
@@ -707,6 +717,230 @@ Deno.test("R11: the live matcher's variant guard is the AWRI Stage 5E set, verba
 });
 
 // ===========================================================================
+// Fail-closed fixtures — plausible AI extractions + register families
+// ===========================================================================
+
+function frac(code: string, commonName: string): Row {
+  return { scheme: "frac", code, common_name: commonName };
+}
+
+function aiActive(name: string, concentration: number, group: Row | null): Row {
+  return {
+    name,
+    concentration,
+    concentration_unit: "g/L",
+    activity_group: group,
+    group_source: group ? "authoritative_classification" : "unresolved",
+    identity_source: "ai_interpretation",
+  };
+}
+
+function grapeUse(target: string, whpDays: number): Row {
+  return {
+    crop: "Grapes (winegrapes)",
+    target_raw: target,
+    rates: [{
+      label: "Standard rate",
+      basis: "per_hectare",
+      value: 1.5,
+      min_value: null,
+      max_value: null,
+      unit: "L",
+      raw_text: null,
+    }],
+    withholding_period_days: whpDays,
+    re_entry_period_hours: null,
+    restrictions: null,
+  };
+}
+
+/**
+ * A PLAUSIBLE post-extraction structured result — the shape
+ * buildStructuredResponse serves when the model answers confidently. This is
+ * exactly the payload that must never survive a checked-but-unverified
+ * register consult as canonical facts.
+ */
+// deno-lint-ignore no-explicit-any
+function plausibleAi(
+  productName: string,
+  registrant: string,
+  registrationNumber: string | null,
+  actives: Row[],
+  uses: Row[],
+): any {
+  return {
+    product_name: productName,
+    product_category: "fungicide",
+    form_type: "liquid",
+    registration: {
+      country_code: "AU",
+      scheme: registrationNumber ? "apvma" : null,
+      registration_number: registrationNumber,
+      registrant,
+      registered_product_name: productName,
+      label_reference: null,
+      label_version: null,
+    },
+    active_ingredients: actives,
+    activity_groups: actives
+      .map((a) => a.activity_group?.code)
+      .filter((c: string | undefined): c is string => Boolean(c)),
+    activity_group_scheme: "frac",
+    registered_uses: uses,
+    label_rate_bases: ["per_hectare"],
+    verification: {
+      status: "partially_verified",
+      sources: [
+        {
+          kind: "ai_interpretation",
+          name: "Model extraction (test)",
+          reference: null,
+          retrieved_at: null,
+        },
+        {
+          kind: "authoritative_classification",
+          name: "VineTrack activity group reference v1 (FRAC/HRAC/IRAC)",
+          reference: null,
+          retrieved_at: null,
+        },
+      ],
+      conflicts: [],
+      unresolved_fields: ["label_reference"],
+      verified_at: null,
+    },
+    activity_group_table_version: 1,
+    schema_version: 1,
+  };
+}
+
+/** Production-shaped Custodia 320SC AI payload (baseline regression run). */
+// deno-lint-ignore no-explicit-any
+function custodia320Ai(): any {
+  return plausibleAi(
+    "Custodia 320SC",
+    "BASF Australia Ltd",
+    "80000",
+    [aiActive("Fluopyram", 320, frac("7", "SDHI"))],
+    [grapeUse("Powdery mildew", 14)],
+  );
+}
+
+/** Production-shaped Ridomil Gold AI payload (baseline regression run). */
+// deno-lint-ignore no-explicit-any
+function ridomilGoldAi(): any {
+  return plausibleAi(
+    "Ridomil Gold",
+    "Syngenta Australia Pty Ltd",
+    "55180",
+    [
+      aiActive("Metalaxyl", 200, frac("4", "Phenylamide")),
+      aiActive("Mancozeb", 600, frac("M3", "Multi-site / Dithiocarbamate")),
+    ],
+    [grapeUse("Downy mildew", 14)],
+  );
+}
+
+const CUSTODIA_FORTE: Row = {
+  pcode: "91636",
+  fpname: "CUSTODIA FORTE FUNGICIDE",
+  sname: "ADAMA AUSTRALIA PTY LIMITED",
+  hlevel1: "FUNGICIDE",
+  fdesc: "SUSPENSION CONCENTRATE",
+  regcode: "R",
+  expdate: "30/06/2029 0:00",
+};
+
+/** A register fixture holding only product identity rows (no detail data). */
+function registerFixture(products: Row[]): Fixture {
+  return {
+    products,
+    prodcon: {},
+    constit: {},
+    labelreg: {},
+    produse: {},
+    hosts: {},
+    pests: {},
+    prodcom: {},
+    requestLog: [],
+  };
+}
+
+/**
+ * The strict fail-closed canonical contract, asserted whole: no AI-derived
+ * product fact survives outside `ai_suggestion`, provenance reads unresolved
+ * everywhere, no per-context unresolved entry leaks AI chemistry, and no
+ * Master candidate can be minted.
+ */
+// deno-lint-ignore no-explicit-any
+function assertFailClosedCanonical(structured: any, forbidden: string[]): void {
+  assertEquals(structured.match_source, "unresolved");
+  assertEquals(structured.product_name, null);
+  assertEquals(structured.product_category, "");
+  assertEquals(structured.form_type, null);
+  assertEquals(structured.registration.registration_number, null);
+  assertEquals(structured.registration.scheme, null);
+  assertEquals(structured.registration.registrant, null);
+  assertEquals(structured.registration.registered_product_name, null);
+  assertEquals(structured.registration.label_reference, null);
+  assertEquals(structured.registration.label_version, null);
+  assertEquals(structured.active_ingredients, []);
+  assertEquals(structured.activity_groups, []);
+  assertEquals(structured.activity_group_scheme, null);
+  assertEquals(structured.registered_uses, []);
+  assertEquals(structured.label_rate_bases, []);
+  assertEquals(structured.verification.status, "unverified");
+  assertEquals(structured.verification.conflicts, []);
+  assert(
+    structured.verification.sources.every((s: Row) => s.kind === "ai_interpretation"),
+    "only the model consult stays cited on a fail-closed response",
+  );
+  for (const entry of structured.verification.unresolved_fields) {
+    assert(
+      !String(entry).includes(":"),
+      `per-context entry '${entry}' would leak unverified AI chemistry`,
+    );
+  }
+  for (
+    const field of [
+      "registration_number",
+      "registrant",
+      "active_ingredients",
+      "activity_groups",
+      "registered_uses",
+      "product_name",
+      "form_type",
+      "product_category",
+      "label_reference",
+    ]
+  ) {
+    assert(
+      structured.verification.unresolved_fields.includes(field),
+      `${field} must be listed unresolved`,
+    );
+  }
+  for (const [field, prov] of Object.entries(structured.field_provenance)) {
+    assertEquals(prov, "unresolved", `field_provenance.${field}`);
+  }
+  assert(
+    String(structured.guidance).includes("could not uniquely verify"),
+    "operator guidance present",
+  );
+
+  const canonical: Record<string, unknown> = { ...structured };
+  delete canonical.ai_suggestion;
+  const json = JSON.stringify(canonical);
+  for (const needle of forbidden) {
+    assert(!json.includes(needle), `canonical envelope must not contain "${needle}"`);
+  }
+
+  // No Master candidate may be created from a fail-closed response.
+  assertEquals(
+    buildCandidatePayload(structured, "requested name", null, "2026-08-20T00:00:00Z", 1),
+    null,
+  );
+}
+
+// ===========================================================================
 // R12 — unresolved_fields ↔ field_provenance coherence (contract invariant)
 // ===========================================================================
 
@@ -774,4 +1008,259 @@ Deno.test("R12: a populated field with authoritative provenance is never listed 
     served.verification.unresolved_fields.includes("label_reference"),
     "label_reference is null on the row — genuinely unresolved, stays listed",
   );
+});
+
+// ===========================================================================
+// R13 — fail-closed: unresolved identity + plausible AI chemistry
+// ===========================================================================
+
+Deno.test("R13: unresolved identity + plausible AI chemistry — canonical fields stay unresolved; the AI reading is quarantined to ai_suggestion", async () => {
+  // The register was successfully consulted (no outage) and holds no such
+  // product — identity is checked-but-unverified.
+  clearApvmaCache();
+  const discovery = await discoverAuthoritative(
+    "AU",
+    "Custodia 320SC",
+    null,
+    deps(sprayFixture()),
+  );
+  assertEquals(discovery.outcome, "unresolved");
+  assertEquals(discovery.registration, undefined);
+
+  // The model still answered confidently. Identity is discarded first (as in
+  // the serving path), then EVERY remaining AI product fact is quarantined.
+  const structured = custodia320Ai();
+  assertEquals(discardUnverifiedAiIdentity(structured, discovery.outcome), "80000");
+  assertEquals(quarantineUnverifiedAiFacts(structured, discovery.outcome, "Australia"), true);
+
+  assertFailClosedCanonical(structured, ["Fluopyram", "BASF", "Powdery mildew"]);
+
+  // The advisory — clearly separated — keeps the AI reading for the operator.
+  assertEquals(structured.ai_suggestion.product_name, "Custodia 320SC");
+  assertEquals(structured.ai_suggestion.registrant, "BASF Australia Ltd");
+  assertEquals(structured.ai_suggestion.active_ingredients[0].name, "Fluopyram");
+  assertEquals(structured.ai_suggestion.registered_uses[0].withholding_period_days, 14);
+  assert(String(structured.ai_suggestion.note).toLowerCase().includes("unverified"));
+});
+
+// ===========================================================================
+// R14 — fail-closed: ambiguous identity + plausible AI chemistry
+// ===========================================================================
+
+Deno.test("R14: ambiguous identity + plausible AI chemistry — canonical fields stay unresolved; ambiguity is never resolved by the AI", async () => {
+  // Two register rows correspond at the same tier — checked, ambiguous.
+  clearApvmaCache();
+  const twin = sprayFixture();
+  twin.products = [
+    { ...SPRAYSEAL, fpname: "SPRAYSEAL FUNGICIDE" },
+    {
+      pcode: "99999",
+      fpname: "SPRAYSEAL LIQUID",
+      sname: "OTHER PTY LTD",
+      hlevel1: "FUNGICIDE",
+      fdesc: "SUSPENSION CONCENTRATE",
+      regcode: "R",
+      expdate: null,
+    },
+  ];
+  const discovery = await discoverAuthoritative("AU", "Spray Seal", null, deps(twin));
+  assertEquals(discovery.outcome, "ambiguous");
+  assertEquals(discovery.registration, undefined);
+
+  const structured = plausibleAi(
+    "Spray Seal",
+    "Omnia Specialities (Australia) Pty Ltd",
+    null,
+    [aiActive("Tebuconazole", 430, frac("3", "DMI / Triazole"))],
+    [grapeUse("Eutypa dieback", 28)],
+  );
+  // No AI number to discard — but the name claim still goes.
+  assertEquals(discardUnverifiedAiIdentity(structured, discovery.outcome), null);
+  assertEquals(quarantineUnverifiedAiFacts(structured, discovery.outcome, "Australia"), true);
+
+  assertFailClosedCanonical(structured, ["Tebuconazole", "Omnia", "Eutypa"]);
+  assertEquals(structured.ai_suggestion.active_ingredients[0].name, "Tebuconazole");
+});
+
+// ===========================================================================
+// R15 — resolved + AI disagreement: authority wins, conflict recorded
+// ===========================================================================
+
+Deno.test("R15: authoritative identity resolved + AI disagreement — authoritative data wins, the disagreement is a recorded conflict, and the gate never strips a resolved result", async () => {
+  clearApvmaCache();
+  const discovery = await discoverAuthoritative("AU", "Sprayseal", null, deps(sprayFixture()));
+  assertEquals(discovery.outcome, "resolved");
+  const reg = discovery.registration;
+  assert(reg);
+
+  // Plausible-but-wrong AI identity AND chemistry for the same product.
+  const ai = plausibleAi(
+    "Sprayseal",
+    "Wrong Registrant Pty Ltd",
+    "89999",
+    [aiActive("Tebuconazole", 200, frac("3", "DMI / Triazole"))],
+    [grapeUse("Eutypa dieback", 21)],
+  );
+  const merged = mergeDiscoveryIntoStructured(ai, reg);
+
+  assertEquals(merged.match_source, "authoritative_candidate");
+  assertEquals(merged.registration.registration_number, "80160");
+  assertEquals(merged.registration.registrant, "OMNIA SPECIALITIES (AUSTRALIA) PTY LTD");
+  assertEquals(merged.active_ingredients.length, 1);
+  assertEquals(merged.active_ingredients[0].concentration, 430, "register concentration served");
+  assertEquals(merged.verification.status, "conflict");
+  assert(
+    merged.verification.conflicts.some(
+      (c: Row) => c.field === "registration_number" && c.extracted_value === "89999",
+    ),
+    "fabricated number recorded as a conflict",
+  );
+  assert(
+    merged.verification.conflicts.some(
+      (c: Row) => c.field === "concentration" && c.active_ingredient_name === "Tebuconazole",
+    ),
+    "wrong concentration recorded as a conflict",
+  );
+
+  // The gate is a structural no-op on ANY resolved result.
+  assertEquals(quarantineUnverifiedAiFacts(merged, "resolved"), false);
+  assertEquals(merged.registration.registration_number, "80160");
+  assertEquals(merged.active_ingredients.length, 1);
+  assertEquals(merged.ai_suggestion, undefined);
+  assertEquals(merged.guidance, undefined);
+});
+
+// ===========================================================================
+// R16 — register unavailable / never consulted: degraded mode stays explicit
+// ===========================================================================
+
+Deno.test("R16: register unavailable or never consulted — the gate is a no-op and the existing clearly-attributed degraded mode remains", () => {
+  for (const outcome of ["source_unavailable", "not_supported", "no_country"] as const) {
+    const structured = custodia320Ai();
+    assertEquals(discardUnverifiedAiIdentity(structured, outcome), null, outcome);
+    assertEquals(quarantineUnverifiedAiFacts(structured, outcome, "Australia"), false, outcome);
+
+    // "Could not check" is not "checked and unverified": the AI extraction
+    // stays served exactly as before, attributed — never silently dropped.
+    assertEquals(structured.product_name, "Custodia 320SC");
+    assertEquals(structured.registration.registration_number, "80000");
+    assertEquals(structured.registration.registrant, "BASF Australia Ltd");
+    assertEquals(structured.active_ingredients.length, 1);
+    assertEquals(structured.registered_uses.length, 1);
+    assertEquals(structured.field_provenance, undefined, "serving path computes provenance");
+    assertEquals(structured.ai_suggestion, undefined);
+    assertEquals(structured.guidance, undefined);
+    assertEquals(structured.match_source, undefined, "serving path computes ai_candidate");
+  }
+});
+
+// ===========================================================================
+// R17 — Custodia 320SC production regression (fail closed)
+// ===========================================================================
+
+Deno.test("R17: Custodia 320SC — not on the register, Forte never borrowed (search OR hint), response fails closed with the AI reading quarantined", async () => {
+  // Name path: the register holds only CUSTODIA FORTE — 320SC does not exist.
+  clearApvmaCache();
+  const byName = await discoverAuthoritative(
+    "AU",
+    "Custodia 320SC",
+    null,
+    deps(registerFixture([CUSTODIA_FORTE])),
+  );
+  assertEquals(byName.outcome, "unresolved");
+  assertEquals(byName.registration, undefined);
+
+  // An AI number pointing AT Forte still cannot bind: name↔number
+  // verification fails on the variant token, and the name path stays
+  // unresolved. The variant guard holds under a hint, not just a search.
+  clearApvmaCache();
+  const byHint = await discoverAuthoritative(
+    "AU",
+    "Custodia 320SC",
+    "91636",
+    deps(registerFixture([CUSTODIA_FORTE])),
+  );
+  assertEquals(byHint.outcome, "unresolved");
+  assertEquals(byHint.registration, undefined);
+
+  // Production-shaped AI payload: registrant, Fluopyram 320 g/L, grape use,
+  // 1.5 L/ha, WHP 14 — none of it may survive as canonical facts.
+  const structured = custodia320Ai();
+  assertEquals(discardUnverifiedAiIdentity(structured, byHint.outcome), "80000");
+  assertEquals(quarantineUnverifiedAiFacts(structured, byHint.outcome, "Australia"), true);
+
+  assertFailClosedCanonical(structured, [
+    "Fluopyram",
+    "BASF",
+    "Powdery mildew",
+    "CUSTODIA FORTE",
+  ]);
+  assertEquals(structured.ai_suggestion.active_ingredients[0].concentration, 320);
+  assertEquals(structured.ai_suggestion.registered_uses[0].rates[0].value, 1.5);
+});
+
+// ===========================================================================
+// R18 — Ridomil Gold production regression (ambiguous family, fail closed)
+// ===========================================================================
+
+Deno.test("R18: Ridomil Gold — deliberately ambiguous register family fails closed; no AI chemistry served, no candidate minted", async () => {
+  const family: Row[] = [
+    {
+      pcode: "55180",
+      fpname: "RIDOMIL GOLD MZ WG FUNGICIDE",
+      sname: "SYNGENTA AUSTRALIA PTY LTD",
+      hlevel1: "FUNGICIDE",
+      fdesc: "WATER DISPERSIBLE GRANULE",
+      regcode: "R",
+      expdate: null,
+    },
+    {
+      pcode: "81102",
+      fpname: "RIDOMIL GOLD 480 SL FUNGICIDE",
+      sname: "SYNGENTA AUSTRALIA PTY LTD",
+      hlevel1: "FUNGICIDE",
+      fdesc: "SOLUBLE CONCENTRATE",
+      regcode: "R",
+      expdate: null,
+    },
+    {
+      pcode: "62740",
+      fpname: "RIDOMIL GOLD 25 G FUNGICIDE",
+      sname: "SYNGENTA AUSTRALIA PTY LTD",
+      hlevel1: "FUNGICIDE",
+      fdesc: "GRANULE",
+      regcode: "R",
+      expdate: null,
+    },
+  ];
+
+  // Two family members correspond at the same tier — ambiguous, fail closed.
+  clearApvmaCache();
+  const discovery = await discoverAuthoritative(
+    "AU",
+    "Ridomil Gold",
+    null,
+    deps(registerFixture(family)),
+  );
+  assertEquals(discovery.outcome, "ambiguous");
+  assertEquals(discovery.registration, undefined);
+
+  // The AI's hint (55180 = the MZ WG variant) cannot un-tie it: the hinted
+  // row's name does not correspond to the requested product.
+  clearApvmaCache();
+  const byHint = await discoverAuthoritative(
+    "AU",
+    "Ridomil Gold",
+    "55180",
+    deps(registerFixture(family)),
+  );
+  assertEquals(byHint.outcome, "ambiguous");
+  assertEquals(byHint.registration, undefined);
+
+  const structured = ridomilGoldAi();
+  assertEquals(discardUnverifiedAiIdentity(structured, byHint.outcome), "55180");
+  assertEquals(quarantineUnverifiedAiFacts(structured, byHint.outcome, "Australia"), true);
+
+  assertFailClosedCanonical(structured, ["Metalaxyl", "Mancozeb", "Syngenta", "Downy mildew"]);
+  assertEquals(structured.ai_suggestion.active_ingredients.length, 2);
 });

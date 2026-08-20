@@ -482,7 +482,8 @@ typography tiers. Changes (no schema change, additive wire keys only):
   ONLY from register-verified identities. On register-resolved products,
   `registered_uses`/WHP/re-entry/restrictions come ONLY from official label
   evidence; without it the field stays unresolved and AI readings move to
-  the non-authoritative `ai_suggested_uses` envelope.
+  the non-authoritative `ai_suggested_uses` envelope. Section 20 extends
+  this to EVERY AI-derived product fact (strict fail-closed identity gate).
 - Jurisdiction: `ingestion/jurisdiction.ts` resolves the vineyard-country
   contract server-side (display names, aliases, ISO-2; no fallback) and
   every search/structured response carries the `jurisdiction` envelope
@@ -501,11 +502,63 @@ typography tiers. Changes (no schema change, additive wire keys only):
   the invariant serve clean without any data rewrite
   (`pruneAuthoritativelyResolvedFields` in `ingestion/ingest.ts`).
 
-Regression fixture: `ingestion/resolver_test.ts` (R01–R12) — Sprayseal
+Regression fixture: `ingestion/resolver_test.ts` (R01–R18) — Sprayseal
 (APVMA 80160, Omnia, Tebuconazole 430 g/L, FRAC 3) resolves from the query
 “Spray Seal” with register-backed facts and the fabricated AI result reduced
 to recorded conflicts; variant safety (“Custodia” ↔ “CUSTODIA FORTE”),
 ambiguity fail-closed, label-evidence-only enrichment, and the country
 contract are pinned alongside; R12 pins the unresolved_fields ↔
 field_provenance coherence invariant on the merge, AI-only and master-serve
-paths.
+paths; R13–R18 pin the strict fail-closed identity gate (section 20),
+including the Custodia 320SC and Ridomil Gold production regressions.
+
+## 20. Strict fail-closed identity gate (checked-but-unverified consults)
+
+General resolver invariant — never product-specific, no schema change
+(additive wire keys only):
+
+When a SUPPORTED authoritative register was SUCCESSFULLY consulted and the
+identity outcome is `unresolved` or `ambiguous` (which is also how a checked
+name↔number conflict surfaces — a hint whose register row does not
+correspond falls through to the name path), the AI must not establish or
+populate ANY product-specific fact in the canonical structured response:
+
+- `match_source` is `"unresolved"` — never `"ai_candidate"`;
+- `registration` (number/scheme/registered name/label refs) stays unresolved;
+- `registrant` stays unresolved;
+- `active_ingredients` / concentrations stay unresolved;
+- `activity_groups` stay unresolved — even when the authoritative table
+  classified the AI-claimed actives, because the classification inherits the
+  unverified identity of the chemistry it classified;
+- `registered_uses`, label rates, WHP, re-entry and restrictions stay
+  unresolved;
+- `verification` is rebuilt: status `unverified`, conflicts moved out of the
+  canonical envelope, `unresolved_fields` reduced to WHOLE-FIELD gaps only
+  (a per-context entry like `concentration:<active>` would itself leak
+  unverified AI chemistry);
+- `field_provenance` reads `unresolved` for every field;
+- NO Master candidate is created (the emptied registration block makes
+  `buildCandidatePayload` structurally return null).
+
+The AI reading is preserved — clearly separated — in the additive
+`ai_suggestion` advisory (name, registrant, category/form, actives, uses,
+plus a disclaimer note), and `guidance` carries the operator-facing meaning:
+“We could not uniquely verify this product in the official register for
+‹country›. Please refine the product name or registration number.” The AI’s
+registration hint stays useful internally for discovery (it is retried as a
+pointer before the gate) and remains visible as
+`discovery.ai_registration_hint_discarded`.
+
+The gate deliberately does NOT apply when the register itself was
+UNAVAILABLE (`source_unavailable`) or never consulted (`not_supported`,
+`no_country`): “could not check” is not “checked and could not verify”, so
+the existing degraded mode — clearly-AI-attributed extraction served as
+`ai_candidate` — remains explicit and unchanged. A register-RESOLVED result
+never reaches the gate: authoritative facts win and AI disagreements are
+recorded as structured conflicts by the merge, exactly as before.
+
+Enforced in `quarantineUnverifiedAiFacts` (`ingestion/ingest.ts`), called on
+the serving path immediately after `discardUnverifiedAiIdentity`. Regressions
+R13–R18: unresolved + plausible AI chemistry, ambiguous + plausible AI
+chemistry, resolved + AI disagreement (authority wins, conflict recorded),
+register unavailable (degraded mode intact), Custodia 320SC, Ridomil Gold.

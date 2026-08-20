@@ -310,10 +310,11 @@ export function mergeDiscoveryIntoStructured(
  * behaviour instead, because "could not check" is not "checked and wrong").
  * The AI's number already had its chance to verify as a discovery pointer;
  * past that, AI assists discovery but never establishes registration: the
- * number/scheme/registered-name claims are removed, the field goes honestly
- * unresolved, and only clearly-AI-attributed non-register facts (chemistry,
- * category — fertilisers and biostimulants legitimately have no register
- * entry) remain. Returns the discarded number for the discovery envelope.
+ * number/scheme/registered-name claims are removed and the field goes
+ * honestly unresolved. Returns the discarded number for the discovery
+ * envelope. The rest of the AI extraction is then quarantined by
+ * quarantineUnverifiedAiFacts — on a checked-but-unverified consult NO
+ * AI-derived product fact stays in the canonical fields.
  */
 export function discardUnverifiedAiIdentity(
   structured: any,
@@ -337,6 +338,144 @@ export function discardUnverifiedAiIdentity(
     ).sort();
   }
   return discarded;
+}
+
+// ---------------------------------------------------------------------------
+// Strict fail-closed identity gate (checked-but-unverified register consults)
+// ---------------------------------------------------------------------------
+
+// The whole-field gaps a fail-closed response honestly reports. Deliberately
+// free of per-context entries ("concentration:<active>", "rates:<crop>") —
+// those would leak the AI's unverified chemistry/uses as if they were facts
+// about the product.
+const FAIL_CLOSED_UNRESOLVED_FIELDS: readonly string[] = [
+  "active_ingredients",
+  "activity_groups",
+  "form_type",
+  "label_reference",
+  "label_version",
+  "product_category",
+  "product_name",
+  "registered_uses",
+  "registrant",
+  "registration_number",
+];
+
+/**
+ * Strict fail-closed identity gate — GENERAL resolver invariant, never
+ * product-specific.
+ *
+ * When a supported authoritative register was successfully consulted and the
+ * identity outcome is "unresolved" or "ambiguous" (which is also how a
+ * checked name↔number conflict surfaces — a mismatching hint falls through
+ * to the name path), the AI must not establish or populate ANY
+ * product-specific fact in the canonical structured response:
+ *
+ *   * match_source becomes "unresolved" — never "ai_candidate";
+ *   * registration / registrant / actives / concentrations / activity
+ *     groups / registered uses / rates / WHP / re-entry / restrictions all
+ *     stay unresolved (activity groups are cleared even when the
+ *     authoritative table classified them — the table classified an
+ *     UNVERIFIED AI-claimed active, so the classification inherits the
+ *     uncertainty);
+ *   * verification is rebuilt: status "unverified", conflicts moved out of
+ *     the canonical envelope, unresolved_fields = the whole-field gap list
+ *     (no per-active/per-crop entries that would leak AI chemistry);
+ *   * field_provenance reads "unresolved" for every field;
+ *   * no Master candidate can be minted (the registration block is empty,
+ *     so buildCandidatePayload structurally returns null).
+ *
+ * The AI's reading is preserved — clearly separated — in the additive
+ * `ai_suggestion` advisory envelope (plus `guidance` for the operator), so
+ * discovery hints stay useful without ever looking like chemical facts.
+ *
+ * The gate does NOT apply when the register itself was unavailable
+ * (source_unavailable) or never consulted (not_supported / no_country):
+ * "could not check" is not "checked and could not verify", and the existing
+ * degraded-mode behaviour (clearly AI-attributed extraction) remains. A
+ * REGISTER-RESOLVED result never reaches this gate — authoritative facts
+ * win and AI disagreements are recorded as structured conflicts by the
+ * merge.
+ *
+ * Returns true when the gate fail-closed the response.
+ */
+export function quarantineUnverifiedAiFacts(
+  structured: any,
+  discoveryOutcome: DiscoveryOutcome,
+  registerCountryName?: string | null,
+): boolean {
+  if (discoveryOutcome !== "unresolved" && discoveryOutcome !== "ambiguous") {
+    return false;
+  }
+  if (!structured) return false;
+
+  const regBlock = structured.registration ?? {};
+  const actives: any[] = Array.isArray(structured.active_ingredients)
+    ? structured.active_ingredients
+    : [];
+  const uses: any[] = Array.isArray(structured.registered_uses)
+    ? structured.registered_uses
+    : [];
+  const aiConflicts: WireConflict[] = Array.isArray(structured?.verification?.conflicts)
+    ? structured.verification.conflicts
+    : [];
+
+  // ---- Advisory: the AI's reading, clearly non-authoritative --------------
+  const suggestion: Record<string, any> = {
+    note:
+      "Unverified AI suggestion. The official register was consulted and " +
+      "could not uniquely verify this product, so nothing here is an " +
+      "established product fact. Do not rely on it for spray decisions.",
+    product_name: structured.product_name ?? null,
+    registrant: regBlock?.registrant ?? null,
+    product_category: structured.product_category || null,
+    form_type: structured.form_type ?? null,
+    active_ingredients: actives,
+    registered_uses: uses,
+  };
+  if (aiConflicts.length) suggestion.conflicts = aiConflicts;
+  structured.ai_suggestion = suggestion;
+  structured.guidance =
+    `We could not uniquely verify this product in the official register for ${
+      registerCountryName || "this jurisdiction"
+    }. Please refine the product name or registration number.`;
+
+  // ---- Canonical fields: emptied, never AI-populated ----------------------
+  structured.product_name = null;
+  structured.product_category = "";
+  structured.form_type = null;
+  structured.registration = {
+    country_code: regBlock?.country_code ?? null,
+    scheme: null,
+    registration_number: null,
+    registrant: null,
+    registered_product_name: null,
+    label_reference: null,
+    label_version: null,
+  };
+  structured.active_ingredients = [];
+  structured.activity_groups = [];
+  structured.activity_group_scheme = null;
+  structured.registered_uses = [];
+  structured.label_rate_bases = [];
+
+  // ---- Evidence state: honestly unverified ---------------------------------
+  // The model consult stays cited (its output lives in the advisory); the
+  // authoritative-classification citation goes with the groups it classified.
+  const sources: WireDataSource[] = Array.isArray(structured?.verification?.sources)
+    ? structured.verification.sources.filter((s: any) => s?.kind === "ai_interpretation")
+    : [];
+  structured.verification = {
+    ...(structured.verification ?? {}),
+    status: "unverified",
+    sources,
+    conflicts: [],
+    unresolved_fields: [...FAIL_CLOSED_UNRESOLVED_FIELDS],
+    verified_at: null,
+  };
+  structured.field_provenance = buildFieldProvenance(structured, null, false);
+  structured.match_source = "unresolved";
+  return true;
 }
 
 // ---------------------------------------------------------------------------
