@@ -40,22 +40,94 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * Reassemble the register's chunked label-comment rows into one text block.
- * Chunks are fixed-width slices (words split mid-token: "GRAP" + "EVINES"),
- * so they join with NO separator; parsing regexes tolerate the whitespace the
- * register's own trimming may have dropped at chunk boundaries.
+ * PubCRIS stores each product's comment text as fixed-width 40-character
+ * lines of a CRLF stream (`seq` is literally "Line No" in the dataset's
+ * field metadata), sliced blindly — mid-word ("GRAP" + "EVINES") or ON an
+ * inter-word space. The published extract then strips `\r` and trims each
+ * chunk's edge whitespace (verified on a 5,000-row live sample: no stored
+ * chunk starts or ends with a space). Two artefacts follow:
+ *
+ *   * mid-word slice   → "GRAP" + "EVINES"        → join with NO separator
+ *   * slice on a space → "…AFTER" + "APPLICATION" → the space sat at a
+ *     chunk edge and was trimmed away → restore exactly one space
+ */
+const PRODCOM_SLICE_WIDTH = 40;
+
+const WORD_CHAR = /[A-Za-z0-9]/;
+const CLOSING_PUNCT = /[.,:;!?)]/;
+
+/**
+ * Reassemble the register's chunked label-comment rows into one text block,
+ * restoring ONLY the boundary spaces the publication's trimming provably
+ * removed — never inventing whitespace, never splitting a reunited word.
+ *
+ * Evidence per chunk: a non-final chunk's pre-trim length is exactly the
+ * slice width, and every stored `\n` was `\r\n` before `\r`-stripping, so
+ * `width − (stored length + \n count)` counts the edge whitespace trimmed
+ * off that chunk. Each trimmed unit funds AT MOST one restored space at a
+ * seam adjacent to that chunk:
+ *
+ *   * seams touching a newline never take a space (the line break already
+ *     separates, and a `\r` stripped at the seam shows up as deficit too);
+ *   * word–word seams are funded first (word integrity is what statement
+ *     parsing depends on), then closing-punctuation–letter seams;
+ *   * seams are funded left to right — for the verified live case
+ *     (91636: " APPLICATION…" lost its leading space) this places the
+ *     space at the true seam and leaves the mid-word "HARVES"+"T" bare;
+ *   * unfunded seams keep the bare join; unspent deficit is dropped
+ *     (it was a stripped `\r` or line-edge whitespace — cosmetic).
+ *
+ * If the register ever changes its slice width, deficits clamp to zero and
+ * this degrades to the plain bare join — never to invented whitespace.
  */
 export function assembleProductComments(
   rows: Array<{ seq?: unknown; applic?: unknown }>,
 ): string {
-  return rows
-    .filter((r) => r && r.applic != null)
+  const chunks = rows
+    .filter((r) => r && r.applic != null && String(r.applic).length > 0)
     .map((r) => ({
       seq: Number.parseInt(String(r.seq ?? "0"), 10) || 0,
       text: String(r.applic),
     }))
     .sort((a, b) => a.seq - b.seq)
-    .map((r) => r.text)
+    .map((r) => r.text);
+  if (chunks.length <= 1) return chunks.join("");
+
+  // Pre-trim length: stored text plus one stripped `\r` per stored `\n`.
+  const adjusted = chunks.map((t) => t.length + (t.split("\n").length - 1));
+  // Edge whitespace trimmed off each NON-FINAL chunk (the final chunk is
+  // the remainder of the stream — its length proves nothing).
+  const deficit = chunks.map((_, i) =>
+    i < chunks.length - 1
+      ? Math.max(0, PRODCOM_SLICE_WIDTH - adjusted[i])
+      : 0
+  );
+
+  const spaceAt = new Array<boolean>(chunks.length - 1).fill(false);
+  const spend = (i: number): boolean => {
+    if (deficit[i] > 0) {
+      deficit[i] -= 1;
+      return true;
+    }
+    return false;
+  };
+  const passes: ReadonlyArray<(left: string, right: string) => boolean> = [
+    (l, r) => WORD_CHAR.test(l) && WORD_CHAR.test(r),
+    (l, r) => CLOSING_PUNCT.test(l) && /[A-Za-z(]/.test(r),
+  ];
+  for (const eligible of passes) {
+    for (let s = 0; s < chunks.length - 1; s++) {
+      if (spaceAt[s]) continue;
+      const left = chunks[s].slice(-1);
+      const right = chunks[s + 1].slice(0, 1);
+      if (left === "\n" || right === "\n") continue;
+      if (!eligible(left, right)) continue;
+      if (spend(s) || spend(s + 1)) spaceAt[s] = true;
+    }
+  }
+
+  return chunks
+    .map((t, i) => (i < spaceAt.length && spaceAt[i] ? `${t} ` : t))
     .join("");
 }
 

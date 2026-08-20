@@ -113,8 +113,12 @@ interface RegisterFixture {
 }
 
 // Live PubCRIS label data for Custodia Forte 91636 (retrieved 2026-08-20),
-// mirrored verbatim — including the register's own chunking artefacts
-// ("GRAP" + "EVINES", "AFTER" + "APPLICATION") and out-of-order seq rows.
+// mirrored verbatim — including the register's own chunking artefacts and
+// out-of-order seq rows. The 40-char slicing splits words ("GRAP"+"EVINES",
+// "HARVES"+"T", "N"+"OT") AND the publication trims chunk-edge whitespace:
+// seq 4's original chunk was " APPLICATION.\r\nMACADAMIAS: DO NOT HARVES"
+// (40 chars) — stored 38 chars with the leading space and `\r` gone, so the
+// grape statement's "…AFTER APPLICATION" space lives only in that deficit.
 const FORTE_PRODUSE: Row[] = [
   { pcode: "91636", hostcode: "FRVG", pestcode: "YMIP" },
   { pcode: "91636", hostcode: "FRVG", pestcode: "YBOTR1" },
@@ -1298,4 +1302,38 @@ Deno.test("59: Custodia 66541 stays fail-closed — Forte's label evidence never
   const byHint = await discoverAuthoritative("AU", "Custodia", "66541", makeDeps(lapsed));
   assertEquals(byHint.outcome, "unresolved", "hint to a lapsed number stays unresolved");
   assertEquals(byHint.registration ?? null, null, "91636's label evidence never leaks onto 66541");
+});
+
+Deno.test("60: prodcom reassembly restores the trimmed seam space — words never concatenate or split (real 91636 chunk boundary)", async () => {
+  const text = assembleProductComments(FORTE_PRODCOM);
+  assert(
+    text.includes("GRAPEVINES: DO NOT HARVEST FOR 4 WEEKS AFTER APPLICATION."),
+    "the space the publication trimmed off the ' APPLICATION…' chunk edge is restored",
+  );
+  assert(!text.includes("AFTERAPPLICATION"), "words are never concatenated across a chunk seam");
+  assert(
+    text.includes("ALMONDS: NOT REQUIRED WHEN USED AS DIRECTED."),
+    "mid-word seam N|OT still joins bare",
+  );
+  assert(
+    text.includes("MACADAMIAS: DO NOT HARVEST FOR 15 DAYS AFTER APPLICATION."),
+    "mid-word seam HARVES|T still joins bare — the deficit is never spent on the wrong seam",
+  );
+  assert(text.includes("WITHHOLDING PERIODS\nHarvest\n"), "line structure preserved verbatim");
+
+  // End-to-end: the corrected statement text serves unchanged label facts.
+  clearApvmaCache();
+  const discovery = await discoverAuthoritative("AU", "Custodia Forte", null, makeDeps({ ...FULL_REGISTER }));
+  const evidence = discovery.registration!.label_evidence!;
+  const grape = evidence.claims.find((c) => c.crop === "GRAPEVINE")!;
+  assert(
+    grape.statements.some((s) => s.includes("4 WEEKS AFTER APPLICATION.")),
+    "served verbatim statement carries the corrected wording",
+  );
+  assertEquals(grape.withholding_period_days, 28, "grape WHP unchanged — WHP parsing semantics untouched");
+  assertEquals(
+    evidence.claims.find((c) => c.crop === "MACADAMIA")?.withholding_period_days,
+    15,
+    "macadamia WHP still parsed from the reunited HARVEST",
+  );
 });

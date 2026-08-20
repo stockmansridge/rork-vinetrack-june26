@@ -76,7 +76,12 @@ back to GB or AU.
      `1365af46-a3db-4d54-9f25-e41f7dfce5d2` — verbatim crop/target wording.
    - `prodcom.csv` `98e956e0-8d60-47cd-8bed-1d4da4c9826d` — the label's
      statements (withholding periods, re-entry, restrictions), shipped as
-     fixed-width chunks reassembled by `seq`.
+     fixed-width 40-char chunks reassembled by `seq`. The publication trims
+     chunk-edge whitespace, so reassembly restores a boundary space only
+     where the slice-width deficit proves one was trimmed ("…AFTER" +
+     "APPLICATION…" → "AFTER APPLICATION"); mid-word splits ("GRAP" +
+     "EVINES") join bare, and unspendable deficit (a stripped `\r`,
+     line-edge whitespace) is dropped — whitespace is never invented.
    Strict parsing only: "DO NOT HARVEST FOR n DAYS/WEEKS" and (inside a
    withholding section) "NOT REQUIRED WHEN USED AS DIRECTED" → WHP;
    explicit re-entry hours/days → re-entry period; anything else keeps its
