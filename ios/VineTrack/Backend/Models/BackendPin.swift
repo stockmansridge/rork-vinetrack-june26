@@ -119,6 +119,12 @@ nonisolated struct BackendPinUpsert: Encodable, Sendable {
     let mode: String?
     let buttonName: String?
     let buttonColor: String?
+    /// Display-title snapshot kept equal to `buttonName` for repair/growth
+    /// pins — Android's list and detail read `title` first, so a type change
+    /// made on iOS must update it too. Nil (omitted from the payload, column
+    /// untouched) for manual issues, whose user-authored title is owned by
+    /// the manual-issue RPCs.
+    let title: String?
     let notes: String?
     let latitude: Double?
     let longitude: Double?
@@ -152,6 +158,7 @@ nonisolated struct BackendPinUpsert: Encodable, Sendable {
         case mode
         case buttonName = "button_name"
         case buttonColor = "button_color"
+        case title
         case notes
         case latitude
         case longitude
@@ -200,6 +207,7 @@ extension BackendPin {
             mode: pin.mode.rawValue,
             buttonName: pin.buttonName,
             buttonColor: pin.buttonColor,
+            title: pin.mode == .manualIssue ? nil : (pin.buttonName.isEmpty ? nil : pin.buttonName),
             notes: pin.notes,
             latitude: pin.latitude,
             longitude: pin.longitude,

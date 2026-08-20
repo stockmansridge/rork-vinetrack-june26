@@ -61,6 +61,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -94,6 +95,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -153,6 +156,8 @@ fun PinsScreen(
     val scope = rememberCoroutineScope()
     // Map / List / Stats, mirroring the iOS segmented picker.
     var viewMode by remember { mutableStateOf(initialViewMode) }
+    // List ordering; survives view-mode switches and rotation.
+    var pinSort by rememberSaveable { mutableStateOf(PinSort.NEWEST) }
     // null = All; otherwise a PinMode raw value ("Repairs" / "Growth").
     var modeFilter by remember { mutableStateOf<String?>(initialMode) }
     // null = All statuses; true = Completed; false = Open. Defaults to Open
@@ -229,6 +234,8 @@ fun PinsScreen(
     }
     // Resolve each pin's configured colour (iOS nameColorMap parity).
     val colorMap = remember(state.repairButtons, state.growthButtons) { pinColorMap(state) }
+    // Canonical launcher-type catalogue offered by Change Pin Type.
+    val typeOptions = remember(state.repairButtons, state.growthButtons) { pinTypeOptions(state) }
 
     // Delete visibility mirrors iOS canDeleteOperationalRecords (owner/manager/
     // supervisor may delete; operators may not). An unknown role — the members
@@ -359,6 +366,8 @@ fun PinsScreen(
                     state = state,
                     colorMap = colorMap,
                     userLocation = userLocation,
+                    sort = pinSort,
+                    onSort = { pinSort = it },
                     modeFilter = modeFilter,
                     statusFilter = statusFilter,
                     uploadingPinId = uploadingPinId,
@@ -387,6 +396,14 @@ fun PinsScreen(
         LaunchedEffect(detailPinId) { detailPinId = null }
     }
     if (detailPin != null) {
+        // Change Pin Type is offered for real repair/growth pins only:
+        // growth-stage observations are managed by the growth flow (their type
+        // IS the recorded stage), manual issues have their own editor, and
+        // synthesized rows have no backing pin row to update.
+        val canChangeType = state.pins.any { it.id == detailPin.id } &&
+            (detailPin.mode == "Repairs" || detailPin.mode == "Growth") &&
+            state.growthRecords.none { (it.pinId?.takeIf { id -> id.isNotBlank() } ?: it.id) == detailPin.id } &&
+            !detailPin.displayTitle.trim().startsWith("Growth Stage", ignoreCase = true)
         PinDetailSheet(
             vm = vm,
             pin = detailPin,
@@ -398,6 +415,22 @@ fun PinsScreen(
             // Synthesized growth-record pins have no backing pins row, so their
             // notes stay read-only (a save would have nothing to update).
             canEditNotes = state.pins.any { it.id == detailPin.id },
+            canChangeType = canChangeType,
+            typeOptions = typeOptions,
+            onChangeType = { option ->
+                vm.updatePinType(
+                    pinId = detailPin.id,
+                    buttonName = option.name,
+                    buttonColor = option.color,
+                    mode = option.mode,
+                ) { ok, message ->
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            message ?: if (ok) "Pin type updated" else "Couldn't change the pin type",
+                        )
+                    }
+                }
+            },
             onDismiss = { detailPinId = null },
             onSaveNotes = { newNotes ->
                 // Notes are the only field editable after creation (iOS parity).
@@ -723,6 +756,93 @@ private fun PinFilterSheet(
     }
 }
 
+/** Sort options for the pins List view; Closest needs a live GPS fix (iOS parity). */
+private enum class PinSort(val label: String) {
+    CLOSEST("Closest"),
+    NEWEST("Newest"),
+    OLDEST("Oldest"),
+}
+
+/**
+ * The pin's canonical placement coordinate for distance sorting: the snapped
+ * row point when the pin is row-attached, otherwise the raw drop point
+ * (iOS `attachedCoordinate` parity). Null when the pin has no location.
+ */
+private fun pinSortCoordinate(pin: Pin): Pair<Double, Double>? {
+    val snappedLat = pin.snappedLatitude
+    val snappedLon = pin.snappedLongitude
+    if (pin.snappedToRow && snappedLat != null && snappedLon != null) return snappedLat to snappedLon
+    val lat = pin.latitude ?: return null
+    val lon = pin.longitude ?: return null
+    return lat to lon
+}
+
+/** One selectable entry of the canonical launcher-type catalogue for Change Pin Type. */
+private data class PinTypeOption(val name: String, val color: String, val mode: String)
+
+/**
+ * Canonical pin-type catalogue for Change Pin Type: the vineyard's Repairs +
+ * Growth launcher buttons (built-in defaults when unconfigured), deduped by
+ * name, growth-stage rows excluded (stage observations are managed by the
+ * growth flow, not a type swap).
+ */
+private fun pinTypeOptions(state: AppUiState): kotlin.collections.List<PinTypeOption> {
+    fun options(mode: String, configured: kotlin.collections.List<LauncherButton>): kotlin.collections.List<PinTypeOption> =
+        draftsFromConfig(mode, configured)
+            .filterNot { it.isGrowthStage }
+            .filter { it.name.isNotBlank() }
+            .distinctBy { it.name.trim().lowercase() }
+            .map { PinTypeOption(it.name.trim(), it.color, mode) }
+    return options("Repairs", state.repairButtons) + options("Growth", state.growthButtons)
+}
+
+/** Compact sort control shown above the pins list. */
+@Composable
+private fun PinsSortRow(sort: PinSort, closestEnabled: Boolean, onSort: (PinSort) -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Closest silently falls back to Newest while no fix is available —
+        // the list keeps working with location off or permission denied.
+        val effective = if (sort == PinSort.CLOSEST && !closestEnabled) PinSort.NEWEST.label else sort.label
+        Box {
+            TextButton(onClick = { menu = true }) {
+                Icon(Icons.Filled.SwapVert, contentDescription = null, modifier = Modifier.size(16.dp))
+                Text("Sort: $effective", fontSize = 13.sp, modifier = Modifier.padding(start = 4.dp))
+            }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                PinSort.entries.forEach { option ->
+                    val enabled = option != PinSort.CLOSEST || closestEnabled
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (option == PinSort.CLOSEST && !closestEnabled) {
+                                    "Closest (location unavailable)"
+                                } else {
+                                    option.label
+                                },
+                            )
+                        },
+                        enabled = enabled,
+                        trailingIcon = {
+                            if (option == sort) {
+                                Icon(Icons.Filled.Check, contentDescription = null, tint = VineColors.Primary)
+                            }
+                        },
+                        onClick = {
+                            onSort(option)
+                            menu = false
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
 /** List view: quick-add entry cards plus the observation list (iOS list-mode parity). */
 @Composable
 private fun PinsListMode(
@@ -731,6 +851,8 @@ private fun PinsListMode(
     state: AppUiState,
     colorMap: Map<String, String>,
     userLocation: Pair<Double, Double>?,
+    sort: PinSort,
+    onSort: (PinSort) -> Unit,
     modeFilter: String?,
     statusFilter: Boolean?,
     uploadingPinId: String?,
@@ -742,11 +864,27 @@ private fun PinsListMode(
     canDelete: Boolean,
     onDelete: (Pin) -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
+    // Ordering: Newest is the parent-supplied default; Oldest reverses by
+    // creation time; Closest ranks by straight-line distance to the pin's
+    // canonical placement point, pins without a location last.
+    val orderedPins = remember(visiblePins, sort, userLocation) {
+        when {
+            sort == PinSort.CLOSEST && userLocation != null -> visiblePins.sortedBy { pin ->
+                pinSortCoordinate(pin)?.let { (lat, lon) ->
+                    haversineMetres(userLocation.first, userLocation.second, lat, lon)
+                } ?: Double.MAX_VALUE
+            }
+            sort == PinSort.OLDEST -> visiblePins.sortedBy { parseIsoMillis(it.createdAt) ?: Long.MAX_VALUE }
+            else -> visiblePins
+        }
+    }
+    Column(Modifier.fillMaxSize()) {
+        PinsSortRow(sort = sort, closestEnabled = userLocation != null, onSort = onSort)
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
         if (visiblePins.isEmpty()) {
             item(key = "__empty") {
                 Box(Modifier.fillMaxWidth().padding(top = 24.dp), contentAlignment = Alignment.Center) {
@@ -783,7 +921,7 @@ private fun PinsListMode(
                 }
             }
         } else {
-            items(visiblePins, key = { it.id }) { pin ->
+            items(orderedPins, key = { it.id }) { pin ->
                 PinRow(
                     vm = vm,
                     pin = pin,
@@ -801,6 +939,7 @@ private fun PinsListMode(
                     onDelete = { onDelete(pin) },
                 )
             }
+        }
         }
     }
 }
@@ -2786,6 +2925,9 @@ private fun PinDetailSheet(
     onPhoto: () -> Unit,
     onToggle: () -> Unit,
     onDelete: () -> Unit,
+    canChangeType: Boolean = false,
+    typeOptions: kotlin.collections.List<PinTypeOption> = emptyList(),
+    onChangeType: (PinTypeOption) -> Unit = {},
 ) {
     val vine = LocalVineColors.current
     // Half-height first so the tapped pin stays visible on the map; drag up for
@@ -2795,6 +2937,8 @@ private fun PinDetailSheet(
     // editable field). Saved on Done or when the sheet is dismissed, so a swipe
     // down never silently discards a typed note.
     var notesDraft by remember(pin.id) { mutableStateOf(pin.notes ?: "") }
+    // Change Pin Type picker (same catalogue as the Repairs/Growth launchers).
+    var showTypePicker by remember(pin.id) { mutableStateOf(false) }
     fun saveNotesIfChanged() {
         if (canEditNotes && notesDraft != (pin.notes ?: "")) onSaveNotes(notesDraft)
     }
@@ -2858,6 +3002,18 @@ private fun PinDetailSheet(
                 StatusBadge(if (pin.isCompleted) "Done" else "Open", if (pin.isCompleted) VineColors.Success else VineColors.Warning)
                 if (sync.hasAny && !sync.needsAttention) StatusBadge("Pending sync", VineColors.Warning)
                 if (sync.needsAttention) StatusBadge("Needs attention", VineColors.Destructive)
+            }
+
+            // Change Pin Type — fixes a mis-assigned type in place: same pin
+            // id, location, row attachment, notes, photos and history.
+            if (canChangeType && typeOptions.isNotEmpty()) {
+                TextButton(
+                    onClick = { showTypePicker = true },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                ) {
+                    Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Text("Change pin type", fontSize = 13.sp, modifier = Modifier.padding(start = 6.dp))
+                }
             }
 
             // Quick actions (iOS ActionButton row parity — no Edit; the pin's
@@ -2966,6 +3122,78 @@ private fun PinDetailSheet(
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Done") }
         }
+    }
+
+    if (showTypePicker) {
+        val vineColors = LocalVineColors.current
+        AlertDialog(
+            onDismissRequest = { showTypePicker = false },
+            title = { Text("Change Pin Type") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        "Keeps the pin's location, row, notes, photos and history.",
+                        fontSize = 12.sp,
+                        color = vineColors.textSecondary,
+                    )
+                    listOf("Repairs", "Growth").forEach { mode ->
+                        val group = typeOptions.filter { it.mode == mode }
+                        if (group.isNotEmpty()) {
+                            Text(
+                                mode.uppercase(),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = vineColors.textSecondary,
+                                modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+                            )
+                            group.forEach { option ->
+                                val selected = option.mode == (pin.mode ?: "") &&
+                                    option.name.equals(pin.displayTitle.trim(), ignoreCase = true)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            showTypePicker = false
+                                            if (!selected) onChangeType(option)
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .size(16.dp)
+                                            .clip(CircleShape)
+                                            .background(launcherColor(option.color)),
+                                    )
+                                    Text(
+                                        option.name,
+                                        fontSize = 15.sp,
+                                        color = vineColors.textPrimary,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    if (selected) {
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = "Current type",
+                                            tint = VineColors.Primary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showTypePicker = false }) { Text("Cancel") } },
+        )
     }
 }
 

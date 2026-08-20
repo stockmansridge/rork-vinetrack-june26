@@ -61,6 +61,8 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         @SerialName("operation_type") val operationType: String? = null,
         val target: String? = null,
         val notes: String? = null,
+        /** Canonical E-L stage for the template (sql/034), e.g. "EL12". */
+        @SerialName("growth_stage_code") val growthStageCode: String? = null,
         @SerialName("created_at") val createdAt: String? = null,
         @SerialName("deleted_at") val deletedAt: String? = null,
     )
@@ -115,6 +117,7 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
             operationType = operationType?.takeIf { it.isNotBlank() },
             tanks = listOf(tank),
             createdAt = createdAt,
+            templateGrowthStageCode = growthStageCode?.trim()?.takeIf { it.isNotEmpty() },
         )
     }
 

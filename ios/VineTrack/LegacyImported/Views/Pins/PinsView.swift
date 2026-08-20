@@ -10,6 +10,9 @@ struct PinsView: View {
     private var canDelete: Bool { accessControl.canDeleteOperationalRecords }
     private var canExport: Bool { accessControl.canExport }
     @State private var viewMode: PinsViewMode
+    /// List-view ordering. Lives here (not in the list) so it survives
+    /// switching between Map / List / Summary.
+    @State private var listSort: PinsListSortOption = .newest
 
     init(initialViewMode: PinsViewMode = .map) {
         _viewMode = State(initialValue: initialViewMode)
@@ -128,7 +131,7 @@ struct PinsView: View {
                 case .map:
                     PinsMapView(pins: filteredPins)
                 case .list:
-                    PinsListView(pins: filteredPins)
+                    PinsListView(pins: filteredPins, sort: $listSort)
                 case .summary:
                     PinsSummaryView(pins: filteredPins)
                 }
@@ -325,6 +328,29 @@ nonisolated enum PinsViewMode: String, Hashable {
     case map
     case list
     case summary
+}
+
+nonisolated enum PinsListSortOption: String, CaseIterable, Hashable {
+    case closest
+    case newest
+    case oldest
+
+    var label: String {
+        switch self {
+        case .closest: return "Closest"
+        case .newest: return "Newest"
+        case .oldest: return "Oldest"
+        }
+    }
+}
+
+/// One selectable entry of the canonical pin-type catalogue (the vineyard's
+/// Repairs/Growth launcher buttons) used by the Change Pin Type control.
+nonisolated struct PinTypeOption: Identifiable, Hashable {
+    let name: String
+    let color: String
+    let mode: PinMode
+    var id: String { "\(mode.rawValue)|\(name.lowercased())" }
 }
 
 // MARK: - Summary / Repair Report
@@ -723,6 +749,7 @@ struct PinsMapView: View {
 
 struct PinsListView: View {
     let pins: [VinePin]
+    @Binding var sort: PinsListSortOption
     @Environment(MigratedDataStore.self) private var store
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(LocationService.self) private var locationService
@@ -735,9 +762,103 @@ struct PinsListView: View {
     @State private var pinToDelete: VinePin?
     @State private var showDeleteConfirmation: Bool = false
 
+    private var locationFix: CLLocation? { locationService.location }
+
+    /// Effective ordering. `pins` arrives newest-first from the parent;
+    /// Closest silently falls back to that while no GPS fix is available
+    /// (permission denied / location off) — the list never fails.
+    private var sortedPins: [VinePin] {
+        switch sort {
+        case .newest:
+            return pins
+        case .oldest:
+            return pins.sorted { $0.timestamp < $1.timestamp }
+        case .closest:
+            guard let user = locationFix else { return pins }
+            return pins.sorted { distanceMetres($0, from: user) < distanceMetres($1, from: user) }
+        }
+    }
+
+    /// Distance to the pin's canonical placement location (snapped point when
+    /// the pin is row-attached, raw drop point otherwise).
+    private func distanceMetres(_ pin: VinePin, from user: CLLocation) -> Double {
+        let coordinate = pin.attachedCoordinate
+        return user.distance(from: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude))
+    }
+
+    private var effectiveSortLabel: String {
+        if sort == .closest && locationFix == nil { return PinsListSortOption.newest.label }
+        return sort.label
+    }
+
+    private func selectSort(_ option: PinsListSortOption) {
+        if option == .closest {
+            if locationService.authorizationStatus == .notDetermined {
+                locationService.requestPermission()
+            }
+            locationService.startUpdating()
+        }
+        sort = option
+    }
+
+    private var sortBar: some View {
+        HStack {
+            Text("\(pins.count) pin\(pins.count == 1 ? "" : "s")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Menu {
+                ForEach(PinsListSortOption.allCases, id: \.self) { option in
+                    Button {
+                        selectSort(option)
+                    } label: {
+                        if sort == option {
+                            Label(option.label, systemImage: "checkmark")
+                        } else {
+                            Text(option.label)
+                        }
+                    }
+                    .disabled(option == .closest && locationFix == nil)
+                }
+                if locationFix == nil {
+                    Section {
+                        Text("Closest needs your location")
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.caption2)
+                    Text("Sort: \(effectiveSortLabel)")
+                        .font(.subheadline.weight(.medium))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Color(.tertiarySystemBackground))
+                .clipShape(.capsule)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 2)
+        .padding(.bottom, 6)
+    }
+
     var body: some View {
+        VStack(spacing: 0) {
+            sortBar
+            pinsList
+        }
+        .onAppear {
+            // Re-arm location updates when returning with Closest selected.
+            if sort == .closest {
+                locationService.startUpdating()
+            }
+        }
+    }
+
+    private var pinsList: some View {
         List {
-            ForEach(pins) { pin in
+            ForEach(sortedPins) { pin in
                 PinRowView(
                     pin: pin,
                     paddockName: paddockName(for: pin),
@@ -1251,6 +1372,9 @@ struct PinDetailSheet: View {
     @State private var showDirections: Bool = false
     @State private var showPhotoPicker: Bool = false
     @State private var showFullPhoto: Bool = false
+    /// Locally-applied type change so the sheet reflects the new type
+    /// immediately (the `pin` snapshot it was presented with is immutable).
+    @State private var typeDraft: PinTypeOption?
     @State private var memberDirectory: [UUID: String] = [:]
     private let teamRepository: any TeamRepositoryProtocol = SupabaseTeamRepository()
     private var fmt: RegionFormatter { store.settings.regionFormatter }
@@ -1275,6 +1399,79 @@ struct PinDetailSheet: View {
         return store.paddocks.first { $0.id == paddockId }?.name ?? "—"
     }
 
+    /// The live pin row backing this sheet, when it still exists locally.
+    private var livePin: VinePin? { store.pins.first(where: { $0.id == pin.id }) }
+
+    /// Change Pin Type is offered for real repair/growth pins only:
+    /// growth-stage observations are managed by the growth flow (their type IS
+    /// the recorded stage), manual issues have their own editor and RPC-owned
+    /// writes, and synthesized rows have no backing pin to update.
+    private var canChangeType: Bool {
+        pin.mode != .manualIssue && pin.growthStageCode == nil && livePin != nil
+    }
+
+    /// The canonical pin-type catalogue for one mode: the vineyard's launcher
+    /// buttons (built-in defaults when unconfigured), deduped by name, with
+    /// growth-stage rows excluded.
+    private func typeOptions(for mode: PinMode) -> [PinTypeOption] {
+        let configured = mode == .repairs ? store.repairButtons : store.growthButtons
+        let source: [ButtonConfig]
+        if configured.isEmpty {
+            source = mode == .repairs
+                ? ButtonConfig.defaultRepairButtons(for: pin.vineyardId)
+                : ButtonConfig.defaultGrowthButtons(for: pin.vineyardId)
+        } else {
+            source = configured
+        }
+        var seen = Set<String>()
+        var options: [PinTypeOption] = []
+        for button in source.sorted(by: { $0.index < $1.index }) {
+            let name = button.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, !button.isGrowthStageButton else { continue }
+            let key = name.lowercased()
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            options.append(PinTypeOption(name: name, color: button.color, mode: mode))
+        }
+        return options
+    }
+
+    private var displayTypeName: String { typeDraft?.name ?? pin.buttonName }
+    private var displayTypeColor: String { typeDraft?.color ?? pin.displayColorToken }
+    private var displayTypeMode: PinMode { typeDraft?.mode ?? pin.mode }
+
+    /// Applies a type change to the LIVE pin row — same id, coordinates, row
+    /// attachment/side, notes, photo, status and history all preserved; only
+    /// the type identity (name/colour/mode) changes, then syncs as usual.
+    private func applyTypeChange(_ option: PinTypeOption) {
+        guard let live = livePin else { return }
+        let unchanged = live.buttonName.lowercased() == option.name.lowercased()
+            && live.buttonColor == option.color
+            && live.mode == option.mode
+        guard !unchanged else { return }
+        typeDraft = option
+        store.updatePin(live.changingType(buttonName: option.name, buttonColor: option.color, mode: option.mode))
+    }
+
+    @ViewBuilder
+    private func typeMenuSection(title: String, options: [PinTypeOption]) -> some View {
+        if !options.isEmpty {
+            Section(title) {
+                ForEach(options) { option in
+                    Button {
+                        applyTypeChange(option)
+                    } label: {
+                        if option.name.lowercased() == displayTypeName.lowercased(), option.mode == displayTypeMode {
+                            Label(option.name, systemImage: "checkmark")
+                        } else {
+                            Text(option.name)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private var compassDirection: String {
         // No recorded compass direction — show an honest dash, not North.
         guard let h = pin.heading else { return "\u{2014}" }
@@ -1297,11 +1494,11 @@ struct PinDetailSheet: View {
                 Section {
                     HStack {
                         Circle()
-                            .fill(Color.fromString(pin.displayColorToken).gradient)
+                            .fill(Color.fromString(displayTypeColor).gradient)
                             .frame(width: 44, height: 44)
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
-                                Text(pin.buttonName)
+                                Text(displayTypeName)
                                     .font(.title3.weight(.semibold))
                                 RecordSyncBadge(state: RecordSyncState.forPin(pin.id, pinSync: pinSync))
                             }
@@ -1350,6 +1547,35 @@ struct PinDetailSheet: View {
                     }
                     .padding(.vertical, 4)
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                }
+
+                if canChangeType {
+                    Section {
+                        Menu {
+                            typeMenuSection(title: "Repairs", options: typeOptions(for: .repairs))
+                            typeMenuSection(title: "Growth", options: typeOptions(for: .growth))
+                        } label: {
+                            HStack {
+                                Circle()
+                                    .fill(Color.fromString(displayTypeColor).gradient)
+                                    .frame(width: 22, height: 22)
+                                Text(displayTypeName)
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                Text("Change")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(Color.accentColor)
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                    } header: {
+                        Text("Pin Type")
+                    } footer: {
+                        Text("Changing the type keeps the pin's location, row, notes, photos and history.")
+                    }
                 }
 
                 if let photoData = pin.photoData, let uiImage = UIImage(data: photoData) {

@@ -193,6 +193,50 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
     }
 }
 
+extension VinePin {
+    /// A copy of this pin with a different TYPE identity (launcher
+    /// name/colour/mode). Everything else — id, coordinates, row attachment
+    /// and side, notes, photo, completion state and audit fields — is
+    /// preserved verbatim, so correcting a mis-assigned type never moves or
+    /// recreates the pin.
+    func changingType(buttonName newName: String, buttonColor newColor: String, mode newMode: PinMode) -> VinePin {
+        VinePin(
+            id: id,
+            vineyardId: vineyardId,
+            latitude: latitude,
+            longitude: longitude,
+            heading: heading,
+            buttonName: newName,
+            buttonColor: newColor,
+            side: side,
+            mode: newMode,
+            paddockId: paddockId,
+            rowNumber: rowNumber,
+            timestamp: timestamp,
+            createdBy: createdBy,
+            createdByUserId: createdByUserId,
+            isCompleted: isCompleted,
+            completedBy: completedBy,
+            completedByUserId: completedByUserId,
+            completedAt: completedAt,
+            photoData: photoData,
+            photoPath: photoPath,
+            tripId: tripId,
+            growthStageCode: growthStageCode,
+            notes: notes,
+            drivingRowNumber: drivingRowNumber,
+            pinRowNumber: pinRowNumber,
+            pinSide: pinSide,
+            alongRowDistanceM: alongRowDistanceM,
+            snappedLatitude: snappedLatitude,
+            snappedLongitude: snappedLongitude,
+            snappedToRow: snappedToRow,
+            locationScope: locationScope,
+            rowSegments: rowSegments
+        )
+    }
+}
+
 nonisolated enum PinSide: String, Codable, Sendable, Hashable {
     case left = "Left"
     case right = "Right"

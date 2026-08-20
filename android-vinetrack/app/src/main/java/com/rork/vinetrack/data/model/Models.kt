@@ -16,6 +16,7 @@ import com.rork.vinetrack.data.spray.SprayApplicationSnapshot
 import com.rork.vinetrack.data.spray.SprayProductRateBasis
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sqrt
@@ -1634,6 +1635,13 @@ data class SprayRecord(
     @SerialName("block_ids") val blockIds: List<String>? = null,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
+    /**
+     * Client-only: the canonical E-L `growth_stage_code` carried by portal
+     * spray-job templates (sql/034). Never serialized — `spray_records` has no
+     * such column; populated only by [SprayJobTemplateRepository] mapping so
+     * the Spray Program can sort templates by their actual stage value.
+     */
+    @Transient val templateGrowthStageCode: String? = null,
 ) {
     val dateEpochMs: Long? get() = parseIsoToEpochMs(date ?: startTime)
 

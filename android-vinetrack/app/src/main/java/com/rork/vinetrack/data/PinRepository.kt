@@ -305,6 +305,56 @@ class PinRepository(private val session: SessionStore) {
     }
 
     /**
+     * Type-identity PATCH body for Change Pin Type. Narrow by design: it
+     * updates only the pin's launcher-type identity (name/colour/mode) plus
+     * the `title` display snapshot (kept equal to the name, iOS parity) and
+     * the last-write-wins stamp — so correcting a mis-assigned type can never
+     * disturb coordinates, row attachment, side, completion, notes, photos or
+     * block linkage.
+     */
+    @Serializable
+    private data class TypePatch(
+        val title: String?,
+        @SerialName("button_name") val buttonName: String?,
+        @SerialName("button_color") val buttonColor: String?,
+        val mode: String?,
+        @SerialName("client_updated_at") val clientUpdatedAt: String,
+    )
+
+    /**
+     * Change a pin's TYPE in place — same row id, everything except the type
+     * identity columns untouched. Returns the reconciled server row.
+     */
+    suspend fun updatePinType(
+        id: String,
+        buttonName: String,
+        buttonColor: String,
+        mode: String,
+    ): Pin = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val patch = TypePatch(
+            title = buttonName,
+            buttonName = buttonName,
+            buttonColor = buttonColor,
+            mode = mode,
+            clientUpdatedAt = Instant.now().toString(),
+        )
+        val response = SupabaseClient.http.patch(SupabaseClient.restUrl("pins?id=eq.$id")) {
+            authHeaders(token)
+            headers { append("Prefer", "return=representation") }
+            contentType(ContentType.Application.Json)
+            setBody(patch)
+        }
+        when {
+            response.status.isSuccess() -> response.body<List<Pin>>().firstOrNull()
+                ?: throw BackendError.Server(response.status.value, "Empty response")
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
+    /**
      * Read a single live pin row (including its conflict metadata) for the edit
      * replay's stale-guard (Stage 9B-3). Returns null when the pin is missing
      * or soft-deleted, so the caller can block an edit against a vanished pin.

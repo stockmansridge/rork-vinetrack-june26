@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Air
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -101,6 +102,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
@@ -248,20 +250,75 @@ fun SpraysScreen(
     }
 }
 
-/** Status/segment filters for the spray list, mirroring the iOS SprayStatusFilter. */
+/** Status/segment filters for the spray list, mirroring the iOS SprayStatusFilter order. */
 private enum class SprayFilter(val label: String) {
+    // Order defines the chip order: Templates sits immediately after All
+    // because Templates hold the vineyard's master spray program.
     ALL("All"),
+    TEMPLATES("Templates"),
     IN_PROGRESS("In Progress"),
     NOT_STARTED("Not Started"),
     COMPLETED("Completed"),
-    TEMPLATES("Templates"),
 }
 
-/** Sort options for the spray list, mirroring the iOS SprayProgramSortOption (plus oldest-first). */
+/** Sort options for the spray list, mirroring the iOS SprayProgramSortOption. */
 private enum class SpraySort(val label: String) {
-    DATE_NEWEST("Date (newest)"),
-    DATE_OLDEST("Date (oldest)"),
+    EL_ASC("E-L stage (low → high)"),
+    EL_DESC("E-L stage (high → low)"),
+    DATE_NEWEST("Newest"),
+    DATE_OLDEST("Oldest"),
     NAME_AZ("Name (A–Z)"),
+    NAME_ZA("Name (Z–A)"),
+}
+
+/**
+ * Finds an E-L (Eichhorn–Lorenz) stage mention in free text — "EL12",
+ * "EL 12", "E-L 12", "el-7" — so sorting can use the numeric stage value.
+ * The leading look-behind stops words like "Model 3" or "Diesel 5" matching.
+ */
+private val EL_STAGE_TEXT_REGEX = Regex("""(?i)(?<![a-z0-9])e-?l[\s.\-]*([0-9]{1,3})""")
+
+/**
+ * The numeric E-L stage for a spray record. Portal templates carry the
+ * canonical `growth_stage_code` (sql/034); every other record falls back to an
+ * "EL n" mention in its reference or notes. Null when no stage is known.
+ */
+private fun elStageNumber(record: SprayRecord): Int? {
+    record.templateGrowthStageCode?.let { code ->
+        code.filter { it.isDigit() }.take(3).toIntOrNull()?.takeIf { it > 0 }?.let { return it }
+    }
+    val text = "${record.displayLabel} ${record.notes ?: ""}"
+    return EL_STAGE_TEXT_REGEX.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()?.takeIf { it > 0 }
+}
+
+/**
+ * Applies the selected sort. E-L sorts numerically by actual stage value (EL 7
+ * < EL 12 < EL 31, never alphabetical); records with no known stage always
+ * sink to the bottom in either direction, newest-first among themselves.
+ */
+private fun applySpraySort(records: List<SprayRecord>, sort: SpraySort): List<SprayRecord> = when (sort) {
+    SpraySort.DATE_NEWEST -> records.sortedByDescending { it.dateEpochMs ?: 0L }
+    SpraySort.DATE_OLDEST -> records.sortedBy { it.dateEpochMs ?: 0L }
+    SpraySort.NAME_AZ -> records.sortedBy { it.displayLabel.lowercase() }
+    SpraySort.NAME_ZA -> records.sortedByDescending { it.displayLabel.lowercase() }
+    SpraySort.EL_ASC, SpraySort.EL_DESC -> {
+        val ascending = sort == SpraySort.EL_ASC
+        records
+            .map { it to elStageNumber(it) }
+            .sortedWith(
+                Comparator { a, b ->
+                    val ea = a.second
+                    val eb = b.second
+                    when {
+                        ea != null && eb != null && ea != eb -> if (ascending) ea - eb else eb - ea
+                        ea != null && eb == null -> -1
+                        ea == null && eb != null -> 1
+                        else -> (b.first.dateEpochMs ?: 0L).compareTo(a.first.dateEpochMs ?: 0L)
+                    }
+                },
+            )
+            .map { it.first }
+    }
 }
 
 /**
@@ -298,7 +355,9 @@ private fun SprayListView(
     var filter by remember { mutableStateOf(SprayFilter.ALL) }
     var addMenu by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf("") }
-    var sort by remember { mutableStateOf(SpraySort.DATE_NEWEST) }
+    // Survives leaving/re-entering the tab and rotation while working in the
+    // Spray Program (iOS persists the same choice via AppStorage).
+    var sort by rememberSaveable { mutableStateOf(SpraySort.DATE_NEWEST) }
     var sortMenu by remember { mutableStateOf(false) }
     // CSV import: pick a document, parse it, then confirm in a preview sheet.
     var importResult by remember { mutableStateOf<SprayProgramCsvImporter.ImportResult?>(null) }
@@ -329,25 +388,21 @@ private fun SprayListView(
     val all = remember(state.sprayRecords) { state.sprayRecords }
     // Templates merge two sources: legacy templates stored in spray_records and
     // read-only portal templates from spray_jobs (Lovable-created), deduped by id.
-    val templates = remember(state.sprayRecords, state.sprayJobTemplates, query) {
+    val templates = remember(state.sprayRecords, state.sprayJobTemplates, query, sort) {
         val local = state.sprayRecords.asSequence().filter { it.isTemplate }
         val localIds = local.map { it.id }.toSet()
         val portal = state.sprayJobTemplates.asSequence().filter { it.id !in localIds }
-        (local + portal)
+        val merged = (local + portal)
             .filter { query.isEmpty() || sprayTemplateMatches(it, query) }
-            .sortedBy { it.displayLabel.lowercase() }
             .toList()
+        applySpraySort(merged, sort)
     }
     val operational = remember(state.sprayRecords, query, sort, state.trips) {
         val base = state.sprayRecords.asSequence()
             .filter { !it.isTemplate }
             .filter { query.isEmpty() || sprayRecordMatches(it, state.trips, query) }
             .toList()
-        when (sort) {
-            SpraySort.DATE_NEWEST -> base.sortedByDescending { it.dateEpochMs ?: 0L }
-            SpraySort.DATE_OLDEST -> base.sortedBy { it.dateEpochMs ?: 0L }
-            SpraySort.NAME_AZ -> base.sortedBy { it.displayLabel.lowercase() }
-        }
+        applySpraySort(base, sort)
     }
     val filtered = remember(operational, filter, state.trips) {
         when (filter) {
@@ -400,7 +455,11 @@ private fun SprayListView(
                                     text = { Text(option.label) },
                                     leadingIcon = {
                                         Icon(
-                                            if (option == SpraySort.NAME_AZ) Icons.Filled.SortByAlpha else Icons.Filled.CalendarToday,
+                                            when (option) {
+                                                SpraySort.EL_ASC, SpraySort.EL_DESC -> Icons.Filled.SwapVert
+                                                SpraySort.NAME_AZ, SpraySort.NAME_ZA -> Icons.Filled.SortByAlpha
+                                                else -> Icons.Filled.CalendarToday
+                                            },
                                             contentDescription = null,
                                         )
                                     },

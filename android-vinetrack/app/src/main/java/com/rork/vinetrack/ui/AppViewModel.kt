@@ -6030,6 +6030,61 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Change a pin's TYPE identity (launcher name/colour/mode) in place — same
+     * row id; coordinates, row attachment, side, notes, photos, completion and
+     * history are all preserved by the narrow server patch. Online-only: the
+     * colour identity columns aren't part of the offline descriptive-edit
+     * queue, and a mis-typed pin can safely wait for signal.
+     */
+    fun updatePinType(
+        pinId: String,
+        buttonName: String,
+        buttonColor: String,
+        mode: String,
+        onResult: (Boolean, String?) -> Unit,
+    ) {
+        if (!_ui.value.isOnline) {
+            onResult(false, "Changing a pin's type needs a connection — try again online.")
+            return
+        }
+        val previous = _ui.value.pins
+        // Optimistic: the detail sheet, list and map re-render immediately.
+        _ui.update { st ->
+            st.copy(
+                pins = st.pins.map {
+                    if (it.id == pinId) {
+                        it.copy(title = buttonName, buttonName = buttonName, buttonColor = buttonColor, mode = mode)
+                    } else {
+                        it
+                    }
+                },
+                pinError = null,
+            )
+        }
+        viewModelScope.launch {
+            try {
+                val updated = pinRepo.updatePinType(
+                    id = pinId,
+                    buttonName = buttonName,
+                    buttonColor = buttonColor,
+                    mode = mode,
+                )
+                _ui.update { st -> st.copy(pins = st.pins.map { if (it.id == pinId) updated else it }) }
+                onResult(true, null)
+            } catch (e: BackendError.Unauthorized) {
+                signOut()
+                onResult(false, null)
+            } catch (e: BackendError.Server) {
+                _ui.update { it.copy(pins = previous, pinError = friendlyWriteError(e.code)) }
+                onResult(false, friendlyWriteError(e.code))
+            } catch (e: Exception) {
+                _ui.update { it.copy(pins = previous, pinError = "Couldn't change the pin type. Check your connection.") }
+                onResult(false, "Couldn't change the pin type. Check your connection.")
+            }
+        }
+    }
+
+    /**
      * Toggle a pin's completion state with an optimistic flip (Stage 9A).
      *
      * Online (the common path) this PATCHes only `is_completed` and reconciles
