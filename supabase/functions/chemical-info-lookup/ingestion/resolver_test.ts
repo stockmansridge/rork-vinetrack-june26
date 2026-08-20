@@ -17,6 +17,7 @@
 //   R07 authoritative label enrichment R08 AI disagreement with authority
 //   R09 missing vineyard country       R10 Sprayseal regression (end to end)
 //   R11 AWRI variant protections stay in sync
+//   R12 unresolved_fields ↔ field_provenance coherence (contract invariant)
 
 import {
   assert,
@@ -44,9 +45,11 @@ import {
 } from "./master_lookup.ts";
 import {
   buildCandidatePayload,
+  buildFieldProvenance,
   discardUnverifiedAiIdentity,
   discoverAuthoritative,
   mergeDiscoveryIntoStructured,
+  pruneAuthoritativelyResolvedFields,
 } from "./ingest.ts";
 import { APVMA_RESOURCES, clearApvmaCache } from "./apvma.ts";
 import type { AdapterDeps } from "./contract.ts";
@@ -701,4 +704,74 @@ Deno.test("R11: the live matcher's variant guard is the AWRI Stage 5E set, verba
       `variant token '${token}' must always block a suffix match`,
     );
   }
+});
+
+// ===========================================================================
+// R12 — unresolved_fields ↔ field_provenance coherence (contract invariant)
+// ===========================================================================
+
+Deno.test("R12: a populated field with authoritative provenance is never listed unresolved — stale AI-era entries are pruned on merge and at master serve time", async () => {
+  // Register merge: the AI extraction (like production) marked register-
+  // answerable fields unresolved; the register populates them, so the
+  // entries must go — while genuine gaps stay.
+  clearApvmaCache();
+  const fixture = sprayFixture();
+  const discovery = await discoverAuthoritative("AU", "Spray Seal", null, deps(fixture));
+  assertEquals(discovery.outcome, "resolved");
+  const reg = discovery.registration;
+  assert(reg);
+
+  const ai = fabricatedAiStructured();
+  ai.verification.unresolved_fields = [
+    "product_name",
+    "product_category",
+    "form_type",
+    "registrant",
+    "registration_number",
+  ];
+  const merged = mergeDiscoveryIntoStructured(ai, reg);
+
+  for (const field of ["product_name", "product_category", "form_type", "registrant"]) {
+    assertEquals(merged.field_provenance[field], "official_register");
+    assert(
+      !merged.verification.unresolved_fields.includes(field),
+      `${field} is register-populated — must not be listed unresolved`,
+    );
+  }
+  // Genuine gaps survive: per-context label gaps and truly-empty fields.
+  assert(merged.verification.unresolved_fields.includes("rates:GRAPEVINE"));
+  assert(merged.verification.unresolved_fields.includes("label_reference"));
+
+  // AI-populated is NOT authoritative: with no register behind them, the
+  // displayed values stay honestly listed as unresolved.
+  const aiOnly = fabricatedAiStructured();
+  aiOnly.verification.unresolved_fields = ["registrant", "product_category"];
+  aiOnly.field_provenance = buildFieldProvenance(aiOnly, null, false);
+  pruneAuthoritativelyResolvedFields(aiOnly);
+  assertEquals(aiOnly.field_provenance.registrant, "ai_interpretation");
+  assert(
+    aiOnly.verification.unresolved_fields.includes("registrant"),
+    "an AI-supplied registrant is present but unverified — stays unresolved",
+  );
+  assert(aiOnly.verification.unresolved_fields.includes("product_category"));
+
+  // Master serve time: rows stored before the invariant serve clean without
+  // any data rewrite — catalogue-held fields are pruned, real gaps stay.
+  const staleRow = masterRow({
+    verification_unresolved_fields: [
+      "product_name",
+      "registrant",
+      "rates:GRAPEVINE",
+      "label_reference",
+    ],
+  });
+  const served = buildMasterStructuredResponse(staleRow);
+  assertEquals(served.field_provenance.product_name, "master_catalogue");
+  assert(!served.verification.unresolved_fields.includes("product_name"));
+  assert(!served.verification.unresolved_fields.includes("registrant"));
+  assert(served.verification.unresolved_fields.includes("rates:GRAPEVINE"));
+  assert(
+    served.verification.unresolved_fields.includes("label_reference"),
+    "label_reference is null on the row — genuinely unresolved, stays listed",
+  );
 });

@@ -19,6 +19,12 @@
 //   match_source, jurisdiction, registration identity, active ingredients,
 //   groups, registered uses (rates / WHP / REI per claim), field_provenance,
 //   unresolved_fields, conflicts, discovery envelope.
+//
+// Summary paths follow the structured contract exactly:
+//   registration number  -> registration.registration_number
+//   registrant           -> registration.registrant
+//   unresolved fields    -> verification.unresolved_fields
+//   conflicts            -> verification.conflicts
 
 const ENDPOINT = Deno.env.get("LOOKUP_ENDPOINT") ??
   "https://tbafuqwruefgkbyxrxyb.supabase.co/functions/v1/chemical-info-lookup";
@@ -61,11 +67,10 @@ async function verifyOne(jwt: string, productName: string): Promise<void> {
   line("match_source", body.match_source);
   line("jurisdiction", body.jurisdiction);
   line("discovery", body.discovery);
-  const d: Json = body.data ?? body;
-  line("registration_number", d?.registration_number);
-  line("registrant", d?.registrant);
-  line("product_name", d?.product_name ?? d?.registered_product_name);
-  const actives: Json[] = Array.isArray(d?.active_ingredients) ? d.active_ingredients : [];
+  line("registration_number", body.registration?.registration_number);
+  line("registrant", body.registration?.registrant);
+  line("product_name", body.product_name ?? body.registration?.registered_product_name);
+  const actives: Json[] = Array.isArray(body.active_ingredients) ? body.active_ingredients : [];
   for (const a of actives) {
     line(
       "active",
@@ -74,8 +79,8 @@ async function verifyOne(jwt: string, productName: string): Promise<void> {
       }`,
     );
   }
-  line("activity_groups", d?.activity_groups);
-  const uses: Json[] = Array.isArray(d?.registered_uses) ? d.registered_uses : [];
+  line("activity_groups", body.activity_groups);
+  const uses: Json[] = Array.isArray(body.registered_uses) ? body.registered_uses : [];
   if (!uses.length) line("registered_uses", "(empty)");
   for (const u of uses) {
     line(
@@ -85,10 +90,11 @@ async function verifyOne(jwt: string, productName: string): Promise<void> {
       } | REI=${u?.re_entry_period_hours ?? "unstated"} | provenance=${JSON.stringify(u?.provenance ?? null)}`,
     );
   }
-  line("ai_suggested_uses", body.ai_suggested_uses ?? d?.ai_suggested_uses);
-  line("field_provenance", body.field_provenance ?? d?.field_provenance);
-  line("unresolved_fields", d?.unresolved_fields ?? body.unresolved_fields);
-  line("conflicts", d?.conflicts ?? body.conflicts);
+  line("ai_suggested_uses", body.ai_suggested_uses);
+  line("field_provenance", body.field_provenance);
+  line("verification_status", body.verification?.status);
+  line("unresolved_fields", body.verification?.unresolved_fields);
+  line("conflicts", body.verification?.conflicts);
 }
 
 async function main(): Promise<void> {

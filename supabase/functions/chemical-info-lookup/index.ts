@@ -52,6 +52,11 @@
 //       field_provenance: { <field>: official_register | manufacturer_label
 //                     | authoritative_classification | ai_interpretation
 //                     | master_catalogue | unresolved }  (additive)
+//                     Invariant: verification.unresolved_fields never lists
+//                     a whole field whose served value carries authoritative
+//                     provenance. AI-populated (ai_interpretation) fields
+//                     stay listed; per-context gaps (rates:<crop>, …) are
+//                     untouched. Enforced on every serving path.
 //       ai_suggested_uses?: AI-read uses on a register-resolved product with
 //                     no label evidence — clearly-non-authoritative
 //                     suggestions; NEVER served as registered_uses
@@ -100,6 +105,7 @@ import {
   discoveryEnvelope,
   ingestionLog,
   mergeDiscoveryIntoStructured,
+  pruneAuthoritativelyResolvedFields,
   upsertCandidate,
 } from "./ingestion/ingest.ts";
 import {
@@ -1231,6 +1237,10 @@ Deno.serve(async (req: Request) => {
       if (!structured.field_provenance) {
         structured.field_provenance = buildFieldProvenance(structured, null, false);
       }
+      // Contract invariant on EVERY path: a populated field with
+      // authoritative provenance is never listed unresolved (idempotent —
+      // the merge already enforced it on register-resolved results).
+      pruneAuthoritativelyResolvedFields(structured);
 
       // Validate the label URL exactly as `info` does; a hallucinated label
       // link is worse than none, because it looks like evidence.
@@ -1244,6 +1254,10 @@ Deno.serve(async (req: Request) => {
           structured.verification.unresolved_fields = Array.from(
             new Set([...structured.verification.unresolved_fields, "label_reference"]),
           ).sort();
+          // Keep provenance coherent with the nulled field.
+          if (structured.field_provenance) {
+            structured.field_provenance.label_reference = "unresolved";
+          }
         }
       }
 

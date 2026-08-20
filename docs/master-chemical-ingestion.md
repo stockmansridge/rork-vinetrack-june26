@@ -491,10 +491,21 @@ typography tiers. Changes (no schema change, additive wire keys only):
   tier populated each field — official_register, manufacturer_label,
   authoritative_classification, ai_interpretation, master_catalogue, or
   unresolved.
+- Contract invariant (enforced at response assembly on EVERY serving path —
+  register merge, AI-only, master serve): `verification.unresolved_fields`
+  never lists a whole field whose served value carries authoritative
+  provenance. AI-populated fields stay listed (present-but-unverified is
+  still unresolved), genuinely empty fields stay listed, and per-context gap
+  entries (`rates:<crop>`, `withholding_period:<crop>`,
+  `concentration:<active>`, …) are never pruned. Master rows stored before
+  the invariant serve clean without any data rewrite
+  (`pruneAuthoritativelyResolvedFields` in `ingestion/ingest.ts`).
 
-Regression fixture: `ingestion/resolver_test.ts` (R01–R11) — Sprayseal
+Regression fixture: `ingestion/resolver_test.ts` (R01–R12) — Sprayseal
 (APVMA 80160, Omnia, Tebuconazole 430 g/L, FRAC 3) resolves from the query
 “Spray Seal” with register-backed facts and the fabricated AI result reduced
 to recorded conflicts; variant safety (“Custodia” ↔ “CUSTODIA FORTE”),
 ambiguity fail-closed, label-evidence-only enrichment, and the country
-contract are pinned alongside.
+contract are pinned alongside; R12 pins the unresolved_fields ↔
+field_provenance coherence invariant on the merge, AI-only and master-serve
+paths.

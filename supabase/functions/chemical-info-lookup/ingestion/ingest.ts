@@ -295,6 +295,9 @@ export function mergeDiscoveryIntoStructured(
     reg,
     Boolean(evidence && evidence.claims.length),
   );
+  // Contract invariant: entries the register/label just resolved must not
+  // survive from the AI extraction's unresolved list (see prune JSDoc).
+  pruneAuthoritativelyResolvedFields(merged);
   merged.match_source = "authoritative_candidate";
   return merged;
 }
@@ -427,6 +430,75 @@ export function buildFieldProvenance(
       : "unresolved",
     label_reference: has(regBlock?.label_reference) ? "ai_interpretation" : "unresolved",
   };
+}
+
+// Provenance tiers that count as AUTHORITATIVE for the unresolved-fields
+// contract. ai_interpretation is deliberately absent: an AI-supplied value is
+// "present but unverified", which is still unresolved.
+const AUTHORITATIVE_PROVENANCE = new Set<FieldProvenance>([
+  "official_register",
+  "manufacturer_label",
+  "authoritative_classification",
+  "master_catalogue",
+]);
+
+// verification.unresolved_fields entry → field_provenance key. WHOLE-FIELD
+// entries only: per-context gap entries ("rates:GRAPEVINE",
+// "withholding_period:ALMOND", "concentration:<active>",
+// "activity_group:<active>") name genuinely missing sub-facts and are never
+// pruned by the whole-field rule.
+const UNRESOLVED_ENTRY_PROVENANCE_KEY: Record<string, string> = {
+  product_name: "product_name",
+  product_category: "product_category",
+  form_type: "form_type",
+  registrant: "registrant",
+  registration: "registration",
+  registration_number: "registration",
+  active_ingredients: "active_ingredients",
+  activity_groups: "activity_groups",
+  registered_uses: "registered_uses",
+  label_version: "label_version",
+  label_reference: "label_reference",
+  re_entry_period_hours: "re_entry",
+  withholding_period: "withholding_periods",
+  rates: "label_rates",
+  label_rates: "label_rates",
+  restrictions: "restrictions",
+};
+
+/**
+ * Contract invariant (general, never product-specific):
+ * `verification.unresolved_fields` must not list a field whose served value
+ * is POPULATED and whose `field_provenance` is authoritative
+ * (official_register / manufacturer_label / authoritative_classification /
+ * master_catalogue). `field_provenance` already encodes both conditions — an
+ * authoritative tier is only ever assigned to a populated value that the
+ * authority actually provided.
+ *
+ * What stays listed, on purpose:
+ *   * AI-populated fields (ai_interpretation) — displayed but unverified is
+ *     still unresolved;
+ *   * genuinely empty fields (provenance "unresolved");
+ *   * per-context gap entries ("rates:<crop>", "withholding_period:<crop>",
+ *     "concentration:<active>", …) — sub-facts no authority provided.
+ *
+ * Runs at response assembly on EVERY serving path (register merge, AI-only,
+ * master catalogue), so stored rows written before this invariant also serve
+ * clean without any data or schema change.
+ */
+export function pruneAuthoritativelyResolvedFields(structured: any): void {
+  const provenance = structured?.field_provenance;
+  const verification = structured?.verification;
+  if (!provenance || !verification || !Array.isArray(verification.unresolved_fields)) {
+    return;
+  }
+  verification.unresolved_fields = verification.unresolved_fields.filter(
+    (entry: string) => {
+      const key = UNRESOLVED_ENTRY_PROVENANCE_KEY[String(entry)];
+      if (!key) return true;
+      return !AUTHORITATIVE_PROVENANCE.has(provenance[key]);
+    },
+  );
 }
 
 /**

@@ -20,6 +20,7 @@
 
 import { ACTIVITY_GROUP_TABLE_VERSION } from "./activity_groups.ts";
 import type { FieldProvenance } from "./ingest.ts";
+import { pruneAuthoritativelyResolvedFields } from "./ingest.ts";
 import {
   compactProductName,
   normaliseProductNameLoose,
@@ -136,7 +137,7 @@ function masterFieldProvenance(row: any): Record<string, FieldProvenance> {
  * travels with it — no AI source, no AI confidence.
  */
 export function buildMasterStructuredResponse(row: any): any {
-  return {
+  const served = {
     product_name: row.registered_product_name ?? null,
     product_category: row.product_category ?? "",
     form_type: row.form_type ?? null,
@@ -174,6 +175,11 @@ export function buildMasterStructuredResponse(row: any): any {
       registration_identity_key: row.registration_identity_key ?? null,
     },
   };
+  // Contract invariant at serve time: rows stored before the invariant may
+  // carry stale unresolved entries for fields the catalogue actually holds —
+  // the serving envelope is cleaned; the stored row is never rewritten.
+  pruneAuthoritativelyResolvedFields(served);
+  return served;
 }
 
 /**
