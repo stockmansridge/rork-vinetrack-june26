@@ -86,10 +86,14 @@ begin
   on conflict (id) do nothing;
 
   -- Plan P in vineyard A: pos-1 = FRAC 3, pos-2 = FRAC 11 (sql/196 shape).
-  insert into public.resistance_plans (id, vineyard_id, season_id, disease, block_ids, positions)
+  -- sql/196: ruleset metadata is REQUIRED once positions is non-empty
+  -- (resistance_plans_ruleset_required_when_planned).
+  insert into public.resistance_plans (id, vineyard_id, season_id, disease, block_ids, positions,
+                                       ruleset_id, ruleset_version)
   values (
     v_plan, v_vy1, '2026/27', 'powdery_mildew', array[v_block_a, v_block_b],
-    jsonb_build_array(v_pos1_snapshot, v_pos2_snapshot)
+    jsonb_build_array(v_pos1_snapshot, v_pos2_snapshot),
+    'AU_GRAPE_POWDERY_2026_07_22', '2026.07.22'
   );
   select server_revision into v_rev_before from public.resistance_plans where id = v_plan;
 
@@ -293,10 +297,12 @@ begin
   if v_count <> 1 then raise exception 'T7: replay duplicated the job'; end if;
 
   -- The plan lands later, same vineyard: link resolves.
-  insert into public.resistance_plans (id, vineyard_id, season_id, disease, positions)
+  insert into public.resistance_plans (id, vineyard_id, season_id, disease, positions,
+                                       ruleset_id, ruleset_version)
   values (v_plan_future, v_vy1, '2026/27', 'downy_mildew', jsonb_build_array(
     jsonb_build_object('id', 'pos-off', 'products', jsonb_build_array(
-      jsonb_build_object('id', 'prod-off', 'group_codes', jsonb_build_array('7'), 'source', 'group')))));
+      jsonb_build_object('id', 'prod-off', 'group_codes', jsonb_build_array('7'), 'source', 'group')))),
+    'AU_GRAPE_DOWNY_2026_07_22', '2026.07.22');
   if public.spray_job_resistance_link_state(v_j3) <> 'linked' then
     raise exception 'T7: link did not resolve after the plan landed';
   end if;
@@ -312,9 +318,11 @@ begin
     v_j4, v_vy1, 'Pending link, foreign plan',
     v_plan_foreign, 'pos-x', jsonb_build_object('id', 'pos-x')
   );
-  insert into public.resistance_plans (id, vineyard_id, season_id, disease, positions)
+  insert into public.resistance_plans (id, vineyard_id, season_id, disease, positions,
+                                       ruleset_id, ruleset_version)
   values (v_plan_foreign, v_vy2, '2026/27', 'botrytis', jsonb_build_array(
-    jsonb_build_object('id', 'pos-x')));
+    jsonb_build_object('id', 'pos-x')),
+    'AU_GRAPE_BOTRYTIS_2026_07_22', '2026.07.22');
   if public.spray_job_resistance_link_state(v_j4) <> 'cross_vineyard_invalid' then
     raise exception 'T8b: foreign late plan should mark the link cross_vineyard_invalid';
   end if;
