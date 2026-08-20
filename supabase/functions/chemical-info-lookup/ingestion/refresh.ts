@@ -238,7 +238,13 @@ export async function refreshMasterRow(
   // outage rule above).
   const evidence = reg.label_evidence ?? null;
   if (evidence && evidence.claims.length) {
-    const storedSig = storedUsesSignature(row.registered_uses ?? []);
+    // Stage LD-2: stored DOCUMENT-backed rates join the comparison only when
+    // THIS pass extracted the document too — an extraction outage says
+    // nothing about them (absence is never drift, stored rates never churn).
+    const storedSig = storedUsesSignature(
+      row.registered_uses ?? [],
+      Boolean(evidence.document),
+    );
     const freshSig = labelClaimsSignature(evidence);
     if (storedSig !== freshSig) {
       changes.push({

@@ -26,20 +26,26 @@
 //     after the portal HAS confirmed the URL, a merely-transient document
 //     host failure still returns the confirmed URL (document: null); the
 //     hash provenance completes on a later pass.
-//   * NO rate/WHP/REI parsing here (that is LD-2). NO AI involvement.
+//   * NO rate/WHP/REI parsing here — this module only DISCOVERS the
+//     document and (Stage LD-2) hands its extracted text layer to
+//     label_extract.ts. NO AI involvement.
+//   * Text extraction failures are contained HERE: items become null and
+//     the discovery result is byte-identical to a no-extraction pass.
 //   * Transport cache only (same SourceCache discipline as the register
 //     adapter): no database or storage infrastructure.
 //
 // WHAT THIS MODULE WILL NEVER DO
 //   * Serve a constructed URL that nothing confirmed.
 //   * Treat "document unavailable" as "product or label does not exist".
-//   * Parse, interpret, or extract label content.
+//   * Interpret label content (parsing lives in label_extract.ts).
 
 import type {
   AdapterDeps,
   LabelDocumentDiscovery,
+  PdfTextItem,
   WireDataSource,
 } from "./contract.ts";
+import { extractPdfTextItems } from "./label_extract.ts";
 import { identityKey } from "./contract.ts";
 import {
   NEGATIVE_TTL_MS,
@@ -153,7 +159,7 @@ async function fetchStubText(deps: AdapterDeps, url: string): Promise<TextFetch>
 }
 
 type PdfFetch =
-  | { ok: true; sha256: string; byte_size: number }
+  | { ok: true; sha256: string; byte_size: number; bytes: Uint8Array }
   | { ok: false; category: "not_found" | "transient" };
 
 async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
@@ -210,7 +216,12 @@ async function fetchPdfOnce(deps: AdapterDeps, url: string): Promise<PdfFetch> {
       // nothing about the document — treated as a host problem.
       return { ok: false, category: "transient" };
     }
-    return { ok: true, sha256: await sha256Hex(buffer), byte_size: buffer.byteLength };
+    return {
+      ok: true,
+      sha256: await sha256Hex(buffer),
+      byte_size: buffer.byteLength,
+      bytes,
+    };
   } catch {
     return { ok: false, category: "transient" };
   } finally {
@@ -240,6 +251,7 @@ async function fetchPdfWithRetry(
 
 interface CachedDiscovery {
   doc: LabelDocumentDiscovery | null;
+  items: PdfTextItem[] | null;
 }
 
 const cache = new SourceCache();
@@ -249,45 +261,76 @@ export function clearLabelDocumentCache(): void {
   cache.clear();
 }
 
+/** Discovery plus the document's extracted text layer (Stage LD-2 input). */
+export interface LabelDocumentWithText {
+  doc: LabelDocumentDiscovery | null;
+  /**
+   * Positioned text items from the fetched PDF, or null when no bytes were
+   * fetched this pass OR extraction failed — a null here is ALWAYS
+   * fail-soft: the discovery result is byte-identical either way.
+   */
+  items: PdfTextItem[] | null;
+}
+
+/** Contained text extraction: any failure returns null, never propagates. */
+async function extractItems(
+  deps: AdapterDeps,
+  bytes: Uint8Array,
+): Promise<PdfTextItem[] | null> {
+  try {
+    const extractor = deps.extractPdfText ?? extractPdfTextItems;
+    return await extractor(bytes);
+  } catch (err) {
+    console.error(
+      "label document text extraction failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+}
+
 /**
- * Discover the official label document for a register-RESOLVED pcode.
+ * Discover the official label document for a register-RESOLVED pcode and,
+ * when its bytes were fetched, extract the text layer for Stage LD-2.
  *
  * Returns:
- *   * full discovery (URL + sha256/byte size) when the document was fetched;
+ *   * full discovery (URL + sha256/byte size) when the document was fetched
+ *     — plus text items unless extraction failed (contained, fail-soft);
  *   * URL-only discovery when the portal confirmed the URL but the document
  *     host failed transiently (provenance completes on a later pass);
  *   * null when nothing could be confirmed — the caller keeps
  *     `label_reference` honestly unresolved and NOTHING else changes.
  */
-export async function discoverLabelDocument(
+export async function discoverLabelDocumentWithText(
   deps: AdapterDeps,
   pcode: string,
-): Promise<LabelDocumentDiscovery | null> {
+): Promise<LabelDocumentWithText> {
   const trimmed = pcode.trim();
-  if (!trimmed) return null;
+  if (!trimmed) return { doc: null, items: null };
 
   const nowMs = deps.now().getTime();
   const key = `label_document:${trimmed}`;
   const cached = cache.get<CachedDiscovery>("AU", CACHE_SOURCE, key, nowMs);
-  if (cached) return cached.value.doc;
+  if (cached) return { doc: cached.value.doc, items: cached.value.items };
 
   const retrievedAt = deps.now().toISOString();
   const startedMs = nowMs;
   const finish = (
     doc: LabelDocumentDiscovery | null,
+    items: PdfTextItem[] | null,
     ttlMs: number,
-  ): LabelDocumentDiscovery | null => {
+  ): LabelDocumentWithText => {
     cache.set(
       "AU",
       CACHE_SOURCE,
       key,
-      { doc } satisfies CachedDiscovery,
+      { doc, items } satisfies CachedDiscovery,
       ttlMs,
       nowMs,
       retrievedAt,
       identityKey("AU", "apvma", trimmed),
     );
-    return doc;
+    return { doc, items };
   };
 
   // 1) Preferred: the register portal's own view-label redirect.
@@ -297,16 +340,20 @@ export async function discoverLabelDocument(
   if (confirmedUrl) {
     const pdf = await fetchPdfWithRetry(deps, confirmedUrl, startedMs);
     if (pdf.ok) {
-      return finish({
-        url: confirmedUrl,
-        confirmation: "pubcris_view_label",
-        retrieved_at: retrievedAt,
-        document: { sha256: pdf.sha256, byte_size: pdf.byte_size },
-      }, RESOLVED_TTL_MS);
+      return finish(
+        {
+          url: confirmedUrl,
+          confirmation: "pubcris_view_label",
+          retrieved_at: retrievedAt,
+          document: { sha256: pdf.sha256, byte_size: pdf.byte_size },
+        },
+        await extractItems(deps, pdf.bytes),
+        RESOLVED_TTL_MS,
+      );
     }
     if (pdf.category === "not_found") {
       // The portal named a document that is not there: nothing to reference.
-      return finish(null, NEGATIVE_TTL_MS);
+      return finish(null, null, NEGATIVE_TTL_MS);
     }
     // Transient document-host failure AFTER portal confirmation: the URL is
     // authoritative on its own; the hash provenance completes later.
@@ -315,29 +362,44 @@ export async function discoverLabelDocument(
       confirmation: "pubcris_view_label",
       retrieved_at: retrievedAt,
       document: null,
-    }, UNAVAILABLE_TTL_MS);
+    }, null, UNAVAILABLE_TTL_MS);
   }
 
   // 2) Fallback: the deterministic eLabels pattern — counts ONLY when the
   //    PDF bytes are actually fetched and verified from the official host.
   if (deps.now().getTime() - startedMs > DISCOVERY_BUDGET_MS) {
-    return finish(null, UNAVAILABLE_TTL_MS);
+    return finish(null, null, UNAVAILABLE_TTL_MS);
   }
   const fallbackUrl = elabelsUrlFor(trimmed);
   const pdf = await fetchPdfWithRetry(deps, fallbackUrl, startedMs);
   if (pdf.ok) {
-    return finish({
-      url: fallbackUrl,
-      confirmation: "document_fetch",
-      retrieved_at: retrievedAt,
-      document: { sha256: pdf.sha256, byte_size: pdf.byte_size },
-    }, RESOLVED_TTL_MS);
+    return finish(
+      {
+        url: fallbackUrl,
+        confirmation: "document_fetch",
+        retrieved_at: retrievedAt,
+        document: { sha256: pdf.sha256, byte_size: pdf.byte_size },
+      },
+      await extractItems(deps, pdf.bytes),
+      RESOLVED_TTL_MS,
+    );
   }
   // A definitive 404 after a DEFINITIVE portal answer with no label link
   // means this product has no eLabel today (negative-cacheable); anything
   // else is treated as transient so the next lookup retries soon.
   const definitiveAbsence = stub.ok && pdf.category === "not_found";
-  return finish(null, definitiveAbsence ? NEGATIVE_TTL_MS : UNAVAILABLE_TTL_MS);
+  return finish(null, null, definitiveAbsence ? NEGATIVE_TTL_MS : UNAVAILABLE_TTL_MS);
+}
+
+/**
+ * Stage LD-1 view of discovery (document only). Same cache, same behaviour
+ * — kept so every LD-1 call site and regression stays byte-identical.
+ */
+export async function discoverLabelDocument(
+  deps: AdapterDeps,
+  pcode: string,
+): Promise<LabelDocumentDiscovery | null> {
+  return (await discoverLabelDocumentWithText(deps, pcode)).doc;
 }
 
 /**

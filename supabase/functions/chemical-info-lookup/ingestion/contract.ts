@@ -146,6 +146,65 @@ export interface LabelDocumentDiscovery {
 }
 
 // ---------------------------------------------------------------------------
+// Official label document extraction (Stage LD-2) — wire rate shape
+// ---------------------------------------------------------------------------
+
+/**
+ * One label rate in the sql/194 wire vocabulary (JSON contract §4.6/§5.5).
+ * Document-derived entries ALWAYS carry `raw_text` (the verbatim label
+ * wording the number was read from) — a quote is deterministic, a guess is
+ * not. `basis: "other"` carries ONLY the verbatim text: numeric fields are
+ * never invented for wordings the bounded grammar cannot parse.
+ */
+export interface WireLabelRate {
+  label: string; // what the label calls the rate ("Dilute spraying"), or ""
+  basis:
+    | "per_100_litres"
+    | "per_hectare"
+    | "range_per_100_litres"
+    | "range_per_hectare"
+    | "other";
+  value?: number; // single-rate bases only
+  min_value?: number; // range bases only
+  max_value?: number; // range bases only
+  unit: string; // "mL", "L", "g", "kg" — "" for basis "other"
+  raw_text: string; // verbatim label wording (always, for document rates)
+}
+
+/** One positioned text item from the label PDF's text layer. */
+export interface PdfTextItem {
+  page: number;
+  x: number;
+  y: number;
+  /** Measured advance width — cells are reassembled by chaining extents. */
+  width: number;
+  str: string;
+}
+
+/**
+ * A Directions-for-Use row the fail-closed binder could NOT attach to any
+ * register claim — preserved VERBATIM for admin review, never served as a
+ * product fact. `reason` records why it failed closed.
+ */
+export interface UnboundDfuRow {
+  crop_text: string;
+  target_texts: string[];
+  rate_texts: string[];
+  comments_text: string;
+  reason: "no_corresponding_claim" | "conflicting_rates";
+}
+
+/** Provenance of a completed label-document text extraction pass. */
+export interface LabelDocumentExtraction {
+  url: string;
+  sha256: string;
+  byte_size: number;
+  retrieved_at: string;
+  extraction: "pdf_text_layer";
+  parser_version: number;
+}
+
+// ---------------------------------------------------------------------------
 // Official label evidence (Stage 4)
 // ---------------------------------------------------------------------------
 
@@ -165,6 +224,13 @@ export interface LabelUseClaim {
   re_entry_period_hours?: number; // only when a label statement states it
   /** Verbatim crop-scoped label statements backing the fields above. */
   statements: string[];
+  /**
+   * Stage LD-2 — label rates parsed from the official label DOCUMENT and
+   * bound to this claim by the fail-closed crop/target join. Absent unless
+   * document extraction succeeded AND the binding was unambiguous. Every
+   * entry carries the verbatim wording it was read from.
+   */
+  rates?: WireLabelRate[];
 }
 
 /** Official label evidence for one registered product. */
@@ -176,6 +242,20 @@ export interface LabelEvidence {
   sources: WireDataSource[];
   /** Label facts the evidence could not supply (never fabricated). */
   unresolved: string[];
+  /**
+   * Stage LD-2 — provenance of the completed document extraction pass, or
+   * absent when no document text was extracted (timeout/404/extraction
+   * failure — all fail-soft; the Stage 4 evidence stands untouched).
+   */
+  document?: LabelDocumentExtraction;
+  /** Verbatim DFU rows the fail-closed binder refused to attach (audit). */
+  unbound_rows?: UnboundDfuRow[];
+  /**
+   * Disagreements between the label DOCUMENT and the register-published
+   * label statements (both manufacturer_label — always surfaced for review,
+   * never silently resolved).
+   */
+  document_conflicts?: WireConflict[];
 }
 
 export interface DiscoveryResult {
@@ -189,6 +269,13 @@ export interface DiscoveryResult {
 export interface AdapterDeps {
   fetchFn: typeof fetch;
   now: () => Date;
+  /**
+   * Stage LD-2 — PDF text-layer extractor override (tests inject captured
+   * item fixtures). Absent in production: the default pure-JS extractor
+   * (unpdf, the serverless pdf.js build) is used. Extractor failures are
+   * always contained — they can never degrade the register result.
+   */
+  extractPdfText?: (bytes: Uint8Array) => Promise<PdfTextItem[]>;
 }
 
 /**

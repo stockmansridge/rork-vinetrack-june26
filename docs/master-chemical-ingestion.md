@@ -1,11 +1,12 @@
 # Master Chemical Ingestion — Stages 3–4 (Australia)
 
 **Status:** Stage 3 implemented 2026-08-19 (deployed). Stage 4 — official
-label evidence — implemented 2026-08-20 (NOT yet deployed). Stage LD-1 —
-official label DOCUMENT discovery + provenance — implemented 2026-08-20
-(NOT yet deployed; §21). Authoritative ingestion pipeline inside the
-`chemical-info-lookup` edge function
-(`supabase/functions/chemical-info-lookup/ingestion/`).
+label evidence — implemented 2026-08-20 (deployed). Stage LD-1 — official
+label DOCUMENT discovery + provenance — implemented 2026-08-20 (deployed
+and production-verified; §21). Stage LD-2 — label PDF text extraction +
+deterministic DFU rate binding — implemented 2026-08-20 (NOT yet deployed;
+§22). Authoritative ingestion pipeline inside the `chemical-info-lookup`
+edge function (`supabase/functions/chemical-info-lookup/ingestion/`).
 **Scope:** Australia (APVMA) only. NZ / GB / US are declared future adapters.
 **Companions:** `docs/master-chemical-catalogue-design.md` (schema + trust model),
 `docs/chemical-intelligence-json-contract.md` (wire contract, §12),
@@ -630,3 +631,87 @@ intact); foreign-host redirect rejected and never fetched;
 unresolved/ambiguous outcomes never attempt discovery; cache-fronted;
 non-PDF 200 → URL-only provenance. R01–R18 and the full ingestion suite
 unchanged: 144 passed / 0 failed.
+
+## 22. Stage LD-2 — label PDF extraction + deterministic rate binding
+
+Implemented 2026-08-20 (NOT yet deployed). Design:
+`docs/chemical-label-document-extraction-design.md` §3 "Stage LD-2".
+NO AI anywhere on this path, NO database change, NO Saved Chemicals or
+spray-snapshot writes. Only the LD-1-confirmed authoritative document is
+ever parsed.
+
+`ingestion/label_extract.ts` (invoked from `resolveDetails` — register-
+RESOLVED identities only, and only when LD-1 actually fetched verified PDF
+bytes):
+
+1. **Text layer** — `unpdf` (the serverless pdf.js build, pure JS npm
+   import; extractor injectable for tests) yields positioned text items in
+   the same pass that hashed the bytes — no extra document-host request.
+   Extractor failures are contained: the result is byte-identical to a
+   no-extraction pass.
+2. **DFU reconstruction** — items → lines (±4pt baseline, superscript-
+   safe) → cells (measured-extent chaining; whitespace wider than a real
+   inter-word space is a column boundary, never text) → columns (header
+   tokens give the ORDER; the first body line that fills every column
+   teaches the true content edges — measured necessity: Custodia Forte's
+   Table 1 prints its CRITICAL COMMENTS header 95pt right of the column's
+   content edge) → verbatim rows. Handles both measured APVMA layouts:
+   a single table WITH a CROP column (Sprayseal) and per-crop
+   "Table N. ‹Crop›" tables without one (Custodia Forte). Parsing ends at
+   the statutory "NOT TO BE USED…" footer.
+3. **Bounded rate grammar** — measured label forms only: "Mix 30 mL of X
+   per 100 litres of water", "N mL/100 L", "N or M mL/100 L" (range),
+   "N mL/ha", to/– ranges; qualifier labels ("Dilute spraying") read from
+   the wording; every entry carries the verbatim cell text in `raw_text`.
+   Unparseable wording → ONE `basis:"other"` verbatim entry — numbers are
+   never guessed. Two different numbers on the same basis in one cell →
+   the whole cell fails closed to verbatim.
+4. **Fail-closed binding** — a row's rates attach to a register claim only
+   when `cropsCorrespond` AND a target candidate corresponds (the same
+   regression-pinned helpers as Stage 4; candidates = cell / lines /
+   separator-splits / parenthetical-stripped variants). Rows binding no
+   claim, and rows whose rates disagree on the same basis for one claim,
+   serve NOTHING — they land verbatim in `unbound_rows` for review.
+5. **WHP / re-entry corroboration** — the document's statements are parsed
+   with the SAME strict Stage 4 patterns. Where the register statements
+   already state a value: agreement is corroboration; disagreement is a
+   recorded conflict (both sides manufacturer_label — review, never
+   silent) and the register value stands. Where the register is silent, a
+   document value may FILL the claim (e.g. Sprayseal's product-level
+   "WITHHOLDING PERIOD - NOT REQUIRED WHEN USED AS DIRECTED" →
+   authoritative 0 days), clearing its gap. Bound rows' critical comments
+   append verbatim to claim statements.
+
+Serving effects (all additive): claim rates serve with per-use
+`provenance.rates = manufacturer_label` and `field_provenance.label_rates`
+reads manufacturer_label; `rates:<crop>` clears ONLY where a structured
+(non-"other") rate bound; an AI rate disagreeing with a document rate is a
+structured conflict and is never served beside it (AI rates survive only
+on claims the document left rate-less, still `ai_interpretation`); a new
+additive `label_extraction` envelope carries document URL + sha256 +
+parser_version + verbatim `unbound_rows`. Candidates persist the rates
+inside `registered_uses` jsonb — sql/199 unchanged.
+
+Refresh: claim signatures now include document rates; stored document-
+backed rates join the comparison ONLY when the refresh pass extracted the
+document too, and a re-merge carries stored manufacturer_label facts
+through without downgrade — an extraction outage can neither strip nor
+churn stored rates (absence is never drift).
+
+Failure discipline: PDF timeout / 404 / non-PDF / extractor crash →
+response byte-equivalent to LD-1 behaviour (no rates, no envelope, gaps
+stay listed, discovery provenance untouched).
+
+Tests — `ingestion/label_extract_test.ts` (grammar + DFU units on REAL
+captured text-layer fixtures, LD2-A…LD2-J): Sprayseal exact single-rate
+binding to BOTH claims + WHP 0; Custodia Forte multi-row grape binding
+(dilute range 35–54/100 L + concentrate 540/ha per target, rate-less
+Botrytis row serves nothing, almond/macadamia rows unbound, 28-day WHP
+undisturbed); document-vs-AI conflict; same-basis ambiguity fails closed;
+unparseable wording verbatim-only; outage byte-equivalence; unresolved/
+ambiguous never reach the extractor; WHP document-vs-register conflict;
+cache-fronted extraction; refresh-signature outage safety. Full suite:
+156 passed / 0 failed (R01–R18 and all LD-1 tests untouched).
+
+Deployment: the same `supabase functions deploy chemical-info-lookup`
+(bundles the `unpdf` npm import); no SQL to run.

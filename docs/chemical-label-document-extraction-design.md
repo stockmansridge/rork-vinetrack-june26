@@ -1,10 +1,19 @@
 # Chemical Intelligence — official label document extraction (audit & design)
 
 Status: Stage LD-1 (document discovery + provenance, §3 "Stage LD-1")
-IMPLEMENTED 2026-08-20 — see docs/master-chemical-ingestion.md §21,
-`ingestion/label_document.ts` and `ingestion/label_document_test.ts`.
-Stage LD-2 (text extraction + deterministic DFU rate parsing) NOT started;
-§3 "Stage LD-2", §4 and §5 remain the reviewed design for it.
+IMPLEMENTED 2026-08-20, deployed and production-verified — see
+docs/master-chemical-ingestion.md §21, `ingestion/label_document.ts` and
+`ingestion/label_document_test.ts`. Stage LD-2 (text extraction +
+deterministic DFU rate binding) IMPLEMENTED 2026-08-20 (NOT yet deployed)
+— see docs/master-chemical-ingestion.md §22, `ingestion/label_extract.ts`
+and `ingestion/label_extract_test.ts`. Implementation notes beyond this
+design, all measured on the live documents: columns are reconstructed by
+extent-chained cells + first-full-row edge learning (Custodia Forte's
+Table 1 indents its CRITICAL COMMENTS header 95pt right of the column's
+content edge, so header-anchor midpoints alone would leak comment text
+into the rate cell); per-crop "Table N. ‹Crop›" layouts carry the crop in
+the table title rather than a CROP column; "35 or 54 mL/100 L" wordings
+parse as range_per_100_litres.
 
 Goal: when the register's machine-published data does not provide label rates
 (it never does — PubCRIS publishes no rate table), extract authoritative

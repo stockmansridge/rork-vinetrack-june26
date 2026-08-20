@@ -464,16 +464,57 @@ function pushConflict(list: WireConflict[], entry: WireConflict): void {
   if (!dup) list.push(entry);
 }
 
+/** Order-independent identity of one rate reading (label/raw_text excluded
+ * — an AI paraphrase of the same number is the same reading). */
+function rateKey(r: any): string {
+  return [
+    String(r?.basis ?? ""),
+    r?.value ?? "",
+    r?.min_value ?? "",
+    r?.max_value ?? "",
+    String(r?.unit ?? "").toLowerCase(),
+  ].join("|");
+}
+
+function ratesEquivalent(a: any[], b: any[]): boolean {
+  return a.map(rateKey).sort().join(";") === b.map(rateKey).sort().join(";");
+}
+
+/** Compact human-readable rate list for conflict entries and diffs. */
+export function ratesSummary(rates: any[]): string {
+  const list = (Array.isArray(rates) ? rates : []).map((r) => {
+    if (r?.basis === "other") {
+      return `"${String(r?.raw_text ?? "").slice(0, 60)}"`;
+    }
+    const amount = r?.value != null
+      ? String(r.value)
+      : `${r?.min_value ?? "?"}–${r?.max_value ?? "?"}`;
+    const per = r?.basis === "per_hectare" || r?.basis === "range_per_hectare"
+      ? "ha"
+      : "100 L";
+    return `${amount} ${String(r?.unit ?? "")}/${per}`;
+  });
+  return list.join(" + ") || "(none)";
+}
+
 /**
  * Serve the label's registered use claims, letting the AI extraction
  * contribute ONLY clearly-attributed detail (rates) to the claim it matches.
  *
  *   * The claim set (which crops, which targets) is the label's — an AI use
  *     with no corresponding claim is dropped and recorded as a conflict.
+ *   * Rates (Stage LD-2): DOCUMENT-bound rates outrank AI rates on the same
+ *     claim — an AI disagreement becomes a structured conflict and the AI
+ *     reading is never served alongside. AI rates survive only on claims
+ *     the document gave no rates, still attributed ai_interpretation.
  *   * WHP/re-entry: the label value wins where stated; an AI disagreement
  *     becomes a structured conflict. Where the label is silent, an AI value
  *     may be carried but stays attributed to ai_interpretation — it is NEVER
  *     promoted to label evidence.
+ *   * Refresh passes re-merge STORED uses (which carry their own provenance
+ *     from an earlier merge): a stored manufacturer_label fact rides through
+ *     an extraction-failure pass WITHOUT downgrade — raw AI extractions
+ *     never carry a provenance key, so the serving path is unaffected.
  *   * Distinct claims stay distinct: rates attach per crop AND target, never
  *     collapsed across contexts.
  *   * Every served use carries field-level provenance (additive `provenance`
@@ -496,21 +537,47 @@ export function mergeLabelEvidenceIntoUses(
     const ai = aiIndex >= 0 ? aiUses[aiIndex] : null;
     if (aiIndex >= 0) matchedAi.add(aiIndex);
 
+    const carried = (key: string): string =>
+      ai?.provenance?.[key] === "manufacturer_label"
+        ? "manufacturer_label"
+        : "ai_interpretation";
+
+    const docRates = Array.isArray(claim.rates) && claim.rates.length
+      ? claim.rates
+      : null;
+    const aiRates: any[] = Array.isArray(ai?.rates) ? ai.rates : [];
     const use: any = {
       crop: claim.crop,
       target_raw: claim.target_raw,
-      rates: Array.isArray(ai?.rates) ? ai.rates : [],
+      rates: docRates ?? aiRates,
     };
     if (claim.target) use.target = claim.target;
     else if (ai?.target) use.target = ai.target;
 
     const provenance: Record<string, string | null> = {
       claim: "manufacturer_label",
-      rates: use.rates.length ? "ai_interpretation" : null,
+      rates: docRates
+        ? "manufacturer_label"
+        : (use.rates.length ? carried("rates") : null),
       withholding_period: null,
       re_entry: null,
       restrictions: null,
     };
+
+    // ---- Rates: document evidence wins; AI disagreement is a conflict -----
+    if (
+      docRates && aiRates.length &&
+      carried("rates") === "ai_interpretation" &&
+      !ratesEquivalent(aiRates, docRates)
+    ) {
+      pushConflict(conflicts, {
+        field: "label_rates",
+        extracted_value: `${ratesSummary(aiRates)} (${claim.crop} — ${claim.target_raw})`,
+        authoritative_value: `${ratesSummary(docRates)} — official label document`,
+        extracted_source: "ai_interpretation",
+        authoritative_source: "manufacturer_label",
+      });
+    }
 
     // ---- WHP: label statement wins; disagreement is a conflict ------------
     const aiWhp = typeof ai?.withholding_period_days === "number"
@@ -531,7 +598,7 @@ export function mergeLabelEvidenceIntoUses(
       }
     } else if (aiWhp !== null) {
       use.withholding_period_days = aiWhp;
-      provenance.withholding_period = "ai_interpretation";
+      provenance.withholding_period = carried("withholding_period");
     }
 
     // ---- Re-entry: same discipline ----------------------------------------
@@ -552,7 +619,7 @@ export function mergeLabelEvidenceIntoUses(
       }
     } else if (aiReentry !== null) {
       use.re_entry_period_hours = aiReentry;
-      provenance.re_entry = "ai_interpretation";
+      provenance.re_entry = carried("re_entry");
     }
 
     // ---- Restrictions: verbatim label statements win -----------------------
@@ -561,7 +628,7 @@ export function mergeLabelEvidenceIntoUses(
       provenance.restrictions = "manufacturer_label";
     } else if (typeof ai?.restrictions === "string" && ai.restrictions.trim()) {
       use.restrictions = ai.restrictions;
-      provenance.restrictions = "ai_interpretation";
+      provenance.restrictions = carried("restrictions");
     }
 
     use.provenance = provenance;
@@ -605,31 +672,55 @@ function signatureEntry(
   ].join("|");
 }
 
-/** Canonical signature of fresh label evidence claims. */
+function ratesSignaturePart(rates: any[]): string {
+  return (Array.isArray(rates) ? rates : []).map(rateKey).sort().join(",");
+}
+
+/** Canonical signature of fresh label evidence claims. Document-bound rates
+ * (Stage LD-2) are part of the claim content — a changed label rate is a
+ * material change. */
 export function labelClaimsSignature(evidence: LabelEvidence): string {
   return evidence.claims
     .map((c) =>
-      signatureEntry(
-        c.crop,
-        c.target_raw,
-        c.withholding_period_days,
-        c.re_entry_period_hours,
-      )
+      [
+        signatureEntry(
+          c.crop,
+          c.target_raw,
+          c.withholding_period_days,
+          c.re_entry_period_hours,
+        ),
+        ratesSignaturePart(c.rates ?? []),
+      ].join("||")
     )
     .sort()
     .join(" ; ");
 }
 
-/** Canonical signature of a master row's stored registered uses. */
-export function storedUsesSignature(uses: any[]): string {
+/**
+ * Canonical signature of a master row's stored registered uses.
+ * `includeDocumentRates` must mirror whether THIS refresh pass extracted the
+ * label document: stored document-backed rates are compared only against a
+ * fresh extraction — an extraction outage says NOTHING about them (absence
+ * is never drift, so a failed pass can never strip or churn stored rates).
+ * AI-attributed rates are never part of the signature.
+ */
+export function storedUsesSignature(
+  uses: any[],
+  includeDocumentRates = false,
+): string {
   return (Array.isArray(uses) ? uses : [])
     .map((u) =>
-      signatureEntry(
-        u?.crop,
-        u?.target_raw,
-        u?.withholding_period_days,
-        u?.re_entry_period_hours,
-      )
+      [
+        signatureEntry(
+          u?.crop,
+          u?.target_raw,
+          u?.withholding_period_days,
+          u?.re_entry_period_hours,
+        ),
+        includeDocumentRates && u?.provenance?.rates === "manufacturer_label"
+          ? ratesSignaturePart(u?.rates)
+          : "",
+      ].join("||")
     )
     .sort()
     .join(" ; ");

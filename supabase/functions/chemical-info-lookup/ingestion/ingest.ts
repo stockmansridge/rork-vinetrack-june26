@@ -229,6 +229,9 @@ export function mergeDiscoveryIntoStructured(
     const labelMerge = mergeLabelEvidenceIntoUses(aiUses, evidence);
     uses = labelMerge.uses;
     for (const c of labelMerge.conflicts) conflicts.push(c);
+    // Stage LD-2: label DOCUMENT vs register-statement disagreements (both
+    // manufacturer_label) always surface for review — never silently won.
+    for (const c of evidence.document_conflicts ?? []) conflicts.push(c);
   } else if (aiUses.length) {
     merged.ai_suggested_uses = aiUses;
   }
@@ -236,6 +239,18 @@ export function mergeDiscoveryIntoStructured(
   merged.label_rate_bases = Array.from(
     new Set(uses.flatMap((u: any) => (u?.rates ?? []).map((r: any) => r?.basis).filter(Boolean))),
   );
+  // Stage LD-2 (additive envelope): document-extraction provenance plus the
+  // verbatim DFU rows the fail-closed binder refused to attach. Present ONLY
+  // when a document text pass actually completed — timeout/404/extraction
+  // failure leaves the response byte-identical to a no-extraction lookup.
+  if (evidence?.document) {
+    merged.label_extraction = {
+      document_url: evidence.document.url,
+      document_sha256: evidence.document.sha256,
+      parser_version: evidence.document.parser_version,
+      unbound_rows: evidence.unbound_rows ?? [],
+    };
+  }
 
   // ---- Evidence: sources, unresolved, status ------------------------------
   const sources: WireDataSource[] = Array.isArray(structured?.verification?.sources)
@@ -558,7 +573,12 @@ export function buildFieldProvenance(
       ? (labelUsesResolved ? "manufacturer_label" : "ai_interpretation")
       : "unresolved",
     label_rates: uses.some((u) => Array.isArray(u?.rates) && u.rates.length)
-      ? "ai_interpretation"
+      // Stage LD-2: document-bound rates read manufacturer_label — the
+      // per-use provenance recorded by the merge is the arbiter, so AI rates
+      // riding on other claims never inflate the field-level tier.
+      ? (uses.some((u) => u?.provenance?.rates === "manufacturer_label")
+        ? "manufacturer_label"
+        : "ai_interpretation")
       : "unresolved",
     withholding_periods: useFact(
       "withholding_period",

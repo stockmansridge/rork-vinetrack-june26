@@ -19,15 +19,19 @@
 //   stay unresolved for the admin to confirm against the label document at
 //   review (or AI-attributed, clearly marked). They are never invented.
 //
-// LABEL DOCUMENT (Stage LD-1)
+// LABEL DOCUMENT (Stage LD-1 discovery + Stage LD-2 extraction)
 //   For a register-RESOLVED identity only, the official label DOCUMENT is
 //   discovered via the PubCRIS portal's own view-label redirect to the
 //   APVMA eLabels host (ingestion/label_document.ts). Success populates
 //   `label_reference` with the confirmed document URL and records document
 //   provenance (URL, retrieval time, SHA-256 when fetched) as a
-//   `manufacturer_label` source. Any failure is fail-soft: the reference
-//   stays unresolved and nothing else about the register result changes.
-//   No document content is parsed here (rates/WHP extraction is LD-2).
+//   `manufacturer_label` source. When the PDF bytes were fetched, the
+//   document's text layer is parsed DETERMINISTICALLY (label_extract.ts):
+//   Directions-for-Use rates bind to the register's OWN claims through the
+//   fail-closed crop/target join, WHP/re-entry are corroborated with the
+//   Stage 4 strict patterns (disagreements become review conflicts), and
+//   unbindable rows are preserved verbatim — never served. Any failure at
+//   any step is fail-soft: the register result stands byte-identical.
 //
 // WHAT THIS ADAPTER WILL NEVER DO
 //   * Resolve by substring or fuzzy similarity ("custodia" can never reach
@@ -63,9 +67,10 @@ import {
 } from "./cache.ts";
 import {
   clearLabelDocumentCache,
-  discoverLabelDocument,
+  discoverLabelDocumentWithText,
   labelDocumentSource,
 } from "./label_document.ts";
+import { applyLabelDocumentExtraction } from "./label_extract.ts";
 
 export const APVMA_DATASTORE_URL =
   "https://data.gov.au/data/api/3/action/datastore_search";
@@ -470,19 +475,43 @@ async function resolveDetails(
   }
 
   // ---- Official label evidence (Stage 4; fail-soft) -----------------------
-  const labelEvidence = await fetchLabelEvidence(deps, pcode, retrievedAt);
+  let labelEvidence = await fetchLabelEvidence(deps, pcode, retrievedAt);
+
+  // ---- Official label DOCUMENT (Stage LD-1 + LD-2; fail-soft) -------------
+  // Runs ONLY here — i.e. only after this register identity RESOLVED
+  // deterministically. Discovery success clears the label_reference gap and
+  // records document provenance. When the PDF text layer was extracted AND
+  // Stage 4 claims resolved, the deterministic LD-2 pass binds document
+  // rates / corroborates WHP+re-entry onto those claims (fail-closed join;
+  // its own failures are contained so a bad document can never damage the
+  // register result). Any timeout/404/extraction failure leaves everything
+  // exactly as it stands — gaps stay honestly listed, nothing downgraded.
+  const labelDoc = await discoverLabelDocumentWithText(deps, pcode);
+  const labelDocument = labelDoc.doc;
+  if (
+    labelDocument?.document && labelDoc.items && labelEvidence &&
+    labelEvidence.claims.length
+  ) {
+    try {
+      labelEvidence = applyLabelDocumentExtraction(
+        labelEvidence,
+        labelDoc.items,
+        labelDocument,
+      );
+    } catch (err) {
+      // Fail soft: Stage 4 evidence stands untouched.
+      console.error(
+        "label document extraction skipped:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   if (labelEvidence) {
     unresolved.delete("registered_uses");
     for (const gap of labelEvidence.unresolved) unresolved.add(gap);
     sources.push(...labelEvidence.sources);
   }
-
-  // ---- Official label DOCUMENT (Stage LD-1; fail-soft) --------------------
-  // Runs ONLY here — i.e. only after this register identity RESOLVED
-  // deterministically. Success clears the label_reference gap and records
-  // document provenance; any timeout/404 leaves the register result exactly
-  // as it stands (the gap stays honestly listed, nothing is downgraded).
-  const labelDocument = await discoverLabelDocument(deps, pcode);
   if (labelDocument) {
     unresolved.delete("label_reference");
     sources.push(labelDocumentSource(pcode, labelDocument));

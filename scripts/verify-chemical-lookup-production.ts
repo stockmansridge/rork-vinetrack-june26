@@ -89,6 +89,27 @@ async function verifyOne(jwt: string, productName: string): Promise<void> {
   for (const s of labelDocSources) {
     line("label_document_source", `${s?.name} -> ${s?.reference}`);
   }
+  // Stage LD-2 — document extraction envelope (rates parsed from the
+  // official label PDF; unbound rows are the fail-closed audit trail).
+  if (body.label_extraction && typeof body.label_extraction === "object") {
+    const e: Json = body.label_extraction;
+    line(
+      "label_extraction",
+      `parser v${e.parser_version} sha256=${String(e.document_sha256 ?? "").slice(0, 16)}… url=${e.document_url}`,
+    );
+    const unbound: Json[] = Array.isArray(e.unbound_rows) ? e.unbound_rows : [];
+    if (!unbound.length) line("unbound_rows", "(none — every DFU row bound)");
+    for (const r of unbound) {
+      line(
+        "unbound_row",
+        `${r?.crop_text} — ${JSON.stringify(r?.target_texts ?? [])} (${r?.reason}) rates=${
+          JSON.stringify(r?.rate_texts ?? [])
+        }`,
+      );
+    }
+  } else {
+    line("label_extraction", "(absent — no document text pass this lookup)");
+  }
   const actives: Json[] = Array.isArray(body.active_ingredients) ? body.active_ingredients : [];
   for (const a of actives) {
     line(
