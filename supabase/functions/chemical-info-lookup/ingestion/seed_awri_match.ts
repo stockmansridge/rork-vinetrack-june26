@@ -199,7 +199,7 @@ export const VARIANT_TOKENS = new Set([
   "flexi", "flex", "xcel", "excel", "xt", "xl", "xtreme", "ii", "iii", "iv",
 ]);
 
-function isNumeric(token: string): boolean {
+export function isNumeric(token: string): boolean {
   return /^\d+(\.\d+)?$/.test(token);
 }
 
@@ -210,7 +210,7 @@ function isIgnorableToken(token: string): boolean {
 }
 
 /** A remainder is droppable iff every token is ignorable and none is a variant. */
-function droppableRemainder(tokens: string[]): boolean {
+export function droppableRemainder(tokens: string[]): boolean {
   if (tokens.some((t) => VARIANT_TOKENS.has(t))) return false;
   return tokens.every((t) => isIgnorableToken(t));
 }
@@ -261,7 +261,7 @@ export function parseManifestActive(raw: string): string[][][] {
   return alternatives;
 }
 
-function partMatchesRegisterActive(partTokens: string[], registerName: string): boolean {
+export function partMatchesRegisterActive(partTokens: string[], registerName: string): boolean {
   const registerTokens = new Set(activeTokens(registerName));
   const expanded = new Set(registerTokens);
   for (const token of registerTokens) {
