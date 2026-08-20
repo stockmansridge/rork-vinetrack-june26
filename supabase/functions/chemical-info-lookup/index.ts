@@ -11,6 +11,15 @@
 //     "registrationNumber"?: string }   // optional identity hint (sql/199)
 //   { "action": "master_refresh", "masterChemicalId": uuid,
 //     "apply"?: boolean }               // system admins only (Stage 3)
+//   { "action": "seed_apply", "registrationNumber": string,
+//     "productName": string, "seedSource": string }
+//                                        // system admins only (Stage 5B) —
+//                                        // INSERT-ONLY reviewed-seed apply:
+//                                        // existing rows (any review state)
+//                                        // come back "already_exists"
+//                                        // untouched; the live register
+//                                        // re-verifies name↔number before
+//                                        // any write; candidates only.
 //
 // Response 200 JSON shapes:
 //   action=search -> { results: ChemicalSearchResult[] }  (approved master
@@ -76,6 +85,7 @@ import {
   buildCandidateRefreshPatch,
   refreshMasterRow,
 } from "./ingestion/refresh.ts";
+import { runSeedApply } from "./ingestion/seed_apply.ts";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -796,6 +806,34 @@ async function searchMaster(query: string, countryCode: string): Promise<any[]> 
   }
 }
 
+/**
+ * System-admin gate shared by master_refresh and seed_apply: the caller's own
+ * JWT is presented to the database's is_system_admin() RPC. Anything short of
+ * an explicit true — missing header, RPC failure, non-admin — is NOT an admin.
+ */
+async function isSystemAdmin(req: Request): Promise<boolean> {
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+  const supabaseUrl = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
+  if (!authHeader || !anonKey || !supabaseUrl) return false;
+  try {
+    const adminRes = await fetch(`${supabaseUrl}/rest/v1/rpc/is_system_admin`, {
+      method: "POST",
+      headers: {
+        "apikey": anonKey,
+        "Authorization": authHeader,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+    if (adminRes.ok) return (await adminRes.json()) === true;
+    try { await adminRes.body?.cancel(); } catch { /* ignore */ }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 function extractJSON(text: string): any {
   let cleaned = text
     .replace(/```json/gi, "")
@@ -1333,29 +1371,7 @@ Deno.serve(async (req: Request) => {
       ).trim();
       if (!masterId) return json({ error: "Missing masterChemicalId" }, 400);
 
-      const authHeader = req.headers.get("Authorization") ?? "";
-      const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-      const supabaseUrl = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
-      let isAdmin = false;
-      if (authHeader && anonKey && supabaseUrl) {
-        try {
-          const adminRes = await fetch(`${supabaseUrl}/rest/v1/rpc/is_system_admin`, {
-            method: "POST",
-            headers: {
-              "apikey": anonKey,
-              "Authorization": authHeader,
-              "Content-Type": "application/json",
-            },
-            body: "{}",
-          });
-          if (adminRes.ok) {
-            isAdmin = (await adminRes.json()) === true;
-          } else {
-            try { await adminRes.body?.cancel(); } catch { /* ignore */ }
-          }
-        } catch { isAdmin = false; }
-      }
-      if (!isAdmin) return json({ error: "Not authorised" }, 403);
+      if (!(await isSystemAdmin(req))) return json({ error: "Not authorised" }, 403);
 
       const rows = await masterSelect(
         `select=*&id=eq.${encodeURIComponent(masterId)}&limit=1`,
@@ -1398,6 +1414,49 @@ Deno.serve(async (req: Request) => {
         },
         ...(result.error_category ? { error_category: result.error_category } : {}),
       });
+    }
+
+    if (action === "seed_apply") {
+      // Stage 5B — apply ONE reviewed seed identity as a Master CANDIDATE.
+      // System admins only. INSERT-ONLY by construction (ingestion/
+      // seed_apply.ts): an existing row in ANY review state is returned
+      // "already_exists" untouched; the live register re-verifies
+      // name↔number before anything binds; AWRI rides along as ONE
+      // viticulture_reference evidence entry, never as facts; no AI call;
+      // saved_chemicals and spray records are never touched; approval stays
+      // a human step.
+      if (!masterConfigured()) {
+        return json({ error: "Master catalogue not configured" }, 500);
+      }
+      if (!(await isSystemAdmin(req))) return json({ error: "Not authorised" }, 403);
+
+      const registrationNumber = String(body?.registrationNumber ?? "").trim();
+      const productName = String(body?.productName ?? "").trim();
+      const seedSource = String(body?.seedSource ?? "").trim();
+      const deps = { fetchFn: fetch, now: () => new Date() };
+
+      const outcome = await runSeedApply(
+        {
+          registration_number: registrationNumber,
+          product_name: productName,
+          seed_source_id: seedSource,
+        },
+        masterOps,
+        (query, hint) => discoverAuthoritative("AU", query, hint, deps),
+        new Date().toISOString(),
+        ACTIVITY_GROUP_TABLE_VERSION,
+      );
+
+      console.log(JSON.stringify({
+        evt: "seed_apply",
+        seed_source: seedSource,
+        registration_identity: outcome.registration_identity_key,
+        outcome: outcome.outcome,
+        detail: outcome.detail,
+        writes: outcome.writes,
+      }));
+
+      return json(outcome);
     }
 
     return json({ error: "Unknown action" }, 400);

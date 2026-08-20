@@ -400,13 +400,51 @@ idempotence proof: the seed skips it — no duplicate, no update. Result is
 recorded in `seeds/awri_dogbook_2026_27.dryrun.json` under
 `manual_comparison`.
 
-Next step (NOT yet run — dry-run counts are confirmed, but execution still
-requires explicit operator approval): bulk candidate creation by feeding each
-candidate-eligible
-registration number through the existing pipeline (`ingest.ts`, register-
-number-verified path) — candidates only, tagged with AWRI
-`viticulture_reference` provenance, never auto-approved, duplicate-safe on
-the identity key so rerunning the same edition creates nothing new.
+### Stage 5B — apply mechanism (implemented; NOT yet executed)
+
+The reviewed seed is applied through the DEPLOYED pipeline, one identity per
+call — never bulk SQL. Pieces:
+
+- `ingestion/seed_apply.ts` — server-side apply module behind the new
+  `seed_apply` action in `index.ts` (system admins only, same
+  `is_system_admin` gate as `master_refresh`). INSERT-ONLY by construction:
+  it receives a narrowed ops surface with no update capability, so an
+  existing row in ANY review state comes back `already_exists` untouched —
+  the Stage 4 pilot candidate `AU:apvma:91636` can never be modified by
+  seeding. For a missing identity it re-verifies name↔number LIVE via the
+  adapter's `register_number_verified` path (the reviewed number is only a
+  pointer; the resolved identity must equal the requested identity or
+  nothing is written), refuses register drift (`conflict` when the row is
+  no longer current, `unresolved` when the name no longer verifies), builds
+  a register-only structured result (NO AI call; register + label evidence
+  only), appends exactly one `viticulture_reference` evidence entry for the
+  AWRI booklet (metadata only — never a fact; row `source_kind` stays
+  `official_register`, keeping rows approvable under sql/199's provenance
+  gate), and inserts via the duplicate-safe candidate insert.
+- `ingestion/seed_awri_apply.ts` — pure batch logic: the batch is built from
+  the reviewed artifact's `candidate_identities` ONLY (tampering — adding a
+  conflict or an unreviewed identity — throws); operator-verified existing
+  rows are pre-marked and never sent; terminal outcomes
+  (created / already_exists / unresolved / conflict) are never re-sent on a
+  rerun; only `failed` retries; per-item failures are contained so one
+  product never aborts the batch.
+- `ingestion/seeds/run_awri_apply.ts` — operator CLI. PLAN mode by default
+  (zero network, zero writes). `--execute` performs the batch sequentially
+  against the deployed function using the operator's OWN admin JWT
+  (`SEED_APPLY_JWT`; no service-role key exists in the repo or the runner),
+  persisting state (`seeds/awri_dogbook_2026_27.apply-state.json`) after
+  every item — stop with Ctrl-C and rerun to resume. Logs one line per
+  identity: created / already_exists / unresolved / conflict / failed.
+- Tests 67–74 (`seed_apply_test.ts`) pin every gate above.
+
+Runbook (when execution is approved): 1) deploy the updated function
+(`supabase functions deploy chemical-info-lookup`, §16); 2) plan:
+`deno run --allow-read seeds/run_awri_apply.ts`; 3) execute:
+`SEED_APPLY_JWT=<admin JWT> deno run --allow-read --allow-write --allow-net
+--allow-env seeds/run_awri_apply.ts --execute` (optionally `--limit 5` for a
+pilot slice); 4) rerun the same command until `pending 0`; reruns create
+nothing new. saved_chemicals and spray records are never touched; approval
+remains a human step in the admin review UI.
 
 ## 18. Future jurisdictions (New Zealand, not implemented)
 
