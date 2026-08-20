@@ -1263,9 +1263,15 @@ Deno.serve(async (req: Request) => {
       pruneAuthoritativelyResolvedFields(structured);
 
       // Validate the label URL exactly as `info` does; a hallucinated label
-      // link is worse than none, because it looks like evidence.
+      // link is worse than none, because it looks like evidence. A Stage
+      // LD-1 register-confirmed document URL (field_provenance
+      // manufacturer_label) is NOT re-probed: it was confirmed by the
+      // register portal itself, and a transient eLabels hiccup must never
+      // strip authoritative provenance from the response.
       const labelRef = structured.registration?.label_reference;
-      if (labelRef) {
+      const labelRefAuthoritative =
+        structured.field_provenance?.label_reference === "manufacturer_label";
+      if (labelRef && !labelRefAuthoritative) {
         const ok = !isPlaceholderURL(labelRef) &&
           looksLikeLabelURL(labelRef) &&
           await isURLReachable(labelRef);

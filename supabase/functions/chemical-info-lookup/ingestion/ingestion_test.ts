@@ -473,11 +473,20 @@ Deno.test("40/23: AU vineyard + Custodia resolves AU:apvma:66541 with register-b
   assert(reg.label_version?.includes("112233") === true, "current label approval referenced");
   assert(reg.register_status?.startsWith("R") === true, "register status recorded");
 
-  // No foreign sources: every request stayed on the AU government register.
+  // No foreign sources: every request stayed on official AU government
+  // hosts — the register extract (data.gov.au) plus the APVMA's own portal
+  // and eLabels hosts, which Stage LD-1 consults for the label DOCUMENT of
+  // a register-resolved identity (this harness rejects them, exercising the
+  // fail-soft path).
   assert(fixture.requestLog!.length > 0, "requests were made");
+  const officialHosts = [
+    "https://data.gov.au/",
+    "https://portal.apvma.gov.au/",
+    "https://elabels.apvma.gov.au/",
+  ];
   assert(
-    fixture.requestLog!.every((u) => u.startsWith("https://data.gov.au/")),
-    "only the AU register was consulted",
+    fixture.requestLog!.every((u) => officialHosts.some((h) => u.startsWith(h))),
+    "only official AU government sources were consulted",
   );
 
   // Candidate created once, deduplicated, as a CANDIDATE with provenance.

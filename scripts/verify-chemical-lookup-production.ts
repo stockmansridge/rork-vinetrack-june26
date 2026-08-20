@@ -76,6 +76,19 @@ async function verifyOne(jwt: string, productName: string): Promise<void> {
   line("registration_number", body.registration?.registration_number);
   line("registrant", body.registration?.registrant);
   line("product_name", body.product_name ?? body.registration?.registered_product_name);
+  // Stage LD-1 — official label document discovery + provenance.
+  line("label_reference", body.registration?.label_reference);
+  line("label_reference_provenance", body.field_provenance?.label_reference);
+  const labelDocSources: Json[] =
+    (Array.isArray(body.verification?.sources) ? body.verification.sources : [])
+      .filter((s: Json) =>
+        s?.kind === "manufacturer_label" &&
+        String(s?.name ?? "").includes("label document")
+      );
+  if (!labelDocSources.length) line("label_document_source", "(none)");
+  for (const s of labelDocSources) {
+    line("label_document_source", `${s?.name} -> ${s?.reference}`);
+  }
   const actives: Json[] = Array.isArray(body.active_ingredients) ? body.active_ingredients : [];
   for (const a of actives) {
     line(

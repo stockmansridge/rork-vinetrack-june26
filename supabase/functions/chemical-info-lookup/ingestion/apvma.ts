@@ -19,6 +19,16 @@
 //   stay unresolved for the admin to confirm against the label document at
 //   review (or AI-attributed, clearly marked). They are never invented.
 //
+// LABEL DOCUMENT (Stage LD-1)
+//   For a register-RESOLVED identity only, the official label DOCUMENT is
+//   discovered via the PubCRIS portal's own view-label redirect to the
+//   APVMA eLabels host (ingestion/label_document.ts). Success populates
+//   `label_reference` with the confirmed document URL and records document
+//   provenance (URL, retrieval time, SHA-256 when fetched) as a
+//   `manufacturer_label` source. Any failure is fail-soft: the reference
+//   stays unresolved and nothing else about the register result changes.
+//   No document content is parsed here (rates/WHP extraction is LD-2).
+//
 // WHAT THIS ADAPTER WILL NEVER DO
 //   * Resolve by substring or fuzzy similarity ("custodia" can never reach
 //     "Custodia Forte").
@@ -51,6 +61,11 @@ import {
   SourceCache,
   UNAVAILABLE_TTL_MS,
 } from "./cache.ts";
+import {
+  clearLabelDocumentCache,
+  discoverLabelDocument,
+  labelDocumentSource,
+} from "./label_document.ts";
 
 export const APVMA_DATASTORE_URL =
   "https://data.gov.au/data/api/3/action/datastore_search";
@@ -220,9 +235,10 @@ async function datastoreSearch(deps: AdapterDeps, params: DatastoreParams): Prom
 
 const cache = new SourceCache();
 
-/** Test hook: clears the module cache between deno test cases. */
+/** Test hook: clears the module caches between deno test cases. */
 export function clearApvmaCache(): void {
   cache.clear();
+  clearLabelDocumentCache();
 }
 
 function source(
@@ -325,9 +341,9 @@ async function resolveDetails(
   const retrievedAt = deps.now().toISOString();
   const pcode = String(row.pcode).trim();
   const unresolved = new Set<string>([
-    // The label DOCUMENT itself is not machine-consumed; the reference stays
-    // unresolved for the admin to attach at review. Registered uses start
-    // unresolved and are cleared only when label evidence actually resolves.
+    // Both start unresolved and are cleared ONLY by their authoritative
+    // steps below: label_reference by Stage LD-1 document discovery,
+    // registered_uses by Stage 4 label evidence. Never assumed resolved.
     "label_reference",
     "registered_uses",
   ]);
@@ -461,6 +477,17 @@ async function resolveDetails(
     sources.push(...labelEvidence.sources);
   }
 
+  // ---- Official label DOCUMENT (Stage LD-1; fail-soft) --------------------
+  // Runs ONLY here — i.e. only after this register identity RESOLVED
+  // deterministically. Success clears the label_reference gap and records
+  // document provenance; any timeout/404 leaves the register result exactly
+  // as it stands (the gap stays honestly listed, nothing is downgraded).
+  const labelDocument = await discoverLabelDocument(deps, pcode);
+  if (labelDocument) {
+    unresolved.delete("label_reference");
+    sources.push(labelDocumentSource(pcode, labelDocument));
+  }
+
   return {
     country_code: "AU",
     scheme: "apvma",
@@ -477,6 +504,7 @@ async function resolveDetails(
     sources,
     match_mode: mode,
     label_evidence: labelEvidence,
+    label_document: labelDocument,
   };
 }
 

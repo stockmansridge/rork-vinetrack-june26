@@ -148,7 +148,9 @@ export function mergeDiscoveryIntoStructured(
     registration_number: reg.registration_number,
     registrant: reg.registrant ?? aiReg?.registrant ?? null,
     registered_product_name: reg.registered_product_name,
-    label_reference: aiReg?.label_reference ?? null,
+    // Stage LD-1: the register-confirmed label DOCUMENT wins; an AI-supplied
+    // URL is only carried when no authoritative document was discovered.
+    label_reference: reg.label_document?.url ?? aiReg?.label_reference ?? null,
     label_version: reg.label_version ?? aiReg?.label_version ?? null,
   };
   merged.product_name = reg.registered_product_name;
@@ -567,7 +569,13 @@ export function buildFieldProvenance(
     label_version: has(regBlock?.label_version)
       ? (reg?.label_version ? "official_register" : "ai_interpretation")
       : "unresolved",
-    label_reference: has(regBlock?.label_reference) ? "ai_interpretation" : "unresolved",
+    // Stage LD-1: only the EXACT document URL the register portal confirmed
+    // reads manufacturer_label; any other populated value is the AI's.
+    label_reference: has(regBlock?.label_reference)
+      ? (reg?.label_document?.url === regBlock?.label_reference
+        ? "manufacturer_label"
+        : "ai_interpretation")
+      : "unresolved",
   };
 }
 

@@ -1,8 +1,10 @@
 # Master Chemical Ingestion — Stages 3–4 (Australia)
 
 **Status:** Stage 3 implemented 2026-08-19 (deployed). Stage 4 — official
-label evidence — implemented 2026-08-20 (NOT yet deployed). Authoritative
-ingestion pipeline inside the `chemical-info-lookup` edge function
+label evidence — implemented 2026-08-20 (NOT yet deployed). Stage LD-1 —
+official label DOCUMENT discovery + provenance — implemented 2026-08-20
+(NOT yet deployed; §21). Authoritative ingestion pipeline inside the
+`chemical-info-lookup` edge function
 (`supabase/functions/chemical-info-lookup/ingestion/`).
 **Scope:** Australia (APVMA) only. NZ / GB / US are declared future adapters.
 **Companions:** `docs/master-chemical-catalogue-design.md` (schema + trust model),
@@ -37,7 +39,7 @@ adapter; source selection is never an AI decision.**
 
 | Country | Schemes | Register authority | Label authority | Adapter |
 |---|---|---|---|---|
-| AU | `apvma` | APVMA PubCRIS register extract (data.gov.au dataset, published weekly by the APVMA) | APVMA-approved label (label registration record; document confirmed at admin review) | **implemented** |
+| AU | `apvma` | APVMA PubCRIS register extract (data.gov.au dataset, published weekly by the APVMA) | APVMA-approved label (label registration record + eLabels label DOCUMENT discovered via the PubCRIS portal — §21) | **implemented** |
 | NZ | `acvm`, `nz_epa` | MPI ACVM register | ACVM-registered label / EPA HSNO approval | future |
 | GB | `other` | HSE plant protection products register | HSE-authorised label | future |
 | US | `other` | US EPA pesticide product label system | EPA-stamped label | future |
@@ -562,3 +564,69 @@ the serving path immediately after `discardUnverifiedAiIdentity`. Regressions
 R13–R18: unresolved + plausible AI chemistry, ambiguous + plausible AI
 chemistry, resolved + AI disagreement (authority wins, conflict recorded),
 register unavailable (degraded mode intact), Custodia 320SC, Ridomil Gold.
+
+## 21. Stage LD-1 — official label DOCUMENT discovery + provenance
+
+Implemented 2026-08-20 (NOT yet deployed). Design + audit:
+`docs/chemical-label-document-extraction-design.md`. NO rate/WHP/REI
+parsing (that is LD-2), NO AI involvement, NO database change, NO Saved
+Chemicals or spray-snapshot changes.
+
+For a register-RESOLVED identity only (`ingestion/apvma.ts` →
+`resolveDetails`, which unresolved/ambiguous/unavailable outcomes never
+reach), `ingestion/label_document.ts` locates the official APVMA label
+document:
+
+1. **Confirm** — fetch the PubCRIS portal's own view-label action for the
+   exact pcode; the response is a stub whose only payload is a
+   `window.location.replace('https://elabels.apvma.gov.au/<pcode>ELBL.pdf')`
+   redirect. The redirect is STRICTLY validated: https, the official
+   eLabels host, a `.pdf` path naming THIS pcode. Anything else is
+   rejected.
+2. **Fetch** — download the PDF (one retry on transient failure; 404/410 is
+   definitive and never retried), verify the `%PDF` magic bytes, record
+   SHA-256 + byte size + retrieval timestamp.
+3. **Fallback** — if the portal stub is unavailable, the deterministic
+   eLabels URL pattern counts ONLY when the PDF bytes are actually fetched
+   and verified (confirmation `document_fetch` instead of
+   `pubcris_view_label`). A constructed URL that nothing confirmed is never
+   served.
+
+Serving effects (all additive, wire `schema_version` unchanged):
+
+- `registration.label_reference` = the confirmed document URL;
+  `field_provenance.label_reference` = `manufacturer_label` — ONLY for the
+  exact discovered URL. An AI-supplied URL still reads `ai_interpretation`
+  and still goes through the serve-time reachability probe; the
+  authoritative URL is NOT re-probed, so an eLabels hiccup can never strip
+  authoritative provenance at serve time.
+- The `label_reference` unresolved entry clears ONLY on discovery success.
+- A `manufacturer_label` source entry records URL + retrieval time + sha256
+  ("PDF not retrieved this pass" when only the URL was confirmed).
+- Candidates carry `label_reference` (existing sql/199 column, no
+  migration); a candidate refresh patch rides a freshly-confirmed URL along
+  with an applied material change — additive only, discovery failure never
+  blanks a stored reference.
+
+Failure discipline: fail-soft, never fail-closed of identity. Portal
+outage, eLabels timeout, non-PDF response or 404 leave the register result
+exactly as it stands. One deliberate special case: after the portal HAS
+confirmed the URL, a merely-transient document-host failure still serves
+the confirmed URL with `document: null` provenance (the hash completes on a
+later pass) — the eLabels host measurably drops connections. Transport
+cache only (same `SourceCache` discipline, no storage infrastructure):
+success 6 h, transient failure 5 min, definitive absence 1 h.
+
+Budget: 6 s per attempt, ≈15 s discovery ceiling, 25 MB document cap; at
+most 1 portal + 2 eLabels requests per uncached discovery.
+
+Tests — `ingestion/label_document_test.ts` (LD-A…LD-I + URL-validation
+units): Sprayseal 80160 full discovery (sha256 provenance, Stage 4
+claims/WHP untouched, candidate carries the reference); Custodia Forte
+91636 transient PDF-host failure (URL still resolves, lookup intact,
+exactly one retry); definitive 404 (no reference, nothing damaged);
+portal-down fallback (verified bytes only); total outage (register result
+intact); foreign-host redirect rejected and never fetched;
+unresolved/ambiguous outcomes never attempt discovery; cache-fronted;
+non-PDF 200 → URL-only provenance. R01–R18 and the full ingestion suite
+unchanged: 144 passed / 0 failed.

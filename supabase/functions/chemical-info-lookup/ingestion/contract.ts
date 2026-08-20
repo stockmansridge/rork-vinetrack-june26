@@ -104,6 +104,45 @@ export interface ResolvedRegistration {
    * AI-attributed, never invented).
    */
   label_evidence?: LabelEvidence | null;
+  /**
+   * Stage LD-1 — the official label DOCUMENT discovered for this resolved
+   * registration (URL + retrieval provenance), or null when discovery
+   * failed. Fail soft by contract: a document outage never degrades the
+   * register result — `label_reference` simply stays unresolved.
+   */
+  label_document?: LabelDocumentDiscovery | null;
+}
+
+// ---------------------------------------------------------------------------
+// Official label document discovery (Stage LD-1)
+// ---------------------------------------------------------------------------
+
+/**
+ * The official label document located for a register-RESOLVED identity.
+ * The URL is never a blind construction: it is either the PubCRIS portal's
+ * own view-label redirect for this exact product, or the deterministic
+ * eLabels pattern verified by actually fetching the PDF bytes.
+ */
+export interface LabelDocumentDiscovery {
+  /** Authoritative label document URL (APVMA eLabels host). */
+  url: string;
+  /**
+   * How the URL was established (audit trail):
+   *   pubcris_view_label — the register portal's own view-label redirect
+   *                        named this URL for this pcode;
+   *   document_fetch     — portal stub unavailable; the deterministic
+   *                        eLabels URL was verified by fetching and
+   *                        checking the PDF bytes themselves.
+   */
+  confirmation: "pubcris_view_label" | "document_fetch";
+  /** When discovery ran (ISO timestamp). */
+  retrieved_at: string;
+  /**
+   * Fetched-document provenance, or null when the PDF bytes could not be
+   * retrieved this pass (transient document-host failure AFTER portal
+   * confirmation — the confirmed URL stands on its own).
+   */
+  document: { sha256: string; byte_size: number } | null;
 }
 
 // ---------------------------------------------------------------------------

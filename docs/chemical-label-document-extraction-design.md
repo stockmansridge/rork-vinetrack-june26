@@ -1,7 +1,10 @@
 # Chemical Intelligence — official label document extraction (audit & design)
 
-Status: AUDIT/DESIGN ONLY — nothing implemented. Next stage implements against
-this document after review.
+Status: Stage LD-1 (document discovery + provenance, §3 "Stage LD-1")
+IMPLEMENTED 2026-08-20 — see docs/master-chemical-ingestion.md §21,
+`ingestion/label_document.ts` and `ingestion/label_document_test.ts`.
+Stage LD-2 (text extraction + deterministic DFU rate parsing) NOT started;
+§3 "Stage LD-2", §4 and §5 remain the reviewed design for it.
 
 Goal: when the register's machine-published data does not provide label rates
 (it never does — PubCRIS publishes no rate table), extract authoritative

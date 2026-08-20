@@ -308,6 +308,10 @@ export function buildCandidateRefreshPatch(
       source_kind: "official_register",
       source_reference: reg.sources[0]?.reference ?? row.source_reference,
     };
+    // Stage LD-1: a freshly-confirmed label document rides along with an
+    // applied material change (additive only — discovery failure never
+    // blanks a stored reference; absence of the document is not a change).
+    if (reg.label_document?.url) patch.label_reference = reg.label_document.url;
     // Stage 4: apply fresh label claims, carrying the stored uses'
     // AI-attributed detail (rates) onto the claims they match — the refresh
     // never invents, never discards silently, never re-keys.
