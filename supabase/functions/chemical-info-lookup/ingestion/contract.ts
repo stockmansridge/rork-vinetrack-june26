@@ -91,7 +91,12 @@ export interface ResolvedRegistration {
   /** official_register evidence entries with reproducible references. */
   sources: WireDataSource[];
   /** How the deterministic match was made (audit trail, never fuzzy). */
-  match_mode: "exact_name" | "formulation_suffix" | "register_number_verified";
+  match_mode:
+    | "exact_name"
+    | "compact_name"
+    | "formulation_suffix"
+    | "reverse_formulation_suffix"
+    | "register_number_verified";
   /**
    * Stage 4 — official label evidence resolved from the register's published
    * label claim data, or null when it could not be fetched/parsed (fail

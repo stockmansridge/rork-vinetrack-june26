@@ -30,6 +30,7 @@
 //     (ingest.ts) — candidates only, never auto-approved.
 
 import { normaliseProductName, selectProductRow } from "./apvma.ts";
+import type { SelectionMode } from "./matching.ts";
 import { identityKey } from "./contract.ts";
 
 // ---------------------------------------------------------------------------
@@ -99,7 +100,8 @@ export interface SeedResolution {
   registrant: string | null;
   /** Register lifecycle, e.g. "R, expires 30/06/2029 0:00". */
   register_status: string | null;
-  match_mode: "exact_name" | "formulation_suffix" | null;
+  /** Selection tier from the shared deterministic matcher (matching.ts). */
+  match_mode: SelectionMode | null;
 }
 
 export interface CancelledListResolution {
@@ -214,7 +216,8 @@ function isCurrentRegcode(regcode: string | null): boolean {
 interface NameResolution {
   kind: SeedOutcomeKind;
   row: RegisterProductRow | null;
-  matchMode: "exact_name" | "formulation_suffix" | null;
+  /** Selection tier from the shared deterministic matcher (matching.ts). */
+  matchMode: SelectionMode | null;
 }
 
 function resolveName(

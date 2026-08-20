@@ -505,8 +505,13 @@ Deno.test("23: merged Custodia keeps actives separate and both FRAC groups", () 
     assertEquals(merged.activity_group_scheme, "frac", "scheme");
     assertEquals(merged.verification.status, "partially_verified", "AI can never verify; register identity is not approval");
     assertEquals(merged.match_source, "authoritative_candidate", "candidate, not master");
-    // Narrative re-entry stays narrative: no invented hours.
-    assertEquals(merged.registered_uses[0].re_entry_period_hours ?? null, null, "no fabricated re-entry hours");
+    // 66541 has no label claim data in the fixture: AI-read uses no longer
+    // stand in the authoritative field — they are preserved as clearly-
+    // attributed suggestions, and the suggestion invents no hours either.
+    assertEquals(merged.registered_uses.length, 0, "registered_uses stays unresolved without label evidence");
+    assert(merged.verification.unresolved_fields.includes("registered_uses"), "gap recorded honestly");
+    assertEquals(merged.ai_suggested_uses?.length ?? 0, 1, "AI reading preserved as a suggestion");
+    assertEquals(merged.ai_suggested_uses[0].re_entry_period_hours ?? null, null, "no fabricated re-entry hours");
   })();
 });
 
@@ -706,9 +711,14 @@ Deno.test("46: WHP absent stays absent; register constituent outage keeps identi
   const deps = makeDeps({ ...FULL_REGISTER });
   const discovery = await discoverAuthoritative("AU", "Custodia", null, deps);
   const merged = mergeDiscoveryIntoStructured(noWhp, discovery.registration!);
-  assertEquals(merged.registered_uses[0].withholding_period_days ?? null, null, "no fabricated WHP");
+  assertEquals(merged.registered_uses.length, 0, "no label evidence → no authoritative uses served");
+  assertEquals(
+    merged.ai_suggested_uses?.[0]?.withholding_period_days ?? null,
+    null,
+    "the preserved AI suggestion invents no WHP",
+  );
   const payload = buildCandidatePayload(merged, "Custodia", discovery.registration!, NOW_ISO, 1)!;
-  assertEquals(payload.registered_uses[0].withholding_period_days ?? null, null, "candidate stores the gap honestly");
+  assertEquals(payload.registered_uses.length, 0, "candidate stores the gap honestly");
 
   // Constituent resource down: identity resolved, chemistry unresolved.
   clearApvmaCache();
@@ -1202,8 +1212,9 @@ Deno.test("56: label evidence failure is fail-soft — register identity and che
   assertEquals(d1.registration?.label_evidence ?? null, null, "no label evidence claimed");
   assertEquals(d1.registration?.active_ingredients.length, 2, "chemistry stands");
   const merged1 = mergeDiscoveryIntoStructured(forteAi(), d1.registration!);
-  assertEquals(merged1.registered_uses.length, 1, "AI uses stand unchanged");
-  assertEquals(merged1.registered_uses[0].provenance ?? null, null, "no label provenance without label evidence");
+  assertEquals(merged1.registered_uses.length, 0, "no label evidence → registered_uses stays unresolved");
+  assertEquals(merged1.ai_suggested_uses?.length ?? 0, 1, "AI reading preserved as a clearly-attributed suggestion");
+  assert(merged1.verification.unresolved_fields.includes("registered_uses"), "gap stays honest");
   assert(
     !merged1.verification.sources.some((s: { kind: string }) => s.kind === "manufacturer_label"),
     "no label source cited",

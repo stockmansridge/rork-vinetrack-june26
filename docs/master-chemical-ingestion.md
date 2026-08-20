@@ -455,3 +455,46 @@ deterministic name discipline, fill the `NZ` registry slot, and add an
 NZ regression fixture mirroring Custodia. No master_chemicals schema change
 is required — identity is already country-scoped and the candidate columns
 are jurisdiction-neutral.
+
+## 19. General resolver upgrade (Sprayseal-class fixes)
+
+The shared identity resolver was generalised after a live miss: “Spray
+Seal” (AU) fell through to a fabricated AI answer because the CKAN
+full-text search returns zero rows for a spaced query against the compact
+register name “Sprayseal Pruning Wound Treatment”, and the matcher had no
+typography tiers. Changes (no schema change, additive wire keys only):
+
+- `ingestion/matching.ts` — ONE deterministic matcher for every
+  register-facing path: strict tier, pure-typography tiers
+  (case/punctuation/spacing/pack codes: “250SC” ↔ “250 SC”, “Spray Seal” ↔
+  “Sprayseal”), formulation/use-descriptor suffix tiers in both directions,
+  the AWRI Stage 5E variant guard (`VARIANT_TOKENS` — FORTE/ULTRA/DUO/…
+  never droppable on either side), substring matching structurally
+  impossible, every tie fails closed. Retrieval fires bounded typography
+  query variants (raw → compact → loose) so the register rows can be found
+  at all; MATCHING stays anchored to the original requested name.
+- Master lookup (`ingestion/master_lookup.ts`) retries the exact-equality
+  name/alias query with the same typography variants — still whole-string,
+  still unique-or-nothing, never fuzzy.
+- AI demotion: where the register was consulted and did NOT verify
+  (unresolved/ambiguous), AI registration-identity claims are DISCARDED
+  (`discovery.ai_registration_hint_discarded`), and candidates are enqueued
+  ONLY from register-verified identities. On register-resolved products,
+  `registered_uses`/WHP/re-entry/restrictions come ONLY from official label
+  evidence; without it the field stays unresolved and AI readings move to
+  the non-authoritative `ai_suggested_uses` envelope.
+- Jurisdiction: `ingestion/jurisdiction.ts` resolves the vineyard-country
+  contract server-side (display names, aliases, ISO-2; no fallback) and
+  every search/structured response carries the `jurisdiction` envelope
+  (vineyard-country contract §7).
+- Per-field provenance: `field_provenance` (additive) states which evidence
+  tier populated each field — official_register, manufacturer_label,
+  authoritative_classification, ai_interpretation, master_catalogue, or
+  unresolved.
+
+Regression fixture: `ingestion/resolver_test.ts` (R01–R11) — Sprayseal
+(APVMA 80160, Omnia, Tebuconazole 430 g/L, FRAC 3) resolves from the query
+“Spray Seal” with register-backed facts and the fabricated AI result reduced
+to recorded conflicts; variant safety (“Custodia” ↔ “CUSTODIA FORTE”),
+ambiguity fail-closed, label-evidence-only enrichment, and the country
+contract are pinned alongside.

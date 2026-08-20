@@ -22,9 +22,14 @@
 //                                        // any write; candidates only.
 //
 // Response 200 JSON shapes:
-//   action=search -> { results: ChemicalSearchResult[] }  (approved master
-//                     catalogue hits are listed FIRST, tagged source:"master")
-//   action=info   -> ChemicalInfoResponse
+//   action=search -> { results: ChemicalSearchResult[], jurisdiction }
+//                     Lookup order: approved master hits FIRST (source:
+//                     "master"), then a register-resolved hit when the
+//                     jurisdiction's official register deterministically
+//                     matches the query (source: "official_register"), then
+//                     AI suggestions (deduplicated).
+//   action=info   -> ChemicalInfoResponse  (legacy AI-only quick info — the
+//                     structured action is the identity resolver)
 //   action=structured -> the sql/194 structured contract, plus (sql/199):
 //       match_source: "master" | "authoritative_candidate" | "ai_candidate"
 //                     | "unresolved"
@@ -33,9 +38,23 @@
 //       candidate?: { master_chemical_id, candidate_revision,
 //                     catalogue_status: "candidate",
 //                     registration_identity_key }      (additive, Stage 3 —
-//                     NEVER a master match; approval is a human step)
+//                     NEVER a master match; approval is a human step;
+//                     enqueued ONLY from register-verified identities)
 //       discovery?: { adapter, outcome, registration_identity_key?,
-//                     register_status?, error_category? }  (additive, Stage 3)
+//                     match_mode?, register_status?, error_category?,
+//                     ai_registration_hint_discarded? }  (additive)
+//       jurisdiction: { requested_country, resolved_country_code,
+//                     resolved_country_name, register_adapter,
+//                     register_support }  (additive — the ONE authoritative
+//                     statement of the lookup jurisdiction; clients render
+//                     lookup country AND registration country from this,
+//                     never derived independently)
+//       field_provenance: { <field>: official_register | manufacturer_label
+//                     | authoritative_classification | ai_interpretation
+//                     | master_catalogue | unresolved }  (additive)
+//       ai_suggested_uses?: AI-read uses on a register-resolved product with
+//                     no label evidence — clearly-non-authoritative
+//                     suggestions; NEVER served as registered_uses
 //   action=master_refresh -> { outcome, changes[], applied, master }
 //     outcome: no_material_change | material_change | evidence_refreshed
 //              | conflict | source_unavailable
@@ -73,14 +92,26 @@ import {
 import type { MasterOps, MasterRow } from "./ingestion/contract.ts";
 import {
   buildCandidatePayload,
+  buildFieldProvenance,
   buildRegisterOnlyStructured,
   candidateEnvelope,
+  discardUnverifiedAiIdentity,
   discoverAuthoritative,
   discoveryEnvelope,
   ingestionLog,
   mergeDiscoveryIntoStructured,
   upsertCandidate,
 } from "./ingestion/ingest.ts";
+import {
+  jurisdictionEnvelope,
+  registrationSchemeForCode,
+  resolveLookupCountry,
+} from "./ingestion/jurisdiction.ts";
+import {
+  buildMasterStructuredResponse,
+  fetchApprovedMaster,
+  searchMaster,
+} from "./ingestion/master_lookup.ts";
 import {
   buildCandidateRefreshPatch,
   refreshMasterRow,
@@ -195,29 +226,20 @@ The ratesPerHectare array should contain recommended rates per hectare. For liqu
 // rules. The FRAC/HRAC/IRAC classification table stays server-side
 // authoritative and is applied to every active AFTER extraction.
 
-const REGISTER_BY_COUNTRY: Record<string, string> = {
+// Register hints for the extraction prompt, keyed by RESOLVED ISO-2 code.
+// Country resolution itself lives in ingestion/jurisdiction.ts — the server
+// side of docs/vineyard-country-contract.md (canonical display names,
+// approved aliases, bare ISO-2 codes; NO locale/default-country fallback).
+const REGISTER_BY_CODE: Record<string, string> = {
   AU: "the APVMA public register (PUBCRIS) product number",
-  AUSTRALIA: "the APVMA public register (PUBCRIS) product number",
   NZ: "the NZ ACVM register number (and the EPA/HSNO approval number if that is what the label quotes)",
-  "NEW ZEALAND":
-    "the NZ ACVM register number (and the EPA/HSNO approval number if that is what the label quotes)",
 };
 
-function registrationSchemeFor(country: string): string | null {
-  const c = country.trim().toUpperCase();
-  if (c === "AU" || c === "AUSTRALIA") return "apvma";
-  if (c === "NZ" || c === "NEW ZEALAND") return "acvm";
-  return null;
-}
-
-function countryCodeFor(country: string): string {
-  const c = country.trim().toUpperCase();
-  if (c === "AU" || c === "AUSTRALIA") return "AU";
-  if (c === "NZ" || c === "NEW ZEALAND") return "NZ";
-  return c.length === 2 ? c : "";
-}
-
-function buildStructuredPrompt(productName: string, country: string): {
+function buildStructuredPrompt(
+  productName: string,
+  country: string,
+  countryCode: string,
+): {
   system: string;
   user: string;
 } {
@@ -235,7 +257,7 @@ function buildStructuredPrompt(productName: string, country: string): {
     "4. List EVERY active ingredient separately. A mixture has multiple actives, each with its own " +
     "concentration and its own resistance group.";
 
-  const register = REGISTER_BY_COUNTRY[country.trim().toUpperCase()] ??
+  const register = REGISTER_BY_CODE[countryCode] ??
     "the national pesticide register that applies in that country";
   const countryContext = country
     ? `The vineyard is in ${country}. Use ONLY the ${country}-registered version of this product. ` +
@@ -405,7 +427,7 @@ function schemeFromCategory(category: string | null): ActivityGroupScheme | null
  * is partially verified. Promotion to Verified is a human decision made in the
  * app's verify step. That ceiling is the entire point of Phase 4.
  */
-function buildStructuredResponse(parsed: any, country: string): any {
+function buildStructuredResponse(parsed: any, countryCode: string): any {
   const unresolved = new Set<string>(
     Array.isArray(parsed?.unresolved)
       ? parsed.unresolved.filter((x: any) => typeof x === "string")
@@ -458,14 +480,13 @@ function buildStructuredResponse(parsed: any, country: string): any {
   if (!actives.length) unresolved.add("active_ingredients");
 
   const registrationNumber = parseString(parsed?.registration_number);
-  const countryCode = countryCodeFor(country);
   if (!registrationNumber) unresolved.add("registration_number");
   if (!countryCode) unresolved.add("country");
 
   const registration = registrationNumber || countryCode
     ? {
       country_code: countryCode,
-      scheme: registrationNumber ? registrationSchemeFor(country) : null,
+      scheme: registrationNumber ? registrationSchemeForCode(countryCode || null) : null,
       registration_number: registrationNumber,
       registrant: parseString(parsed?.registrant),
       registered_product_name: parseString(parsed?.product_name),
@@ -545,25 +566,33 @@ function buildStructuredResponse(parsed: any, country: string): any {
 // Master Chemical Catalogue (sql/199) — approved-master-first lookup
 // ===========================================================================
 //
-// Lookup priority (Stage 1):
+// Lookup priority (general resolver):
 //   1. APPROVED master catalogue row — by exact registration identity when a
 //      hint is supplied, else exact (case-insensitive) registered name or
-//      exact lower-cased alias, always country-scoped. A known approved
-//      product NEVER goes back through the AI.
-//   2. AI extraction (unchanged honesty rules) — tagged "ai_candidate", or
-//      "unresolved" when it established neither actives nor a registration.
-//   3. Manual structured entry (client-side, unchanged).
+//      exact lower-cased alias — retried with pure-typography variants
+//      ("Spray Seal" ↔ "sprayseal") — always country-scoped, always
+//      unique-or-nothing. A known approved product NEVER goes back through
+//      the AI.
+//   2. The jurisdiction's OFFICIAL REGISTER (registry-selected adapter):
+//      deterministic identity resolution with typography normalisation and
+//      the AWRI variant guard, then official label evidence.
+//   3. AI extraction — discovery assistance and clearly-attributed
+//      interpretation ONLY. Where the register was consulted and did not
+//      verify, AI identity claims are discarded, never served.
+//   4. Manual structured entry (client-side, unchanged).
 //
 // Identity discipline mirrors the apps: only review_status='approved' rows are
 // served; a name/alias must match EXACTLY ONE row or the match is abandoned
 // ("custodia" can never reach "Custodia Forte"); aliases are exact whole-string
-// equality, never substrings.
+// equality, never substrings. Matching rules live in ingestion/matching.ts and
+// ingestion/master_lookup.ts.
 //
-// On an AI-path result carrying a complete registration identity, a CANDIDATE
-// master row is enqueued (service-role write, deduplicated on the identity
-// key, existing rows always win). Candidates are never served to lookups —
-// they exist so the catalogue grows from real demand and a human admin can
-// approve them against the register (sql/199 blocks approving AI provenance).
+// A CANDIDATE master row is enqueued ONLY from a register-verified identity
+// (service-role write, deduplicated on the identity key, existing rows always
+// win). An AI-asserted registration can no longer mint a catalogue row.
+// Candidates are never served to lookups — they exist so the catalogue grows
+// from real demand and a human admin can approve them against the register
+// (sql/199 blocks approving AI provenance).
 //
 // EVERY catalogue call here is fail-open: any error (including sql/199 not yet
 // applied) falls through to the AI path, so "not in Master" can never become
@@ -587,16 +616,6 @@ function masterHeaders(): Record<string, string> {
   };
 }
 
-/** PostgREST double-quoted value (for or=() expressions). */
-function pgQuote(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-}
-
-/** Escape LIKE/ILIKE wildcards so a product name is matched literally. */
-function escapeLike(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
-}
-
 async function masterSelect(query: string): Promise<any[] | null> {
   if (!masterConfigured()) return null;
   const res = await fetch(`${MASTER_TABLE_URL}?${query}`, { headers: masterHeaders() });
@@ -610,96 +629,10 @@ async function masterSelect(query: string): Promise<any[] | null> {
   return Array.isArray(rows) ? rows : null;
 }
 
-/**
- * Resolve the single approved master row for this request, or null.
- *
- * Identity hint first (deterministic), then exact name/alias — which must be
- * UNIQUE among approved rows for that country or nothing is returned. Never
- * fuzzy, never substring, never cross-country.
- */
-async function fetchApprovedMaster(
-  productName: string,
-  countryCode: string,
-  registrationNumber: string,
-  scheme: string | null,
-): Promise<any | null> {
-  if (!masterConfigured() || !countryCode) return null;
-
-  // Belt-and-braces jurisdiction assertion: whatever the query matched, the
-  // row itself must belong to the requested country. Both query paths already
-  // scope by country (the identity key embeds it; the name path filters on
-  // registration_country), but a master row from another country must never
-  // be served even if a future query edit loosens one of them.
-  const inCountry = (row: any): boolean =>
-    String(row?.registration_country ?? "").trim().toUpperCase() === countryCode;
-
-  if (registrationNumber && scheme) {
-    const key = `${countryCode}:${scheme}:${registrationNumber.trim().toUpperCase()}`;
-    const rows = await masterSelect(
-      `select=*&review_status=eq.approved` +
-        `&registration_identity_key=eq.${encodeURIComponent(key)}&limit=1`,
-    );
-    if (rows && rows.length === 1 && inCountry(rows[0])) return rows[0];
-  }
-
-  const name = productName.trim();
-  if (!name) return null;
-  const nameExpr = `registered_product_name.ilike.${pgQuote(escapeLike(name))}`;
-  const aliasExpr = `common_names.cs.{${pgQuote(name.toLowerCase())}}`;
-  const rows = await masterSelect(
-    `select=*&review_status=eq.approved` +
-      `&registration_country=eq.${encodeURIComponent(countryCode)}` +
-      `&or=${encodeURIComponent(`(${nameExpr},${aliasExpr})`)}&limit=2`,
-  );
-  if (!rows || rows.length !== 1 || !inCountry(rows[0])) return null;
-  return rows[0];
-}
-
-/**
- * Serve a master row in EXACTLY the structured contract every client already
- * decodes, plus the additive master envelope. The row's own sql/194
- * verification evidence (register/label provenance recorded at review time)
- * travels with it — no AI source, no AI confidence.
- */
-function buildMasterStructuredResponse(row: any): any {
-  return {
-    product_name: row.registered_product_name ?? null,
-    product_category: row.product_category ?? "",
-    form_type: row.form_type ?? null,
-    registration: {
-      country_code: row.registration_country ?? "",
-      scheme: row.registration_scheme ?? null,
-      registration_number: row.registration_number ?? null,
-      registrant: row.registrant ?? null,
-      registered_product_name: row.registered_product_name ?? null,
-      label_reference: row.label_reference ?? null,
-      label_version: row.label_version ?? null,
-    },
-    active_ingredients: Array.isArray(row.active_ingredients) ? row.active_ingredients : [],
-    activity_groups: Array.isArray(row.activity_groups) ? row.activity_groups : [],
-    activity_group_scheme: row.activity_group_scheme ?? null,
-    registered_uses: Array.isArray(row.registered_uses) ? row.registered_uses : [],
-    label_rate_bases: Array.isArray(row.label_rate_bases) ? row.label_rate_bases : [],
-    verification: {
-      status: row.verification_status ?? "unverified",
-      sources: Array.isArray(row.verification_sources) ? row.verification_sources : [],
-      conflicts: Array.isArray(row.verification_conflicts) ? row.verification_conflicts : [],
-      unresolved_fields: Array.isArray(row.verification_unresolved_fields)
-        ? row.verification_unresolved_fields
-        : [],
-      verified_at: row.verified_at ?? null,
-    },
-    activity_group_table_version: row.activity_group_table_version ?? ACTIVITY_GROUP_TABLE_VERSION,
-    schema_version: row.intelligence_schema_version ?? 1,
-    match_source: "master",
-    master: {
-      master_chemical_id: row.id,
-      master_revision: row.catalogue_version ?? 1,
-      catalogue_status: row.review_status ?? null,
-      registration_identity_key: row.registration_identity_key ?? null,
-    },
-  };
-}
+// fetchApprovedMaster / buildMasterStructuredResponse / searchMaster moved to
+// ingestion/master_lookup.ts (injected masterSelect) so the identity rules
+// are unit-testable. The rules themselves are unchanged — plus exact-equality
+// typography variants ("Spray Seal" ↔ "Sprayseal"), still unique-or-nothing.
 
 /**
  * Live sql/199 catalogue operations for the ingestion orchestrator
@@ -752,59 +685,6 @@ const masterOps: MasterOps = {
     return res.ok;
   },
 };
-
-/**
- * Approved master rows matching a human search, mapped to the search-result
- * shape (additive `source`/`master_chemical_id` fields). Substring matching is
- * fine HERE — this is a discovery listing a human picks from; identity is only
- * ever established by the structured lookup's exact rules.
- */
-async function searchMaster(query: string, countryCode: string): Promise<any[]> {
-  try {
-    if (!masterConfigured() || !countryCode) return [];
-    const trimmed = query.trim();
-    if (!trimmed) return [];
-    const nameExpr = `registered_product_name.ilike.${pgQuote(`%${escapeLike(trimmed)}%`)}`;
-    const aliasExpr = `common_names.cs.{${pgQuote(trimmed.toLowerCase())}}`;
-    const rows = await masterSelect(
-      `select=*&review_status=eq.approved` +
-        `&registration_country=eq.${encodeURIComponent(countryCode)}` +
-        `&or=${encodeURIComponent(`(${nameExpr},${aliasExpr})`)}` +
-        `&order=registered_product_name.asc&limit=3`,
-    );
-    if (!rows) return [];
-    return rows.map((row: any) => {
-      const actives = Array.isArray(row.active_ingredients) ? row.active_ingredients : [];
-      const groups = Array.isArray(row.activity_groups) ? row.activity_groups : [];
-      const uses = Array.isArray(row.registered_uses) ? row.registered_uses : [];
-      const firstUse = uses[0] ?? null;
-      return {
-        name: String(row.registered_product_name ?? ""),
-        activeIngredient: actives
-          .map((a: any) => {
-            const conc = a?.concentration != null
-              ? ` ${a.concentration}${a?.concentration_unit ? ` ${a.concentration_unit}` : ""}`
-              : "";
-            return `${String(a?.name ?? "").trim()}${conc}`.trim();
-          })
-          .filter((s: string) => s)
-          .join(" + "),
-        chemicalGroup: groups.join(" + "),
-        brand: String(row.registrant ?? ""),
-        primaryUse: firstUse
-          ? [firstUse.target_raw, firstUse.crop ? `(${firstUse.crop})` : ""]
-            .filter(Boolean).join(" ")
-          : "",
-        modeOfAction: groups.join(" + "),
-        source: "master",
-        master_chemical_id: row.id,
-      };
-    }).filter((r: any) => r.name);
-  } catch (err) {
-    console.error("master search skipped:", err instanceof Error ? err.message : String(err));
-    return [];
-  }
-}
 
 /**
  * System-admin gate shared by master_refresh and seed_apply: the caller's own
@@ -1071,9 +951,18 @@ Deno.serve(async (req: Request) => {
   }
 
   const action = String(body?.action ?? "").toLowerCase();
-  const country = typeof body?.country === "string"
-    ? body.country.trim()
-    : "";
+  // Lookup jurisdiction — resolved ONCE, from the request's country value
+  // (the vineyard's country, sent verbatim by the apps/portal), through the
+  // vineyard-country contract table. Every response carries the resulting
+  // envelope so clients render lookup jurisdiction AND registration country
+  // from ONE resolved value. No locale/default fallback: unrecognised or
+  // missing stays exactly that.
+  const jur = resolveLookupCountry(
+    typeof body?.country === "string" ? body.country : "",
+  );
+  const jurEnv = jurisdictionEnvelope(jur);
+  const countryCode = jur.code ?? "";
+  const countryLabel = jur.displayName ?? jur.raw;
 
   try {
     if (action === "search") {
@@ -1082,27 +971,90 @@ Deno.serve(async (req: Request) => {
       if (query.length > 200) {
         return json({ error: "Query too long" }, 400);
       }
-      // Master catalogue first (sql/199): approved, country-scoped rows lead
-      // the list. The AI still runs so unknown products keep surfacing — and
-      // if the AI provider fails, master hits alone are a valid answer.
-      const masterHits = await searchMaster(query, countryCodeFor(country));
+      // Lookup order: 1) approved master catalogue, 2) the jurisdiction's
+      // official register, 3) AI suggestions. Authoritative hits lead the
+      // list; the AI still runs so unknown/unregistrable products keep
+      // surfacing — and if the AI provider fails, authoritative hits alone
+      // are a valid answer.
+      const masterHits = masterConfigured()
+        ? await searchMaster(masterSelect, query, countryCode)
+        : [];
+
+      let registerHit: any = null;
+      if (jurEnv.register_support === "supported" && query.length >= 3) {
+        try {
+          const d = await discoverAuthoritative(countryCode, query, null, {
+            fetchFn: fetch,
+            now: () => new Date(),
+          });
+          if (d.outcome === "resolved" && d.registration) {
+            const reg = d.registration;
+            const covered = masterHits.some(
+              (m: any) =>
+                String(m.name).toLowerCase() ===
+                  reg.registered_product_name.toLowerCase(),
+            );
+            if (!covered) {
+              const groups = Array.from(
+                new Set(
+                  reg.active_ingredients
+                    .map((a) => a.activity_group?.code)
+                    .filter((c): c is string => Boolean(c)),
+                ),
+              );
+              registerHit = {
+                name: reg.registered_product_name,
+                activeIngredient: reg.active_ingredients
+                  .map((a) => {
+                    const conc = a.concentration != null
+                      ? ` ${a.concentration}${a.concentration_unit ? ` ${a.concentration_unit}` : ""}`
+                      : "";
+                    return `${a.name}${conc}`.trim();
+                  })
+                  .filter((s) => s)
+                  .join(" + "),
+                chemicalGroup: groups.join(" + "),
+                brand: reg.registrant ?? "",
+                primaryUse: "",
+                modeOfAction: groups.join(" + "),
+                source: "official_register",
+                registration_number: reg.registration_number,
+              };
+            }
+          }
+        } catch (err) {
+          // Fail-soft: a register hiccup can never break search.
+          console.error(
+            "register search hit skipped:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+
+      const authoritative = registerHit
+        ? [...masterHits, registerHit]
+        : masterHits;
       try {
-        const { system, user } = buildSearchPrompt(query, country);
+        const { system, user } = buildSearchPrompt(query, countryLabel);
         const raw = await callOpenAI(system, user, apiKey);
         const parsed = extractJSON(raw);
         const normalized = normalizeSearchResults(parsed);
-        if (masterHits.length) {
-          const seen = new Set(masterHits.map((m: any) => m.name.toLowerCase()));
+        if (authoritative.length) {
+          const seen = new Set(
+            authoritative.map((m: any) => String(m.name).toLowerCase()),
+          );
           normalized.results = [
-            ...masterHits,
+            ...authoritative,
             ...normalized.results.filter(
               (r: any) => !seen.has(String(r?.name ?? "").toLowerCase()),
             ),
           ];
         }
-        return json(normalized);
+        return json({ ...normalized, jurisdiction: jurEnv });
       } catch (err) {
-        if (masterHits.length) return json({ results: masterHits });
+        if (authoritative.length) {
+          return json({ results: authoritative, jurisdiction: jurEnv });
+        }
         throw err;
       }
     }
@@ -1117,7 +1069,6 @@ Deno.serve(async (req: Request) => {
       }
 
       const startedAt = Date.now();
-      const countryCode = countryCodeFor(country);
       const deps = { fetchFn: fetch, now: () => new Date() };
 
       // 1) Approved master catalogue (sql/199), name/alias path. A hit
@@ -1128,10 +1079,11 @@ Deno.serve(async (req: Request) => {
         : "";
       try {
         const masterRow = await fetchApprovedMaster(
+          masterSelect,
           productName,
           countryCode,
           registrationNumber,
-          registrationSchemeFor(country),
+          registrationSchemeForCode(jur.code),
         );
         if (masterRow) {
           console.log(ingestionLog({
@@ -1146,7 +1098,7 @@ Deno.serve(async (req: Request) => {
             durationMs: Date.now() - startedAt,
             cache: "none",
           }));
-          return json(buildMasterStructuredResponse(masterRow));
+          return json({ ...buildMasterStructuredResponse(masterRow), jurisdiction: jurEnv });
         }
       } catch (err) {
         console.error(
@@ -1172,10 +1124,14 @@ Deno.serve(async (req: Request) => {
       let structured: any = null;
       let aiError: unknown = null;
       try {
-        const { system, user } = buildStructuredPrompt(productName, country);
+        const { system, user } = buildStructuredPrompt(
+          productName,
+          countryLabel,
+          countryCode,
+        );
         const raw = await callOpenAI(system, user, apiKey);
         const parsed = extractJSON(raw);
-        structured = buildStructuredResponse(parsed, country);
+        structured = buildStructuredResponse(parsed, countryCode);
       } catch (err) {
         aiError = err;
       }
@@ -1211,6 +1167,7 @@ Deno.serve(async (req: Request) => {
       if (resolved) {
         try {
           const byIdentity = await fetchApprovedMaster(
+            masterSelect,
             "",
             countryCode,
             resolved.registration_number,
@@ -1229,7 +1186,7 @@ Deno.serve(async (req: Request) => {
               durationMs: Date.now() - startedAt,
               cache: discovery.cache,
             }));
-            return json(buildMasterStructuredResponse(byIdentity));
+            return json({ ...buildMasterStructuredResponse(byIdentity), jurisdiction: jurEnv });
           }
         } catch (err) {
           console.error(
@@ -1252,10 +1209,27 @@ Deno.serve(async (req: Request) => {
       //    conflicts), or build a register-only result when the AI was
       //    unavailable. Facts no authoritative source provided stay
       //    unresolved — never invented.
+      //
+      //    When the register was CONSULTED and did NOT verify (unresolved or
+      //    ambiguous — not an outage), the AI's registration identity claims
+      //    are DISCARDED rather than served: AI assists discovery, it never
+      //    establishes registration. Its number already had its chance to
+      //    verify as a pointer in 3b. Chemistry/category stay as clearly
+      //    AI-attributed suggestions (fertilisers/biostimulants legitimately
+      //    have no register entry); identity facts do not.
+      let aiIdentityDiscarded: string | null = null;
       if (resolved) {
         structured = structured
           ? mergeDiscoveryIntoStructured(structured, resolved)
           : buildRegisterOnlyStructured(resolved, ACTIVITY_GROUP_TABLE_VERSION);
+      } else if (structured) {
+        aiIdentityDiscarded = discardUnverifiedAiIdentity(structured, discovery.outcome);
+      }
+
+      // Per-field provenance for the non-merged paths (the merge computes its
+      // own). Additive; every field states which evidence tier populated it.
+      if (!structured.field_provenance) {
+        structured.field_provenance = buildFieldProvenance(structured, null, false);
       }
 
       // Validate the label URL exactly as `info` does; a hallucinated label
@@ -1293,13 +1267,18 @@ Deno.serve(async (req: Request) => {
       //    lookup.
       let candidateAction = "none";
       let candidateRow: MasterRow | null = null;
-      const payload = buildCandidatePayload(
-        structured,
-        productName,
-        resolved,
-        new Date().toISOString(),
-        ACTIVITY_GROUP_TABLE_VERSION,
-      );
+      // Candidates are enqueued ONLY from register-verified identities. An
+      // AI-asserted registration can no longer mint a catalogue row — the
+      // register verifies name↔number first, or nothing is written.
+      const payload = resolved
+        ? buildCandidatePayload(
+          structured,
+          productName,
+          resolved,
+          new Date().toISOString(),
+          ACTIVITY_GROUP_TABLE_VERSION,
+        )
+        : null;
       if (payload) {
         const outcome = await upsertCandidate(masterOps, payload, Date.now());
         candidateAction = outcome.reason
@@ -1313,7 +1292,7 @@ Deno.serve(async (req: Request) => {
           // The identity's row is already approved (an alias the name path
           // missed, or a review that landed mid-request): serve the approved
           // master, create nothing.
-          return json(buildMasterStructuredResponse(outcome.row));
+          return json({ ...buildMasterStructuredResponse(outcome.row), jurisdiction: jurEnv });
         }
         if (outcome.row && outcome.row.review_status === "candidate") {
           candidateRow = outcome.row;
@@ -1322,6 +1301,10 @@ Deno.serve(async (req: Request) => {
 
       if (candidateRow) structured.candidate = candidateEnvelope(candidateRow);
       structured.discovery = discoveryEnvelope(discovery);
+      if (aiIdentityDiscarded) {
+        structured.discovery.ai_registration_hint_discarded = aiIdentityDiscarded;
+      }
+      structured.jurisdiction = jurEnv;
 
       console.log(ingestionLog({
         jurisdiction: countryCode,
@@ -1349,7 +1332,7 @@ Deno.serve(async (req: Request) => {
       if (productName.length > 200) {
         return json({ error: "productName too long" }, 400);
       }
-      const { system, user } = buildInfoPrompt(productName, country);
+      const { system, user } = buildInfoPrompt(productName, countryLabel);
       const raw = await callOpenAI(system, user, apiKey);
       const parsed = extractJSON(raw);
       const normalized = await normalizeInfo(parsed);

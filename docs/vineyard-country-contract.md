@@ -135,3 +135,39 @@ apply unchanged.
 Adding or removing a supported country is Contract v2: update BOTH platform
 catalogues, both parity tests and this document in the same change, and
 notify the portal. The portal must never ship a divergent set.
+
+## 7. Lookup jurisdiction envelope (server-resolved)
+
+The `chemical-info-lookup` edge function resolves the request's `country`
+value server-side through THIS contract
+(`supabase/functions/chemical-info-lookup/ingestion/jurisdiction.ts`):
+canonical display names case-insensitively, the §3 approved aliases, and
+bare ISO-2 codes passed through uppercased. Unknown values resolve to NO
+jurisdiction — there is no locale, browser, or default-country fallback
+anywhere in the path.
+
+Every `search` and `structured` response carries the resolved jurisdiction:
+
+```json
+"jurisdiction": {
+  "requested_country": "Australia",
+  "resolved_country_code": "AU",
+  "resolved_country_name": "Australia",
+  "register_adapter": "apvma",
+  "register_support": "supported"
+}
+```
+
+`register_support` is one of `supported` (wired register adapter),
+`declared` (in the source registry, adapter not implemented — NZ/GB/US),
+`none` (resolved country with no declared register), `unrecognised` (the
+request carried a value this contract cannot resolve), or `missing` (no
+country supplied).
+
+Clients — the portal included — MUST render the lookup jurisdiction AND the
+registration country from this envelope, never derived independently from
+request state or other response fragments. This closes the contract gap that
+let a lookup display “jurisdiction AU” beside “Registration country
+unknown”: both statements now come from one server-resolved value. When
+`resolved_country_code` is null the correct rendering is “no lookup
+jurisdiction” — never a guessed country.

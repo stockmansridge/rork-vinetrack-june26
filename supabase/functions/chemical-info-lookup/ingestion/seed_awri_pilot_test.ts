@@ -204,20 +204,28 @@ Deno.test("G09: wire format is locked to the deployed seed_apply action — regi
   assertThrows(() => pilotRequestBody(broken), Error, "no send_product_name");
 });
 
-Deno.test("G10: WHY the registered name is sent — the deployed nameCorresponds rejects every AWRI booklet name in this cohort, and exactly matches the audited registered name", () => {
+Deno.test("G10: WHY the registered name is sent — the audited registered name is GUARANTEED to verify (exact self-match); booklet names are not, even under the upgraded typography matcher", () => {
   const items = buildPilotBatch(clone());
+  let bookletCorresponds = 0;
   for (const item of items) {
-    assertEquals(
-      nameCorresponds(item.awri_product_name, item.send_product_name),
-      false,
-      `${item.awri_product_name} would verify live under deployed rules — revisit the Stage 5G wire-format decision`,
-    );
     assertEquals(
       nameCorresponds(item.send_product_name, item.send_product_name),
       true,
       `${item.send_product_name} must exact-match itself`,
     );
+    if (nameCorresponds(item.awri_product_name, item.send_product_name)) {
+      bookletCorresponds += 1;
+    }
   }
+  // The general resolver upgrade (matching.ts) added pure-typography tiers,
+  // so booklet names like "Penncozeb 750DF" now correspond to their
+  // registered names ("… 750 DF …") — but registrant-prefix booklet names
+  // still cannot. The registered name remains the only wire choice that
+  // verifies for EVERY item, which is why Stage 5G/5H send it.
+  assert(
+    bookletCorresponds < items.length,
+    "at least one booklet name still requires the registered name on the wire",
+  );
 });
 
 Deno.test("G11: cohort-separated state — the Stage 5B/5D batch state, other cohorts and malformed files all refuse", () => {

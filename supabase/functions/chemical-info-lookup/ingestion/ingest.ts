@@ -22,6 +22,7 @@ import { normaliseActiveName } from "./activity_groups.ts";
 import type {
   AdapterDeps,
   CandidateRowPayload,
+  DiscoveryOutcome,
   DiscoveryResult,
   MasterOps,
   MasterRow,
@@ -207,23 +208,27 @@ export function mergeDiscoveryIntoStructured(
   merged.activity_groups = codes;
   merged.activity_group_scheme = scheme;
 
-  // ---- Registered uses (Stage 4: official label evidence wins) -----------
-  // When the register resolves the approved label's claim data, the label's
-  // claim set IS the served uses: label-stated WHP/re-entry/restrictions win
-  // (AI disagreements become conflicts), AI rates ride along clearly
-  // attributed, and AI-only uses are dropped as conflicts. Without label
-  // evidence the extraction's uses stand with their own honest attribution —
-  // inventing rates, WHPs or re-entry to "complete" the record is exactly
-  // what must not happen.
+  // ---- Registered uses (label evidence ONLY) ------------------------------
+  // On a register-resolved product the authoritative label evidence is the
+  // ONLY source that can populate registered_uses. When it resolves, the
+  // label's claim set IS the served uses: label-stated WHP/re-entry/
+  // restrictions win (AI disagreements become conflicts), AI rates ride
+  // along clearly attributed, and AI-only uses are dropped as conflicts.
+  // Without label evidence the field stays honestly UNRESOLVED — AI-read
+  // uses move to the clearly-non-authoritative `ai_suggested_uses` envelope
+  // instead of standing in the authoritative field. An unsupported guess
+  // never overwrites an unresolved fact.
   const aiUses: any[] = Array.isArray(structured?.registered_uses)
     ? structured.registered_uses
     : [];
   const evidence = reg.label_evidence ?? null;
-  let uses: any[] = aiUses;
+  let uses: any[] = [];
   if (evidence && evidence.claims.length) {
     const labelMerge = mergeLabelEvidenceIntoUses(aiUses, evidence);
     uses = labelMerge.uses;
     for (const c of labelMerge.conflicts) conflicts.push(c);
+  } else if (aiUses.length) {
+    merged.ai_suggested_uses = aiUses;
   }
   merged.registered_uses = uses;
   merged.label_rate_bases = Array.from(
@@ -285,8 +290,143 @@ export function mergeDiscoveryIntoStructured(
     unresolved_fields: Array.from(unresolved).sort(),
     verified_at: null,
   };
+  merged.field_provenance = buildFieldProvenance(
+    merged,
+    reg,
+    Boolean(evidence && evidence.claims.length),
+  );
   merged.match_source = "authoritative_candidate";
   return merged;
+}
+
+/**
+ * Discard unverified AI registration-identity claims.
+ *
+ * Called when the jurisdiction's register was CONSULTED and did not verify
+ * (outcome unresolved/ambiguous — an outage keeps today's honesty-labelled
+ * behaviour instead, because "could not check" is not "checked and wrong").
+ * The AI's number already had its chance to verify as a discovery pointer;
+ * past that, AI assists discovery but never establishes registration: the
+ * number/scheme/registered-name claims are removed, the field goes honestly
+ * unresolved, and only clearly-AI-attributed non-register facts (chemistry,
+ * category — fertilisers and biostimulants legitimately have no register
+ * entry) remain. Returns the discarded number for the discovery envelope.
+ */
+export function discardUnverifiedAiIdentity(
+  structured: any,
+  discoveryOutcome: DiscoveryOutcome,
+): string | null {
+  if (discoveryOutcome !== "unresolved" && discoveryOutcome !== "ambiguous") return null;
+  const regBlock = structured?.registration;
+  if (!regBlock) return null;
+  if (!regBlock.registration_number && !regBlock.registered_product_name) return null;
+  const discarded = regBlock.registration_number ?? null;
+  regBlock.registration_number = null;
+  regBlock.scheme = null;
+  regBlock.registered_product_name = null;
+  regBlock.label_version = null;
+  if (structured.verification) {
+    structured.verification.unresolved_fields = Array.from(
+      new Set([
+        ...(structured.verification.unresolved_fields ?? []),
+        "registration_number",
+      ]),
+    ).sort();
+  }
+  return discarded;
+}
+
+// ---------------------------------------------------------------------------
+// Per-field provenance (additive wire key)
+// ---------------------------------------------------------------------------
+
+export type FieldProvenance =
+  | "official_register"
+  | "manufacturer_label"
+  | "authoritative_classification"
+  | "ai_interpretation"
+  | "master_catalogue"
+  | "unresolved";
+
+/**
+ * Which evidence tier populated each structured field — and "unresolved"
+ * where nothing did. Additive wire key (clients ignore unknown keys); it
+ * never claims an authority that did not actually contribute. For uses-level
+ * facts it defers to the per-use `provenance` recorded by the label merge,
+ * so an AI-carried WHP on a label-backed claim still reads ai_interpretation.
+ */
+export function buildFieldProvenance(
+  structured: any,
+  reg: ResolvedRegistration | null,
+  labelUsesResolved: boolean,
+): Record<string, FieldProvenance> {
+  const regBlock = structured?.registration ?? null;
+  const actives: any[] = Array.isArray(structured?.active_ingredients)
+    ? structured.active_ingredients
+    : [];
+  const uses: any[] = Array.isArray(structured?.registered_uses)
+    ? structured.registered_uses
+    : [];
+
+  const has = (v: unknown): boolean => v !== null && v !== undefined && v !== "";
+  const fromRegister = (regProvided: boolean, present: boolean): FieldProvenance =>
+    present ? (regProvided ? "official_register" : "ai_interpretation") : "unresolved";
+
+  const useFact = (
+    key: "withholding_period" | "re_entry" | "restrictions",
+    present: (u: any) => boolean,
+  ): FieldProvenance => {
+    if (!uses.some(present)) return "unresolved";
+    if (uses.some((u) => u?.provenance?.[key] === "manufacturer_label")) {
+      return "manufacturer_label";
+    }
+    if (labelUsesResolved && !uses.some((u) => u?.provenance)) {
+      return "manufacturer_label";
+    }
+    return "ai_interpretation";
+  };
+
+  const groupsPresent = actives.some((a) => a?.activity_group);
+  const groupsAuthoritative = actives.some(
+    (a) => a?.group_source === "authoritative_classification",
+  );
+
+  return {
+    product_name: fromRegister(Boolean(reg), has(structured?.product_name)),
+    product_category: fromRegister(
+      Boolean(reg?.product_category),
+      has(structured?.product_category),
+    ),
+    form_type: fromRegister(Boolean(reg?.form_type), has(structured?.form_type)),
+    registration: has(regBlock?.registration_number)
+      ? (reg ? "official_register" : "ai_interpretation")
+      : "unresolved",
+    registrant: has(regBlock?.registrant)
+      ? (reg?.registrant ? "official_register" : "ai_interpretation")
+      : "unresolved",
+    active_ingredients: actives.length
+      ? (reg?.active_ingredients.length ? "official_register" : "ai_interpretation")
+      : "unresolved",
+    activity_groups: groupsPresent
+      ? (groupsAuthoritative ? "authoritative_classification" : "ai_interpretation")
+      : "unresolved",
+    registered_uses: uses.length
+      ? (labelUsesResolved ? "manufacturer_label" : "ai_interpretation")
+      : "unresolved",
+    label_rates: uses.some((u) => Array.isArray(u?.rates) && u.rates.length)
+      ? "ai_interpretation"
+      : "unresolved",
+    withholding_periods: useFact(
+      "withholding_period",
+      (u) => u?.withholding_period_days != null,
+    ),
+    re_entry: useFact("re_entry", (u) => u?.re_entry_period_hours != null),
+    restrictions: useFact("restrictions", (u) => has(u?.restrictions)),
+    label_version: has(regBlock?.label_version)
+      ? (reg?.label_version ? "official_register" : "ai_interpretation")
+      : "unresolved",
+    label_reference: has(regBlock?.label_reference) ? "ai_interpretation" : "unresolved",
+  };
 }
 
 /**
@@ -562,6 +702,7 @@ export function discoveryEnvelope(discovery: DiscoveryResult): Record<string, an
   };
   if (discovery.registration) {
     out.registration_identity_key = discovery.registration.registration_identity_key;
+    out.match_mode = discovery.registration.match_mode;
     if (discovery.registration.register_status) {
       out.register_status = discovery.registration.register_status;
     }

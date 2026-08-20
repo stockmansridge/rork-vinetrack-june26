@@ -40,6 +40,12 @@ import type {
 import { identityKey } from "./contract.ts";
 import { buildLabelEvidence } from "./label.ts";
 import {
+  nameCorresponds,
+  normaliseProductName,
+  retrievalQueryVariants,
+  selectProductRow,
+} from "./matching.ts";
+import {
   NEGATIVE_TTL_MS,
   RESOLVED_TTL_MS,
   SourceCache,
@@ -90,86 +96,16 @@ interface ProductRecord {
 }
 
 // ---------------------------------------------------------------------------
-// Deterministic name discipline (shared with tests)
+// Deterministic name discipline — CANONICAL implementation in matching.ts
+// (shared with seed apply hint verification and tests). Re-exported here so
+// every existing import site keeps working. The matcher generalises the AWRI
+// Stage 5E variant protections: typography (case/punctuation/spacing/pack
+// codes) never distinguishes identity, variant designators (FORTE, ULTRA,
+// DUO, …) always do, substring matching is structurally impossible, and
+// every tie fails closed.
 // ---------------------------------------------------------------------------
 
-/** Lowercase, alphanumeric-only tokens, single spaces. */
-export function normaliseProductName(raw: string): string {
-  return raw
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .replace(/\s+/g, " ");
-}
-
-/**
- * Tokens a register name may append to a brand without changing WHICH product
- * it is: pack strength numbers, formulation codes, and category words.
- * "FORTE", "ULTRA", "DUO" etc. are deliberately NOT here — they denote a
- * different registered product.
- */
-const IGNORABLE_SUFFIX_TOKENS = new Set([
-  "sc", "ec", "wg", "wdg", "wp", "sl", "se", "ew", "gr", "df", "dp", "ulv",
-  "cs", "od", "sg", "sp", "la", "me", "fs",
-  "fungicide", "herbicide", "insecticide", "miticide", "acaricide",
-  "nematicide", "bactericide", "adjuvant", "surfactant",
-  "liquid", "concentrate", "suspension", "emulsifiable", "soluble",
-  "dispersible", "flowable", "granule", "granules", "powder", "spray",
-  "systemic", "selective",
-]);
-
-function isIgnorableToken(token: string): boolean {
-  if (/^\d+(\.\d+)?$/.test(token)) return true; // "320", "500"
-  if (/^\d+(\.\d+)?(g|kg|ml|l)$/.test(token)) return true; // "500g"
-  return IGNORABLE_SUFFIX_TOKENS.has(token);
-}
-
-/**
- * Whether a register product name corresponds to a requested name under the
- * deterministic rules: exact normalised equality, or the register name being
- * the requested name plus ONLY ignorable formulation/category tokens.
- * Substring matching is structurally impossible here — "custodia" can never
- * correspond to "custodia forte …" because "forte" is not ignorable.
- */
-export function nameCorresponds(requested: string, registerName: string): boolean {
-  const wanted = normaliseProductName(requested);
-  const actual = normaliseProductName(registerName);
-  if (!wanted || !actual) return false;
-  if (wanted === actual) return true;
-  if (!actual.startsWith(`${wanted} `)) return false;
-  const remainder = actual.slice(wanted.length).trim();
-  return remainder.split(" ").every((t) => isIgnorableToken(t));
-}
-
-/**
- * Deterministically select AT MOST one register row for the requested names.
- * Exact normalised equality wins first; the formulation-suffix rule second;
- * ANY tie at either tier is ambiguous and fails closed.
- */
-export function selectProductRow(
-  requestedNames: string[],
-  rows: ProductRecord[],
-): { row: ProductRecord; mode: "exact_name" | "formulation_suffix" } | "ambiguous" | null {
-  const names = requestedNames.map(normaliseProductName).filter((n) => n.length > 0);
-  if (!names.length || !rows.length) return null;
-
-  const byPcode = new Map<string, ProductRecord>();
-  for (const row of rows) {
-    if (row?.pcode && row?.fpname) byPcode.set(String(row.pcode), row);
-  }
-  const unique = Array.from(byPcode.values());
-
-  const exact = unique.filter((r) =>
-    names.some((n) => normaliseProductName(r.fpname) === n)
-  );
-  if (exact.length === 1) return { row: exact[0], mode: "exact_name" };
-  if (exact.length > 1) return "ambiguous";
-
-  const suffix = unique.filter((r) => names.some((n) => nameCorresponds(n, r.fpname)));
-  if (suffix.length === 1) return { row: suffix[0], mode: "formulation_suffix" };
-  if (suffix.length > 1) return "ambiguous";
-  return null;
-}
+export { nameCorresponds, normaliseProductName, selectProductRow };
 
 // ---------------------------------------------------------------------------
 // Register field mappings (contract vocabularies only — no synonyms invented)
@@ -384,7 +320,7 @@ async function fetchLabelEvidence(
 async function resolveDetails(
   deps: AdapterDeps,
   row: ProductRecord,
-  mode: "exact_name" | "formulation_suffix" | "register_number_verified",
+  mode: ResolvedRegistration["match_mode"],
 ): Promise<ResolvedRegistration> {
   const retrievedAt = deps.now().toISOString();
   const pcode = String(row.pcode).trim();
@@ -593,19 +529,38 @@ async function discover(
       // Fall through to the name path: the number did not verify.
     }
 
-    // 2) Full-text register search, then DETERMINISTIC selection.
+    // 2) Full-text register search, then DETERMINISTIC selection. The live
+    //    CKAN datastore tokenises on whitespace, so a spaced request can miss
+    //    a compact register name entirely ("Spray Seal" retrieves ZERO rows
+    //    for "Sprayseal Pruning Wound Treatment"). RETRIEVAL therefore tries
+    //    bounded typography variants (raw → compact → loose), unioning rows
+    //    by pcode — while MATCHING stays deterministic against the original
+    //    requested name. An ambiguous selection is terminal: more retrieval
+    //    can only add rows, never un-tie them.
     if (!normQuery) {
       return finish(
         { outcome: "unresolved", adapter: "apvma", cache: "miss" },
         NEGATIVE_TTL_MS,
       );
     }
-    const rows = await datastoreSearch(deps, {
-      resourceId: APVMA_RESOURCES.product,
-      q: query,
-      limit: 32,
-    }) as ProductRecord[];
-    const selection = selectProductRow([query], rows);
+    const seenPcodes = new Set<string>();
+    const collected: ProductRecord[] = [];
+    let selection: ReturnType<typeof selectProductRow<ProductRecord>> = null;
+    for (const variant of retrievalQueryVariants(query)) {
+      const rows = await datastoreSearch(deps, {
+        resourceId: APVMA_RESOURCES.product,
+        q: variant,
+        limit: 32,
+      }) as ProductRecord[];
+      for (const r of rows) {
+        const pcode = String(r?.pcode ?? "");
+        if (!pcode || !r?.fpname || seenPcodes.has(pcode)) continue;
+        seenPcodes.add(pcode);
+        collected.push(r);
+      }
+      selection = selectProductRow([query], collected);
+      if (selection) break;
+    }
     if (selection === "ambiguous") {
       return finish(
         { outcome: "ambiguous", adapter: "apvma", cache: "miss" },
