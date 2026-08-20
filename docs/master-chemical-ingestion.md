@@ -340,7 +340,65 @@ exactly as it already does for `vinetrack-webhook-dispatch/lib.ts` and the
 is no longer a supported deployment method for this function. No database
 migration accompanies this stage.
 
-## 17. Future jurisdictions (Stage 5 — New Zealand, not implemented)
+## 17. Stage 5 — AWRI "Dog Book" 2026/27 seed (dry run complete, no writes)
+
+Coverage seeding for AU viticulture from the AWRI booklet *Agrochemicals
+registered for use in Australian viticulture 2026/27* (compiled 1 June 2026).
+AWRI is a `viticulture_reference` source ONLY — it nominates which products
+are worth seeding and never supplies registration, label, chemistry, WHP,
+re-entry, or rate facts. The APVMA register remains the sole authority.
+
+Pieces (all under `ingestion/` unless noted):
+
+- `seeds/extract_awri_dogbook.py` — versioned extractor. Table 2 + the
+  cancelled-products list are hand-transcribed (PDF column extraction is
+  unreliable) and every transcribed product string is mechanically verified
+  against the squashed booklet text; a transcription typo fails the build.
+  Variant expansion is deterministic: `Parent (V1, V2)` → `Parent V1`,
+  `Parent V2`; the bare parent is also emitted only when the parentheses
+  hold exactly one letter-initial variant (e.g. `Custodia (Forte)`).
+- `seeds/awri_dogbook_2026_27.json` — the deterministic seed manifest
+  (666 unique product names, 5 cancelled-list rows, PDF SHA-256 provenance).
+  The booklet publishes NO APVMA numbers, so every entry carries
+  `apvma_registration_number: null` — identity can only come from the
+  register.
+- `seed_awri.ts` — pure dry-run module. Resolves each name against a
+  PubCRIS product snapshot using the adapter's own discipline verbatim
+  (`normaliseProductName`/`selectProductRow`: exact tier → formulation-suffix
+  tier → ties fail closed; substring/fuzzy structurally impossible).
+  Classification: `resolved_current` (regcode R), `resolved_not_current`
+  (archived/suspended → conflict bucket), `unresolved_no_match`,
+  `unresolved_ambiguous`. Names on AWRI's cancelled list classify as
+  conflicts even when a current register row matches (e.g. Jasper 520 EC,
+  Fyfanon 440 EW) — never candidate-eligible, never silently swapped.
+  Dedupe is by `AU:apvma:<number>` ONLY. Idempotent: same manifest + same
+  snapshot ⇒ byte-identical output (test 65).
+- `seeds/run_awri_dryrun.ts` — read-only runner. Snapshots the PubCRIS
+  product resource (public CKAN), writes the dry-run artifact
+  (`seeds/awri_dogbook_2026_27.dryrun.json`) and the manual comparison SQL
+  (`sql/stage5_awri_dryrun_compare.sql`). It contains no database client;
+  "Already in Master" stays pending until an operator runs that SQL in the
+  Supabase SQL Editor.
+- Tests 61–66 (`seed_awri_test.ts`): manifest invariants, resolution
+  discipline, cancelled/lapsed fail-safe, identity dedupe, idempotence +
+  read-only SQL, empty-register fail-closed posture.
+
+Dry-run result (register snapshot 2026-08-20, 18,809 rows: 12,980 R /
+5,829 A): 666 unique products; 198 names resolved → 199 identities;
+197 candidate-eligible; 468 unresolved (466 no deterministic match — mostly
+registrant-prefixed or generic register names, deliberately fail-closed and
+NOT "not registered"; 2 ambiguous); 5 conflicts/cancelled; 0 duplicate
+identities. Live proof of the fail-closed rule: bare `Custodia` stayed
+unresolved rather than resolving to `CUSTODIA FORTE FUNGICIDE`.
+
+Next step (NOT yet run, requires operator sign-off on the counts and the
+SQL comparison): bulk candidate creation by feeding each candidate-eligible
+registration number through the existing pipeline (`ingest.ts`, register-
+number-verified path) — candidates only, tagged with AWRI
+`viticulture_reference` provenance, never auto-approved, duplicate-safe on
+the identity key so rerunning the same edition creates nothing new.
+
+## 18. Future jurisdictions (New Zealand, not implemented)
 
 To add NZ later: implement `SourceAdapter` for the MPI ACVM register (and the
 EPA HSNO approval reference the label quotes), decide the identity scheme
