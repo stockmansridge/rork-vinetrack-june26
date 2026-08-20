@@ -10287,8 +10287,8 @@
   "names_resolved_total": 198,
   "with_apvma_registration_identities": 199,
   "candidate_eligible_identities": 197,
-  "already_in_master": null,
-  "would_create_candidates": null,
+  "already_in_master": 1,
+  "would_create_candidates": 196,
   "unresolved_total": 468,
   "unresolved_no_match": 466,
   "unresolved_ambiguous": 2,
@@ -10301,5 +10301,24 @@
  "invariants": {
   "apvma_remains_authoritative": "PASS",
   "dry_run_no_writes": "PASS"
+ },
+ "manual_comparison": {
+  "method": "operator-run read-only SQL in Supabase SQL Editor",
+  "sql_file": "sql/stage5_awri_dryrun_compare.sql",
+  "date": "2026-08-20",
+  "awri_identities_total": 197,
+  "existing_master_rows": 1,
+  "existing_candidates": 1,
+  "existing_approved": 0,
+  "existing_retired": 0,
+  "identities_not_in_master": 196,
+  "existing_rows": [
+   {
+    "registration_identity_key": "AU:apvma:91636",
+    "review_status": "candidate",
+    "registered_product_name": "CUSTODIA FORTE FUNGICIDE"
+   }
+  ],
+  "note": "91636 is the Stage 4 pilot ingestion candidate (Custodia Forte); idempotent seed skips it, never duplicates or updates it."
  }
 }

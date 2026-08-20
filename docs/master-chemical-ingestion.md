@@ -391,8 +391,18 @@ NOT "not registered"; 2 ambiguous); 5 conflicts/cancelled; 0 duplicate
 identities. Live proof of the fail-closed rule: bare `Custodia` stayed
 unresolved rather than resolving to `CUSTODIA FORTE FUNGICIDE`.
 
-Next step (NOT yet run, requires operator sign-off on the counts and the
-SQL comparison): bulk candidate creation by feeding each candidate-eligible
+Manual comparison (operator-run read-only SQL, 2026-08-20): of the 197
+candidate-eligible identities, 1 already exists in Master — `AU:apvma:91636`
+(CUSTODIA FORTE FUNGICIDE, review_status `candidate`, the Stage 4 pilot
+ingestion row); 0 approved, 0 retired; 196 identities are not in Master and
+would be created as candidates. The pre-existing 91636 candidate is the live
+idempotence proof: the seed skips it — no duplicate, no update. Result is
+recorded in `seeds/awri_dogbook_2026_27.dryrun.json` under
+`manual_comparison`.
+
+Next step (NOT yet run — dry-run counts are confirmed, but execution still
+requires explicit operator approval): bulk candidate creation by feeding each
+candidate-eligible
 registration number through the existing pipeline (`ingest.ts`, register-
 number-verified path) — candidates only, tagged with AWRI
 `viticulture_reference` provenance, never auto-approved, duplicate-safe on
