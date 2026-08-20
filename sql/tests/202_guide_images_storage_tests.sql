@@ -30,6 +30,15 @@
 --   * >10 MB upload rejected; non-JPEG/PNG/WebP upload rejected
 --   * public URL serving of uploaded objects (/object/public/guide-images/…)
 --
+-- Platform note (Supabase storage ≥ Jan 2026, supabase/storage#817):
+--   storage.protect_delete() now rejects EVERY direct SQL DELETE on
+--   storage.buckets/objects/prefixes (statement-level trigger — fires even on
+--   0-row deletes) unless the session sets storage.allow_delete_query='true'.
+--   The Storage API sets that GUC in its own sessions, so production remove()
+--   flows are unaffected. The fixtures below set it TRANSACTION-LOCALLY so
+--   T3/T4 exercise the API-equivalent path where OUR RLS policies are the
+--   enforcement boundary; the setting disappears at the final rollback.
+--
 -- Expected final line:
 --   NOTICE: sql/202 guide images storage tests: ALL PASSED
 -- =============================================================================
@@ -121,6 +130,12 @@ begin
 
   perform set_config('vinetrack.t202_user_a',   u_a::text,   false);
   perform set_config('vinetrack.t202_user_adm', u_adm::text, false);
+
+  -- Supabase blocks direct SQL DELETEs on storage tables (protect_delete,
+  -- supabase/storage#817) unless this GUC is set — the Storage API sets the
+  -- same value for its own sessions. Transaction-local (is_local => true):
+  -- gone at the final rollback; RLS remains the boundary under test.
+  perform set_config('storage.allow_delete_query', 'true', true);
 end$$;
 
 -- Helper: become one of the fixture users, with RLS enforced.
@@ -178,7 +193,8 @@ begin
     raise exception 'T3 FAILED: admin overwrite-update did not stick';
   end if;
 
-  -- Replace = upload new timestamped object, then remove the previous one.
+  -- Replace = upload new timestamped object, then remove the previous one
+  -- (API-parity delete: storage.allow_delete_query set in fixtures).
   insert into storage.objects (bucket_id, name)
   values ('guide-images', 'hero/1755000000001.jpg');
 
@@ -219,6 +235,9 @@ begin
   end if;
 
   -- RLS silently filters updates/deletes to 0 rows — verify nothing changed.
+  -- (The platform delete guard is satisfied by the fixture GUC, so what
+  --  blocks this delete is OUR guide_images_delete_admin policy — exactly
+  --  the boundary this test must prove.)
   update storage.objects
      set metadata = '{"hacked":true}'::jsonb
    where bucket_id = 'guide-images';
