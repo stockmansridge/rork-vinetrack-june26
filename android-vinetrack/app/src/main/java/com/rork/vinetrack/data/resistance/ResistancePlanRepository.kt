@@ -676,6 +676,13 @@ class ResistancePlanRepository(
     /** Pending-upload count, for the plan list badge. */
     fun pendingCount(): Int = vineyardId?.let { local.loadPending(it).size } ?: 0
 
+    /**
+     * True when this plan has local changes the server has not yet accepted.
+     * Per-row companion to [pendingCount], for the plan list's row badge.
+     */
+    fun isPending(planId: String): Boolean =
+        vineyardId?.let { local.loadPending(it).contains(planId) } ?: false
+
     /** Unresolved-conflict count, for the plan list badge. */
     fun conflictCount(): Int = _conflicts.value.size
 

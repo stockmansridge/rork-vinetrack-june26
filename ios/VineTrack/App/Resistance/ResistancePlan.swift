@@ -429,6 +429,51 @@ nonisolated struct ResistancePlan: Codable, Sendable, Hashable, Identifiable {
         positions.first { $0.id == positionId }
     }
 
+    /// Operator-facing title for the plan list and navigation.
+    ///
+    /// The optional plan name lives in `notes` (the sql/196 column already exists and
+    /// syncs on every platform), falling back to "<Disease> — <Season>" so an unnamed
+    /// plan is still identifiable. Only the first line is used: notes is free text, and
+    /// a multi-line note must not become a three-line list row.
+    nonisolated var displayTitle: String {
+        let trimmed = (notes ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if let firstLine = trimmed.components(separatedBy: .newlines).first, !firstLine.isEmpty {
+            return firstLine
+        }
+        return "\(disease.label) — \(seasonId)"
+    }
+
+    /// A duplicate of this plan with NEW stable identities throughout.
+    ///
+    /// New plan id AND new position/product ids — never reused. Position ids are the
+    /// seam sql/201 spray jobs point at: a duplicate that kept them would let jobs
+    /// created from Plan A silently claim coverage on Plan B. Content (blocks,
+    /// chemistry, season, disease, ruleset stamp) is copied verbatim; SERVER STATE is
+    /// not — the copy has never been accepted by the server, so `serverRevision` is nil
+    /// and its first push is a CREATE (sql/198). `createdBy` is reset: the person who
+    /// duplicates is not the person who authored the original.
+    nonisolated func duplicated(atEpochMs now: Int64, by userId: String?) -> ResistancePlan {
+        var copy = self
+        copy.id = UUID().uuidString
+        copy.positions = positions.map { position in
+            var newPosition = position
+            newPosition.id = UUID().uuidString
+            newPosition.products = position.products.map { product in
+                var newProduct = product
+                newProduct.id = UUID().uuidString
+                return newProduct
+            }
+            return newPosition
+        }
+        copy.notes = "\(displayTitle) (copy)"
+        copy.createdBy = userId
+        copy.createdAtEpochMs = now
+        copy.updatedAtEpochMs = now
+        copy.deletedAtEpochMs = nil
+        copy.serverRevision = nil
+        return copy
+    }
+
     /// 1-based display ordinal, e.g. position index 0 in a season with 3 completed
     /// sprays is "Spray 4".
     nonisolated func displayOrdinal(forPositionAt index: Int, completedCount: Int) -> Int {

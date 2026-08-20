@@ -4,7 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,9 +28,10 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -40,6 +43,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -48,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,6 +79,7 @@ import com.rork.vinetrack.data.resistance.ResistancePlanSyncState
 import com.rork.vinetrack.data.resistance.ResistancePlanner
 import com.rork.vinetrack.data.resistance.ResistancePlannerPosition
 import com.rork.vinetrack.data.resistance.ResistancePlannerPresentation
+import com.rork.vinetrack.data.resistance.ResistancePlannerSeasonChoice
 import com.rork.vinetrack.data.resistance.ResistancePlannerUiState
 import com.rork.vinetrack.data.resistance.ResistanceRulesets
 import com.rork.vinetrack.data.resistance.ResistanceSeasonCalendar
@@ -91,20 +97,20 @@ import java.util.Locale
 import java.util.TimeZone
 
 /**
- * Resistance Planner — plan a season-long fungicide rotation for a block and disease.
+ * Resistance Planner — the PLAN LIST first, then one plan's editor.
  *
- * A dedicated planning tool, deliberately NOT inside the Spray Calculator: the decisions
- * here are made weeks before a tank is filled, and burying them in a calculator would
- * make the plan a by-product of an individual spray rather than the thing the sprays are
- * drawn from.
+ * Opening the Planner always lands on the list: every live plan for the selected
+ * vineyard, filterable by season and disease. A vineyard may legitimately hold several
+ * plans for the SAME season and disease (a trial-block plan, a "plan B"), so nothing
+ * here ever auto-selects a plan — tapping a row opens the editor by stable
+ * `resistance_plans.id`, and back always returns to this list.
  *
- * Every verdict on this screen comes from `ResistanceEngine` via [ResistancePlanner], and
- * every label comes from [ResistancePlannerPresentation]. This file lays out; it never
- * counts and never decides a status.
+ * Every verdict in the editor comes from `ResistanceEngine` via [ResistancePlanner],
+ * and every label comes from [ResistancePlannerPresentation]. This file lays out; it
+ * never counts and never decides a status.
  *
- * Mirrors `ResistancePlannerView.swift`.
+ * Mirrors `ResistancePlannerView.swift` + `ResistancePlanEditorView.swift`.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ResistancePlannerScreen(
     vm: AppViewModel,
@@ -113,7 +119,6 @@ fun ResistancePlannerScreen(
     onBack: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
-    val vine = LocalVineColors.current
 
     // Server-authoritative with a local cache. The remote is attached only when Supabase
     // is configured; without it the repository degrades to a device-local cache rather
@@ -128,6 +133,7 @@ fun ResistancePlannerScreen(
     }
     val plans by planRepository.plans.collectAsStateWithLifecycle()
     val syncState by planRepository.syncState.collectAsStateWithLifecycle()
+    val conflicts by planRepository.conflicts.collectAsStateWithLifecycle()
 
     val vineyard = state.selectedVineyard
     val vineyardId = state.selectedVineyardId
@@ -142,36 +148,8 @@ fun ResistancePlannerScreen(
                 ?: TimeZone.getDefault().id,
         )
     }
-    val nowMs = remember { System.currentTimeMillis() }
-    val currentSeasonStartYear = remember(seasonCalendar, nowMs) {
-        seasonCalendar.season(nowMs).startYear
-    }
-
-    var seasonStartYear by remember(currentSeasonStartYear) {
-        mutableStateOf(currentSeasonStartYear)
-    }
-    var disease by remember { mutableStateOf(ResistanceDisease.POWDERY_MILDEW) }
-    var plan by remember { mutableStateOf<ResistancePlan?>(null) }
-    var editingPositionId by remember { mutableStateOf<String?>(null) }
-    var expandedPositionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var showStrategy by remember { mutableStateOf(false) }
-    var showUnresolvedDetail by remember { mutableStateOf(false) }
-
-    // Plan -> Spray Jobs (sql/201, Stage 5B). The create gate mirrors the
-    // spray_jobs INSERT RLS policy (owner/manager only).
-    val planSprayJobsMap by vm.planSprayJobs.collectAsStateWithLifecycle()
-    val canCreateSprayJobs = state.currentRole == "owner" || state.currentRole == "manager"
-    var jobDetail by remember { mutableStateOf<PlanSprayJob?>(null) }
-    var recordingJob by remember { mutableStateOf<PlanSprayJob?>(null) }
-
-    val season = remember(seasonCalendar, seasonStartYear) {
-        seasonCalendar.seasonStarting(seasonStartYear)
-    }
-
-    // Resistance events are rebuilt from persisted spray records only. Nothing on this
-    // screen writes to them: historical applications are immutable input.
-    val sourced = remember(state.sprayRecords, seasonCalendar) {
-        ResistanceEventSource.events(state.sprayRecords, seasonCalendar)
+    val currentSeasonStartYear = remember(seasonCalendar) {
+        seasonCalendar.season(System.currentTimeMillis()).startYear
     }
 
     LaunchedEffect(vineyardId) {
@@ -181,90 +159,6 @@ fun ResistancePlannerScreen(
         // on this screen waits for the network to become interactive.
         planRepository.load(id)
         planRepository.sync(id)
-    }
-
-    /** Loads the saved plan for the selected season and disease, or prepares a new one. */
-    fun reloadPlan() {
-        val id = vineyardId ?: return
-        plan = planRepository.plans(season.id, disease).firstOrNull()
-            ?: ResistancePlan(
-                vineyardId = id,
-                seasonId = season.id,
-                seasonStartYear = season.startYear,
-                disease = disease,
-                jurisdiction = jurisdiction,
-                createdAtEpochMs = nowMs,
-                updatedAtEpochMs = nowMs,
-            )
-    }
-
-    LaunchedEffect(vineyardId, season.id, disease, jurisdiction) { reloadPlan() }
-
-    /**
-     * Applies an edit, persists it, and lets the plan value drive re-evaluation.
-     *
-     * Every mutation goes through here so re-evaluation can never be forgotten — the
-     * rules are sequence-dependent, so a change to position 4 can alter positions 5 and
-     * 6, and a stale later warning would be worse than none.
-     */
-    fun apply(transform: (ResistancePlan) -> ResistancePlan) {
-        val current = plan ?: return
-        var updated = transform(current)
-        ResistanceRulesets.registry
-            .current(updated.jurisdiction, updated.crop, updated.disease)
-            ?.let { updated = updated.stampingRuleset(it.id, it.rulesetVersion) }
-        plan = updated
-        // Local commit + outbox. Returns immediately, works offline, and never blocks the
-        // edit the grower just made on a network round trip.
-        planRepository.save(updated)
-    }
-
-    val activePlan = plan
-
-    // Plan-linked spray jobs: push queued creates, pull live rows. Progress is
-    // DERIVED — job activity never edits the plan or bumps its revision.
-    LaunchedEffect(activePlan?.id) {
-        activePlan?.id?.let { vm.refreshPlanSprayJobs(it) }
-    }
-    val planJobs = activePlan?.let { planSprayJobsMap[it.id] }.orEmpty()
-    val jobsByPosition = remember(planJobs) { planJobs.groupBy { it.resistancePositionId.orEmpty() } }
-
-    val chemicalCandidates = remember(state.savedChemicals, disease, vineyard?.country) {
-        ResistancePlanChemicalSource.candidates(
-            chemicals = state.savedChemicals,
-            disease = disease,
-            vineyardCountry = vineyard?.country,
-        )
-    }
-
-    val dateFormatter = remember(seasonCalendar.timeZoneId) {
-        SimpleDateFormat("d MMM", Locale.getDefault()).apply {
-            timeZone = TimeZone.getTimeZone(seasonCalendar.timeZoneId)
-        }
-    }
-    val formatDate: (Long) -> String = remember(dateFormatter) {
-        { epochMs -> dateFormatter.format(Date(epochMs)) }
-    }
-
-    val request = remember(activePlan, season, sourced) {
-        activePlan?.let {
-            ResistancePlanner.Request(
-                plan = it,
-                season = season,
-                seasonCalendar = seasonCalendar,
-                events = sourced.events,
-                unresolvedApplications = sourced.unresolvedBlockApplications,
-            )
-        }
-    }
-
-    // Every change to group, product, order, block set, disease or season lands in
-    // `plan`/`season`, so this single call re-runs the already-tested orchestrator. There
-    // is no counting anywhere in this file.
-    val evaluation = remember(request) { request?.let { ResistancePlanner.evaluate(it) } }
-
-    val blockNames = remember(state.paddocks) {
-        state.paddocks.sortedBy { it.name.lowercase() }.map { it.id to it.name }
     }
 
     val syncNotice = remember(syncState) {
@@ -280,20 +174,725 @@ fun ResistancePlannerScreen(
         }
     }
 
-    val ui: ResistancePlannerUiState? =
-        remember(evaluation, activePlan, blockNames, currentSeasonStartYear, syncNotice) {
-            if (activePlan == null || evaluation == null) {
-                null
+    // The ONLY navigation state: which plan is open, by stable id. Never re-resolved
+    // by season/disease — two plans for the same season and disease must never swap
+    // under the editor. Back clears it and lands on the list, never on another plan.
+    var openPlanId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val listDateFormatter = remember { SimpleDateFormat("d MMM yyyy", Locale.getDefault()) }
+
+    val open = openPlanId
+    if (open == null) {
+        ResistancePlanListContent(
+            plans = plans,
+            hasVineyard = vineyardId != null,
+            syncNotice = syncNotice,
+            isPending = { planRepository.isPending(it) },
+            hasConflict = { id -> conflicts.any { it.rowId == id } },
+            newPlanSeasonChoices = ResistancePlannerPresentation.seasonChoices(
+                currentStartYear = currentSeasonStartYear,
+                selectedStartYear = currentSeasonStartYear,
+            ),
+            formatListDate = { listDateFormatter.format(Date(it)) },
+            onOpen = { openPlanId = it },
+            onCreate = create@{ seasonStartYear, disease, name ->
+                val id = vineyardId ?: return@create
+                val now = System.currentTimeMillis()
+                // Created immediately with a device-minted id, then opened. Creating
+                // before first edit gives the plan its stable identity up front — the
+                // same id the server, other devices and spray jobs will use.
+                var plan = ResistancePlan(
+                    vineyardId = id,
+                    seasonId = ResistanceSeasonCalendar.seasonId(seasonStartYear),
+                    seasonStartYear = seasonStartYear,
+                    disease = disease,
+                    jurisdiction = jurisdiction,
+                    notes = name,
+                    createdAtEpochMs = now,
+                    updatedAtEpochMs = now,
+                )
+                ResistanceRulesets.registry
+                    .current(plan.jurisdiction, plan.crop, plan.disease)
+                    ?.let { plan = plan.stampingRuleset(it.id, it.rulesetVersion) }
+                planRepository.save(plan)
+                openPlanId = plan.id
+            },
+            // New stable plan AND position ids — see ResistancePlan.duplicated. The copy
+            // stays in the list (not auto-opened) so both plans sit visibly side by side.
+            // createdBy is left null; the sql/196 attribution guard stamps the uploader.
+            onDuplicate = { plan ->
+                planRepository.save(plan.duplicated(nowMs = System.currentTimeMillis(), by = null))
+            },
+            onRename = { plan, name ->
+                planRepository.save(plan.settingNotes(name, System.currentTimeMillis()))
+            },
+            // Soft-delete via the existing tombstone contract (sql/196): the archive
+            // propagates to the server and other devices.
+            onArchive = { planRepository.delete(it.id) },
+            onBack = onBack,
+            modifier = modifier,
+        )
+    } else {
+        androidx.activity.compose.BackHandler { openPlanId = null }
+        ResistancePlanEditorContent(
+            vm = vm,
+            state = state,
+            planRepository = planRepository,
+            plan = plans.firstOrNull { it.id == open },
+            seasonCalendar = seasonCalendar,
+            currentSeasonStartYear = currentSeasonStartYear,
+            syncNotice = syncNotice,
+            onBack = { openPlanId = null },
+            modifier = modifier,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Plan list
+// ---------------------------------------------------------------------------
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ResistancePlanListContent(
+    plans: List<ResistancePlan>,
+    hasVineyard: Boolean,
+    syncNotice: String,
+    isPending: (String) -> Boolean,
+    hasConflict: (String) -> Boolean,
+    newPlanSeasonChoices: List<ResistancePlannerSeasonChoice>,
+    formatListDate: (Long) -> String,
+    onOpen: (String) -> Unit,
+    onCreate: (Int, ResistanceDisease, String?) -> Unit,
+    onDuplicate: (ResistancePlan) -> Unit,
+    onRename: (ResistancePlan, String?) -> Unit,
+    onArchive: (ResistancePlan) -> Unit,
+    onBack: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val vine = LocalVineColors.current
+
+    var seasonFilter by rememberSaveable { mutableStateOf<String?>(null) }
+    var diseaseFilterRaw by rememberSaveable { mutableStateOf<String?>(null) }
+    var showNewPlan by rememberSaveable { mutableStateOf(false) }
+    var renamingPlanId by rememberSaveable { mutableStateOf<String?>(null) }
+    var archivingPlanId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val diseaseFilter = diseaseFilterRaw?.let { raw ->
+        ResistanceDisease.entries.firstOrNull { it.name == raw }
+    }
+    // Seasons that actually have plans, newest first.
+    val seasonOptions = remember(plans) {
+        plans.sortedByDescending { it.seasonStartYear }.map { it.seasonId }.distinct()
+    }
+    val filtered = remember(plans, seasonFilter, diseaseFilter) {
+        plans.filter { plan ->
+            (seasonFilter == null || plan.seasonId == seasonFilter) &&
+                (diseaseFilter == null || plan.disease == diseaseFilter)
+        }
+    }
+
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        containerColor = vine.appBackground,
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = { Text("Resistance Planner", fontWeight = FontWeight.SemiBold) },
+                navigationIcon = { onBack?.let { BackNavIcon(it) } },
+                actions = {
+                    if (hasVineyard) {
+                        IconButton(onClick = { showNewPlan = true }) {
+                            Icon(Icons.Filled.Add, contentDescription = "New resistance plan")
+                        }
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Spacer(Modifier.height(4.dp))
+
+            if (!hasVineyard) {
+                VineyardCard {
+                    Text(
+                        "Select a vineyard to plan a resistance strategy.",
+                        fontSize = 14.sp,
+                        color = vine.textSecondary,
+                    )
+                }
             } else {
-                ResistancePlannerPresentation.state(
-                    plan = activePlan,
-                    evaluation = evaluation,
-                    blockNames = blockNames,
-                    currentSeasonStartYear = currentSeasonStartYear,
-                    syncNotice = syncNotice,
-                    formatDate = formatDate,
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterMenuChip(
+                        label = seasonFilter ?: "All seasons",
+                        isActive = seasonFilter != null,
+                    ) { dismiss ->
+                        DropdownMenuItem(
+                            text = { Text("All seasons") },
+                            onClick = { seasonFilter = null; dismiss() },
+                        )
+                        seasonOptions.forEach { seasonId ->
+                            DropdownMenuItem(
+                                text = { Text(seasonId) },
+                                onClick = { seasonFilter = seasonId; dismiss() },
+                            )
+                        }
+                    }
+                    FilterMenuChip(
+                        label = diseaseFilter?.label ?: "All diseases",
+                        isActive = diseaseFilter != null,
+                    ) { dismiss ->
+                        DropdownMenuItem(
+                            text = { Text("All diseases") },
+                            onClick = { diseaseFilterRaw = null; dismiss() },
+                        )
+                        ResistanceDisease.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label) },
+                                onClick = { diseaseFilterRaw = option.name; dismiss() },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    if (seasonFilter != null || diseaseFilterRaw != null) {
+                        TextButton(onClick = { seasonFilter = null; diseaseFilterRaw = null }) {
+                            Text("Clear", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+
+                if (plans.isEmpty()) {
+                    VineyardCard {
+                        Text(
+                            "No resistance plans yet",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Plan a season-long FRAC rotation per disease. You can keep several plans for the same season and disease — nothing is ever selected for you.",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Button(onClick = { showNewPlan = true }) {
+                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.size(6.dp))
+                            Text("New Resistance Plan", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                } else if (filtered.isEmpty()) {
+                    VineyardCard {
+                        Text("No plans match the filter.", fontSize = 13.sp, color = vine.textSecondary)
+                        TextButton(onClick = { seasonFilter = null; diseaseFilterRaw = null }) {
+                            Text("Clear filters", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                } else {
+                    filtered.forEach { plan ->
+                        PlanListRow(
+                            plan = plan,
+                            isPending = isPending(plan.id),
+                            hasConflict = hasConflict(plan.id),
+                            updatedLabel = formatListDate(plan.updatedAtEpochMs),
+                            onOpen = { onOpen(plan.id) },
+                            onRename = { renamingPlanId = plan.id },
+                            onDuplicate = { onDuplicate(plan) },
+                            onArchive = { archivingPlanId = plan.id },
+                        )
+                    }
+                }
+
+                // Where these plans actually live, stated where they are managed.
+                Text(syncNotice, fontSize = 11.sp, color = vine.textSecondary)
+            }
+
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+
+    if (showNewPlan) {
+        NewResistancePlanDialog(
+            seasonChoices = newPlanSeasonChoices,
+            onDismiss = { showNewPlan = false },
+            onCreate = { year, disease, name ->
+                showNewPlan = false
+                onCreate(year, disease, name)
+            },
+        )
+    }
+
+    val renaming = renamingPlanId?.let { id -> plans.firstOrNull { it.id == id } }
+    if (renaming != null) {
+        RenamePlanDialog(
+            plan = renaming,
+            onDismiss = { renamingPlanId = null },
+            onSave = { name ->
+                renamingPlanId = null
+                onRename(renaming, name)
+            },
+        )
+    }
+
+    val archiving = archivingPlanId?.let { id -> plans.firstOrNull { it.id == id } }
+    if (archiving != null) {
+        AlertDialog(
+            onDismissRequest = { archivingPlanId = null },
+            title = { Text("Archive this plan?") },
+            text = {
+                Text(
+                    "Archives \"${archiving.displayTitle}\" for the whole vineyard. " +
+                        "Spray jobs and records created from it are never touched.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    archivingPlanId = null
+                    onArchive(archiving)
+                }) { Text("Archive", color = VineColors.Destructive) }
+            },
+            dismissButton = {
+                TextButton(onClick = { archivingPlanId = null }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun PlanListRow(
+    plan: ResistancePlan,
+    isPending: Boolean,
+    hasConflict: Boolean,
+    updatedLabel: String,
+    onOpen: () -> Unit,
+    onRename: () -> Unit,
+    onDuplicate: () -> Unit,
+    onArchive: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    var menuOpen by remember { mutableStateOf(false) }
+    val blocks = plan.blockIds.size
+    val positions = plan.positions.size
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(vine.cardBackground)
+            .border(0.5.dp, vine.cardBorder, RoundedCornerShape(14.dp))
+            .clickable { onOpen() }
+            .padding(12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    plan.displayTitle,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(5.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    PlanTag(plan.seasonId)
+                    PlanTag(plan.disease.label)
+                }
+            }
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = "Plan actions",
+                        tint = vine.textSecondary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Open") },
+                        onClick = { menuOpen = false; onOpen() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Rename") },
+                        leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        onClick = { menuOpen = false; onRename() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Duplicate") },
+                        leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        onClick = { menuOpen = false; onDuplicate() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Archive", color = VineColors.Destructive) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Delete,
+                                contentDescription = null,
+                                tint = VineColors.Destructive,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        onClick = { menuOpen = false; onArchive() },
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "$blocks ${if (blocks == 1) "block" else "blocks"} • " +
+                "$positions ${if (positions == 1) "position" else "positions"} • " +
+                "Updated $updatedLabel",
+            fontSize = 12.sp,
+            color = vine.textSecondary,
+        )
+        if (hasConflict) {
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Warning,
+                    contentDescription = null,
+                    tint = VineColors.Orange,
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.size(4.dp))
+                Text(
+                    "Changes need review",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = VineColors.Orange,
                 )
             }
+        } else if (isPending) {
+            Spacer(Modifier.height(4.dp))
+            Text("Waiting to sync", fontSize = 11.sp, color = VineColors.Orange)
+        }
+    }
+}
+
+@Composable
+private fun PlanTag(text: String) {
+    Text(
+        text,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        color = VineColors.LeafGreen,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(VineColors.LeafGreen.copy(alpha = 0.14f))
+            .padding(horizontal = 7.dp, vertical = 3.dp),
+    )
+}
+
+@Composable
+private fun FilterMenuChip(
+    label: String,
+    isActive: Boolean,
+    content: @Composable (dismiss: () -> Unit) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(50))
+                .background(if (isActive) VineColors.LeafGreen.copy(alpha = 0.18f) else vine.cardBackground)
+                .border(0.5.dp, vine.cardBorder, RoundedCornerShape(50))
+                .clickable { expanded = true }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                label,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (isActive) VineColors.LeafGreen else vine.textPrimary,
+            )
+            Spacer(Modifier.size(4.dp))
+            Icon(
+                Icons.Filled.ExpandMore,
+                contentDescription = null,
+                tint = if (isActive) VineColors.LeafGreen else vine.textSecondary,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            content { expanded = false }
+        }
+    }
+}
+
+/**
+ * Season, disease and an optional name for a NEW plan.
+ *
+ * Duplicates by season+disease are allowed on purpose — the list is the place that
+ * tells them apart, and the optional name makes that easy.
+ */
+@Composable
+private fun NewResistancePlanDialog(
+    seasonChoices: List<ResistancePlannerSeasonChoice>,
+    onDismiss: () -> Unit,
+    onCreate: (Int, ResistanceDisease, String?) -> Unit,
+) {
+    var seasonStartYear by remember {
+        mutableStateOf(
+            seasonChoices.firstOrNull { it.isSelected }?.startYear
+                ?: seasonChoices.firstOrNull()?.startYear
+                ?: 0,
+        )
+    }
+    var disease by remember { mutableStateOf(ResistanceDisease.POWDERY_MILDEW) }
+    var name by remember { mutableStateOf("") }
+    val vine = LocalVineColors.current
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("New Resistance Plan") },
+        text = {
+            Column {
+                PickerRow(
+                    label = "Season",
+                    value = seasonChoices.firstOrNull { it.startYear == seasonStartYear }?.id
+                        ?: ResistanceSeasonCalendar.seasonId(seasonStartYear),
+                ) { dismiss ->
+                    seasonChoices.forEach { choice ->
+                        DropdownMenuItem(
+                            text = { Text(choice.id) },
+                            onClick = { seasonStartYear = choice.startYear; dismiss() },
+                        )
+                    }
+                }
+                PickerRow(label = "Disease", value = disease.label) { dismiss ->
+                    ResistanceDisease.entries.forEach { option ->
+                        DropdownMenuItem(
+                            text = { Text(option.label) },
+                            onClick = { disease = option; dismiss() },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Plan name (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "You can keep several plans for the same season and disease — a name makes them easy to tell apart.",
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onCreate(seasonStartYear, disease, name.trim().ifBlank { null })
+            }) { Text("Create") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+@Composable
+private fun RenamePlanDialog(
+    plan: ResistancePlan,
+    onDismiss: () -> Unit,
+    onSave: (String?) -> Unit,
+) {
+    var name by remember(plan.id) { mutableStateOf(plan.notes.orEmpty()) }
+    val vine = LocalVineColors.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename plan") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Plan name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Shown in the plan list. Clear it to fall back to season and disease.",
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(name.trim().ifBlank { null }) }) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Plan editor
+// ---------------------------------------------------------------------------
+
+/**
+ * Editor for ONE plan, opened by stable id. Season and disease are the plan's
+ * identity, fixed at creation and shown read-only — the pickers that used to live
+ * here silently switched to a DIFFERENT plan, which is exactly what the plan list
+ * exists to prevent.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ResistancePlanEditorContent(
+    vm: AppViewModel,
+    state: AppUiState,
+    planRepository: ResistancePlanRepository,
+    plan: ResistancePlan?,
+    seasonCalendar: ResistanceSeasonCalendar,
+    currentSeasonStartYear: Int,
+    syncNotice: String,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val vine = LocalVineColors.current
+
+    if (plan == null) {
+        // Archived or removed — possibly on another device, pulled mid-session.
+        // Never silently substitute a different plan.
+        Scaffold(
+            modifier = modifier.fillMaxSize(),
+            containerColor = vine.appBackground,
+            topBar = {
+                CenterAlignedTopAppBar(
+                    title = { Text("Resistance Plan", fontWeight = FontWeight.SemiBold) },
+                    navigationIcon = { BackNavIcon(onBack) },
+                )
+            },
+        ) { padding ->
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+            ) {
+                Spacer(Modifier.height(8.dp))
+                VineyardCard {
+                    Text("Plan no longer available", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "This plan was archived or removed. Go back to the plan list to pick or create another.",
+                        fontSize = 13.sp,
+                        color = vine.textSecondary,
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    val vineyard = state.selectedVineyard
+    var editingPositionId by remember { mutableStateOf<String?>(null) }
+    var expandedPositionIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showStrategy by remember { mutableStateOf(false) }
+    var showUnresolvedDetail by remember { mutableStateOf(false) }
+
+    // Plan -> Spray Jobs (sql/201, Stage 5B). The create gate mirrors the
+    // spray_jobs INSERT RLS policy (owner/manager only).
+    val planSprayJobsMap by vm.planSprayJobs.collectAsStateWithLifecycle()
+    val canCreateSprayJobs = state.currentRole == "owner" || state.currentRole == "manager"
+    var jobDetail by remember { mutableStateOf<PlanSprayJob?>(null) }
+    var recordingJob by remember { mutableStateOf<PlanSprayJob?>(null) }
+
+    val season = remember(seasonCalendar, plan.seasonStartYear) {
+        seasonCalendar.seasonStarting(plan.seasonStartYear)
+    }
+
+    // Resistance events are rebuilt from persisted spray records only. Nothing on this
+    // screen writes to them: historical applications are immutable input.
+    val sourced = remember(state.sprayRecords, seasonCalendar) {
+        ResistanceEventSource.events(state.sprayRecords, seasonCalendar)
+    }
+
+    fun now(): Long = System.currentTimeMillis()
+
+    /**
+     * Applies an edit and persists it; the repository publish drives re-evaluation.
+     *
+     * Every mutation goes through here so re-evaluation can never be forgotten — the
+     * rules are sequence-dependent, so a change to position 4 can alter positions 5 and
+     * 6, and a stale later warning would be worse than none.
+     */
+    fun apply(transform: (ResistancePlan) -> ResistancePlan) {
+        var updated = transform(plan)
+        ResistanceRulesets.registry
+            .current(updated.jurisdiction, updated.crop, updated.disease)
+            ?.let { updated = updated.stampingRuleset(it.id, it.rulesetVersion) }
+        // Local commit + outbox. Returns immediately, works offline, and never blocks the
+        // edit the grower just made on a network round trip.
+        planRepository.save(updated)
+    }
+
+    // Plan-linked spray jobs: push queued creates, pull live rows. Progress is
+    // DERIVED — job activity never edits the plan or bumps its revision.
+    LaunchedEffect(plan.id) { vm.refreshPlanSprayJobs(plan.id) }
+    val planJobs = planSprayJobsMap[plan.id].orEmpty()
+    val jobsByPosition = remember(planJobs) { planJobs.groupBy { it.resistancePositionId.orEmpty() } }
+
+    val chemicalCandidates = remember(state.savedChemicals, plan.disease, vineyard?.country) {
+        ResistancePlanChemicalSource.candidates(
+            chemicals = state.savedChemicals,
+            disease = plan.disease,
+            vineyardCountry = vineyard?.country,
+        )
+    }
+
+    val dateFormatter = remember(seasonCalendar.timeZoneId) {
+        SimpleDateFormat("d MMM", Locale.getDefault()).apply {
+            timeZone = TimeZone.getTimeZone(seasonCalendar.timeZoneId)
+        }
+    }
+    val formatDate: (Long) -> String = remember(dateFormatter) {
+        { epochMs -> dateFormatter.format(Date(epochMs)) }
+    }
+
+    val request = remember(plan, season, sourced) {
+        ResistancePlanner.Request(
+            plan = plan,
+            season = season,
+            seasonCalendar = seasonCalendar,
+            events = sourced.events,
+            unresolvedApplications = sourced.unresolvedBlockApplications,
+        )
+    }
+
+    // Every change to group, product, order or block set lands in `plan`, so this
+    // single call re-runs the already-tested orchestrator. There is no counting
+    // anywhere in this file.
+    val evaluation = remember(request) { ResistancePlanner.evaluate(request) }
+
+    val blockNames = remember(state.paddocks) {
+        state.paddocks.sortedBy { it.name.lowercase() }.map { it.id to it.name }
+    }
+
+    val ui: ResistancePlannerUiState =
+        remember(evaluation, plan, blockNames, currentSeasonStartYear, syncNotice) {
+            ResistancePlannerPresentation.state(
+                plan = plan,
+                evaluation = evaluation,
+                blockNames = blockNames,
+                currentSeasonStartYear = currentSeasonStartYear,
+                syncNotice = syncNotice,
+                formatDate = formatDate,
+            )
         }
 
     // Executing a plan-linked job: host the Spray Calculator in place (the
@@ -309,12 +908,12 @@ fun ResistancePlannerScreen(
             onBack = { recordingJob = null },
             onSaved = {
                 recordingJob = null
-                activePlan?.id?.let { vm.refreshPlanSprayJobs(it) }
+                vm.refreshPlanSprayJobs(plan.id)
             },
             onJobStarted = null,
             prefillJobRecord = recording.toPrefillSprayRecord(),
             originSprayJobId = recording.id,
-            prefillPaddockIds = activePlan?.blockIds.orEmpty(),
+            prefillPaddockIds = plan.blockIds,
         )
         return
     }
@@ -324,8 +923,15 @@ fun ResistancePlannerScreen(
         containerColor = vine.appBackground,
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("Resistance Planner", fontWeight = FontWeight.SemiBold) },
-                navigationIcon = { onBack?.let { BackNavIcon(it) } },
+                title = {
+                    Text(
+                        plan.displayTitle,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
+                navigationIcon = { BackNavIcon(onBack) },
             )
         },
     ) { padding ->
@@ -340,23 +946,7 @@ fun ResistancePlannerScreen(
         ) {
             Spacer(Modifier.height(4.dp))
 
-            if (ui == null) {
-                VineyardCard {
-                    Text(
-                        "Select a vineyard to plan a resistance strategy.",
-                        fontSize = 14.sp,
-                        color = vine.textSecondary,
-                    )
-                }
-                Spacer(Modifier.height(24.dp))
-                return@Column
-            }
-
-            SeasonDiseaseCard(
-                ui = ui,
-                onSeasonChange = { seasonStartYear = it },
-                onDiseaseChange = { disease = it },
-            )
+            PlanHeaderCard(plan)
 
             if (!ui.isSupported) {
                 UnsupportedCard(ui)
@@ -365,7 +955,7 @@ fun ResistancePlannerScreen(
                     apply { current ->
                         val ids = current.blockIds.toMutableList()
                         if (!ids.remove(blockId)) ids.add(blockId)
-                        current.settingBlockIds(ids, nowMs)
+                        current.settingBlockIds(ids, now())
                     }
                 }
 
@@ -390,11 +980,11 @@ fun ResistancePlannerScreen(
                         jobsByPosition = jobsByPosition,
                         canCreateSprayJobs = canCreateSprayJobs,
                         isJobPending = { vm.isPendingSprayJob(it) },
-                        onAdd = { apply { it.addingPosition(nowMs = nowMs) } },
+                        onAdd = { apply { it.addingPosition(nowMs = now()) } },
                         onEdit = { editingPositionId = it },
-                        onMoveUp = { id -> apply { it.movingPositionUp(id, nowMs) } },
-                        onMoveDown = { id -> apply { it.movingPositionDown(id, nowMs) } },
-                        onRemove = { id -> apply { it.removingPosition(id, nowMs) } },
+                        onMoveUp = { id -> apply { it.movingPositionUp(id, now()) } },
+                        onMoveDown = { id -> apply { it.movingPositionDown(id, now()) } },
+                        onRemove = { id -> apply { it.removingPosition(id, now()) } },
                         onToggleReasons = { id ->
                             expandedPositionIds = if (expandedPositionIds.contains(id)) {
                                 expandedPositionIds - id
@@ -403,8 +993,7 @@ fun ResistancePlannerScreen(
                             }
                         },
                         onCreateSprayJob = createJob@{ positionId ->
-                            val currentPlan = activePlan ?: return@createJob
-                            val position = currentPlan.position(positionId) ?: return@createJob
+                            val position = plan.position(positionId) ?: return@createJob
                             val ordinal = ui.positions
                                 .firstOrNull { it.positionId == positionId }
                                 ?.ordinalLabel ?: "Spray"
@@ -412,11 +1001,11 @@ fun ResistancePlannerScreen(
                             // only what the plan genuinely knows (blocks, disease,
                             // planned chemistry identity) — never rates or volumes.
                             vm.createSprayJobFromPlan(
-                                plan = currentPlan,
+                                plan = plan,
                                 position = position,
-                                name = "${disease.label} ${currentPlan.seasonId} — $ordinal",
-                                target = disease.label,
-                                paddockIds = currentPlan.blockIds,
+                                name = "${plan.disease.label} ${plan.seasonId} — $ordinal",
+                                target = plan.disease.label,
+                                paddockIds = plan.blockIds,
                             )
                         },
                         onOpenJob = { jobDetail = it },
@@ -435,19 +1024,19 @@ fun ResistancePlannerScreen(
     }
 
     val editingId = editingPositionId
-    if (editingId != null && activePlan != null && request != null) {
-        val position = activePlan.position(editingId)
-        val index = activePlan.positions.indexOfFirst { it.id == editingId }
+    if (editingId != null) {
+        val position = plan.position(editingId)
+        val index = plan.positions.indexOfFirst { it.id == editingId }
         if (position != null && index >= 0) {
             ResistancePlanPositionEditorSheet(
                 position = position,
                 positionIndex = index,
                 plannerRequest = request,
                 chemicalCandidates = chemicalCandidates,
-                jurisdiction = jurisdiction,
+                jurisdiction = plan.jurisdiction,
                 onDismiss = { editingPositionId = null },
                 onSave = { updated ->
-                    apply { it.replacingPosition(updated, nowMs) }
+                    apply { it.replacingPosition(updated, now()) }
                     editingPositionId = null
                 },
             )
@@ -460,8 +1049,8 @@ fun ResistancePlannerScreen(
     if (detailJob != null) {
         PlanSprayJobDetailSheet(
             job = detailJob,
-            planLabel = "${disease.label} — ${season.id}",
-            livePosition = ui?.positions?.firstOrNull { it.positionId == detailJob.resistancePositionId },
+            planLabel = plan.displayTitle,
+            livePosition = ui.positions.firstOrNull { it.positionId == detailJob.resistancePositionId },
             isPendingSync = vm.isPendingSprayJob(detailJob.id),
             onRecordSpray = {
                 jobDetail = null
@@ -473,39 +1062,39 @@ fun ResistancePlannerScreen(
 }
 
 // ---------------------------------------------------------------------------
-// Season & disease
+// Plan identity header
 // ---------------------------------------------------------------------------
 
+/**
+ * Season and disease, read-only. These identify the plan (together with its name)
+ * and are fixed at creation; a different season or disease is a different plan,
+ * created from the list.
+ */
 @Composable
-private fun SeasonDiseaseCard(
-    ui: ResistancePlannerUiState,
-    onSeasonChange: (Int) -> Unit,
-    onDiseaseChange: (ResistanceDisease) -> Unit,
-) {
+private fun PlanHeaderCard(plan: ResistancePlan) {
     val vine = LocalVineColors.current
     VineyardCard {
-        // The season is stated as a span, never a bare calendar year: an Australian
-        // season starts in one year and finishes in the next, and "2026" would be
-        // ambiguous about which side of the new year a spray belongs to.
-        PickerRow(label = "Season", value = ui.seasonId) { dismiss ->
-            ui.seasonChoices.forEach { choice ->
-                DropdownMenuItem(
-                    text = { Text(choice.id) },
-                    onClick = { onSeasonChange(choice.startYear); dismiss() },
-                )
-            }
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Season", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            // Stated as a span, never a bare calendar year: an Australian season
+            // starts in one year and finishes in the next.
+            Text(plan.seasonId, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         }
         HorizontalDivider(Modifier.padding(vertical = 10.dp), color = vine.cardBorder)
-        PickerRow(label = "Disease", value = ui.disease.label) { dismiss ->
-            ui.diseaseChoices.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(option.label) },
-                    onClick = { onDiseaseChange(option); dismiss() },
-                )
-            }
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Disease", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            Text(plan.disease.label, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         }
         Spacer(Modifier.height(8.dp))
-        Text(ui.diseaseNote, fontSize = 12.sp, color = vine.textSecondary)
+        Text(ResistancePlannerPresentation.DISEASE_NOTE, fontSize = 12.sp, color = vine.textSecondary)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Season and disease identify this plan. For a different season or disease, create another plan from the list.",
+            fontSize = 11.sp,
+            color = vine.textSecondary,
+        )
     }
 }
 

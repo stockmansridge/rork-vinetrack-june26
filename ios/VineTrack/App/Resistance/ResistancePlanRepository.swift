@@ -632,6 +632,13 @@ final class ResistancePlanRepository {
         return local.loadPending(vineyardId: vineyard).count
     }
 
+    /// True when this plan has local changes the server has not yet accepted.
+    /// Per-row companion to `pendingCount()`, for the plan list's row badge.
+    func isPending(id planId: String) -> Bool {
+        guard let vineyard = vineyardId else { return false }
+        return local.loadPending(vineyardId: vineyard).contains(planId)
+    }
+
     /// Unresolved-conflict count, for the plan list badge.
     func conflictCount() -> Int { conflicts.count }
 }

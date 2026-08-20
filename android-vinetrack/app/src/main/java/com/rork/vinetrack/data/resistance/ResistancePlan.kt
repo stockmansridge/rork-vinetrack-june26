@@ -318,6 +318,47 @@ data class ResistancePlan(
 
     fun position(positionId: String): ResistancePlannedPosition? =
         positions.firstOrNull { it.id == positionId }
+
+    /**
+     * Operator-facing title for the plan list and navigation.
+     *
+     * The optional plan name lives in [notes] (the sql/196 column already exists and
+     * syncs on every platform), falling back to "<Disease> — <Season>" so an unnamed
+     * plan is still identifiable. Only the first line is used: notes is free text, and
+     * a multi-line note must not become a three-line list row.
+     */
+    val displayTitle: String
+        get() {
+            val firstLine = notes?.trim()?.lineSequence()?.firstOrNull()?.trim().orEmpty()
+            return firstLine.ifEmpty { "${disease.label} — $seasonId" }
+        }
+
+    /**
+     * A duplicate of this plan with NEW stable identities throughout.
+     *
+     * New plan id AND new position/product ids — never reused. Position ids are the
+     * seam sql/201 spray jobs point at: a duplicate that kept them would let jobs
+     * created from Plan A silently claim coverage on Plan B. Content (blocks,
+     * chemistry, season, disease, ruleset stamp) is copied verbatim; SERVER STATE is
+     * not — the copy has never been accepted by the server, so [serverRevision] is
+     * null and its first push is a CREATE (sql/198). [createdBy] is reset: the person
+     * who duplicates is not the person who authored the original.
+     */
+    fun duplicated(nowMs: Long, by: String?): ResistancePlan = copy(
+        id = UUID.randomUUID().toString(),
+        positions = positions.map { position ->
+            position.copy(
+                id = UUID.randomUUID().toString(),
+                products = position.products.map { it.copy(id = UUID.randomUUID().toString()) },
+            )
+        },
+        notes = "$displayTitle (copy)",
+        createdBy = by,
+        createdAtEpochMs = nowMs,
+        updatedAtEpochMs = nowMs,
+        deletedAtEpochMs = null,
+        serverRevision = null,
+    )
 }
 
 /** Operator-facing label for a signature, e.g. `"FRAC 11 + 3"`. */

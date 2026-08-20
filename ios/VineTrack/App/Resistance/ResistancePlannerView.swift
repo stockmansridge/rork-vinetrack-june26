@@ -1,35 +1,31 @@
 import SwiftUI
 
-/// Resistance Planner — plan a season-long fungicide rotation for a block and disease.
+/// Resistance Planner — the PLAN LIST.
 ///
-/// A dedicated planning tool, deliberately NOT inside the Spray Calculator: the
-/// decisions here are made weeks before a tank is filled, and burying them in a
-/// calculator would make the plan a by-product of an individual spray rather than the
-/// thing the sprays are drawn from.
+/// Opening the Planner always lands here: every live plan for the selected vineyard,
+/// filterable by season and disease. A vineyard may legitimately hold several plans
+/// for the SAME season and disease (a trial-block plan, a "plan B"), so nothing here
+/// ever auto-selects a plan — tapping a row opens `ResistancePlanEditorView` by stable
+/// `resistance_plans.id`, and returning always comes back to this list.
 ///
-/// Every verdict on this screen comes from `ResistanceEngine` via `ResistancePlanner`.
-/// The view formats and explains; it never counts.
+/// Mirrors `ResistancePlannerScreen.kt` on Android.
 struct ResistancePlannerView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(NewBackendAuthService.self) private var auth
-    @Environment(BackendAccessControl.self) private var accessControl
 
     /// Server-authoritative with a local cache. The remote is attached only when Supabase
     /// is configured; without it the repository degrades to a device-local cache rather
     /// than failing, so the Planner still works for a signed-out or offline grower.
     @State private var planRepository = ResistancePlannerView.makeRepository()
-    @State private var seasonStartYear: Int = 0
-    @State private var disease: ResistanceDisease = .powderyMildew
-    @State private var plan: ResistancePlan?
-    @State private var evaluation: ResistancePlanEvaluation?
-    @State private var editingPositionId: String?
-    @State private var expandedPositionIds: Set<String> = []
-    @State private var showStrategy: Bool = false
-    @State private var showUnresolvedDetail: Bool = false
-    /// Spray jobs created from plan positions (sql/201 provenance).
-    @State private var jobService = ResistancePlanJobService()
-    @State private var jobDetail: BackendPlanSprayJob?
-    @State private var recordingJob: BackendPlanSprayJob?
+    /// Nil = all seasons. Matched against `seasonId` (`"2026/27"`).
+    @State private var seasonFilter: String?
+    /// Nil = all diseases.
+    @State private var diseaseFilter: ResistanceDisease?
+    @State private var showNewPlan: Bool = false
+    @State private var openRoute: ResistancePlanRoute?
+    @State private var renamingPlan: ResistancePlan?
+    @State private var renameText: String = ""
+    @State private var archivingPlan: ResistancePlan?
 
     private var vineyard: Vineyard? {
         store.vineyards.first { $0.id == store.selectedVineyardId }
@@ -49,32 +45,38 @@ struct ResistancePlannerView: View {
         )
     }
 
-    private var season: ResistanceSeason {
-        seasonCalendar.seasonStarting(seasonStartYear)
+    private var currentSeasonStartYear: Int {
+        seasonCalendar.season(epochMs: nowMs).startYear
     }
 
-    private var blocks: [Paddock] {
-        store.paddocks.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    /// The four completed seasons, the current one and the season ahead — the whole
+    /// point of the tool is deciding a rotation before the season starts.
+    private var selectableSeasonYears: [Int] {
+        ((currentSeasonStartYear - 4)...(currentSeasonStartYear + 1)).reversed()
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                seasonDiseaseSection
-
-                if jurisdiction == .unknown || evaluation?.isSupported == false {
-                    unsupportedCard
+            VStack(alignment: .leading, spacing: 14) {
+                if store.selectedVineyardId == nil {
+                    noVineyardCard
                 } else {
-                    blockSelectionSection
-                    if let plan, !plan.blockIds.isEmpty {
-                        historyStatusSection
-                        timelineSection
-                        plannedPositionsSection
-                        seasonTotalsSection
-                        strategySection
+                    filterBar
+
+                    if planRepository.plans.isEmpty {
+                        emptyStateCard
+                    } else if filteredPlans.isEmpty {
+                        noMatchesCard
                     } else {
-                        chooseBlocksPrompt
+                        ForEach(filteredPlans) { plan in
+                            planRow(plan)
+                        }
                     }
+
+                    Text(planRepository.syncState.notice)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
                 }
             }
             .padding(.horizontal)
@@ -83,116 +85,218 @@ struct ResistancePlannerView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Resistance Planner")
         .navigationBarTitleDisplayMode(.inline)
-        .task { bootstrap() }
-        .sheet(item: $editingPositionId) { positionId in
-            if let plan, let position = plan.position(id: positionId) {
-                ResistancePlanPositionEditorSheet(
-                    position: position,
-                    positionIndex: plan.positions.firstIndex(where: { $0.id == positionId }) ?? 0,
-                    plannerRequest: plannerRequest(for: plan),
-                    chemicalCandidates: chemicalCandidates,
-                    jurisdiction: jurisdiction,
-                    onSave: { updated in
-                        apply { $0.replacingPosition(updated, atEpochMs: nowMs) }
+        .toolbar {
+            if store.selectedVineyardId != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showNewPlan = true
+                    } label: {
+                        Label("New Plan", systemImage: "plus")
                     }
-                )
+                    .accessibilityLabel("New resistance plan")
+                }
             }
         }
-        .sheet(item: $jobDetail) { job in
-            PlanSprayJobDetailSheet(
-                job: job,
-                planLabel: "\(disease.label) — \(season.id)",
-                positionOrdinal: evaluation?.positions.first { $0.positionId == job.resistancePositionId }?.displayOrdinal,
-                liveEvaluation: evaluation?.positions.first { $0.positionId == job.resistancePositionId },
-                blockName: { blockName($0) },
-                canRecordSpray: accessControl.canCreateOperationalRecords,
-                isPendingSync: jobService.isPendingSync(job.id),
-                onRecordSpray: {
-                    jobDetail = nil
-                    recordingJob = job
+        .task { bootstrap() }
+        .refreshable { await syncNow() }
+        .navigationDestination(item: $openRoute) { route in
+            // Opened by STABLE id. Never re-resolved by season/disease, so two plans
+            // for the same season and disease can never swap under the editor.
+            ResistancePlanEditorView(planId: route.id, planRepository: planRepository)
+        }
+        .sheet(isPresented: $showNewPlan) {
+            NewResistancePlanSheet(
+                seasonYears: Array(selectableSeasonYears),
+                defaultYear: currentSeasonStartYear,
+                onCreate: { year, disease, name in
+                    createPlan(seasonStartYear: year, disease: disease, name: name)
                 }
             )
         }
-        .sheet(item: $recordingJob) { job in
-            NavigationStack {
-                SprayCalculatorView(
-                    prefillRecord: job.toPrefillRecord(),
-                    originSprayJobId: job.id,
-                    prefillPaddockIds: plan?.blockIds.compactMap(UUID.init(uuidString:)) ?? []
-                )
+        .alert("Rename plan", isPresented: renameAlertBinding) {
+            TextField("Plan name", text: $renameText)
+            Button("Save") { commitRename() }
+            Button("Cancel", role: .cancel) { renamingPlan = nil }
+        } message: {
+            Text("Shown in the plan list. Clear it to fall back to season and disease.")
+        }
+        .confirmationDialog(
+            "Archive this plan?",
+            isPresented: archiveDialogBinding,
+            titleVisibility: .visible
+        ) {
+            Button("Archive plan", role: .destructive) { commitArchive() }
+            Button("Cancel", role: .cancel) { archivingPlan = nil }
+        } message: {
+            Text("Archives the plan for the whole vineyard. Spray jobs and records created from it are never touched.")
+        }
+    }
+
+    // MARK: - Filters
+
+    private var filterBar: some View {
+        HStack(spacing: 8) {
+            Menu {
+                Button("All seasons") { seasonFilter = nil }
+                ForEach(seasonOptions, id: \.self) { seasonId in
+                    Button(seasonId) { seasonFilter = seasonId }
+                }
+            } label: {
+                filterChip(title: seasonFilter ?? "All seasons", isActive: seasonFilter != nil)
+            }
+
+            Menu {
+                Button("All diseases") { diseaseFilter = nil }
+                ForEach(ResistanceDisease.allCases, id: \.self) { option in
+                    Button(option.label) { diseaseFilter = option }
+                }
+            } label: {
+                filterChip(title: diseaseFilter?.label ?? "All diseases", isActive: diseaseFilter != nil)
+            }
+
+            Spacer()
+
+            if seasonFilter != nil || diseaseFilter != nil {
+                Button("Clear") {
+                    seasonFilter = nil
+                    diseaseFilter = nil
+                }
+                .font(.caption.weight(.semibold))
             }
         }
     }
 
-    // MARK: - Season & disease
+    private func filterChip(title: String, isActive: Bool) -> some View {
+        HStack(spacing: 4) {
+            Text(title)
+            Image(systemName: "chevron.down").font(.caption2)
+        }
+        .font(.footnote.weight(.medium))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            isActive ? VineyardTheme.leafGreen.opacity(0.18) : Color(.secondarySystemGroupedBackground),
+            in: .capsule
+        )
+        .foregroundStyle(isActive ? VineyardTheme.leafGreen : Color.primary)
+    }
 
-    private var seasonDiseaseSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // The season is stated as a span, never a bare calendar year: an
-            // Australian season starts in one year and finishes in the next, and
-            // "2026" would be ambiguous about which side of the new year a spray
-            // belongs to.
-            HStack {
-                Label("Season", systemImage: "calendar")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Picker("Season", selection: $seasonStartYear) {
-                    ForEach(selectableSeasonYears, id: \.self) { year in
-                        Text(ResistanceSeasonCalendar.seasonId(startYear: year)).tag(year)
+    /// Seasons that actually have plans, newest first.
+    private var seasonOptions: [String] {
+        var seen: Set<String> = []
+        return planRepository.plans
+            .sorted { $0.seasonStartYear > $1.seasonStartYear }
+            .compactMap { seen.insert($0.seasonId).inserted ? $0.seasonId : nil }
+    }
+
+    private var filteredPlans: [ResistancePlan] {
+        planRepository.plans.filter { plan in
+            (seasonFilter == nil || plan.seasonId == seasonFilter)
+                && (diseaseFilter == nil || plan.disease == diseaseFilter)
+        }
+    }
+
+    // MARK: - Rows
+
+    private func planRow(_ plan: ResistancePlan) -> some View {
+        HStack(alignment: .top, spacing: 4) {
+            Button {
+                openRoute = ResistancePlanRoute(id: plan.id)
+            } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(plan.displayTitle)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        rowTag(plan.seasonId)
+                        rowTag(plan.disease.label)
+                    }
+                    Text(metaLine(plan))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if planRepository.conflict(id: plan.id) != nil {
+                        Label("Changes need review", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.orange)
+                    } else if planRepository.isPending(id: plan.id) {
+                        Label("Waiting to sync", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
                     }
                 }
-                .pickerStyle(.menu)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
             }
+            .buttonStyle(.plain)
 
-            Divider()
-
-            HStack {
-                Label("Disease", systemImage: "allergens")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Picker("Disease", selection: $disease) {
-                    ForEach(ResistanceDisease.allCases, id: \.self) { option in
-                        Text(option.label).tag(option)
-                    }
-                }
-                .pickerStyle(.menu)
+            Menu {
+                rowActions(plan)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(.rect)
             }
-
-            Text("One disease is planned at a time. A spray recorded against both diseases still counts in both histories.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            .accessibilityLabel("Plan actions")
         }
-        .padding()
+        .padding(12)
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
-        .onChange(of: seasonStartYear) { _, _ in reloadPlan() }
-        .onChange(of: disease) { _, _ in reloadPlan() }
+        .contextMenu { rowActions(plan) }
     }
 
-    private var selectableSeasonYears: [Int] {
-        let current = seasonCalendar.season(epochMs: nowMs).startYear
-        return ((current - 4)...(current + 1)).reversed()
-    }
-
-    private var unsupportedCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Strategy not available", systemImage: "exclamationmark.triangle.fill")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.orange)
-            Text(ResistancePlanner.unsupportedJurisdictionMessage)
-                .font(.subheadline)
-            // Stated explicitly so nobody assumes the Australian rules are a sensible
-            // default. They are a jurisdiction-specific published strategy, and
-            // applying them to another country's label conditions would be wrong.
-            Text("VineTrack applies a published strategy only where one has been configured for the vineyard's country. No resistance limits are being evaluated.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    @ViewBuilder
+    private func rowActions(_ plan: ResistancePlan) -> some View {
+        Button {
+            openRoute = ResistancePlanRoute(id: plan.id)
+        } label: {
+            Label("Open", systemImage: "arrow.right.circle")
         }
-        .padding()
-        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
+        Button {
+            renameText = plan.notes ?? ""
+            renamingPlan = plan
+        } label: {
+            Label("Rename", systemImage: "pencil")
+        }
+        Button {
+            duplicate(plan)
+        } label: {
+            Label("Duplicate", systemImage: "plus.square.on.square")
+        }
+        Button(role: .destructive) {
+            archivingPlan = plan
+        } label: {
+            Label("Archive", systemImage: "archivebox")
+        }
     }
 
-    private var chooseBlocksPrompt: some View {
-        Text("Select at least one block to see its recorded history and plan a sequence.")
+    private func rowTag(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(VineyardTheme.leafGreen.opacity(0.14), in: .capsule)
+            .foregroundStyle(VineyardTheme.leafGreen)
+    }
+
+    private func metaLine(_ plan: ResistancePlan) -> String {
+        let blocks = plan.blockIds.count
+        let positions = plan.positions.count
+        return "\(blocks) block\(blocks == 1 ? "" : "s") • "
+            + "\(positions) position\(positions == 1 ? "" : "s") • "
+            + "Updated \(listDate(plan.updatedAtEpochMs))"
+    }
+
+    private func listDate(_ epochMs: Int64) -> String {
+        Date(timeIntervalSince1970: Double(epochMs) / 1000)
+            .formatted(.dateTime.day().month(.abbreviated).year())
+    }
+
+    // MARK: - Empty states
+
+    private var noVineyardCard: some View {
+        Text("Select a vineyard to plan a resistance strategy.")
             .font(.subheadline)
             .foregroundStyle(.secondary)
             .padding()
@@ -200,677 +304,123 @@ struct ResistancePlannerView: View {
             .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
     }
 
-    // MARK: - Blocks
-
-    private var blockSelectionSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Blocks")
-                .font(.subheadline.weight(.semibold))
-            Text("Each block is assessed against its own history. Selecting several never merges them.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if blocks.isEmpty {
-                Text("This vineyard has no blocks yet.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 8)], spacing: 8) {
-                    ForEach(blocks) { block in
-                        blockChip(block)
-                    }
-                }
-            }
-        }
-        .padding()
-        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
-    }
-
-    private func blockChip(_ block: Paddock) -> some View {
-        let id = block.id.uuidString
-        let isSelected = plan?.blockIds.contains(id) ?? false
-        return Button {
-            toggleBlock(id)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                Text(block.name)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .font(.footnote.weight(.medium))
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .padding(.horizontal, 8)
-            .background(
-                isSelected ? VineyardTheme.leafGreen.opacity(0.18) : Color(.tertiarySystemFill),
-                in: .rect(cornerRadius: 10)
-            )
-            .foregroundStyle(isSelected ? VineyardTheme.leafGreen : Color.primary)
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - History status
-
-    private var historyStatusSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("History check")
-                .font(.subheadline.weight(.semibold))
-            // Deliberately ABOVE the plan. A grower who scrolls to a green sequence
-            // first has already been reassured before learning the history behind it
-            // is incomplete.
-            Text("Checked before any recommendation, so a plan never looks settled on top of history that isn't.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if let evaluation {
-                ForEach(evaluation.historyChecks, id: \.blockId) { check in
-                    historyCheckRow(check)
-                }
-
-                if evaluation.unresolvedApplicationCount > 0 {
-                    unresolvedSummary(count: evaluation.unresolvedApplicationCount)
-                }
-            }
-        }
-        .padding()
-        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
-    }
-
-    private func historyCheckRow(_ check: ResistanceBlockHistoryCheck) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(blockName(check.blockId))
-                .font(.footnote.weight(.semibold))
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: check.isCompleteEnoughToAssess
-                      ? "checkmark.circle.fill"
-                      : "exclamationmark.triangle.fill")
-                    .foregroundStyle(check.isCompleteEnoughToAssess ? VineyardTheme.leafGreen : .orange)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(check.headline(disease: disease))
-                        .font(.footnote)
-                    ForEach(detailLines(check), id: \.self) { line in
-                        Text(line)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color(.tertiarySystemFill), in: .rect(cornerRadius: 10))
-    }
-
-    private func detailLines(_ check: ResistanceBlockHistoryCheck) -> [String] {
-        var lines: [String] = []
-        if check.relevantApplicationCount > 0 {
-            lines.append("\(check.relevantApplicationCount) relevant application\(check.relevantApplicationCount == 1 ? "" : "s") this season")
-        }
-        if check.unresolvedVineyardApplicationCount > 0 {
-            lines.append("\(check.unresolvedVineyardApplicationCount) older spray record\(check.unresolvedVineyardApplicationCount == 1 ? "" : "s") cannot be assigned to a block")
-        }
-        if check.unknownTargetCount > 0 {
-            lines.append("\(check.unknownTargetCount) spray\(check.unknownTargetCount == 1 ? "" : "s") with no recorded disease target")
-        }
-        if check.conflictingCount > 0 {
-            lines.append("\(check.conflictingCount) application\(check.conflictingCount == 1 ? "" : "s") with conflicting chemistry")
-        }
-        if check.unavailableCount > 0 {
-            lines.append("\(check.unavailableCount) application\(check.unavailableCount == 1 ? "" : "s") with no usable chemistry")
-        }
-        if check.unverifiedCount > 0 {
-            lines.append("\(check.unverifiedCount) application\(check.unverifiedCount == 1 ? "" : "s") with unverified chemistry")
-        }
-        return lines
-    }
-
-    private func unresolvedSummary(count: Int) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Resistance history incomplete", systemImage: "questionmark.circle.fill")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.orange)
-            Text("\(count) older spray\(count == 1 ? "" : "s") in this vineyard cannot be assigned to individual blocks, so VineTrack cannot confirm that every strategy limit is still available for these blocks.")
-                .font(.caption)
-            Button(showUnresolvedDetail ? "Hide details" : "Show details") {
-                withAnimation(.easeInOut(duration: 0.2)) { showUnresolvedDetail.toggle() }
-            }
-            .font(.caption.weight(.semibold))
-            if showUnresolvedDetail {
-                // Counts by default, records only on request: a vineyard with years of
-                // legacy history would otherwise bury the plan under a list nobody
-                // asked for.
-                Text("These applications happened somewhere in this vineyard. Because the treated blocks were never recorded, they are not assigned to any block — and not assumed to be absent from one either.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color.orange.opacity(0.12), in: .rect(cornerRadius: 10))
-    }
-
-    // MARK: - Timeline
-
-    private var timelineSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Season history")
-                .font(.subheadline.weight(.semibold))
-            if let evaluation {
-                ForEach(evaluation.timelines, id: \.blockId) { timeline in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(blockName(timeline.blockId))
-                                .font(.footnote.weight(.semibold))
-                            Spacer()
-                            Text("\(timeline.entries.count) relevant application\(timeline.entries.count == 1 ? "" : "s")")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if timeline.entries.isEmpty {
-                            Text("No recorded \(disease.label) sprays this season")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(Array(timeline.entries.enumerated()), id: \.element.id) { index, entry in
-                                timelineRow(index: index, entry: entry)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(Color(.tertiarySystemFill), in: .rect(cornerRadius: 10))
-                }
-            }
-        }
-        .padding()
-        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
-    }
-
-    private func timelineRow(index: Int, entry: ResistancePlanTimelineEntry) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text("\(index + 1).")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(shortDate(entry.appliedAtEpochMs))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    // FRAC identity leads; the brand is supporting detail. Rotation is
-                    // a property of the chemistry group, not of the label on the drum.
-                    Text(entry.groupsLabel)
-                        .font(.footnote.weight(.semibold))
-                    verificationBadge(entry.availability)
-                }
-                if !entry.productNames.isEmpty {
-                    Text(entry.productNames.joined(separator: ", "))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-            }
-            Spacer()
-            // Completed work is labelled as such so it can never be mistaken for a
-            // planning slot.
-            Text("Completed")
-                .font(.caption2.weight(.semibold))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(VineyardTheme.leafGreen.opacity(0.16), in: .capsule)
-                .foregroundStyle(VineyardTheme.leafGreen)
-        }
-    }
-
-    @ViewBuilder
-    private func verificationBadge(_ availability: ChemicalIntelligenceAvailability) -> some View {
-        switch availability {
-        case .availableVerified:
-            Image(systemName: "checkmark.seal.fill").font(.caption2).foregroundStyle(VineyardTheme.leafGreen)
-        case .availablePartiallyVerified:
-            Image(systemName: "circle.lefthalf.filled").font(.caption2).foregroundStyle(.orange)
-        case .availableUnverified:
-            Image(systemName: "questionmark.circle").font(.caption2).foregroundStyle(.orange)
-        case .conflict:
-            Image(systemName: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(.red)
-        case .unavailable:
-            Image(systemName: "slash.circle").font(.caption2).foregroundStyle(.secondary)
-        }
-    }
-
-    // MARK: - Planned positions
-
-    private var plannedPositionsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Planned sequence")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Button {
-                    apply { $0.addingPosition(atEpochMs: nowMs) }
-                } label: {
-                    Label("Add", systemImage: "plus.circle.fill")
-                        .font(.footnote.weight(.semibold))
-                }
-            }
-
-            Text("Planning positions only — nothing here is a spray record. Create Spray Job hands a position to operations; progress is derived and job activity never edits this plan.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if let evaluation, !evaluation.positions.isEmpty {
-                ForEach(evaluation.positions, id: \.positionId) { positionEval in
-                    positionCard(positionEval)
-                }
-            } else {
-                Text("No planned positions yet. Add one to start building the sequence.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            // Where this plan actually lives is stated where plans are edited, so neither
-            // the sharing nor the offline queue is a surprise discovered by losing work.
-            Text(planRepository.syncState.notice)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .padding()
-        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
-    }
-
-    private func positionCard(_ positionEval: ResistancePlanPositionEvaluation) -> some View {
-        let position = plan?.position(id: positionEval.positionId)
-        let isExpanded = expandedPositionIds.contains(positionEval.positionId)
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Spray \(positionEval.displayOrdinal)")
-                        .font(.footnote.weight(.bold))
-                    Text(position?.groupsLabel ?? "No chemistry selected")
-                        .font(.subheadline.weight(.semibold))
-                    if let timing = timingLabel(position) {
-                        Text(timing)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                statusBadge(positionEval.status)
-            }
-
-            if positionEval.awaitingChemistry {
-                Text("Choose a FRAC group to evaluate this position.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if let position, !position.productsRequiringCaveat.isEmpty {
-                ForEach(position.productsRequiringCaveat) { product in
-                    Label(
-                        "\(product.displayLabel): recorded as \(product.groups.displayLabel) — \(product.effectiveAvailability.label.lowercased())",
-                        systemImage: "exclamationmark.circle.fill"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                }
-            }
-
-            if positionEval.blocksDisagree {
-                // The blocks differ, so the summary badge alone would hide a real
-                // difference. Per-block rows are always shown in that case.
-                ForEach(positionEval.blocks, id: \.blockId) { outcome in
-                    HStack {
-                        Text(blockName(outcome.blockId))
-                            .font(.caption)
-                        Spacer()
-                        Text(outcome.status.label)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(statusColor(outcome.status))
-                    }
-                }
-            }
-
-            HStack(spacing: 12) {
-                Button("Edit chemistry") { editingPositionId = positionEval.positionId }
-                    .font(.caption.weight(.semibold))
-                Spacer()
-                Button {
-                    apply { $0.movingPositionUp(id: positionEval.positionId, atEpochMs: nowMs) }
-                } label: { Image(systemName: "arrow.up") }
-                    .disabled(positionEval.index == 0)
-                Button {
-                    apply { $0.movingPositionDown(id: positionEval.positionId, atEpochMs: nowMs) }
-                } label: { Image(systemName: "arrow.down") }
-                    .disabled(positionEval.index >= (plan?.positions.count ?? 1) - 1)
-                Button(role: .destructive) {
-                    apply { $0.removingPosition(id: positionEval.positionId, atEpochMs: nowMs) }
-                } label: { Image(systemName: "trash") }
-            }
-            .buttonStyle(.borderless)
-            .font(.footnote)
-
-            if !positionEval.findings.isEmpty {
-                Button(isExpanded ? "Hide reasons" : "Why?") {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        if isExpanded {
-                            expandedPositionIds.remove(positionEval.positionId)
-                        } else {
-                            expandedPositionIds.insert(positionEval.positionId)
-                        }
-                    }
-                }
-                .font(.caption.weight(.semibold))
-
-                if isExpanded {
-                    ForEach(positionEval.blocks, id: \.blockId) { outcome in
-                        ForEach(outcome.evaluation.findings) { finding in
-                            findingRow(finding, blockName: blockName(outcome.blockId))
-                        }
-                    }
-                }
-            }
-
-            planJobsSection(positionEval, position: position)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        // Planned positions are visually distinct from the completed timeline: dashed
-        // border, no "Completed" chip.
-        .background(Color(.tertiarySystemFill).opacity(0.6), in: .rect(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                .foregroundStyle(statusColor(positionEval.status).opacity(0.5))
-        )
-    }
-
-    // MARK: - Plan -> Spray Jobs (sql/201)
-
-    /// `spray_jobs` INSERT is owner/manager-gated by RLS, so the button is too.
-    private var canCreateSprayJobs: Bool {
-        accessControl.currentRole == .owner || accessControl.currentRole == .manager
-    }
-
-    @ViewBuilder
-    private func planJobsSection(
-        _ positionEval: ResistancePlanPositionEvaluation,
-        position: ResistancePlannedPosition?
-    ) -> some View {
-        let jobs = plan.map { jobService.jobs(planId: $0.id, positionId: positionEval.positionId) } ?? []
-        if !jobs.isEmpty || (canCreateSprayJobs && position != nil) {
-            Divider()
-            HStack {
-                Label("Spray Jobs", systemImage: "checklist")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if canCreateSprayJobs, let position {
-                    Button {
-                        createSprayJob(for: positionEval, position: position)
-                    } label: {
-                        Label("Create Spray Job", systemImage: "plus.circle")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .buttonStyle(.borderless)
-                }
-            }
-            ForEach(jobs) { job in
-                planJobRow(job)
-            }
-            if jobs.isEmpty {
-                Text("No spray jobs yet. Creating one freezes this position's current intent into the job — later plan edits never rewrite it.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func planJobRow(_ job: BackendPlanSprayJob) -> some View {
-        Button {
-            jobDetail = job
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "wrench.and.screwdriver")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(job.name.isEmpty ? "Spray job" : job.name)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    HStack(spacing: 6) {
-                        Text((job.status ?? "planned").capitalized)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        if jobService.isPendingSync(job.id) {
-                            Label("Waiting to sync", systemImage: "arrow.triangle.2.circlepath")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                        }
-                        if job.deviatesFromPlan {
-                            Label("Differs from plan", systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(8)
-            .background(Color(.systemBackground).opacity(0.6), in: .rect(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-    }
-
-    /// Creates the job with the position frozen VERBATIM as its snapshot.
-    /// Prefills only what the plan genuinely knows: blocks, disease target and
-    /// planned chemistry identity — never carrier volumes or rates.
-    private func createSprayJob(
-        for positionEval: ResistancePlanPositionEvaluation,
-        position: ResistancePlannedPosition
-    ) {
-        guard let plan, let vineyardId = store.selectedVineyardId else { return }
-        let name = "\(disease.label) \(season.id) — Spray \(positionEval.displayOrdinal)"
-        jobService.createJob(
-            name: name,
-            vineyardId: vineyardId,
-            plan: plan,
-            position: position,
-            target: disease.label,
-            paddockIds: plan.blockIds.compactMap(UUID.init(uuidString:)),
-            createdBy: auth.userId
-        )
-    }
-
-    private func refreshPlanJobs() {
-        guard let plan, let vineyardId = store.selectedVineyardId else { return }
-        jobService.load(planId: plan.id)
-        Task { await jobService.refresh(planId: plan.id, vineyardId: vineyardId) }
-    }
-
-    private func timingLabel(_ position: ResistancePlannedPosition?) -> String? {
-        guard let position else { return nil }
-        var parts: [String] = []
-        if let date = position.targetDateEpochMs { parts.append("Target \(shortDate(date))") }
-        if let stage = position.growthStage, !stage.isEmpty { parts.append(stage) }
-        if parts.isEmpty { return nil }
-        return parts.joined(separator: " • ")
-    }
-
-    private func findingRow(_ finding: ResistanceRuleResult, blockName: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("\(blockName) — \(finding.thresholdDescription.capitalizedFirst)")
-                .font(.caption.weight(.semibold))
-            Text(finding.explanation)
-                .font(.caption)
-            // Observed vs threshold vs source, so the operator can check the claim
-            // rather than take it on faith.
-            Text("Observed: \(finding.observedDescription). Strategy: \(finding.thresholdDescription).")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            if !finding.contributingDatesEpochMs.isEmpty {
-                Text("Contributing: \(finding.contributingDatesEpochMs.map(shortDate).joined(separator: ", "))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            if let mixture = finding.mixtureRequirement, mixture == .unknown {
-                Label("Mixture requirement cannot be fully confirmed", systemImage: "questionmark.circle")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.orange)
-            }
-            Text("\(finding.sourceReference) • \(finding.rulesetId) \(finding.rulesetVersion)")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
-        .background(Color(.systemBackground).opacity(0.6), in: .rect(cornerRadius: 8))
-    }
-
-    private func statusBadge(_ status: ResistancePlanPositionStatus) -> some View {
-        Text(status.label)
-            .font(.caption2.weight(.bold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(statusColor(status).opacity(0.16), in: .capsule)
-            .foregroundStyle(statusColor(status))
-    }
-
-    private func statusColor(_ status: ResistancePlanPositionStatus) -> Color {
-        switch status {
-        case .goodFit: return VineyardTheme.leafGreen
-        case .reachesStrategyLimit: return .orange
-        case .wouldExceedStrategy: return .red
-        case .needsReview: return .orange
-        case .unableToFullyAssess: return .purple
-        }
-    }
-
-    // MARK: - Season totals
-
-    private var seasonTotalsSection: some View {
+    private var emptyStateCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Season totals")
+            Label("No resistance plans yet", systemImage: "calendar.badge.plus")
                 .font(.subheadline.weight(.semibold))
-            Text("Counted from resistance applications, not tank lines — a three-product tank is one application.")
+            Text("Plan a season-long FRAC rotation per disease. You can keep several plans for the same season and disease — nothing is ever selected for you.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if let evaluation {
-                ForEach(evaluation.seasonTotals, id: \.blockId) { totals in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(blockName(totals.blockId))
-                            .font(.footnote.weight(.semibold))
-                        Text("\(disease.label) sprays this season: \(totals.diseaseSprayCount)")
-                            .font(.caption)
-                        ForEach(totals.orderedGroups, id: \.self) { group in
-                            Text("FRAC \(group) applications: \(totals.applicationsByGroup[group] ?? 0)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(Color(.tertiarySystemFill), in: .rect(cornerRadius: 10))
-                }
+            Button {
+                showNewPlan = true
+            } label: {
+                Label("New Resistance Plan", systemImage: "plus.circle.fill")
+                    .font(.footnote.weight(.semibold))
             }
         }
         .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
     }
 
-    // MARK: - Strategy reference
-
-    private var strategySection: some View {
+    private var noMatchesCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) { showStrategy.toggle() }
-            } label: {
-                HStack {
-                    Label("Strategy", systemImage: "book.closed")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Image(systemName: showStrategy ? "chevron.up" : "chevron.down")
-                        .font(.caption)
-                }
+            Text("No plans match the filter.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button("Clear filters") {
+                seasonFilter = nil
+                diseaseFilter = nil
             }
-            .buttonStyle(.plain)
-
-            if showStrategy, let evaluation {
-                VStack(alignment: .leading, spacing: 3) {
-                    if let organisation = evaluation.sourceOrganisation {
-                        Text(organisation).font(.footnote.weight(.semibold))
-                    }
-                    if let name = evaluation.strategyName {
-                        Text(name).font(.caption)
-                    }
-                    if let validFrom = evaluation.rulesetValidFrom {
-                        Text("Valid \(validFrom)").font(.caption).foregroundStyle(.secondary)
-                    }
-                    if let version = evaluation.rulesetVersion {
-                        Text("Ruleset: \(version)").font(.caption).foregroundStyle(.secondary)
-                    }
-                    if let plan, plan.isStrategyOutdated(against: ResistanceRulesets.registry) {
-                        Label(
-                            "A newer resistance strategy is available — review this plan.",
-                            systemImage: "arrow.triangle.2.circlepath"
-                        )
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.orange)
-                        .padding(.top, 4)
-                    }
-                    Text("The Planner supports resistance management. It does not replace the product label or agronomic judgement.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 4)
-                }
-            }
+            .font(.footnote.weight(.semibold))
         }
         .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
+    }
+
+    // MARK: - Actions
+
+    /// Creates the plan immediately with a device-minted id, then opens it. Creating
+    /// before first edit gives the plan its stable identity up front — the same id the
+    /// server, other devices and (later) spray jobs will use.
+    private func createPlan(seasonStartYear: Int, disease: ResistanceDisease, name: String) {
+        guard let vineyardId = store.selectedVineyardId?.uuidString else { return }
+        let now = nowMs
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var plan = ResistancePlan(
+            vineyardId: vineyardId,
+            seasonId: ResistanceSeasonCalendar.seasonId(startYear: seasonStartYear),
+            seasonStartYear: seasonStartYear,
+            disease: disease,
+            jurisdiction: jurisdiction,
+            notes: trimmed.isEmpty ? nil : trimmed,
+            createdAtEpochMs: now,
+            updatedAtEpochMs: now
+        )
+        if let ruleset = ResistanceRulesets.registry.current(
+            jurisdiction: plan.jurisdiction,
+            crop: plan.crop,
+            disease: plan.disease
+        ) {
+            plan = plan.stampingRuleset(id: ruleset.id, version: ruleset.rulesetVersion)
+        }
+        planRepository.save(plan)
+        openRoute = ResistancePlanRoute(id: plan.id)
+    }
+
+    /// New stable plan AND position ids — see `ResistancePlan.duplicated`. The copy
+    /// stays in the list (not auto-opened) so both plans are visibly side by side.
+    /// `createdBy` is left nil; the sql/196 attribution guard stamps the uploader.
+    private func duplicate(_ plan: ResistancePlan) {
+        planRepository.save(plan.duplicated(atEpochMs: nowMs, by: nil))
+    }
+
+    private func commitRename() {
+        guard let plan = renamingPlan else { return }
+        let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        planRepository.save(plan.settingNotes(trimmed.isEmpty ? nil : trimmed, atEpochMs: nowMs))
+        renamingPlan = nil
+    }
+
+    /// Soft-delete via the existing tombstone contract (sql/196): the archive
+    /// propagates to the server and other devices, and can be restored server-side.
+    private func commitArchive() {
+        guard let plan = archivingPlan else { return }
+        planRepository.delete(id: plan.id)
+        archivingPlan = nil
     }
 
     // MARK: - Plumbing
 
     private var nowMs: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
 
-    private var chemicalCandidates: [ResistancePlanChemicalCandidate] {
-        ResistancePlanChemicalSource.candidates(
-            from: store.savedChemicals,
-            disease: disease,
-            vineyardCountry: vineyard?.country
+    private var renameAlertBinding: Binding<Bool> {
+        Binding(
+            get: { renamingPlan != nil },
+            set: { if !$0 { renamingPlan = nil } }
         )
     }
 
-    private func blockName(_ blockId: String) -> String {
-        // Current live name, falling back to a stable stand-in for a block that has
-        // since been removed. Matches the spray-export display rule.
-        blocks.first { $0.id.uuidString.caseInsensitiveCompare(blockId) == .orderedSame }?.name
-            ?? "Unknown block"
-    }
-
-    private func shortDate(_ epochMs: Int64) -> String {
-        let date = Date(timeIntervalSince1970: Double(epochMs) / 1000)
-        return date.formatted(.dateTime.day().month(.abbreviated))
+    private var archiveDialogBinding: Binding<Bool> {
+        Binding(
+            get: { archivingPlan != nil },
+            set: { if !$0 { archivingPlan = nil } }
+        )
     }
 
     private func bootstrap() {
-        if seasonStartYear == 0 {
-            seasonStartYear = seasonCalendar.season(epochMs: nowMs).startYear
-        }
-        if let vineyardId = store.selectedVineyardId?.uuidString {
-            // Cache first so the screen paints immediately, then reconcile with the
-            // server. A plan saved on another device appears once the pull lands; nothing
-            // on this screen waits for the network to become interactive.
-            planRepository.load(vineyardId: vineyardId)
-            Task {
-                await planRepository.sync(vineyardId: vineyardId)
-                reloadPlan()
-            }
-        }
-        reloadPlan()
+        guard let vineyardId = store.selectedVineyardId?.uuidString else { return }
+        // Cache first so the list paints immediately, then reconcile with the server.
+        // A plan saved on another device appears once the pull lands; nothing on this
+        // screen waits for the network to become interactive.
+        planRepository.load(vineyardId: vineyardId)
+        Task { await planRepository.sync(vineyardId: vineyardId) }
+    }
+
+    private func syncNow() async {
+        guard let vineyardId = store.selectedVineyardId?.uuidString else { return }
+        await planRepository.sync(vineyardId: vineyardId)
     }
 
     private static func makeRepository() -> ResistancePlanRepository {
@@ -880,95 +430,65 @@ struct ResistancePlannerView: View {
             remote: provider.isConfigured ? SupabaseResistancePlanRepository(provider: provider) : nil
         )
     }
-
-    /// Loads the saved plan for the selected season and disease, or prepares a new one.
-    private func reloadPlan() {
-        guard let vineyardId = store.selectedVineyardId?.uuidString else { return }
-        let existing = planRepository.plans(seasonId: season.id, disease: disease).first
-        plan = existing ?? ResistancePlan(
-            vineyardId: vineyardId,
-            seasonId: season.id,
-            seasonStartYear: season.startYear,
-            disease: disease,
-            jurisdiction: jurisdiction,
-            createdAtEpochMs: nowMs,
-            updatedAtEpochMs: nowMs
-        )
-        recompute()
-        refreshPlanJobs()
-    }
-
-    private func toggleBlock(_ blockId: String) {
-        apply { current in
-            var ids = current.blockIds
-            if let index = ids.firstIndex(of: blockId) { ids.remove(at: index) } else { ids.append(blockId) }
-            return current.settingBlockIds(ids, atEpochMs: nowMs)
-        }
-    }
-
-    /// Applies an edit, persists it, and re-runs the engine.
-    ///
-    /// Every mutation goes through here so re-evaluation can never be forgotten — the
-    /// rules are sequence-dependent, so a change to position 4 can alter positions 5
-    /// and 6, and a stale later warning would be worse than none.
-    private func apply(_ transform: (ResistancePlan) -> ResistancePlan) {
-        guard let current = plan else { return }
-        var updated = transform(current)
-        if let ruleset = ResistanceRulesets.registry.current(
-            jurisdiction: updated.jurisdiction,
-            crop: updated.crop,
-            disease: updated.disease
-        ) {
-            updated = updated.stampingRuleset(id: ruleset.id, version: ruleset.rulesetVersion)
-        }
-        plan = updated
-        // Local commit + outbox. Returns immediately, works offline, and never blocks the
-        // edit the grower just made on a network round trip.
-        planRepository.save(updated)
-        recompute()
-    }
-
-    private func recompute() {
-        guard let plan else { evaluation = nil; return }
-        guard jurisdiction != .unknown else {
-            evaluation = ResistancePlanner.evaluate(plannerRequest(for: plan))
-            return
-        }
-        evaluation = ResistancePlanner.evaluate(plannerRequest(for: plan))
-    }
-
-    private func plannerRequest(for plan: ResistancePlan) -> ResistancePlanner.Request {
-        let inputs = store.sprayRecords.map { ResistanceEventSource.input(from: $0) }
-        let result = ResistanceEventSource.events(from: inputs, seasonCalendar: seasonCalendar)
-        return ResistancePlanner.Request(
-            plan: plan,
-            season: season,
-            seasonCalendar: seasonCalendar,
-            events: result.events,
-            unresolvedApplications: result.unresolvedBlockApplications,
-            registry: ResistanceRulesets.registry
-        )
-    }
 }
 
-private extension String {
-    var capitalizedFirst: String {
-        guard let first else { return self }
-        return first.uppercased() + dropFirst()
-    }
+/// Navigation payload: the STABLE plan id, nothing else. Carrying the id (not the
+/// plan value) means the pushed editor always renders the repository's live copy.
+private struct ResistancePlanRoute: Identifiable, Hashable {
+    let id: String
 }
 
-/// Lets an optional `String` id drive a sheet.
-private extension View {
-    func sheet<Content: View>(
-        item: Binding<String?>,
-        @ViewBuilder content: @escaping (String) -> Content
-    ) -> some View {
-        sheet(isPresented: Binding(
-            get: { item.wrappedValue != nil },
-            set: { if !$0 { item.wrappedValue = nil } }
-        )) {
-            if let value = item.wrappedValue { content(value) }
+/// Season, disease and an optional name for a NEW plan.
+///
+/// Duplicates by season+disease are allowed on purpose — the list is the place that
+/// tells them apart, and the optional name makes that easy.
+private struct NewResistancePlanSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let seasonYears: [Int]
+    let defaultYear: Int
+    let onCreate: (Int, ResistanceDisease, String) -> Void
+
+    @State private var seasonStartYear: Int = 0
+    @State private var disease: ResistanceDisease = .powderyMildew
+    @State private var name: String = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Picker("Season", selection: $seasonStartYear) {
+                        ForEach(seasonYears, id: \.self) { year in
+                            Text(ResistanceSeasonCalendar.seasonId(startYear: year)).tag(year)
+                        }
+                    }
+                    Picker("Disease", selection: $disease) {
+                        ForEach(ResistanceDisease.allCases, id: \.self) { option in
+                            Text(option.label).tag(option)
+                        }
+                    }
+                    TextField("Plan name (optional)", text: $name)
+                } footer: {
+                    Text("You can keep several plans for the same season and disease — a name makes them easy to tell apart.")
+                }
+            }
+            .navigationTitle("New Resistance Plan")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Create") {
+                        onCreate(seasonStartYear, disease, name)
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear {
+                if seasonStartYear == 0 { seasonStartYear = defaultYear }
+            }
         }
+        .presentationDetents([.medium, .large])
     }
 }
