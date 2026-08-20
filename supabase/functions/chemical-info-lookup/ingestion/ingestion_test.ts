@@ -1,15 +1,20 @@
 // deno test supabase/functions/chemical-info-lookup/ingestion/ingestion_test.ts
 //
-// Master Chemical Catalogue Stage 3 — AU authoritative ingestion tests.
+// Master Chemical Catalogue Stages 3–4 — AU authoritative ingestion tests.
 // Covers the required matrix (§O 40–49) plus the Custodia end-to-end fixture
-// (§H 23–25), the cache jurisdiction rules (§L) and the candidate response
-// envelope (§J).
+// (§H 23–25), the cache jurisdiction rules (§L), the candidate response
+// envelope (§J) and Stage 4 official label evidence (50–59).
 //
 // The register facts (Custodia 320 SC = Azoxystrobin 120 g/L + Tebuconazole
 // 200 g/L, APVMA 66541; Custodia Forte = 222/370 g/L, APVMA 91636) live HERE,
 // in mocked APVMA PubCRIS documents — the adapter must establish them through
 // its normal evidence path (register extract → constituent names →
-// authoritative FRAC table). Nothing in the implementation hard-codes them.
+// authoritative FRAC table). Stage 4 label fixtures mirror the LIVE PubCRIS
+// label data for Custodia Forte 91636 byte-for-byte (use claims + chunked
+// withholding statements, retrieved 2026-08-20): grapevine claims for powdery
+// mildew / botrytis cinerea / downy mildew, grape WHP "4 WEEKS" = 28 days, NO
+// re-entry statement, NO machine-readable rates. Nothing in the
+// implementation hard-codes any of it.
 
 import {
   APVMA_RESOURCES,
@@ -41,6 +46,13 @@ import type {
 } from "./contract.ts";
 import { identityKey } from "./contract.ts";
 import { SourceCache } from "./cache.ts";
+import {
+  assembleProductComments,
+  cropsCorrespond,
+  reentryHoursFromStatement,
+  targetsCorrespond,
+  whpDaysFromStatement,
+} from "./label.ts";
 
 // ---------------------------------------------------------------------------
 // Assertion helpers (lib_test.ts convention)
@@ -88,9 +100,39 @@ interface RegisterFixture {
   prodcon: Record<string, Row[]>;
   constit: Record<string, string>;
   labelreg: Record<string, Row[]>;
+  /** Stage 4 — approved-label use claims (produse.csv), keyed by pcode. */
+  produse?: Record<string, Row[]>;
+  /** Stage 4 — host code → wording (host.csv). */
+  hosts?: Record<string, string>;
+  /** Stage 4 — pest code → wording (pest.csv). */
+  pests?: Record<string, string>;
+  /** Stage 4 — chunked label statements (prodcom.csv), keyed by pcode. */
+  prodcom?: Record<string, Row[]>;
   failResources?: Set<string>;
   requestLog?: string[];
 }
+
+// Live PubCRIS label data for Custodia Forte 91636 (retrieved 2026-08-20),
+// mirrored verbatim — including the register's own chunking artefacts
+// ("GRAP" + "EVINES", "AFTER" + "APPLICATION") and out-of-order seq rows.
+const FORTE_PRODUSE: Row[] = [
+  { pcode: "91636", hostcode: "FRVG", pestcode: "YMIP" },
+  { pcode: "91636", hostcode: "FRVG", pestcode: "YBOTR1" },
+  { pcode: "91636", hostcode: "FRVG", pestcode: "YMIDP" },
+  { pcode: "91636", hostcode: "NTSA", pestcode: "HUR" },
+  { pcode: "91636", hostcode: "NTSA", pestcode: "YRU" },
+  { pcode: "91636", hostcode: "NTSA", pestcode: "YROB3" },
+  { pcode: "91636", hostcode: "NTSA", pestcode: "YSHOE" },
+  { pcode: "91636", hostcode: "NTSGB", pestcode: "YSPH1" },
+];
+
+const FORTE_PRODCOM: Row[] = [
+  { pcode: "91636", seq: 1, applic: "WITHHOLDING PERIODS\nHarvest\nALMONDS: N" },
+  { pcode: "91636", seq: 4, applic: "APPLICATION.\nMACADAMIAS: DO NOT HARVES" },
+  { pcode: "91636", seq: 5, applic: "T FOR 15 DAYS AFTER APPLICATION." },
+  { pcode: "91636", seq: 2, applic: "OT REQUIRED WHEN USED AS DIRECTED.\nGRAP" },
+  { pcode: "91636", seq: 3, applic: "EVINES: DO NOT HARVEST FOR 4 WEEKS AFTER" },
+];
 
 const FULL_REGISTER: RegisterFixture = {
   products: [CUSTODIA_320, CUSTODIA_FORTE],
@@ -109,6 +151,19 @@ const FULL_REGISTER: RegisterFixture = {
     "66541": [{ pcode: "66541", regno: "112233", regdate: "5/09/2012 0:00" }],
     "91636": [{ pcode: "91636", regno: "132920", regdate: "2/03/2022 9:50:13 AM" }],
   },
+  produse: { "91636": FORTE_PRODUSE },
+  hosts: { FRVG: "GRAPEVINE", NTSA: "ALMOND", NTSGB: "MACADAMIA" },
+  pests: {
+    YMIP: "POWDERY MILDEW",
+    YBOTR1: "BOTRYTIS CINEREA",
+    YMIDP: "DOWNY MILDEW ON GRAPE",
+    HUR: "HULL ROT SUPPRESSION ONLY",
+    YRU: "RUST",
+    YROB3: "BROWN ROT",
+    YSHOE: "SHOT HOLE",
+    YSPH1: "HUSK SPOT - PSEUDOCERCOSPORA MACADAMIAE",
+  },
+  prodcom: { "91636": FORTE_PRODCOM },
 };
 
 function fixtureWithoutCustodia320(): RegisterFixture {
@@ -162,6 +217,24 @@ function makeRegisterFetch(fixture: RegisterFixture): typeof fetch {
         .filter((r) => r.cname);
     } else if (resource === APVMA_RESOURCES.labelRegistrations) {
       records = fixture.labelreg[filters?.pcode] ?? [];
+    } else if (resource === APVMA_RESOURCES.productUses) {
+      records = fixture.produse?.[filters?.pcode] ?? [];
+    } else if (resource === APVMA_RESOURCES.hosts) {
+      const codes: string[] = Array.isArray(filters?.hostcode)
+        ? filters.hostcode
+        : [filters?.hostcode].filter(Boolean);
+      records = codes
+        .map((c) => ({ hostcode: c, hostdesc: fixture.hosts?.[c] }))
+        .filter((r) => r.hostdesc);
+    } else if (resource === APVMA_RESOURCES.pests) {
+      const codes: string[] = Array.isArray(filters?.pestcode)
+        ? filters.pestcode
+        : [filters?.pestcode].filter(Boolean);
+      records = codes
+        .map((c) => ({ pestcode: c, pestdesc: fixture.pests?.[c] }))
+        .filter((r) => r.pestdesc);
+    } else if (resource === APVMA_RESOURCES.productComments) {
+      records = fixture.prodcom?.[filters?.pcode] ?? [];
     }
     return Promise.resolve(respond(records));
   }) as typeof fetch;
@@ -897,4 +970,332 @@ Deno.test("10: automated ingestion can only ever create candidates", async () =>
   for (const row of ops.rows.values()) {
     assertEquals(row.review_status, "candidate", "nothing auto-approved");
   }
+});
+
+// ===========================================================================
+// Stage 4 — official label evidence (AU/APVMA approved-label claim data)
+// ===========================================================================
+
+/** Forte-correct AI extraction (registration and chemistry agree with the
+ * register) so Stage 4 tests exercise LABEL merging, not Stage 3 conflicts. */
+// deno-lint-ignore no-explicit-any
+function forteAi(overrides: Record<string, any> = {}): any {
+  return aiStructured({
+    product_name: "Custodia Forte",
+    active_ingredients: [
+      {
+        name: "Azoxystrobin",
+        concentration: 222,
+        concentration_unit: "g/L",
+        activity_group: { scheme: "frac", code: "11", common_name: "QoI / Strobilurin" },
+        group_source: "authoritative_classification",
+        identity_source: "ai_interpretation",
+      },
+      {
+        name: "Tebuconazole",
+        concentration: 370,
+        concentration_unit: "g/L",
+        activity_group: { scheme: "frac", code: "3", common_name: "DMI / Triazole" },
+        group_source: "authoritative_classification",
+        identity_source: "ai_interpretation",
+      },
+    ],
+    registered_uses: [
+      {
+        crop: "Grapevines",
+        target_raw: "Powdery mildew",
+        target: "powdery_mildew",
+        rates: [
+          { label: "Dilute spraying", basis: "per_100_litres", value: 40, min_value: null, max_value: null, unit: "mL", raw_text: null },
+        ],
+        withholding_period_days: 28,
+        re_entry_period_hours: null,
+        restrictions: "Do not re-enter treated areas until the spray has dried.",
+      },
+    ],
+    ...overrides,
+  });
+}
+
+Deno.test("49: label statement parsing is strict — seq reassembly, WHP forms, re-entry, correspondence", () => {
+  const text = assembleProductComments(FORTE_PRODCOM);
+  assert(
+    text.includes("GRAPEVINES: DO NOT HARVEST FOR 4 WEEKS AFTER"),
+    "chunks reassemble in seq order, mid-word splits joined",
+  );
+  assertEquals(whpDaysFromStatement("DO NOT HARVEST FOR 4 WEEKS AFTERAPPLICATION.", "withholding"), 28, "weeks → days");
+  assertEquals(whpDaysFromStatement("DO NOT HARVEST FOR 15 DAYS AFTER APPLICATION.", "other"), 15, "harvest statements are self-descriptive");
+  assertEquals(whpDaysFromStatement("NOT REQUIRED WHEN USED AS DIRECTED.", "withholding"), 0, "label-stated 'not required' = 0 days");
+  assertEquals(whpDaysFromStatement("NOT REQUIRED WHEN USED AS DIRECTED.", "other"), null, "'not required' binds only inside a withholding section");
+  assertEquals(whpDaysFromStatement("APPLY IN AT LEAST 100 L WATER PER HECTARE", "withholding"), null, "numbers are never guessed into a WHP");
+  assertEquals(reentryHoursFromStatement("DO NOT allow entry into treated areas until the spray has dried."), null, "a condition is not a period");
+  assertEquals(reentryHoursFromStatement("Do not re-enter treated areas for 24 hours."), 24, "explicit hours");
+  assertEquals(reentryHoursFromStatement("Do not re-enter for 2 days."), 48, "explicit days converted");
+  assertEquals(reentryHoursFromStatement("DO NOT HARVEST FOR 14 DAYS"), null, "harvest wording is not re-entry");
+  assert(cropsCorrespond("GRAPEVINE", "GRAPEVINES"), "register/label plurals correspond");
+  assert(cropsCorrespond("Grapes (winegrapes)", "GRAPEVINE"), "AI grape wording corresponds");
+  assert(!cropsCorrespond("GRAPEVINE", "ALMONDS"), "different crops never correspond");
+  assert(targetsCorrespond("Downy mildew", "DOWNY MILDEW ON GRAPE"), "crop qualifier stripped");
+  assert(targetsCorrespond("Botrytis", "BOTRYTIS CINEREA"), "word-boundary prefix");
+  assert(!targetsCorrespond("Powdery mildew", "DOWNY MILDEW ON GRAPE"), "different targets never correspond");
+});
+
+Deno.test("50: the adapter resolves the approved label's use claims for Custodia Forte 91636", async () => {
+  clearApvmaCache();
+  const discovery = await discoverAuthoritative("AU", "Custodia Forte", null, makeDeps({ ...FULL_REGISTER }));
+  assertEquals(discovery.outcome, "resolved", "Forte resolves");
+  const reg = discovery.registration!;
+  assertEquals(reg.registration_identity_key, "AU:apvma:91636", "Forte identity");
+  const evidence = reg.label_evidence!;
+  assert(evidence !== null && evidence !== undefined, "label evidence resolved");
+  assertEquals(evidence.claims.length, 8, "all label use claims carried");
+
+  const grape = evidence.claims.filter((c) => c.crop === "GRAPEVINE");
+  assertEquals(grape.length, 3, "three grapevine claims");
+  assertEquals(grape.find((c) => c.target_raw === "POWDERY MILDEW")?.target, "powdery_mildew", "clean target mapping");
+  assertEquals(grape.find((c) => c.target_raw === "BOTRYTIS CINEREA")?.target, "botrytis", "botrytis mapping");
+  assertEquals(grape.find((c) => c.target_raw === "DOWNY MILDEW ON GRAPE")?.target, "downy_mildew", "downy mapping");
+  for (const c of grape) {
+    assertEquals(c.withholding_period_days, 28, "grape WHP 4 weeks = 28 days from the label statement");
+    assertEquals(c.re_entry_period_hours ?? null, null, "no re-entry statement → no re-entry period, never fabricated");
+  }
+  assert(
+    grape[0].statements.some((s) => s.startsWith("GRAPEVINES: DO NOT HARVEST FOR 4 WEEKS")),
+    "verbatim label statement preserved",
+  );
+  assertEquals(evidence.claims.find((c) => c.crop === "ALMOND")?.withholding_period_days, 0, "label-stated 'not required' → 0 days");
+  assertEquals(evidence.claims.find((c) => c.crop === "MACADAMIA")?.withholding_period_days, 15, "macadamia 15 days");
+
+  assert(!reg.unresolved_fields.includes("registered_uses"), "uses resolved by label evidence");
+  assert(reg.unresolved_fields.includes("rates:GRAPEVINE"), "rates await the label document — never invented");
+  assert(reg.unresolved_fields.includes("re_entry_period_hours"), "absent re-entry stays an honest gap");
+  assert(
+    reg.sources.some((s) => s.kind === "manufacturer_label" && s.name.includes("registered use claims")),
+    "label evidence attributed to manufacturer_label with a reproducible reference",
+  );
+});
+
+Deno.test("51: merged uses are label-backed with field-level provenance; AI rates carried, never promoted", async () => {
+  clearApvmaCache();
+  const discovery = await discoverAuthoritative("AU", "Custodia Forte", null, makeDeps({ ...FULL_REGISTER }));
+  const merged = mergeDiscoveryIntoStructured(forteAi(), discovery.registration!);
+
+  assertEquals(merged.registered_uses.length, 8, "the label's claim set is served");
+  // deno-lint-ignore no-explicit-any
+  const powdery = merged.registered_uses.find((u: any) => u.crop === "GRAPEVINE" && u.target_raw === "POWDERY MILDEW");
+  assertEquals(powdery.provenance?.claim, "manufacturer_label", "claim provenance");
+  assertEquals(powdery.rates.length, 1, "AI rate carried onto the matching claim");
+  assertEquals(powdery.rates[0].value, 40, "rate value preserved");
+  assertEquals(powdery.provenance?.rates, "ai_interpretation", "rates stay AI-attributed — never promoted");
+  assertEquals(powdery.withholding_period_days, 28, "label WHP served");
+  assertEquals(powdery.provenance?.withholding_period, "manufacturer_label", "WHP is label-backed");
+  assert(String(powdery.restrictions ?? "").startsWith("GRAPEVINES: DO NOT HARVEST"), "verbatim label statement as restrictions");
+
+  // deno-lint-ignore no-explicit-any
+  const botrytis = merged.registered_uses.find((u: any) => u.target_raw === "BOTRYTIS CINEREA");
+  assertEquals(botrytis.rates.length, 0, "no AI rate for botrytis — stays empty, never borrowed");
+  assertEquals(botrytis.provenance?.rates ?? null, null, "no rate provenance without rates");
+
+  assert(!merged.verification.unresolved_fields.includes("registered_uses"), "whole-array gap resolved");
+  assert(merged.verification.unresolved_fields.includes("rates:GRAPEVINE"), "per-crop rate gap awaits admin review");
+  assertEquals(merged.verification.status, "partially_verified", "agreeing evidence → no conflict");
+  assertEquals(merged.label_rate_bases.length, 1, "bases from carried rates");
+  assert(
+    merged.verification.sources.some((s: { kind: string }) => s.kind === "manufacturer_label"),
+    "label evidence cited",
+  );
+});
+
+Deno.test("52: AI WHP disagreement with the label is a structured conflict; the label value is served", async () => {
+  clearApvmaCache();
+  const discovery = await discoverAuthoritative("AU", "Custodia Forte", null, makeDeps({ ...FULL_REGISTER }));
+  const ai = forteAi();
+  ai.registered_uses[0].withholding_period_days = 21;
+  const merged = mergeDiscoveryIntoStructured(ai, discovery.registration!);
+
+  // deno-lint-ignore no-explicit-any
+  const powdery = merged.registered_uses.find((u: any) => u.crop === "GRAPEVINE" && u.target_raw === "POWDERY MILDEW");
+  assertEquals(powdery.withholding_period_days, 28, "label value served");
+  // deno-lint-ignore no-explicit-any
+  const conflict = merged.verification.conflicts.find((c: any) => c.field === "withholding_period_days");
+  assert(conflict !== undefined, "disagreement recorded");
+  assertEquals(conflict.extracted_source, "ai_interpretation", "AI side attributed");
+  assertEquals(conflict.authoritative_source, "manufacturer_label", "label side attributed");
+  assertEquals(merged.verification.status, "conflict", "status honesty");
+});
+
+Deno.test("53: AI-only uses are dropped with a conflict — the label's claim set is authoritative", async () => {
+  clearApvmaCache();
+  const discovery = await discoverAuthoritative("AU", "Custodia Forte", null, makeDeps({ ...FULL_REGISTER }));
+  const ai = forteAi();
+  ai.registered_uses.push({
+    crop: "Citrus",
+    target_raw: "Black spot",
+    rates: [{ label: "", basis: "per_hectare", value: 1, unit: "L" }],
+    withholding_period_days: 7,
+  });
+  const merged = mergeDiscoveryIntoStructured(ai, discovery.registration!);
+
+  assertEquals(merged.registered_uses.length, 8, "citrus never served");
+  // deno-lint-ignore no-explicit-any
+  assert(!merged.registered_uses.some((u: any) => /citrus/i.test(String(u.crop))), "no invented claim");
+  // deno-lint-ignore no-explicit-any
+  const conflict = merged.verification.conflicts.find((c: any) => c.field === "registered_uses");
+  assert(conflict !== undefined && conflict.extracted_value.includes("Citrus"), "dropped use recorded as a conflict");
+  assertEquals(conflict.authoritative_source, "manufacturer_label", "label authority cited");
+});
+
+Deno.test("54: distinct grape uses stay distinct — rates never collapse across targets", async () => {
+  clearApvmaCache();
+  const discovery = await discoverAuthoritative("AU", "Custodia Forte", null, makeDeps({ ...FULL_REGISTER }));
+  const ai = forteAi();
+  ai.registered_uses.push({
+    crop: "Grapes",
+    target_raw: "Botrytis",
+    rates: [{ label: "Bunch closure", basis: "per_100_litres", value: 80, min_value: null, max_value: null, unit: "mL", raw_text: null }],
+    withholding_period_days: 28,
+  });
+  const merged = mergeDiscoveryIntoStructured(ai, discovery.registration!);
+
+  // deno-lint-ignore no-explicit-any
+  const powdery = merged.registered_uses.find((u: any) => u.target_raw === "POWDERY MILDEW");
+  // deno-lint-ignore no-explicit-any
+  const botrytis = merged.registered_uses.find((u: any) => u.target_raw === "BOTRYTIS CINEREA");
+  // deno-lint-ignore no-explicit-any
+  const downy = merged.registered_uses.find((u: any) => u.target_raw === "DOWNY MILDEW ON GRAPE");
+  assertEquals(powdery.rates[0]?.value, 40, "powdery keeps its own rate");
+  assertEquals(botrytis.rates[0]?.value, 80, "botrytis keeps its own rate");
+  assertEquals(downy.rates.length, 0, "downy has no AI rate — stays empty");
+  assertEquals(merged.verification.conflicts.length, 0, "both AI uses matched label claims");
+});
+
+Deno.test("55: re-entry is never fabricated — an AI value is carried but stays AI-attributed", async () => {
+  clearApvmaCache();
+  const discovery = await discoverAuthoritative("AU", "Custodia Forte", null, makeDeps({ ...FULL_REGISTER }));
+  const ai = forteAi();
+  ai.registered_uses[0].re_entry_period_hours = 24;
+  const merged = mergeDiscoveryIntoStructured(ai, discovery.registration!);
+
+  // deno-lint-ignore no-explicit-any
+  const powdery = merged.registered_uses.find((u: any) => u.target_raw === "POWDERY MILDEW");
+  assertEquals(powdery.re_entry_period_hours, 24, "AI detail carried where the label is silent");
+  assertEquals(powdery.provenance?.re_entry, "ai_interpretation", "…but clearly AI-attributed, never promoted");
+  // deno-lint-ignore no-explicit-any
+  const downy = merged.registered_uses.find((u: any) => u.target_raw === "DOWNY MILDEW ON GRAPE");
+  assertEquals(downy.re_entry_period_hours ?? null, null, "no borrowed re-entry on unmatched claims");
+  assert(merged.verification.unresolved_fields.includes("re_entry_period_hours"), "gap stays honest for admin review");
+});
+
+Deno.test("56: label evidence failure is fail-soft — register identity and chemistry stand", async () => {
+  // Claims source down: registration resolves, AI uses stand, nothing invented.
+  clearApvmaCache();
+  const claimsDown: RegisterFixture = {
+    ...FULL_REGISTER,
+    failResources: new Set([APVMA_RESOURCES.productUses]),
+  };
+  const d1 = await discoverAuthoritative("AU", "Custodia Forte", null, makeDeps(claimsDown));
+  assertEquals(d1.outcome, "resolved", "identity stands");
+  assertEquals(d1.registration?.label_evidence ?? null, null, "no label evidence claimed");
+  assertEquals(d1.registration?.active_ingredients.length, 2, "chemistry stands");
+  const merged1 = mergeDiscoveryIntoStructured(forteAi(), d1.registration!);
+  assertEquals(merged1.registered_uses.length, 1, "AI uses stand unchanged");
+  assertEquals(merged1.registered_uses[0].provenance ?? null, null, "no label provenance without label evidence");
+  assert(
+    !merged1.verification.sources.some((s: { kind: string }) => s.kind === "manufacturer_label"),
+    "no label source cited",
+  );
+  assert(!merged1.verification.unresolved_fields.includes("rates:GRAPEVINE"), "no label-scoped gaps without evidence");
+
+  // Statements source down: claims stand; WHP stays an honest per-crop gap.
+  clearApvmaCache();
+  const statementsDown: RegisterFixture = {
+    ...FULL_REGISTER,
+    failResources: new Set([APVMA_RESOURCES.productComments]),
+  };
+  const d2 = await discoverAuthoritative("AU", "Custodia Forte", null, makeDeps(statementsDown));
+  const evidence = d2.registration!.label_evidence!;
+  assertEquals(evidence.claims.length, 8, "claims survive a statements outage");
+  assertEquals(evidence.claims[0].withholding_period_days ?? null, null, "WHP not invented without its statement");
+  assert(d2.registration!.unresolved_fields.includes("withholding_period:GRAPEVINE"), "per-crop WHP gap recorded");
+});
+
+Deno.test("57: register-only lookup (AI outage) serves label claims with empty rates", async () => {
+  clearApvmaCache();
+  const discovery = await discoverAuthoritative("AU", "Custodia Forte", null, makeDeps({ ...FULL_REGISTER }));
+  const structured = buildRegisterOnlyStructured(discovery.registration!, 1);
+
+  assertEquals(structured.registered_uses.length, 8, "label claims served without any AI");
+  // deno-lint-ignore no-explicit-any
+  for (const u of structured.registered_uses as any[]) {
+    assertEquals(u.rates.length, 0, "no rates invented");
+    assertEquals(u.provenance?.claim, "manufacturer_label", "claims attributed");
+  }
+  // deno-lint-ignore no-explicit-any
+  const grape = structured.registered_uses.find((u: any) => u.target_raw === "POWDERY MILDEW");
+  assertEquals(grape.withholding_period_days, 28, "label WHP served");
+  assertEquals(structured.verification.status, "partially_verified", "register-backed but not approved");
+  assert(structured.verification.unresolved_fields.includes("rates:GRAPEVINE"), "rates await the label document");
+  assert(!structured.verification.unresolved_fields.includes("registered_uses"), "uses no longer a whole-array gap");
+});
+
+Deno.test("58: master_refresh re-checks label evidence — drift is material, stored AI rates and the row identity survive", async () => {
+  clearApvmaCache();
+  const ops = new MockOps();
+  const discovery = await discoverAuthoritative("AU", "Custodia Forte", null, makeDeps({ ...FULL_REGISTER }));
+  const merged = mergeDiscoveryIntoStructured(forteAi(), discovery.registration!);
+  const payload = buildCandidatePayload(merged, "Custodia Forte", discovery.registration!, NOW_ISO, 1)!;
+  const outcome = await upsertCandidate(ops, payload, NOW_MS);
+  const row = outcome.row!;
+  const originalId = row.id;
+
+  // The APVMA publishes a revised label: grape WHP drops to 3 weeks.
+  clearApvmaCache();
+  const revised: RegisterFixture = {
+    ...FULL_REGISTER,
+    prodcom: {
+      "91636": [{
+        pcode: "91636",
+        seq: 1,
+        applic:
+          "WITHHOLDING PERIODS\nHarvest\nALMONDS: NOT REQUIRED WHEN USED AS DIRECTED.\nGRAPEVINES: DO NOT HARVEST FOR 3 WEEKS AFTER APPLICATION.\nMACADAMIAS: DO NOT HARVEST FOR 15 DAYS AFTER APPLICATION.",
+      }],
+    },
+  };
+  const result = await refreshMasterRow(row, makeDeps(revised));
+  assertEquals(result.outcome, "material_change", "label drift is a material change");
+  assert(result.changes.some((c) => c.field === "registered_uses"), "uses diff surfaced");
+
+  const patch = buildCandidateRefreshPatch(row, result, NOW_ISO)!;
+  assert(patch !== null, "candidate refresh may be applied");
+  // deno-lint-ignore no-explicit-any
+  const powdery = (patch.registered_uses as any[]).find((u) => u.target_raw === "POWDERY MILDEW");
+  assertEquals(powdery.withholding_period_days, 21, "fresh label WHP applied");
+  assertEquals(powdery.rates[0]?.value, 40, "stored AI rate carried through the refresh");
+  assertEquals(powdery.provenance?.rates, "ai_interpretation", "carried rate stays AI-attributed");
+
+  await ops.updateCandidate(row.id, patch);
+  const stored = await ops.selectByIdentityKey("AU:apvma:91636");
+  assertEquals(stored!.id, originalId, "Master UUID preserved — refresh never re-keys");
+  assertEquals(stored!.review_status, "candidate", "still a candidate — never auto-approved");
+
+  // Approved rows are structurally untouchable by the refresh patch.
+  const approved = ops.seed({
+    registration_number: "55555",
+    review_status: "approved",
+    registered_product_name: "APPROVED PRODUCT",
+  });
+  assertEquals(buildCandidateRefreshPatch(approved, result, NOW_ISO), null, "no patch for approved rows");
+});
+
+Deno.test("59: Custodia 66541 stays fail-closed — Forte's label evidence never substitutes", async () => {
+  clearApvmaCache();
+  const lapsed = fixtureWithoutCustodia320();
+  const byName = await discoverAuthoritative("AU", "Custodia", null, makeDeps(lapsed));
+  assertEquals(byName.outcome, "unresolved", "lapsed Custodia never resolves");
+  assertEquals(byName.registration ?? null, null, "no registration bound");
+
+  clearApvmaCache();
+  const byHint = await discoverAuthoritative("AU", "Custodia", "66541", makeDeps(lapsed));
+  assertEquals(byHint.outcome, "unresolved", "hint to a lapsed number stays unresolved");
+  assertEquals(byHint.registration ?? null, null, "91636's label evidence never leaks onto 66541");
 });

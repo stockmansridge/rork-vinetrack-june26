@@ -12,6 +12,14 @@
 // AI may LOCATE a product (a name, a possible registration number); it can
 // never elevate itself into authoritative evidence, and a fact an
 // authoritative source does not provide stays unresolved — never invented.
+//
+// Stage 4 note — "official label evidence" travels as the contract's
+// `manufacturer_label` kind: the APVMA-approved label IS the registrant's
+// approved label (§5.3 of the JSON contract), already ranked authoritative
+// and second only to the register itself. The four tiers stay structurally
+// distinguishable on every stored fact: official_register (identity,
+// chemistry), manufacturer_label (label claims/statements),
+// authoritative_classification (FRAC/HRAC/IRAC), ai_interpretation.
 
 import type { ActivityGroup } from "./activity_groups.ts";
 
@@ -84,6 +92,46 @@ export interface ResolvedRegistration {
   sources: WireDataSource[];
   /** How the deterministic match was made (audit trail, never fuzzy). */
   match_mode: "exact_name" | "formulation_suffix" | "register_number_verified";
+  /**
+   * Stage 4 — official label evidence resolved from the register's published
+   * label claim data, or null when it could not be fetched/parsed (fail
+   * soft: identity and chemistry stand; label facts stay unresolved or
+   * AI-attributed, never invented).
+   */
+  label_evidence?: LabelEvidence | null;
+}
+
+// ---------------------------------------------------------------------------
+// Official label evidence (Stage 4)
+// ---------------------------------------------------------------------------
+
+/**
+ * One registered use claim from the official label evidence: the crop and
+ * target verbatim as the register publishes them, plus ONLY the label facts
+ * the evidence actually states. A claim never carries a rate — the register
+ * publishes no machine-readable rate table, so rates stay unresolved for the
+ * admin to confirm against the label document (or AI-attributed, never
+ * promoted).
+ */
+export interface LabelUseClaim {
+  crop: string; // verbatim register host wording, e.g. "GRAPEVINE"
+  target_raw: string; // verbatim register pest wording
+  target?: string; // VineTrack target enum, only when it maps cleanly
+  withholding_period_days?: number; // only when a label statement states it (0 = "not required")
+  re_entry_period_hours?: number; // only when a label statement states it
+  /** Verbatim crop-scoped label statements backing the fields above. */
+  statements: string[];
+}
+
+/** Official label evidence for one registered product. */
+export interface LabelEvidence {
+  claims: LabelUseClaim[];
+  /** Every reassembled label statement, verbatim (audit trail). */
+  statements: string[];
+  /** manufacturer_label evidence entries with reproducible references. */
+  sources: WireDataSource[];
+  /** Label facts the evidence could not supply (never fabricated). */
+  unresolved: string[];
 }
 
 export interface DiscoveryResult {

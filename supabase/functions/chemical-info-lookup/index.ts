@@ -164,20 +164,25 @@ The ratesPerHectare array should contain recommended rates per hectare. For liqu
 //   official register — AU: LIVE APVMA PubCRIS register extract (data.gov.au
 //                       CKAN datastore), selected per jurisdiction by
 //                       ingestion/registry.ts -> ingestion/apvma.ts
-//     -> structured active ingredient information (register-backed for AU)
+//     -> official label evidence — AU: the approved label's published claim
+//        data (produse/host/pest use claims + prodcom label statements),
+//        attributed `manufacturer_label` (ingestion/label.ts, Stage 4)
 //       -> authoritative activity-group classification (server-side table)
 //         -> viticulture-specific cross-check
-//           -> AI/search interpretation (fallback + label-only facts)
+//           -> AI/search interpretation (fallback; rates detail)
 //
 // For AU vineyards the structured lookup consults the live APVMA register:
 // registration identity (AU:apvma:<number>), verbatim registered product name,
 // registrant, actives with concentrations, registration status and the label
-// approval pointer come from the register and feed CANDIDATE-only master
-// ingestion (ingestion/ingest.ts). Label-only facts (rates, WHP, re-entry) are
-// still the model's reading of public label material — attributed
-// `ai_interpretation`, never able to make a product Verified on its own. No
-// live ACVM (NZ) source is wired yet; NZ remains AI-extraction-only under the
-// same honesty rules. The FRAC/HRAC/IRAC classification table stays server-side
+// approval pointer come from the register; the approved label's use claims,
+// WHP, re-entry wording and restrictions come from official label evidence
+// where it resolves (fail-soft otherwise). Both feed CANDIDATE-only master
+// ingestion (ingestion/ingest.ts). Label RATES are not machine-published by
+// the register: they stay the model's reading of public label material —
+// attributed `ai_interpretation`, never promoted without label evidence, and
+// never able to make a product Verified on their own. No live ACVM (NZ)
+// source is wired yet; NZ remains AI-extraction-only under the same honesty
+// rules. The FRAC/HRAC/IRAC classification table stays server-side
 // authoritative and is applied to every active AFTER extraction.
 
 const REGISTER_BY_COUNTRY: Record<string, string> = {

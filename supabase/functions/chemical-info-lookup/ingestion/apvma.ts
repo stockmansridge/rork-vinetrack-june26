@@ -8,12 +8,16 @@
 //   and expiry, the product's active constituents WITH concentrations and
 //   units, and the current approved-label registration record.
 //
-// LABEL AUTHORITY
-//   The APVMA-approved label itself. The register extract points at it
-//   (labelreg approval number + date, carried as `label_version`); the label
-//   DOCUMENT is not machine-consumed here, so label-only facts (directions
-//   for use, rates, WHP, re-entry) stay unresolved for the admin to confirm
-//   against the label at review. They are never invented.
+// LABEL AUTHORITY (Stage 4)
+//   The APVMA-approved label. The register extract points at the current
+//   approval (labelreg, carried as `label_version`) AND publishes the
+//   label's machine-readable content: registered use claims (produse ×
+//   host × pest) and the label's product statements (prodcom — withholding
+//   periods, re-entry, restrictions). Those become structured label
+//   evidence (ingestion/label.ts) attributed to `manufacturer_label`.
+//   The register publishes NO machine-readable rate table, so label RATES
+//   stay unresolved for the admin to confirm against the label document at
+//   review (or AI-attributed, clearly marked). They are never invented.
 //
 // WHAT THIS ADAPTER WILL NEVER DO
 //   * Resolve by substring or fuzzy similarity ("custodia" can never reach
@@ -27,12 +31,14 @@ import { reconcileGroup } from "./activity_groups.ts";
 import type {
   AdapterDeps,
   DiscoveryResult,
+  LabelEvidence,
   ResolvedRegistration,
   SourceAdapter,
   WireActiveIngredient,
   WireDataSource,
 } from "./contract.ts";
 import { identityKey } from "./contract.ts";
+import { buildLabelEvidence } from "./label.ts";
 import {
   NEGATIVE_TTL_MS,
   RESOLVED_TTL_MS,
@@ -53,6 +59,14 @@ export const APVMA_RESOURCES = {
   constituentNames: "de913672-c51a-483a-b467-f2f9df51f671",
   /** labelreg.csv — current approved label registration per product. */
   labelRegistrations: "a83d500d-b47a-4f03-9d77-4c0524217855",
+  /** produse.csv — the approved label's use claims (pcode × host × pest). */
+  productUses: "80289270-0681-44fd-be6e-0473bb4ab9a0",
+  /** host.csv — host (crop) code → wording. */
+  hosts: "2927e1dd-b064-411c-bc90-1e2c05b6822f",
+  /** pest.csv — pest (target) code → wording. */
+  pests: "1365af46-a3db-4d54-9f25-e41f7dfce5d2",
+  /** prodcom.csv — label statements (WHP, re-entry…), chunked by seq. */
+  productComments: "98e956e0-8d60-47cd-8bed-1d4da4c9826d",
 } as const;
 
 const FETCH_TIMEOUT_MS = 8000;
@@ -283,6 +297,90 @@ function source(
   return { kind: "official_register", name, reference, retrieved_at: retrievedAt };
 }
 
+/**
+ * Fetch the approved label's published claim data for one product.
+ * Fail-soft by contract: any failure returns null — register identity and
+ * chemistry stand, label facts stay unresolved or AI-attributed. Never
+ * invented, never partially guessed.
+ */
+async function fetchLabelEvidence(
+  deps: AdapterDeps,
+  pcode: string,
+  retrievedAt: string,
+): Promise<LabelEvidence | null> {
+  try {
+    const useRows = await datastoreSearch(deps, {
+      resourceId: APVMA_RESOURCES.productUses,
+      filters: { pcode },
+      limit: 512,
+    });
+    if (!useRows.length) return null;
+
+    const hostCodes = Array.from(
+      new Set(useRows.map((u) => String(u?.hostcode ?? "")).filter(Boolean)),
+    );
+    const pestCodes = Array.from(
+      new Set(useRows.map((u) => String(u?.pestcode ?? "")).filter(Boolean)),
+    );
+    const [hostRows, pestRows] = await Promise.all([
+      datastoreSearch(deps, {
+        resourceId: APVMA_RESOURCES.hosts,
+        filters: { hostcode: hostCodes },
+        limit: hostCodes.length + 4,
+      }),
+      datastoreSearch(deps, {
+        resourceId: APVMA_RESOURCES.pests,
+        filters: { pestcode: pestCodes },
+        limit: pestCodes.length + 4,
+      }),
+    ]);
+
+    // Label statements are supporting evidence for the claims; their outage
+    // must not take the claims down with them.
+    let commentRows: Record<string, unknown>[] = [];
+    try {
+      commentRows = await datastoreSearch(deps, {
+        resourceId: APVMA_RESOURCES.productComments,
+        filters: { pcode },
+        limit: 256,
+      });
+    } catch (err) {
+      console.error(
+        "apvma label statements unavailable:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
+    const evidence = buildLabelEvidence({
+      pcode,
+      useRows,
+      hostRows,
+      pestRows,
+      commentRows,
+      retrievedAt,
+      claimsReference: datastoreUrl({
+        resourceId: APVMA_RESOURCES.productUses,
+        filters: { pcode },
+        limit: 512,
+      }),
+      statementsReference: commentRows.length
+        ? datastoreUrl({
+          resourceId: APVMA_RESOURCES.productComments,
+          filters: { pcode },
+          limit: 256,
+        })
+        : null,
+    });
+    return evidence.claims.length ? evidence : null;
+  } catch (err) {
+    console.error(
+      "apvma label evidence unavailable:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+}
+
 async function resolveDetails(
   deps: AdapterDeps,
   row: ProductRecord,
@@ -291,8 +389,9 @@ async function resolveDetails(
   const retrievedAt = deps.now().toISOString();
   const pcode = String(row.pcode).trim();
   const unresolved = new Set<string>([
-    // The register extract carries no label directions-for-use table and the
-    // label document itself is not machine-consumed here.
+    // The label DOCUMENT itself is not machine-consumed; the reference stays
+    // unresolved for the admin to attach at review. Registered uses start
+    // unresolved and are cleared only when label evidence actually resolves.
     "label_reference",
     "registered_uses",
   ]);
@@ -418,6 +517,14 @@ async function resolveDetails(
     );
   }
 
+  // ---- Official label evidence (Stage 4; fail-soft) -----------------------
+  const labelEvidence = await fetchLabelEvidence(deps, pcode, retrievedAt);
+  if (labelEvidence) {
+    unresolved.delete("registered_uses");
+    for (const gap of labelEvidence.unresolved) unresolved.add(gap);
+    sources.push(...labelEvidence.sources);
+  }
+
   return {
     country_code: "AU",
     scheme: "apvma",
@@ -433,6 +540,7 @@ async function resolveDetails(
     unresolved_fields: Array.from(unresolved).sort(),
     sources,
     match_mode: mode,
+    label_evidence: labelEvidence,
   };
 }
 

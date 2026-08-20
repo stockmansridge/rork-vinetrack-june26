@@ -7,10 +7,18 @@
 //   evidence_refreshed — content identical; the stored evidence was stale and
 //                        has been re-confirmed (apply updates evidence only).
 //   material_change    — register asserts different non-chemistry facts
-//                        (name, registrant, label approval, status…).
+//                        (name, registrant, label approval, status, label
+//                        use claims / WHP / re-entry — Stage 4).
 //   conflict           — register disagrees about the CHEMISTRY (actives /
 //                        concentrations). Never auto-resolved.
 //   source_unavailable — register unreachable; says NOTHING about the product.
+//
+// Stage 4: refresh re-checks LABEL EVIDENCE too. Fresh label claims are
+// compared against the stored uses; drift is a material change. When a
+// candidate patch is applied, stored AI-attributed rates are carried onto
+// the matching fresh claims — label refresh never silently discards them,
+// and never touches the row's UUID, its version history (sql/199 triggers
+// version every content change), saved_chemicals, or spray snapshots.
 //
 // Write policy:
 //   * CANDIDATE rows may be patched by the caller using the patch builders
@@ -30,6 +38,12 @@ import type {
   WireConflict,
   WireDataSource,
 } from "./contract.ts";
+import {
+  labelClaimsSignature,
+  mergeLabelEvidenceIntoUses,
+  storedUsesSignature,
+  usesSummary,
+} from "./label.ts";
 import { adapterFor } from "./registry.ts";
 
 /** Candidate evidence older than this is re-stamped on the next lookup. */
@@ -217,6 +231,26 @@ export async function refreshMasterRow(
   }
 
   const changes = materialChanges(row, reg);
+
+  // ---- Label evidence re-check (Stage 4) ----------------------------------
+  // Only when fresh evidence actually resolved: an unavailable label source
+  // says NOTHING about the stored uses (fail soft, mirrors the register
+  // outage rule above).
+  const evidence = reg.label_evidence ?? null;
+  if (evidence && evidence.claims.length) {
+    const storedSig = storedUsesSignature(row.registered_uses ?? []);
+    const freshSig = labelClaimsSignature(evidence);
+    if (storedSig !== freshSig) {
+      changes.push({
+        field: "registered_uses",
+        current: usesSummary(
+          Array.isArray(row.registered_uses) ? row.registered_uses : [],
+        ),
+        authoritative: usesSummary(evidence.claims),
+      });
+    }
+  }
+
   const chemistryChanged = changes.some((c) => c.field === "active_ingredients");
   if (chemistryChanged) return { outcome: "conflict", changes, registration: reg };
   if (changes.length) return { outcome: "material_change", changes, registration: reg };
@@ -229,7 +263,10 @@ export async function refreshMasterRow(
 }
 
 function mergeSources(row: MasterRow, fresh: WireDataSource[]): WireDataSource[] {
-  const kept = (row.verification_sources ?? []).filter((s) => s?.kind !== "official_register");
+  // Fresh evidence replaces the stored entries OF THE SAME KIND (register,
+  // label…); other kinds (AI extraction, classification table) are kept.
+  const freshKinds = new Set(fresh.map((s) => s?.kind).filter(Boolean));
+  const kept = (row.verification_sources ?? []).filter((s) => !freshKinds.has(s?.kind));
   return [...fresh, ...kept];
 }
 
@@ -260,7 +297,7 @@ export function buildCandidateRefreshPatch(
   }
 
   if (result.outcome === "material_change" && reg) {
-    return {
+    const patch: Record<string, any> = {
       registered_product_name: reg.registered_product_name,
       registrant: reg.registrant ?? row.registrant,
       product_category: reg.product_category ?? row.product_category,
@@ -271,6 +308,37 @@ export function buildCandidateRefreshPatch(
       source_kind: "official_register",
       source_reference: reg.sources[0]?.reference ?? row.source_reference,
     };
+    // Stage 4: apply fresh label claims, carrying the stored uses'
+    // AI-attributed detail (rates) onto the claims they match — the refresh
+    // never invents, never discards silently, never re-keys.
+    const evidence = reg.label_evidence ?? null;
+    if (
+      evidence && evidence.claims.length &&
+      result.changes.some((c) => c.field === "registered_uses")
+    ) {
+      const merged = mergeLabelEvidenceIntoUses(
+        Array.isArray(row.registered_uses) ? row.registered_uses : [],
+        evidence,
+      );
+      patch.registered_uses = merged.uses;
+      patch.label_rate_bases = Array.from(
+        new Set(
+          merged.uses.flatMap((u: any) =>
+            (u?.rates ?? []).map((r: any) => r?.basis).filter(Boolean)
+          ),
+        ),
+      );
+      const keptUnresolved = (row.verification_unresolved_fields ?? []).filter(
+        (f) =>
+          !/^(rates|withholding_period|registered_use_claim):/.test(f) &&
+          f !== "registered_uses" &&
+          f !== "re_entry_period_hours",
+      );
+      patch.verification_unresolved_fields = Array.from(
+        new Set([...keptUnresolved, ...evidence.unresolved]),
+      ).sort();
+    }
+    return patch;
   }
 
   if (result.outcome === "conflict" && reg) {

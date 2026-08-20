@@ -30,6 +30,7 @@ import type {
   WireDataSource,
 } from "./contract.ts";
 import { identityKey } from "./contract.ts";
+import { mergeLabelEvidenceIntoUses } from "./label.ts";
 import { adapterFor } from "./registry.ts";
 import {
   CANDIDATE_EVIDENCE_MAX_AGE_MS,
@@ -206,12 +207,24 @@ export function mergeDiscoveryIntoStructured(
   merged.activity_groups = codes;
   merged.activity_group_scheme = scheme;
 
-  // Registered uses stay whatever the extraction honestly produced — the
-  // register extract has no directions-for-use table, and inventing rates,
-  // WHPs or re-entry to "complete" the record is exactly what must not happen.
-  const uses: any[] = Array.isArray(structured?.registered_uses)
+  // ---- Registered uses (Stage 4: official label evidence wins) -----------
+  // When the register resolves the approved label's claim data, the label's
+  // claim set IS the served uses: label-stated WHP/re-entry/restrictions win
+  // (AI disagreements become conflicts), AI rates ride along clearly
+  // attributed, and AI-only uses are dropped as conflicts. Without label
+  // evidence the extraction's uses stand with their own honest attribution —
+  // inventing rates, WHPs or re-entry to "complete" the record is exactly
+  // what must not happen.
+  const aiUses: any[] = Array.isArray(structured?.registered_uses)
     ? structured.registered_uses
     : [];
+  const evidence = reg.label_evidence ?? null;
+  let uses: any[] = aiUses;
+  if (evidence && evidence.claims.length) {
+    const labelMerge = mergeLabelEvidenceIntoUses(aiUses, evidence);
+    uses = labelMerge.uses;
+    for (const c of labelMerge.conflicts) conflicts.push(c);
+  }
   merged.registered_uses = uses;
   merged.label_rate_bases = Array.from(
     new Set(uses.flatMap((u: any) => (u?.rates ?? []).map((r: any) => r?.basis).filter(Boolean))),
@@ -249,6 +262,15 @@ export function mergeDiscoveryIntoStructured(
     if (f === "label_reference" && merged.registration.label_reference) continue;
     if (f === "active_ingredients" && mergedActives.length) continue;
     unresolved.add(f);
+  }
+  if (evidence && evidence.claims.length) {
+    // Label evidence resolved the claim set; the AI-era whole-array gap goes,
+    // replaced by the evidence's own per-context gaps (rates:<crop>,
+    // withholding_period:<crop>…) carried in reg.unresolved_fields above.
+    unresolved.delete("registered_uses");
+    if (evidence.claims.every((c) => c.re_entry_period_hours !== undefined)) {
+      unresolved.delete("re_entry_period_hours");
+    }
   }
 
   merged.verification = {

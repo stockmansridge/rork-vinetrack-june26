@@ -1,14 +1,16 @@
-# Master Chemical Ingestion — Stage 3 (Australia)
+# Master Chemical Ingestion — Stages 3–4 (Australia)
 
-**Status:** Implemented 2026-08-19. Authoritative ingestion pipeline inside the
-`chemical-info-lookup` edge function (`supabase/functions/chemical-info-lookup/ingestion/`).
+**Status:** Stage 3 implemented 2026-08-19 (deployed). Stage 4 — official
+label evidence — implemented 2026-08-20 (NOT yet deployed). Authoritative
+ingestion pipeline inside the `chemical-info-lookup` edge function
+(`supabase/functions/chemical-info-lookup/ingestion/`).
 **Scope:** Australia (APVMA) only. NZ / GB / US are declared future adapters.
 **Companions:** `docs/master-chemical-catalogue-design.md` (schema + trust model),
 `docs/chemical-intelligence-json-contract.md` (wire contract, §12),
 `docs/vineyard-country-contract.md` (supported vineyard countries),
 `docs/chemical-custodia-parity-fixture.md` (the pinned regression fixture).
 **Database changes:** NONE — sql/199 already carries every candidate,
-provenance, conflict and version field this stage needs.
+provenance, conflict and version field both stages need.
 
 ## 1. Purpose
 
@@ -62,12 +64,29 @@ back to GB or AU.
      approved label registration (approval number + date).
    Attributed `official_register`; every source entry carries the reproducible
    datastore query URL and retrieval timestamp.
-2. **Label authority.** The APVMA-approved label itself. The register extract
-   points at it (`label_version` = "APVMA label approval NNNN (date)"); the
-   label **document** is not machine-consumed, so label-only facts (directions
-   for use, rates, WHP, re-entry) stay unresolved for the admin to confirm at
-   review. `label_reference` remains unresolved until a real label document is
-   recorded.
+2. **Label authority (Stage 4 — machine-consumed).** The APVMA-approved
+   label. The register extract points at the current approval
+   (`label_version` = "APVMA label approval NNNN (date)") **and publishes the
+   label's claim content**, which `ingestion/label.ts` consumes as official
+   label evidence attributed `manufacturer_label` (the contract's
+   registrant's-approved-label kind, §5.3 — already authoritative):
+   - `produse.csv` `80289270-0681-44fd-be6e-0473bb4ab9a0` — the approved
+     label's registered use claims (pcode × host × pest).
+   - `host.csv` `2927e1dd-b064-411c-bc90-1e2c05b6822f` / `pest.csv`
+     `1365af46-a3db-4d54-9f25-e41f7dfce5d2` — verbatim crop/target wording.
+   - `prodcom.csv` `98e956e0-8d60-47cd-8bed-1d4da4c9826d` — the label's
+     statements (withholding periods, re-entry, restrictions), shipped as
+     fixed-width chunks reassembled by `seq`.
+   Strict parsing only: "DO NOT HARVEST FOR n DAYS/WEEKS" and (inside a
+   withholding section) "NOT REQUIRED WHEN USED AS DIRECTED" → WHP;
+   explicit re-entry hours/days → re-entry period; anything else keeps its
+   verbatim wording and resolves nothing. **The register publishes NO
+   machine-readable rate table** — label rates stay unresolved per crop
+   (`rates:<CROP>`) for the admin to confirm against the label document at
+   review, or ride along AI-attributed. `label_reference` (the document URL)
+   remains unresolved until a real label document is recorded. Fail-soft: any
+   label-source failure keeps register identity/chemistry intact and leaves
+   label fields unresolved or AI-attributed — never invented.
 3. **Supporting evidence.** Registrant/manufacturer label mirrors
    (`manufacturer_label`) and the AWRI viticulture registrations list
    (`viticulture_reference`) — admissible at review, never authoritative alone.
@@ -276,17 +295,27 @@ POST /functions/v1/chemical-info-lookup
 deno test supabase/functions/chemical-info-lookup/ingestion/ingestion_test.ts
 ```
 
-25 deno tests (all executed and passing) cover the Stage 3 matrix: AU
-resolution + provenance (40), Custodia chemistry through the normal evidence
-path (23), similar-name protection incl. the lapsed-register case (24/43),
+36 deno tests (all executed and passing). Stage 3 matrix: AU resolution +
+provenance (40), Custodia chemistry through the normal evidence path (23),
+similar-name protection incl. the lapsed-register case (24/43),
 approved-master short-circuit (41), candidate dedupe/upgrade (42), repeated
 lookups → one candidate (48), foreign/missing jurisdiction (44/45), partial
 extraction honesty (46), register-vs-AI conflict (47), refresh outcomes and
 approved-row immutability (49), source-unavailable semantics (36), candidate
 envelope (28), cache scoping/TTL (33/34), and candidate-only writes (10).
-Register facts live in mocked APVMA documents inside the test file — the
-implementation hard-codes none of them. Mobile: 2 new pinned parity tests per
-platform assert a candidate can never read as an approved master.
+Stage 4 label evidence (49–59): strict statement parsing (49), Custodia Forte
+91636 claims/WHP from live-mirrored PubCRIS label data (50), label-backed
+merge with field-level provenance and AI rates carried-never-promoted (51),
+WHP disagreement → structured conflict with the label value served (52),
+AI-only uses dropped as conflicts (53), distinct grape uses never collapsed
+(54), re-entry never fabricated (55), fail-soft on label-source outages (56),
+register-only lookups serving claims with empty rates (57), refresh label
+drift as material change preserving stored rates + Master UUID and never
+touching approved rows (58), and 66541 fail-closed with Forte evidence
+present (59). Register + label facts live in mocked APVMA documents inside
+the test file (mirroring live PubCRIS bytes for 91636) — the implementation
+hard-codes none of them. Mobile: 2 pinned parity tests per platform assert a
+candidate can never read as an approved master.
 
 ## 16. Deployment
 
@@ -306,7 +335,7 @@ exactly as it already does for `vinetrack-webhook-dispatch/lib.ts` and the
 is no longer a supported deployment method for this function. No database
 migration accompanies this stage.
 
-## 17. Future jurisdictions (Stage 4 — New Zealand, not implemented)
+## 17. Future jurisdictions (Stage 5 — New Zealand, not implemented)
 
 To add NZ later: implement `SourceAdapter` for the MPI ACVM register (and the
 EPA HSNO approval reference the label quotes), decide the identity scheme
