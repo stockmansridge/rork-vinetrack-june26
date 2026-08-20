@@ -28,8 +28,10 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -37,6 +39,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -56,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.rork.vinetrack.data.PlanSprayJob
 import com.rork.vinetrack.data.SupabaseClient
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.resistance.ResistanceDisease
@@ -74,6 +78,7 @@ import com.rork.vinetrack.data.resistance.ResistancePlannerUiState
 import com.rork.vinetrack.data.resistance.ResistanceRulesets
 import com.rork.vinetrack.data.resistance.ResistanceSeasonCalendar
 import com.rork.vinetrack.data.resistance.SupabaseResistancePlanRemote
+import com.rork.vinetrack.data.resistance.displayLabel
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
@@ -152,6 +157,13 @@ fun ResistancePlannerScreen(
     var showStrategy by remember { mutableStateOf(false) }
     var showUnresolvedDetail by remember { mutableStateOf(false) }
 
+    // Plan -> Spray Jobs (sql/201, Stage 5B). The create gate mirrors the
+    // spray_jobs INSERT RLS policy (owner/manager only).
+    val planSprayJobsMap by vm.planSprayJobs.collectAsStateWithLifecycle()
+    val canCreateSprayJobs = state.currentRole == "owner" || state.currentRole == "manager"
+    var jobDetail by remember { mutableStateOf<PlanSprayJob?>(null) }
+    var recordingJob by remember { mutableStateOf<PlanSprayJob?>(null) }
+
     val season = remember(seasonCalendar, seasonStartYear) {
         seasonCalendar.seasonStarting(seasonStartYear)
     }
@@ -208,6 +220,15 @@ fun ResistancePlannerScreen(
     }
 
     val activePlan = plan
+
+    // Plan-linked spray jobs: push queued creates, pull live rows. Progress is
+    // DERIVED — job activity never edits the plan or bumps its revision.
+    LaunchedEffect(activePlan?.id) {
+        activePlan?.id?.let { vm.refreshPlanSprayJobs(it) }
+    }
+    val planJobs = activePlan?.let { planSprayJobsMap[it.id] }.orEmpty()
+    val jobsByPosition = remember(planJobs) { planJobs.groupBy { it.resistancePositionId.orEmpty() } }
+
     val chemicalCandidates = remember(state.savedChemicals, disease, vineyard?.country) {
         ResistancePlanChemicalSource.candidates(
             chemicals = state.savedChemicals,
@@ -274,6 +295,29 @@ fun ResistancePlannerScreen(
                 )
             }
         }
+
+    // Executing a plan-linked job: host the Spray Calculator in place (the
+    // SpraysScreen pattern). The saved record carries spray_job_id — the
+    // job-originated completion link.
+    val recording = recordingJob
+    if (recording != null) {
+        androidx.activity.compose.BackHandler { recordingJob = null }
+        SprayCalculatorScreen(
+            vm = vm,
+            state = state,
+            modifier = modifier,
+            onBack = { recordingJob = null },
+            onSaved = {
+                recordingJob = null
+                activePlan?.id?.let { vm.refreshPlanSprayJobs(it) }
+            },
+            onJobStarted = null,
+            prefillJobRecord = recording.toPrefillSprayRecord(),
+            originSprayJobId = recording.id,
+            prefillPaddockIds = activePlan?.blockIds.orEmpty(),
+        )
+        return
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -343,6 +387,9 @@ fun ResistancePlannerScreen(
                     PlannedPositionsCard(
                         ui = ui,
                         expandedPositionIds = expandedPositionIds,
+                        jobsByPosition = jobsByPosition,
+                        canCreateSprayJobs = canCreateSprayJobs,
+                        isJobPending = { vm.isPendingSprayJob(it) },
                         onAdd = { apply { it.addingPosition(nowMs = nowMs) } },
                         onEdit = { editingPositionId = it },
                         onMoveUp = { id -> apply { it.movingPositionUp(id, nowMs) } },
@@ -355,6 +402,24 @@ fun ResistancePlannerScreen(
                                 expandedPositionIds + id
                             }
                         },
+                        onCreateSprayJob = createJob@{ positionId ->
+                            val currentPlan = activePlan ?: return@createJob
+                            val position = currentPlan.position(positionId) ?: return@createJob
+                            val ordinal = ui.positions
+                                .firstOrNull { it.positionId == positionId }
+                                ?.ordinalLabel ?: "Spray"
+                            // Freezes the position VERBATIM into the job; prefills
+                            // only what the plan genuinely knows (blocks, disease,
+                            // planned chemistry identity) — never rates or volumes.
+                            vm.createSprayJobFromPlan(
+                                plan = currentPlan,
+                                position = position,
+                                name = "${disease.label} ${currentPlan.seasonId} — $ordinal",
+                                target = disease.label,
+                                paddockIds = currentPlan.blockIds,
+                            )
+                        },
+                        onOpenJob = { jobDetail = it },
                     )
                     SeasonTotalsCard(ui)
                     StrategyCard(
@@ -389,6 +454,21 @@ fun ResistancePlannerScreen(
         } else {
             editingPositionId = null
         }
+    }
+
+    val detailJob = jobDetail
+    if (detailJob != null) {
+        PlanSprayJobDetailSheet(
+            job = detailJob,
+            planLabel = "${disease.label} — ${season.id}",
+            livePosition = ui?.positions?.firstOrNull { it.positionId == detailJob.resistancePositionId },
+            isPendingSync = vm.isPendingSprayJob(detailJob.id),
+            onRecordSpray = {
+                jobDetail = null
+                recordingJob = detailJob
+            },
+            onDismiss = { jobDetail = null },
+        )
     }
 }
 
@@ -685,12 +765,17 @@ private fun TimelineCard(ui: ResistancePlannerUiState) {
 private fun PlannedPositionsCard(
     ui: ResistancePlannerUiState,
     expandedPositionIds: Set<String>,
+    jobsByPosition: Map<String, List<PlanSprayJob>>,
+    canCreateSprayJobs: Boolean,
+    isJobPending: (String) -> Boolean,
     onAdd: () -> Unit,
     onEdit: (String) -> Unit,
     onMoveUp: (String) -> Unit,
     onMoveDown: (String) -> Unit,
     onRemove: (String) -> Unit,
     onToggleReasons: (String) -> Unit,
+    onCreateSprayJob: (String) -> Unit,
+    onOpenJob: (PlanSprayJob) -> Unit,
 ) {
     val vine = LocalVineColors.current
     VineyardCard {
@@ -704,7 +789,7 @@ private fun PlannedPositionsCard(
             }
         }
         Text(
-            "Planning positions only. Nothing here is a spray record, and no spray job is created.",
+            "Planning positions only — nothing here is a spray record. Create Spray Job hands a position to operations; progress is derived and job activity never edits this plan.",
             fontSize = 12.sp,
             color = vine.textSecondary,
         )
@@ -718,11 +803,16 @@ private fun PlannedPositionsCard(
             PositionCard(
                 position = position,
                 isExpanded = expandedPositionIds.contains(position.positionId),
+                jobs = jobsByPosition[position.positionId].orEmpty(),
+                canCreateSprayJobs = canCreateSprayJobs,
+                isJobPending = isJobPending,
                 onEdit = { onEdit(position.positionId) },
                 onMoveUp = { onMoveUp(position.positionId) },
                 onMoveDown = { onMoveDown(position.positionId) },
                 onRemove = { onRemove(position.positionId) },
                 onToggleReasons = { onToggleReasons(position.positionId) },
+                onCreateSprayJob = { onCreateSprayJob(position.positionId) },
+                onOpenJob = onOpenJob,
             )
         }
 
@@ -737,11 +827,16 @@ private fun PlannedPositionsCard(
 private fun PositionCard(
     position: ResistancePlannerPosition,
     isExpanded: Boolean,
+    jobs: List<PlanSprayJob>,
+    canCreateSprayJobs: Boolean,
+    isJobPending: (String) -> Boolean,
     onEdit: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onRemove: () -> Unit,
     onToggleReasons: () -> Unit,
+    onCreateSprayJob: () -> Unit,
+    onOpenJob: (PlanSprayJob) -> Unit,
 ) {
     val vine = LocalVineColors.current
     val accent = statusColor(position.status)
@@ -861,6 +956,68 @@ private fun PositionCard(
                 }
             }
         }
+
+        // Spray Jobs created FROM this position (sql/201). Derived display
+        // only — nothing here writes back into the plan.
+        Spacer(Modifier.height(8.dp))
+        HorizontalDivider(color = vine.cardBorder.copy(alpha = 0.5f))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Spray Jobs", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+            Spacer(Modifier.weight(1f))
+            if (canCreateSprayJobs) {
+                TextButton(onClick = onCreateSprayJob) {
+                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.size(4.dp))
+                    Text("Create Spray Job", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        if (jobs.isEmpty()) {
+            Text(
+                "No spray jobs yet. Creating one freezes this position's current intent into the job — later plan edits never rewrite it.",
+                fontSize = 11.sp,
+                color = vine.textSecondary,
+            )
+        }
+        jobs.forEach { job ->
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(vine.cardBackground.copy(alpha = 0.6f))
+                    .clickable { onOpenJob(job) }
+                    .padding(8.dp),
+            ) {
+                Text(
+                    job.name.ifBlank { "Spray job" },
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        (job.status ?: "planned").replaceFirstChar { it.uppercase() },
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
+                    if (isJobPending(job.id)) {
+                        Spacer(Modifier.size(8.dp))
+                        Text("Waiting to sync", fontSize = 11.sp, color = VineColors.Orange)
+                    }
+                    if (job.deviatesFromPlan) {
+                        Spacer(Modifier.size(8.dp))
+                        Text(
+                            "Differs from plan",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = VineColors.Orange,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -886,6 +1043,198 @@ private fun statusColor(status: ResistancePlanPositionStatus): Color = when (sta
     ResistancePlanPositionStatus.WOULD_EXCEED_STRATEGY -> VineColors.Destructive
     ResistancePlanPositionStatus.NEEDS_REVIEW -> VineColors.Orange
     ResistancePlanPositionStatus.UNABLE_TO_FULLY_ASSESS -> VineColors.Indigo
+}
+
+// ---------------------------------------------------------------------------
+// Plan -> Spray Job detail (sql/201, Stage 5B)
+// ---------------------------------------------------------------------------
+
+/**
+ * Detail sheet for a spray job created from a plan position: WHERE it came
+ * from ("From Resistance Plan"), the ORIGINAL frozen intent, the CURRENT
+ * proposal with an explicit plan-deviation flag, and the LIVE Resistance
+ * Check. Deviation ≠ compliance: a job may differ from the plan yet still be
+ * resistance-compliant — compliance is always the engine's call against
+ * current history.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlanSprayJobDetailSheet(
+    job: PlanSprayJob,
+    planLabel: String,
+    livePosition: ResistancePlannerPosition?,
+    isPendingSync: Boolean,
+    onRecordSpray: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(job.name.ifBlank { "Spray Job" }, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+
+            JobSheetSection("From Resistance Plan") {
+                Text(planLabel, fontSize = 13.sp)
+                if (livePosition != null) {
+                    Text("Position: ${livePosition.ordinalLabel}", fontSize = 12.sp, color = vine.textSecondary)
+                } else {
+                    Text(
+                        "This position is no longer in the current plan. The job keeps its original intent below.",
+                        fontSize = 12.sp,
+                        color = VineColors.Orange,
+                    )
+                }
+                job.resistancePlanSourceRevision?.let {
+                    Text("Created against plan revision $it", fontSize = 11.sp, color = vine.textSecondary)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        (job.status ?: "planned").replaceFirstChar { it.uppercase() },
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(vine.cardBorder.copy(alpha = 0.4f))
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                    if (isPendingSync) {
+                        Spacer(Modifier.size(8.dp))
+                        Text("Waiting to sync", fontSize = 11.sp, color = VineColors.Orange)
+                    }
+                }
+            }
+
+            JobSheetSection("Original planned intent") {
+                val snapshot = job.snapshotPosition()
+                if (snapshot != null) {
+                    Text(
+                        job.originalIntentLabel ?: snapshot.groupsLabel,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    snapshot.products.forEach { product ->
+                        Text(
+                            "• ${product.displayLabel} — ${product.groups.displayLabel}",
+                            fontSize = 12.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
+                    snapshot.note?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, fontSize = 12.sp, color = vine.textSecondary)
+                    }
+                } else {
+                    Text(
+                        "No frozen intent — this job was not created from a plan position.",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                    )
+                }
+                Text(
+                    "Frozen when the job was created. Editing the plan later never rewrites this.",
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                )
+            }
+
+            JobSheetSection("Current proposal") {
+                Text(job.currentProposalLabel, fontSize = 13.sp)
+                if (job.deviatesFromPlan) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        Icon(
+                            Icons.Filled.Warning,
+                            contentDescription = null,
+                            tint = VineColors.Orange,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.size(6.dp))
+                        Text(
+                            "Differs from the original plan — a plan deviation, not a compliance verdict.",
+                            fontSize = 12.sp,
+                            color = VineColors.Orange,
+                        )
+                    }
+                } else if (job.resistancePositionSnapshot != null) {
+                    Text("Matches the original planned intent.", fontSize = 12.sp, color = vine.textSecondary)
+                }
+                Text(
+                    "The job stays fully editable. Changing it is allowed — the deviation is simply shown; resistance compliance is always the engine's call.",
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                )
+            }
+
+            JobSheetSection("Live Resistance Check") {
+                if (livePosition != null) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Current standing", fontSize = 12.sp, color = vine.textSecondary)
+                        Spacer(Modifier.weight(1f))
+                        StatusBadge(livePosition.status, livePosition.statusLabel)
+                    }
+                    livePosition.blockBreakdown.forEach { block ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(block.blockName, fontSize = 12.sp)
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                block.statusLabel,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = statusColor(block.status),
+                            )
+                        }
+                    }
+                    if (job.deviatesFromPlan) {
+                        Text(
+                            "This check evaluates the position's planned chemistry. The job proposes different products — review before spraying.",
+                            fontSize = 12.sp,
+                            color = VineColors.Orange,
+                        )
+                    }
+                } else {
+                    Text(
+                        "The position is no longer in the plan, so there is no live evaluation for it.",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                    )
+                }
+                Text(
+                    "Evaluated now, against current spray history. Plan compliance when this job was created guarantees nothing later.",
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                )
+            }
+
+            Button(onClick = onRecordSpray, modifier = Modifier.fillMaxWidth()) {
+                Text("Record this spray", fontWeight = FontWeight.SemiBold)
+            }
+            Text(
+                "Opens the Spray Calculator prefilled from this job. The saved record will reference this job, completing the Plan → Job → Record chain.",
+                fontSize = 11.sp,
+                color = vine.textSecondary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun JobSheetSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    val vine = LocalVineColors.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(vine.cardBorder.copy(alpha = 0.22f))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        content()
+    }
 }
 
 // ---------------------------------------------------------------------------

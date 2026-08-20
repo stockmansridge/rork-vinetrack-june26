@@ -108,6 +108,7 @@ import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.chemical.ChemicalSnapshotCapture
 import com.rork.vinetrack.data.model.SavedChemical
+import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.chemicalUnitFromBase
 import com.rork.vinetrack.data.model.resolveSprayTrip
 import com.rork.vinetrack.data.model.sprayOperationTypes
@@ -248,6 +249,19 @@ fun SprayCalculatorScreen(
     onSaved: () -> Unit = {},
     onJobStarted: ((String) -> Unit)? = null,
     prefillRecordId: String? = null,
+    /**
+     * Stage 5B: prefill from a plan-linked spray job (sql/201). The synthetic
+     * record is never stored — only its identity/chemistry seeds the form.
+     */
+    prefillJobRecord: SprayRecord? = null,
+    /**
+     * Stage 5B: the `spray_jobs` row this calculator run is executing. Every
+     * record saved from this session carries it as `spray_job_id` — the
+     * job-originated completion link (sql/033). Null for ad-hoc runs.
+     */
+    originSprayJobId: String? = null,
+    /** Blocks the originating plan proposes — applied once at prefill. */
+    prefillPaddockIds: List<String> = emptyList(),
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
@@ -522,9 +536,10 @@ fun SprayCalculatorScreen(
         }
     }
 
-    // Template / record prefill (Start from Template, re-run a completed job).
-    val prefillRecord = remember(prefillRecordId, state.sprayRecords, state.sprayJobTemplates) {
-        prefillRecordId?.let { id ->
+    // Template / record / plan-job prefill (Start from Template, re-run a
+    // completed job, or execute a plan-linked spray job).
+    val prefillRecord = remember(prefillRecordId, prefillJobRecord, state.sprayRecords, state.sprayJobTemplates) {
+        prefillJobRecord ?: prefillRecordId?.let { id ->
             state.sprayRecords.firstOrNull { it.id == id }
                 ?: state.sprayJobTemplates.firstOrNull { it.id == id }
         }
@@ -544,12 +559,21 @@ fun SprayCalculatorScreen(
                 it.name.isNotBlank() && it.name.equals(r.equipmentType ?: "", ignoreCase = true)
             }?.id
             ?: sprayEquipmentId
-        resolveSprayTrip(r, state.trips)?.let { trip ->
-            val ids = trip.paddockIds.ifEmpty { listOfNotNull(trip.paddockId) }
-                .filter { pid -> state.paddocks.any { it.id == pid } }
+        if (prefillPaddockIds.isNotEmpty()) {
+            // Plan/job prefill: only the blocks the plan genuinely proposed.
+            val ids = prefillPaddockIds.filter { pid -> state.paddocks.any { it.id == pid } }
             if (ids.isNotEmpty()) {
                 selectedPaddockIds.clear()
                 selectedPaddockIds.addAll(ids)
+            }
+        } else {
+            resolveSprayTrip(r, state.trips)?.let { trip ->
+                val ids = trip.paddockIds.ifEmpty { listOfNotNull(trip.paddockId) }
+                    .filter { pid -> state.paddocks.any { it.id == pid } }
+                if (ids.isNotEmpty()) {
+                    selectedPaddockIds.clear()
+                    selectedPaddockIds.addAll(ids)
+                }
             }
         }
         r.tanks?.firstOrNull()?.let { tank ->
@@ -643,6 +667,8 @@ fun SprayCalculatorScreen(
             sprayEquipmentId = sprayEquipmentId,
             operationType = operationType,
             tripId = null,
+            // Job-originated completion: the record fulfils this spray job.
+            sprayJobId = originSprayJobId,
             isTemplate = false,
             // Each product line carries the area basis the operator chose for
             // THAT line, keyed by saved-chemical id so a banded treated-band

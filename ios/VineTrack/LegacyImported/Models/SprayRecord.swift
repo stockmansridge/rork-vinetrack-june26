@@ -41,6 +41,12 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
     /// Read this instead of re-deriving geometry — a completed record is a
     /// compliance document and must not change when the vineyard does.
     var applicationGeometry: SprayApplicationSnapshot?
+    /// The planned `spray_jobs` row this record fulfils (sql/033, Stage 5B).
+    ///
+    /// Set ONLY when the record was created from a Spray Job (job-originated
+    /// completion) — never inferred afterwards. `nil` for ad-hoc records and
+    /// every record written before Stage 5B.
+    var sprayJobId: UUID?
 
     init(
         id: UUID = UUID(),
@@ -66,7 +72,8 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         sprayEquipmentId: UUID? = nil,
         isTemplate: Bool = false,
         operationType: OperationType = .foliarSpray,
-        applicationGeometry: SprayApplicationSnapshot? = nil
+        applicationGeometry: SprayApplicationSnapshot? = nil,
+        sprayJobId: UUID? = nil
     ) {
         self.id = id
         self.tripId = tripId
@@ -92,6 +99,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         self.isTemplate = isTemplate
         self.operationType = operationType
         self.applicationGeometry = applicationGeometry
+        self.sprayJobId = sprayJobId
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -101,6 +109,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         case averageSpeed, equipmentType, tractor, tractorGear
         case machineId, tractorId, sprayEquipmentId, isTemplate, operationType
         case applicationGeometry
+        case sprayJobId
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -135,6 +144,8 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         // An all-null snapshot is indistinguishable from "never recorded", so
         // normalise it to nil and keep one representation of absence.
         applicationGeometry = (decodedGeometry?.isEmpty ?? true) ? nil : decodedGeometry
+        // Additive: records cached before Stage 5B simply have no job link.
+        sprayJobId = try container.decodeIfPresent(UUID.self, forKey: .sprayJobId)
     }
 }
 

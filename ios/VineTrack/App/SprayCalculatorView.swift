@@ -94,13 +94,27 @@ struct SprayCalculatorView: View {
 
     // Prefill (duplicate / template)
     private let prefillRecord: SprayRecord?
+    /// Stage 5B: the `spray_jobs` row this calculator run is executing. Every
+    /// record saved from this session carries it as `sprayJobId`, which is
+    /// what writes `spray_records.spray_job_id` on sync — the job-originated
+    /// completion link. Nil for ad-hoc and template-originated runs.
+    private let originSprayJobId: UUID?
+    /// Blocks the originating plan/job proposes — applied once at prefill,
+    /// fully editable afterwards.
+    private let prefillPaddockIds: [UUID]
     @State private var prefillApplied: Bool = false
     /// Template/duplicate products that no longer resolve to a saved chemical.
     /// Surfaced so a missing product is a visible gap, never a silent one.
     @State private var unresolvedPrefillProducts: [String] = []
 
-    init(prefillRecord: SprayRecord? = nil) {
+    init(
+        prefillRecord: SprayRecord? = nil,
+        originSprayJobId: UUID? = nil,
+        prefillPaddockIds: [UUID] = []
+    ) {
         self.prefillRecord = prefillRecord
+        self.originSprayJobId = originSprayJobId
+        self.prefillPaddockIds = prefillPaddockIds
         if let r = prefillRecord {
             let baseName = r.sprayReference.isEmpty ? "" : r.sprayReference
             let prefilledName: String = {
@@ -531,7 +545,10 @@ struct SprayCalculatorView: View {
         if !r.tractor.isEmpty {
             selectedTractorId = store.tractors.first(where: { $0.displayName == r.tractor || $0.name == r.tractor })?.id
         }
-        if let trip = store.trips.first(where: { $0.id == r.tripId }) {
+        if !prefillPaddockIds.isEmpty {
+            // Plan/job prefill: only the blocks the plan genuinely proposed.
+            selectedPaddockIds = Set(prefillPaddockIds)
+        } else if let trip = store.trips.first(where: { $0.id == r.tripId }) {
             selectedPaddockIds = Set(trip.paddockIds)
         }
 
@@ -2905,7 +2922,9 @@ struct SprayCalculatorView: View {
             operationType: operationType,
             // Projection of the SAME plan the Review step displayed. The 17
             // sql/191 + sql/192 columns are never populated from UI state.
-            applicationGeometry: flow.snapshot
+            applicationGeometry: flow.snapshot,
+            // Job-originated completion: the record fulfils this spray job.
+            sprayJobId: originSprayJobId
         )
         store.addSprayRecord(record)
 
@@ -2977,7 +2996,9 @@ struct SprayCalculatorView: View {
             isTemplate: false,
             operationType: operationType,
             // Projection of the SAME plan the Review step displayed.
-            applicationGeometry: flow.snapshot
+            applicationGeometry: flow.snapshot,
+            // Job-originated completion: the record fulfils this spray job.
+            sprayJobId: originSprayJobId
         )
         store.addSprayRecord(record)
 

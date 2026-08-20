@@ -1,6 +1,8 @@
 # VineTrack release ProGuard/R8 rules.
 # (sql/200 offline-linkage closeout: work_tasks.pruning_activity_id rides the
 # queued create replay — no reflection impact; rules unchanged.)
+# (sql/201 Stage 5B: spray_jobs plan provenance + spray_records.spray_job_id
+# ride kotlinx-serialized payloads already covered below; rules unchanged.)
 #
 # `app/build.gradle.kts` lists this file in the release build type's
 # `proguardFiles(...)`. It was referenced but MISSING from the repo, which left

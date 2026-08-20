@@ -166,6 +166,21 @@ object PendingEntityType {
      */
     const val TRIP_SEEDING = "trip_seeding"
     const val SPRAY_RECORD = "spray_record"
+    /**
+     * A spray job created FROM a resistance plan position, queued offline
+     * (sql/201, Stage 5B). CREATE only — the payload carries the full insert
+     * (name/target/chemical lines), the plan provenance (plan id, position id,
+     * VERBATIM frozen position snapshot, source revision) and the proposed
+     * paddock links, keyed by the client-minted job id
+     * ([PendingWrite.clientId] = sprayJobId) so a retried replay can never
+     * create a second job. The provenance rides INSIDE the create itself —
+     * never a follow-up patch — so the link survives any sync ordering,
+     * including the job landing before its offline-created plan (the server
+     * accepts the pending link and resolves it once the plan arrives).
+     * Deliberately distinct from [SPRAY_RECORD] so the record queues can never
+     * pick up a job write and a job replay never touches a spray record.
+     */
+    const val SPRAY_JOB = "spray_job"
     const val FUEL_LOG = "fuel_log"
     const val WORK_TASK = "work_task"
     /**

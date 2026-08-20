@@ -30,9 +30,11 @@ import java.util.UUID
  *
  * Online-first — there is no local queue yet. The spray form is the sole editor
  * of these columns (including the `tanks` JSONB), so create/edit send the full
- * editable column set. `trip_id` is the only link field the schema supports
- * (there is no `work_task_id` on spray_records — iOS derives the task via the
- * linked trip), and it is user-editable from the form. `created_by` and the
+ * editable column set. `trip_id` links the trip (there is no `work_task_id` on
+ * spray_records — iOS derives the task via the linked trip) and is user-editable
+ * from the form. `spray_job_id` (sql/033, Stage 5B) links the planned job a
+ * record fulfils and is INSERT-ONLY — the edit patch never carries it, so a
+ * normal edit can never rewrite or clear job provenance. `created_by` and the
  * server-managed sync columns are left untouched on edit.
  */
 class SprayRecordRepository(private val session: SessionStore) {
@@ -58,6 +60,9 @@ class SprayRecordRepository(private val session: SessionStore) {
         @SerialName("spray_equipment_id") val sprayEquipmentId: String? = null,
         @SerialName("operation_type") val operationType: String? = null,
         @SerialName("trip_id") val tripId: String? = null,
+        // sql/033 Job -> Record provenance (Stage 5B). Insert-only by design:
+        // [SprayPatch] deliberately has no such field.
+        @SerialName("spray_job_id") val sprayJobId: String? = null,
         @SerialName("is_template") val isTemplate: Boolean = false,
         val tanks: List<SprayTank> = emptyList(),
         // sql/191 + sql/192 snapshot columns, projected from the canonical plan.
@@ -172,6 +177,12 @@ class SprayRecordRepository(private val session: SessionStore) {
         val sprayEquipmentId: String?,
         val operationType: String?,
         val tripId: String?,
+        /**
+         * sql/033 Job -> Record link (Stage 5B): the planned `spray_jobs` row
+         * this record fulfils. Set ONLY by job-originated creation flows;
+         * never patched on edit, so completed provenance can't be rewritten.
+         */
+        val sprayJobId: String? = null,
         val isTemplate: Boolean = false,
         val tanks: List<SprayTank>,
         /**
@@ -225,6 +236,7 @@ class SprayRecordRepository(private val session: SessionStore) {
             val body = SprayInsert(
                 id = id,
                 vineyardId = vineyardId,
+                sprayJobId = input.sprayJobId,
                 date = input.date,
                 startTime = input.startTime,
                 temperature = input.temperature,

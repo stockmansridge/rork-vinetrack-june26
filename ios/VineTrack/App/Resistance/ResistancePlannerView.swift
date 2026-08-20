@@ -11,6 +11,8 @@ import SwiftUI
 /// The view formats and explains; it never counts.
 struct ResistancePlannerView: View {
     @Environment(MigratedDataStore.self) private var store
+    @Environment(NewBackendAuthService.self) private var auth
+    @Environment(BackendAccessControl.self) private var accessControl
 
     /// Server-authoritative with a local cache. The remote is attached only when Supabase
     /// is configured; without it the repository degrades to a device-local cache rather
@@ -24,6 +26,10 @@ struct ResistancePlannerView: View {
     @State private var expandedPositionIds: Set<String> = []
     @State private var showStrategy: Bool = false
     @State private var showUnresolvedDetail: Bool = false
+    /// Spray jobs created from plan positions (sql/201 provenance).
+    @State private var jobService = ResistancePlanJobService()
+    @State private var jobDetail: BackendPlanSprayJob?
+    @State private var recordingJob: BackendPlanSprayJob?
 
     private var vineyard: Vineyard? {
         store.vineyards.first { $0.id == store.selectedVineyardId }
@@ -89,6 +95,30 @@ struct ResistancePlannerView: View {
                     onSave: { updated in
                         apply { $0.replacingPosition(updated, atEpochMs: nowMs) }
                     }
+                )
+            }
+        }
+        .sheet(item: $jobDetail) { job in
+            PlanSprayJobDetailSheet(
+                job: job,
+                planLabel: "\(disease.label) — \(season.id)",
+                positionOrdinal: evaluation?.positions.first { $0.positionId == job.resistancePositionId }?.displayOrdinal,
+                liveEvaluation: evaluation?.positions.first { $0.positionId == job.resistancePositionId },
+                blockName: { blockName($0) },
+                canRecordSpray: accessControl.canCreateOperationalRecords,
+                isPendingSync: jobService.isPendingSync(job.id),
+                onRecordSpray: {
+                    jobDetail = nil
+                    recordingJob = job
+                }
+            )
+        }
+        .sheet(item: $recordingJob) { job in
+            NavigationStack {
+                SprayCalculatorView(
+                    prefillRecord: job.toPrefillRecord(),
+                    originSprayJobId: job.id,
+                    prefillPaddockIds: plan?.blockIds.compactMap(UUID.init(uuidString:)) ?? []
                 )
             }
         }
@@ -424,7 +454,7 @@ struct ResistancePlannerView: View {
                 }
             }
 
-            Text("Planning positions only. Nothing here is a spray record, and no spray job is created.")
+            Text("Planning positions only — nothing here is a spray record. Create Spray Job hands a position to operations; progress is derived and job activity never edits this plan.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -539,6 +569,8 @@ struct ResistancePlannerView: View {
                     }
                 }
             }
+
+            planJobsSection(positionEval, position: position)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
@@ -550,6 +582,113 @@ struct ResistancePlannerView: View {
                 .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                 .foregroundStyle(statusColor(positionEval.status).opacity(0.5))
         )
+    }
+
+    // MARK: - Plan -> Spray Jobs (sql/201)
+
+    /// `spray_jobs` INSERT is owner/manager-gated by RLS, so the button is too.
+    private var canCreateSprayJobs: Bool {
+        accessControl.currentRole == .owner || accessControl.currentRole == .manager
+    }
+
+    @ViewBuilder
+    private func planJobsSection(
+        _ positionEval: ResistancePlanPositionEvaluation,
+        position: ResistancePlannedPosition?
+    ) -> some View {
+        let jobs = plan.map { jobService.jobs(planId: $0.id, positionId: positionEval.positionId) } ?? []
+        if !jobs.isEmpty || (canCreateSprayJobs && position != nil) {
+            Divider()
+            HStack {
+                Label("Spray Jobs", systemImage: "checklist")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if canCreateSprayJobs, let position {
+                    Button {
+                        createSprayJob(for: positionEval, position: position)
+                    } label: {
+                        Label("Create Spray Job", systemImage: "plus.circle")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            ForEach(jobs) { job in
+                planJobRow(job)
+            }
+            if jobs.isEmpty {
+                Text("No spray jobs yet. Creating one freezes this position's current intent into the job — later plan edits never rewrite it.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func planJobRow(_ job: BackendPlanSprayJob) -> some View {
+        Button {
+            jobDetail = job
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "wrench.and.screwdriver")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(job.name.isEmpty ? "Spray job" : job.name)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text((job.status ?? "planned").capitalized)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        if jobService.isPendingSync(job.id) {
+                            Label("Waiting to sync", systemImage: "arrow.triangle.2.circlepath")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+                        if job.deviatesFromPlan {
+                            Label("Differs from plan", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(8)
+            .background(Color(.systemBackground).opacity(0.6), in: .rect(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Creates the job with the position frozen VERBATIM as its snapshot.
+    /// Prefills only what the plan genuinely knows: blocks, disease target and
+    /// planned chemistry identity — never carrier volumes or rates.
+    private func createSprayJob(
+        for positionEval: ResistancePlanPositionEvaluation,
+        position: ResistancePlannedPosition
+    ) {
+        guard let plan, let vineyardId = store.selectedVineyardId else { return }
+        let name = "\(disease.label) \(season.id) — Spray \(positionEval.displayOrdinal)"
+        jobService.createJob(
+            name: name,
+            vineyardId: vineyardId,
+            plan: plan,
+            position: position,
+            target: disease.label,
+            paddockIds: plan.blockIds.compactMap(UUID.init(uuidString:)),
+            createdBy: auth.userId
+        )
+    }
+
+    private func refreshPlanJobs() {
+        guard let plan, let vineyardId = store.selectedVineyardId else { return }
+        jobService.load(planId: plan.id)
+        Task { await jobService.refresh(planId: plan.id, vineyardId: vineyardId) }
     }
 
     private func timingLabel(_ position: ResistancePlannedPosition?) -> String? {
@@ -756,6 +895,7 @@ struct ResistancePlannerView: View {
             updatedAtEpochMs: nowMs
         )
         recompute()
+        refreshPlanJobs()
     }
 
     private func toggleBlock(_ blockId: String) {

@@ -129,7 +129,12 @@ import com.rork.vinetrack.data.FuelPurchaseRepository
 import com.rork.vinetrack.data.SprayProgramCsvImporter
 import com.rork.vinetrack.data.SprayRecordCreateSync
 import com.rork.vinetrack.data.SprayRecordDeleteSync
+import com.rork.vinetrack.data.SprayJobCreateSync
+import com.rork.vinetrack.data.SprayJobPlanRepository
+import com.rork.vinetrack.data.PlanSprayJob
 import com.rork.vinetrack.data.SprayJobTemplateRepository
+import com.rork.vinetrack.data.resistance.ResistancePlan
+import com.rork.vinetrack.data.resistance.ResistancePlannedPosition
 import com.rork.vinetrack.data.SprayRecordRepository
 import com.rork.vinetrack.data.SprayRecordUpdateSync
 import com.rork.vinetrack.data.TripDeleteSync
@@ -811,6 +816,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val pieceRateRowRepo = WorkTaskPieceRateRowRepository(session)
     private val sprayRepo = SprayRecordRepository(session)
     private val sprayJobTemplateRepo = SprayJobTemplateRepository(session)
+    /** Plan-linked spray jobs (sql/201, Stage 5B) — distinct from templates. */
+    private val sprayJobPlanRepo = SprayJobPlanRepository(session)
     private val savedChemicalRepo = SavedChemicalRepository(session)
     private val savedInputRepo = SavedInputRepository(session)
     private val operatorCategoryRepo = OperatorCategoryRepository(session)
@@ -1014,6 +1021,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * first) are NOT queued here.
      */
     private val sprayCreateSync = SprayRecordCreateSync(sprayRepo, pendingWrites)
+
+    /**
+     * Replay coordinator for plan-originated spray-job creates (sql/201,
+     * Stage 5B). SPRAY_JOB / CREATE only. Always replayed BEFORE
+     * [sprayCreateSync] in every pipeline — a queued spray record may carry
+     * `spray_job_id` referencing a queued job, and sql/033 requires the job
+     * row to exist before the record can land.
+     */
+    private val sprayJobCreateSync = SprayJobCreateSync(sprayJobPlanRepo, pendingWrites)
 
     /**
      * Replay coordinator for spray-record edits only (Android Stage I-2).
@@ -2357,6 +2373,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun replayPendingSprayCreates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
         viewModelScope.launch {
+            // Jobs FIRST: a queued spray record may reference a queued job via
+            // spray_job_id, and sql/033 requires the job row to exist.
+            sprayJobCreateSync.replayAll()
             sprayCreateSync.replayAll { record ->
                 _ui.update { st ->
                     if (st.sprayRecords.any { it.id == record.id }) {
@@ -2367,6 +2386,83 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Plan -> Spray Job provenance (sql/201, Stage 5B)
+    // ------------------------------------------------------------------
+
+    /**
+     * Plan-linked spray jobs keyed by resistance plan id. The Resistance
+     * Planner collects this and calls [refreshPlanSprayJobs]; queued-but-
+     * unsynced creates are overlaid so an offline create never vanishes.
+     */
+    private val _planSprayJobs = MutableStateFlow<Map<String, List<PlanSprayJob>>>(emptyMap())
+    val planSprayJobs: StateFlow<Map<String, List<PlanSprayJob>>> = _planSprayJobs.asStateFlow()
+
+    /** True while [jobId]'s queued create has not landed on the server. */
+    fun isPendingSprayJob(jobId: String): Boolean =
+        sprayJobCreateSync.pendingPayloads().any { it.insert.id == jobId }
+
+    private fun overlayPendingSprayJobs(planId: String, fetched: List<PlanSprayJob>): List<PlanSprayJob> {
+        val fetchedIds = fetched.map { it.id }.toSet()
+        val pendingRows = sprayJobCreateSync.pendingPayloads()
+            .filter { it.insert.resistancePlanId == planId && it.insert.id !in fetchedIds }
+            .map { it.insert.asJob() }
+        return fetched + pendingRows
+    }
+
+    /** Push queued job creates, then pull the plan's live linked jobs. */
+    fun refreshPlanSprayJobs(planId: String) {
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        viewModelScope.launch {
+            if (session.accessToken != null && _ui.value.isOnline) {
+                sprayJobCreateSync.replayAll()
+            }
+            val fetched = runCatching { sprayJobPlanRepo.fetchJobsForPlan(vineyardId, planId) }.getOrNull()
+            _planSprayJobs.update { current ->
+                val base = fetched
+                    ?: current[planId].orEmpty().filterNot { row -> isPendingSprayJob(row.id) }
+                current + (planId to overlayPendingSprayJobs(planId, base))
+            }
+        }
+    }
+
+    /**
+     * "Create Spray Job" on a Resistance Planner position (sql/201).
+     *
+     * Local-first: the insert — with the position frozen VERBATIM as the
+     * original-intent snapshot — goes into the optimistic list and the offline
+     * queue, then replays immediately when online. The provenance rides INSIDE
+     * the queued create (never a follow-up patch), so the linkage survives any
+     * sync ordering, including this job landing before its offline-created
+     * plan. Job activity never writes to the plan and never bumps its sql/198
+     * revision — position progress is derived server-side.
+     */
+    fun createSprayJobFromPlan(
+        plan: ResistancePlan,
+        position: ResistancePlannedPosition,
+        name: String,
+        target: String?,
+        paddockIds: List<String>,
+    ): PlanSprayJob {
+        val insert = SprayJobPlanRepository.buildInsert(
+            plan = plan,
+            position = position,
+            name = name,
+            target = target,
+            createdBy = session.userId,
+        )
+        val optimistic = insert.asJob()
+        _planSprayJobs.update { current ->
+            val existing = current[plan.id].orEmpty().filter { it.id != optimistic.id }
+            current + (plan.id to (existing + optimistic))
+        }
+        sprayJobCreateSync.enqueue(insert, paddockIds)
+        if (session.accessToken != null && _ui.value.isOnline) {
+            viewModelScope.launch { sprayJobCreateSync.replayAll() }
+        }
+        return optimistic
     }
 
     /**

@@ -108,6 +108,27 @@ nonisolated struct SprayJobChemicalLine: Codable, Sendable {
         init?(intValue: Int) { nil }
     }
 
+    /// Explicit memberwise init — the custom `init(from:)` suppresses the
+    /// synthesised one, and Stage 5B (plan -> spray job) constructs lines
+    /// directly when prefilling a job from a resistance plan position.
+    nonisolated init(
+        chemicalId: UUID? = nil,
+        name: String,
+        activeIngredient: String? = nil,
+        rate: Double? = nil,
+        unit: String? = nil,
+        waterRate: Double? = nil,
+        notes: String? = nil
+    ) {
+        self.chemicalId = chemicalId
+        self.name = name
+        self.activeIngredient = activeIngredient
+        self.rate = rate
+        self.unit = unit
+        self.waterRate = waterRate
+        self.notes = notes
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: AnyKey.self)
 

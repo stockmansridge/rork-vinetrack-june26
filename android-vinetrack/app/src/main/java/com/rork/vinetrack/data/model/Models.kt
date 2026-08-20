@@ -1563,6 +1563,12 @@ data class SprayRecord(
     val id: String,
     @SerialName("vineyard_id") val vineyardId: String,
     @SerialName("trip_id") val tripId: String? = null,
+    /**
+     * The planned `spray_jobs` row this record fulfils (sql/033, Stage 5B).
+     * Set ONLY when the record was created from a Spray Job (job-originated
+     * completion) — never inferred. Null for ad-hoc and pre-5B records.
+     */
+    @SerialName("spray_job_id") val sprayJobId: String? = null,
     val date: String? = null,
     @SerialName("start_time") val startTime: String? = null,
     @SerialName("end_time") val endTime: String? = null,

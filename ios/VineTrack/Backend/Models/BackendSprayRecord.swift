@@ -59,6 +59,9 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
     // blocks" and never the vineyard's current blocks.
     let applicationBlocks: [SprayApplicationBlockSnapshot]?
     let blockIds: [UUID]?
+    /// sql/033: the planned `spray_jobs` row this record fulfilled. Written by
+    /// the client only for job-originated completions (Stage 5B).
+    let sprayJobId: UUID?
     let createdBy: UUID?
     let updatedBy: UUID?
     let createdAt: Date?
@@ -112,6 +115,7 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
         case sprayHeadTarget = "spray_head_target"
         case applicationBlocks = "application_blocks"
         case blockIds = "block_ids"
+        case sprayJobId = "spray_job_id"
         case createdBy = "created_by"
         case updatedBy = "updated_by"
         case createdAt = "created_at"
@@ -184,6 +188,10 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
     /// ids always match the per-block geometry. A client that authored it could
     /// claim to have treated a block the calculation never saw.
     let applicationBlocks: [SprayApplicationBlockSnapshot]?
+    /// Job -> Record provenance (sql/033). Omitted when nil (synthesised
+    /// `encodeIfPresent`), so a legacy record can never clear another
+    /// writer's link and an ad-hoc record never touches the column.
+    let sprayJobId: UUID?
     let createdBy: UUID?
     let clientUpdatedAt: Date
 
@@ -231,6 +239,7 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
         case targets
         case sprayHeadTarget = "spray_head_target"
         case applicationBlocks = "application_blocks"
+        case sprayJobId = "spray_job_id"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
     }
@@ -293,6 +302,7 @@ extension BackendSprayRecord {
             // per-block geometry outputs — `templateConfiguration()` above has
             // already applied that rule, so this is a straight read.
             applicationBlocks: geometry?.blocks,
+            sprayJobId: record.sprayJobId,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt
         )
@@ -324,7 +334,8 @@ extension BackendSprayRecord {
             sprayEquipmentId: sprayEquipmentId,
             isTemplate: isTemplate ?? false,
             operationType: operationType.flatMap { OperationType(rawValue: $0) } ?? .foliarSpray,
-            applicationGeometry: applicationGeometrySnapshot
+            applicationGeometry: applicationGeometrySnapshot,
+            sprayJobId: sprayJobId
         )
     }
 

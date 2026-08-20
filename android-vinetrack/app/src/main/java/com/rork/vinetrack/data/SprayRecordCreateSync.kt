@@ -71,6 +71,12 @@ class SprayRecordCreateSync(
         val sprayEquipmentId: String? = null,
         val operationType: String? = null,
         val tripId: String? = null,
+        /**
+         * sql/033 Job -> Record link (Stage 5B): the planned `spray_jobs` row
+         * this record fulfils. Default null keeps every pre-5B queued marker
+         * decodable as a plain unlinked create.
+         */
+        val sprayJobId: String? = null,
         val isTemplate: Boolean = false,
         val tanks: List<SprayTank> = emptyList(),
         /**
@@ -124,6 +130,7 @@ class SprayRecordCreateSync(
             sprayEquipmentId = input.sprayEquipmentId,
             operationType = input.operationType,
             tripId = input.tripId,
+            sprayJobId = input.sprayJobId,
             isTemplate = input.isTemplate,
             tanks = input.tanks,
             applicationGeometry = input.applicationGeometry,
@@ -220,6 +227,7 @@ class SprayRecordCreateSync(
                             sprayEquipmentId = payload.sprayEquipmentId,
                             operationType = payload.operationType,
                             tripId = payload.tripId,
+                            sprayJobId = payload.sprayJobId,
                             isTemplate = payload.isTemplate,
                             tanks = payload.tanks,
                             applicationGeometry = payload.applicationGeometry,
