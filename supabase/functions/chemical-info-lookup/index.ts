@@ -11,6 +11,15 @@
 //     "registrationNumber"?: string }   // optional identity hint (sql/199)
 //   { "action": "master_refresh", "masterChemicalId": uuid,
 //     "apply"?: boolean }               // system admins only (Stage 3)
+//   { "action": "master_review_preview", "masterChemicalId": uuid }
+//                                        // system admins only (Stage 2 R2-B)
+//                                        // — read-only refresh + SERVER-
+//                                        // stored resolver patch
+//                                        // (master_review_previews, sql/203).
+//                                        // NEVER accepts a patch/apply input;
+//                                        // apply is the master_review_apply
+//                                        // RPC called with the ADMIN'S OWN
+//                                        // JWT, never the service role.
 //   { "action": "seed_apply", "registrationNumber": string,
 //     "productName": string, "seedSource": string }
 //                                        // system admins only (Stage 5B) —
@@ -72,6 +81,13 @@
 //   action=master_refresh -> { outcome, changes[], applied, master }
 //     outcome: no_material_change | material_change | evidence_refreshed
 //              | conflict | source_unavailable
+//   action=master_review_preview -> { outcome, changes[], identity_guard,
+//     preview_stored, preview_id, expires_at, base_revision,
+//     proposed_patch (display only), current, master,
+//     no_preview_reason?, error_category? }
+//     No preview row is stored for no_material_change / source_unavailable /
+//     identity-guard refusal / no writable patch; a preview NEVER mutates
+//     master_chemicals.
 //
 // Errors return { error: string } with appropriate HTTP status.
 //
@@ -132,6 +148,10 @@ import {
   buildCandidateRefreshPatch,
   refreshMasterRow,
 } from "./ingestion/refresh.ts";
+import {
+  type PreviewStore,
+  runMasterReviewPreview,
+} from "./ingestion/review_preview.ts";
 import { runSeedApply } from "./ingestion/seed_apply.ts";
 
 const CORS_HEADERS: Record<string, string> = {
@@ -618,6 +638,10 @@ const MASTER_TABLE_URL = (() => {
   const base = Deno.env.get("SUPABASE_URL") ?? "";
   return base ? `${base.replace(/\/+$/, "")}/rest/v1/master_chemicals` : "";
 })();
+const REVIEW_PREVIEWS_URL = (() => {
+  const base = Deno.env.get("SUPABASE_URL") ?? "";
+  return base ? `${base.replace(/\/+$/, "")}/rest/v1/master_review_previews` : "";
+})();
 const MASTER_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
 function masterConfigured(): boolean {
@@ -703,6 +727,51 @@ const masterOps: MasterOps = {
 };
 
 /**
+ * Service-role store for master_review_previews (sql/203) — the ONE
+ * service-role write in the Stage 2 review flow: INSERT the resolver-built
+ * patch, and opportunistically DELETE expired unconsumed rows. There is no
+ * UPDATE here and the grants don't allow one — consumption happens only
+ * inside the master_review_apply RPC, under the admin's own JWT.
+ */
+const previewStore: PreviewStore = {
+  async insertPreview(payload) {
+    if (!REVIEW_PREVIEWS_URL || !MASTER_SERVICE_KEY) return null;
+    const res = await fetch(REVIEW_PREVIEWS_URL, {
+      method: "POST",
+      headers: {
+        ...masterHeaders(),
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      try { await res.body?.cancel(); } catch { /* ignore */ }
+      return null;
+    }
+    const rows = await res.json().catch(() => null);
+    return Array.isArray(rows) && rows.length ? rows[0] : null;
+  },
+  async purgeExpired(nowIso) {
+    if (!REVIEW_PREVIEWS_URL || !MASTER_SERVICE_KEY) return;
+    try {
+      const res = await fetch(
+        `${REVIEW_PREVIEWS_URL}?consumed_at=is.null&expires_at=lt.${
+          encodeURIComponent(nowIso)
+        }`,
+        {
+          method: "DELETE",
+          headers: { ...masterHeaders(), "Prefer": "return=minimal" },
+        },
+      );
+      try { await res.body?.cancel(); } catch { /* ignore */ }
+    } catch {
+      /* fail-soft: purge is housekeeping, never blocks a preview */
+    }
+  },
+};
+
+/**
  * System-admin gate shared by master_refresh and seed_apply: the caller's own
  * JWT is presented to the database's is_system_admin() RPC. Anything short of
  * an explicit true — missing header, RPC failure, non-admin — is NOT an admin.
@@ -727,6 +796,32 @@ async function isSystemAdmin(req: Request): Promise<boolean> {
     return false;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Resolve the CALLER's auth user id from their own JWT via the Auth server
+ * (which verifies the token — never decoded locally, never read from the
+ * request body). Binds a stored review preview to the requesting admin;
+ * sql/203 master_review_apply refuses every other caller.
+ */
+async function authenticatedUserId(req: Request): Promise<string | null> {
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+  const supabaseUrl = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
+  if (!authHeader || !anonKey || !supabaseUrl) return null;
+  try {
+    const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: { "apikey": anonKey, "Authorization": authHeader },
+    });
+    if (!res.ok) {
+      try { await res.body?.cancel(); } catch { /* ignore */ }
+      return null;
+    }
+    const user: any = await res.json().catch(() => null);
+    return typeof user?.id === "string" && user.id ? user.id : null;
+  } catch {
+    return null;
   }
 }
 
@@ -1439,6 +1534,92 @@ Deno.serve(async (req: Request) => {
         },
         ...(result.error_category ? { error_category: result.error_category } : {}),
       });
+    }
+
+    if (action === "master_review_preview") {
+      // Stage 2 R2-B — build AND STORE the resolver-owned review patch for
+      // one master row (any review state). System admins only.
+      //
+      //   * The row is NEVER written here: refreshMasterRow is read-only and
+      //     this action has no master write path at all.
+      //   * The patch is built by the reviewed refresh builder, validated
+      //     against the sql/203 resolver patch contract, and stored in
+      //     master_review_previews bound to the requesting admin. The
+      //     returned proposed_patch/current are DISPLAY ONLY.
+      //   * Apply is deliberately NOT proxied by this function: the portal
+      //     calls the master_review_apply RPC directly (PostgREST) with the
+      //     admin's own JWT, so the service role never applies and reviewer
+      //     attribution (auth.uid()) stays real.
+      if (!masterConfigured()) {
+        return json({ error: "Master catalogue not configured" }, 500);
+      }
+      // Trust boundary, stated loudly: this action accepts NO patch and NO
+      // apply flag from any client, ever.
+      if (
+        body?.proposedPatch !== undefined ||
+        body?.proposed_patch !== undefined ||
+        body?.patch !== undefined ||
+        body?.apply !== undefined
+      ) {
+        return json({
+          error:
+            "master_review_preview accepts no patch/apply input; the patch is resolver-built and server-stored",
+        }, 400);
+      }
+      const masterId = String(
+        body?.masterChemicalId ?? body?.master_chemical_id ?? "",
+      ).trim();
+      if (!masterId) return json({ error: "Missing masterChemicalId" }, 400);
+
+      if (!(await isSystemAdmin(req))) {
+        return json({ error: "Not authorised" }, 403);
+      }
+      const adminId = await authenticatedUserId(req);
+      if (!adminId) return json({ error: "Not authorised" }, 403);
+
+      const rows = await masterSelect(
+        `select=*&id=eq.${encodeURIComponent(masterId)}&limit=1`,
+      );
+      if (!rows || rows.length !== 1) {
+        return json({ error: "Master row not found" }, 404);
+      }
+      const row = rows[0] as MasterRow;
+
+      const result = await refreshMasterRow(row, {
+        fetchFn: fetch,
+        now: () => new Date(),
+      });
+      const response = await runMasterReviewPreview(row, result, adminId, {
+        store: previewStore,
+        nowIso: () => new Date().toISOString(),
+      });
+
+      console.log(JSON.stringify({
+        evt: "master_review_preview",
+        jurisdiction: row.registration_country,
+        registration_identity: row.registration_identity_key,
+        review_status: row.review_status,
+        outcome: response.outcome,
+        identity_guard: response.identity_guard.status,
+        preview_stored: response.preview_stored,
+        base_revision: response.base_revision,
+        ...(response.preview_id ? { preview_id: response.preview_id } : {}),
+        ...(response.no_preview_reason
+          ? { no_preview_reason: response.no_preview_reason }
+          : {}),
+        ...(response.error ? { error: response.error } : {}),
+        ...(response.error_category
+          ? { error_category: response.error_category }
+          : {}),
+      }));
+
+      if (response.error === "patch_contract_violation") {
+        return json(response, 500);
+      }
+      if (response.error === "preview_store_failed") {
+        return json(response, 503);
+      }
+      return json(response);
     }
 
     if (action === "seed_apply") {

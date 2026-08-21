@@ -277,20 +277,31 @@ function mergeSources(row: MasterRow, fresh: WireDataSource[]): WireDataSource[]
 }
 
 /**
- * Patch a CANDIDATE row from a refresh result. Returns null when nothing may
- * be written (no change, source unavailable, or an approved/retired row).
+ * Build the refresh patch for ANY review state — the ONE reviewed builder
+ * behind both write paths:
+ *
+ *   * buildCandidateRefreshPatch — candidate rows patched in place
+ *     (master_refresh apply:true), exactly as before.
+ *   * master_review_preview (Stage 2 R2-B) — approved rows too: the patch is
+ *     stored server-side in master_review_previews and applied ONLY through
+ *     the sql/203 master_review_apply RPC under the admin's own JWT. It is
+ *     never applied here.
+ *
+ * Returns null when nothing may be written (no change, source unavailable,
+ * or no register identity established). Output keys always stay within the
+ * sql/203 resolver patch contract — identity fields and review_status are
+ * structurally absent.
  *
  *   evidence_refreshed → evidence columns only.
  *   material_change    → register-backed scalar facts + evidence.
  *   conflict           → conflicts recorded + status "conflict"; the stored
  *                        chemistry is NOT replaced (no arbitrary winner).
  */
-export function buildCandidateRefreshPatch(
+export function buildRefreshPatch(
   row: MasterRow,
   result: RefreshResult,
   nowIso: string,
 ): Record<string, any> | null {
-  if (row.review_status !== "candidate") return null;
   const reg = result.registration;
 
   if (result.outcome === "evidence_refreshed" && reg) {
@@ -373,4 +384,18 @@ export function buildCandidateRefreshPatch(
   }
 
   return null;
+}
+
+/**
+ * Candidate-only wrapper (master_refresh apply:true — unchanged behaviour):
+ * approved/retired rows NEVER get an in-place patch. Their updates flow
+ * exclusively through the Stage 2 review preview + master_review_apply RPC.
+ */
+export function buildCandidateRefreshPatch(
+  row: MasterRow,
+  result: RefreshResult,
+  nowIso: string,
+): Record<string, any> | null {
+  if (row.review_status !== "candidate") return null;
+  return buildRefreshPatch(row, result, nowIso);
 }
