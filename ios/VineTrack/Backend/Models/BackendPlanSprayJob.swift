@@ -147,7 +147,18 @@ nonisolated struct BackendPlanSprayJob: Codable, Sendable, Identifiable {
                 ratePer100L: parsed.per100L ? baseRate : 0,
                 costPerUnit: 0,
                 unit: parsed.unit,
-                savedChemicalId: line.chemicalId
+                savedChemicalId: line.chemicalId,
+                // The chemistry frozen when the job was created. Carried so the
+                // calculator can re-establish the product from STORED provenance —
+                // the saved-chemical id, and failing that the registered identity
+                // key inside this snapshot — rather than by matching a product
+                // name, which for a group-planned line is a group label.
+                //
+                // It is provenance for re-resolution, NOT the chemistry the
+                // eventual record will carry: completion re-captures the Chemical
+                // Store as it stands at application time, which is the contract
+                // every other new-application path follows.
+                chemicalSnapshot: line.chemicalSnapshot
             )
         }
         let tank = SprayTank(

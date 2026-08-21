@@ -694,6 +694,10 @@ struct ResistancePlanEditorView: View {
             position: position,
             target: disease.label,
             paddockIds: plan.blockIds.compactMap(UUID.init(uuidString:)),
+            // Today's Chemical Store, so each line's chemistry is frozen onto the
+            // job now. A later re-verification must not restate what this job was
+            // created to apply.
+            library: store.savedChemicals,
             createdBy: auth.userId
         )
     }

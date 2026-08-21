@@ -67,6 +67,9 @@ final class ResistancePlanJobService {
     /// VERBATIM as the original-intent snapshot. Prefills only what the plan
     /// genuinely knows — product identity and planned FRAC groups — never
     /// carrier volumes or rates.
+    ///
+    /// `library` is the Chemical Store as it stands NOW, used to freeze each
+    /// line's chemistry onto the job. See `chemicalLines(for:library:)`.
     @discardableResult
     func createJob(
         name: String,
@@ -75,19 +78,10 @@ final class ResistancePlanJobService {
         position: ResistancePlannedPosition,
         target: String?,
         paddockIds: [UUID],
+        library: [SavedChemical],
         createdBy: UUID?
     ) -> BackendPlanSprayJob {
-        let lines: [SprayJobChemicalLine] = position.products
-            .filter { !$0.groups.codes.isEmpty || !($0.productName ?? "").isEmpty }
-            .map { product in
-                SprayJobChemicalLine(
-                    chemicalId: product.savedChemicalId.flatMap(UUID.init(uuidString:)),
-                    name: product.displayLabel,
-                    notes: product.groups.codes.isEmpty
-                        ? nil
-                        : "Planned \(product.groups.displayLabel)"
-                )
-            }
+        let lines = Self.chemicalLines(for: position, library: library)
         let payload = BackendPlanSprayJobInsert(
             id: UUID(),
             vineyardId: vineyardId,
@@ -110,6 +104,49 @@ final class ResistancePlanJobService {
         persistOutbox()
         Task { await pushOutbox() }
         return optimistic
+    }
+
+    /// Builds the job's chemical lines, FREEZING each resolved product's
+    /// chemistry at creation time.
+    ///
+    /// `chemical_id` alone is a pointer, and a pointer is re-read. Without a
+    /// frozen snapshot, re-verifying or correcting that Saved Chemical later
+    /// would silently restate what this job was created to apply — including the
+    /// resistance groups the position was planned around. Freezing here means the
+    /// job can always answer "what chemistry was this planned with?" from its own
+    /// stored row.
+    ///
+    /// Resolution is BY IDENTIFIER ONLY. There is deliberately no name match: a
+    /// position planned as a bare group carries a group label as its display name
+    /// (`"FRAC 3"`), and letting that bind to a similarly-named library record
+    /// would promote a stipulation the operator never made into authoritative
+    /// chemistry. Such a line is written with no snapshot, which is the honest
+    /// answer — the planned group itself is preserved in
+    /// `resistance_position_snapshot`.
+    nonisolated static func chemicalLines(
+        for position: ResistancePlannedPosition,
+        library: [SavedChemical],
+        at date: Date = Date()
+    ) -> [SprayJobChemicalLine] {
+        position.products
+            .filter { !$0.groups.codes.isEmpty || !($0.productName ?? "").isEmpty }
+            .map { product in
+                let chemicalId = product.savedChemicalId.flatMap(UUID.init(uuidString:))
+                let saved = chemicalId.flatMap { id in library.first { $0.id == id } }
+                let snapshot = saved.flatMap { ChemicalSnapshotCapture.capture($0, at: date) }
+                // Every active, in the product's own order, so a co-formulation
+                // reads as the two-active product it is rather than one name.
+                let actives = snapshot?.activeIngredients.map(\.name).filter { !$0.isEmpty } ?? []
+                return SprayJobChemicalLine(
+                    chemicalId: chemicalId,
+                    name: product.displayLabel,
+                    activeIngredient: actives.isEmpty ? nil : actives.joined(separator: " + "),
+                    notes: product.groups.codes.isEmpty
+                        ? nil
+                        : "Planned \(product.groups.displayLabel)",
+                    chemicalSnapshot: snapshot
+                )
+            }
     }
 
     // MARK: - Sync

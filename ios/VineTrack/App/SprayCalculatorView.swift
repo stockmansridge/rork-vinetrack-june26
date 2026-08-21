@@ -2814,7 +2814,14 @@ struct SprayCalculatorView: View {
         ChemicalSnapshotCapture.captureForNewApplication(
             savedChemicalId: chemResult.savedChemicalId,
             productName: chemResult.chemicalName,
-            library: store.savedChemicals
+            library: store.savedChemicals,
+            // Identity only. Every line on this screen was either picked from the
+            // Chemical Store (so it carries an id) or deliberately typed, and a
+            // job created from a group-only plan position is NAMED for its group
+            // ("FRAC 3"). Allowing a name match here would let such a line adopt a
+            // library product's authoritative chemistry — promoting a planned
+            // stipulation into a verified classification nobody established.
+            allowNameMatch: false
         ).snapshot
     }
 

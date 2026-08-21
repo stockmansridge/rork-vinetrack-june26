@@ -90,6 +90,19 @@ nonisolated struct SprayJobChemicalLine: Codable, Sendable {
     let unit: String?
     let waterRate: Double?
     let notes: String?
+    /// The product's chemistry FROZEN when this job line was created (sql/201).
+    ///
+    /// Additive inside the existing `chemical_lines` JSONB — no column, no
+    /// migration. It exists because `chemical_id` + `name` are a POINTER, and a
+    /// pointer is re-read: re-verifying or correcting the Saved Chemical after a
+    /// job was created would silently restate what that job was created to apply,
+    /// including its resistance groups. Freezing the actives and their
+    /// scheme-qualified FRAC/HRAC/IRAC classification here keeps the job's
+    /// chemistry answerable to the day it was planned.
+    ///
+    /// Nil is legitimate: a position planned as a bare group has no product to
+    /// freeze, and inventing one would be worse than the absence.
+    let chemicalSnapshot: ChemicalLineSnapshot?
 
     enum CodingKeys: String, CodingKey {
         case chemicalId = "chemical_id"
@@ -99,6 +112,7 @@ nonisolated struct SprayJobChemicalLine: Codable, Sendable {
         case unit
         case waterRate = "water_rate"
         case notes
+        case chemicalSnapshot = "chemical_snapshot"
     }
 
     private struct AnyKey: CodingKey {
@@ -118,7 +132,8 @@ nonisolated struct SprayJobChemicalLine: Codable, Sendable {
         rate: Double? = nil,
         unit: String? = nil,
         waterRate: Double? = nil,
-        notes: String? = nil
+        notes: String? = nil,
+        chemicalSnapshot: ChemicalLineSnapshot? = nil
     ) {
         self.chemicalId = chemicalId
         self.name = name
@@ -127,6 +142,7 @@ nonisolated struct SprayJobChemicalLine: Codable, Sendable {
         self.unit = unit
         self.waterRate = waterRate
         self.notes = notes
+        self.chemicalSnapshot = chemicalSnapshot
     }
 
     init(from decoder: Decoder) throws {
@@ -165,6 +181,12 @@ nonisolated struct SprayJobChemicalLine: Codable, Sendable {
         unit = string(["unit", "rate_unit", "rateUnit"])
         waterRate = double(["water_rate", "waterRate"])
         notes = string(["notes", "note"])
+        // Tolerant, like every other field here: a portal write that omits or
+        // mangles the frozen chemistry must cost the line its snapshot, never
+        // the whole job.
+        chemicalSnapshot = AnyKey(stringValue: "chemical_snapshot").flatMap { key in
+            (try? container.decodeIfPresent(ChemicalLineSnapshot.self, forKey: key)) ?? nil
+        }
     }
 }
 
