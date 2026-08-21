@@ -172,7 +172,15 @@ internal fun ChemicalMatchFlowSheet(
         structuredError = null
         scope.launch {
             try {
-                val lookup = service.lookupStructured(result.name, countryCode)
+                // A register candidate carries its registration number;
+                // passing it makes the strict resolver verify THAT exact
+                // identity (name↔number re-checked server-side), which also
+                // disambiguates same-name pack registrations.
+                val lookup = service.lookupStructured(
+                    result.name,
+                    countryCode,
+                    result.registrationNumber,
+                )
                 // Jurisdiction gate: a payload registered in another country —
                 // or a master row keyed to one — is refused OUTRIGHT, exactly
                 // like a failed lookup. Foreign label rates, WHP, re-entry

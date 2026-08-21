@@ -37,6 +37,16 @@ class ChemicalInfoService {
         val brand: String = "",
         val primaryUse: String = "",
         val modeOfAction: String = "",
+        /**
+         * Registration number carried by official-register CANDIDATE rows
+         * (additive; DISCOVERY only — a listing grants nothing). Selecting
+         * the candidate passes this back as the identity hint so the strict
+         * server-side resolver verifies that exact identity against the
+         * register before anything binds. Mirrors iOS `ChemicalSearchResult`.
+         */
+        @SerialName("registration_number") val registrationNumber: String? = null,
+        /** "master" | "official_register" | null (AI suggestion / older server). */
+        val source: String? = null,
     )
 
     @Serializable
@@ -256,12 +266,22 @@ class ChemicalInfoService {
      * The result is never verified: the lookup can identify a candidate and
      * classify its chemistry, but confirming product identity is a human step.
      */
-    suspend fun lookupStructured(productName: String, country: String): ChemicalStructuredLookup =
+    suspend fun lookupStructured(
+        productName: String,
+        country: String,
+        registrationNumber: String? = null,
+    ): ChemicalStructuredLookup =
         withContext(Dispatchers.IO) {
             val payload = buildMap {
                 put("action", "structured")
                 put("productName", productName)
                 if (country.isNotBlank()) put("country", country)
+                // Identity hint from a selected register candidate. Only ever
+                // a POINTER: the server re-verifies name↔number against the
+                // official register before anything binds.
+                if (!registrationNumber.isNullOrBlank()) {
+                    put("registrationNumber", registrationNumber)
+                }
             }
             val data = postEdge(payload)
             try {

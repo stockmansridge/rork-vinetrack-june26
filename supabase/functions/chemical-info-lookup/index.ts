@@ -33,10 +33,15 @@
 // Response 200 JSON shapes:
 //   action=search -> { results: ChemicalSearchResult[], jurisdiction }
 //                     Lookup order: approved master hits FIRST (source:
-//                     "master"), then a register-resolved hit when the
-//                     jurisdiction's official register deterministically
-//                     matches the query (source: "official_register"), then
-//                     AI suggestions (deduplicated).
+//                     "master"), then official-register CANDIDATES from the
+//                     jurisdiction's register (source: "official_register",
+//                     each with its registration_number) — DISCOVERY ONLY:
+//                     partial names, typography variants and bare
+//                     registration numbers all list plausible rows for a
+//                     human to pick from, several when ambiguous, never a
+//                     silent selection. Identity/authority is established
+//                     ONLY by the structured action on the selected exact
+//                     identity. AI suggestions follow (deduplicated).
 //   action=info   -> ChemicalInfoResponse  (legacy AI-only quick info — the
 //                     structured action is the identity resolver)
 //   action=structured -> the sql/194 structured contract, plus (sql/199):
@@ -127,6 +132,7 @@ import {
   candidateEnvelope,
   discardUnverifiedAiIdentity,
   discoverAuthoritative,
+  discoverRegisterCandidates,
   discoveryEnvelope,
   ingestionLog,
   mergeDiscoveryIntoStructured,
@@ -1091,60 +1097,49 @@ Deno.serve(async (req: Request) => {
         ? await searchMaster(masterSelect, query, countryCode)
         : [];
 
-      let registerHit: any = null;
+      // Register CANDIDATE discovery — discovery is separate from
+      // verification. A partial name ("Dithane rainshield"), a loosely
+      // spaced or differently cased name, or a bare registration number all
+      // surface the register rows the operator might mean — SEVERAL when
+      // the name is ambiguous, never a silent pick. Candidates carry
+      // identity and display fields only; selecting one runs the strict
+      // resolver on that exact identity (verbatim name + registration
+      // number), which is the only place authority is established.
+      // Fail-soft: a register hiccup can never break search.
+      let registerCandidates: any[] = [];
       if (jurEnv.register_support === "supported" && query.length >= 3) {
         try {
-          const d = await discoverAuthoritative(countryCode, query, null, {
-            fetchFn: fetch,
-            now: () => new Date(),
-          });
-          if (d.outcome === "resolved" && d.registration) {
-            const reg = d.registration;
-            const covered = masterHits.some(
-              (m: any) =>
-                String(m.name).toLowerCase() ===
-                  reg.registered_product_name.toLowerCase(),
-            );
-            if (!covered) {
-              const groups = Array.from(
-                new Set(
-                  reg.active_ingredients
-                    .map((a) => a.activity_group?.code)
-                    .filter((c): c is string => Boolean(c)),
-                ),
-              );
-              registerHit = {
-                name: reg.registered_product_name,
-                activeIngredient: reg.active_ingredients
-                  .map((a) => {
-                    const conc = a.concentration != null
-                      ? ` ${a.concentration}${a.concentration_unit ? ` ${a.concentration_unit}` : ""}`
-                      : "";
-                    return `${a.name}${conc}`.trim();
-                  })
-                  .filter((s) => s)
-                  .join(" + "),
-                chemicalGroup: groups.join(" + "),
-                brand: reg.registrant ?? "",
-                primaryUse: "",
-                modeOfAction: groups.join(" + "),
-                source: "official_register",
-                registration_number: reg.registration_number,
-              };
-            }
-          }
+          const candidates = await discoverRegisterCandidates(
+            countryCode,
+            query,
+            { fetchFn: fetch, now: () => new Date() },
+          );
+          const masterNames = new Set(
+            masterHits.map((m: any) => String(m.name).toLowerCase()),
+          );
+          registerCandidates = candidates
+            .filter((c) =>
+              !masterNames.has(c.registered_product_name.toLowerCase())
+            )
+            .map((c) => ({
+              name: c.registered_product_name,
+              activeIngredient: c.actives_summary,
+              chemicalGroup: c.activity_groups.join(" + "),
+              brand: c.registrant ?? "",
+              primaryUse: "",
+              modeOfAction: c.activity_groups.join(" + "),
+              source: "official_register",
+              registration_number: c.registration_number,
+            }));
         } catch (err) {
-          // Fail-soft: a register hiccup can never break search.
           console.error(
-            "register search hit skipped:",
+            "register candidate search skipped:",
             err instanceof Error ? err.message : String(err),
           );
         }
       }
 
-      const authoritative = registerHit
-        ? [...masterHits, registerHit]
-        : masterHits;
+      const authoritative = [...masterHits, ...registerCandidates];
       try {
         const { system, user } = buildSearchPrompt(query, countryLabel);
         const raw = await callOpenAI(system, user, apiKey);

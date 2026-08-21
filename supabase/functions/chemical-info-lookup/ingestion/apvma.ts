@@ -46,6 +46,7 @@ import type {
   AdapterDeps,
   DiscoveryResult,
   LabelEvidence,
+  RegisterCandidate,
   ResolvedRegistration,
   SourceAdapter,
   WireActiveIngredient,
@@ -54,8 +55,10 @@ import type {
 import { identityKey } from "./contract.ts";
 import { buildLabelEvidence } from "./label.ts";
 import {
+  discoveryMatchRank,
   nameCorresponds,
   normaliseProductName,
+  normaliseProductNameLoose,
   retrievalQueryVariants,
   selectProductRow,
 } from "./matching.ts";
@@ -353,10 +356,7 @@ async function resolveDetails(
     "registered_uses",
   ]);
 
-  const registerStatus = [
-    row.regcode ? String(row.regcode).trim() : null,
-    row.expdate ? `expires ${String(row.expdate).trim()}` : null,
-  ].filter(Boolean).join(", ") || null;
+  const registerStatus = registerStatusOf(row);
 
   const productUrl = datastoreUrl({
     resourceId: APVMA_RESOURCES.product,
@@ -537,6 +537,14 @@ async function resolveDetails(
   };
 }
 
+/** Register lifecycle detail ("R, expires 30/06/2029"), or null. */
+function registerStatusOf(row: ProductRecord): string | null {
+  return [
+    row.regcode ? String(row.regcode).trim() : null,
+    row.expdate ? `expires ${String(row.expdate).trim()}` : null,
+  ].filter(Boolean).join(", ") || null;
+}
+
 async function discover(
   query: string,
   hintRegistrationNumber: string | null,
@@ -649,9 +657,194 @@ async function discover(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Candidate discovery (search listings) — DISCOVERY ONLY, never authority
+// ---------------------------------------------------------------------------
+
+const CANDIDATE_LIMIT_DEFAULT = 6;
+
+/**
+ * Free-text candidate discovery for human search listings (contract
+ * `SourceAdapter.discoverCandidates`).
+ *
+ * DISCOVERY IS NOT VERIFICATION. This path exists so a partial or loosely
+ * spaced product name ("Dithane rainshield") — or a bare registration
+ * number — can SURFACE the register rows a human might mean, including
+ * SEVERAL rows when the name is ambiguous (never a silent pick). It grants
+ * nothing: candidates carry register identity and display fields only; the
+ * strict `discover` path re-establishes identity on the exact selection
+ * (verbatim register name + registration number) before anything binds.
+ *
+ * Retrieval mirrors the resolver's bounded typography variants plus a direct
+ * registration-number lookup for digit queries. Ranking is
+ * `discoveryMatchRank` (token-boundary discipline — substrings still cannot
+ * match). Chemistry summaries are best-effort batched constituent reads,
+ * fail-soft to empty. Any source failure returns [] — search never breaks.
+ */
+async function discoverCandidates(
+  query: string,
+  deps: AdapterDeps,
+  limit: number = CANDIDATE_LIMIT_DEFAULT,
+): Promise<RegisterCandidate[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  const nowMs = deps.now().getTime();
+  const cacheKey = `candidates:${normaliseProductNameLoose(trimmed)}|${limit}`;
+  const cached = cache.get<RegisterCandidate[]>("AU", "apvma", cacheKey, nowMs);
+  if (cached) return cached.value;
+
+  const finish = (
+    result: RegisterCandidate[],
+    ttlMs: number,
+  ): RegisterCandidate[] => {
+    cache.set(
+      "AU",
+      "apvma",
+      cacheKey,
+      result,
+      ttlMs,
+      nowMs,
+      deps.now().toISOString(),
+      null,
+    );
+    return result;
+  };
+
+  try {
+    const ranked: { row: ProductRecord; rank: number }[] = [];
+    const seen = new Set<string>();
+
+    if (/^\d{3,8}$/.test(trimmed)) {
+      // Registration-number query: a direct register pointer. Listed as a
+      // candidate only — the strict resolver still re-verifies name↔number
+      // after selection.
+      const rows = await datastoreSearch(deps, {
+        resourceId: APVMA_RESOURCES.product,
+        filters: { pcode: trimmed },
+        limit: 2,
+      }) as ProductRecord[];
+      for (const r of rows) {
+        const pcode = String(r?.pcode ?? "").trim();
+        if (pcode !== trimmed || !r?.fpname || seen.has(pcode)) continue;
+        seen.add(pcode);
+        ranked.push({ row: r, rank: 0 });
+      }
+    } else {
+      // Bounded typography-variant retrieval (raw → compact → loose),
+      // unioned by pcode; every retrieved row is then ranked — or dropped —
+      // by the discovery matcher.
+      for (const variant of retrievalQueryVariants(trimmed)) {
+        const rows = await datastoreSearch(deps, {
+          resourceId: APVMA_RESOURCES.product,
+          q: variant,
+          limit: 32,
+        }) as ProductRecord[];
+        for (const r of rows) {
+          const pcode = String(r?.pcode ?? "").trim();
+          if (!pcode || !r?.fpname || seen.has(pcode)) continue;
+          seen.add(pcode);
+          const rank = discoveryMatchRank(trimmed, String(r.fpname));
+          if (rank !== null) ranked.push({ row: r, rank });
+        }
+      }
+    }
+
+    if (!ranked.length) return finish([], NEGATIVE_TTL_MS);
+
+    ranked.sort((a, b) =>
+      a.rank - b.rank ||
+      String(a.row.fpname).localeCompare(String(b.row.fpname)) ||
+      String(a.row.pcode).localeCompare(String(b.row.pcode))
+    );
+    const top = ranked.slice(0, limit);
+
+    // Best-effort display chemistry: ONE batched constituent read + ONE
+    // name read for all candidates. Fail-soft — a summary outage never
+    // hides a candidate.
+    const summaries = new Map<string, { text: string; groups: string[] }>();
+    try {
+      const pcodes = top.map((t) => String(t.row.pcode).trim());
+      const conRows = await datastoreSearch(deps, {
+        resourceId: APVMA_RESOURCES.productConstituents,
+        filters: { pcode: pcodes },
+        limit: 256,
+      });
+      const activeRows = conRows.filter((c) =>
+        String(c?.ctype ?? "").trim().toUpperCase() === "A" && c?.ccode &&
+        c?.pcode
+      );
+      const codes = Array.from(
+        new Set(activeRows.map((c) => String(c.ccode))),
+      );
+      const namesByCode = new Map<string, string>();
+      if (codes.length) {
+        const nameRows = await datastoreSearch(deps, {
+          resourceId: APVMA_RESOURCES.constituentNames,
+          filters: { ccode: codes },
+          limit: codes.length + 4,
+        });
+        for (const n of nameRows) {
+          if (n?.ccode && n?.cname) {
+            namesByCode.set(String(n.ccode), String(n.cname));
+          }
+        }
+      }
+      for (const pcode of pcodes) {
+        const parts: string[] = [];
+        const groups = new Set<string>();
+        for (const c of activeRows.filter((r) => String(r.pcode) === pcode)) {
+          const rawName = namesByCode.get(String(c.ccode));
+          if (!rawName) continue;
+          const name = titleCaseActive(rawName);
+          const parsed = Number.parseFloat(String(c.camount ?? ""));
+          const unit = mapConcentrationUnit(c?.cucode ? String(c.cucode) : null);
+          const conc = Number.isFinite(parsed)
+            ? ` ${parsed}${unit ? ` ${unit}` : ""}`
+            : "";
+          parts.push(`${name}${conc}`.trim());
+          const { group } = reconcileGroup(name, null);
+          if (group?.code) groups.add(group.code);
+        }
+        summaries.set(pcode, {
+          text: parts.join(" + "),
+          groups: Array.from(groups),
+        });
+      }
+    } catch (err) {
+      console.error(
+        "apvma candidate chemistry summary skipped:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
+    const candidates: RegisterCandidate[] = top.map(({ row, rank }) => {
+      const pcode = String(row.pcode).trim();
+      const summary = summaries.get(pcode);
+      return {
+        registration_number: pcode,
+        registered_product_name: String(row.fpname).trim(),
+        registrant: row.sname ? String(row.sname).trim() : null,
+        product_category: mapCategory(row.hlevel1),
+        register_status: registerStatusOf(row),
+        actives_summary: summary?.text ?? "",
+        activity_groups: summary?.groups ?? [],
+        match_rank: rank,
+      };
+    });
+    return finish(candidates, RESOLVED_TTL_MS);
+  } catch (err) {
+    console.error(
+      "apvma candidate discovery unavailable:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return finish([], UNAVAILABLE_TTL_MS);
+  }
+}
+
 export const apvmaAdapter: SourceAdapter = {
   id: "apvma",
   country: "AU",
   scheme: "apvma",
   discover,
+  discoverCandidates,
 };

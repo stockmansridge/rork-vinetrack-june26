@@ -243,13 +243,39 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
 }
 
 nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashable {
-    var id: String { name }
+    /// Two register rows can share one verbatim name (pack registrations),
+    /// so the registration number joins the identity when present.
+    var id: String {
+        if let registrationNumber, !registrationNumber.isEmpty {
+            return "\(name)#\(registrationNumber)"
+        }
+        return name
+    }
     let name: String
     let activeIngredient: String
     let chemicalGroup: String
     let brand: String
     let primaryUse: String
     let modeOfAction: String
+    /// Registration number carried by official-register CANDIDATE rows
+    /// (additive; DISCOVERY only — a listing grants nothing). Selecting the
+    /// candidate passes this back as the identity hint so the strict
+    /// server-side resolver verifies that exact identity against the
+    /// register before anything binds.
+    let registrationNumber: String?
+    /// "master" | "official_register" | nil (AI suggestion / older server).
+    let source: String?
+
+    nonisolated enum CodingKeys: String, CodingKey {
+        case name
+        case activeIngredient
+        case chemicalGroup
+        case brand
+        case primaryUse
+        case modeOfAction
+        case registrationNumber = "registration_number"
+        case source
+    }
 }
 
 nonisolated struct ChemicalSearchResponse: Codable, Sendable {
@@ -316,12 +342,22 @@ nonisolated struct ChemicalInfoService: Sendable {
     ///
     /// The result is never `.verified`: the lookup can identify a candidate and
     /// classify its chemistry, but confirming product identity is a human step.
-    func lookupStructured(productName: String, country: String = "") async throws -> ChemicalStructuredLookup {
+    func lookupStructured(
+        productName: String,
+        country: String = "",
+        registrationNumber: String? = nil
+    ) async throws -> ChemicalStructuredLookup {
         var payload: [String: Any] = [
             "action": "structured",
             "productName": productName,
         ]
         if !country.isEmpty { payload["country"] = country }
+        // Identity hint from a selected register candidate. Only ever a
+        // POINTER: the server re-verifies name↔number against the official
+        // register before anything binds.
+        if let registrationNumber, !registrationNumber.isEmpty {
+            payload["registrationNumber"] = registrationNumber
+        }
         let data = try await postEdge(path: "chemical-info-lookup", payload: payload)
         do {
             return try JSONDecoder().decode(ChemicalStructuredLookup.self, from: data)

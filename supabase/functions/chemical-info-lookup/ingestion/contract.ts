@@ -266,6 +266,29 @@ export interface DiscoveryResult {
   cache: "hit" | "miss" | "none";
 }
 
+/**
+ * One register row surfaced by free-text CANDIDATE DISCOVERY (search
+ * listings). Deliberately identity-and-display only: no registered uses, no
+ * rates, no label facts, no verification evidence — a candidate is
+ * structurally incapable of being served as a resolved product. Identity is
+ * only ever established afterwards, by the strict `discover` path, on the
+ * exact candidate the human selected.
+ */
+export interface RegisterCandidate {
+  registration_number: string;
+  /** Verbatim register product name. */
+  registered_product_name: string;
+  registrant: string | null;
+  product_category: string | null;
+  register_status: string | null;
+  /** Display-only chemistry summary ("Mancozeb 750 g/kg"), best-effort. */
+  actives_summary: string;
+  /** Display-only authoritative group codes for the summarised actives. */
+  activity_groups: string[];
+  /** Discovery rank (0 strict … 2 loose) — ordering only, never authority. */
+  match_rank: number;
+}
+
 export interface AdapterDeps {
   fetchFn: typeof fetch;
   now: () => Date;
@@ -293,6 +316,18 @@ export interface SourceAdapter {
     hintRegistrationNumber: string | null,
     deps: AdapterDeps,
   ): Promise<DiscoveryResult>;
+  /**
+   * OPTIONAL free-text candidate discovery for human search listings.
+   * Generous retrieval (partial names, registration numbers, typography
+   * variants), bounded results, fail-soft (errors → []). Grants no
+   * authority: candidates carry identity/display fields only, and the
+   * strict `discover` path re-verifies whatever the human selects.
+   */
+  discoverCandidates?(
+    query: string,
+    deps: AdapterDeps,
+    limit?: number,
+  ): Promise<RegisterCandidate[]>;
 }
 
 // ---------------------------------------------------------------------------

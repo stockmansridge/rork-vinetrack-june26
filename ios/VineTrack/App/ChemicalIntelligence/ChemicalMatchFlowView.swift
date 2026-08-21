@@ -482,7 +482,15 @@ struct ChemicalMatchFlowView: View {
         defer { isLoadingStructured = false }
         do {
             let lookup = try await ChemicalInfoService()
-                .lookupStructured(productName: result.name, country: countryCode)
+                .lookupStructured(
+                    productName: result.name,
+                    country: countryCode,
+                    // A register candidate carries its registration number;
+                    // passing it makes the strict resolver verify THAT exact
+                    // identity (name↔number re-checked server-side), which
+                    // also disambiguates same-name pack registrations.
+                    registrationNumber: result.registrationNumber
+                )
             // Jurisdiction gate: a payload registered in another country — or
             // a master row keyed to one — is refused OUTRIGHT, exactly like a
             // failed lookup. Foreign label rates, WHP, re-entry statements and

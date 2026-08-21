@@ -26,6 +26,7 @@ import type {
   DiscoveryResult,
   MasterOps,
   MasterRow,
+  RegisterCandidate,
   ResolvedRegistration,
   WireConflict,
   WireDataSource,
@@ -80,6 +81,38 @@ export async function discoverAuthoritative(
       error_category: "unexpected_error",
       cache: "none",
     };
+  }
+}
+
+/**
+ * Free-text register CANDIDATE discovery for human search listings.
+ *
+ * Same jurisdiction gate as `discoverAuthoritative` — the resolved vineyard
+ * country (and only the registry) selects the adapter; no country or no
+ * adapter means no register candidates, never a foreign register. Discovery
+ * is NOT verification: candidates are identity/display rows a human picks
+ * from, and the strict resolver then re-establishes identity on the exact
+ * selection. Fail-soft everywhere: any failure returns [] so a register
+ * hiccup can never break search.
+ */
+export async function discoverRegisterCandidates(
+  countryCode: string,
+  query: string,
+  deps: AdapterDeps,
+  limit = 6,
+): Promise<RegisterCandidate[]> {
+  const code = countryCode.trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return [];
+  const adapter = adapterFor(code);
+  if (!adapter?.discoverCandidates) return [];
+  try {
+    return await adapter.discoverCandidates(query, deps, limit);
+  } catch (err) {
+    console.error(
+      "register candidate discovery crashed:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return [];
   }
 }
 

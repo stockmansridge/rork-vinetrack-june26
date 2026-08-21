@@ -252,6 +252,70 @@ export function selectProductRow<T extends NamedRow>(
 }
 
 // ---------------------------------------------------------------------------
+// Discovery-only candidate ranking — NEVER identity, NEVER authority
+// ---------------------------------------------------------------------------
+
+/**
+ * How strongly a register name PLAUSIBLY matches a free-text search, for
+ * human candidate listings ONLY.
+ *
+ * This is the deliberate counterpart to `nameCorresponds`: DISCOVERY may be
+ * generous because a human picks from the listed candidates and the strict
+ * resolver then re-establishes identity on the exact selection (verbatim
+ * register name + registration number). Nothing here can bind a product:
+ * candidate rank is never consulted by `selectProductRow`, any adapter
+ * resolution path, or any provenance decision — a candidate listing grants
+ * no authority whatsoever.
+ *
+ * Ranks (lower = stronger):
+ *   0  strict deterministic correspondence — the exact tiers the resolver
+ *      itself accepts (`nameCorresponds`)
+ *   1  the query is a CONTIGUOUS token run of the register name compared in
+ *      compact form ("dithane rainshield" ⊂ "DITHANE RAINSHIELD NEO TEC
+ *      FUNGICIDE", "rain shield" ⊂ "… RAINSHIELD …") — always at token
+ *      boundaries, so "custodia" still can never match inside "MYCUSTODIA"
+ *   2  every query token appears, in order, as a whole token of the
+ *      register name ("dithane fungicide" ⊂ "DITHANE RAINSHIELD NEO TEC
+ *      FUNGICIDE")
+ *
+ * Returns null when the register name is not a plausible candidate.
+ */
+export function discoveryMatchRank(
+  requested: string,
+  registerName: string,
+): 0 | 1 | 2 | null {
+  if (nameCorresponds(requested, registerName)) return 0;
+
+  const wantedCompact = compactProductName(requested);
+  const tokens = normaliseProductNameLoose(registerName)
+    .split(" ")
+    .filter(Boolean);
+  if (!wantedCompact || !tokens.length) return null;
+
+  // Contiguous compact token-run containment, at token boundaries only.
+  for (let start = 0; start < tokens.length; start++) {
+    let compact = "";
+    for (let i = start; i < tokens.length; i++) {
+      compact += tokens[i];
+      if (compact.length > wantedCompact.length) break;
+      if (compact === wantedCompact) return 1;
+    }
+  }
+
+  // Ordered whole-token subsequence.
+  const wanted = normaliseProductNameLoose(requested).split(" ").filter(Boolean);
+  if (!wanted.length) return null;
+  let matched = 0;
+  for (const token of tokens) {
+    if (token === wanted[matched]) {
+      matched++;
+      if (matched === wanted.length) return 2;
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Retrieval variants
 // ---------------------------------------------------------------------------
 
