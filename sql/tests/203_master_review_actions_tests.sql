@@ -103,6 +103,10 @@ declare
   u_a uuid; u_b uuid; u_n uuid;
   v_m_apply uuid; v_m_adj uuid; v_m_ident uuid;
   v_m_rekey uuid; v_m_linked uuid; v_m_approved uuid;
+  -- Fixture identities are randomised per run: these rows land in the REAL
+  -- master_chemicals table (rolled back at the end), so fixed registration
+  -- numbers would collide with live catalogue data (identity key is unique).
+  v_run text := upper(substr(md5(random()::text || clock_timestamp()::text), 1, 10));
   c_conc jsonb := '{"field":"concentration","active_ingredient_name":"Azoxystrobin","extracted_value":"Azoxystrobin 120 g/L","authoritative_value":"Azoxystrobin 200 g/L","extracted_source":"ai_interpretation","authoritative_source":"official_register"}'::jsonb;
   c_missing jsonb := '{"field":"active_ingredients","active_ingredient_name":"Bogusamine","extracted_value":"extracted as an active ingredient","authoritative_value":"not an active constituent of this registration","extracted_source":"ai_interpretation","authoritative_source":"official_register"}'::jsonb;
   c_reg jsonb := '{"field":"registration_number","extracted_value":"80003","authoritative_value":"90003","extracted_source":"ai_interpretation","authoritative_source":"official_register"}'::jsonb;
@@ -143,7 +147,7 @@ begin
     (registration_country, registration_scheme, registration_number,
      registrant, registered_product_name, source_kind, review_status,
      label_version)
-  values ('AU', 'apvma', '80001', 'Original Registrant Pty Ltd',
+  values ('AU', 'apvma', 'T203-' || v_run || '-APPLY', 'Original Registrant Pty Ltd',
           'T203 Apply Target', 'manufacturer_label', 'candidate', 'Rev A')
   returning id into v_m_apply;
 
@@ -152,7 +156,7 @@ begin
      registrant, registered_product_name, source_kind, review_status,
      active_ingredients, verification_status, verification_sources,
      verification_conflicts)
-  values ('AU', 'apvma', '80002', 'Adjudicate Registrant',
+  values ('AU', 'apvma', 'T203-' || v_run || '-ADJ', 'Adjudicate Registrant',
           'T203 Adjudicate Target', 'manufacturer_label', 'candidate',
           '[{"name":"Azoxystrobin","concentration":120,"concentration_unit":"g/L"}]'::jsonb,
           'conflict',
@@ -164,7 +168,7 @@ begin
     (registration_country, registration_scheme, registration_number,
      registered_product_name, source_kind, review_status,
      verification_status, verification_conflicts)
-  values ('AU', 'apvma', '80003', 'T203 Identity Conflict Target',
+  values ('AU', 'apvma', 'T203-' || v_run || '-IDENT', 'T203 Identity Conflict Target',
           'manufacturer_label', 'candidate', 'conflict',
           jsonb_build_array(c_reg, c_whp))
   returning id into v_m_ident;
@@ -172,21 +176,21 @@ begin
   insert into public.master_chemicals
     (registration_country, registration_scheme, registration_number,
      registered_product_name, source_kind, review_status)
-  values ('AU', 'apvma', '80004', 'T203 Rekey Candidate',
+  values ('AU', 'apvma', 'T203-' || v_run || '-REKEY', 'T203 Rekey Candidate',
           'manufacturer_label', 'candidate')
   returning id into v_m_rekey;
 
   insert into public.master_chemicals
     (registration_country, registration_scheme, registration_number,
      registered_product_name, source_kind, review_status)
-  values ('AU', 'apvma', '80005', 'T203 Rekey Linked',
+  values ('AU', 'apvma', 'T203-' || v_run || '-LINKED', 'T203 Rekey Linked',
           'manufacturer_label', 'candidate')
   returning id into v_m_linked;
 
   insert into public.master_chemicals
     (registration_country, registration_scheme, registration_number,
      registered_product_name, source_kind, review_status, reviewed_by, reviewed_at)
-  values ('AU', 'apvma', '80006', 'T203 Approved Row',
+  values ('AU', 'apvma', 'T203-' || v_run || '-APPROVED', 'T203 Approved Row',
           'manufacturer_label', 'approved', u_a, now())
   returning id into v_m_approved;
 
@@ -263,6 +267,11 @@ begin
   perform set_config('vinetrack.t203_c_missing', c_missing::text, false);
   perform set_config('vinetrack.t203_c_reg',     c_reg::text,     false);
   perform set_config('vinetrack.t203_c_whp',     c_whp::text,     false);
+  -- Registration numbers T15 needs: an existing one (duplicate probe), the
+  -- rekey row's own, and a fresh unused one for the happy rekey.
+  perform set_config('vinetrack.t203_num_apply', 'T203-' || v_run || '-APPLY', false);
+  perform set_config('vinetrack.t203_num_rekey', 'T203-' || v_run || '-REKEY', false);
+  perform set_config('vinetrack.t203_num_new',   'T203-' || v_run || '-NEW',   false);
 end$$;
 
 -- Helper: become one of the fixture users, with RLS enforced.
@@ -976,6 +985,9 @@ declare
   v_m_linked   uuid := current_setting('vinetrack.t203_m_linked',   true)::uuid;
   v_m_approved uuid := current_setting('vinetrack.t203_m_approved', true)::uuid;
   u_a uuid := current_setting('vinetrack.t203_user_a', true)::uuid;
+  v_num_apply text := current_setting('vinetrack.t203_num_apply', true);
+  v_num_rekey text := current_setting('vinetrack.t203_num_rekey', true);
+  v_num_new   text := current_setting('vinetrack.t203_num_new',   true);
   v_err text;
   v_out jsonb;
   v_row public.master_chemicals%rowtype;
@@ -983,10 +995,10 @@ declare
 begin
   perform public._t203_login('a');
 
-  -- Duplicate identity (80001 belongs to the apply-target fixture).
+  -- Duplicate identity (the apply-target fixture already owns this number).
   v_err := '';
   begin
-    v_out := public.master_review_rekey(v_m_rekey, 1, 'AU', 'apvma', '80001', 'dup');
+    v_out := public.master_review_rekey(v_m_rekey, 1, 'AU', 'apvma', v_num_apply, 'dup');
   exception when others then v_err := sqlerrm;
   end;
   if v_err <> 'identity_exists' then
@@ -1033,15 +1045,15 @@ begin
 
   -- Clean candidate: the one legitimate path.
   v_out := public.master_review_rekey(
-    v_m_rekey, 1, 'AU', 'apvma', '80104', 'Transposed digits in original enqueue');
+    v_m_rekey, 1, 'AU', 'apvma', v_num_new, 'Transposed digits in original enqueue');
   if v_out->>'status' <> 'rekeyed'
-     or v_out->>'new_identity_key' <> 'AU:apvma:80104' then
+     or v_out->>'new_identity_key' <> 'AU:apvma:' || v_num_new then
     raise exception 'T15 FAILED: happy rekey wrong outcome %', v_out;
   end if;
 
   perform set_config('role', 'postgres', true);
   select * into v_row from public.master_chemicals where id = v_m_rekey;
-  if v_row.registration_identity_key <> 'AU:apvma:80104'
+  if v_row.registration_identity_key <> 'AU:apvma:' || v_num_new
      or v_row.catalogue_version <> 2 then
     raise exception 'T15 FAILED: rekey did not land (key %, rev %)',
       v_row.registration_identity_key, v_row.catalogue_version;
@@ -1050,8 +1062,8 @@ begin
    where master_chemical_id = v_m_rekey and action = 'rekey';
   if v_act.id is null
      or v_act.performed_by <> u_a
-     or v_act.patch->'old'->>'registration_identity_key' <> 'AU:apvma:80004'
-     or v_act.patch->'new'->>'registration_identity_key' <> 'AU:apvma:80104' then
+     or v_act.patch->'old'->>'registration_identity_key' <> 'AU:apvma:' || v_num_rekey
+     or v_act.patch->'new'->>'registration_identity_key' <> 'AU:apvma:' || v_num_new then
     raise exception 'T15 FAILED: rekey audit row wrong or missing';
   end if;
 
