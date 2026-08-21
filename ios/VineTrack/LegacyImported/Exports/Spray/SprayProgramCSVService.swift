@@ -533,6 +533,15 @@ struct SprayProgramCSVService {
                     library: library,
                     at: importedAt
                 )
+                // Record the basis the ROW actually stated. Leaving it nil made
+                // a per-100 L import reload as a whole-block-area line, which
+                // restates the imported application as something it was not.
+                // Neither column populated stays nil — an honest "not stated".
+                let importedBasis: SprayProductRateBasis? = {
+                    if chem.ratePerHa > 0 { return .wholeBlockArea }
+                    if chem.ratePer100L > 0 { return .per100Litres }
+                    return nil
+                }()
                 return SprayChemical(
                     name: chem.name,
                     volumePerTank: chem.unit.toBase(chem.amountPerTank),
@@ -540,6 +549,7 @@ struct SprayProgramCSVService {
                     ratePer100L: chem.unit.toBase(chem.ratePer100L),
                     costPerUnit: chem.costPerUnit,
                     unit: chem.unit,
+                    rateBasis: importedBasis,
                     savedChemicalId: resolution.savedChemicalId,
                     chemicalSnapshot: resolution.snapshot
                 )

@@ -265,6 +265,53 @@ nonisolated struct SprayChemical: Codable, Identifiable, Sendable, Hashable {
         rateBasis ?? .wholeBlockArea
     }
 
+    /// The basis this line's rate should be REPORTED on.
+    ///
+    /// Distinct from `resolvedRateBasis`, which answers "what area do I
+    /// multiply by" and so must default a legacy line to whole block. This one
+    /// answers "what does the recorded number mean", and for a legacy line that
+    /// stored only a per-100 L rate the honest answer is per-100 L — reporting
+    /// it as a per-hectare rate would print the line's rate as 0.
+    nonisolated var reportedRateBasis: SprayProductRateBasis {
+        if let rateBasis { return rateBasis }
+        if ratePerHa <= 0, ratePer100L > 0 { return .per100Litres }
+        return .wholeBlockArea
+    }
+
+    /// The recorded rate in BASE units, read from whichever field the line's
+    /// own basis stores it in.
+    nonisolated var reportedRateBaseValue: Double {
+        switch reportedRateBasis {
+        case .per100Litres:
+            return ratePer100L
+        case .wholeBlockArea, .treatedArea, .per100Metres:
+            return ratePerHa
+        }
+    }
+
+    /// The recorded rate in the line's own display unit.
+    nonisolated var displayReportedRate: Double {
+        unit.fromBase(reportedRateBaseValue)
+    }
+
+    /// The recorded rate as a report/export string, e.g. `"540.00 mL/ha"` or
+    /// `"45.00 mL/100 L"`.
+    ///
+    /// Only an AREA rate is region-converted: a per-100 L or per-100 m rate has
+    /// no area in it to convert, and pushing one through the per-hectare→acre
+    /// factor would silently restate a historical number.
+    nonisolated func reportedRateText(formatter: RegionFormatter) -> String {
+        switch reportedRateBasis {
+        case .wholeBlockArea, .treatedArea:
+            return formatter.formatSprayRate(
+                perHectare: displayReportedRate,
+                unitLabel: unitLabel
+            )
+        case .per100Litres, .per100Metres:
+            return String(format: "%.2f %@%@", displayReportedRate, unitLabel, reportedRateBasis.rateSuffix)
+        }
+    }
+
     var costPerTank: Double {
         costPerUnit * volumePerTank
     }

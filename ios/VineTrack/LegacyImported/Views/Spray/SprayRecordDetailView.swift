@@ -443,7 +443,10 @@ struct SprayRecordDetailView: View {
                 Text(String(format: "%.2f %@/tank", chemical.displayVolume, chemical.unitLabel))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                Text(String(format: "%.2f %@/Ha", chemical.displayRate, chemical.unitLabel))
+                // The line's own recorded basis, not a hard-coded /Ha: a
+                // per-100 L line used to read "0.00 L/Ha" on the record it was
+                // applied under.
+                Text(chemical.reportedRateText(formatter: store.settings.regionFormatter))
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }

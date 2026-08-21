@@ -359,7 +359,16 @@ struct SprayProgramExportService {
                     paddocks: paddocks
                 )
             )
-            let chemicals = escapeCSV(record.tanks.flatMap { $0.chemicals }.map { "\($0.name) (\(String(format: "%.2f", $0.displayRate)) \($0.unitLabel)/\(rateUnit))" }.filter { !$0.isEmpty }.joined(separator: "; "))
+            // Each line states its rate on the basis it was RECORDED on. The
+            // old form hard-coded the per-area denominator, so a per-100 L line
+            // exported as "0.00 L/ha".
+            let chemicals = escapeCSV(
+                record.tanks
+                    .flatMap { $0.chemicals }
+                    .map { "\($0.name) (\($0.reportedRateText(formatter: formatter)))" }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "; ")
+            )
             let tanks = "\(record.tanks.count)"
             let avgRate = record.tanks.isEmpty ? "" : String(format: "%.1f", formatter.sprayRateValue(perHectare: record.tanks.map(\.sprayRatePerHa).reduce(0, +) / Double(record.tanks.count)))
             let avgWater = record.tanks.isEmpty ? "" : String(format: "%.0f", formatter.volumeValue(litres: record.tanks.map(\.waterVolume).reduce(0, +) / Double(record.tanks.count)))

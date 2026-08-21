@@ -281,7 +281,10 @@ struct SprayRecordPDFService {
                     let colHeaderAttrs: [NSAttributedString.Key: Any] = [.font: captionFont, .foregroundColor: UIColor.black]
                     ("CHEMICAL" as NSString).draw(at: CGPoint(x: colX[0], y: y), withAttributes: colHeaderAttrs)
                     ("VOL/TANK" as NSString).draw(at: CGPoint(x: colX[1], y: y), withAttributes: colHeaderAttrs)
-                    ("RATE/\(formatter.sprayRateAreaAbbreviation.uppercased())" as NSString).draw(at: CGPoint(x: colX[2], y: y), withAttributes: colHeaderAttrs)
+                    // Basis-neutral heading: the column now carries each line's
+                    // OWN denominator (/ha, /100 L, /100 m), because one tank
+                    // legitimately holds rates recorded on different bases.
+                    ("RATE" as NSString).draw(at: CGPoint(x: colX[2], y: y), withAttributes: colHeaderAttrs)
                     y += 14
 
                     for chemical in tank.chemicals {
@@ -295,7 +298,10 @@ struct SprayRecordPDFService {
                         // region preference. Only the per-area denominator is
                         // region-aware via the spray-rate formatter.
                         (String(format: "%.2f %@", chemical.displayVolume, chemical.unitLabel) as NSString).draw(at: CGPoint(x: colX[1], y: y), withAttributes: valAttrs)
-                        (formatter.formatSprayRate(perHectare: chemical.displayRate, unitLabel: chemical.unitLabel) as NSString).draw(at: CGPoint(x: colX[2], y: y), withAttributes: valAttrs)
+                        // Read from the line's own recorded basis. Printing
+                        // `ratePerHa` unconditionally reported every per-100 L
+                        // line as "0.00 L/ha" on a compliance document.
+                        (chemical.reportedRateText(formatter: formatter) as NSString).draw(at: CGPoint(x: colX[2], y: y), withAttributes: valAttrs)
                         y += 18
                     }
                 }
