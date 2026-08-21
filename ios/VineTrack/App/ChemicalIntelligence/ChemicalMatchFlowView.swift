@@ -341,7 +341,15 @@ struct ChemicalMatchFlowView: View {
                 }
 
                 Section("Registered uses") {
-                    ChemicalRegisteredUsesView(uses: intel.registeredUses)
+                    // The label-source flag only ever changes the WORDING of a
+                    // label-parsed zero-day withholding period ("not required
+                    // when used as directed"); it never invents or alters a
+                    // value. Derived from the payload's own cited sources.
+                    ChemicalRegisteredUsesView(
+                        uses: intel.registeredUses,
+                        hasManufacturerLabelSource: intel.verification.sources
+                            .contains { $0.kind == .manufacturerLabel }
+                    )
                 }
 
                 Section {
