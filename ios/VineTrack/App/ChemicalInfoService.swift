@@ -134,6 +134,10 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
     let verification: ChemicalVerification
     let activityGroupTableVersion: Int
     let schemaVersion: Int
+    /// Per-field evidence tiers recorded by the resolver (`field_provenance`
+    /// wire key). Carried verbatim into the stored intelligence; `nil` from
+    /// servers that predate the key.
+    let fieldProvenance: [String: String]?
     /// "master" | "authoritative_candidate" | "ai_candidate" | "unresolved"
     /// | nil (pre-sql/199 server). Stage 3 adds "authoritative_candidate":
     /// register-backed but NOT approved — handled exactly like an AI
@@ -166,6 +170,7 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         case verification
         case activityGroupTableVersion = "activity_group_table_version"
         case schemaVersion = "schema_version"
+        case fieldProvenance = "field_provenance"
         case matchSource = "match_source"
         case master
     }
@@ -183,6 +188,9 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         verification = try c.decodeIfPresent(ChemicalVerification.self, forKey: .verification) ?? ChemicalVerification()
         activityGroupTableVersion = try c.decodeIfPresent(Int.self, forKey: .activityGroupTableVersion) ?? 0
         schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
+        // Additive LD-2 key — tolerant: malformed provenance degrades to nil
+        // rather than failing the lookup.
+        fieldProvenance = try? c.decodeIfPresent([String: String].self, forKey: .fieldProvenance)
         // Additive sql/199 envelope — tolerant on both sides: an old server
         // sends neither key, and a malformed master block degrades to nil
         // (plain AI-candidate behaviour) rather than failing the lookup.
@@ -226,6 +234,7 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
             registration: registration,
             verification: verification,
             registeredUses: registeredUses,
+            fieldProvenance: fieldProvenance,
             productCategory: productCategory ?? "",
             activityGroupTableVersion: max(activityGroupTableVersion, AuthoritativeActivityGroups.tableVersion),
             schemaVersion: max(schemaVersion, ChemicalIntelligence.currentSchemaVersion)

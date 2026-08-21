@@ -271,9 +271,17 @@ struct ChemicalLabelRatesView: View {
     var body: some View {
         if !rates.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Product label rate")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text("Product label rate")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    // Shown only when every rate-owning use proves the same
+                    // authoritative tier — read from stored provenance,
+                    // never inferred from the values themselves.
+                    if let badge = uses.uniformRatesBadge {
+                        ChemicalProvenanceTagView(badge: badge)
+                    }
+                }
                 ForEach(rates) { rate in
                     HStack(spacing: 8) {
                         Text(rate.displayRate)
@@ -344,9 +352,19 @@ struct ChemicalRegisteredUsesView: View {
                     .foregroundStyle(.tertiary)
             } else {
                 ForEach(uses) { use in
+                    // Tags come from STORED per-use provenance only: one badge
+                    // for the card when every fact shares a tier, per-fact
+                    // badges only when trust is mixed, nothing for legacy or
+                    // unproven records. See ChemicalUseProvenancePlan.
+                    let plan = use.provenancePlan
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(use.crop.isEmpty ? "Crop not stated" : use.crop)
-                            .font(.subheadline.weight(.semibold))
+                        HStack(spacing: 6) {
+                            Text(use.crop.isEmpty ? "Crop not stated" : use.crop)
+                                .font(.subheadline.weight(.semibold))
+                            if let badge = plan.headerBadge {
+                                ChemicalProvenanceTagView(badge: badge)
+                            }
+                        }
                         Text("• \(use.targetRaw.isEmpty ? "Target not stated" : use.targetRaw)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -355,17 +373,30 @@ struct ChemicalRegisteredUsesView: View {
                             restrictions: use.restrictions,
                             hasManufacturerLabelSource: hasManufacturerLabelSource
                         ) {
-                            Text("Withholding period: \(whp)")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                            HStack(spacing: 6) {
+                                Text("Withholding period: \(whp)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                if let badge = plan.badge(for: .withholdingPeriod) {
+                                    ChemicalProvenanceTagView(badge: badge)
+                                }
+                            }
                         }
                         if let reEntry = use.reEntryPeriodHours {
-                            Text("Re-entry: \(reEntry) hours")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                            HStack(spacing: 6) {
+                                Text("Re-entry: \(reEntry) hours")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                if let badge = plan.badge(for: .reEntry) {
+                                    ChemicalProvenanceTagView(badge: badge)
+                                }
+                            }
                         }
                         if let restrictions = use.restrictions, !restrictions.isEmpty {
-                            ChemicalUseRestrictionsView(text: restrictions)
+                            ChemicalUseRestrictionsView(
+                                text: restrictions,
+                                badge: plan.badge(for: .restrictions)
+                            )
                         }
                     }
                 }
@@ -379,6 +410,25 @@ struct ChemicalRegisteredUsesView: View {
     }
 }
 
+/// Tiny capsule naming the evidence tier behind a displayed fact.
+///
+/// Rendered exclusively from STORED provenance (`ChemicalProvenanceBadge`):
+/// it never derives a tier from the value it sits beside, and it simply does
+/// not exist for records without recorded provenance.
+struct ChemicalProvenanceTagView: View {
+    let badge: ChemicalProvenanceBadge
+
+    var body: some View {
+        Label(badge.text, systemImage: badge.symbolName)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color(.tertiarySystemFill), in: Capsule())
+            .accessibilityLabel("Source: \(badge.text)")
+    }
+}
+
 /// A registered use's verbatim label restriction statements.
 ///
 /// The wording is legal text: it renders exactly as the label states it,
@@ -387,6 +437,10 @@ struct ChemicalRegisteredUsesView: View {
 /// without dominating the product summary.
 struct ChemicalUseRestrictionsView: View {
     let text: String
+    /// Optional provenance tag for the restrictions statement, shown only in
+    /// mixed-trust cards. Defaults to none so existing call sites render
+    /// exactly as before.
+    var badge: ChemicalProvenanceBadge? = nil
 
     @State private var isExpanded = false
 
@@ -402,9 +456,14 @@ struct ChemicalUseRestrictionsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("Label restrictions")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Text("Label restrictions")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if let badge {
+                    ChemicalProvenanceTagView(badge: badge)
+                }
+            }
             Text(text)
                 .font(.caption2)
                 .foregroundStyle(.secondary)

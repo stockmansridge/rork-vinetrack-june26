@@ -29,6 +29,14 @@ nonisolated struct ChemicalIntelligence: Codable, Sendable, Hashable {
     var verification: ChemicalVerification
     /// Registered crop + target + rate combinations.
     var registeredUses: [ChemicalRegisteredUse]
+    /// Which evidence tier populated each top-level field, keyed by the wire
+    /// field name (`label_rates`, `withholding_periods`, `registration`, …)
+    /// with tier values such as `official_register`, `manufacturer_label`,
+    /// `authoritative_classification`, `ai_interpretation` or `unresolved`.
+    /// Recorded by the server resolver and stored VERBATIM — never derived
+    /// from values, never upgraded or backfilled on device. `nil` on records
+    /// saved before the server published provenance.
+    var fieldProvenance: [String: String]?
     /// Product category key, aligned with the existing `product_category`
     /// vocabulary (fungicide, herbicide, insecticide, adjuvant, …).
     var productCategory: String
@@ -42,6 +50,7 @@ nonisolated struct ChemicalIntelligence: Codable, Sendable, Hashable {
         registration: ChemicalRegistration? = nil,
         verification: ChemicalVerification = ChemicalVerification(),
         registeredUses: [ChemicalRegisteredUse] = [],
+        fieldProvenance: [String: String]? = nil,
         productCategory: String = "",
         activityGroupTableVersion: Int = AuthoritativeActivityGroups.tableVersion,
         schemaVersion: Int = ChemicalIntelligence.currentSchemaVersion
@@ -50,6 +59,7 @@ nonisolated struct ChemicalIntelligence: Codable, Sendable, Hashable {
         self.registration = registration
         self.verification = verification
         self.registeredUses = registeredUses
+        self.fieldProvenance = fieldProvenance
         self.productCategory = productCategory
         self.activityGroupTableVersion = activityGroupTableVersion
         self.schemaVersion = schemaVersion
@@ -60,6 +70,7 @@ nonisolated struct ChemicalIntelligence: Codable, Sendable, Hashable {
         case registration
         case verification
         case registeredUses = "registered_uses"
+        case fieldProvenance = "field_provenance"
         case productCategory = "product_category"
         case activityGroupTableVersion = "activity_group_table_version"
         case schemaVersion = "schema_version"
@@ -71,6 +82,9 @@ nonisolated struct ChemicalIntelligence: Codable, Sendable, Hashable {
         registration = try c.decodeIfPresent(ChemicalRegistration.self, forKey: .registration)
         verification = try c.decodeIfPresent(ChemicalVerification.self, forKey: .verification) ?? ChemicalVerification()
         registeredUses = try c.decodeIfPresent([ChemicalRegisteredUse].self, forKey: .registeredUses) ?? []
+        // Additive and tolerant: malformed or missing provenance reads as nil
+        // so every stored record keeps loading; absence is never invented.
+        fieldProvenance = try? c.decodeIfPresent([String: String].self, forKey: .fieldProvenance)
         productCategory = try c.decodeIfPresent(String.self, forKey: .productCategory) ?? ""
         activityGroupTableVersion = try c.decodeIfPresent(Int.self, forKey: .activityGroupTableVersion) ?? 0
         schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0

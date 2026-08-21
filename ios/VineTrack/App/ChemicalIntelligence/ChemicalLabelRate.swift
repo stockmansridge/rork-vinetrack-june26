@@ -185,6 +185,14 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
     var reEntryPeriodHours: Int?
     /// Any label restriction text worth surfacing verbatim.
     var restrictions: String?
+    /// Per-fact evidence tiers recorded by the server's label merge, keyed by
+    /// fact name (`claim`, `rates`, `withholding_period`, `re_entry`,
+    /// `restrictions`) with tier values such as `manufacturer_label` or
+    /// `ai_interpretation`. Stored VERBATIM: never derived from this record's
+    /// values, never rewritten on device, and `nil` on records saved before
+    /// the server published provenance — absence means "unknown", never
+    /// "authoritative".
+    var provenance: [String: String]?
 
     init(
         crop: String,
@@ -193,7 +201,8 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
         rates: [ChemicalLabelRate] = [],
         withholdingPeriodDays: Int? = nil,
         reEntryPeriodHours: Int? = nil,
-        restrictions: String? = nil
+        restrictions: String? = nil,
+        provenance: [String: String]? = nil
     ) {
         self.crop = crop.trimmingCharacters(in: .whitespacesAndNewlines)
         self.targetRaw = targetRaw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -203,10 +212,11 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
         self.reEntryPeriodHours = reEntryPeriodHours
         let r = restrictions?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.restrictions = (r?.isEmpty ?? true) ? nil : r
+        self.provenance = provenance
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
-        case crop, target, rates, restrictions
+        case crop, target, rates, restrictions, provenance
         case targetRaw = "target_raw"
         case withholdingPeriodDays = "withholding_period_days"
         case reEntryPeriodHours = "re_entry_period_hours"
@@ -225,6 +235,9 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
         withholdingPeriodDays = try c.decodeIfPresent(Int.self, forKey: .withholdingPeriodDays)
         reEntryPeriodHours = try c.decodeIfPresent(Int.self, forKey: .reEntryPeriodHours)
         restrictions = try c.decodeIfPresent(String.self, forKey: .restrictions)
+        // Additive and tolerant: a malformed or missing provenance map reads
+        // as nil so the use itself always loads; the value is never guessed.
+        provenance = try? c.decodeIfPresent([String: String].self, forKey: .provenance)
     }
 
     /// Whether this use concerns grapevines.
