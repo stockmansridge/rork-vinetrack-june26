@@ -482,8 +482,28 @@ nonisolated struct ResistancePlan: Codable, Sendable, Hashable, Identifiable {
 }
 
 nonisolated extension ResistanceGroupSignature {
-    /// Operator-facing label for a signature, e.g. `"FRAC 11 + 3"`.
+    /// Operator-facing label for a signature, e.g. `"FRAC 3 + 11"`.
+    ///
+    /// A code that states a NON-FRAC scheme is named in full (`"HRAC 9"`) rather than
+    /// folded under the FRAC heading. The whole point of keeping the scheme is that
+    /// "Group 9" means two unrelated chemistries depending on who numbered it, and a
+    /// label that hid that would undo it at the last step.
     nonisolated var displayLabel: String {
-        codes.isEmpty ? "No group recorded" : "FRAC " + codes.joined(separator: " + ")
+        guard !codes.isEmpty else { return "No group recorded" }
+        let foreign = codes.filter { code in
+            guard let scheme = ResistanceGroupCode.scheme(of: code) else { return false }
+            return scheme != .frac
+        }
+        guard !foreign.isEmpty else {
+            return "FRAC " + codes.map { ResistanceGroupCode.bare($0) }.joined(separator: " + ")
+        }
+        return codes
+            .map { code in
+                guard let scheme = ResistanceGroupCode.scheme(of: code) else {
+                    return "Group \(code)"
+                }
+                return "\(scheme.label) \(ResistanceGroupCode.bare(code))"
+            }
+            .joined(separator: " + ")
     }
 }

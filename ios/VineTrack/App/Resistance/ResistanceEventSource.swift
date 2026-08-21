@@ -263,11 +263,30 @@ nonisolated enum ResistanceEventSource {
                     lineId: chemical.id.uuidString,
                     productName: snapshot?.productName ?? (chemical.name.isEmpty ? nil : chemical.name),
                     savedChemicalId: chemical.savedChemicalId?.uuidString,
-                    groups: ResistanceGroupSignature.of(snapshot?.activityGroupCodes ?? []),
+                    groups: groups(from: snapshot),
                     availability: ChemicalIntelligenceAvailability.resolve(snapshot: snapshot)
                 )
             }
         }
+    }
+
+    /// The frozen groups for one line, SCHEME-QUALIFIED wherever the snapshot recorded
+    /// a scheme.
+    ///
+    /// The structured actives are the authority: each carries its own FRAC/HRAC/IRAC
+    /// classification, so a `"9"` on a herbicide active stays HRAC 9 and can never be
+    /// counted against a FRAC 9 rule. `activityGroupCodes` is a denormalised bare copy
+    /// with no scheme, so it is consulted only when the actives carry no classification
+    /// at all — older snapshots that genuinely never recorded one. Those stay bare and
+    /// are resolved by the reading ruleset rather than being promoted to a scheme
+    /// nobody wrote down.
+    nonisolated static func groups(from snapshot: ChemicalLineSnapshot?) -> ResistanceGroupSignature {
+        guard let snapshot else { return .empty }
+        let structured = ResistanceGroupSignature.of(
+            structured: snapshot.activeIngredients.compactMap(\.activityGroup)
+        )
+        if !structured.codes.isEmpty { return structured }
+        return ResistanceGroupSignature.of(snapshot.activityGroupCodes)
     }
 
     /// Builds an `Input` from a real spray record.

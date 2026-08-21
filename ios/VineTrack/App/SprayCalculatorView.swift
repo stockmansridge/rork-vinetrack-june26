@@ -379,6 +379,78 @@ struct SprayCalculatorView: View {
         SprayGuidedFlow(inputs: guidedInputs, profile: sprayProfile)
     }
 
+    // MARK: - Live Resistance Check
+    //
+    // This screen owns NO resistance rules. It assembles the spray being composed and
+    // hands it to `SprayResistanceCheck`, which routes it through the same Planner and
+    // Engine the standalone Resistance Planner uses. Groups detected, previous uses,
+    // repeat warnings, severity and recommendations therefore come from one
+    // implementation — a vineyard shown "good fit" here and "would exceed strategy"
+    // in the Planner would have no reason to believe either.
+
+    private var resistanceSeasonCalendar: ResistanceSeasonCalendar {
+        ResistanceSeasonCalendar(
+            startMonth: store.settings.seasonStartMonth,
+            startDay: store.settings.seasonStartDay,
+            timeZoneIdentifier: store.settings.timezone.isEmpty
+                ? TimeZone.current.identifier
+                : store.settings.timezone
+        )
+    }
+
+    /// From the VINEYARD's stored country — never the phone locale. An Australian
+    /// operator managing a New Zealand vineyard must not drag the Australian strategy
+    /// across the Tasman.
+    private var resistanceJurisdiction: ResistanceJurisdiction {
+        ResistanceJurisdiction.fromCountryCode(store.selectedVineyard?.country)
+    }
+
+    /// The live check for the spray as currently composed.
+    ///
+    /// Evaluated once per render of the chemicals section and shared across the
+    /// product lines, rather than per line: the history scan is over every spray
+    /// record the vineyard holds.
+    private var resistanceCheck: SprayResistanceCheck.Result {
+        let diseases = SprayResistanceCheck.diseases(from: sprayTargets)
+        guard !diseases.isEmpty, let vineyardId = store.selectedVineyardId else {
+            return .notApplicable
+        }
+        let nowMs = Int64((Date().timeIntervalSince1970 * 1000).rounded())
+        let products = chemicalLines.compactMap { line -> ResistancePlannedProduct? in
+            guard let chemical = store.savedChemicals.first(where: { $0.id == line.chemicalId })
+            else { return nil }
+            return SprayResistanceCheck.product(
+                from: chemical,
+                lineId: line.id.uuidString,
+                // Registered-use evidence is disease-specific, so it is only stated
+                // when this spray targets exactly one disease. Otherwise it stays
+                // unknown rather than being asserted for the wrong one.
+                disease: diseases.count == 1 ? diseases[0] : nil
+            )
+        }
+        // The SAME history adapter the Planner uses, so neither surface can be
+        // reading a different set of past applications.
+        let inputs = store.sprayRecords.map { ResistanceEventSource.input(from: $0) }
+        let history = ResistanceEventSource.events(
+            from: inputs,
+            seasonCalendar: resistanceSeasonCalendar
+        )
+        return SprayResistanceCheck.evaluate(
+            SprayResistanceCheck.Request(
+                vineyardId: vineyardId.uuidString,
+                blockIds: selectedPaddocks.map { $0.id.uuidString },
+                diseases: diseases,
+                products: products,
+                jurisdiction: resistanceJurisdiction,
+                season: resistanceSeasonCalendar.season(epochMs: nowMs),
+                seasonCalendar: resistanceSeasonCalendar,
+                events: history.events,
+                unresolvedApplications: history.unresolvedBlockApplications,
+                nowMs: nowMs
+            )
+        )
+    }
+
     /// Whether a growth stage has genuinely been assigned for the selection.
     private var isGrowthStageAssigned: Bool {
         guard !selectedPaddockIds.isEmpty else { return false }
@@ -1873,7 +1945,10 @@ struct SprayCalculatorView: View {
     }
 
     private var chemicalLinesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        // Evaluated once here and shared by every line below, rather than recomputed
+        // per product: the check reads the vineyard's whole spray history.
+        let check = resistanceCheck
+        return VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Chemicals", icon: "flask")
 
             ForEach($chemicalLines) { $line in
@@ -1905,11 +1980,13 @@ struct SprayCalculatorView: View {
                         GuidedProductCalculationRow(line: planLine)
                     }
 
-                    // Reserved insertion point for the future Resistance Check,
-                    // immediately beneath the chemistry it will judge. Renders
-                    // nothing today — a fabricated "no issues" verdict would be
-                    // worse than silence.
-                    ResistanceCheckSlot(isApplicable: flow.isResistanceCheckApplicable)
+                    // The Live Resistance Check, immediately beneath the chemistry
+                    // it judges. Shows only the findings that concern the groups
+                    // THIS product carries; silence is never dressed up as a pass.
+                    ResistanceCheckSlot(
+                        isApplicable: flow.isResistanceCheckApplicable,
+                        findings: check.findings(forProductId: line.id.uuidString)
+                    )
                 }
                 .padding(.bottom, 4)
             }

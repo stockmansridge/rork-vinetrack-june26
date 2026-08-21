@@ -79,7 +79,7 @@ nonisolated enum ResistanceDisease: String, Codable, Sendable, Hashable, CaseIte
 
 // MARK: - Group codes and signatures
 
-/// Canonicalisation for FRAC activity group codes.
+/// Canonicalisation for activity group codes.
 ///
 /// Free-text codes reach this engine from Chemical Intelligence, where they are
 /// deliberately not constrained to a hard-coded list. Here they must be
@@ -91,31 +91,72 @@ nonisolated enum ResistanceGroupCode {
     /// spellings never met.
     private static let aliases: [String: String] = ["U8": "50"]
 
+    private static let schemePrefixes: [(String, ChemicalActivityGroupScheme)] = [
+        ("FRAC", .frac), ("HRAC", .hrac), ("IRAC", .irac),
+    ]
+
+    /// Canonical form of a raw code, KEEPING the scheme when one was stated.
+    ///
+    /// `"HRAC 9"` normalises to `"HRAC:9"`, never to `"9"`. Discarding the scheme —
+    /// which this used to do for every prefix it recognised — made HRAC 9
+    /// (glyphosate) indistinguishable from FRAC 9 (anilinopyrimidines), so a
+    /// herbicide line on a spray recorded against powdery mildew could consume a
+    /// real anilinopyrimidine allowance and, worse, satisfy an alternation rule
+    /// with chemistry that has no fungicidal activity at all.
+    ///
+    /// A code with NO stated scheme stays bare. That is an honest unknown and is
+    /// resolved later against the ruleset doing the reading — see
+    /// `ResistanceGroupSignature.projected(into:)`.
     nonisolated static func normalize(_ raw: String?) -> String? {
         guard var text = raw?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
               !text.isEmpty else { return nil }
-        for prefix in ["FRAC", "GROUP", "HRAC", "IRAC"] where text.hasPrefix(prefix) {
-            text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+        var scheme: ChemicalActivityGroupScheme?
+        for (prefix, candidate) in schemePrefixes where text.hasPrefix(prefix) {
+            scheme = candidate
+            text = String(text.dropFirst(prefix.count))
+            break
         }
+        if text.hasPrefix("GROUP") { text = String(text.dropFirst("GROUP".count)) }
         text = text.trimmingCharacters(in: CharacterSet(charactersIn: ": ")).trimmingCharacters(in: .whitespaces)
         // "50 (U8)" -> "50"
         if let open = text.firstIndex(of: "(") {
             text = String(text[text.startIndex..<open]).trimmingCharacters(in: .whitespaces)
         }
         if text.isEmpty { return nil }
-        return aliases[text] ?? text
+        let bare = aliases[text] ?? text
+        guard let scheme else { return bare }
+        return "\(scheme.rawValue.uppercased()):\(bare)"
+    }
+
+    /// The scheme a canonical code states, or nil when it states none.
+    nonisolated static func scheme(of code: String) -> ChemicalActivityGroupScheme? {
+        guard let separator = code.firstIndex(of: ":") else { return nil }
+        return ChemicalActivityGroupScheme(
+            rawValue: String(code[code.startIndex..<separator]).lowercased()
+        )
+    }
+
+    /// The code without its scheme: `"HRAC:9"` -> `"9"`.
+    nonisolated static func bare(_ code: String) -> String {
+        guard let separator = code.firstIndex(of: ":") else { return code }
+        return String(code[code.index(after: separator)...])
     }
 
     /// Numeric groups ascending, then alphanumeric codes (`U6`) after them, so a
     /// signature's key is stable regardless of the order products were recorded.
+    /// Codes sharing a number sort by their scheme, keeping FRAC 3 and IRAC 3
+    /// adjacent but distinct.
     nonisolated static func isOrderedBefore(_ lhs: String, _ rhs: String) -> Bool {
-        let left = Int(lhs)
-        let right = Int(rhs)
+        let leftBare = bare(lhs)
+        let rightBare = bare(rhs)
+        if leftBare == rightBare { return lhs < rhs }
+        let left = Int(leftBare)
+        let right = Int(rightBare)
         switch (left, right) {
         case let (l?, r?): return l < r
         case (_?, nil): return true
         case (nil, _?): return false
-        default: return lhs < rhs
+        default: return leftBare < rightBare
         }
     }
 }
@@ -148,10 +189,63 @@ nonisolated struct ResistanceGroupSignature: Codable, Sendable, Hashable {
             seen.insert(code)
             result.append(code)
         }
+        // "3" and "FRAC:3" are one chemistry stated with and without its scheme.
+        // Keeping both would fabricate a co-formulation out of a single active, so
+        // the qualified form — the one carrying more information — absorbs the bare
+        // one. "FRAC:3" and "IRAC:3" are NOT the same and both survive.
+        let qualifiedBareCodes = Set(
+            result
+                .filter { ResistanceGroupCode.scheme(of: $0) != nil }
+                .map { ResistanceGroupCode.bare($0) }
+        )
+        result.removeAll {
+            ResistanceGroupCode.scheme(of: $0) == nil && qualifiedBareCodes.contains($0)
+        }
         return ResistanceGroupSignature(codes: result.sorted(by: ResistanceGroupCode.isOrderedBefore))
     }
 
     nonisolated static func of(_ raw: String...) -> ResistanceGroupSignature { of(raw) }
+
+    /// Scheme-qualified signature built from STRUCTURED Chemical Intelligence.
+    ///
+    /// This is the authoritative path: each group arrives with its own scheme
+    /// recorded, so nothing has to be assumed from the product's category or from
+    /// whichever ruleset happens to be reading it. Groups the classification marks
+    /// as not resistance-relevant (adjuvants, straight nutrition) are excluded
+    /// rather than stored as an empty code.
+    nonisolated static func of(structured groups: [ChemicalActivityGroup]) -> ResistanceGroupSignature {
+        of(
+            groups
+                .filter(\.isResistanceRelevant)
+                .map { "\($0.scheme.rawValue.uppercased()):\($0.code)" }
+        )
+    }
+
+    /// This signature as one classification scheme sees it.
+    ///
+    /// Codes stating a DIFFERENT scheme are dropped: HRAC 9 is not a FRAC 9 spray
+    /// and must never consume a FRAC 9 allowance, nor count as the alternative
+    /// mode of action that a FRAC rule demands.
+    ///
+    /// Codes matching the scheme are reduced to their bare form so published rules —
+    /// written in one scheme's numbering — compare directly.
+    ///
+    /// Codes with NO stated scheme are KEPT. Legitimate VineTrack history stored
+    /// bare codes long before schemes were recorded, and discarding those would
+    /// shrink a rotation count, which is the one direction of error that
+    /// manufactures a clean result. Counting a possible match is the safe way to
+    /// be wrong; missing a real one is not.
+    nonisolated func projected(into scheme: ChemicalActivityGroupScheme) -> ResistanceGroupSignature {
+        var seen: Set<String> = []
+        var result: [String] = []
+        for code in codes {
+            let codeScheme = ResistanceGroupCode.scheme(of: code)
+            guard codeScheme == nil || codeScheme == scheme else { continue }
+            let bare = ResistanceGroupCode.bare(code)
+            if seen.insert(bare).inserted { result.append(bare) }
+        }
+        return ResistanceGroupSignature(codes: result.sorted(by: ResistanceGroupCode.isOrderedBefore))
+    }
 }
 
 // MARK: - Selectors
@@ -443,6 +537,13 @@ nonisolated struct ResistanceRuleset: Codable, Sendable, Hashable {
     nonisolated var jurisdiction: ResistanceJurisdiction
     nonisolated var crop: ResistanceCrop
     nonisolated var disease: ResistanceDisease
+    /// The classification scheme this strategy's group numbers are written in.
+    ///
+    /// Stated rather than implied so the engine can reject chemistry from another
+    /// scheme instead of matching on the bare number. Every strategy VineTrack
+    /// carries today is a fungicide strategy, hence the default — but "Group 9"
+    /// means nothing until this says which body numbered it.
+    nonisolated var scheme: ChemicalActivityGroupScheme = .frac
     nonisolated var strategyName: String
     nonisolated var sourceOrganisation: String
     /// Canonical public location of the strategy.
@@ -467,6 +568,7 @@ nonisolated struct ResistanceRuleset: Codable, Sendable, Hashable {
         jurisdiction: ResistanceJurisdiction,
         crop: ResistanceCrop,
         disease: ResistanceDisease,
+        scheme: ChemicalActivityGroupScheme = .frac,
         strategyName: String,
         sourceOrganisation: String,
         sourceReference: String,
@@ -484,6 +586,7 @@ nonisolated struct ResistanceRuleset: Codable, Sendable, Hashable {
         self.jurisdiction = jurisdiction
         self.crop = crop
         self.disease = disease
+        self.scheme = scheme
         self.strategyName = strategyName
         self.sourceOrganisation = sourceOrganisation
         self.sourceReference = sourceReference

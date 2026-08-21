@@ -67,8 +67,19 @@ nonisolated enum ResistanceEngine {
             return unsupported(request)
         }
 
+        // --- Express every event in the ruleset's own classification scheme ---
+        //
+        // Done ONCE, here, before any counting: a rule that reads "Group 9" means
+        // Group 9 as ITS issuing body numbers it. Projecting at the boundary is what
+        // stops an HRAC 9 herbicide line from satisfying — or breaching — a FRAC 9
+        // fungicide rule, and it does so for every caller at once, so the Planner and
+        // the Spray Calculator cannot end up disagreeing about what a code meant.
+        let scheme = ruleset.scheme
+        let scopedEvents = request.events.map { $0.projected(into: scheme) }
+        let scopedCandidate = request.candidate?.projected(into: scheme)
+
         // --- Scope to the block ---
-        let blockEvents = request.events.filter { $0.blockId == request.blockId }
+        let blockEvents = scopedEvents.filter { $0.blockId == request.blockId }
 
         let excludedPlanned = request.includePlanned
             ? []
@@ -88,7 +99,7 @@ nonisolated enum ResistanceEngine {
         // A candidate is only relevant to the block AND disease being evaluated.
         // Without the block check, assessing a spray planned for block B would
         // silently consume block A's allowance.
-        let candidate = request.candidate.flatMap {
+        let candidate = scopedCandidate.flatMap {
             $0.targets(request.disease) && $0.blockId == request.blockId ? $0 : nil
         }
 

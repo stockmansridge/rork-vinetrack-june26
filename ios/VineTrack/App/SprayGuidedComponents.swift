@@ -208,17 +208,83 @@ struct GuidedCalculatedPanel<Content: View>: View {
     }
 }
 
-/// The reserved slot for the future Resistance Check.
+/// The Live Resistance Check for ONE product line.
 ///
-/// Deliberately renders NOTHING when disabled: showing a fake "no resistance
-/// issues" result would be worse than showing nothing, because an operator would
-/// trust it. The rules engine is a separate task; this only fixes the location —
-/// immediately beneath the product line it will judge.
+/// Every word it shows is engine output. It receives findings already produced by
+/// `SprayResistanceCheck` — which routes the spray through the same Planner and
+/// Engine the standalone Resistance Planner uses — and formats them. It counts
+/// nothing, compares nothing, and decides no severity of its own.
+///
+/// Renders NOTHING when there is no finding. A "no resistance issues" badge would
+/// be trusted, and this panel is not in a position to make that claim: silence here
+/// means only that no published rule fired for the groups THIS product carries.
+/// Where the engine genuinely cannot reach a conclusion it says so, as a finding.
 struct ResistanceCheckSlot: View {
     let isApplicable: Bool
+    let findings: [ResistanceRuleResult]
+
+    init(isApplicable: Bool, findings: [ResistanceRuleResult] = []) {
+        self.isApplicable = isApplicable
+        self.findings = findings
+    }
 
     var body: some View {
-        EmptyView()
+        if isApplicable, !findings.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(findings) { finding in
+                    ResistanceFindingRow(finding: finding)
+                }
+            }
+            .padding(.top, 2)
+        }
+    }
+}
+
+/// One engine finding, shown verbatim enough to be argued with.
+///
+/// The published clause is always named. A resistance warning an operator cannot
+/// trace back to a strategy is one they can only obey or ignore — never check.
+struct ResistanceFindingRow: View {
+    let finding: ResistanceRuleResult
+
+    private var tint: Color {
+        switch finding.severity {
+        case .critical: return .red
+        case .warning: return .orange
+        case .indeterminate: return .yellow
+        case .advisory, .informational: return .secondary
+        }
+    }
+
+    private var icon: String {
+        switch finding.severity {
+        case .critical: return "exclamationmark.octagon.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .indeterminate: return "questionmark.circle.fill"
+        case .advisory, .informational: return "info.circle"
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: icon)
+                .font(.caption2)
+                .foregroundStyle(tint)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(finding.explanation)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(finding.sourceReference)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(tint.opacity(0.10))
+        .clipShape(.rect(cornerRadius: 8))
     }
 }
 

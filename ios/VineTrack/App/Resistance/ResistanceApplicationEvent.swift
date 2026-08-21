@@ -160,6 +160,23 @@ nonisolated struct ResistanceApplicationEvent: Codable, Sendable, Hashable, Iden
         componentGroups.filter { !groups.contains($0) }
     }
 
+    /// This event as one classification scheme sees it.
+    ///
+    /// Applied by the engine before anything is counted, so every rule compares
+    /// like with like. A product line whose chemistry belongs to another scheme
+    /// keeps its LINE — it was really in the tank, and its verification state still
+    /// governs how far the application can be trusted — but contributes no groups,
+    /// exactly as an adjuvant does.
+    nonisolated func projected(into scheme: ChemicalActivityGroupScheme) -> ResistanceApplicationEvent {
+        var projected = self
+        projected.products = products.map { product in
+            var line = product
+            line.groups = product.groups.projected(into: scheme)
+            return line
+        }
+        return projected
+    }
+
     /// Chronological ordering: by instant, then by application ID.
     ///
     /// The ID tie-breaker is what makes results reproducible. Two sprays on the same
