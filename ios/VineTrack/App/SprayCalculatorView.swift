@@ -304,8 +304,26 @@ struct SprayCalculatorView: View {
         chemicalLines.compactMap { line -> SprayProductLineInput? in
             guard let chemical = store.savedChemicals.first(where: { $0.id == line.chemicalId })
             else { return nil }
-            let savedRate = chemical.rates.first(where: { $0.id == line.selectedRateId })
-            let rate = line.overrideRate ?? savedRate?.value ?? chemical.ratePerHa
+            // Structured `registeredUses[].rates` are authoritative; the
+            // resolver falls back to the legacy `rates` array only when the
+            // record carries no structured rate at all. It also refuses a rate
+            // whose basis disagrees with the line's, so a per-hectare rate can
+            // never be dosed against carrier volume (or the reverse), and a
+            // range or a reference-only entry never seeds a dose — the operator
+            // establishes those through the override field.
+            let seededRate = SprayRegisteredUseRates.seedValue(
+                for: chemical,
+                rateId: line.selectedRateId,
+                basis: line.basis
+            )
+            // The legacy `ratePerHa` scalar is the last-resort fallback for
+            // pre-Chemical-Intelligence records, and is a PER-HECTARE number:
+            // it is never valid for a per-100 L line, and never consulted once
+            // the record carries structured rates.
+            let legacyScalarRate: Double? = SprayRegisteredUseRates.hasStructuredRates(chemical)
+                ? nil
+                : (line.basis == .perHectare ? chemical.ratePerHa : nil)
+            let rate = line.overrideRate ?? seededRate ?? legacyScalarRate ?? 0
             let chosenAreaBasis = productAreaBasis[line.id]
             let basis: SprayProductRateBasis = {
                 switch line.basis {
@@ -577,13 +595,17 @@ struct SprayCalculatorView: View {
                     unresolved.append(name.isEmpty ? "Unnamed product" : name)
                     continue
                 }
-                let basis: RateBasis = chem.ratePer100L > 0 ? .per100Litres : .perHectare
-                let rate = saved.rates.first(where: { $0.basis == basis }) ?? saved.rates.first
+                let preferredBasis: RateBasis = chem.ratePer100L > 0 ? .per100Litres : .perHectare
+                // Structured registered-use rates first, legacy rates only when
+                // the record has none.
+                let selection = SprayRegisteredUseRates.defaultSelection(
+                    for: saved, preferring: preferredBasis
+                )
                 lines.append(
                     ChemicalLine(
                         chemicalId: saved.id,
-                        selectedRateId: rate?.id ?? UUID(),
-                        basis: rate?.basis ?? basis
+                        selectedRateId: selection?.id ?? UUID(),
+                        basis: selection?.basis ?? preferredBasis
                     )
                 )
             }
@@ -1894,12 +1916,12 @@ struct SprayCalculatorView: View {
 
             Button {
                 if let chem = store.savedChemicals.first {
-                    let rate = chem.rates.first
+                    let selection = SprayRegisteredUseRates.defaultSelection(for: chem)
                     chemicalLines.append(
                         ChemicalLine(
                             chemicalId: chem.id,
-                            selectedRateId: rate?.id ?? UUID(),
-                            basis: rate?.basis ?? .perHectare
+                            selectedRateId: selection?.id ?? UUID(),
+                            basis: selection?.basis ?? .perHectare
                         )
                     )
                 }
@@ -3032,14 +3054,82 @@ private struct CalcChemicalLineCard: View {
         chemicals.first(where: { $0.id == line.chemicalId })
     }
 
-    private var selectedRate: ChemicalRate? {
-        selectedChemical?.rates.first(where: { $0.id == line.selectedRateId })
+    /// Every rate this product offers — structured registered-use rates when
+    /// the record has them, the legacy `rates` array only when it does not.
+    private var offeredRates: [SpraySelectableRate] {
+        guard let chem = selectedChemical else { return [] }
+        return SprayRegisteredUseRates.rates(for: chem)
     }
 
-    /// Recommended rate expressed in the chemical's display unit.
-    private var recommendedRateDisplay: Double {
-        guard let chem = selectedChemical, let rate = selectedRate else { return 0 }
-        return chem.unit.fromBase(rate.value)
+    private var selectedOfferedRate: SpraySelectableRate? {
+        offeredRates.first { $0.id == line.selectedRateId }
+    }
+
+    /// Offered rates grouped by the registered use they belong to.
+    ///
+    /// A rate detached from its crop and target is just a number, so the menu
+    /// keeps them under their own heading rather than pooling everything into
+    /// one anonymous list.
+    private var rateGroups: [RateGroup] {
+        var order: [String] = []
+        var byTitle: [String: [SpraySelectableRate]] = [:]
+        for rate in offeredRates {
+            let key = rate.useTitle ?? ""
+            if byTitle[key] == nil { order.append(key) }
+            byTitle[key, default: []].append(rate)
+        }
+        return order.map { key in
+            RateGroup(id: key, title: key.isEmpty ? nil : key, rates: byTitle[key] ?? [])
+        }
+    }
+
+    private struct RateGroup: Identifiable {
+        let id: String
+        let title: String?
+        let rates: [SpraySelectableRate]
+    }
+
+    /// The seedable rate in the chemical's display unit, when the current
+    /// selection actually provides one. `nil` for a range, a reference-only
+    /// entry or an unresolved rate — all of which the operator must resolve.
+    private var recommendedRateDisplay: Double? {
+        guard let chem = selectedChemical,
+              let base = selectedOfferedRate?.seed.seedableValue else { return nil }
+        return chem.unit.fromBase(base)
+    }
+
+    /// The rate menu, shared by the compact basis chip and the Rate row.
+    @ViewBuilder
+    private func rateMenuItems(showsCheckmark: Bool) -> some View {
+        ForEach(rateGroups) { group in
+            Section(group.title ?? "Saved rates") {
+                ForEach(group.rates) { rate in
+                    if rate.isSelectable {
+                        Button {
+                            line.selectedRateId = rate.id
+                            if let basis = rate.basis { line.basis = basis }
+                        } label: {
+                            HStack {
+                                Text(rate.menuText)
+                                if showsCheckmark, line.selectedRateId == rate.id {
+                                    Spacer()
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    } else {
+                        // Reference-only (`basis:"other"`) and number-less rates
+                        // are SHOWN so the operator can read what the label
+                        // actually says, but they can never be chosen as an
+                        // application rate.
+                        Button {} label: {
+                            Label(rate.menuText, systemImage: "info.circle")
+                        }
+                        .disabled(true)
+                    }
+                }
+            }
+        }
     }
 
     var body: some View {
@@ -3086,36 +3176,11 @@ private struct CalcChemicalLineCard: View {
                     .accessibilityLabel("Open product page (not the official label)")
                 }
                 Spacer()
-                if let chem = selectedChemical, !chem.rates.isEmpty {
+                if !offeredRates.isEmpty {
                     Menu {
-                        let haRates = chem.rates.filter { $0.basis == .perHectare }
-                        let per100LRates = chem.rates.filter { $0.basis == .per100Litres }
-                        if !haRates.isEmpty {
-                            Section("Per Hectare") {
-                                ForEach(haRates) { rate in
-                                    Button {
-                                        line.selectedRateId = rate.id
-                                        line.basis = rate.basis
-                                    } label: {
-                                        Text("\(rate.label): \(SprayRateFormatter.format(chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/ha")
-                                    }
-                                }
-                            }
-                        }
-                        if !per100LRates.isEmpty {
-                            Section("Per 100L Water") {
-                                ForEach(per100LRates) { rate in
-                                    Button {
-                                        line.selectedRateId = rate.id
-                                        line.basis = rate.basis
-                                    } label: {
-                                        Text("\(rate.label): \(SprayRateFormatter.format(chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/100L")
-                                    }
-                                }
-                            }
-                        }
+                        rateMenuItems(showsCheckmark: false)
                     } label: {
-                        let currentBasis = chem.rates.first(where: { $0.id == line.selectedRateId })?.basis ?? line.basis
+                        let currentBasis = selectedOfferedRate?.basis ?? line.basis
                         HStack(spacing: 4) {
                             Text(currentBasis == .perHectare ? "Per Ha" : "Per 100L")
                                 .font(.caption2.weight(.medium))
@@ -3149,10 +3214,14 @@ private struct CalcChemicalLineCard: View {
                         Button {
                             if line.chemicalId != chem.id {
                                 line.chemicalId = chem.id
-                                if let firstRate = chem.rates.first {
-                                    line.selectedRateId = firstRate.id
-                                    line.basis = firstRate.basis
-                                }
+                                // Re-seed from the NEW product's own rates. Left
+                                // alone, a stale `selectedRateId` keeps pointing
+                                // at the previous product's rate and the line
+                                // silently keeps that product's basis.
+                                let selection = SprayRegisteredUseRates
+                                    .defaultSelection(for: chem)
+                                line.selectedRateId = selection?.id ?? UUID()
+                                if let basis = selection?.basis { line.basis = basis }
                             }
                         } label: {
                             HStack {
@@ -3186,58 +3255,15 @@ private struct CalcChemicalLineCard: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
 
-            if let chem = selectedChemical, !chem.rates.isEmpty {
-                let haRates = chem.rates.filter { $0.basis == .perHectare }
-                let per100LRates = chem.rates.filter { $0.basis == .per100Litres }
-
+            if let chem = selectedChemical, !offeredRates.isEmpty {
                 Divider().padding(.leading, 14)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Rate").font(.caption).foregroundStyle(.secondary)
                     Menu {
-                        if !haRates.isEmpty {
-                            Section("Per Hectare") {
-                                ForEach(haRates) { rate in
-                                    Button {
-                                        line.selectedRateId = rate.id
-                                        line.basis = rate.basis
-                                    } label: {
-                                        HStack {
-                                            Text("\(rate.label): \(SprayRateFormatter.format(chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/ha")
-                                            if line.selectedRateId == rate.id {
-                                                Spacer()
-                                                Image(systemName: "checkmark")
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if !per100LRates.isEmpty {
-                            Section("Per 100L Water") {
-                                ForEach(per100LRates) { rate in
-                                    Button {
-                                        line.selectedRateId = rate.id
-                                        line.basis = rate.basis
-                                    } label: {
-                                        HStack {
-                                            Text("\(rate.label): \(SprayRateFormatter.format(chem.unit.fromBase(rate.value))) \(chem.unit.rawValue)/100L")
-                                            if line.selectedRateId == rate.id {
-                                                Spacer()
-                                                Image(systemName: "checkmark")
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        rateMenuItems(showsCheckmark: true)
                     } label: {
-                        let selectedRate = chem.rates.first(where: { $0.id == line.selectedRateId })
-                        let label: String = {
-                            guard let r = selectedRate else { return "Select rate" }
-                            let suffix = r.basis == .perHectare ? "/ha" : "/100L"
-                            return "\(r.label): \(SprayRateFormatter.format(chem.unit.fromBase(r.value))) \(chem.unit.rawValue)\(suffix)"
-                        }()
+                        let label: String = selectedOfferedRate?.menuText ?? "Select rate"
                         HStack(spacing: 8) {
                             Text(label)
                                 .font(.subheadline.weight(.medium))
@@ -3308,7 +3334,7 @@ private struct CalcChemicalLineCard: View {
             }
             HStack(spacing: 8) {
                 TextField(
-                    SprayRateFormatter.format(recommendedRateDisplay),
+                    recommendedRateDisplay.map { SprayRateFormatter.format($0) } ?? "Enter rate",
                     text: $overrideText
                 )
                 .keyboardType(.decimalPad)
@@ -3328,12 +3354,33 @@ private struct CalcChemicalLineCard: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
-            Text("Recommended: \(SprayRateFormatter.format(recommendedRateDisplay)) \(chem.unit.rawValue)\(basisLabel)")
+            rateGuidanceText(chem: chem, basisLabel: basisLabel)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
+    }
+
+    /// What the field is being measured against.
+    ///
+    /// A single label rate reads as a recommendation. A RANGE deliberately does
+    /// not: the band is shown verbatim and the operator is asked for the rate
+    /// they are actually applying, because picking a point inside a registered
+    /// range is their decision and never VineTrack's. A reference-only
+    /// (`basis:"other"`) entry says so in the label's own words.
+    @ViewBuilder
+    private func rateGuidanceText(chem: SavedChemical, basisLabel: String) -> some View {
+        if let recommendedRateDisplay {
+            Text("Recommended: \(SprayRateFormatter.format(recommendedRateDisplay)) "
+                 + "\(chem.unit.rawValue)\(basisLabel)")
+        } else if let rate = selectedOfferedRate, rate.requiresOperatorRate {
+            Text("Label rate: \(rate.displayText) — enter the rate you are applying.")
+        } else if let rate = selectedOfferedRate {
+            Text("\(rate.displayText) — enter the rate you are applying.")
+        } else {
+            Text("Enter the rate you are applying.")
+        }
     }
 
     private func syncOverrideText() {

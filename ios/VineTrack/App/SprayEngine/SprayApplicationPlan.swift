@@ -98,6 +98,10 @@ nonisolated struct SprayProductLineResult: Sendable, Hashable {
     /// fix the wrong one wastes a spray window.
     var unresolvedReason: SprayProductUnresolvedReason? {
         guard isUnresolved else { return nil }
+        // The rate is checked first: when the product itself has no rate, no
+        // amount of block or carrier geometry will fix the line, and pointing
+        // the operator at their block setup would send them to the wrong screen.
+        guard rate.isFinite, rate > 0 else { return .rateUnavailable }
         switch basis {
         case .wholeBlockArea: return .grossAreaUnavailable
         case .treatedArea: return .treatedAreaUnavailable
@@ -113,6 +117,10 @@ nonisolated enum SprayProductUnresolvedReason: Sendable, Hashable {
     case treatedAreaUnavailable
     case carrierUnavailable
     case rowLengthUnavailable
+    /// The product line carries no usable rate. Distinct from every other case
+    /// here: the missing input belongs to the PRODUCT, not the block geometry
+    /// or the carrier step.
+    case rateUnavailable
 
     var title: String {
         switch self {
@@ -120,11 +128,15 @@ nonisolated enum SprayProductUnresolvedReason: Sendable, Hashable {
         case .treatedAreaUnavailable: return "Treated area unavailable"
         case .carrierUnavailable: return "Carrier volume required"
         case .rowLengthUnavailable: return "Row length unavailable"
+        case .rateUnavailable: return "Product rate required"
         }
     }
 
     var message: String {
         switch self {
+        case .rateUnavailable:
+            return "Enter the label rate for this product. VineTrack does not apply a "
+                + "product at an assumed rate."
         case .grossAreaUnavailable:
             return "Select blocks with an area before this product can be calculated."
         case .treatedAreaUnavailable:

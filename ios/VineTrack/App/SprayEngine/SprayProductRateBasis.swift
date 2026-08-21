@@ -152,12 +152,19 @@ nonisolated enum SprayProductQuantityCalculator {
     ///
     /// Returns `nil` when the input this basis depends on is unavailable —
     /// never 0, which would understate a dose.
+    ///
+    /// An absent rate is one of those unavailable inputs. A product with no
+    /// resolvable rate is UNRESOLVED, not a product applied at zero: returning
+    /// 0 here let an unrated line report itself as calculated, pass the
+    /// Products step, and freeze "0 L applied" into a compliance record. The
+    /// rate must therefore be strictly positive — the same standard every
+    /// measured input on this type is already held to.
     static func totalQuantity(
         rate: Double,
         basis: SprayProductRateBasis,
         context: SprayQuantityContext
     ) -> Double? {
-        guard rate.isFinite, rate >= 0 else { return nil }
+        guard rate.isFinite, rate > 0 else { return nil }
         switch basis {
         case .wholeBlockArea:
             guard context.grossAreaHectares.isFinite, context.grossAreaHectares > 0 else { return nil }
