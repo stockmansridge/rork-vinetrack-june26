@@ -102,6 +102,13 @@ struct SprayCalculatorView: View {
     /// Blocks the originating plan/job proposes — applied once at prefill,
     /// fully editable afterwards.
     private let prefillPaddockIds: [UUID]
+    /// Program Step configuration: declared intent and identities the operator
+    /// already chose once (growth stage, targets, equipment, tractor).
+    ///
+    /// Configuration ONLY. No chemistry travels through here — products are
+    /// still resolved against today's Chemical Store below, and the snapshot is
+    /// captured fresh at save time.
+    private let prefillProgram: SprayProgramPrefill?
     @State private var prefillApplied: Bool = false
     /// Template/duplicate products that no longer resolve to a saved chemical.
     /// Surfaced so a missing product is a visible gap, never a silent one.
@@ -110,11 +117,13 @@ struct SprayCalculatorView: View {
     init(
         prefillRecord: SprayRecord? = nil,
         originSprayJobId: UUID? = nil,
-        prefillPaddockIds: [UUID] = []
+        prefillPaddockIds: [UUID] = [],
+        prefillProgram: SprayProgramPrefill? = nil
     ) {
         self.prefillRecord = prefillRecord
         self.originSprayJobId = originSprayJobId
         self.prefillPaddockIds = prefillPaddockIds
+        self.prefillProgram = prefillProgram
         if let r = prefillRecord {
             let baseName = r.sprayReference.isEmpty ? "" : r.sprayReference
             let prefilledName: String = {
@@ -629,16 +638,57 @@ struct SprayCalculatorView: View {
         guard let r = prefillRecord, !prefillApplied else { return }
         prefillApplied = true
 
-        if !r.equipmentType.isEmpty {
+        // Equipment and tractor by IDENTITY first, display name only as the
+        // legacy fallback. A renamed spray unit still resolves, and a name that
+        // matches nothing simply leaves the step for the operator.
+        let equipmentId = r.sprayEquipmentId ?? prefillProgram?.equipmentId
+        if let equipmentId, store.sprayEquipment.contains(where: { $0.id == equipmentId }) {
+            selectedEquipmentId = equipmentId
+        } else if !r.equipmentType.isEmpty {
             selectedEquipmentId = store.sprayEquipment.first(where: { $0.name == r.equipmentType })?.id
         }
-        if !r.tractor.isEmpty {
+        let tractorId = r.tractorId ?? prefillProgram?.tractorId
+        if let tractorId, store.tractors.contains(where: { $0.id == tractorId }) {
+            selectedTractorId = tractorId
+        } else if !r.tractor.isEmpty {
             selectedTractorId = store.tractors.first(where: { $0.displayName == r.tractor || $0.name == r.tractor })?.id
         }
+
+        // Targets (guided Step 3). Taken from the Program Step's declared
+        // intent, falling back to the record's own frozen targets. This feeds
+        // the EXISTING `sprayTargets` state — there is no second target model
+        // and no alternative calculation path.
+        //
+        // `sprayHeadTarget` is deliberately NOT prefilled: no Program Step
+        // source carries it, and defaulting where the head is aimed would
+        // silently decide a banded application's treated area.
+        let programTargets = prefillProgram?.targets ?? []
+        let recordTargets = r.applicationGeometry?.targets ?? []
+        let resolvedTargets = programTargets.isEmpty ? recordTargets : programTargets
+        if !resolvedTargets.isEmpty {
+            sprayTargets = Set(resolvedTargets)
+        }
+
+        // Growth stage (guided Step 4) from the canonical `growth_stage_code`,
+        // mapped onto the calculator's own stage state rather than appended to
+        // notes. Compared as STAGE NUMBERS through the existing parser so
+        // "EL12", "E-L 12" and "el 12" all land on the same stage.
+        if let code = prefillProgram?.growthStageCode,
+           let stageNumber = ELStageParser.stageNumber(fromCode: code),
+           let match = phenologyStages.first(where: {
+               ELStageParser.stageNumber(fromCode: $0.code) == stageNumber
+           }) {
+            sharedGrowthStageId = match.id
+            growthStageMode = .same
+        }
+
         if !prefillPaddockIds.isEmpty {
             // Plan/job prefill: only the blocks the plan genuinely proposed.
             selectedPaddockIds = Set(prefillPaddockIds)
         } else if let trip = store.trips.first(where: { $0.id == r.tripId }) {
+            // A generic Program Step has no trip and no block scope, so this
+            // resolves to nothing and the operator still chooses at Step 2.
+            // Blocks are never invented from the vineyard's current paddocks.
             selectedPaddockIds = Set(trip.paddockIds)
         }
 

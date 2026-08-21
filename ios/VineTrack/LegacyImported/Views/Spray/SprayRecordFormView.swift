@@ -10,6 +10,11 @@ struct SprayRecordFormView: View {
     let tripId: UUID
     let paddockIds: [UUID]
     var existingRecord: SprayRecord?
+    /// Whether a NEW record created here is a reusable Program Step rather than
+    /// an application. Ignored when editing — an existing record's own flag
+    /// always wins, so opening a Program Step to edit it can never demote it to
+    /// an operational record (or promote a spray into the program).
+    var createsProgramStep: Bool = false
 
     @State private var date: Date
     @State private var startTime: Date
@@ -47,10 +52,16 @@ struct SprayRecordFormView: View {
         var id: String { "\(tankIndex)-\(chemicalIndex)" }
     }
 
-    init(tripId: UUID, paddockIds: [UUID], existingRecord: SprayRecord? = nil) {
+    init(
+        tripId: UUID,
+        paddockIds: [UUID],
+        existingRecord: SprayRecord? = nil,
+        createsProgramStep: Bool = false
+    ) {
         self.tripId = tripId
         self.paddockIds = paddockIds
         self.existingRecord = existingRecord
+        self.createsProgramStep = createsProgramStep
         let r = existingRecord
         _date = State(initialValue: r?.date ?? Date())
         _startTime = State(initialValue: r?.startTime ?? Date())
@@ -711,7 +722,7 @@ struct SprayRecordFormView: View {
             machineId: machineId,
             tractorId: tractorId,
             sprayEquipmentId: sprayEquipmentId,
-            isTemplate: existingRecord?.isTemplate ?? false,
+            isTemplate: existingRecord?.isTemplate ?? createsProgramStep,
             // Attribution is recorded here, and the rest of any existing frozen
             // snapshot is carried through verbatim. Rebuilding the snapshot from
             // scratch would wipe the calculated geometry off a record that was

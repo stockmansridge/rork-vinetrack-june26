@@ -234,6 +234,12 @@ extension BackendSprayJobTemplate {
                 ratePer100L: parsed.per100L ? baseRate : 0,
                 costPerUnit: 0,
                 unit: parsed.unit,
+                // The basis the portal's own unit string states. Previously
+                // left nil, so a `mL/100L` program line reloaded as a
+                // whole-block-area rate and reported as 0/ha — the same class
+                // of defect P10 fixed on the CSV import path. A line with no
+                // rate at all stays nil: an honest "not stated".
+                rateBasis: baseRate > 0 ? (parsed.per100L ? .per100Litres : .wholeBlockArea) : nil,
                 savedChemicalId: line.chemicalId
             )
         }
@@ -247,8 +253,18 @@ extension BackendSprayJobTemplate {
             chemicals: chemicals
         )
 
+        // The portal's target wording, mapped onto VineTrack's typed targets
+        // where it maps cleanly. Carrying it structurally is what lets the
+        // guided calculator prefill Step 3 instead of the operator re-deriving
+        // the target from a sentence in the notes.
+        let mappedTargets = SprayProgramTargetParser.targets(from: target)
+
+        // Only fall back to the old "Target: ..." notes prefix when NOTHING
+        // mapped — a label may name a target VineTrack has no case for
+        // (Phomopsis, Black Spot), and that wording must not be lost. When it
+        // did map, the prefix would just duplicate what the UI now shows.
         var combinedNotes = notes ?? ""
-        if let target, !target.isEmpty {
+        if let target, !target.isEmpty, mappedTargets.isEmpty {
             combinedNotes = combinedNotes.isEmpty ? "Target: \(target)" : "Target: \(target)\n\(combinedNotes)"
         }
 
@@ -258,8 +274,21 @@ extension BackendSprayJobTemplate {
             sprayReference: name,
             tanks: [tank],
             notes: combinedNotes,
+            // Already-synced identities the previous adapter decoded and then
+            // dropped. Passing them through lets a Program Step prefill the
+            // equipment and tractor the portal chose, by ID rather than by
+            // matching a display name.
+            tractorId: tractorId,
+            sprayEquipmentId: equipmentId,
             isTemplate: true,
-            operationType: operationType.flatMap { OperationType(rawValue: $0) } ?? .foliarSpray
+            operationType: operationType.flatMap { OperationType(rawValue: $0) } ?? .foliarSpray,
+            // Targets only — a template has no geometry, and this snapshot
+            // never reaches history. `blocks` stays nil, which reads as
+            // "blocks not recorded", because a reusable step does not know
+            // where it is going.
+            applicationGeometry: mappedTargets.isEmpty
+                ? nil
+                : SprayApplicationSnapshot(targets: mappedTargets)
         )
     }
 }
