@@ -347,8 +347,7 @@ struct ChemicalMatchFlowView: View {
                     // value. Derived from the payload's own cited sources.
                     ChemicalRegisteredUsesView(
                         uses: intel.registeredUses,
-                        hasManufacturerLabelSource: intel.verification.sources
-                            .contains { $0.kind == .manufacturerLabel }
+                        hasManufacturerLabelSource: intel.hasManufacturerLabelSource
                     )
                 }
 

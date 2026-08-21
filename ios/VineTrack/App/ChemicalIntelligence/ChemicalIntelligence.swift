@@ -107,6 +107,15 @@ nonisolated struct ChemicalIntelligence: Codable, Sendable, Hashable {
     /// Distinct label rate bases across all registered uses.
     nonisolated var labelRateBases: [ChemicalLabelRateBasis] { registeredUses.rateBases }
 
+    /// Whether this payload cites the manufacturer's approved label as a source.
+    ///
+    /// Read ONLY as evidence that a label was actually consulted — it decides
+    /// the wording of a label-parsed zero-day withholding period (see
+    /// `ChemicalWithholdingDisplay`) and never changes a value.
+    nonisolated var hasManufacturerLabelSource: Bool {
+        verification.sources.contains { $0.kind == .manufacturerLabel }
+    }
+
     /// The trust level the evidence actually supports.
     ///
     /// Always prefer this over `verification.status`: it re-derives the claim

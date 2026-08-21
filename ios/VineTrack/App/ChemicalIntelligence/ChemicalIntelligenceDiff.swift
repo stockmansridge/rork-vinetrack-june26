@@ -222,7 +222,13 @@ nonisolated enum ChemicalIntelligenceDiffer {
         diffIdentity(existing.registration, candidate.registration, into: &changes)
         diffActives(existing.activeIngredients, candidate.activeIngredients, into: &changes)
         diffGroups(existing, candidate, into: &changes)
-        diffUses(existing.registeredUses, candidate.registeredUses, into: &changes)
+        diffUses(
+            existing.registeredUses,
+            candidate.registeredUses,
+            currentHasLabelSource: existing.hasManufacturerLabelSource,
+            candidateHasLabelSource: candidate.hasManufacturerLabelSource,
+            into: &changes
+        )
         diffEvidence(existing, candidate, into: &changes)
 
         return ChemicalIntelligenceDiff(changes: changes)
@@ -410,6 +416,8 @@ nonisolated enum ChemicalIntelligenceDiffer {
     private static func diffUses(
         _ current: [ChemicalRegisteredUse],
         _ candidate: [ChemicalRegisteredUse],
+        currentHasLabelSource: Bool,
+        candidateHasLabelSource: Bool,
         into changes: inout [ChemicalIntelligenceChange]
     ) {
         var currentByKey: [String: ChemicalRegisteredUse] = [:]
@@ -437,8 +445,21 @@ nonisolated enum ChemicalIntelligenceDiffer {
                         field: .withholdingPeriod,
                         kind: kind(prior.withholdingPeriodDays == nil, use.withholdingPeriodDays == nil),
                         subject: useLabel(use),
-                        currentValue: prior.withholdingPeriodDays.map { "\($0) days" },
-                        candidateValue: use.withholdingPeriodDays.map { "\($0) days" }
+                        // Same display rule as every other withholding surface:
+                        // a zero reads as the label's "not required" wording only
+                        // where that side's own evidence carries it, and each side
+                        // is judged on its OWN restrictions and sources. Wording
+                        // only — the comparison above is on the raw values.
+                        currentValue: ChemicalWithholdingDisplay.text(
+                            days: prior.withholdingPeriodDays,
+                            restrictions: prior.restrictions,
+                            hasManufacturerLabelSource: currentHasLabelSource
+                        ),
+                        candidateValue: ChemicalWithholdingDisplay.text(
+                            days: use.withholdingPeriodDays,
+                            restrictions: use.restrictions,
+                            hasManufacturerLabelSource: candidateHasLabelSource
+                        )
                     )
                 )
             }

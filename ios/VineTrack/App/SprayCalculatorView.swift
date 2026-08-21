@@ -1788,8 +1788,19 @@ struct SprayCalculatorView: View {
         }
         let labelURL = saved?.labelURL ?? ""
         let productURL = saved?.productURL ?? ""
-        let restrictions = saved?.restrictions ?? ""
-        let isOverridden: Bool = chemicalLines.first(where: { $0.chemicalId == chemResult.savedChemicalId })?.overrideRate != nil
+        let line = chemicalLines.first(where: { $0.chemicalId == chemResult.savedChemicalId })
+        // Restrictions belong to the registered use the operator actually
+        // picked a rate from. The product-level field is the fallback for
+        // records with no structured uses, never a substitute for a use that
+        // states its own — a second crop's wording is not this job's law.
+        let selectedUse: ChemicalRegisteredUse? = {
+            guard let saved, let line else { return nil }
+            return SprayRegisteredUseRates.registeredUse(for: saved, rateId: line.selectedRateId)
+        }()
+        let useRestrictions = selectedUse?.restrictions?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let restrictions = useRestrictions.isEmpty ? (saved?.restrictions ?? "") : useRestrictions
+        let isOverridden: Bool = line?.overrideRate != nil
 
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
@@ -1859,14 +1870,14 @@ struct SprayCalculatorView: View {
                 }
             }
             if !restrictions.isEmpty {
-                HStack(spacing: 6) {
+                // Verbatim, with the shared expand control. A two-line clamp
+                // used to hide the rest of a legal statement at the one moment
+                // the operator is deciding what to put in the tank.
+                HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.shield.fill")
                         .font(.caption2)
                         .foregroundStyle(.orange)
-                    Text(restrictions)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                    ChemicalUseRestrictionsView(text: restrictions)
                 }
             }
         }

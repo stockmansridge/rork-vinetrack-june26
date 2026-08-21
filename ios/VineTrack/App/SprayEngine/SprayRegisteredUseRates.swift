@@ -124,6 +124,30 @@ nonisolated enum SprayRegisteredUseRates {
         rates(for: chemical).filter(\.isSelectable)
     }
 
+    /// The registered use a selected rate belongs to.
+    ///
+    /// Restrictions, withholding and re-entry are stated PER USE on a label: a
+    /// product registered for two crops can carry two different withholding
+    /// periods and two different restriction statements. Once the operator has
+    /// chosen a rate, the use behind that rate is the only one whose legal text
+    /// applies to the job being composed.
+    ///
+    /// `nil` for a legacy rate, an unknown id, or a record with no structured
+    /// uses — the caller then has nothing use-specific to show, which is the
+    /// honest answer rather than another use's wording.
+    static func registeredUse(
+        for chemical: SavedChemical,
+        rateId: UUID
+    ) -> ChemicalRegisteredUse? {
+        guard let uses = chemical.chemicalIntelligence?.registeredUses else { return nil }
+        for use in uses {
+            for labelRate in use.rates where selectable(labelRate, use: use, chemical: chemical).id == rateId {
+                return use
+            }
+        }
+        return nil
+    }
+
     /// Look up one offered rate by its stable id.
     static func rate(for chemical: SavedChemical, id: UUID) -> SpraySelectableRate? {
         rates(for: chemical).first { $0.id == id }

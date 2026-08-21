@@ -446,11 +446,18 @@ struct ChemicalUseRestrictionsView: View {
 
     private static let collapsedLineLimit = 3
 
-    /// Whether the statement plausibly exceeds the collapsed window and
-    /// deserves an expand control. A cheap display heuristic — it never
-    /// alters the text itself.
+    /// Whether the statement may exceed the collapsed window and so needs an
+    /// expand control. A display heuristic — it never alters the text itself.
+    ///
+    /// Deliberately pessimistic about how much fits: the bound assumes a NARROW
+    /// column (this view renders inside spray-mix cards as well as the product
+    /// summary). Erring high hides the tail of a legal statement behind no
+    /// control at all; erring low only offers an expand control that reveals
+    /// nothing. Only one of those two mistakes matters.
+    private static let conservativeCharsPerLine = 30
+
     private var isLong: Bool {
-        text.count > 160
+        text.count > Self.collapsedLineLimit * Self.conservativeCharsPerLine
             || text.components(separatedBy: .newlines).count > Self.collapsedLineLimit
     }
 
