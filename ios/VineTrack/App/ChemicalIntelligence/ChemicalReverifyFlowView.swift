@@ -46,6 +46,14 @@ struct ChemicalReverifyFlowView: View {
 
     @State private var phase: Phase = .checking
     @State private var hasStarted: Bool = false
+    /// Set the moment a write is committed, and never cleared.
+    ///
+    /// The accept and confirm buttons each write once and then dismiss. Dismissal
+    /// is not instantaneous, so without this a double tap fires the handler twice
+    /// and the second call writes an outcome computed against the pre-update
+    /// record — undoing part of what the operator just accepted. Mirrors the
+    /// `saving` guard on Android's `ChemicalReverifySheet`.
+    @State private var isWriting: Bool = false
 
     private var countryCode: String {
         ChemicalRegistration.normaliseCountry(
@@ -220,6 +228,7 @@ struct ChemicalReverifyFlowView: View {
                         .frame(maxWidth: .infinity)
                         .fontWeight(.semibold)
                 }
+                .disabled(isWriting)
             }
         }
     }
@@ -321,6 +330,7 @@ struct ChemicalReverifyFlowView: View {
                         .frame(maxWidth: .infinity)
                         .fontWeight(.semibold)
                 }
+                .disabled(isWriting)
                 Button("Cancel", role: .cancel) { dismiss() }
             } footer: {
                 Text("Updating changes this Chemical Store record only. Completed spray records keep the chemical information that was captured at the time they were applied.")
@@ -449,6 +459,8 @@ struct ChemicalReverifyFlowView: View {
     /// Accept an update. The outcome was already reconciled and displayed, so
     /// what is written is exactly what was reviewed.
     private func accept(_ outcome: ChemicalEditOutcome) {
+        guard !isWriting else { return }
+        isWriting = true
         store.updateSavedChemical(ChemicalReverifyFlow.accepted(chemical, with: outcome))
         onCompleted()
         dismiss()
@@ -460,6 +472,8 @@ struct ChemicalReverifyFlowView: View {
             dismiss()
             return
         }
+        guard !isWriting else { return }
+        isWriting = true
         store.updateSavedChemical(ChemicalReverifyFlow.confirmed(chemical, with: refreshed))
         onCompleted()
         dismiss()
