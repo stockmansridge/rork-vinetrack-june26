@@ -127,13 +127,25 @@ struct PinsView: View {
                     .padding(.horizontal)
                     .padding(.vertical, 8)
 
-                switch viewMode {
-                case .map:
-                    PinsMapView(pins: filteredPins)
-                case .list:
-                    PinsListView(pins: filteredPins, sort: $listSort)
-                case .summary:
-                    PinsSummaryView(pins: filteredPins)
+                // Pull-to-refresh is scoped to the mode content only — never
+                // to the shared VStack. When it sat on the VStack, the
+                // horizontal filter-chip ScrollView inherited the
+                // RefreshAction, gained a vertical pull affordance and showed
+                // a spinner during chip drags, which also bounced the large
+                // "Pins" title between expanded/collapsed heights.
+                Group {
+                    switch viewMode {
+                    case .map:
+                        PinsMapView(pins: filteredPins)
+                    case .list:
+                        PinsListView(pins: filteredPins, sort: $listSort)
+                    case .summary:
+                        PinsSummaryView(pins: filteredPins)
+                    }
+                }
+                .refreshable {
+                    await pinSync.syncPinsForSelectedVineyard()
+                    await growthStageRecordSync.syncForSelectedVineyard()
                 }
             }
             .navigationTitle("Pins")
@@ -174,10 +186,6 @@ struct PinsView: View {
             .task {
                 // Force a fresh pull on entry so growth-stage pins created
                 // on other devices appear without requiring a manual Sync.
-                await pinSync.syncPinsForSelectedVineyard()
-                await growthStageRecordSync.syncForSelectedVineyard()
-            }
-            .refreshable {
                 await pinSync.syncPinsForSelectedVineyard()
                 await growthStageRecordSync.syncForSelectedVineyard()
             }
@@ -267,6 +275,11 @@ struct PinsView: View {
         }
         .contentMargins(.horizontal, 16)
         .scrollIndicators(.hidden)
+        // Horizontal-only interaction: vertical bounce is disabled outright
+        // and the row keeps a fixed, content-driven height so chip drags can
+        // never move or resize the Pins heading/filter area above the list.
+        .scrollBounceBehavior(.basedOnSize, axes: [.vertical])
+        .fixedSize(horizontal: false, vertical: true)
     }
     private func exportPins(format: ExportFormat) {
         guard !isExporting else { return }
