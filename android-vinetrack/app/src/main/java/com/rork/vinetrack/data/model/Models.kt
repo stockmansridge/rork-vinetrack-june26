@@ -1801,7 +1801,14 @@ const val CHEMICAL_RATE_PER_100L: String = "per_100_litres"
  */
 @Serializable
 data class ChemicalRate(
-    val id: String,
+    /**
+     * Local list identity. Defaulted (P4 parity) because a canonical row
+     * written by the portal may omit it: without a default, kotlinx threw
+     * MissingFieldException and the operator's ENTIRE chemical failed to
+     * decode. A generated id is a UI handle, never chemistry — no rate
+     * value, unit or basis is ever invented here.
+     */
+    val id: String = java.util.UUID.randomUUID().toString(),
     val label: String = "",
     /** Rate value in base units (mL for liquids, g for solids). */
     val value: Double = 0.0,

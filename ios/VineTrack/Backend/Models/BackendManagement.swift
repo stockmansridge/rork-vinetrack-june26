@@ -142,8 +142,11 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         self.crop = try c.decodeIfPresent(String.self, forKey: .crop)
         self.problem = try c.decodeIfPresent(String.self, forKey: .problem)
         self.activeIngredient = try c.decodeIfPresent(String.self, forKey: .activeIngredient)
-        self.rates = try c.decodeIfPresent([ChemicalRate].self, forKey: .rates)
-        self.purchase = try c.decodeIfPresent(ChemicalPurchase.self, forKey: .purchase)
+        // Tolerant (P4 parity): a canonical row whose rates/purchase were
+        // written by the portal or another client must never be able to drop
+        // the whole chemical from the operator's store.
+        self.rates = try? c.decodeIfPresent([ChemicalRate].self, forKey: .rates)
+        self.purchase = try? c.decodeIfPresent(ChemicalPurchase.self, forKey: .purchase)
         self.labelUrl = try c.decodeIfPresent(String.self, forKey: .labelUrl)
         // product_url was added in sql/086; tolerate older rows where the
         // column is absent so decoding doesn't fail for legacy backends.

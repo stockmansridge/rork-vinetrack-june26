@@ -49,6 +49,28 @@ nonisolated struct ChemicalRate: Codable, Identifiable, Sendable, Hashable {
         self.value = value
         self.basis = basis
     }
+
+    nonisolated enum CodingKeys: String, CodingKey {
+        case id, label, value, basis
+    }
+
+    /// Tolerant decode (P4 cross-platform parity).
+    ///
+    /// The synthesised decoder required all four keys, so ONE canonical row
+    /// written by the portal or another client without a rate `id` threw and
+    /// took the operator's ENTIRE chemical out of the Chemical Store. Every
+    /// field now falls back to its documented default and an absent `id`
+    /// becomes a fresh local list identity — a UI handle, never chemistry.
+    /// No rate value, unit or basis is ever invented: a missing basis reads
+    /// as the model's own default exactly as a fresh `ChemicalRate` would.
+    nonisolated init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
+        label = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? ""
+        value = (try? c.decodeIfPresent(Double.self, forKey: .value)) ?? 0
+        let rawBasis = (try? c.decodeIfPresent(String.self, forKey: .basis)) ?? ""
+        basis = ChemicalRateBasis(rawValue: rawBasis) ?? .perHectare
+    }
 }
 
 nonisolated struct ChemicalPurchase: Codable, Sendable, Hashable {
@@ -82,6 +104,30 @@ nonisolated struct ChemicalPurchase: Codable, Sendable, Hashable {
         self.costDollars = costDollars
         self.containerSizeML = containerSizeML
         self.containerUnit = containerUnit
+    }
+
+    nonisolated enum CodingKeys: String, CodingKey {
+        case brand, activeIngredient, chemicalGroup, labelURL
+        case costDollars, containerSizeML, containerUnit
+    }
+
+    /// Tolerant decode (P4 cross-platform parity).
+    ///
+    /// Android models every purchase field with a default, so a partial
+    /// `purchase` object round-trips there; iOS's synthesised decoder
+    /// required all seven keys and threw, dropping the whole chemical. The
+    /// costing fields now degrade individually — an unreadable container
+    /// unit reads as the model default rather than destroying the record.
+    nonisolated init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        brand = (try? c.decodeIfPresent(String.self, forKey: .brand)) ?? ""
+        activeIngredient = (try? c.decodeIfPresent(String.self, forKey: .activeIngredient)) ?? ""
+        chemicalGroup = (try? c.decodeIfPresent(String.self, forKey: .chemicalGroup)) ?? ""
+        labelURL = (try? c.decodeIfPresent(String.self, forKey: .labelURL)) ?? ""
+        costDollars = (try? c.decodeIfPresent(Double.self, forKey: .costDollars)) ?? 0
+        containerSizeML = (try? c.decodeIfPresent(Double.self, forKey: .containerSizeML)) ?? 0
+        let rawUnit = (try? c.decodeIfPresent(String.self, forKey: .containerUnit)) ?? ""
+        containerUnit = ChemicalUnit(rawValue: rawUnit) ?? .litres
     }
 }
 
@@ -264,8 +310,10 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         crop = try container.decodeIfPresent(String.self, forKey: .crop) ?? ""
         problem = try container.decodeIfPresent(String.self, forKey: .problem) ?? ""
         activeIngredient = try container.decodeIfPresent(String.self, forKey: .activeIngredient) ?? ""
-        rates = try container.decodeIfPresent([ChemicalRate].self, forKey: .rates) ?? []
-        purchase = try container.decodeIfPresent(ChemicalPurchase.self, forKey: .purchase)
+        // Tolerant (P4): a malformed rate or purchase degrades to the empty
+        // default instead of failing the whole chemical.
+        rates = (try? container.decodeIfPresent([ChemicalRate].self, forKey: .rates)) ?? []
+        purchase = try? container.decodeIfPresent(ChemicalPurchase.self, forKey: .purchase)
         labelURL = LabelURLValidator.sanitize(try container.decodeIfPresent(String.self, forKey: .labelURL) ?? "")
         // Product URL is user-facing as a non-label link; sanitize for
         // placeholder hosts but do not require a document path.

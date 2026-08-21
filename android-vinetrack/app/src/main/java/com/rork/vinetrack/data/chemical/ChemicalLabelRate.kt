@@ -175,7 +175,13 @@ data class ChemicalRegisteredUse(
                     SprayTarget.POWDERY_MILDEW
                 v.contains("downy") || v.contains("plasmopara") -> SprayTarget.DOWNY_MILDEW
                 v.contains("botrytis") || v.contains("bunch rot") -> SprayTarget.BOTRYTIS
-                v.contains("weed") -> SprayTarget.WEEDS
+                // P4 parity: iOS also reads "grass control" wording as weeds.
+                // Without this branch an Android-written use stored target
+                // null and resolved to null, while the SAME row opened on iOS
+                // resolved to Weeds — the two platforms disagreed about what
+                // the label said.
+                v.contains("weed") || (v.contains("grass") && v.contains("control")) ->
+                    SprayTarget.WEEDS
                 else -> null
             }
         }
