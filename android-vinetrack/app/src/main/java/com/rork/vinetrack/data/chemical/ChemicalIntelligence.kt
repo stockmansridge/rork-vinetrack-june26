@@ -29,6 +29,19 @@ data class ChemicalIntelligence(
     val verification: ChemicalVerification = ChemicalVerification(),
     @SerialName("registered_uses")
     val registeredUses: List<ChemicalRegisteredUse> = emptyList(),
+    /**
+     * Which evidence tier populated each top-level field, keyed by the wire
+     * field name (`label_rates`, `withholding_periods`, `registration`, …)
+     * with tier values such as `official_register`, `manufacturer_label`,
+     * `authoritative_classification`, `ai_interpretation` or `unresolved`.
+     * Recorded by the server resolver and stored VERBATIM — never derived
+     * from values, never upgraded or backfilled on device. Null on records
+     * saved before the server published provenance. Mirrors iOS
+     * `ChemicalIntelligence.fieldProvenance`.
+     */
+    @Serializable(with = ChemicalProvenanceMapSerializer::class)
+    @SerialName("field_provenance")
+    val fieldProvenance: Map<String, String>? = null,
     /** Aligned with the existing `product_category` vocabulary. */
     @SerialName("product_category") val productCategory: String = "",
     /** Version of [AuthoritativeActivityGroups] that judged this record. */

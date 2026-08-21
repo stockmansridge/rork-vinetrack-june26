@@ -732,8 +732,6 @@ internal fun ChemicalFormSheet(
     var chemistryDraft by remember(existing?.id) {
         mutableStateOf(ChemicalManualEntry.draft(existing, manualCountry))
     }
-    var aiLoading by remember { mutableStateOf(false) }
-    var aiError by remember { mutableStateOf<String?>(null) }
 
     // Keep unit/container-unit valid when the form type flips.
     fun applyFormType(newForm: String) {
@@ -743,10 +741,20 @@ internal fun ChemicalFormSheet(
         if (containerUnit !in units) containerUnit = units.first()
     }
 
-    /** Prefill empty fields from an AI search pick, then deep-fetch details. */
+    /**
+     * Prefill empty descriptive fields from an AI search pick — clearly
+     * unverified reference only.
+     *
+     * P3C: the legacy AI `info` deep-fetch is gone from this form. It used to
+     * write the AI's `ratesPerHectare`/`ratesPer100L` into the working rate
+     * fields and its `labelURL` into the official label field — authoritative
+     * fields no unverified source may populate. This matches iOS, which never
+     * calls the legacy info path: working rates, label documents and
+     * registered uses arrive through Match & Verify / Re-verify with cited
+     * evidence, or the operator types them. Everything filled here is
+     * descriptive free-text that is recorded — and displayed — as unverified.
+     */
     fun applyAIResult(result: ChemicalInfoService.ChemicalSearchResult) {
-        aiError = null
-        aiLoading = true
         if (result.name.isNotBlank()) name = result.name
         if (result.brand.isNotBlank()) manufacturer = result.brand
         if (activeIngredient.isBlank()) activeIngredient = result.activeIngredient
@@ -754,23 +762,6 @@ internal fun ChemicalFormSheet(
         if (modeOfAction.isBlank()) modeOfAction = result.modeOfAction
         if (use.isBlank()) use = result.primaryUse
         if (problem.isBlank()) problem = result.primaryUse
-        vm.lookupChemicalInfo(result.name.ifBlank { name }) { res ->
-            aiLoading = false
-            res.onSuccess { info ->
-                if (activeIngredient.isBlank()) activeIngredient = info.activeIngredient
-                if (manufacturer.isBlank() && info.brand.isNotBlank()) manufacturer = info.brand
-                if (chemicalGroup.isBlank()) chemicalGroup = info.chemicalGroup
-                if (labelUrl.isBlank()) labelUrl = info.labelURL
-                if (productUrl.isBlank()) info.productURL?.let { productUrl = it }
-                if (modeOfAction.isBlank()) info.modeOfAction?.let { modeOfAction = it }
-                if (use.isBlank()) use = info.primaryUse
-                applyFormType(formForUnit(info.defaultUnit))
-                unit = info.defaultUnit
-                if (ratePerHa.isBlank()) info.ratesPerHectare?.firstOrNull()?.let { ratePerHa = formatRate(it.value) }
-                if (ratePer100L.isBlank()) info.ratesPer100L?.firstOrNull()?.let { ratePer100L = formatRate(it.value) }
-            }
-            res.onFailure { aiError = it.message }
-        }
     }
 
     /**
@@ -944,21 +935,13 @@ internal fun ChemicalFormSheet(
 
             // Search with AI (advisory; must be checked against the label).
             OutlinedButton(
-                onClick = { aiError = null; showAI = true },
-                enabled = !aiLoading,
+                onClick = { showAI = true },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                if (aiLoading) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = ChemTint)
-                    Spacer(Modifier.size(8.dp))
-                    Text("Looking up...")
-                } else {
-                    Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = ChemTint, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.size(8.dp))
-                    Text("Search with AI")
-                }
+                Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = ChemTint, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(8.dp))
+                Text("Search with AI")
             }
-            aiError?.let { Text(it, fontSize = 12.sp, color = VineColors.Destructive) }
             Text(
                 "AI suggestions must be checked against the current product label, permit, SDS, and local regulations before use.",
                 fontSize = 11.sp,

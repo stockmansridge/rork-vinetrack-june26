@@ -139,6 +139,17 @@ data class ChemicalRegisteredUse(
     @SerialName("withholding_period_days") val withholdingPeriodDays: Int? = null,
     @SerialName("re_entry_period_hours") val reEntryPeriodHours: Int? = null,
     val restrictions: String? = null,
+    /**
+     * Per-fact evidence tiers recorded by the server's label merge, keyed by
+     * fact name (`claim`, `rates`, `withholding_period`, `re_entry`,
+     * `restrictions`) with tier values such as `manufacturer_label` or
+     * `ai_interpretation`. Stored VERBATIM: never derived from this record's
+     * values, never rewritten on device, and null on records saved before the
+     * server published provenance — absence means "unknown", never
+     * "authoritative". Mirrors iOS `ChemicalRegisteredUse.provenance`.
+     */
+    @Serializable(with = ChemicalProvenanceMapSerializer::class)
+    val provenance: Map<String, String>? = null,
 ) {
     val id: String get() = "$crop|$targetRaw"
 

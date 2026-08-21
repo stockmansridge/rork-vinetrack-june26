@@ -12,12 +12,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Adjust
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Help
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
@@ -33,14 +37,21 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.chemical.ChemicalActiveIngredient
 import com.rork.vinetrack.data.chemical.ChemicalActivityGroup
 import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
 import com.rork.vinetrack.data.chemical.ChemicalLabelRate
+import com.rork.vinetrack.data.chemical.ChemicalProvenanceBadge
+import com.rork.vinetrack.data.chemical.ChemicalProvenanceTier
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
+import com.rork.vinetrack.data.chemical.ChemicalUseProvenanceFact
+import com.rork.vinetrack.data.chemical.ChemicalWithholdingDisplay
+import com.rork.vinetrack.data.chemical.provenancePlan
+import com.rork.vinetrack.data.chemical.uniformRatesBadge
 import com.rork.vinetrack.data.chemical.ChemicalVerification
 import com.rork.vinetrack.data.chemical.ChemicalVerificationConflict
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
@@ -450,12 +461,21 @@ fun ChemicalLabelRatesView(uses: List<ChemicalRegisteredUse>, modifier: Modifier
     if (rates.isEmpty()) return
     val vine = LocalVineColors.current
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            "Product label rate",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = vine.textSecondary,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                "Product label rate",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textSecondary,
+            )
+            // Shown only when every rate-owning use proves the same
+            // authoritative tier — read from stored provenance, never
+            // inferred from the values themselves.
+            uses.uniformRatesBadge()?.let { ChemicalProvenanceTag(it) }
+        }
         rates.forEach { rate ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -479,9 +499,21 @@ fun ChemicalLabelRatesView(uses: List<ChemicalRegisteredUse>, modifier: Modifier
     }
 }
 
-/** Registered uses, with an explicit statement when grape use is unconfirmed. */
+/**
+ * Registered uses, with an explicit statement when grape use is unconfirmed.
+ *
+ * [hasManufacturerLabelSource] says whether the payload cites the
+ * manufacturer's approved label as a data source. It drives ONLY the
+ * withholding "not required" wording — see [ChemicalWithholdingDisplay] — and
+ * defaults to false so a call site that cannot prove label evidence fails
+ * closed to plain day counts. Mirrors the iOS `ChemicalRegisteredUsesView`.
+ */
 @Composable
-fun ChemicalRegisteredUsesView(uses: List<ChemicalRegisteredUse>, modifier: Modifier = Modifier) {
+fun ChemicalRegisteredUsesView(
+    uses: List<ChemicalRegisteredUse>,
+    modifier: Modifier = Modifier,
+    hasManufacturerLabelSource: Boolean = false,
+) {
     val vine = LocalVineColors.current
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (uses.isEmpty()) {
@@ -493,13 +525,24 @@ fun ChemicalRegisteredUsesView(uses: List<ChemicalRegisteredUse>, modifier: Modi
             )
         } else {
             uses.forEach { use ->
+                // Tags come from STORED per-use provenance only: one badge for
+                // the card when every fact shares a tier, per-fact badges only
+                // when trust is mixed, nothing for legacy or unproven records.
+                // See ChemicalUseProvenancePlan.
+                val plan = use.provenancePlan
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        use.crop.ifBlank { "Crop not stated" },
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = vine.textPrimary,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            use.crop.ifBlank { "Crop not stated" },
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = vine.textPrimary,
+                        )
+                        plan.headerBadge?.let { ChemicalProvenanceTag(it) }
+                    }
                     Text(
                         "• ${use.targetRaw.ifBlank { "Target not stated" }}",
                         fontSize = 12.sp,
@@ -513,11 +556,35 @@ fun ChemicalRegisteredUsesView(uses: List<ChemicalRegisteredUse>, modifier: Modi
                             color = vine.textPrimary,
                         )
                     }
-                    use.withholdingPeriodDays?.let {
-                        Text("Withholding period: $it days", fontSize = 11.sp, color = vine.textSecondary)
+                    ChemicalWithholdingDisplay.text(
+                        days = use.withholdingPeriodDays,
+                        restrictions = use.restrictions,
+                        hasManufacturerLabelSource = hasManufacturerLabelSource,
+                    )?.let { whp ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text("Withholding period: $whp", fontSize = 11.sp, color = vine.textSecondary)
+                            plan.badgeFor(ChemicalUseProvenanceFact.WITHHOLDING_PERIOD)
+                                ?.let { ChemicalProvenanceTag(it) }
+                        }
                     }
                     use.reEntryPeriodHours?.let {
-                        Text("Re-entry: $it hours", fontSize = 11.sp, color = vine.textSecondary)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text("Re-entry: $it hours", fontSize = 11.sp, color = vine.textSecondary)
+                            plan.badgeFor(ChemicalUseProvenanceFact.RE_ENTRY)
+                                ?.let { ChemicalProvenanceTag(it) }
+                        }
+                    }
+                    use.restrictions?.takeIf { it.isNotEmpty() }?.let { restrictions ->
+                        ChemicalUseRestrictionsView(
+                            text = restrictions,
+                            badge = plan.badgeFor(ChemicalUseProvenanceFact.RESTRICTIONS),
+                        )
                     }
                 }
             }
@@ -529,6 +596,100 @@ fun ChemicalRegisteredUsesView(uses: List<ChemicalRegisteredUse>, modifier: Modi
         }
     }
 }
+
+/**
+ * Tiny capsule naming the evidence tier behind a displayed fact.
+ *
+ * Rendered exclusively from STORED provenance ([ChemicalProvenanceBadge]): it
+ * never derives a tier from the value it sits beside, and it simply does not
+ * exist for records without recorded provenance. Mirrors the iOS
+ * `ChemicalProvenanceTagView`.
+ */
+@Composable
+fun ChemicalProvenanceTag(badge: ChemicalProvenanceBadge, modifier: Modifier = Modifier) {
+    val vine = LocalVineColors.current
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(vine.textSecondary.copy(alpha = 0.10f))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Icon(
+            when (badge) {
+                is ChemicalProvenanceBadge.Authoritative -> when (badge.tier) {
+                    ChemicalProvenanceTier.OFFICIAL_REGISTER -> Icons.Filled.Verified
+                    ChemicalProvenanceTier.MANUFACTURER_LABEL -> Icons.Filled.Description
+                    ChemicalProvenanceTier.AUTHORITATIVE_CLASSIFICATION -> Icons.Filled.Shield
+                    ChemicalProvenanceTier.MASTER_CATALOGUE -> Icons.AutoMirrored.Filled.LibraryBooks
+                }
+                ChemicalProvenanceBadge.Unresolved -> Icons.AutoMirrored.Filled.HelpOutline
+            },
+            contentDescription = "Source: ${badge.text}",
+            tint = vine.textSecondary,
+            modifier = Modifier.size(10.dp),
+        )
+        Text(badge.text, fontSize = 10.sp, color = vine.textSecondary)
+    }
+}
+
+/**
+ * A registered use's verbatim label restriction statements.
+ *
+ * The wording is legal text: it renders exactly as the label states it, never
+ * paraphrased or summarised. Long statements collapse to a few lines with an
+ * explicit expand control, so the full wording stays one tap away without
+ * dominating the product summary. Mirrors the iOS `ChemicalUseRestrictionsView`.
+ */
+@Composable
+fun ChemicalUseRestrictionsView(
+    text: String,
+    modifier: Modifier = Modifier,
+    badge: ChemicalProvenanceBadge? = null,
+) {
+    val vine = LocalVineColors.current
+    var expanded by remember(text) { mutableStateOf(false) }
+    // Whether the statement plausibly exceeds the collapsed window and
+    // deserves an expand control. A cheap display heuristic — it never alters
+    // the text itself.
+    val isLong = text.length > 160 || text.lines().size > COLLAPSED_RESTRICTION_LINES
+    Column(
+        modifier = modifier.fillMaxWidth().padding(top = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                "Label restrictions",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textSecondary,
+            )
+            badge?.let { ChemicalProvenanceTag(it) }
+        }
+        Text(
+            text,
+            fontSize = 11.sp,
+            color = vine.textSecondary,
+            maxLines = if (expanded) Int.MAX_VALUE else COLLAPSED_RESTRICTION_LINES,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (isLong) {
+            Text(
+                if (expanded) "Show less" else "Show full restrictions",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = VineColors.Primary,
+                modifier = Modifier.clickable { expanded = !expanded },
+            )
+        }
+    }
+}
+
+private const val COLLAPSED_RESTRICTION_LINES: Int = 3
 
 @Composable
 private fun GrapeNotVerifiedLabel() {

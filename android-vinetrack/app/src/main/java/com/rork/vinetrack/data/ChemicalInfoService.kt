@@ -4,6 +4,7 @@ import com.rork.vinetrack.data.chemical.AuthoritativeActivityGroups
 import com.rork.vinetrack.data.chemical.ChemicalActiveIngredient
 import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
+import com.rork.vinetrack.data.chemical.ChemicalProvenanceMapSerializer
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalVerification
@@ -105,6 +106,16 @@ class ChemicalInfoService {
         @SerialName("activity_groups") val activityGroups: List<String> = emptyList(),
         @SerialName("registered_uses") val registeredUses: List<ChemicalRegisteredUse> = emptyList(),
         @SerialName("label_rate_bases") val labelRateBases: List<String> = emptyList(),
+        /**
+         * Per-field evidence tiers recorded by the resolver (`field_provenance`
+         * at top level; each registered use additionally carries its own
+         * `provenance` map). Decoded tolerantly and carried VERBATIM into
+         * [ChemicalIntelligence] — absent on pre-provenance servers, never
+         * invented on device. Mirrors iOS `ChemicalStructuredLookup`.
+         */
+        @Serializable(with = ChemicalProvenanceMapSerializer::class)
+        @SerialName("field_provenance")
+        val fieldProvenance: Map<String, String>? = null,
         val verification: ChemicalVerification = ChemicalVerification(),
         @SerialName("activity_group_table_version") val activityGroupTableVersion: Int = 0,
         @SerialName("schema_version") val schemaVersion: Int = 0,
@@ -170,6 +181,9 @@ class ChemicalInfoService {
                 registration = registration,
                 verification = verification,
                 registeredUses = registeredUses,
+                // Stored verbatim: the resolver's own record of which evidence
+                // tier populated each field. Never derived or upgraded here.
+                fieldProvenance = fieldProvenance,
                 productCategory = productCategory.orEmpty(),
                 activityGroupTableVersion = maxOf(
                     activityGroupTableVersion,
@@ -204,6 +218,17 @@ class ChemicalInfoService {
             }
         }
 
+    /**
+     * LEGACY AI info path — quarantined (P3C).
+     *
+     * This transport remains only to mirror the iOS `ChemicalInfoService`,
+     * where it likewise has no app call site. Its output (`ratesPerHectare`,
+     * `ratesPer100L`, `labelURL`) is AI interpretation with no label evidence
+     * behind it, so NO UI path may write it into a chemical's working rate
+     * fields, label URL, or any other authoritative field. Rates, label
+     * documents and registered uses arrive through the structured lookup with
+     * verification evidence — or the operator types them. Fail closed.
+     */
     suspend fun lookupChemicalInfo(productName: String, country: String): ChemicalInfoResponse =
         withContext(Dispatchers.IO) {
             val payload = buildMap {

@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.ChemicalInfoService
+import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
@@ -463,7 +464,17 @@ internal fun ChemicalMatchFlowSheet(
 
                         HorizontalDivider()
                         SectionLabel("Registered uses")
-                        ChemicalRegisteredUsesView(intel.registeredUses)
+                        // The label-source flag only ever changes the WORDING of
+                        // a label-parsed zero-day withholding period ("not
+                        // required when used as directed"); it never invents or
+                        // alters a value. Derived from the payload's own cited
+                        // sources.
+                        ChemicalRegisteredUsesView(
+                            intel.registeredUses,
+                            hasManufacturerLabelSource = intel.verification.sources.any {
+                                it.kind == ChemicalDataSourceKind.MANUFACTURER_LABEL
+                            },
+                        )
 
                         HorizontalDivider()
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

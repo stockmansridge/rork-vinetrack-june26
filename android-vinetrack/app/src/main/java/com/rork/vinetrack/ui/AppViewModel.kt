@@ -9670,26 +9670,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Fetch full AI detail for a chosen product, used to prefill the chemical
-     * editor. Mirrors the iOS `ChemicalInfoService.lookupChemicalInfo`.
-     */
-    fun lookupChemicalInfo(
-        productName: String,
-        onResult: (Result<ChemicalInfoService.ChemicalInfoResponse>) -> Unit,
-    ) {
-        viewModelScope.launch {
-            try {
-                val info = chemicalInfoService.lookupChemicalInfo(productName.trim(), chemicalLookupCountry())
-                onResult(Result.success(info))
-            } catch (e: ChemicalInfoService.LookupException) {
-                onResult(Result.failure(e))
-            } catch (e: Exception) {
-                onResult(Result.failure(ChemicalInfoService.LookupException("AI lookup failed. Check your connection.")))
-            }
-        }
-    }
-
-    /**
      * Persist a trip's structured seeding payload (mix lines + box settings).
      * Optimistically applies the new details locally, then writes only the
      * `seeding_details` JSONB column. On failure the previous value is restored
