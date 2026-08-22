@@ -181,15 +181,48 @@ nonisolated enum SprayRegisteredUseRates {
         for chemical: SavedChemical,
         preferring basis: ChemicalRateBasis? = nil
     ) -> SpraySelectableRate? {
+        defaultSelection(for: chemical, preferring: basis.map { [$0] } ?? [])
+    }
+
+    /// The rate to select by default, trying each basis in preference order.
+    ///
+    /// The ordered form is what a carrier workflow needs: a 100 m runoff job
+    /// prefers the label's per-100 L rate and falls back to its per-hectare
+    /// rate, and an L/ha job does the reverse. Nothing is converted and nothing
+    /// is hidden — a basis that the label does not state simply finds no
+    /// candidate and the next preference is tried.
+    ///
+    /// Within a basis, a directly usable single rate beats a range, so opening
+    /// a product does not immediately demand a manual entry when the label
+    /// offers a plain rate as well. A range still wins over a rate on a
+    /// less-preferred basis: `range_per_100_litres` is the right starting point
+    /// for a runoff job even though the operator must still pick a point inside
+    /// the band.
+    static func defaultSelection(
+        for chemical: SavedChemical,
+        preferring order: [ChemicalRateBasis]
+    ) -> SpraySelectableRate? {
         let candidates = selectableRates(for: chemical)
         guard !candidates.isEmpty else { return nil }
-        if let basis {
+        for basis in order {
             let matching = candidates.filter { $0.basis == basis }
             if let single = matching.first(where: { $0.seed.seedableValue != nil }) { return single }
             if let first = matching.first { return first }
         }
         if let single = candidates.first(where: { $0.seed.seedableValue != nil }) { return single }
         return candidates.first
+    }
+
+    /// The default selection for a carrier workflow.
+    ///
+    /// The single entry point every seeding call site should use, so "which
+    /// basis does this vineyard start from" is answered in one place rather
+    /// than re-derived — differently — at each one.
+    static func defaultSelection(
+        for chemical: SavedChemical,
+        carrier: SprayCarrierBasis
+    ) -> SpraySelectableRate? {
+        defaultSelection(for: chemical, preferring: SprayRateBasisPreference.order(for: carrier))
     }
 
     // MARK: - Structured

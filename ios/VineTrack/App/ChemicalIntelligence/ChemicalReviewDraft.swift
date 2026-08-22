@@ -120,11 +120,23 @@ nonisolated enum ChemicalReviewMerge {
         // A number is never invented. When the register did not confirm one the
         // field stays blank, which is exactly what "Registration not confirmed"
         // means — and it costs the chemistry above nothing.
+        //
+        // The label link is resolved across EVERY place the response can state
+        // one, not just `registration.label_reference` — see
+        // `ChemicalLabelReference`. Blank here now means the lookup returned no
+        // label address, rather than the app having decoded only one of the
+        // places it can arrive in.
+        let labelReference = ChemicalLabelReference.resolve(
+            lookup: lookup,
+            existingStructured: existing?.chemicalIntelligence?.registration?.labelReference,
+            existingRecordURL: existing?.labelURL
+        )
         let registration = mergedRegistration(
             canonical: canonical?.registration,
             existing: existing?.chemicalIntelligence?.registration,
             selected: selected,
-            countryCode: countryCode
+            countryCode: countryCode,
+            labelReference: labelReference?.url
         )
 
         // ---- Evidence -------------------------------------------------------
@@ -371,11 +383,15 @@ nonisolated enum ChemicalReviewMerge {
     /// block exists to hold it even when nothing else was confirmed. The number,
     /// scheme, registered name, label reference and label version each survive
     /// only if some tier actually supplied them.
+    /// - Parameter labelReference: the already-resolved Official Label link.
+    ///   Passing `nil` keeps the historic behaviour of reading the canonical
+    ///   and existing registration blocks directly.
     static func mergedRegistration(
         canonical: ChemicalRegistration?,
         existing: ChemicalRegistration?,
         selected: ChemicalSearchResult?,
-        countryCode: String
+        countryCode: String,
+        labelReference: String? = nil
     ) -> ChemicalRegistration? {
         let country = firstNonEmpty([
             canonical?.countryCode,
@@ -396,6 +412,7 @@ nonisolated enum ChemicalReviewMerge {
             existing?.registeredProductName
         ])
         let reference = firstNonEmpty([
+            labelReference,
             canonical?.labelReference,
             existing?.labelReference
         ])

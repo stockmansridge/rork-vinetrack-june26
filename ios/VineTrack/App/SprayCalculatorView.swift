@@ -301,6 +301,26 @@ struct SprayCalculatorView: View {
             ?? SprayVineyardProfile(countryCode: store.settings.regionSettings.countryCode)
     }
 
+    /// The carrier workflow actually in force, resolved exactly as the engine
+    /// resolves it: the operator's choice when the vineyard profile allows
+    /// either, and the profile's mandate when it does not.
+    ///
+    /// Read directly rather than through `flow.effectiveCarrierBasis` so a
+    /// prefill loop does not build a whole application plan per product line.
+    private var effectiveCarrierBasis: SprayCarrierBasis {
+        sprayProfile.allows(carrierBasisChoice)
+            ? carrierBasisChoice
+            : sprayProfile.defaultCarrierBasis
+    }
+
+    /// The label rate bases this vineyard's workflow starts from, strongest
+    /// first. A 100 m runoff job prefers the label's per-100 L rate; an L/ha
+    /// job prefers its per-hectare rate. Neither suppresses the other, and
+    /// neither is ever converted into the other.
+    private var preferredRateBases: [ChemicalRateBasis] {
+        SprayRateBasisPreference.order(for: effectiveCarrierBasis)
+    }
+
     /// The tank capacity of the selected spray unit — the only figure the tank
     /// split may be derived from.
     private var selectedTankCapacityLitres: Double {
@@ -748,11 +768,25 @@ struct SprayCalculatorView: View {
                     unresolved.append(name.isEmpty ? "Unnamed product" : name)
                     continue
                 }
-                let preferredBasis: RateBasis = chem.ratePer100L > 0 ? .per100Litres : .perHectare
+                // An EXPLICIT basis recorded on the template line is a decision
+                // the operator already made; a vineyard-level preference must
+                // never overrule it. Only a line that never recorded one falls
+                // through to the workflow's preference.
+                //
+                // The rule this replaces read the legacy `ratePer100L` scalar,
+                // which the consolidated Chemical Store no longer edits: a
+                // product whose only label rate is per-100 L projects 0 into
+                // that column, so every prefill silently chose per hectare.
+                let explicitBasis: RateBasis? = chem.rateBasis.map { basis in
+                    basis == .per100Litres ? .per100Litres : .perHectare
+                }
+                let preferredOrder: [RateBasis] = explicitBasis.map { [$0] } ?? preferredRateBases
+                let preferredBasis: RateBasis = explicitBasis
+                    ?? SprayRateBasisPreference.fallbackBasis(for: effectiveCarrierBasis)
                 // Structured registered-use rates first, legacy rates only when
                 // the record has none.
                 let selection = SprayRegisteredUseRates.defaultSelection(
-                    for: saved, preferring: preferredBasis
+                    for: saved, preferring: preferredOrder
                 )
                 lines.append(
                     ChemicalLine(
@@ -2042,7 +2076,8 @@ struct SprayCalculatorView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     CalcChemicalLineCard(
                         line: $line,
-                        chemicals: store.savedChemicals
+                        chemicals: store.savedChemicals,
+                        preferredRateBases: preferredRateBases
                     ) {
                         chemicalLines.removeAll { $0.id == line.id }
                     }
@@ -2080,12 +2115,17 @@ struct SprayCalculatorView: View {
 
             Button {
                 if let chem = store.savedChemicals.first {
-                    let selection = SprayRegisteredUseRates.defaultSelection(for: chem)
+                    // A product added by hand seeds from the same workflow
+                    // preference as everything else on this screen.
+                    let selection = SprayRegisteredUseRates.defaultSelection(
+                        for: chem, preferring: preferredRateBases
+                    )
                     chemicalLines.append(
                         ChemicalLine(
                             chemicalId: chem.id,
                             selectedRateId: selection?.id ?? UUID(),
-                            basis: selection?.basis ?? .perHectare
+                            basis: selection?.basis
+                                ?? SprayRateBasisPreference.fallbackBasis(for: effectiveCarrierBasis)
                         )
                     )
                 }
@@ -3206,6 +3246,10 @@ struct SprayCalculatorView: View {
 private struct CalcChemicalLineCard: View {
     @Binding var line: ChemicalLine
     let chemicals: [SavedChemical]
+    /// The vineyard workflow's label rate-basis preference, strongest first.
+    /// Passed in rather than re-derived: one rule, decided once, so swapping a
+    /// product here seeds the same basis the rest of the screen would.
+    let preferredRateBases: [ChemicalRateBasis]
     let onDelete: () -> Void
 
     @Environment(\.openURL) private var openURL
@@ -3390,7 +3434,7 @@ private struct CalcChemicalLineCard: View {
                                 // at the previous product's rate and the line
                                 // silently keeps that product's basis.
                                 let selection = SprayRegisteredUseRates
-                                    .defaultSelection(for: chem)
+                                    .defaultSelection(for: chem, preferring: preferredRateBases)
                                 line.selectedRateId = selection?.id ?? UUID()
                                 if let basis = selection?.basis { line.basis = basis }
                             }

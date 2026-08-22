@@ -157,6 +157,14 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
     let guidance: String?
     /// What the jurisdiction's register actually did on this lookup.
     let discovery: ChemicalDiscoveryEnvelope?
+    /// Stage LD-2 document-extraction provenance.
+    ///
+    /// Decoded so `document_url` can reach the ONE Official Label field. This
+    /// key was previously discarded, which is why a lookup that had read the
+    /// label could still arrive at the Review screen with a blank label link.
+    /// It is not a second label field — `ChemicalLabelReference` folds it into
+    /// the same `registration.labelReference` every other tier writes.
+    let labelExtraction: ChemicalLabelExtraction?
 
     /// True when this lookup was served from an APPROVED master catalogue row
     /// and carries the reference the saved record should retain.
@@ -188,6 +196,7 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         case aiSuggestion = "ai_suggestion"
         case guidance
         case discovery
+        case labelExtraction = "label_extraction"
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -217,6 +226,9 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         aiSuggestion = (try? c.decodeIfPresent(ChemicalLookupAdvisory.self, forKey: .aiSuggestion)) ?? nil
         guidance = (try? c.decodeIfPresent(String.self, forKey: .guidance)) ?? nil
         discovery = (try? c.decodeIfPresent(ChemicalDiscoveryEnvelope.self, forKey: .discovery)) ?? nil
+        labelExtraction = (try? c.decodeIfPresent(
+            ChemicalLabelExtraction.self, forKey: .labelExtraction
+        )) ?? nil
     }
 
     /// True when the resolver established no chemistry at all.

@@ -54,6 +54,31 @@ struct SprayProgramStepEditView: View {
         draft.isValid && !isSaving && !requiresConnection
     }
 
+    /// The vineyard's spray profile, read from the vineyard and never
+    /// re-derived here.
+    private var sprayProfile: SprayVineyardProfile {
+        store.selectedVineyard?.sprayProfile
+            ?? SprayVineyardProfile(countryCode: store.settings.regionSettings.countryCode)
+    }
+
+    /// The label rate bases this vineyard's carrier workflow starts from.
+    ///
+    /// A Program Step is configuration rather than an application, so there is
+    /// no live carrier choice to read; the vineyard's own default workflow is
+    /// the honest answer. This seeds a product being ADDED or REPLACED only —
+    /// a rate and basis already saved on a step is an explicit decision and is
+    /// loaded verbatim by `SprayProgramStepDraft(step:)`.
+    private var preferredRateBases: [ChemicalRateBasis] {
+        SprayRateBasisPreference.order(for: sprayProfile)
+    }
+
+    /// The basis a brand-new product line starts on before a product is chosen.
+    private var initialProductBasis: SprayProductRateBasis {
+        SprayRateBasisPreference.fallbackBasis(for: sprayProfile) == .per100Litres
+            ? .per100Litres
+            : .wholeBlockArea
+    }
+
     var body: some View {
         Form {
             if requiresConnection {
@@ -281,7 +306,7 @@ struct SprayProgramStepEditView: View {
             }
 
             Button {
-                draft.products.append(SprayProgramProductDraft())
+                draft.products.append(SprayProgramProductDraft(basis: initialProductBasis))
                 productBeingReplaced = draft.products.last?.id
             } label: {
                 Label("Add Product", systemImage: "plus.circle.fill")
@@ -436,9 +461,13 @@ struct SprayProgramStepEditView: View {
             draft.products[index].clearProduct(name: draft.products[index].name)
             return
         }
+        // Replacing a product is a NEW choice of product, so it seeds from the
+        // vineyard's workflow preference rather than inheriting the basis the
+        // outgoing product happened to use. A 100 m runoff vineyard swapping in
+        // a product with a per-100 L label rate gets that rate.
         let seed = SprayRegisteredUseRates.defaultSelection(
             for: chemical,
-            preferring: draft.products[index].basis == .per100Litres ? .per100Litres : .perHectare
+            preferring: preferredRateBases
         )
         draft.products[index].replaceProduct(with: chemical, seedRate: seed)
     }
