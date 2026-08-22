@@ -21,15 +21,41 @@ struct SprayProgramStepDetailView: View {
 
     @State private var showEditSheet: Bool = false
     @State private var showDeleteConfirmation: Bool = false
+    /// The step as it reads after an edit made on this screen.
+    ///
+    /// The parent presents this view with a value, so a save has to be
+    /// reflected here or the operator would be looking at the configuration
+    /// they just replaced until they backed out and reopened Spray Program.
+    @State private var editedStep: SprayProgramStep?
+
+    /// The single source of truth for everything below — including Plan Spray,
+    /// so a spray planned straight after a save uses the SAVED configuration.
+    private var currentStep: SprayProgramStep { editedStep ?? step }
 
     private var formatter: RegionFormatter { store.settings.regionFormatter }
 
     private var productLines: [SprayChemical] {
-        step.products.filter { !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        currentStep.products.filter { !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
+    /// Editing follows the rule the DATABASE already enforces: owner/manager for
+    /// the shared portal row, and the existing rule for a local step.
+    private var canEdit: Bool {
+        SprayProgramStepPermissions.canEdit(
+            step: currentStep,
+            canManageSprayProgram: accessControl?.canManageSprayProgram ?? false,
+            canEditRecords: accessControl?.canEditRecords ?? false
+        )
+    }
+
+    /// Unchanged. Mobile deletion of a shared portal Program Step stays out of
+    /// scope until permissions, confirmation and downstream references are
+    /// decided deliberately.
     private var canDelete: Bool {
-        !step.isPortalManaged && (accessControl?.canDelete ?? false)
+        SprayProgramStepPermissions.canDelete(
+            step: currentStep,
+            canDeleteRecords: accessControl?.canDelete ?? false
+        )
     }
 
     var body: some View {
@@ -37,11 +63,11 @@ struct SprayProgramStepDetailView: View {
             VStack(alignment: .leading, spacing: 20) {
                 header
 
-                if step.isPortalManaged {
+                if currentStep.isPortalManaged {
                     portalBanner
                 }
 
-                if let target = step.targetDisplay {
+                if let target = currentStep.targetDisplay {
                     section("Targets", icon: "scope") {
                         Text(target)
                             .font(.subheadline)
@@ -62,9 +88,9 @@ struct SprayProgramStepDetailView: View {
 
                 section("Application", icon: "gearshape.2") {
                     VStack(alignment: .leading, spacing: 6) {
-                        detailLine("Method", step.operationType.rawValue)
-                        if let stage = step.elStageLabel {
-                            detailLine("Growth stage", step.growthStageDescription.map { "\(stage) — \($0)" } ?? stage)
+                        detailLine("Method", currentStep.operationType.rawValue)
+                        if let stage = currentStep.elStageLabel {
+                            detailLine("Growth stage", currentStep.growthStageDescription.map { "\(stage) — \($0)" } ?? stage)
                         }
                         if let equipment = equipmentName {
                             detailLine("Spray unit", equipment)
@@ -77,9 +103,9 @@ struct SprayProgramStepDetailView: View {
 
                 chemistrySection
 
-                if !step.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if !currentStep.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     section("Notes", icon: "note.text") {
-                        Text(step.notes)
+                        Text(currentStep.notes)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -101,7 +127,7 @@ struct SprayProgramStepDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
             Button {
-                onPlanSpray(step)
+                onPlanSpray(currentStep)
             } label: {
                 Label("Plan Spray", systemImage: "arrow.right.circle.fill")
                     .font(.headline)
@@ -116,15 +142,18 @@ struct SprayProgramStepDetailView: View {
             .background(.bar)
         }
         .toolbar {
-            // Portal-managed steps expose no Edit, no Delete and no template
-            // toggle — the existing mobile permission boundary, unchanged.
-            if !step.isPortalManaged {
+            // The Program is a shared vineyard resource: an authorised user
+            // edits the SAME Program Step from either interface. Delete is
+            // unchanged — local steps only.
+            if canEdit || canDelete {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Button {
-                            showEditSheet = true
-                        } label: {
-                            Label("Edit Program Step", systemImage: "pencil")
+                        if canEdit {
+                            Button {
+                                showEditSheet = true
+                            } label: {
+                                Label("Edit Program Step", systemImage: "pencil")
+                            }
                         }
                         if canDelete {
                             Button(role: .destructive) {
@@ -141,16 +170,14 @@ struct SprayProgramStepDetailView: View {
         }
         .sheet(isPresented: $showEditSheet) {
             NavigationStack {
-                SprayRecordFormView(
-                    tripId: step.record.tripId,
-                    paddockIds: [],
-                    existingRecord: step.record
-                )
+                SprayProgramStepEditView(step: currentStep) { updated in
+                    editedStep = updated
+                }
             }
         }
         .alert("Delete Program Step", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
-                store.deleteSprayRecord(step.record)
+                store.deleteSprayRecord(currentStep.record)
                 dismiss()
             }
             Button("Cancel", role: .cancel) {}
@@ -163,7 +190,7 @@ struct SprayProgramStepDetailView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let stage = step.elStageLabel {
+            if let stage = currentStep.elStageLabel {
                 HStack(spacing: 8) {
                     Text(stage)
                         .font(.subheadline.weight(.bold))
@@ -171,28 +198,37 @@ struct SprayProgramStepDetailView: View {
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
                         .background(VineyardTheme.leafGreen.opacity(0.14), in: Capsule())
-                    if let description = step.growthStageDescription {
+                    if let description = currentStep.growthStageDescription {
                         Text(description)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
             }
-            Text(step.name.isEmpty ? "Untitled Program Step" : step.name)
+            Text(currentStep.name.isEmpty ? "Untitled Program Step" : currentStep.name)
                 .font(.title2.bold())
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// "Synced", not "Managed".
+    ///
+    /// The old wording described a locked portal-only object, which is no longer
+    /// what this is: it is the vineyard's shared Program Step, and an authorised
+    /// user edits it from either interface. The lock survives only where it is
+    /// still true — for a reader who cannot change it.
     private var portalBanner: some View {
-        Label("Managed in Admin Portal", systemImage: "lock")
-            .font(.caption.weight(.medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
+        Label(
+            SprayProgramTerminology.portalSyncBanner,
+            systemImage: canEdit ? "arrow.triangle.2.circlepath" : "lock"
+        )
+        .font(.caption.weight(.medium))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - Chemistry
@@ -265,20 +301,20 @@ struct SprayProgramStepDetailView: View {
     // MARK: - Building blocks
 
     private var equipmentName: String? {
-        if let id = step.record.sprayEquipmentId,
+        if let id = currentStep.record.sprayEquipmentId,
            let match = store.sprayEquipment.first(where: { $0.id == id }) {
             return match.name
         }
-        let typed = step.record.equipmentType.trimmingCharacters(in: .whitespacesAndNewlines)
+        let typed = currentStep.record.equipmentType.trimmingCharacters(in: .whitespacesAndNewlines)
         return typed.isEmpty ? nil : typed
     }
 
     private var tractorName: String? {
-        if let id = step.record.tractorId,
+        if let id = currentStep.record.tractorId,
            let match = store.tractors.first(where: { $0.id == id }) {
             return match.displayName
         }
-        let typed = step.record.tractor.trimmingCharacters(in: .whitespacesAndNewlines)
+        let typed = currentStep.record.tractor.trimmingCharacters(in: .whitespacesAndNewlines)
         return typed.isEmpty ? nil : typed
     }
 

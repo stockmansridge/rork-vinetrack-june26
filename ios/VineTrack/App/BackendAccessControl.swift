@@ -30,6 +30,8 @@ final class BackendAccessControl {
     /// Field pricing (piece rate per vine on an unpriced job). Supervisors and
     /// above. Reviewing or changing an existing price stays on `canViewCosting`.
     var canEnterPricing: Bool { currentRole?.canEnterPricing ?? false }
+    /// Owner/manager — the client-side mirror of the `spray_jobs` UPDATE policy.
+    var canManageSprayProgram: Bool { currentRole?.canManageSprayProgram ?? false }
     var canChangeSettings: Bool { currentRole?.canChangeSettings ?? false }
     var canDeleteOperationalRecords: Bool { currentRole?.canDeleteOperationalRecords ?? false }
     var canInviteMembers: Bool { currentRole?.canInviteMembers ?? false }
@@ -54,7 +56,9 @@ final class BackendAccessControl {
             canEnterPricing: canEnterPricing,
             canFinalizeRecords: canDeleteOperationalRecords,
             canReopenRecords: canDeleteOperationalRecords,
-            canManageSetup: canChangeSettings
+            canManageSetup: canChangeSettings,
+            canManageSprayProgram: canManageSprayProgram,
+            canEditRecords: canEditRecords
         )
     }
 

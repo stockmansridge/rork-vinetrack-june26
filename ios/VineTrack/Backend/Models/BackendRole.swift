@@ -40,6 +40,22 @@ nonisolated enum BackendRole: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    /// May change the vineyard's shared spray program.
+    ///
+    /// Mirrors the `spray_jobs_update_managers` RLS policy (sql/032) EXACTLY:
+    /// `has_vineyard_role(vineyard_id, ['owner','manager'])`. Stated as its own
+    /// flag rather than borrowed from a similar one so that if the policy ever
+    /// changes, there is a single place on the client that has to change with
+    /// it — and so it can never be widened by accident to make a button appear.
+    var canManageSprayProgram: Bool {
+        switch self {
+        case .owner, .manager:
+            true
+        case .supervisor, .operator:
+            false
+        }
+    }
+
     var canChangeSettings: Bool {
         switch self {
         case .owner, .manager:

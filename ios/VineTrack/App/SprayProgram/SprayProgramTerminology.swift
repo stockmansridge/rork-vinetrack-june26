@@ -40,8 +40,17 @@ nonisolated enum SprayProgramTerminology {
     static let addToProgram = "Add to Program"
     /// Supporting state shown once a record is already in the program.
     static let inProgram = "In Program"
-    /// Read-only banner for steps owned by the admin portal.
-    static let managedInAdminPortal = "Managed in Admin Portal"
+    /// Banner for a Program Step that is shared with the admin portal.
+    ///
+    /// Deliberately "Synced", not "Managed". The Program is a shared vineyard
+    /// resource — the portal and mobile edit the SAME `spray_jobs` row — so
+    /// wording that described a locked, portal-only object now misleads. What
+    /// the operator needs to know is that this is the shared Program Step, and
+    /// that changing it here changes it everywhere.
+    static let syncedWithAdminPortal = "Synced with Admin Portal"
+    /// Alias kept so the banner has one canonical name at the call sites that
+    /// describe the sync relationship rather than the step itself.
+    static var portalSyncBanner: String { syncedWithAdminPortal }
 
     // MARK: - Import spreadsheet
 
@@ -69,7 +78,7 @@ nonisolated enum SprayProgramTerminology {
         [
             programStep, program, programSteps,
             planFromProgram, oneOffSpray, addProgramStep, addToProgram,
-            inProgram, managedInAdminPortal,
+            inProgram, syncedWithAdminPortal,
             downloadImportCSV, importCSV,
             chooseProgramStepTitle, noProgramStepsAvailable,
             planFromProgramSubtitle(count: 0),

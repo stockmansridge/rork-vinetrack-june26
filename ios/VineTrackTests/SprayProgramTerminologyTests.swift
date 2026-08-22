@@ -43,9 +43,17 @@ struct SprayProgramTerminologyTests {
         #expect(SprayProgramTerminology.inProgram == "In Program")
     }
 
-    @Test("Portal-owned steps are Managed in Admin Portal, not 'admin portal template'")
+    /// Reworded once portal Program Steps became editable on mobile.
+    ///
+    /// "Managed in Admin Portal" described a locked, portal-only object. The
+    /// Program is a shared vineyard resource — both interfaces edit the same
+    /// `spray_jobs` row — so the banner now explains the sync relationship
+    /// instead of implying mobile is locked out.
+    @Test("Portal-backed steps read Synced with Admin Portal, not Managed")
     func portalBanner() {
-        #expect(SprayProgramTerminology.managedInAdminPortal == "Managed in Admin Portal")
+        #expect(SprayProgramTerminology.syncedWithAdminPortal == "Synced with Admin Portal")
+        #expect(SprayProgramTerminology.portalSyncBanner == SprayProgramTerminology.syncedWithAdminPortal)
+        #expect(!SprayProgramTerminology.allLabels.contains { $0.localizedCaseInsensitiveContains("Managed in") })
     }
 
     // MARK: - Composed copy

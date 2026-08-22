@@ -46,6 +46,45 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         case createdBy = "created_by"
     }
 
+    /// Explicit memberwise init — the custom `init(from:)` suppresses the
+    /// synthesised one, and the mobile Program Step editor needs to project an
+    /// already-persisted update onto the cached row.
+    nonisolated init(
+        id: UUID,
+        vineyardId: UUID,
+        name: String,
+        status: String? = nil,
+        plannedDate: String? = nil,
+        chemicalLines: [SprayJobChemicalLine] = [],
+        waterVolume: Double? = nil,
+        sprayRatePerHa: Double? = nil,
+        concentrationFactor: Double? = nil,
+        operationType: String? = nil,
+        target: String? = nil,
+        notes: String? = nil,
+        growthStageCode: String? = nil,
+        equipmentId: UUID? = nil,
+        tractorId: UUID? = nil,
+        createdBy: UUID? = nil
+    ) {
+        self.id = id
+        self.vineyardId = vineyardId
+        self.name = name
+        self.status = status
+        self.plannedDate = plannedDate
+        self.chemicalLines = chemicalLines
+        self.waterVolume = waterVolume
+        self.sprayRatePerHa = sprayRatePerHa
+        self.concentrationFactor = concentrationFactor
+        self.operationType = operationType
+        self.target = target
+        self.notes = notes
+        self.growthStageCode = growthStageCode
+        self.equipmentId = equipmentId
+        self.tractorId = tractorId
+        self.createdBy = createdBy
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -82,7 +121,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
 /// One line of the `spray_jobs.chemical_lines` JSONB array. The portal and
 /// Excel import write snake_case keys (`chemical_id`, `rate`, `unit`,
 /// `water_rate`) but the decoder also accepts camelCase variants defensively.
-nonisolated struct SprayJobChemicalLine: Codable, Sendable {
+nonisolated struct SprayJobChemicalLine: Codable, Sendable, Equatable {
     let chemicalId: UUID?
     let name: String
     let activeIngredient: String?

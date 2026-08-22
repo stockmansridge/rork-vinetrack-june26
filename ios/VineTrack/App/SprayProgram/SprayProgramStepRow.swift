@@ -10,6 +10,8 @@ import SwiftUI
 /// The hierarchy is the one an operator reads a spray program in:
 /// stage → name → target → products/rates → application method.
 struct SprayProgramStepRow: View {
+    @Environment(\.accessControl) private var accessControl
+
     let step: SprayProgramStep
     /// Region formatter for the programmed rate. Display only — the Program
     /// screen performs no spray arithmetic.
@@ -17,6 +19,14 @@ struct SprayProgramStepRow: View {
 
     private var productLines: [SprayChemical] {
         step.products.filter { !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private var canEdit: Bool {
+        SprayProgramStepPermissions.canEdit(
+            step: step,
+            canManageSprayProgram: accessControl?.canManageSprayProgram ?? false,
+            canEditRecords: accessControl?.canEditRecords ?? false
+        )
     }
 
     var body: some View {
@@ -52,9 +62,15 @@ struct SprayProgramStepRow: View {
                         .foregroundStyle(.tertiary)
 
                     if step.isPortalManaged {
-                        Label("Managed in Admin Portal", systemImage: "lock")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                        // The lock is reserved for a reader who genuinely
+                        // cannot change this step. For an owner/manager it is
+                        // the shared Program Step, not a locked portal object.
+                        Label(
+                            SprayProgramTerminology.portalSyncBanner,
+                            systemImage: canEdit ? "arrow.triangle.2.circlepath" : "lock"
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                     }
                 }
             }

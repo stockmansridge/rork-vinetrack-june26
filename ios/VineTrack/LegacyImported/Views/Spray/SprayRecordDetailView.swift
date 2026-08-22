@@ -170,14 +170,18 @@ struct SprayRecordDetailView: View {
         if isPortalTemplate {
             cardContainer {
                 HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "lock.doc")
+                    Image(systemName: "arrow.triangle.2.circlepath")
                         .font(.title3)
                         .foregroundStyle(.secondary)
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(SprayProgramTerminology.managedInAdminPortal)
+                        Text(SprayProgramTerminology.syncedWithAdminPortal)
                             .font(.headline)
-                        Text("This Program Step is managed in the admin portal. Use it to plan a new spray — it can't be edited here.")
+                        // This is the spray RECORD screen. The shared Program
+                        // Step is edited on its own screen in Spray Program, not
+                        // through a record form, so point there rather than
+                        // claiming it cannot be changed at all.
+                        Text("This is the vineyard's shared Program Step. Use it to plan a new spray, or open it in Spray Program to change it.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
