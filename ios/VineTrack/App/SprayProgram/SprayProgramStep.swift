@@ -314,6 +314,36 @@ nonisolated enum SprayProgramStepSortOption: String, CaseIterable, Sendable {
     }
 }
 
+/// One E-L stage's worth of Program Steps, as a list section.
+///
+/// The vineyard program is read in phenological order, so the SECTION is the
+/// stage. Grouping by application method instead — Foliar / Banded / Spreader —
+/// orders the program by a piece of equipment and destroys the only sequence
+/// that means anything agronomically.
+nonisolated struct SprayProgramStageSection: Identifiable, Sendable, Hashable {
+    /// The numeric E-L stage, or `nil` for steps with no resolvable stage.
+    let stage: Int?
+    /// The canonical phenological description, e.g. "2 to 3 leaves". `nil` when
+    /// the resolved stage number has no entry in the phenology table.
+    let stageDescription: String?
+    let steps: [SprayProgramStep]
+
+    nonisolated var id: String { stage.map(String.init) ?? "unstaged" }
+
+    /// `"E-L Stage 9 / 2 to 3 leaves"`, or `"E-L Stage Not Set"`.
+    ///
+    /// The description is read from `GrowthStage.allStages` — VineTrack's
+    /// existing phenology table — rather than a second hard-coded list, so this
+    /// picker and the rest of the app cannot describe EL9 differently.
+    var title: String {
+        guard let stage else { return "E-L Stage Not Set" }
+        guard let stageDescription, !stageDescription.isEmpty else {
+            return "E-L Stage \(stage)"
+        }
+        return "E-L Stage \(stage) / \(stageDescription)"
+    }
+}
+
 /// Builds the Program list from the existing merged template sources.
 ///
 /// Pure logic, no view and no store: the merge, dedup, sort and search rules
@@ -410,5 +440,56 @@ nonisolated enum SprayProgramCatalog {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return steps }
         return steps.filter { $0.matches(trimmed) }
+    }
+
+    /// Group Program Steps into E-L stage sections, in program order.
+    ///
+    /// Ordering is delegated to `sorted(_:by: .elStageAscending)` — the SAME
+    /// comparator the Program tab uses — so EL7 precedes EL12 (numeric, never
+    /// alphabetical), same-stage steps tie-break by name, and steps with no
+    /// resolvable stage sink to a final section. Reusing it is the point: a
+    /// second stage parser here would be free to disagree with the Program tab
+    /// about the order the vineyard sprays in.
+    ///
+    /// Portal steps resolve their stage from the canonical `growth_stage_code`;
+    /// legacy local steps fall back to the existing text parser over the step's
+    /// own name and notes. Neither path invents a stage.
+    static func groupedByStage(_ steps: [SprayProgramStep]) -> [SprayProgramStageSection] {
+        let ordered = sorted(steps, by: .elStageAscending)
+        var sections: [SprayProgramStageSection] = []
+        var currentStage: Int??
+        var bucket: [SprayProgramStep] = []
+
+        func flush() {
+            guard let stage = currentStage, !bucket.isEmpty else { return }
+            sections.append(
+                SprayProgramStageSection(
+                    stage: stage,
+                    stageDescription: stageDescription(for: stage),
+                    steps: bucket
+                )
+            )
+            bucket = []
+        }
+
+        for step in ordered {
+            let stage = step.elStage
+            if currentStage == nil || currentStage! != stage {
+                flush()
+                currentStage = .some(stage)
+            }
+            bucket.append(step)
+        }
+        flush()
+        return sections
+    }
+
+    /// The canonical description for an E-L stage number, from the existing
+    /// phenology table. Never a second hard-coded list of E-L descriptions.
+    static func stageDescription(for stage: Int?) -> String? {
+        guard let stage else { return nil }
+        return GrowthStage.allStages
+            .first { ELStageParser.stageNumber(fromCode: $0.code) == stage }?
+            .description
     }
 }

@@ -145,6 +145,18 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
     let matchSource: String?
     /// Present only on master-served responses.
     let master: ChemicalMasterMatch?
+    /// The resolver's UNVERIFIED reading, quarantined out of the canonical
+    /// fields by the fail-closed gate.
+    ///
+    /// Decoded so the app can EXPLAIN a refusal. Dropping it was the reason
+    /// Search could show "Mancozeb" and Verify could then say "No active
+    /// ingredients were identified" with nothing on screen connecting the two.
+    /// It is never merged into `intelligence()`.
+    let aiSuggestion: ChemicalLookupAdvisory?
+    /// The resolver's operator-facing next step when it could not verify.
+    let guidance: String?
+    /// What the jurisdiction's register actually did on this lookup.
+    let discovery: ChemicalDiscoveryEnvelope?
 
     /// True when this lookup was served from an APPROVED master catalogue row
     /// and carries the reference the saved record should retain.
@@ -173,6 +185,9 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         case fieldProvenance = "field_provenance"
         case matchSource = "match_source"
         case master
+        case aiSuggestion = "ai_suggestion"
+        case guidance
+        case discovery
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -196,7 +211,19 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         // (plain AI-candidate behaviour) rather than failing the lookup.
         matchSource = try? c.decodeIfPresent(String.self, forKey: .matchSource)
         master = try? c.decodeIfPresent(ChemicalMasterMatch.self, forKey: .master)
+        // Additive advisory keys. Tolerant on every one: they exist to explain
+        // a refusal, so a malformed advisory must cost the explanation and
+        // never the lookup itself.
+        aiSuggestion = (try? c.decodeIfPresent(ChemicalLookupAdvisory.self, forKey: .aiSuggestion)) ?? nil
+        guidance = (try? c.decodeIfPresent(String.self, forKey: .guidance)) ?? nil
+        discovery = (try? c.decodeIfPresent(ChemicalDiscoveryEnvelope.self, forKey: .discovery)) ?? nil
     }
+
+    /// True when the resolver established no chemistry at all.
+    ///
+    /// Distinct from "the product is not a real product": the register may
+    /// simply have declined to confirm this identity.
+    var establishedNoChemistry: Bool { activeIngredients.isEmpty }
 
     /// Converts the lookup into the single structured model.
     ///
@@ -266,6 +293,33 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
     /// "master" | "official_register" | nil (AI suggestion / older server).
     let source: String?
 
+    /// Wire value for a row the jurisdiction's official register returned.
+    static let officialRegisterSource: String = "official_register"
+    /// Wire value for a row served from the approved master catalogue.
+    static let masterSource: String = "master"
+
+    /// Where this row came from, for display.
+    ///
+    /// Search is DISCOVERY: the same list mixes approved catalogue rows,
+    /// official-register rows and AI suggestions, and until now they were drawn
+    /// identically. An operator who cannot tell a register row from a guess has
+    /// no way to anticipate that the guess will not survive verification, which
+    /// is what made the Verify screen look like it had lost their data.
+    var provenanceLabel: String {
+        switch source {
+        case ChemicalSearchResult.masterSource: return "Verified catalogue"
+        case ChemicalSearchResult.officialRegisterSource: return "Official register"
+        default: return "Unverified suggestion"
+        }
+    }
+
+    /// True when this row is backed by a register or the approved catalogue,
+    /// rather than being a model suggestion.
+    var isAuthoritativeCandidate: Bool {
+        source == ChemicalSearchResult.masterSource
+            || source == ChemicalSearchResult.officialRegisterSource
+    }
+
     nonisolated enum CodingKeys: String, CodingKey {
         case name
         case activeIngredient
@@ -280,6 +334,45 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
 
 nonisolated struct ChemicalSearchResponse: Codable, Sendable {
     let results: [ChemicalSearchResult]
+}
+
+/// What the structured resolver is asked about, once the operator has chosen.
+///
+/// A separate type because the rule it encodes is easy to break and invisible
+/// when broken: **after an exact result is selected, the operator's typed query
+/// is dead**. Someone searching "Dithaine rainshield" and tapping
+/// "Dithane Rainshield" has told us the product's name; resolving the typo
+/// instead would look up a product that does not exist and then honestly report
+/// that it could not be verified.
+///
+/// Building it here rather than inline in the view is what lets that be a test
+/// instead of a comment.
+nonisolated struct ChemicalStructuredLookupRequest: Sendable, Hashable {
+    /// The CANONICAL product name — from the selected candidate, never the
+    /// search box.
+    let productName: String
+    let country: String
+    /// The candidate's registration number, when it carried one. Only ever a
+    /// POINTER: the resolver re-verifies name↔number against the register
+    /// before anything binds, so passing it can sharpen an identity but can
+    /// never assert one.
+    let registrationNumber: String?
+
+    /// Build the request for a selected search result.
+    ///
+    /// - Parameter fallbackQuery: used ONLY when the candidate has no usable
+    ///   name, which a well-formed result never does.
+    init(selected: ChemicalSearchResult, country: String, fallbackQuery: String = "") {
+        let canonical = selected.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        productName = canonical.isEmpty
+            ? fallbackQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            : canonical
+        self.country = country
+        let number = selected.registrationNumber?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Absent stays absent. Inventing a number would make the resolver
+        // verify a registration nobody ever claimed.
+        registrationNumber = (number?.isEmpty ?? true) ? nil : number
+    }
 }
 
 nonisolated enum ChemicalLookupError: Error, LocalizedError, Sendable {
@@ -342,6 +435,18 @@ nonisolated struct ChemicalInfoService: Sendable {
     ///
     /// The result is never `.verified`: the lookup can identify a candidate and
     /// classify its chemistry, but confirming product identity is a human step.
+    /// Resolve a selected search candidate.
+    ///
+    /// The overload the Match flow uses, so the "canonical name, never the
+    /// typed query" rule lives in one testable place.
+    func lookupStructured(_ request: ChemicalStructuredLookupRequest) async throws -> ChemicalStructuredLookup {
+        try await lookupStructured(
+            productName: request.productName,
+            country: request.country,
+            registrationNumber: request.registrationNumber
+        )
+    }
+
     func lookupStructured(
         productName: String,
         country: String = "",

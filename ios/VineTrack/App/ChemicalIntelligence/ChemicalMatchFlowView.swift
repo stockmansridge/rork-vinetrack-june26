@@ -33,6 +33,13 @@ struct ChemicalMatchFlowView: View {
     @State private var isLoadingStructured: Bool = false
     @State private var structuredError: String?
     @State private var intelligence: ChemicalIntelligence?
+    /// The resolver's quarantined reading, kept so a refusal can be EXPLAINED.
+    ///
+    /// Never merged into `intelligence`, never saved: it is the reason the
+    /// canonical fields are empty, not a substitute for them.
+    @State private var advisory: ChemicalLookupAdvisory?
+    @State private var guidance: String?
+    @State private var withholdingReason: ChemicalEvidenceWithholdingReason?
 
     @State private var showManualEntry: Bool = false
 
@@ -193,6 +200,14 @@ struct ChemicalMatchFlowView: View {
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
             }
+            // Search mixes register rows with model suggestions, and drawing
+            // them identically is what let an unverifiable guess look like a
+            // register hit — until Verify refused it and appeared to lose data.
+            Text(result.provenanceLabel)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(
+                    result.isAuthoritativeCandidate ? VineyardTheme.success : VineyardTheme.warning
+                )
         }
     }
 
@@ -295,9 +310,10 @@ struct ChemicalMatchFlowView: View {
 
                 Section {
                     if intel.activeIngredients.isEmpty {
-                        Text("No active ingredients were identified.")
+                        Text("No active ingredients were established for this product.")
                             .font(.caption)
                             .foregroundStyle(VineyardTheme.warning)
+                        evidenceWithholdingExplanation
                     } else {
                         ForEach(intel.activeIngredients) { active in
                             ChemicalActiveIngredientRow(active: active)
@@ -367,6 +383,53 @@ struct ChemicalMatchFlowView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// Why the canonical chemistry is empty, and what the resolver read anyway.
+    ///
+    /// This is the fix for the reported defect. The evidence was always being
+    /// withheld deliberately; what was missing was any way for the app to SAY
+    /// so. The suggestion below is drawn as explicitly unverified and is not
+    /// saved, selectable or promotable — showing it does not make it evidence.
+    @ViewBuilder
+    private var evidenceWithholdingExplanation: some View {
+        if let reason = withholdingReason {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(reason.headline, systemImage: "info.circle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(VineyardTheme.info)
+                Text(reason.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 2)
+        }
+
+        if let advisory, advisory.hasContent {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Unverified reading")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(VineyardTheme.warning)
+                if !advisory.activeIngredientSummary.isEmpty {
+                    Text(advisory.activeIngredientSummary)
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                }
+                Text("Not recorded, and not used for resistance. Enter the product manually if you can confirm it from the label.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 2)
+        }
+
+        if let guidance, !guidance.isEmpty {
+            Text(guidance)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -480,16 +543,17 @@ struct ChemicalMatchFlowView: View {
         structuredError = nil
         defer { isLoadingStructured = false }
         do {
-            let lookup = try await ChemicalInfoService()
-                .lookupStructured(
-                    productName: result.name,
-                    country: countryCode,
-                    // A register candidate carries its registration number;
-                    // passing it makes the strict resolver verify THAT exact
-                    // identity (name↔number re-checked server-side), which
-                    // also disambiguates same-name pack registrations.
-                    registrationNumber: result.registrationNumber
-                )
+            // The SELECTED candidate defines the identity from here on — the
+            // typed query ("Dithaine rainshield") is dead the moment an exact
+            // result is chosen. A register candidate's number rides along as a
+            // pointer so the strict resolver verifies THAT exact identity,
+            // which also disambiguates same-name pack registrations.
+            let request = ChemicalStructuredLookupRequest(
+                selected: result,
+                country: countryCode,
+                fallbackQuery: query
+            )
+            let lookup = try await ChemicalInfoService().lookupStructured(request)
             // Jurisdiction gate: a payload registered in another country — or
             // a master row keyed to one — is refused OUTRIGHT, exactly like a
             // failed lookup. Foreign label rates, WHP, re-entry statements and
@@ -499,6 +563,7 @@ struct ChemicalMatchFlowView: View {
             ) {
                 masterMatch = nil
                 intelligence = nil
+                clearAdvisory()
                 structuredError = reason
                 return
             }
@@ -506,15 +571,44 @@ struct ChemicalMatchFlowView: View {
             // record retains (sql/199). AI-sourced lookups carry none.
             masterMatch = lookup.isMasterMatch ? lookup.master : nil
             intelligence = lookup.intelligence()
+
+            // Keep the resolver's account of WHY it withheld what it withheld.
+            // Presentation only — nothing here is merged, promoted or saved.
+            advisory = lookup.aiSuggestion
+            guidance = lookup.guidance
+            withholdingReason = ChemicalEvidenceWithholding.reason(
+                discovery: lookup.discovery,
+                hasEstablishedActives: !lookup.establishedNoChemistry,
+                selectedSource: result.source,
+                selectedRegistrationNumber: result.registrationNumber,
+                registerName: countryCode
+            )
+            if lookup.establishedNoChemistry,
+               result.source == ChemicalSearchResult.officialRegisterSource {
+                // Search offered a register row that the strict resolver would
+                // not re-verify. That is the two contracts disagreeing about
+                // one product, not a user error, and it should be visible in
+                // diagnostics rather than absorbed silently.
+                #if DEBUG
+                print("[ChemicalMatchFlow] register candidate did not re-verify: \(result.name)")
+                #endif
+            }
         } catch {
             // No silent downgrade to the old AI shape: treating an unstructured
             // answer as if it were verified evidence is the exact failure this
             // stage exists to prevent.
             masterMatch = nil
             intelligence = nil
+            clearAdvisory()
             structuredError = (error as? LocalizedError)?.errorDescription
                 ?? "Structured lookup is unavailable. Retry, or enter the product manually."
         }
+    }
+
+    private func clearAdvisory() {
+        advisory = nil
+        guidance = nil
+        withholdingReason = nil
     }
 
     /// Writes the confirmed intelligence onto a record.
@@ -533,6 +627,14 @@ struct ChemicalMatchFlowView: View {
         chemical.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if let registrant = intel.registration?.registrant, !registrant.isEmpty {
             chemical.manufacturer = registrant
+        } else if let brand = selected?.brand,
+                  !brand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  chemical.manufacturer.isEmpty {
+            // Manufacturer from the row the operator picked. Display metadata,
+            // not chemistry and not identity: it populates no active, cites no
+            // source and cannot move `resolvedVerificationStatus`. Only ever
+            // fills a blank, so a confirmed registrant is never overwritten.
+            chemical.manufacturer = brand.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if !intel.productCategory.isEmpty {
             chemical.productCategory = intel.productCategory
