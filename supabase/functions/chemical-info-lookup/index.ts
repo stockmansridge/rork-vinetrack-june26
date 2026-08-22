@@ -159,6 +159,17 @@ import {
   runMasterReviewPreview,
 } from "./ingestion/review_preview.ts";
 import { runSeedApply } from "./ingestion/seed_apply.ts";
+import {
+  projectResearch,
+  projectResearchToSearchResults,
+  type ResearchProjection,
+} from "./research/authority.ts";
+import {
+  readResearchConfig,
+  researchLog,
+  runChemicalResearch,
+  type ResearchOutcome,
+} from "./research/research.ts";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -167,6 +178,11 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// LEGACY chat-completions model. Still used by the `info` action, which is
+// an unrelated free-text helper. The RESEARCH path (search/structured) no
+// longer reads this variable at all — see research/research.ts, where the
+// models are named explicitly so a stale `gpt-4o` in the environment cannot
+// silently undo the Responses API upgrade.
 const OPENAI_MODEL = Deno.env.get("OPENAI_MODEL") ?? "gpt-4o";
 
 function json(body: unknown, status = 200): Response {
@@ -1140,6 +1156,49 @@ Deno.serve(async (req: Request) => {
       }
 
       const authoritative = [...masterHits, ...registerCandidates];
+
+      // WEB RESEARCH IS NOT FREE (task §24). The cheap deterministic tiers
+      // run first, and Terra is only asked when they did not answer well:
+      // enough authoritative candidates already on screen means the operator
+      // has what they came for, and a two-character fragment is still
+      // typing, not a question.
+      const researchConfig = readResearchConfig();
+      const wantsBroaderResults = body?.broaden === true;
+      const shouldResearch = researchConfig.enabled &&
+        query.length >= 3 &&
+        (wantsBroaderResults || authoritative.length < 3);
+
+      if (shouldResearch) {
+        const outcome = await runChemicalResearch({
+          query,
+          countryCode,
+          countryLabel,
+          mode: "candidate_discovery",
+          apiKey,
+          fetchFn: fetch,
+          config: researchConfig,
+          registerResolved: registerCandidates.length > 0,
+        });
+        console.log(researchLog(outcome.telemetry));
+
+        if (outcome.research) {
+          const seen = new Set(
+            authoritative.map((m: any) => String(m.name).toLowerCase()),
+          );
+          const researched = projectResearchToSearchResults(outcome.research)
+            .filter((r) => !seen.has(String(r?.name ?? "").toLowerCase()));
+          return json({
+            results: [...authoritative, ...researched],
+            jurisdiction: jurEnv,
+          });
+        }
+        // Research failed. Authoritative hits alone are a complete answer;
+        // only fall through to the legacy model when there is nothing else.
+        if (authoritative.length) {
+          return json({ results: authoritative, jurisdiction: jurEnv });
+        }
+      }
+
       try {
         const { system, user } = buildSearchPrompt(query, countryLabel);
         const raw = await callOpenAI(system, user, apiKey);
@@ -1229,17 +1288,59 @@ Deno.serve(async (req: Request) => {
       //    and a register outage cannot break the AI lookup.
       let structured: any = null;
       let aiError: unknown = null;
-      try {
-        const { system, user } = buildStructuredPrompt(
-          productName,
-          countryLabel,
+      let projection: ResearchProjection | null = null;
+      let researchOutcome: ResearchOutcome | null = null;
+
+      const researchConfig = readResearchConfig();
+      if (researchConfig.enabled) {
+        // Live web research. Never throws: a provider outage returns a null
+        // result and the register path below carries the lookup alone.
+        researchOutcome = await runChemicalResearch({
+          query: productName,
           countryCode,
-        );
-        const raw = await callOpenAI(system, user, apiKey);
-        const parsed = extractJSON(raw);
-        structured = buildStructuredResponse(parsed, countryCode);
-      } catch (err) {
-        aiError = err;
+          countryLabel,
+          mode: "product_enrichment",
+          apiKey,
+          fetchFn: fetch,
+          config: researchConfig,
+          registerResolved: discovery.outcome === "resolved",
+          labelMissingForResolvedRegistration: discovery.outcome === "resolved" &&
+            !discovery.registration?.label_document?.url,
+        });
+        console.log(researchLog(researchOutcome.telemetry));
+
+        if (researchOutcome.research) {
+          projection = projectResearch(
+            researchOutcome.research,
+            countryCode,
+            registrationSchemeForCode(jur.code),
+          );
+          // Research enters through the EXISTING extraction door, so every
+          // downstream authority rule (register merge, unverified-identity
+          // discard, group reconciliation, provenance) applies unchanged.
+          structured = buildStructuredResponse(projection.extraction, countryCode);
+        } else if (researchOutcome.error) {
+          aiError = new Error(
+            `Chemical research unavailable (${researchOutcome.error.category}): ${researchOutcome.error.message}`,
+          );
+        }
+      }
+
+      if (!structured && !researchConfig.enabled) {
+        // Legacy chat-completions path, retained behind the flag until the
+        // Responses path is validated in production (task §44).
+        try {
+          const { system, user } = buildStructuredPrompt(
+            productName,
+            countryLabel,
+            countryCode,
+          );
+          const raw = await callOpenAI(system, user, apiKey);
+          const parsed = extractJSON(raw);
+          structured = buildStructuredResponse(parsed, countryCode);
+        } catch (err) {
+          aiError = err;
+        }
       }
 
       // 3b) The AI's extracted registration number may LOCATE a register row
@@ -1250,16 +1351,21 @@ Deno.serve(async (req: Request) => {
         (discovery.outcome === "unresolved" || discovery.outcome === "ambiguous") &&
         structured
       ) {
+        // Research may have surfaced SEVERAL plausible numbers. Each is only
+        // a pointer: the adapter re-verifies number AND name before anything
+        // binds, so trying the best two costs at most one extra register
+        // call and can never bind the wrong identity. Bounded deliberately —
+        // this is a hint list, not a brute-force search.
+        const hints = projection?.resolverHints.slice(0, 2) ?? [];
         const aiNumber = String(
           structured?.registration?.registration_number ?? "",
         ).trim();
-        if (/^\d{3,8}$/.test(aiNumber)) {
-          discovery = await discoverAuthoritative(
-            countryCode,
-            productName,
-            aiNumber,
-            deps,
-          );
+        if (!hints.length && /^\d{3,8}$/.test(aiNumber)) hints.push(aiNumber);
+
+        for (const hint of hints) {
+          if (!/^\d{3,8}$/.test(hint)) continue;
+          discovery = await discoverAuthoritative(countryCode, productName, hint, deps);
+          if (discovery.outcome === "resolved") break;
         }
       }
 
