@@ -1,11 +1,6 @@
 import SwiftUI
 import CoreLocation
 
-enum GrowthStageMode: String, CaseIterable {
-    case same
-    case perPaddock
-}
-
 /// Backend-safe Spray Calculator.
 ///
 /// Restores the original spray-job setup workflow visually and functionally:
@@ -34,9 +29,14 @@ struct SprayCalculatorView: View {
     @State private var selectedTractorId: UUID?
     @State private var canopySize: CanopySize = .medium
     @State private var canopyDensity: CanopyDensity = .low
-    @State private var sharedGrowthStageId: UUID?
-    @State private var growthStageMode: GrowthStageMode = .same
-    @State private var paddockPhenologyStages: [UUID: UUID] = [:]
+    /// Growth stage (guided Step 4).
+    ///
+    /// One value holds the mode, the shared decision and the per-block
+    /// decisions. It replaces the previous trio of loose state variables in
+    /// which `nil` had to mean both "unanswered" and "deliberately Not Set" —
+    /// which is exactly why choosing the visible `Not Set` option could never
+    /// complete the step.
+    @State private var growthStage: SprayGrowthStageSelection = SprayGrowthStageSelection()
     @State private var chemicalLines: [ChemicalLine] = []
     @State private var showAddChemicalToList: Bool = false
     @State private var sprayRateText: String = ""
@@ -162,21 +162,21 @@ struct SprayCalculatorView: View {
     }
 
     private var sharedGrowthStage: PhenologyStage? {
-        guard let id = sharedGrowthStageId else { return nil }
+        guard let id = growthStage.sharedStageId else { return nil }
         return phenologyStages.first(where: { $0.id == id })
     }
 
+    private func phenologyStage(_ id: UUID) -> PhenologyStage? {
+        phenologyStages.first(where: { $0.id == id })
+    }
+
+    /// The collapsed Step 4 line. An unanswered step says so; an explicit
+    /// Not Set reads "Not Set" and is a finished state, not an error.
     private var growthStageSummary: String {
-        if selectedPaddockIds.isEmpty { return "Select blocks first" }
-        if growthStageMode == .same {
-            if let stage = sharedGrowthStage {
-                return "\(stage.code) — \(stage.name)"
-            }
-            return "Not set"
+        growthStage.summary(selectedBlockIds: selectedPaddockIds) { id in
+            guard let stage = phenologyStage(id) else { return nil }
+            return "\(stage.code) — \(stage.name)"
         }
-        let count = paddockPhenologyStages.values.filter { _ in true }.count
-        let assigned = selectedPaddockIds.compactMap { paddockPhenologyStages[$0] }.count
-        return "Per block — \(assigned)/\(selectedPaddockIds.count) assigned (\(count >= 0 ? "" : ""))"
     }
 
     /// Canonical geometry for the current selection — the single source of
@@ -368,7 +368,7 @@ struct SprayCalculatorView: View {
         inputs.targets = sprayTargets
         inputs.sprayHeadTarget = sprayHeadTarget
         inputs.bandWidthTotalMetres = Double(bandWidthText)
-        inputs.isGrowthStageAssigned = isGrowthStageAssigned
+        inputs.isGrowthStageResolved = isGrowthStageResolved
         inputs.isEquipmentSelected = selectedEquipmentId != nil
         inputs.tankCapacityLitres = selectedTankCapacityLitres
         inputs.carrierBasis = carrierBasisChoice
@@ -460,15 +460,22 @@ struct SprayCalculatorView: View {
         )
     }
 
-    /// Whether a growth stage has genuinely been assigned for the selection.
-    private var isGrowthStageAssigned: Bool {
-        guard !selectedPaddockIds.isEmpty else { return false }
-        switch growthStageMode {
-        case .same:
-            return sharedGrowthStageId != nil
-        case .perPaddock:
-            return selectedPaddockIds.allSatisfy { paddockPhenologyStages[$0] != nil }
-        }
+    /// Whether the growth-stage DECISION has been made for the current block
+    /// selection — not whether an E-L stage exists.
+    ///
+    /// `EL12 / EL9 / Not Set` across three blocks is a complete answer.
+    private var isGrowthStageResolved: Bool {
+        growthStage.isResolved(selectedBlockIds: selectedPaddockIds)
+    }
+
+    /// Mode switch. Copying a REAL shared stage down to the blocks is preserved;
+    /// an unresolved shared answer copies nothing, so switching modes can never
+    /// classify an untouched block as though someone decided about it.
+    private var growthStageModeBinding: Binding<GrowthStageMode> {
+        Binding(
+            get: { growthStage.mode },
+            set: { growthStage.setMode($0, selectedBlockIds: selectedPaddockIds) }
+        )
     }
 
     /// The section currently expanded: the operator's explicit choice, otherwise
@@ -604,8 +611,12 @@ struct SprayCalculatorView: View {
             .onChange(of: store.sprayEquipment.count) { _, _ in
                 autoSelectEquipmentIfSingle()
             }
-            .onChange(of: selectedPaddockIds) { _, _ in
+            .onChange(of: selectedPaddockIds) { _, newValue in
                 clampStartPath()
+                // Decisions for blocks that are no longer selected are dropped;
+                // decisions for blocks that remain are kept, and a newly added
+                // block simply has no entry, so it starts unresolved.
+                growthStage.prune(to: newValue)
             }
         }
     }
@@ -673,14 +684,17 @@ struct SprayCalculatorView: View {
         // mapped onto the calculator's own stage state rather than appended to
         // notes. Compared as STAGE NUMBERS through the existing parser so
         // "EL12", "E-L 12" and "el 12" all land on the same stage.
-        if let code = prefillProgram?.growthStageCode,
-           let stageNumber = ELStageParser.stageNumber(fromCode: code),
-           let match = phenologyStages.first(where: {
-               ELStageParser.stageNumber(fromCode: $0.code) == stageNumber
-           }) {
-            sharedGrowthStageId = match.id
-            growthStageMode = .same
-        }
+        //
+        // A Program Step that STATES a stage has answered the question, so the
+        // decision is resolved as well as valued. A Program Step that states
+        // nothing leaves Step 4 unresolved on purpose: "the Program did not
+        // specify a stage" is not "the operator chose no stage for this
+        // application".
+        growthStage.applyProgramPrefill(
+            code: prefillProgram?.growthStageCode,
+            stages: phenologyStages.map { (id: $0.id, code: $0.code) },
+            selectedBlockIds: selectedPaddockIds
+        )
 
         if !prefillPaddockIds.isEmpty {
             // Plan/job prefill: only the blocks the plan genuinely proposed.
@@ -974,20 +988,13 @@ struct SprayCalculatorView: View {
             .accessibilityHint(paddocksMissing ? "Select blocks first to choose a growth stage" : "Opens growth stage selector")
 
             if isGrowthStageExpanded && !paddocksMissing {
-                Picker("", selection: $growthStageMode) {
+                Picker("", selection: growthStageModeBinding) {
                     Text("Same for All").tag(GrowthStageMode.same)
                     Text("Per Paddock").tag(GrowthStageMode.perPaddock)
                 }
                 .pickerStyle(.segmented)
-                .onChange(of: growthStageMode) { _, newMode in
-                    if newMode == .same, let shared = sharedGrowthStageId {
-                        for pid in selectedPaddockIds {
-                            paddockPhenologyStages[pid] = shared
-                        }
-                    }
-                }
 
-                if growthStageMode == .same {
+                if growthStage.mode == .same {
                     sameGrowthStageList
                 } else {
                     perPaddockGrowthStageList
@@ -1009,16 +1016,17 @@ struct SprayCalculatorView: View {
 
             Divider()
 
+            // Not Set is a real answer, so it is only shown as chosen once the
+            // operator has actually chosen it. Before that the radio is empty:
+            // an unanswered step must never look answered.
+            let isNotSetSelected = growthStage.shared == .notSet
             Button {
-                sharedGrowthStageId = nil
-                for pid in selectedPaddockIds {
-                    paddockPhenologyStages.removeValue(forKey: pid)
-                }
+                growthStage.selectSharedNotSet(selectedBlockIds: selectedPaddockIds)
             } label: {
                 HStack {
-                    Image(systemName: sharedGrowthStageId == nil ? "largecircle.fill.circle" : "circle")
-                        .foregroundStyle(sharedGrowthStageId == nil ? AnyShapeStyle(VineyardTheme.olive) : AnyShapeStyle(.tertiary))
-                    Text("Not Set").foregroundStyle(.primary)
+                    Image(systemName: isNotSetSelected ? "largecircle.fill.circle" : "circle")
+                        .foregroundStyle(isNotSetSelected ? AnyShapeStyle(VineyardTheme.olive) : AnyShapeStyle(.tertiary))
+                    Text(SprayGrowthStageCopy.notSet).foregroundStyle(.primary)
                     Spacer()
                 }
                 .padding(.horizontal, 12)
@@ -1028,12 +1036,9 @@ struct SprayCalculatorView: View {
             Divider().padding(.leading, 40)
 
             ForEach(phenologyStages) { stage in
-                let isSelected = sharedGrowthStageId == stage.id
+                let isSelected = growthStage.sharedStageId == stage.id
                 Button {
-                    sharedGrowthStageId = stage.id
-                    for pid in selectedPaddockIds {
-                        paddockPhenologyStages[pid] = stage.id
-                    }
+                    growthStage.selectShared(stageId: stage.id, selectedBlockIds: selectedPaddockIds)
                 } label: {
                     HStack {
                         Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
@@ -1069,8 +1074,8 @@ struct SprayCalculatorView: View {
                         Text(paddock.name)
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.primary)
-                        if let stageId = paddockPhenologyStages[paddock.id],
-                           let stage = phenologyStages.first(where: { $0.id == stageId }) {
+                        if let stageId = growthStage.perBlock[paddock.id]?.stageId,
+                           let stage = phenologyStage(stageId) {
                             Text("\(stage.name) (\(stage.code))")
                                 .font(.caption2)
                                 .foregroundStyle(VineyardTheme.leafGreen)
@@ -1078,20 +1083,24 @@ struct SprayCalculatorView: View {
                     }
                     Spacer()
                     Menu {
-                        Button("Not Set") { paddockPhenologyStages.removeValue(forKey: paddock.id) }
+                        // Explicit Not Set for THIS block — recorded as a
+                        // decision, not as the absence of one.
+                        Button(SprayGrowthStageCopy.notSet) {
+                            growthStage.select(blockId: paddock.id, decision: .notSet)
+                        }
                         ForEach(phenologyStages) { stage in
                             Button("\(stage.code) – \(stage.name)") {
-                                paddockPhenologyStages[paddock.id] = stage.id
+                                growthStage.select(blockId: paddock.id, decision: .stage(stage.id))
                             }
                         }
                     } label: {
                         HStack(spacing: 4) {
-                            if let stageId = paddockPhenologyStages[paddock.id],
-                               let stage = phenologyStages.first(where: { $0.id == stageId }) {
-                                Text(stage.code).font(.caption.weight(.semibold))
-                            } else {
-                                Text("Select").font(.caption)
-                            }
+                            // "Select" means unanswered; an explicit Not Set
+                            // shows as "Not Set".
+                            Text(growthStage.blockLabel(for: paddock.id) { phenologyStage($0)?.code })
+                                .font(growthStage.perBlock[paddock.id]?.stageId == nil
+                                      ? .caption
+                                      : .caption.weight(.semibold))
                             Image(systemName: "chevron.up.chevron.down").font(.caption2)
                         }
                         .foregroundStyle(VineyardTheme.olive)

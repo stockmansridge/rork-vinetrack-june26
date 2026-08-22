@@ -64,6 +64,8 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
     case bandWidthRequired
     /// Band width was entered but the geometry still cannot yield treated area.
     case treatedAreaUnavailable
+    /// The growth-stage DECISION has not been made. An actual E-L stage is
+    /// optional — explicitly choosing Not Set satisfies this step.
     case growthStageRequired
     case equipmentRequired
     case carrierRateRequired
@@ -88,7 +90,7 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case .sprayHeadTargetRequired: return "Choose a spray head target"
         case .bandWidthRequired: return "Enter treated band width"
         case .treatedAreaUnavailable: return "Treated area unavailable"
-        case .growthStageRequired: return "Set growth stage"
+        case .growthStageRequired: return "Choose growth stage or Not Set"
         case .equipmentRequired: return "Select spray unit"
         case .carrierRateRequired: return "Enter carrier volume"
         case .carrierNotCalculable: return "Carrier volume unavailable"
@@ -114,7 +116,7 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case .treatedAreaUnavailable:
             return "Row spacing or vineyard row geometry is incomplete for this calculation."
         case .growthStageRequired:
-            return "Set the growth stage for the selected blocks."
+            return "Choose an E-L growth stage for the selected blocks, or choose Not Set."
         case .equipmentRequired:
             return "Select the spray unit used for this application."
         case .carrierRateRequired:
@@ -159,7 +161,14 @@ nonisolated struct SprayGuidedInputs: Sendable {
     /// Total treated band width per row, metres. Banded applications only.
     var bandWidthTotalMetres: Double?
 
-    var isGrowthStageAssigned: Bool = false
+    /// Whether the growth-stage DECISION has been made — not whether a stage
+    /// value exists.
+    ///
+    /// An operator who deliberately chooses "Not Set" has answered the
+    /// question, so this is `true` while the recorded stage stays `nil`. The
+    /// two facts are independent, and nothing downstream may invent a stage to
+    /// satisfy the step.
+    var isGrowthStageResolved: Bool = false
     var isEquipmentSelected: Bool = false
     var tankCapacityLitres: Double = 0
 
@@ -418,7 +427,7 @@ nonisolated struct SprayGuidedFlow: Sendable {
             return nil
 
         case .growthStage:
-            return inputs.isGrowthStageAssigned ? nil : .growthStageRequired
+            return inputs.isGrowthStageResolved ? nil : .growthStageRequired
 
         case .equipment:
             return inputs.isEquipmentSelected ? nil : .equipmentRequired

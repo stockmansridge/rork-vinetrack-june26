@@ -69,7 +69,7 @@ struct SprayGuidedWorkflowParityTests {
         inputs.blocks = [block()]
         inputs.targets = [.weeds]
         inputs.bandWidthTotalMetres = bandWidth
-        inputs.isGrowthStageAssigned = true
+        inputs.isGrowthStageResolved = true
         inputs.isEquipmentSelected = true
         inputs.tankCapacityLitres = 2_000
         inputs.carrierBasis = .litresPer100Metres
@@ -88,7 +88,7 @@ struct SprayGuidedWorkflowParityTests {
         inputs.blocks = [block()]
         inputs.targets = targets
         inputs.sprayHeadTarget = head
-        inputs.isGrowthStageAssigned = true
+        inputs.isGrowthStageResolved = true
         inputs.isEquipmentSelected = true
         inputs.tankCapacityLitres = 2_000
         inputs.carrierBasis = .litresPerHectare

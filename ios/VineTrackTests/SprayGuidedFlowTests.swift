@@ -63,7 +63,7 @@ struct SprayGuidedFlowTests {
         inputs.targets = [.powderyMildew]
         inputs.sprayHeadTarget = operationType == .foliarSpray ? .fullCanopy : nil
         inputs.bandWidthTotalMetres = operationType == .bandedSpray ? 0.8 : nil
-        inputs.isGrowthStageAssigned = true
+        inputs.isGrowthStageResolved = true
         inputs.isEquipmentSelected = true
         inputs.tankCapacityLitres = 2_000
         inputs.carrierBasis = .litresPerHectare
@@ -541,7 +541,7 @@ struct SprayGuidedFlowTests {
         #expect(flow.isUnlocked(.growthStage))
         #expect(!flow.isUnlocked(.equipment))
 
-        inputs.isGrowthStageAssigned = true
+        inputs.isGrowthStageResolved = true
         flow = SprayGuidedFlow(inputs: inputs)
         #expect(flow.isUnlocked(.equipment))
         #expect(!flow.isUnlocked(.carrier))
