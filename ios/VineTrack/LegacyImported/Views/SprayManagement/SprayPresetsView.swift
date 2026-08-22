@@ -19,7 +19,10 @@ struct SprayPresetsView: View {
         .navigationTitle("Spray Presets")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showAddChemical) {
-            EditSavedChemicalSheet(chemical: nil)
+            // Adding starts with identification, not a blank form: search the
+            // register, pick the exact product, review what was found. Same
+            // flow as the Chemical Store and the Spray Program.
+            ChemicalMatchFlowView()
         }
         .sheet(item: $editingChemical) { chem in
             EditSavedChemicalSheet(chemical: chem)
@@ -172,26 +175,50 @@ struct SprayPresetsView: View {
 
 // MARK: - Edit Saved Chemical Sheet
 
-private enum ChemicalFormType: String, CaseIterable, Identifiable {
-    case liquid = "Liquid"
-    case solid = "Solid"
-    var id: String { rawValue }
+/// Which secondary screen the editor is showing.
+///
+/// ONE sheet presenter instead of four stacked `.sheet` modifiers. Chaining
+/// several sheets onto the same view makes their content views share a
+/// presentation slot, and rebuilding the parent can tear down and re-create the
+/// one that is open — which is how a populated Review Chemical form could lose
+/// its contents just because the operator opened and closed Chemistry &
+/// Identity, or the store ticked underneath it.
+private enum ChemicalEditorSheet: Identifiable {
+    case search
+    case chemistry
+    case reverify
 
-    var units: [ChemicalUnit] {
+    var id: Int {
         switch self {
-        case .liquid: return [.litres, .millilitres]
-        case .solid: return [.kilograms, .grams]
-        }
-    }
-
-    static func from(unit: ChemicalUnit) -> ChemicalFormType {
-        switch unit {
-        case .litres, .millilitres: return .liquid
-        case .kilograms, .grams: return .solid
+        case .search: return 0
+        case .chemistry: return 1
+        case .reverify: return 2
         }
     }
 }
 
+/// THE Chemical Store editor — a pure editor over one stable draft.
+///
+/// # What it is not, any more
+///
+/// It used to double as a second product-lookup pipeline: a "Search with AI"
+/// action called its own server endpoint and mapped the reply into its own
+/// fields, filling the legacy free-text chemistry while leaving the structured
+/// sql/194 record empty. Two pipelines producing two different answers for the
+/// same product is what put "No active ingredients recorded" directly above
+/// "Recorded as text: Mancozeb · M5" on the same screen.
+///
+/// Now there is one lookup implementation (`ChemicalProductSearchSheet`) and
+/// one mapping authority (`ChemicalReviewMerge`). This view resolves nothing on
+/// its own and runs no background lookup: it is handed a draft, it edits it,
+/// and it saves it.
+///
+/// # Draft lifecycle
+///
+/// The whole form is ONE `@State` value, seeded once by
+/// `ChemicalReviewSession.make`. Nothing re-seeds on redraw, on scroll, on
+/// `onAppear`, on scene change or on sheet dismissal. Once Review Chemical is
+/// open, its values change only when the operator changes them.
 struct EditSavedChemicalSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var store
@@ -229,55 +256,18 @@ struct EditSavedChemicalSheet: View {
     /// store list is the destination and there is nothing to hand back.
     private let onSaved: ((SavedChemical) -> Void)?
 
-    @State private var name: String = ""
-    @State private var formType: ChemicalFormType = .liquid
-    @State private var unit: ChemicalUnit = .litres
-    @State private var chemicalGroup: String = ""
-    @State private var use: String = ""
-    @State private var manufacturer: String = ""
-    @State private var notes: String = ""
-    @State private var problem: String = ""
-    @State private var ratePerHaText: String = ""
-    @State private var ratePer100LText: String = ""
-    @State private var activeIngredient: String = ""
-    @State private var modeOfAction: String = ""
-    @State private var labelURL: String = ""
-    @State private var productURL: String = ""
-    @State private var trackPurchase: Bool = false
-    @State private var containerSizeText: String = ""
-    @State private var containerUnit: ChemicalUnit = .litres
-    @State private var costText: String = ""
-    // Unified product library fields (sql/111). Fertiliser-specific inputs
-    // only appear when a fertiliser/nutrient category is selected.
-    @State private var productCategory: ProductCategory?
-    @State private var packSizeText: String = ""
-    @State private var packPriceText: String = ""
-    @State private var densityText: String = ""
-    @State private var nitrogenText: String = ""
-    @State private var phosphorusText: String = ""
-    @State private var potassiumText: String = ""
-    @State private var analysisBasis: FertiliserAnalysisBasis = .elemental
-    @State private var organicCertified: Bool = false
-    @State private var inventoryText: String = ""
-    @State private var applicationNotes: String = ""
-    @State private var showAILookup: Bool = false
-    @State private var showReverify: Bool = false
-    /// The structured chemistry the operator is authoring.
+    /// THE draft. Every field on this screen lives here.
     ///
-    /// This replaces the three free-text chemistry boxes this form used to
-    /// carry. It is held here rather than inside the structured editor so the
-    /// edits survive that sheet closing and are written by this form's own Save,
-    /// keeping one Save button for the whole product.
-    @State private var chemistryDraft: ChemicalManualDraft = ChemicalManualDraft()
-    @State private var showChemistryEditor: Bool = false
-    @State private var aiLoading: Bool = false
-    @State private var aiError: String?
+    /// One `@State` rather than twenty-five, so the form has one owner and one
+    /// lifetime. It is seeded once in `init` and never re-seeded: a redraw
+    /// cannot empty it, and there is no `onAppear` that quietly rewrites part
+    /// of it on the sheet's second appearance.
+    @State private var session: ChemicalReviewSession
+
+    @State private var activeSheet: ChemicalEditorSheet?
     @State private var linkAlertMessage: String?
     @State private var showLinkAlert: Bool = false
     @State private var deleteCoordinator = ChemicalDeleteCoordinator()
-
-    private let existingPerHaRateId: UUID?
-    private let existingPer100LRateId: UUID?
 
     init(
         chemical: SavedChemical?,
@@ -287,80 +277,20 @@ struct EditSavedChemicalSheet: View {
         self.chemical = chemical
         self.prefill = prefill
         self.onSaved = onSaved
-        // One seeding path for both cases. A reviewed lookup and a stored
-        // record populate the identical fields; only what Save does differs.
-        if let c = chemical ?? prefill {
-            _name = State(initialValue: c.name)
-            _unit = State(initialValue: c.unit)
-            _formType = State(initialValue: ChemicalFormType.from(unit: c.unit))
-            _chemicalGroup = State(initialValue: c.chemicalGroup)
-            _use = State(initialValue: c.use)
-            _manufacturer = State(initialValue: c.manufacturer)
-            _notes = State(initialValue: c.notes)
-            _problem = State(initialValue: c.problem)
-            _activeIngredient = State(initialValue: c.activeIngredient)
-            _modeOfAction = State(initialValue: c.modeOfAction)
-            _labelURL = State(initialValue: c.labelURL)
-            _productURL = State(initialValue: c.productURL)
-
-            let perHa = c.rates.first(where: { $0.basis == .perHectare })
-            let per100L = c.rates.first(where: { $0.basis == .per100Litres })
-            self.existingPerHaRateId = perHa?.id
-            self.existingPer100LRateId = per100L?.id
-
-            if let perHa {
-                _ratePerHaText = State(initialValue: Self.formatRate(c.unit.fromBase(perHa.value)))
-            } else if c.ratePerHa > 0 {
-                _ratePerHaText = State(initialValue: Self.formatRate(c.ratePerHa))
-            }
-            if let per100L {
-                _ratePer100LText = State(initialValue: Self.formatRate(c.unit.fromBase(per100L.value)))
-            }
-
-            if let p = c.purchase {
-                _trackPurchase = State(initialValue: true)
-                _containerSizeText = State(initialValue: Self.formatRate(p.containerSizeML))
-                _containerUnit = State(initialValue: p.containerUnit)
-                _costText = State(initialValue: p.costDollars > 0 ? Self.formatRate(p.costDollars) : "")
-            } else {
-                _containerUnit = State(initialValue: c.unit)
-            }
-
-            _chemistryDraft = State(initialValue: ChemicalManualEntry.draft(
-                from: c,
-                fallbackCountry: ""
-            ))
-            _productCategory = State(initialValue: c.category)
-            _packSizeText = State(initialValue: c.packSize.map { Self.formatRate($0) } ?? "")
-            _packPriceText = State(initialValue: c.pricePerPack.map { Self.formatRate($0) } ?? "")
-            _densityText = State(initialValue: c.density.map { Self.formatRate($0) } ?? "")
-            _nitrogenText = State(initialValue: c.nitrogenPercent.map { Self.formatRate($0) } ?? "")
-            _phosphorusText = State(initialValue: c.phosphorusPercent.map { Self.formatRate($0) } ?? "")
-            _potassiumText = State(initialValue: c.potassiumPercent.map { Self.formatRate($0) } ?? "")
-            _analysisBasis = State(initialValue: FertiliserAnalysisBasis(rawValue: c.analysisBasis) ?? .elemental)
-            _organicCertified = State(initialValue: c.organicCertified)
-            _inventoryText = State(initialValue: c.inventoryQuantity.map { Self.formatRate($0) } ?? "")
-            _applicationNotes = State(initialValue: c.applicationNotes)
-        } else {
-            self.existingPerHaRateId = nil
-            self.existingPer100LRateId = nil
-            _chemistryDraft = State(initialValue: ChemicalManualEntry.draft(
-                from: nil,
-                fallbackCountry: ""
-            ))
-        }
+        // ONE seeding path for both cases, run ONCE. A reviewed lookup and a
+        // stored record populate the identical fields; only what Save does
+        // differs. `@State` keeps the value produced here for the lifetime of
+        // the editor, so re-running this initialiser on a parent redraw cannot
+        // overwrite anything the operator has typed.
+        _session = State(initialValue: ChemicalReviewSession.make(
+            chemical: chemical,
+            prefill: prefill,
+            fallbackCountry: ""
+        ))
     }
 
     private static func formatRate(_ value: Double) -> String {
-        if value == 0 { return "" }
-        if value.truncatingRemainder(dividingBy: 1) == 0 {
-            return String(format: "%.0f", value)
-        }
-        return String(format: "%.2f", value)
-    }
-
-    private var isValid: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ChemicalReviewSession.formatRate(value)
     }
 
     /// The country a manual entry defaults to, from the vineyard profile.
@@ -370,39 +300,6 @@ struct EditSavedChemicalSheet: View {
         )
     }
 
-    /// Whether the operator has authored any structured chemistry in this form.
-    ///
-    /// A record whose chemistry section was never opened has nothing structured
-    /// to write, and must be saved without touching the intelligence columns —
-    /// otherwise editing a price on a legacy chemical would materialise its
-    /// free-text seed as its first structured write.
-    private var hasAuthoredChemistry: Bool {
-        !ChemicalManualEntry
-            .proposedIntelligence(from: chemistryDraft, existing: seedIntelligence)
-            .isEmpty
-    }
-
-    /// The structured chemistry this form OPENED with.
-    ///
-    /// For a stored record that is what is on file; for a reviewed lookup it is
-    /// the merged result. Reconciliation needs it either way — passing `nil` for
-    /// a lookup would make every prefilled value look freshly hand-typed, and a
-    /// register-confirmed product would save with its authoritative citations
-    /// withdrawn simply because the operator pressed Save without editing.
-    private var seedIntelligence: ChemicalIntelligence? {
-        chemical?.chemicalIntelligence ?? prefill?.chemicalIntelligence
-    }
-
-    /// A reviewed lookup whose registration number could not be established.
-    ///
-    /// Only ever shown on the review case: a hand-entered product has no
-    /// registration because nobody looked one up, which is not news.
-    private var registrationNotConfirmed: Bool {
-        guard prefill != nil else { return false }
-        let number = seedIntelligence?.registration?.registrationNumber ?? ""
-        return number.isEmpty
-    }
-
     /// "Review Chemical" for a looked-up product, so the operator understands
     /// they are checking findings rather than filling in a blank form.
     private var reviewTitle: String {
@@ -410,35 +307,11 @@ struct EditSavedChemicalSheet: View {
         return chemical == nil ? "New Chemical" : "Edit Chemical"
     }
 
-    /// Re-resolved verification for the structured chemistry in this form.
-    ///
-    /// The draft goes through `ChemicalManualEntry`, which reconciles it as
-    /// `.manualEntry` evidence: authoritative citations for values the operator
-    /// changed are withdrawn, each active's group is cross-checked against the
-    /// reference table, and the status is re-derived. Nothing here decides what
-    /// the status becomes.
-    ///
-    /// `nil` when there is no structured chemistry to write, which is what keeps
-    /// a price-only edit from disturbing verification at all.
-    private var editOutcome: ChemicalEditOutcome? {
-        guard hasAuthoredChemistry else { return nil }
-        let outcome = ChemicalManualEntry.outcome(
-            for: chemistryDraft,
-            existing: seedIntelligence
-        )
-        // An unchanged structured record must not be rewritten by the act of
-        // saving a note: identical intelligence means there is nothing to store.
-        if let stored = seedIntelligence, stored == outcome.intelligence {
-            return nil
-        }
-        return outcome
-    }
-
     var body: some View {
         NavigationStack {
             Form {
                 if store.settings.aiSuggestionsEnabled {
-                    aiSection
+                    lookupSection
                 }
                 productSection
                 chemistrySection
@@ -447,7 +320,7 @@ struct EditSavedChemicalSheet: View {
                 }
                 detailsSection
                 ratesSection
-                if productCategory?.isFertiliser == true {
+                if session.productCategory?.isFertiliser == true {
                     fertiliserSection
                 }
                 if canViewFinancials {
@@ -461,32 +334,39 @@ struct EditSavedChemicalSheet: View {
             }
             .navigationTitle(reviewTitle)
             .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showAILookup) {
-                ChemicalAILookupSheet(initialQuery: name) { result in
-                    Task { await applyAIResult(result) }
-                }
-            }
-            .sheet(isPresented: $showChemistryEditor) {
-                ChemicalManualEditorView(
-                    draft: $chemistryDraft,
-                    existing: seedIntelligence
-                )
-            }
-            .onAppear {
-                // The vineyard's country is the sensible default, but it is only
-                // applied when the record does not already name one — an imported
-                // product's own country must never be overwritten on open.
-                if chemistryDraft.countryCode.isEmpty {
-                    chemistryDraft.countryCode = resolvedCountry
-                }
-            }
-            .sheet(isPresented: $showReverify) {
-                if let chemical {
-                    // Closing this form after a successful re-verification is not
-                    // cosmetic. These @State fields were captured from the record
-                    // at init, so a Save afterwards would write the pre-check
-                    // values straight back over the update just accepted.
-                    ChemicalReverifyFlowView(chemical: chemical) { dismiss() }
+            // ONE sheet presenter. Four stacked `.sheet` modifiers shared a
+            // presentation slot, and a parent rebuild while one was open could
+            // tear down the editor underneath it — which is how a populated
+            // Review Chemical form lost its contents after Chemistry & Identity
+            // was opened and closed. There is deliberately no `onAppear` work
+            // here either: the country default is applied once when the session
+            // is seeded, not on every re-appearance of the sheet.
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .search:
+                    // The SAME lookup the Add Chemical flow uses. It hands back a
+                    // merged draft, which is applied to this session — one
+                    // lookup, one merge, one review. Nothing is saved here.
+                    ChemicalProductSearchSheet(
+                        initialQuery: session.name,
+                        existing: chemical
+                    ) { reviewed in
+                        session.apply(reviewed: reviewed, fallbackCountry: resolvedCountry)
+                    }
+                case .chemistry:
+                    ChemicalManualEditorView(
+                        draft: $session.chemistryDraft,
+                        existing: session.seedIntelligence
+                    )
+                case .reverify:
+                    if let chemical {
+                        // Closing this form after a successful re-verification is
+                        // not cosmetic. The session was captured from the record
+                        // when the editor opened, so a Save afterwards would write
+                        // the pre-check values straight back over the update just
+                        // accepted.
+                        ChemicalReverifyFlowView(chemical: chemical) { dismiss() }
+                    }
                 }
             }
             .toolbar {
@@ -498,7 +378,7 @@ struct EditSavedChemicalSheet: View {
                         if let saved = save() { onSaved?(saved) }
                         dismiss()
                     }
-                    .disabled(!isValid)
+                    .disabled(!session.isValid)
                 }
             }
             .alert("Link", isPresented: $showLinkAlert, presenting: linkAlertMessage) { _ in
@@ -510,54 +390,60 @@ struct EditSavedChemicalSheet: View {
             .onChange(of: deleteCoordinator.didDeleteId) { _, newValue in
                 if newValue != nil { dismiss() }
             }
-            .onChange(of: formType) { _, newValue in
-                if !newValue.units.contains(unit) {
-                    unit = newValue.units.first ?? .litres
+            .onChange(of: session.formType) { _, newValue in
+                if !newValue.units.contains(session.unit) {
+                    session.unit = newValue.units.first ?? .litres
                 }
-                if !newValue.units.contains(containerUnit) {
-                    containerUnit = newValue.units.first ?? .litres
+                if !newValue.units.contains(session.containerUnit) {
+                    session.containerUnit = newValue.units.first ?? .litres
                 }
             }
         }
     }
 
-    private var aiSection: some View {
+    /// Re-run the product lookup from inside the editor.
+    ///
+    /// This is NOT a second pipeline. It opens the same search screen the Add
+    /// Chemical flow opens, resolves through the same resolver and maps through
+    /// the same `ChemicalReviewMerge`, then replaces this session's product data
+    /// with the result. What the operator owns — price, pack, stock, notes — is
+    /// left alone: re-identifying a product says nothing about what it cost.
+    private var lookupSection: some View {
         Section {
             Button {
-                showAILookup = true
+                activeSheet = .search
             } label: {
-                Label(aiLoading ? "Looking up..." : "Search with AI", systemImage: "sparkles")
-            }
-            .disabled(aiLoading)
-            if let aiError {
-                Text(aiError)
-                    .font(.caption)
-                    .foregroundStyle(.red)
+                Label(
+                    session.name.trimmingCharacters(in: .whitespaces).isEmpty
+                        ? "Search for this product"
+                        : "Search the register again",
+                    systemImage: "magnifyingglass"
+                )
             }
         } footer: {
-            Text("AI suggestions must be checked against the current product label, permit, SDS, and local regulations before use.")
+            Text("Looks the product up again and refills the product details below. Everything found stays editable, and nothing is saved until you press Save.")
         }
     }
 
     private var productSection: some View {
         Section {
             LabeledField(label: "Chemical / Product Name") {
-                TextField("e.g. Synertrol Horti Oil", text: $name)
+                TextField("e.g. Synertrol Horti Oil", text: $session.name)
             }
-            Picker("Category", selection: $productCategory) {
+            Picker("Category", selection: $session.productCategory) {
                 Text("Uncategorised").tag(ProductCategory?.none)
                 ForEach(ProductCategory.allCases) { option in
                     Text(option.label).tag(ProductCategory?.some(option))
                 }
             }
-            Picker("Form", selection: $formType) {
+            Picker("Form", selection: $session.formType) {
                 ForEach(ChemicalFormType.allCases) { f in
                     Text(f.rawValue).tag(f)
                 }
             }
             .pickerStyle(.segmented)
-            Picker("Unit", selection: $unit) {
-                ForEach(formType.units, id: \.self) { u in
+            Picker("Unit", selection: $session.unit) {
+                ForEach(session.formType.units, id: \.self) { u in
                     Text(u.rawValue).tag(u)
                 }
             }
@@ -573,28 +459,28 @@ struct EditSavedChemicalSheet: View {
     private var fertiliserSection: some View {
         Group {
             Section("Pack & Inventory") {
-                Toggle("Organic certified", isOn: $organicCertified)
-                LabeledContent("Pack size (\(formType == .liquid ? "L" : "kg"))") {
-                    TextField("25", text: $packSizeText)
+                Toggle("Organic certified", isOn: $session.organicCertified)
+                LabeledContent("Pack size (\(session.formType == .liquid ? "L" : "kg"))") {
+                    TextField("25", text: $session.packSizeText)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
                 if canViewFinancials {
                     LabeledContent("Price per pack ($)") {
-                        TextField("Optional", text: $packPriceText)
+                        TextField("Optional", text: $session.packPriceText)
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                     }
                 }
-                if formType == .liquid {
+                if session.formType == .liquid {
                     LabeledContent("Density (kg/L)") {
-                        TextField("Optional", text: $densityText)
+                        TextField("Optional", text: $session.densityText)
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                     }
                 }
                 LabeledContent("Stock on hand (packs)") {
-                    TextField("Optional", text: $inventoryText)
+                    TextField("Optional", text: $session.inventoryText)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
@@ -602,21 +488,21 @@ struct EditSavedChemicalSheet: View {
 
             Section {
                 LabeledContent("Nitrogen (N) %") {
-                    TextField("0", text: $nitrogenText)
+                    TextField("0", text: $session.nitrogenText)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
                 LabeledContent("Phosphorus %") {
-                    TextField("0", text: $phosphorusText)
+                    TextField("0", text: $session.phosphorusText)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
                 LabeledContent("Potassium %") {
-                    TextField("0", text: $potassiumText)
+                    TextField("0", text: $session.potassiumText)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
-                Picker("P & K basis", selection: $analysisBasis) {
+                Picker("P & K basis", selection: $session.analysisBasis) {
                     ForEach(FertiliserAnalysisBasis.allCases) { option in
                         Text(option.label).tag(option)
                     }
@@ -628,7 +514,7 @@ struct EditSavedChemicalSheet: View {
             }
 
             Section("Application Notes") {
-                TextField("Optional notes", text: $applicationNotes, axis: .vertical)
+                TextField("Optional notes", text: $session.applicationNotes, axis: .vertical)
                     .lineLimit(2...4)
             }
         }
@@ -641,12 +527,14 @@ struct EditSavedChemicalSheet: View {
     /// summary, and how many label rates and uses are on record — then hands off
     /// to the structured editor for the actual work.
     private var chemistrySection: some View {
-        let actives = chemistryDraft.actives.filter {
-            !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        let summary = ChemicalManualEntry.groupSummary(chemistryDraft)
-        let rateCount = chemistryDraft.productRates.count
-            + chemistryDraft.uses.reduce(0) { $0 + $1.rates.count }
+        // Read from the STRUCTURED draft, which a lookup now hydrates directly.
+        // This list saying "none" while the legacy line below it read "Mancozeb"
+        // was the visible symptom of two pipelines disagreeing; there is one
+        // pipeline now, and this is its output.
+        let actives = session.populatedActives
+        let summary = ChemicalManualEntry.groupSummary(session.chemistryDraft)
+        let rateCount = session.chemistryDraft.productRates.count
+            + session.chemistryDraft.uses.reduce(0) { $0 + $1.rates.count }
         return Section {
             if actives.isEmpty {
                 Label("No active ingredients recorded", systemImage: "flask")
@@ -688,17 +576,17 @@ struct EditSavedChemicalSheet: View {
                     Text(summary).font(.subheadline.weight(.semibold))
                 }
             }
-            if rateCount > 0 || !chemistryDraft.uses.isEmpty {
+            if rateCount > 0 || !session.chemistryDraft.uses.isEmpty {
                 LabeledContent("Label rates & uses") {
                     Text("\(rateCount) rate\(rateCount == 1 ? "" : "s") · "
-                         + "\(chemistryDraft.uses.count) use\(chemistryDraft.uses.count == 1 ? "" : "s")")
+                         + "\(session.chemistryDraft.uses.count) use\(session.chemistryDraft.uses.count == 1 ? "" : "s")")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
             }
 
             Button {
-                showChemistryEditor = true
+                activeSheet = .chemistry
             } label: {
                 Label(
                     actives.isEmpty ? "Enter Chemistry & Identity" : "Edit Chemistry & Identity",
@@ -710,7 +598,7 @@ struct EditSavedChemicalSheet: View {
             // Not a warning and not a blocker: an unconfirmed registration says
             // nothing about whether the chemistry below is right, and repeating
             // it on every screen is what made the old flow feel like a refusal.
-            if registrationNotConfirmed {
+            if session.registrationNotConfirmed {
                 Label("Registration not confirmed", systemImage: "info.circle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -719,12 +607,18 @@ struct EditSavedChemicalSheet: View {
             // A legacy record's free-text chemistry, shown read-only so the
             // operator can see what the old columns hold while they restate it as
             // structure. Nothing calculates from these strings.
-            if actives.isEmpty, !activeIngredient.isEmpty || !chemicalGroup.isEmpty {
+            //
+            // Only ever reachable for a record that has never been structured:
+            // when a lookup finds actives they appear in the list above, not
+            // here, and this block stays hidden.
+            if actives.isEmpty,
+               !session.activeIngredient.isEmpty || !session.chemicalGroup.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Recorded as text")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
-                    Text([activeIngredient, chemicalGroup].filter { !$0.isEmpty }
+                    Text([session.activeIngredient, session.chemicalGroup]
+                        .filter { !$0.isEmpty }
                         .joined(separator: " · "))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -740,21 +634,21 @@ struct EditSavedChemicalSheet: View {
     private var detailsSection: some View {
         Section {
             LabeledField(label: "Use / Problem") {
-                TextField("e.g. Fungicide", text: $use)
+                TextField("e.g. Fungicide", text: $session.use)
             }
             LabeledField(label: "Target Problem") {
-                TextField("e.g. Powdery Mildew", text: $problem)
+                TextField("e.g. Powdery Mildew", text: $session.problem)
             }
             LabeledField(label: "Manufacturer") {
-                TextField("e.g. Syngenta", text: $manufacturer)
+                TextField("e.g. Syngenta", text: $session.manufacturer)
             }
-            if let warning = editOutcome?.warning {
+            if let warning = session.editOutcome?.warning {
                 verificationWarning(warning)
             }
             LabeledURLField(
                 label: "Official Label URL",
                 placeholder: "https://...",
-                text: $labelURL,
+                text: $session.labelURL,
                 onOpenFailure: { message in
                     linkAlertMessage = message
                     showLinkAlert = true
@@ -763,7 +657,7 @@ struct EditSavedChemicalSheet: View {
             LabeledURLField(
                 label: "Product Page URL",
                 placeholder: "https://...",
-                text: $productURL,
+                text: $session.productURL,
                 onOpenFailure: { message in
                     linkAlertMessage = message
                     showLinkAlert = true
@@ -814,7 +708,7 @@ struct EditSavedChemicalSheet: View {
             }
             if offered {
                 Button {
-                    showReverify = true
+                    activeSheet = .reverify
                 } label: {
                     Label("Re-verify Chemical", systemImage: "arrow.triangle.2.circlepath")
                 }
@@ -852,18 +746,18 @@ struct EditSavedChemicalSheet: View {
         Section {
             LabeledField(label: "Rate per ha") {
                 HStack {
-                    TextField("0", text: $ratePerHaText)
+                    TextField("0", text: $session.ratePerHaText)
                         .keyboardType(.decimalPad)
-                    Text("\(unit.rawValue)/ha")
+                    Text("\(session.unit.rawValue)/ha")
                         .foregroundStyle(.secondary)
                         .font(.subheadline)
                 }
             }
             LabeledField(label: "Rate per 100L water") {
                 HStack {
-                    TextField("0", text: $ratePer100LText)
+                    TextField("0", text: $session.ratePer100LText)
                         .keyboardType(.decimalPad)
-                    Text("\(unit.rawValue)/100L")
+                    Text("\(session.unit.rawValue)/100L")
                         .foregroundStyle(.secondary)
                         .font(.subheadline)
                 }
@@ -877,17 +771,17 @@ struct EditSavedChemicalSheet: View {
 
     private var purchaseSection: some View {
         Section {
-            Toggle("Track Purchase Info", isOn: $trackPurchase.animation())
-            if trackPurchase {
+            Toggle("Track Purchase Info", isOn: $session.trackPurchase.animation())
+            if session.trackPurchase {
                 HStack {
                     Text("Container Size")
                     Spacer()
-                    TextField("0", text: $containerSizeText)
+                    TextField("0", text: $session.containerSizeText)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                         .frame(width: 90)
-                    Picker("Unit", selection: $containerUnit) {
-                        ForEach(formType.units, id: \.self) { u in
+                    Picker("Unit", selection: $session.containerUnit) {
+                        ForEach(session.formType.units, id: \.self) { u in
                             Text(u.rawValue).tag(u)
                         }
                     }
@@ -899,7 +793,7 @@ struct EditSavedChemicalSheet: View {
                     Spacer()
                     Text("$")
                         .foregroundStyle(.secondary)
-                    TextField("0.00", text: $costText)
+                    TextField("0.00", text: $session.costText)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                         .frame(width: 90)
@@ -958,7 +852,7 @@ struct EditSavedChemicalSheet: View {
                 Text("Notes")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextEditor(text: $notes)
+                TextEditor(text: $session.notes)
                     .frame(minHeight: 80)
                     .padding(8)
                     .background(Color(.systemBackground))
@@ -972,76 +866,32 @@ struct EditSavedChemicalSheet: View {
         }
     }
 
-    @MainActor
-    private func applyAIResult(_ result: ChemicalSearchResult) async {
-        aiError = nil
-        aiLoading = true
-        defer { aiLoading = false }
-        // Explicit user selection — replace the typed search text with the
-        // official product name and manufacturer returned by the lookup so
-        // spelling mistakes ('Syntirol' -> 'Syntiro') are corrected and the
-        // chemical is easier to find later. Other fields only fill when empty
-        // so existing manual edits are preserved.
-        let officialName = result.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !officialName.isEmpty { name = officialName }
-        let officialBrand = result.brand.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !officialBrand.isEmpty { manufacturer = officialBrand }
-        if activeIngredient.isEmpty { activeIngredient = result.activeIngredient }
-        if chemicalGroup.isEmpty { chemicalGroup = result.chemicalGroup }
-        if modeOfAction.isEmpty { modeOfAction = result.modeOfAction }
-        if use.isEmpty { use = result.primaryUse }
-        if problem.isEmpty { problem = result.primaryUse }
-
-        let country = ChemicalInfoService.resolveCountry(vineyardCountry: store.selectedVineyard?.country)
-        do {
-            let info = try await ChemicalInfoService().lookupChemicalInfo(productName: officialName.isEmpty ? result.name : officialName, country: country)
-            if activeIngredient.isEmpty { activeIngredient = info.activeIngredient }
-            let infoBrand = info.brand.trimmingCharacters(in: .whitespacesAndNewlines)
-            if manufacturer.isEmpty, !infoBrand.isEmpty { manufacturer = infoBrand }
-            if chemicalGroup.isEmpty { chemicalGroup = info.chemicalGroup }
-            if labelURL.isEmpty { labelURL = LabelURLValidator.sanitize(info.labelURL) }
-            if productURL.isEmpty, let p = info.productURL {
-                productURL = LabelURLValidator.sanitize(p)
-            }
-            if let moa = info.modeOfAction, modeOfAction.isEmpty { modeOfAction = moa }
-            if use.isEmpty { use = info.primaryUse }
-            unit = info.defaultUnit
-            formType = ChemicalFormType.from(unit: info.defaultUnit)
-            if !formType.units.contains(containerUnit) {
-                containerUnit = info.defaultUnit
-            }
-            if let rates = info.ratesPerHectare, let first = rates.first, ratePerHaText.isEmpty {
-                ratePerHaText = Self.formatRate(first.value)
-            }
-            if let rates = info.ratesPer100L, let first = rates.first, ratePer100LText.isEmpty {
-                ratePer100LText = Self.formatRate(first.value)
-            }
-        } catch {
-            aiError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        }
-    }
-
     /// - Returns: the product as the store now holds it, so a caller can select
     ///   what was just created without searching for it by name.
+    ///
+    /// The ONE write path. Whether the product came from the approved master
+    /// catalogue, the official register, a structured lookup, an `ai_suggestion`
+    /// or the operator's own typing, the vineyard record it produces is a row in
+    /// `saved_chemicals` written from here.
     @discardableResult
     private func save() -> SavedChemical? {
-        let perHaDisplay = Double(ratePerHaText) ?? 0
-        let per100LDisplay = Double(ratePer100LText) ?? 0
+        let perHaDisplay = Double(session.ratePerHaText) ?? 0
+        let per100LDisplay = Double(session.ratePer100LText) ?? 0
 
         var rates: [ChemicalRate] = []
         if perHaDisplay > 0 {
             rates.append(ChemicalRate(
-                id: existingPerHaRateId ?? UUID(),
+                id: session.existingPerHaRateId ?? UUID(),
                 label: "Per Ha",
-                value: unit.toBase(perHaDisplay),
+                value: session.unit.toBase(perHaDisplay),
                 basis: .perHectare
             ))
         }
         if per100LDisplay > 0 {
             rates.append(ChemicalRate(
-                id: existingPer100LRateId ?? UUID(),
+                id: session.existingPer100LRateId ?? UUID(),
                 label: "Per 100L",
-                value: unit.toBase(per100LDisplay),
+                value: session.unit.toBase(per100LDisplay),
                 basis: .per100Litres
             ))
         }
@@ -1050,73 +900,85 @@ struct EditSavedChemicalSheet: View {
         // financials so that owners/managers don't lose cost values when a
         // supervisor/operator edits the same chemical for other details.
         var purchase: ChemicalPurchase? = canViewFinancials ? nil : chemical?.purchase
-        if canViewFinancials, trackPurchase {
-            let containerSize = Double(containerSizeText) ?? 0
-            let cost = Double(costText) ?? 0
+        if canViewFinancials, session.trackPurchase {
+            let containerSize = Double(session.containerSizeText) ?? 0
+            let cost = Double(session.costText) ?? 0
             if containerSize > 0 || cost > 0 {
                 purchase = ChemicalPurchase(
-                    brand: manufacturer,
-                    activeIngredient: activeIngredient,
-                    chemicalGroup: chemicalGroup,
-                    labelURL: labelURL,
+                    brand: session.manufacturer,
+                    activeIngredient: session.activeIngredient,
+                    chemicalGroup: session.chemicalGroup,
+                    labelURL: session.labelURL,
                     costDollars: cost,
 
                     containerSizeML: containerSize,
-                    containerUnit: containerUnit
+                    containerUnit: session.containerUnit
                 )
             }
         }
 
         let parseOptional: (String) -> Double? = { Double($0.replacingOccurrences(of: ",", with: ".")) }
-        let productForm = formType == .liquid ? "liquid" : "solid"
-        let packUnit = formType == .liquid ? "L" : "kg"
+        let productForm = session.formType == .liquid ? "liquid" : "solid"
+        let packUnit = session.formType == .liquid ? "L" : "kg"
 
         // Legacy scalars are now OUTPUTS of the structured record. They are
         // rewritten only when there is structured chemistry to derive them from,
         // so a record that has never been structured keeps its original text and
         // is not blanked by the act of saving it.
-        let outcome = editOutcome
+        let outcome = session.editOutcome
         let structured = outcome?.intelligence
-            ?? (hasAuthoredChemistry ? seedIntelligence : nil)
+            ?? (session.hasAuthoredChemistry ? session.seedIntelligence : nil)
         let projectedActive = structured?.legacyActiveIngredient ?? ""
         let projectedGroup = structured?.legacyChemicalGroup ?? ""
-        let legacyActive = projectedActive.isEmpty ? activeIngredient : projectedActive
-        let legacyGroup = projectedGroup.isEmpty ? chemicalGroup : projectedGroup
+        let legacyActive = projectedActive.isEmpty ? session.activeIngredient : projectedActive
+        let legacyGroup = projectedGroup.isEmpty ? session.chemicalGroup : projectedGroup
 
         if var existing = chemical {
-            existing.name = name
-            existing.unit = unit
+            existing.name = session.name
+            existing.unit = session.unit
             existing.chemicalGroup = legacyGroup
-            existing.use = use
-            existing.manufacturer = manufacturer
-            existing.notes = notes
-            existing.problem = problem
+            existing.use = session.use
+            existing.manufacturer = session.manufacturer
+            existing.notes = session.notes
+            existing.problem = session.problem
             existing.ratePerHa = perHaDisplay
             existing.activeIngredient = legacyActive
             // Mode of action is no longer an editable chemistry input — the group
             // is structured per active now — so whatever the record already held
             // is carried through untouched rather than dropped.
-            existing.modeOfAction = modeOfAction
-            existing.labelURL = labelURL
-            existing.productURL = productURL
+            existing.modeOfAction = session.modeOfAction
+            existing.labelURL = session.labelURL
+            existing.productURL = session.productURL
             existing.rates = rates
             existing.purchase = purchase
-            existing.productCategory = productCategory?.rawValue ?? ""
+            existing.productCategory = session.productCategory?.rawValue ?? ""
             existing.productForm = productForm
-            existing.packSize = parseOptional(packSizeText)
+            existing.packSize = parseOptional(session.packSizeText)
             existing.packUnit = packUnit
             // Preserve pricing authored by owners/managers when the current
             // editor cannot see financials.
-            existing.pricePerPack = canViewFinancials ? parseOptional(packPriceText) : chemical?.pricePerPack
-            existing.density = parseOptional(densityText)
-            existing.nitrogenPercent = parseOptional(nitrogenText)
-            existing.phosphorusPercent = parseOptional(phosphorusText)
-            existing.potassiumPercent = parseOptional(potassiumText)
-            existing.analysisBasis = analysisBasis.rawValue
-            existing.organicCertified = organicCertified
-            existing.inventoryQuantity = parseOptional(inventoryText)
-            existing.inventoryUnit = parseOptional(inventoryText) != nil ? "packs" : existing.inventoryUnit
-            existing.applicationNotes = applicationNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+            existing.pricePerPack = canViewFinancials
+                ? parseOptional(session.packPriceText)
+                : chemical?.pricePerPack
+            existing.density = parseOptional(session.densityText)
+            existing.nitrogenPercent = parseOptional(session.nitrogenText)
+            existing.phosphorusPercent = parseOptional(session.phosphorusText)
+            existing.potassiumPercent = parseOptional(session.potassiumText)
+            existing.analysisBasis = session.analysisBasis.rawValue
+            existing.organicCertified = session.organicCertified
+            existing.inventoryQuantity = parseOptional(session.inventoryText)
+            existing.inventoryUnit = parseOptional(session.inventoryText) != nil
+                ? "packs"
+                : existing.inventoryUnit
+            existing.applicationNotes = session.applicationNotes
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // Master catalogue reference (sql/199). Set only when the product
+            // was taken from an APPROVED master; otherwise left exactly as it
+            // was, because nothing here has re-derived it.
+            if let masterId = session.masterChemicalId {
+                existing.masterChemicalId = masterId
+                existing.masterSourceRevision = session.masterSourceRevision
+            }
             // Re-resolved intelligence when resistance-critical chemistry
             // changed, so a hand-edited group cannot leave a stale `verified`
             // status or an authoritative citation for the OLD value behind.
@@ -1128,34 +990,35 @@ struct EditSavedChemicalSheet: View {
             return store.savedChemicals.first { $0.id == existing.id } ?? existing
         } else {
             let new = SavedChemical(
-                name: name,
+                name: session.name,
                 ratePerHa: perHaDisplay,
-                unit: unit,
+                unit: session.unit,
                 chemicalGroup: legacyGroup,
-                use: use,
-                manufacturer: manufacturer,
-                notes: notes,
-                problem: problem,
+                use: session.use,
+                manufacturer: session.manufacturer,
+                notes: session.notes,
+                problem: session.problem,
                 activeIngredient: legacyActive,
                 rates: rates,
                 purchase: purchase,
-                labelURL: labelURL,
-                productURL: productURL,
-                modeOfAction: modeOfAction,
-                productCategory: productCategory?.rawValue ?? "",
+                labelURL: session.labelURL,
+                productURL: session.productURL,
+                modeOfAction: session.modeOfAction,
+                productCategory: session.productCategory?.rawValue ?? "",
                 productForm: productForm,
-                packSize: parseOptional(packSizeText),
+                packSize: parseOptional(session.packSizeText),
                 packUnit: packUnit,
-                pricePerPack: canViewFinancials ? parseOptional(packPriceText) : nil,
-                density: parseOptional(densityText),
-                nitrogenPercent: parseOptional(nitrogenText),
-                phosphorusPercent: parseOptional(phosphorusText),
-                potassiumPercent: parseOptional(potassiumText),
-                analysisBasis: analysisBasis.rawValue,
-                organicCertified: organicCertified,
-                inventoryQuantity: parseOptional(inventoryText),
-                inventoryUnit: parseOptional(inventoryText) != nil ? "packs" : "",
-                applicationNotes: applicationNotes.trimmingCharacters(in: .whitespacesAndNewlines),
+                pricePerPack: canViewFinancials ? parseOptional(session.packPriceText) : nil,
+                density: parseOptional(session.densityText),
+                nitrogenPercent: parseOptional(session.nitrogenText),
+                phosphorusPercent: parseOptional(session.phosphorusText),
+                potassiumPercent: parseOptional(session.potassiumText),
+                analysisBasis: session.analysisBasis.rawValue,
+                organicCertified: session.organicCertified,
+                inventoryQuantity: parseOptional(session.inventoryText),
+                inventoryUnit: parseOptional(session.inventoryText) != nil ? "packs" : "",
+                applicationNotes: session.applicationNotes
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
                 // A manually created product is born structured. Its status is
                 // whatever `ChemicalManualEntry` reconciled it to — Unverified,
                 // or Conflict where the reference table positively disagrees.
@@ -1165,159 +1028,16 @@ struct EditSavedChemicalSheet: View {
                 // NEW to reconcile — and without this the entire looked-up
                 // record would save as an empty shell, which is the original bug
                 // in a new place.
-                chemicalIntelligence: outcome?.intelligence ?? prefill?.chemicalIntelligence
+                chemicalIntelligence: session.intelligenceToPersist,
+                // Only ever populated from an approved master match; nil for
+                // every other origin, which is valid forever.
+                masterChemicalId: session.masterChemicalId,
+                masterSourceRevision: session.masterSourceRevision
             )
             store.addSavedChemical(new)
             // The store stamps the vineyard onto its own copy, so read the
             // stored value back rather than handing out the pre-insert one.
             return store.savedChemicals.first { $0.id == new.id } ?? new
-        }
-    }
-}
-
-// MARK: - Chemical AI Lookup Sheet
-
-struct ChemicalAILookupSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(MigratedDataStore.self) private var store
-
-    let initialQuery: String
-    let onSelect: (ChemicalSearchResult) -> Void
-
-    @State private var query: String = ""
-    @State private var results: [ChemicalSearchResult] = []
-    @State private var isLoading: Bool = false
-    @State private var errorMessage: String?
-
-    init(initialQuery: String, onSelect: @escaping (ChemicalSearchResult) -> Void) {
-        self.initialQuery = initialQuery
-        self.onSelect = onSelect
-        _query = State(initialValue: initialQuery)
-    }
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    HStack {
-                        TextField("Product or active ingredient", text: $query)
-                            .textInputAutocapitalization(.words)
-                            .onSubmit { Task { await search() } }
-                        Button {
-                            Task { await search() }
-                        } label: {
-                            Image(systemName: "magnifyingglass")
-                        }
-                        .disabled(isLoading || query.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                } footer: {
-                    Text("AI suggestions must be checked against the current label, permit, SDS, and local regulations before use.")
-                }
-
-                if isLoading {
-                    Section {
-                        HStack {
-                            ProgressView()
-                            Text("Searching...")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                if let errorMessage {
-                    Section {
-                        Text(errorMessage)
-                            .foregroundStyle(.red)
-                            .font(.caption)
-                    }
-                }
-
-                if !results.isEmpty {
-                    Section {
-                        ForEach(results) { item in
-                            Button {
-                                onSelect(item)
-                                dismiss()
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    // Manufacturer first, bold, most scannable.
-                                    if !item.brand.isEmpty {
-                                        Text(item.brand)
-                                            .font(.subheadline.weight(.bold))
-                                            .foregroundStyle(.primary)
-                                    }
-                                    // Official product name directly underneath.
-                                    Text(item.name)
-                                        .font(.subheadline)
-                                        .foregroundStyle(item.brand.isEmpty ? .primary : .secondary)
-                                    if !item.activeIngredient.isEmpty {
-                                        Text("Active: \(item.activeIngredient)")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    HStack(spacing: 6) {
-                                        if !item.chemicalGroup.isEmpty {
-                                            Text(item.chemicalGroup).font(.caption2).foregroundStyle(.tertiary)
-                                        }
-                                        if !item.modeOfAction.isEmpty {
-                                            Text("• MOA \(item.modeOfAction)").font(.caption2).foregroundStyle(.tertiary)
-                                        }
-                                    }
-                                    if !item.primaryUse.isEmpty {
-                                        Text(item.primaryUse)
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(2)
-                                    }
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "sparkles")
-                                            .font(.caption2)
-                                        Text("Source: AI lookup")
-                                            .font(.caption2)
-                                    }
-                                    .foregroundStyle(.tertiary)
-                                    .padding(.top, 2)
-                                }
-                            }
-                        }
-                    } header: {
-                        Text("Results")
-                    } footer: {
-                        Text("You can search again if you do not see the right product. A second search may find additional chemicals or alternative product listings.")
-                    }
-                }
-            }
-            .navigationTitle("Search with AI")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .task {
-                if !initialQuery.trimmingCharacters(in: .whitespaces).isEmpty && results.isEmpty {
-                    await search()
-                }
-            }
-        }
-    }
-
-    @MainActor
-    private func search() async {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        errorMessage = nil
-        isLoading = true
-        defer { isLoading = false }
-        let country = ChemicalInfoService.resolveCountry(vineyardCountry: store.selectedVineyard?.country)
-        do {
-            results = try await ChemicalInfoService().searchChemicals(query: trimmed, country: country)
-            if results.isEmpty {
-                errorMessage = "No products found."
-            }
-        } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            results = []
         }
     }
 }

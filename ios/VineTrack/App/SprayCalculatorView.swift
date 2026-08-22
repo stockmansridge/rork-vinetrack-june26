@@ -604,7 +604,10 @@ struct SprayCalculatorView: View {
                 EquipmentFormSheet(equipment: nil)
             }
             .sheet(isPresented: $showAddChemicalToList) {
-                EditSavedChemicalSheet(chemical: nil)
+                // Search → Select → Review → Save, the same single flow the
+                // Chemical Store and the Spray Program use. Adding a product
+                // starts with identifying it, never with a blank form.
+                ChemicalMatchFlowView()
             }
             .sheet(isPresented: $showStartConfirmation) {
                 startConfirmationSheet

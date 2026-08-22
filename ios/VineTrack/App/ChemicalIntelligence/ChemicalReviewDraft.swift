@@ -89,19 +89,25 @@ nonisolated enum ChemicalReviewMerge {
             existing?.manufacturer
         ])
 
-        chemical.productCategory = firstNonEmpty([
+        // Normalised to the stored key so "fungicide", "Fungicide" and
+        // "fungicides" all land on the same category instead of falling through
+        // to Uncategorised. An unrecognised value is kept verbatim rather than
+        // discarded — the resolver may know a category VineTrack does not.
+        let categoryText = firstNonEmpty([
             canonical?.productCategory,
             advisory?.productCategory,
             existing?.productCategory
         ])
+        chemical.productCategory = ProductCategory.parse(categoryText)?.rawValue ?? categoryText
 
         // ---- Chemistry ------------------------------------------------------
-        let actives = mergedActives(
+        let foundActives = mergedActives(
             canonical: canonical?.activeIngredients ?? [],
             advisory: advisory?.activeIngredients ?? [],
             searchText: selected?.activeIngredient,
             existing: existing?.chemicalIntelligence?.activeIngredients ?? []
         )
+        let actives = reconciledActives(foundActives)
 
         // ---- Uses, rates, WHP, re-entry, restrictions ------------------------
         let uses = firstNonEmptyList([
@@ -125,9 +131,20 @@ nonisolated enum ChemicalReviewMerge {
         // Verbatim from the server. Not rebuilt, not upgraded: the sources,
         // conflicts and unresolved-field list are its account of what it could
         // establish, and populating the form does not change what was proved.
-        let verification = canonical?.verification
+        var verification = canonical?.verification
             ?? existing?.chemicalIntelligence?.verification
             ?? ChemicalVerification()
+        // Group disagreements found while reconciling are recorded as conflicts
+        // on the record, not resolved silently. See `reconciledActives`.
+        let groupConflicts = activeGroupConflicts(foundActives)
+        if !groupConflicts.isEmpty {
+            verification = ChemicalVerification(
+                status: verification.status,
+                sources: verification.sources,
+                conflicts: verification.conflicts + groupConflicts,
+                unresolvedFields: verification.unresolvedFields
+            )
+        }
 
         let intelligence = ChemicalIntelligence(
             activeIngredients: actives,
@@ -147,8 +164,21 @@ nonisolated enum ChemicalReviewMerge {
         if let reference = registration?.labelReference, !reference.isEmpty {
             chemical.labelURL = LabelURLValidator.sanitize(reference)
         }
-        if let unit = productUnit(formType: lookup?.formType, actives: actives) {
+        if let form = ChemicalFormType.stated(formDescription(lookup?.formType)) {
+            chemical.productForm = form == .liquid ? "liquid" : "solid"
+        }
+        if let unit = productUnit(formType: lookup?.formType, uses: uses) {
             chemical.unit = unit
+        }
+
+        // ---- Master catalogue reference (sql/199) ----------------------------
+        // Only an APPROVED master row may be claimed as a reference, and only
+        // the server can say so. A candidate or retired row leaves these nil,
+        // which is a permanently valid state — the saved record stands on its
+        // own and simply cites nothing.
+        if let lookup, lookup.isMasterMatch, let master = lookup.master {
+            chemical.masterChemicalId = master.masterChemicalId
+            chemical.masterSourceRevision = master.masterRevision
         }
         if chemical.use.isEmpty {
             chemical.use = firstNonEmpty([selected?.primaryUse, existing?.use])
@@ -190,6 +220,71 @@ nonisolated enum ChemicalReviewMerge {
         let parsed = parseActives(searchText).map(asUnverified)
         if !parsed.isEmpty { return parsed }
         return existing
+    }
+
+    /// Cross-check every active's group against the authoritative table.
+    ///
+    /// A lookup that reads "Mancozeb · M5" off a label is reading the group for
+    /// Chlorothalonil, not Mancozeb, and M5 is what a resistance calculation
+    /// would then be built on. `AuthoritativeActivityGroups.reconcile` returns
+    /// the table's answer whenever it has one, so a suggested group can correct
+    /// a blank but can never overwrite a known classification. The scheme
+    /// travels with the code, so FRAC, HRAC and IRAC stay distinct.
+    ///
+    /// # A classification is only as good as the identification
+    ///
+    /// The table can say "Mancozeb is FRAC M3" with authority. It cannot say
+    /// "this product contains Mancozeb" — on an unverified lookup that came
+    /// from the model. So when the active's IDENTITY is self-reported, the
+    /// corrected code is applied but `groupSource` stays at the identity's trust
+    /// level.
+    ///
+    /// Without that, an unverified product would reach Partially Verified
+    /// because `resolvedStatus` promotes on one authoritative group — the record
+    /// would be citing VineTrack's chemistry table as evidence for a product
+    /// identity nobody established. Populating a field and trusting it stay
+    /// different things.
+    static func reconciledActives(
+        _ actives: [ChemicalActiveIngredient]
+    ) -> [ChemicalActiveIngredient] {
+        actives.map { active in
+            // The table may lend its authority to the GROUP only when someone
+            // outside this installation established the active's IDENTITY.
+            let identityIsAuthoritative = active.identitySource?.isAuthoritative ?? false
+            let outcome = AuthoritativeActivityGroups.reconcile(
+                activeNamed: active.name,
+                extracted: active.activityGroup,
+                extractedSource: active.groupSource ?? .aiInterpretation
+            )
+            return ChemicalActiveIngredient(
+                name: active.name,
+                concentration: active.concentration,
+                concentrationUnit: active.concentrationUnit,
+                // The corrected CODE is always taken — a wrong group is worse
+                // than an unproven one.
+                activityGroup: outcome.group,
+                groupSource: outcome.group == nil
+                    ? nil
+                    : (identityIsAuthoritative
+                       ? outcome.source
+                       : (active.identitySource ?? .aiInterpretation)),
+                identitySource: active.identitySource
+            )
+        }
+    }
+
+    /// The disagreements `reconciledActives` resolved, so they are visible on
+    /// the record instead of being quietly corrected behind the operator.
+    static func activeGroupConflicts(
+        _ actives: [ChemicalActiveIngredient]
+    ) -> [ChemicalVerificationConflict] {
+        actives.compactMap { active in
+            AuthoritativeActivityGroups.reconcile(
+                activeNamed: active.name,
+                extracted: active.activityGroup,
+                extractedSource: active.groupSource ?? .aiInterpretation
+            ).conflict
+        }
     }
 
     /// Restate an active as the unverified reading it is.
@@ -338,28 +433,51 @@ nonisolated enum ChemicalReviewMerge {
         return []
     }
 
-    /// The product unit the Chemical Store should default to.
+    /// `"liquid"` / `"solid"` for a formulation the lookup described, else `""`.
+    static func formDescription(_ formType: String?) -> String {
+        let form = (formType ?? "").lowercased()
+        guard !form.isEmpty else { return "" }
+        if form.contains("liquid") || form.contains("emulsifiable")
+            || form.contains("suspension") || form.contains("soluble concentrate") {
+            return "liquid"
+        }
+        if form.contains("solid") || form.contains("granul") || form.contains("powder")
+            || form.contains("wettable") || form.contains("wdg") || form.contains("wg")
+            || form.contains("pellet") {
+            return "solid"
+        }
+        return ""
+    }
+
+    /// The APPLICATION product unit, when something actually established one.
     ///
-    /// Read from the formulation where the lookup stated one, else inferred
-    /// from the actives' concentration unit — g/L is a liquid, g/kg is a solid.
-    /// Only ever a DEFAULT: the operator can change it, and rates are quoted
-    /// against it rather than converted by it.
+    /// Deliberately NOT inferred from active concentration. `750 g/kg` states
+    /// how much Mancozeb is in the product; `kg/ha` states how much product
+    /// goes on the block. They are different quantities, and reading one off
+    /// the other is a guess dressed as a fact — a guess that then shows up in
+    /// the Spray Calculator as a rate.
+    ///
+    /// Only two things may establish it: an explicit formulation, or the unit a
+    /// registered rate is actually quoted in. When neither does, this returns
+    /// nil and the field is left for the operator to review.
     static func productUnit(
         formType: String?,
-        actives: [ChemicalActiveIngredient]
+        uses: [ChemicalRegisteredUse]
     ) -> ChemicalUnit? {
-        let form = (formType ?? "").lowercased()
-        if !form.isEmpty {
-            if form.contains("liquid") { return .litres }
-            if form.contains("solid") || form.contains("granul") || form.contains("powder")
-                || form.contains("wettable") || form.contains("wdg") || form.contains("wg") {
-                return .kilograms
+        switch formDescription(formType) {
+        case "liquid": return .litres
+        case "solid": return .kilograms
+        default: break
+        }
+        for rate in uses.flatMap(\.rates) {
+            switch rate.unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "l", "litre", "litres", "liter", "liters": return .litres
+            case "ml", "millilitre", "millilitres": return .millilitres
+            case "kg", "kilogram", "kilograms": return .kilograms
+            case "g", "gram", "grams": return .grams
+            default: continue
             }
         }
-        switch actives.compactMap(\.concentrationUnit).first {
-        case .gramsPerLitre, .percentWeightPerVolume: return .litres
-        case .gramsPerKilogram, .colonyFormingUnitsPerGram: return .kilograms
-        default: return nil
-        }
+        return nil
     }
 }

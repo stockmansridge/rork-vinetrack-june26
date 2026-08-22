@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Add a chemical: **Search → Select → Review → Save**.
 ///
-/// # Why this is three steps and not six
+/// # Why this is two screens and not six
 ///
 /// This flow used to run Search → Matched Product → Verify Chemical → Confirm,
 /// with a warning on most of them. For the ordinary case that was four screens
@@ -18,10 +18,14 @@ import SwiftUI
 /// a product is an act of editing it, not an act of clicking through warnings
 /// about it.
 ///
-/// Trust rules are untouched: `ChemicalReviewMerge` writes lookup-derived values
-/// with `ai_interpretation` provenance, so a product whose identity was not
-/// confirmed still saves Unverified — with its chemistry present and editable.
-/// Populating a field and trusting a field remain different things.
+/// # It owns no lookup of its own
+///
+/// Search, ranking and resolution live in `ChemicalProductSearchSheet`; mapping
+/// lives in `ChemicalReviewMerge`; editing and saving live in
+/// `EditSavedChemicalSheet`. This type is the wiring between them and nothing
+/// else, which is what keeps the Chemical Store, the Spray Calculator and the
+/// Spray Program's "Add New Chemical" on genuinely the same path rather than on
+/// three that merely look alike.
 struct ChemicalMatchFlowView: View {
     /// Existing chemical being matched (legacy `needs_match` cleanup), or nil
     /// when adding something new.
@@ -33,15 +37,8 @@ struct ChemicalMatchFlowView: View {
     /// Spray Program's product line, for instance, which binds it by id.
     let onSaved: ((SavedChemical) -> Void)?
 
-    @Environment(MigratedDataStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
-    @State private var query: String = ""
-    @State private var results: [ChemicalSearchResult] = []
-    @State private var isSearching: Bool = false
-    @State private var searchError: String?
-
-    @State private var isLoadingProduct: Bool = false
     /// The populated, unsaved record under review. Presenting it IS the match
     /// step — there is no separate read-only confirmation of it.
     @State private var reviewDraft: SavedChemical?
@@ -57,234 +54,54 @@ struct ChemicalMatchFlowView: View {
         self.onSaved = onSaved
     }
 
-    /// Country comes from the vineyard profile. The operator already told
-    /// VineTrack where they farm; asking again on every lookup would be both
-    /// annoying and a chance to get it wrong, and country is part of product
-    /// identity rather than a search preference.
-    private var countryCode: String {
-        ChemicalRegistration.normaliseCountry(
-            ChemicalInfoService.resolveCountry(vineyardCountry: store.selectedVineyard?.country)
-        )
-    }
-
     var body: some View {
-        NavigationStack {
-            searchStep
-                .navigationTitle(existing == nil ? "Add Chemical" : "Match & Verify")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Cancel") { dismiss() }
-                    }
-                }
-                .sheet(isPresented: $showManualEntry) {
-                    // Manual entry is the same editor with nothing prefilled.
-                    EditSavedChemicalSheet(chemical: existing) { saved in
-                        onSaved?(saved)
-                        dismiss()
-                    }
-                }
-                .sheet(item: $reviewDraft) { draft in
-                    // THE Chemical Store editor, opened on the merged draft.
-                    // `chemical:` stays the record being matched (nil when
-                    // adding) so Save still takes the right create/update path;
-                    // `prefill:` is what to show. Same screen, same Save.
-                    EditSavedChemicalSheet(
-                        chemical: existing,
-                        prefill: draft
-                    ) { saved in
-                        onSaved?(saved)
-                        dismiss()
-                    }
-                }
-        }
-        .onAppear {
-            if query.isEmpty { query = prefillQuery }
-        }
-    }
-
-    // MARK: - Search
-
-    private var searchStep: some View {
-        List {
-            Section {
-                HStack {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Product name", text: $query)
-                        .autocorrectionDisabled()
-                        .onSubmit { Task { await runSearch() } }
-                }
-                Button {
-                    Task { await runSearch() }
-                } label: {
-                    if isSearching {
-                        HStack { ProgressView(); Text("Searching…") }
-                    } else {
-                        Text("Search")
-                    }
-                }
-                // No vineyard country -> no jurisdiction -> fail closed. The
-                // footer below tells the operator what to set; searching a
-                // guessed national register would verify the wrong label.
-                .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty || isSearching || countryCode.isEmpty)
-            } header: {
-                Text("Search for product")
-            } footer: {
-                if countryCode.isEmpty {
-                    Text("Set your vineyard's country so products can be matched to the right national register.")
-                } else {
-                    Text("Searching products registered in \(countryCode). An AU and an NZ product with the same name are different registrations.")
-                }
-            }
-
-            if let searchError {
-                Section {
-                    Label(searchError, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(VineyardTheme.warning)
-                    Button("Try Again") { Task { await runSearch() } }
-                    Button("Enter Manually") { showManualEntry = true }
-                }
-            }
-
-            if isLoadingProduct {
-                Section {
-                    HStack { ProgressView(); Text("Loading product details…") }
-                }
-            }
-
-            if !results.isEmpty {
-                Section {
-                    ForEach(results) { result in
-                        Button {
-                            Task { await review(result) }
-                        } label: {
-                            searchResultRow(result)
-                        }
-                        .disabled(isLoadingProduct)
-                    }
-                } header: {
-                    Text("Select the exact product")
-                } footer: {
-                    // A name match is a lead, not an identification.
-                    Text("Product names repeat across manufacturers and countries. Choose the one on your label — you'll review every detail before saving.")
-                }
-            }
-
-            Section {
-                Button("Enter Manually") { showManualEntry = true }
-            } footer: {
-                Text("Manually entered products stay Unverified until they are matched to a registered product.")
-            }
-        }
-    }
-
-    private func searchResultRow(_ result: ChemicalSearchResult) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(result.name)
-                .font(.body.weight(.medium))
-                .foregroundStyle(.primary)
-            if !result.brand.isEmpty {
-                Text(result.brand)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            HStack(spacing: 6) {
-                if !countryCode.isEmpty {
-                    tag(countryCode, tint: VineyardTheme.info)
-                }
-                if !result.primaryUse.isEmpty {
-                    tag(result.primaryUse, tint: VineyardTheme.olive)
-                }
-            }
-            if !result.activeIngredient.isEmpty {
-                Text(result.activeIngredient)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-            }
-        }
-    }
-
-    private func tag(_ text: String, tint: Color) -> some View {
-        Text(text)
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(tint.opacity(0.12))
-            .foregroundStyle(tint)
-            .clipShape(Capsule())
-    }
-
-    // MARK: - Actions
-
-    private func runSearch() async {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        isSearching = true
-        searchError = nil
-        defer { isSearching = false }
-        do {
-            results = try await ChemicalInfoService()
-                .searchChemicals(query: trimmed, country: countryCode)
-            if results.isEmpty {
-                searchError = "No products found. Try a different spelling, or enter the product manually."
-            }
-        } catch {
-            // The typed query is deliberately left intact so a failed lookup
-            // never costs the operator their input.
-            results = []
-            searchError = (error as? LocalizedError)?.errorDescription
-                ?? "Lookup is unavailable. Check your connection and try again."
-        }
-    }
-
-    /// Resolve the selected product and open it for review.
-    ///
-    /// A structured-lookup failure does NOT dead-end here. The search row
-    /// already carries a canonical name, a manufacturer and usually an active,
-    /// and throwing that away because a second request failed is the same
-    /// data-loss this flow exists to stop. The draft opens with what is known
-    /// and saves as Unverified, which is exactly what it is.
-    private func review(_ result: ChemicalSearchResult) async {
-        isLoadingProduct = true
-        searchError = nil
-        defer { isLoadingProduct = false }
-
-        var lookup: ChemicalStructuredLookup?
-        do {
-            // The SELECTED candidate defines identity from here on — the typed
-            // query ("Dithaine rainshield") is dead the moment an exact result
-            // is chosen. A register candidate's number rides along as a pointer
-            // so the resolver verifies THAT exact identity.
-            lookup = try await ChemicalInfoService().lookupStructured(
-                ChemicalStructuredLookupRequest(
-                    selected: result,
-                    country: countryCode,
-                    fallbackQuery: query
-                )
-            )
-        } catch {
-            lookup = nil
-        }
-
-        // Jurisdiction gate, unchanged and still absolute: a product registered
-        // in another country is refused OUTRIGHT. Its rates, WHP and re-entry
-        // statements are another jurisdiction's law and must never become
-        // saveable here — this is the one case where populating the form would
-        // be worse than refusing it.
-        if let lookup,
-           let reason = ChemicalJurisdiction.rejectionReason(for: lookup, requestCountry: countryCode) {
-            searchError = reason
-            return
-        }
-
-        reviewDraft = ChemicalReviewMerge.reviewChemical(
-            lookup: lookup,
-            selected: result,
+        ChemicalProductSearchSheet(
+            initialQuery: prefillQuery,
             existing: existing,
-            countryCode: countryCode,
-            vineyardId: store.selectedVineyard?.id ?? UUID()
+            onManualEntry: { showManualEntry = true }
+        ) { draft in
+            // Resolved ONCE, here. The draft is a stable value from this moment
+            // until Save or Cancel; nothing downstream re-runs the lookup.
+            reviewDraft = draft
+        }
+        // ONE sheet presenter for both destinations. Two chained `.sheet`
+        // modifiers on the same view share a presentation slot, and a rebuild
+        // of this view while one was open could tear down the editor inside it.
+        .sheet(item: editorTarget) { target in
+            // THE Chemical Store editor. `chemical:` stays the record being
+            // matched (nil when adding) so Save still takes the right
+            // create/update path; `prefill:` is what to show. Same screen,
+            // same Save, same `saved_chemicals` row.
+            EditSavedChemicalSheet(
+                chemical: existing,
+                prefill: target.draft
+            ) { saved in
+                onSaved?(saved)
+                dismiss()
+            }
+        }
+    }
+
+    /// What the single sheet should show: a reviewed draft, or a blank manual
+    /// form. Modelled as one value so the two cannot both be presented.
+    private struct EditorTarget: Identifiable {
+        let draft: SavedChemical?
+        var id: String { draft?.id.uuidString ?? "manual" }
+    }
+
+    private var editorTarget: Binding<EditorTarget?> {
+        Binding(
+            get: {
+                if let reviewDraft { return EditorTarget(draft: reviewDraft) }
+                if showManualEntry { return EditorTarget(draft: nil) }
+                return nil
+            },
+            set: { newValue in
+                if newValue == nil {
+                    reviewDraft = nil
+                    showManualEntry = false
+                }
+            }
         )
     }
 }

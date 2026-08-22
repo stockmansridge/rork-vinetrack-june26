@@ -150,8 +150,10 @@ struct ChemicalReviewMergeTests {
         // The legacy mirror is populated too, so older readers see it.
         #expect(review.activeIngredient.localizedCaseInsensitiveContains("Mancozeb"))
 
-        // A solid formulation, read from the g/kg concentration.
-        #expect(review.unit == .kilograms)
+        // The product unit comes from the unit the registered RATE is quoted
+        // in ("200 g per 100 L"), never from the 750 g/kg active loading —
+        // those describe different quantities.
+        #expect(review.unit == .grams)
     }
 
     @Test("A missing registration number clears neither the active nor the manufacturer")
@@ -173,7 +175,11 @@ struct ChemicalReviewMergeTests {
 
         // AI-tier provenance, honestly recorded...
         #expect(intel.activeIngredients.first?.identitySource == .aiInterpretation)
+        // ...including the group. The reference table can say "Mancozeb is FRAC
+        // M3"; it cannot say "this product contains Mancozeb", and that was the
+        // unverified half.
         #expect(intel.activeIngredients.first?.hasAuthoritativeGroup == false)
+        #expect(intel.activeIngredients.first?.groupSource == .aiInterpretation)
         // ...so the status cannot be moved by anything the merge did.
         #expect(!intel.hasEvidencedRegistration)
         #expect(intel.resolvedVerificationStatus == .unverified)

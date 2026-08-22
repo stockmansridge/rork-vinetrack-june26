@@ -292,6 +292,15 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
     let registrationNumber: String?
     /// "master" | "official_register" | nil (AI suggestion / older server).
     let source: String?
+    /// The country this row's registration belongs to, when the server states
+    /// one. Absent on servers that do not send it; search is country-scoped at
+    /// the request, so absence reads as "the requested country".
+    let countryCode: String?
+    /// Master catalogue lifecycle: "candidate" | "approved" | "retired".
+    /// Absent on servers that do not send it — sql/199's RLS already returns
+    /// approved rows only, and `ChemicalSearchRanking` re-checks rather than
+    /// assuming that will always be true.
+    let reviewStatus: String?
 
     /// Wire value for a row the jurisdiction's official register returned.
     static let officialRegisterSource: String = "official_register"
@@ -329,6 +338,52 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
         case modeOfAction
         case registrationNumber = "registration_number"
         case source
+        case countryCode = "country_code"
+        case reviewStatus = "review_status"
+    }
+
+    init(
+        name: String,
+        activeIngredient: String = "",
+        chemicalGroup: String = "",
+        brand: String = "",
+        primaryUse: String = "",
+        modeOfAction: String = "",
+        registrationNumber: String? = nil,
+        source: String? = nil,
+        countryCode: String? = nil,
+        reviewStatus: String? = nil
+    ) {
+        self.name = name
+        self.activeIngredient = activeIngredient
+        self.chemicalGroup = chemicalGroup
+        self.brand = brand
+        self.primaryUse = primaryUse
+        self.modeOfAction = modeOfAction
+        self.registrationNumber = registrationNumber
+        self.source = source
+        self.countryCode = countryCode
+        self.reviewStatus = reviewStatus
+    }
+
+    /// Tolerant decoding: a row missing any optional field still decodes.
+    /// Dropping a whole result because one key is absent is the same data-loss
+    /// this flow exists to stop.
+    nonisolated init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func text(_ key: CodingKeys) -> String {
+            ((try? c.decodeIfPresent(String.self, forKey: key)) ?? nil) ?? ""
+        }
+        name = text(.name)
+        activeIngredient = text(.activeIngredient)
+        chemicalGroup = text(.chemicalGroup)
+        brand = text(.brand)
+        primaryUse = text(.primaryUse)
+        modeOfAction = text(.modeOfAction)
+        registrationNumber = try? c.decodeIfPresent(String.self, forKey: .registrationNumber)
+        source = try? c.decodeIfPresent(String.self, forKey: .source)
+        countryCode = try? c.decodeIfPresent(String.self, forKey: .countryCode)
+        reviewStatus = try? c.decodeIfPresent(String.self, forKey: .reviewStatus)
     }
 }
 
@@ -471,19 +526,14 @@ nonisolated struct ChemicalInfoService: Sendable {
         }
     }
 
-    func lookupChemicalInfo(productName: String, country: String = "") async throws -> ChemicalInfoResponse {
-        var payload: [String: Any] = [
-            "action": "info",
-            "productName": productName,
-        ]
-        if !country.isEmpty { payload["country"] = country }
-        let data = try await postEdge(path: "chemical-info-lookup", payload: payload)
-        do {
-            return try JSONDecoder().decode(ChemicalInfoResponse.self, from: data)
-        } catch {
-            throw ChemicalLookupError.parseFailed
-        }
-    }
+    // The `"info"` action is deliberately no longer called from iOS.
+    //
+    // It fed the editor's own "Search with AI" mapping, which wrote the legacy
+    // free-text chemistry and never the structured sql/194 record — a second
+    // pipeline producing a second answer for the same product. Product data now
+    // arrives only through `searchChemicals` → `lookupStructured` →
+    // `ChemicalReviewMerge`. The Edge Function still serves the action for other
+    // clients; nothing here calls it.
 
     private func postEdge(path: String, payload: [String: Any]) async throws -> Data {
         guard AppConfig.isSupabaseConfigured else { throw ChemicalLookupError.notConfigured }
