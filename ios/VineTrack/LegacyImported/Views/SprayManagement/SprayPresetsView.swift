@@ -202,7 +202,23 @@ struct EditSavedChemicalSheet: View {
     /// purchase/cost section is hidden so they never see pricing.
     private var canViewFinancials: Bool { accessControl?.canViewFinancials ?? false }
 
+    /// The EXISTING record being edited. Nil when adding.
+    ///
+    /// Distinct from `prefill` on purpose: this is what decides whether Save
+    /// updates a record or creates one, and a looked-up product that has never
+    /// been saved must take the create path.
     let chemical: SavedChemical?
+
+    /// A populated but UNSAVED draft to open the form on — the Review Chemical
+    /// case.
+    ///
+    /// Everything a lookup found is merged into a `SavedChemical` by
+    /// `ChemicalReviewMerge` and handed here, so the operator reviews and
+    /// corrects real values instead of retyping them into a blank form. It is
+    /// the same screen, the same fields and the same Save: "review what we
+    /// found" is not a different kind of editing, and giving it its own screen
+    /// is how the two would drift apart.
+    private let prefill: SavedChemical?
 
     /// Called with the product this form just persisted.
     ///
@@ -263,10 +279,17 @@ struct EditSavedChemicalSheet: View {
     private let existingPerHaRateId: UUID?
     private let existingPer100LRateId: UUID?
 
-    init(chemical: SavedChemical?, onSaved: ((SavedChemical) -> Void)? = nil) {
+    init(
+        chemical: SavedChemical?,
+        prefill: SavedChemical? = nil,
+        onSaved: ((SavedChemical) -> Void)? = nil
+    ) {
         self.chemical = chemical
+        self.prefill = prefill
         self.onSaved = onSaved
-        if let c = chemical {
+        // One seeding path for both cases. A reviewed lookup and a stored
+        // record populate the identical fields; only what Save does differs.
+        if let c = chemical ?? prefill {
             _name = State(initialValue: c.name)
             _unit = State(initialValue: c.unit)
             _formType = State(initialValue: ChemicalFormType.from(unit: c.unit))
@@ -355,8 +378,36 @@ struct EditSavedChemicalSheet: View {
     /// free-text seed as its first structured write.
     private var hasAuthoredChemistry: Bool {
         !ChemicalManualEntry
-            .proposedIntelligence(from: chemistryDraft, existing: chemical?.chemicalIntelligence)
+            .proposedIntelligence(from: chemistryDraft, existing: seedIntelligence)
             .isEmpty
+    }
+
+    /// The structured chemistry this form OPENED with.
+    ///
+    /// For a stored record that is what is on file; for a reviewed lookup it is
+    /// the merged result. Reconciliation needs it either way — passing `nil` for
+    /// a lookup would make every prefilled value look freshly hand-typed, and a
+    /// register-confirmed product would save with its authoritative citations
+    /// withdrawn simply because the operator pressed Save without editing.
+    private var seedIntelligence: ChemicalIntelligence? {
+        chemical?.chemicalIntelligence ?? prefill?.chemicalIntelligence
+    }
+
+    /// A reviewed lookup whose registration number could not be established.
+    ///
+    /// Only ever shown on the review case: a hand-entered product has no
+    /// registration because nobody looked one up, which is not news.
+    private var registrationNotConfirmed: Bool {
+        guard prefill != nil else { return false }
+        let number = seedIntelligence?.registration?.registrationNumber ?? ""
+        return number.isEmpty
+    }
+
+    /// "Review Chemical" for a looked-up product, so the operator understands
+    /// they are checking findings rather than filling in a blank form.
+    private var reviewTitle: String {
+        if prefill != nil { return "Review Chemical" }
+        return chemical == nil ? "New Chemical" : "Edit Chemical"
     }
 
     /// Re-resolved verification for the structured chemistry in this form.
@@ -373,11 +424,11 @@ struct EditSavedChemicalSheet: View {
         guard hasAuthoredChemistry else { return nil }
         let outcome = ChemicalManualEntry.outcome(
             for: chemistryDraft,
-            existing: chemical?.chemicalIntelligence
+            existing: seedIntelligence
         )
         // An unchanged structured record must not be rewritten by the act of
         // saving a note: identical intelligence means there is nothing to store.
-        if let stored = chemical?.chemicalIntelligence, stored == outcome.intelligence {
+        if let stored = seedIntelligence, stored == outcome.intelligence {
             return nil
         }
         return outcome
@@ -408,7 +459,7 @@ struct EditSavedChemicalSheet: View {
                     dangerZoneSection
                 }
             }
-            .navigationTitle(chemical == nil ? "New Chemical" : "Edit Chemical")
+            .navigationTitle(reviewTitle)
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showAILookup) {
                 ChemicalAILookupSheet(initialQuery: name) { result in
@@ -418,7 +469,7 @@ struct EditSavedChemicalSheet: View {
             .sheet(isPresented: $showChemistryEditor) {
                 ChemicalManualEditorView(
                     draft: $chemistryDraft,
-                    existing: chemical?.chemicalIntelligence
+                    existing: seedIntelligence
                 )
             }
             .onAppear {
@@ -653,6 +704,16 @@ struct EditSavedChemicalSheet: View {
                     actives.isEmpty ? "Enter Chemistry & Identity" : "Edit Chemistry & Identity",
                     systemImage: "square.and.pencil"
                 )
+            }
+
+            // ONE quiet statement of fact, next to the identity it is about.
+            // Not a warning and not a blocker: an unconfirmed registration says
+            // nothing about whether the chemistry below is right, and repeating
+            // it on every screen is what made the old flow feel like a refusal.
+            if registrationNotConfirmed {
+                Label("Registration not confirmed", systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             // A legacy record's free-text chemistry, shown read-only so the
@@ -1016,7 +1077,7 @@ struct EditSavedChemicalSheet: View {
         // is not blanked by the act of saving it.
         let outcome = editOutcome
         let structured = outcome?.intelligence
-            ?? (hasAuthoredChemistry ? chemical?.chemicalIntelligence : nil)
+            ?? (hasAuthoredChemistry ? seedIntelligence : nil)
         let projectedActive = structured?.legacyActiveIngredient ?? ""
         let projectedGroup = structured?.legacyChemicalGroup ?? ""
         let legacyActive = projectedActive.isEmpty ? activeIngredient : projectedActive
@@ -1098,7 +1159,13 @@ struct EditSavedChemicalSheet: View {
                 // A manually created product is born structured. Its status is
                 // whatever `ChemicalManualEntry` reconciled it to — Unverified,
                 // or Conflict where the reference table positively disagrees.
-                chemicalIntelligence: outcome?.intelligence
+                //
+                // Falling back to the reviewed draft matters: when the operator
+                // changes nothing, `editOutcome` is nil because there is nothing
+                // NEW to reconcile — and without this the entire looked-up
+                // record would save as an empty shell, which is the original bug
+                // in a new place.
+                chemicalIntelligence: outcome?.intelligence ?? prefill?.chemicalIntelligence
             )
             store.addSavedChemical(new)
             // The store stamps the vineyard onto its own copy, so read the

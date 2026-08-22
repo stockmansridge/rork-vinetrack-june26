@@ -17,10 +17,12 @@ import Foundation
 /// screen to reconcile the two. The evidence had been deliberately withheld and
 /// the app could not say so.
 ///
-/// Everything here is therefore presentation-only. It is never merged into
-/// `ChemicalIntelligence`, never contributes to `resolvedVerificationStatus`,
-/// and never reaches a `SavedChemical`. It exists so the app can explain a
-/// refusal instead of appearing to lose data.
+/// Nothing here is EVIDENCE. It is a reading, and it is treated as one:
+/// `ChemicalReviewMerge` populates the editable review draft from it so the
+/// operator can see and correct what was found, but every value it contributes
+/// is written with `ai_interpretation` provenance, so it can never move
+/// `resolvedVerificationStatus`. Populating a field and trusting a field are
+/// different acts, and only the first one happens here.
 nonisolated struct ChemicalLookupAdvisory: Sendable, Hashable {
     /// The resolver's own wording for why nothing here is a product fact.
     let note: String
@@ -30,9 +32,15 @@ nonisolated struct ChemicalLookupAdvisory: Sendable, Hashable {
     /// The actives the model read off the product — UNVERIFIED. This is the
     /// "Mancozeb" that used to vanish between Search and Verify.
     let activeIngredients: [ChemicalActiveIngredient]
+    /// Registered uses, rates, WHP, re-entry and restrictions the model read —
+    /// UNVERIFIED. Carried for the same reason the actives are: an operator
+    /// holding the label can confirm them in seconds, and cannot confirm a
+    /// field they were never shown.
+    let registeredUses: [ChemicalRegisteredUse]
 
     var hasContent: Bool {
         !activeIngredients.isEmpty
+            || !registeredUses.isEmpty
             || (productName?.isEmpty == false)
             || (registrant?.isEmpty == false)
     }
@@ -48,6 +56,7 @@ nonisolated struct ChemicalLookupAdvisory: Sendable, Hashable {
         case registrant
         case productCategory = "product_category"
         case activeIngredients = "active_ingredients"
+        case registeredUses = "registered_uses"
     }
 }
 
@@ -63,6 +72,9 @@ extension ChemicalLookupAdvisory: Codable {
         // the whole Match & Verify flow to fail.
         activeIngredients = ((try? c.decodeIfPresent(
             [ChemicalActiveIngredient].self, forKey: .activeIngredients
+        )) ?? []) ?? []
+        registeredUses = ((try? c.decodeIfPresent(
+            [ChemicalRegisteredUse].self, forKey: .registeredUses
         )) ?? []) ?? []
     }
 }

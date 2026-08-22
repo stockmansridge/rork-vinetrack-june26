@@ -135,11 +135,18 @@ struct SprayLineChemicalPicker: View {
                 }
             }
             .sheet(isPresented: $isCreatingChemical) {
-                // THE existing Add Chemical screen, not a copy of it. Cancelling
-                // it closes only this sheet, so whatever sent the operator here
-                // — a half-edited Program Step, a spray being recorded — is still
-                // sitting underneath, untouched.
-                EditSavedChemicalSheet(chemical: nil) { created in
+                // THE existing Add Chemical flow, not a copy of it: search the
+                // register, review what was found in the Chemical Store editor,
+                // save. Seeded with whatever the operator already typed here, so
+                // they do not retype the product name they just searched for.
+                //
+                // Cancelling closes only this sheet, so whatever sent the
+                // operator here — a half-edited Program Step, a spray being
+                // recorded — is still sitting underneath, untouched.
+                ChemicalMatchFlowView(
+                    prefillQuery: query.trimmingCharacters(in: .whitespacesAndNewlines)
+                ) { created in
+                    // Bound by Saved Chemical ID, never by name.
                     onSelect(created)
                     dismiss()
                 }
