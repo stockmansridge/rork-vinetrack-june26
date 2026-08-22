@@ -17,6 +17,7 @@ import SwiftUI
 struct SprayProgramStepEditView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(SprayJobTemplateService.self) private var portalTemplates
+    @Environment(SprayTargetLibraryService.self) private var targetLibrary
     @Environment(NetworkMonitor.self) private var network
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(\.dismiss) private var dismiss
@@ -28,6 +29,11 @@ struct SprayProgramStepEditView: View {
 
     @State private var draft: SprayProgramStepDraft
     @State private var productBeingReplaced: SprayProgramProductDraft.ID?
+    @State private var isChoosingTarget: Bool = false
+    /// Set as soon as the operator touches the target list, so a library sync
+    /// landing mid-edit can re-word an existing tag but never re-open a target
+    /// they just removed.
+    @State private var hasEditedTargets: Bool = false
     @State private var isSaving: Bool = false
     @State private var saveError: String?
 
@@ -105,6 +111,18 @@ struct SprayProgramStepEditView: View {
                 onSelect: applyReplacement
             )
         }
+        .sheet(isPresented: $isChoosingTarget) {
+            SprayTargetChooserSheet(
+                selected: draft.targets,
+                vineyardTargets: vineyardTargetSuggestions,
+                onSelect: { tag in
+                    hasEditedTargets = true
+                    draft.addTarget(tag)
+                },
+                onCreate: createCustomTarget
+            )
+        }
+        .task { await loadTargetLibrary() }
         .alert(
             "Couldn't save",
             isPresented: .init(get: { saveError != nil }, set: { if !$0 { saveError = nil } })
@@ -177,41 +195,72 @@ struct SprayProgramStepEditView: View {
 
     private var targetSection: some View {
         Section {
-            TextField("e.g. Powdery Mildew \u{00B7} Botrytis", text: $draft.targetText, axis: .vertical)
-                .lineLimit(1...3)
-
-            let recognised = draft.recognisedTargets
-            if !recognised.isEmpty {
-                LabeledContent("Recognised") {
-                    Text(recognised.map(\.label).joined(separator: " \u{00B7} "))
-                        .font(.caption)
-                        .foregroundStyle(VineyardTheme.olive)
-                        .multilineTextAlignment(.trailing)
+            if draft.targets.isEmpty {
+                Text("No targets on this step yet.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                SprayTargetChipsView(tags: draft.normalisedTargets) { tag in
+                    hasEditedTargets = true
+                    draft.removeTarget(tag)
                 }
+                .padding(.vertical, 2)
             }
 
-            Menu {
-                ForEach(SprayTarget.allCases, id: \.self) { target in
-                    Button(target.label) { appendTarget(target) }
-                }
+            Button {
+                isChoosingTarget = true
             } label: {
-                Label("Add a known target", systemImage: "plus.circle")
-                    .font(.subheadline)
+                Label("Add Target", systemImage: "plus.circle")
+                    .font(.subheadline.weight(.medium))
             }
         } header: {
             Text("Targets")
         } footer: {
-            // The wording is the stored value, verbatim. Replacing it with the
-            // typed set would delete any target VineTrack has no case for —
-            // Phomopsis, Black Spot — from a step that is genuinely for them.
-            Text("Kept exactly as written. Targets VineTrack recognises are used to prefill the calculator; the rest still reads on the step.")
+            // Every selected target is stored, whether or not VineTrack has a
+            // typed case for it. The recognised ones additionally prefill the
+            // calculator; the rest are not silently dropped for the crime of
+            // not being in a six-case enum.
+            Text("Targets VineTrack recognises prefill the Spray Calculator. Your vineyard's own targets are stored and reusable across Program Steps here.")
         }
     }
 
-    private func appendTarget(_ target: SprayTarget) {
-        let trimmed = draft.trimmedTarget
-        guard !trimmed.localizedStandardContains(target.label) else { return }
-        draft.targetText = trimmed.isEmpty ? target.label : "\(trimmed) \u{00B7} \(target.label)"
+    /// Everything this vineyard could reasonably want to reuse: its library
+    /// entries plus the custom targets already on its Program Steps.
+    private var vineyardTargetSuggestions: [SprayTargetTag] {
+        let labels = targetLibrary.labels(vineyardId: store.selectedVineyardId)
+        let steps = SprayProgramCatalog.steps(
+            localRecords: store.sprayRecords,
+            portalRecords: portalTemplates.templateRecords,
+            portalRows: portalTemplates.templates
+        )
+        return targetLibrary.customTags(
+            vineyardId: store.selectedVineyardId,
+            observed: SprayProgramCatalog.observedTargetTags(steps, labels: labels)
+        )
+    }
+
+    /// Add a brand-new custom target: onto this step immediately, and into the
+    /// vineyard's library so the next Program Step offers it.
+    ///
+    /// The tag lands on the step even if the library write fails. The step is
+    /// what states what the spray is for; the library is a convenience, and
+    /// losing the operator's target because a catalogue insert was refused
+    /// would be the wrong way round.
+    private func createCustomTarget(_ wording: String) {
+        guard let tag = SprayTargetVocabulary.tag(wording: wording) else { return }
+        hasEditedTargets = true
+        draft.addTarget(tag)
+        guard tag.isCustom, let vineyardId = store.selectedVineyardId else { return }
+        Task { await targetLibrary.addCustomTarget(wording: tag.label, vineyardId: vineyardId) }
+    }
+
+    /// Pull the vineyard's target vocabulary, then re-word any tag that loaded
+    /// as a de-slugged approximation.
+    private func loadTargetLibrary() async {
+        guard let vineyardId = store.selectedVineyardId else { return }
+        await targetLibrary.refresh(vineyardId: vineyardId)
+        guard !hasEditedTargets else { return }
+        draft.targets = step.targetTags(labels: targetLibrary.labels(vineyardId: vineyardId))
     }
 
     // MARK: - Products
@@ -250,11 +299,15 @@ struct SprayProgramStepEditView: View {
         let saved = store.savedChemicals.first { $0.id == product.wrappedValue.savedChemicalId }
 
         VStack(alignment: .leading, spacing: 10) {
+            // ONE product action, in the header, for every line — resolved or
+            // not. The unresolved row used to carry a second "Replace Product"
+            // button under its warning, which made the same action look like
+            // two different ones depending on where you tapped.
             HStack(alignment: .firstTextBaseline) {
                 Text(product.wrappedValue.name.isEmpty ? "Select a product" : product.wrappedValue.name)
                     .font(.subheadline.weight(.medium))
                 Spacer()
-                Button("Replace") { productBeingReplaced = product.wrappedValue.id }
+                Button("Replace Product") { productBeingReplaced = product.wrappedValue.id }
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.borderless)
             }
@@ -270,25 +323,16 @@ struct SprayProgramStepEditView: View {
                     }
                 }
             } else if !product.wrappedValue.name.isEmpty {
-                // The same warning the detail screen shows, made ACTIONABLE.
-                // It stays until the operator explicitly picks the current
-                // product — nothing here name-matches it into looking verified.
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(
-                        "\(product.wrappedValue.name) is not in your Chemical Store",
-                        systemImage: "exclamationmark.triangle"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(VineyardTheme.warning)
-
-                    Button {
-                        productBeingReplaced = product.wrappedValue.id
-                    } label: {
-                        Label("Replace Product", systemImage: "magnifyingglass")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .buttonStyle(.borderless)
-                }
+                // Informational only. It states the fact and stops — the fix is
+                // the header's Replace Product. It stays until the operator
+                // explicitly picks the product; nothing here name-matches this
+                // line into looking verified.
+                Label(
+                    "\(product.wrappedValue.name) is not in your Chemical Store",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption)
+                .foregroundStyle(VineyardTheme.warning)
             }
 
             if let saved, !SprayRegisteredUseRates.selectableRates(for: saved).isEmpty {

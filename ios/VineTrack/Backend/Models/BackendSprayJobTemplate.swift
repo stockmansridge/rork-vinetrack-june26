@@ -20,7 +20,15 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
     let sprayRatePerHa: Double?
     let concentrationFactor: Double?
     let operationType: String?
+    /// The legacy free-text target line. Still written as a COMPATIBILITY
+    /// PROJECTION (portal readers and reports consume it) and still the only
+    /// place a custom target's exact punctuation survives, since the identifier
+    /// strips it. Not the source of truth for *which* targets — `targets` is.
     let target: String?
+    /// sql/193 `spray_jobs.targets`: the structured selection, as stable
+    /// identifiers. `nil` for a row written before this contract, which is what
+    /// makes the fall back to parsing `target` a migration rather than a guess.
+    let targets: [String]?
     let notes: String?
     let growthStageCode: String?
     let equipmentId: UUID?
@@ -39,6 +47,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         case concentrationFactor = "concentration_factor"
         case operationType = "operation_type"
         case target
+        case targets
         case notes
         case growthStageCode = "growth_stage_code"
         case equipmentId = "equipment_id"
@@ -61,6 +70,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         concentrationFactor: Double? = nil,
         operationType: String? = nil,
         target: String? = nil,
+        targets: [String]? = nil,
         notes: String? = nil,
         growthStageCode: String? = nil,
         equipmentId: UUID? = nil,
@@ -78,6 +88,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         self.concentrationFactor = concentrationFactor
         self.operationType = operationType
         self.target = target
+        self.targets = targets
         self.notes = notes
         self.growthStageCode = growthStageCode
         self.equipmentId = equipmentId
@@ -99,6 +110,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         concentrationFactor = Self.flexibleDouble(container, .concentrationFactor)
         operationType = try? container.decodeIfPresent(String.self, forKey: .operationType)
         target = try? container.decodeIfPresent(String.self, forKey: .target)
+        targets = (try? container.decodeIfPresent([String].self, forKey: .targets)) ?? nil
         notes = try? container.decodeIfPresent(String.self, forKey: .notes)
         growthStageCode = try? container.decodeIfPresent(String.self, forKey: .growthStageCode)
         equipmentId = try? container.decodeIfPresent(UUID.self, forKey: .equipmentId)
@@ -292,20 +304,21 @@ extension BackendSprayJobTemplate {
             chemicals: chemicals
         )
 
-        // The portal's target wording, mapped onto VineTrack's typed targets
-        // where it maps cleanly. Carrying it structurally is what lets the
-        // guided calculator prefill Step 3 instead of the operator re-deriving
-        // the target from a sentence in the notes.
-        let mappedTargets = SprayProgramTargetParser.targets(from: target)
+        // The step's target selection.
+        //
+        // `targets` is authoritative when the row has it. When it does not —
+        // every row written before this contract — the legacy wording is split
+        // into tags instead, so "Eutypa Dieback, Botryosphaeria Dieback" loads
+        // as two targets rather than as one unparsed sentence or as nothing.
+        let tags = SprayTargetVocabulary.tags(identifiers: targets ?? [], wording: target)
+        let mappedTargets = SprayTargetVocabulary.builtIns(tags)
+        let customTargets = SprayTargetVocabulary.customs(tags).map(\.identifier)
 
-        // Only fall back to the old "Target: ..." notes prefix when NOTHING
-        // mapped — a label may name a target VineTrack has no case for
-        // (Phomopsis, Black Spot), and that wording must not be lost. When it
-        // did map, the prefix would just duplicate what the UI now shows.
-        var combinedNotes = notes ?? ""
-        if let target, !target.isEmpty, mappedTargets.isEmpty {
-            combinedNotes = combinedNotes.isEmpty ? "Target: \(target)" : "Target: \(target)\n\(combinedNotes)"
-        }
+        // The old "Target: ..." notes prefix is no longer needed: a target
+        // VineTrack has no typed case for is now carried as a real tag rather
+        // than smuggled into the notes, and duplicating it there would show the
+        // operator the same words twice.
+        let combinedNotes = notes ?? ""
 
         return SprayRecord(
             id: id,
@@ -325,9 +338,9 @@ extension BackendSprayJobTemplate {
             // never reaches history. `blocks` stays nil, which reads as
             // "blocks not recorded", because a reusable step does not know
             // where it is going.
-            applicationGeometry: mappedTargets.isEmpty
+            applicationGeometry: (mappedTargets.isEmpty && customTargets.isEmpty)
                 ? nil
-                : SprayApplicationSnapshot(targets: mappedTargets)
+                : SprayApplicationSnapshot(targets: mappedTargets, customTargets: customTargets)
         )
     }
 }

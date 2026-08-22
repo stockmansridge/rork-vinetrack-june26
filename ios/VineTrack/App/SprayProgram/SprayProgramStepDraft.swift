@@ -202,11 +202,14 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
     /// Canonical `growth_stage_code`, e.g. `"EL12"`. `nil` is a legitimate
     /// answer — a step that does not state a stage says so.
     var growthStageCode: String?
-    /// The target wording, VERBATIM. Free text because that is exactly what the
-    /// `target` column is, and because a label routinely names targets VineTrack
-    /// has no typed case for. Narrowing this to the typed set would silently
-    /// delete "Phomopsis" from a step that is for Phomopsis.
-    var targetText: String
+    /// The selected targets, as tags.
+    ///
+    /// Tags rather than a punctuation-delimited sentence the operator maintains
+    /// by hand, and tags rather than a `Set<SprayTarget>`: the typed set has six
+    /// cases and a vineyard routinely sprays for Eutypa, Phomopsis or Black
+    /// Spot. A tag keeps the stable identifier for storage and matching AND the
+    /// vineyard's own wording, so neither is traded for the other.
+    var targets: [SprayTargetTag]
     var operationType: OperationType
     var equipmentId: UUID?
     var tractorId: UUID?
@@ -215,12 +218,14 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
 
     // MARK: - Load
 
-    init(step: SprayProgramStep) {
+    /// - Parameter targetLabels: the vineyard's target library, so a stored
+    ///   identifier this step has no wording for still loads as real words.
+    init(step: SprayProgramStep, targetLabels: [String: String] = [:]) {
         stepId = step.id
         source = step.source
         name = step.name
         growthStageCode = step.growthStageCode ?? step.elStageLabel
-        targetText = step.targetDisplay ?? ""
+        targets = step.targetTags(labels: targetLabels)
         operationType = step.operationType
         equipmentId = step.record.sprayEquipmentId
         tractorId = step.record.tractorId
@@ -258,13 +263,31 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
     // MARK: - Validation
 
     var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
-    var trimmedTarget: String { targetText.trimmingCharacters(in: .whitespacesAndNewlines) }
     var trimmedNotes: String { notes.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-    /// Typed targets recognised in the wording, for display. Never replaces the
-    /// wording itself.
-    var recognisedTargets: [SprayTarget] {
-        SprayProgramTargetParser.targets(from: trimmedTarget)
+    /// The tags in stored order, de-duplicated.
+    var normalisedTargets: [SprayTargetTag] { SprayTargetVocabulary.normalised(targets) }
+
+    /// The typed targets among the selection — what prefills the calculator.
+    var recognisedTargets: [SprayTarget] { SprayTargetVocabulary.builtIns(targets) }
+
+    /// The display line, also written to the legacy `target` column.
+    var targetDisplay: String? { SprayTargetVocabulary.displayString(targets) }
+
+    /// Add a tag, ignoring one this step already has.
+    ///
+    /// De-duplication is by identifier, which is a case-insensitive slug, so
+    /// "eutypa dieback" cannot join a step that already has "Eutypa Dieback".
+    mutating func addTarget(_ tag: SprayTargetTag) {
+        guard !targets.contains(where: { $0.identifier == tag.identifier }) else { return }
+        targets = SprayTargetVocabulary.normalised(targets + [tag])
+    }
+
+    /// Remove a tag from THIS Program Step. Never touches the vineyard's
+    /// library — a target the vineyard sprays for does not stop existing
+    /// because one step no longer names it.
+    mutating func removeTarget(_ tag: SprayTargetTag) {
+        targets.removeAll { $0.identifier == tag.identifier }
     }
 
     /// The first reason this draft cannot be saved, or `nil`.
@@ -321,7 +344,11 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
             name: trimmedName,
             chemicalLines: chemicalLines(),
             operationType: operationType.rawValue,
-            target: trimmedTarget.isEmpty ? nil : trimmedTarget,
+            // Structured identifiers are the source of truth; the wording line
+            // is written alongside as a compatibility projection for readers
+            // that still consume it. Both go, so neither side has to guess.
+            targets: SprayTargetVocabulary.identifiers(targets),
+            target: targetDisplay,
             notes: trimmedNotes.isEmpty ? nil : trimmedNotes,
             growthStageCode: growthStageCode,
             equipmentId: equipmentId,
@@ -356,11 +383,17 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
         }
         updated.tanks = tanks
 
-        // Typed targets only — the record has no verbatim target field, and the
-        // template's snapshot carries targets and nothing else (no geometry: a
-        // reusable step does not know where it is going).
+        // The full selection — typed cases AND this vineyard's own. A local
+        // Program Step has no free-text target column, so before this the
+        // custom half had nowhere to go and was dropped on save; it now rides
+        // the snapshot's `customTargets`, which persists into the same
+        // `spray_records.targets` array. Targets and nothing else: a reusable
+        // step carries no geometry because it does not know where it is going.
         let typed = recognisedTargets
-        updated.applicationGeometry = typed.isEmpty ? nil : SprayApplicationSnapshot(targets: typed)
+        let custom = SprayTargetVocabulary.customs(targets).map(\.identifier)
+        updated.applicationGeometry = (typed.isEmpty && custom.isEmpty)
+            ? nil
+            : SprayApplicationSnapshot(targets: typed, customTargets: custom)
         return updated
     }
 
@@ -371,7 +404,10 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
             record: applied(to: base.record),
             source: base.source,
             growthStageCode: source == .portal ? growthStageCode : base.growthStageCode,
-            targetRaw: source == .portal ? (trimmedTarget.isEmpty ? nil : trimmedTarget) : base.targetRaw
+            // The wording line carries the vineyard's exact phrasing back to the
+            // detail screen, so a custom target reads as it was typed even
+            // before the library has synced.
+            targetRaw: targetDisplay
         )
     }
 }

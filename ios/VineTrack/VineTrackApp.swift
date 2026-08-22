@@ -24,6 +24,8 @@ struct VineTrackApp: App {
     @State private var tripSyncService = TripSyncService()
     @State private var sprayRecordSyncService = SprayRecordSyncService()
     @State private var sprayJobTemplateService = SprayJobTemplateService()
+    /// The vineyard's reusable spray target vocabulary (sql/204).
+    @State private var sprayTargetLibraryService = SprayTargetLibraryService()
     @State private var buttonConfigSyncService = ButtonConfigSyncService()
     @State private var savedChemicalSyncService = SavedChemicalSyncService()
     @State private var savedSprayPresetSyncService = SavedSprayPresetSyncService()
@@ -105,6 +107,7 @@ struct VineTrackApp: App {
                         .environment(tripSyncService)
                         .environment(sprayRecordSyncService)
                         .environment(sprayJobTemplateService)
+                        .environment(sprayTargetLibraryService)
                         .environment(buttonConfigSyncService)
                         .environment(savedChemicalSyncService)
                         .environment(savedSprayPresetSyncService)

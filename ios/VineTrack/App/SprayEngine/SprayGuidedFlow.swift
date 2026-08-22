@@ -157,6 +157,14 @@ nonisolated struct SprayGuidedInputs: Sendable {
     var blocks: [SprayBlockInput] = []
 
     var targets: Set<SprayTarget> = []
+    /// Targets carried from a Program Step that VineTrack has no typed case for,
+    /// as stable identifiers.
+    ///
+    /// Pure passenger data: the planner never reads it and no calculation
+    /// changes because of it. It exists so a spray planned from a step that is
+    /// for Phomopsis still SAYS it is for Phomopsis, rather than arriving with
+    /// no stated target — or, worse, coerced onto a built-in target it is not.
+    var customTargets: [String] = []
     var sprayHeadTarget: SprayHeadTarget?
     /// Total treated band width per row, metres. Banded applications only.
     var bandWidthTotalMetres: Double?
@@ -389,6 +397,7 @@ nonisolated struct SprayGuidedFlow: Sendable {
         let snapshot = SprayApplicationSnapshot(
             plan: plan,
             targets: orderedTargets,
+            customTargets: inputs.customTargets,
             sprayHeadTarget: effectiveSprayHeadTarget
         )
         return snapshot.isEmpty ? nil : snapshot

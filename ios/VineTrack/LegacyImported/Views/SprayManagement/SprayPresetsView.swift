@@ -204,6 +204,15 @@ struct EditSavedChemicalSheet: View {
 
     let chemical: SavedChemical?
 
+    /// Called with the product this form just persisted.
+    ///
+    /// Exists so callers that need the RESULT of a creation — the Spray Program
+    /// editor, which must bind the new product to the line that sent the
+    /// operator here — can reuse this exact screen instead of forking a
+    /// simplified copy of it. Nil for the Chemical Store's own use, where the
+    /// store list is the destination and there is nothing to hand back.
+    private let onSaved: ((SavedChemical) -> Void)?
+
     @State private var name: String = ""
     @State private var formType: ChemicalFormType = .liquid
     @State private var unit: ChemicalUnit = .litres
@@ -254,8 +263,9 @@ struct EditSavedChemicalSheet: View {
     private let existingPerHaRateId: UUID?
     private let existingPer100LRateId: UUID?
 
-    init(chemical: SavedChemical?) {
+    init(chemical: SavedChemical?, onSaved: ((SavedChemical) -> Void)? = nil) {
         self.chemical = chemical
+        self.onSaved = onSaved
         if let c = chemical {
             _name = State(initialValue: c.name)
             _unit = State(initialValue: c.unit)
@@ -434,7 +444,7 @@ struct EditSavedChemicalSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        save()
+                        if let saved = save() { onSaved?(saved) }
                         dismiss()
                     }
                     .disabled(!isValid)
@@ -950,7 +960,10 @@ struct EditSavedChemicalSheet: View {
         }
     }
 
-    private func save() {
+    /// - Returns: the product as the store now holds it, so a caller can select
+    ///   what was just created without searching for it by name.
+    @discardableResult
+    private func save() -> SavedChemical? {
         let perHaDisplay = Double(ratePerHaText) ?? 0
         let per100LDisplay = Double(ratePer100LText) ?? 0
 
@@ -1051,6 +1064,7 @@ struct EditSavedChemicalSheet: View {
                 existing.chemicalIntelligence = outcome.intelligence
             }
             store.updateSavedChemical(existing)
+            return store.savedChemicals.first { $0.id == existing.id } ?? existing
         } else {
             let new = SavedChemical(
                 name: name,
@@ -1087,6 +1101,9 @@ struct EditSavedChemicalSheet: View {
                 chemicalIntelligence: outcome?.intelligence
             )
             store.addSavedChemical(new)
+            // The store stamps the vineyard onto its own copy, so read the
+            // stored value back rather than handing out the pre-insert one.
+            return store.savedChemicals.first { $0.id == new.id } ?? new
         }
     }
 }

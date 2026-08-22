@@ -11,6 +11,7 @@ import SwiftUI
 /// and then gets out of the way behind one action, Plan Spray.
 struct SprayProgramStepDetailView: View {
     @Environment(MigratedDataStore.self) private var store
+    @Environment(SprayTargetLibraryService.self) private var targetLibrary
     @Environment(\.accessControl) private var accessControl
     @Environment(\.dismiss) private var dismiss
 
@@ -67,12 +68,16 @@ struct SprayProgramStepDetailView: View {
                     portalBanner
                 }
 
-                if let target = currentStep.targetDisplay {
+                let targetTags = currentStep.targetTags(
+                    labels: targetLibrary.labels(vineyardId: store.selectedVineyardId)
+                )
+                if !targetTags.isEmpty {
                     section("Targets", icon: "scope") {
-                        Text(target)
-                            .font(.subheadline)
-                            .foregroundStyle(.primary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        // Read-only chips, so the step reads the same way it is
+                        // edited: one target per tag, whether or not VineTrack
+                        // has a typed case for it.
+                        SprayTargetChipsView(tags: targetTags) { _ in }
+                            .allowsHitTesting(false)
                     }
                 }
 

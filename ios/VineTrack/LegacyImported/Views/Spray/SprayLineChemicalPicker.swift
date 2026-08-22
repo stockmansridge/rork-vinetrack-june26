@@ -8,9 +8,20 @@ import SwiftUI
 /// product they actually chose — not of whichever library entry happened to have
 /// a similar name.
 ///
-/// It also keeps the honest escape hatch. A grower spraying something that is not
-/// in their store yet must still be able to record the application, so "enter it
-/// manually" is a first-class option rather than a failure state.
+/// Three ways out, in the order an operator should want them: pick the product,
+/// CREATE it, or record it unresolved.
+///
+/// Creating is here rather than in the Chemical Store because "the product
+/// isn't in the list" happens mid-task, and sending someone to another screen
+/// to fix it means abandoning whatever they were entering. It launches the
+/// EXISTING Add Chemical form — same fields, same validation, same Chemical
+/// Intelligence, same persistence — and hands the result straight back, so the
+/// operator never creates a product and then has to go find it.
+///
+/// The unresolved escape hatch stays. A grower spraying something that is not in
+/// their store yet must still be able to record the application, so it remains a
+/// first-class option rather than a failure state — but it is no longer the only
+/// alternative when a search finds nothing.
 struct SprayLineChemicalPicker: View {
     /// The product currently bound to the line, so it can be shown as selected.
     let selectedId: UUID?
@@ -18,9 +29,16 @@ struct SprayLineChemicalPicker: View {
     let onSelect: (SavedChemical?) -> Void
 
     @Environment(MigratedDataStore.self) private var store
+    @Environment(\.accessControl) private var accessControl
     @Environment(\.dismiss) private var dismiss
 
     @State private var query: String = ""
+    @State private var isCreatingChemical: Bool = false
+
+    /// Creating a product writes to the vineyard-shared Chemical Store, so it
+    /// carries the same permission that store already enforces. Nothing is
+    /// widened here.
+    private var canCreateChemical: Bool { accessControl?.canManageSetup ?? false }
 
     /// The vineyard's jurisdiction, for marking foreign-registered products.
     /// Display only — selection stays possible; the mark prevents a foreign
@@ -81,6 +99,19 @@ struct SprayLineChemicalPicker: View {
                     }
                 }
 
+                if canCreateChemical {
+                    Section {
+                        Button {
+                            isCreatingChemical = true
+                        } label: {
+                            Label("Add New Chemical", systemImage: "plus.circle.fill")
+                                .font(.body.weight(.semibold))
+                        }
+                    } footer: {
+                        Text("Opens the full Add Chemical form. Saving brings you straight back here with the new product selected.")
+                    }
+                }
+
                 Section {
                     Button {
                         onSelect(nil)
@@ -101,6 +132,16 @@ struct SprayLineChemicalPicker: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                }
+            }
+            .sheet(isPresented: $isCreatingChemical) {
+                // THE existing Add Chemical screen, not a copy of it. Cancelling
+                // it closes only this sheet, so whatever sent the operator here
+                // — a half-edited Program Step, a spray being recorded — is still
+                // sitting underneath, untouched.
+                EditSavedChemicalSheet(chemical: nil) { created in
+                    onSelect(created)
+                    dismiss()
                 }
             }
         }

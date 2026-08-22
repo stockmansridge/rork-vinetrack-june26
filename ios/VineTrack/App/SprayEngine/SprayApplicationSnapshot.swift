@@ -104,6 +104,22 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
     /// NEVER inferred from the products in the tank.
     let targets: [SprayTarget]?
 
+    /// Targets this vineyard named that VineTrack has no typed case for, as
+    /// their stable identifiers (`eutypa_dieback`, `phomopsis`, `black_spot`).
+    ///
+    /// The completion of `targets`, not a rival to it. Together the two are the
+    /// full selection, and both are written into the SAME `targets text[]`
+    /// column — sql/193 put no value CHECK on it precisely so the vocabulary
+    /// could grow per-region, so this needs no migration and no second column.
+    /// They are split apart in memory only because the calculator, the
+    /// resistance rules and the reports can act on a typed case and can only
+    /// carry an untyped one.
+    ///
+    /// The wording lives in the vineyard's target library (sql/204). Dropping
+    /// these on save was the alternative, and it would have quietly deleted
+    /// "Phomopsis" from a step that is for Phomopsis.
+    let customTargets: [String]?
+
     /// Where the spray head was aimed. Foliar applications only — a banded or
     /// spreader pass legitimately carries `nil`.
     let sprayHeadTarget: SprayHeadTarget?
@@ -120,8 +136,17 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
             && carrierVolumeBasis == nil && totalCarrierLitres == nil
             && carrierLitresPerHectare == nil && diluteLitresPer100m == nil
             && appliedLitresPer100m == nil && concentrationFactor == nil
-            && targets == nil && sprayHeadTarget == nil
+            && targets == nil && customTargets == nil && sprayHeadTarget == nil
             && blocks == nil
+    }
+
+    /// Every selected target as the stable identifiers the `targets text[]`
+    /// column stores — typed cases first, then this vineyard's own.
+    ///
+    /// `nil` stays "never recorded"; `[]` stays "recorded as explicitly none".
+    var targetIdentifiers: [String]? {
+        guard targets != nil || customTargets != nil else { return nil }
+        return (targets ?? []).map(\.rawValue) + (customTargets ?? [])
     }
 
     /// The treated blocks' stable ids, in selection order. Empty when the
@@ -137,7 +162,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
 
     /// True when the operator's target selection was genuinely recorded, so the
     /// UI can distinguish "unknown (historical)" from "none selected".
-    var hasRecordedTargets: Bool { (targets?.isEmpty == false) }
+    var hasRecordedTargets: Bool { targets?.isEmpty == false || customTargets?.isEmpty == false }
 
     /// True when this snapshot records a banded application whose treated area
     /// is genuinely known. Lets the UI separate "banded, 2.5 ha treated" from
@@ -201,6 +226,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
             appliedLitresPer100m: appliedLitresPer100m,
             concentrationFactor: concentrationFactor,
             targets: targets,
+            customTargets: customTargets,
             sprayHeadTarget: sprayHeadTarget,
             // Block IDENTITY is reusable intent — "my powdery spray on the home
             // blocks" is exactly what a template is for — but the per-block
@@ -243,6 +269,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
             appliedLitresPer100m: appliedLitresPer100m,
             concentrationFactor: concentrationFactor,
             targets: targets,
+            customTargets: customTargets,
             sprayHeadTarget: sprayHeadTarget,
             blocks: blocks
         )
@@ -264,9 +291,11 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
     init(
         plan: SprayApplicationPlan,
         targets: [SprayTarget]? = nil,
+        customTargets: [String]? = nil,
         sprayHeadTarget: SprayHeadTarget? = nil
     ) {
         self.targets = targets.map(Self.normalisedTargets)
+        self.customTargets = Self.normalisedCustomTargets(customTargets)
         self.sprayHeadTarget = sprayHeadTarget
         self.grossAreaHa = Self.nonNegative(plan.treatedArea.grossAreaHectares)
         self.treatedAreaHa = Self.nonNegative(plan.treatedArea.treatedAreaHectares)
@@ -317,10 +346,12 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         appliedLitresPer100m: Double? = nil,
         concentrationFactor: Double? = nil,
         targets: [SprayTarget]? = nil,
+        customTargets: [String]? = nil,
         sprayHeadTarget: SprayHeadTarget? = nil,
         blocks: [SprayApplicationBlockSnapshot]? = nil
     ) {
         self.targets = targets.map(Self.normalisedTargets)
+        self.customTargets = Self.normalisedCustomTargets(customTargets)
         self.sprayHeadTarget = sprayHeadTarget
         self.blocks = SprayApplicationBlockSnapshot.normalised(blocks)
         self.grossAreaHa = grossAreaHa
@@ -368,13 +399,31 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         return SprayTarget.presentationOrder.filter(selected.contains)
     }
 
+    /// Trim, drop blanks, drop anything the typed enum already covers, and
+    /// de-duplicate — keeping insertion order, because unlike the typed set
+    /// there is no canonical order to impose on a vineyard's own vocabulary.
+    ///
+    /// Empty strings are dropped rather than stored: the sql/193 well-formed
+    /// CHECK rejects them, so writing one would fail the whole spray record.
+    private static func normalisedCustomTargets(_ values: [String]?) -> [String]? {
+        guard let values else { return nil }
+        var seen = Set<String>()
+        var out: [String] = []
+        for value in values {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !trimmed.isEmpty, SprayTarget(rawValue: trimmed) == nil else { continue }
+            if seen.insert(trimmed).inserted { out.append(trimmed) }
+        }
+        return out
+    }
+
     nonisolated enum CodingKeys: String, CodingKey {
         case grossAreaHa, treatedAreaHa, applicationMode, treatedAreaMethod
         case bandWidthTotalMetres, bandWidthLeftMetres, bandWidthRightMetres
         case canonicalRowLengthMetres, rowSpacingMetres, geometrySource, geometryQuality
         case carrierVolumeBasis, totalCarrierLitres, carrierLitresPerHectare
         case diluteLitresPer100m, appliedLitresPer100m, concentrationFactor
-        case targets, sprayHeadTarget
+        case targets, customTargets, sprayHeadTarget
         case blocks
     }
 
@@ -412,6 +461,9 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         } else {
             targets = nil
         }
+        customTargets = Self.normalisedCustomTargets(
+            try? container.decodeIfPresent([String].self, forKey: .customTargets)
+        )
         sprayHeadTarget = SprayHeadTarget.from(
             try? container.decodeIfPresent(String.self, forKey: .sprayHeadTarget)
         )

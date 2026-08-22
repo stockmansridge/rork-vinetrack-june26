@@ -63,6 +63,11 @@ struct SprayCalculatorView: View {
 
     // Guided flow — Step 3 Target, Step 6 Carrier
     @State private var sprayTargets: Set<SprayTarget> = []
+    /// Targets carried in from a Program Step that VineTrack has no typed case
+    /// for. Not editable in Step 3 — there is no control for a target the app
+    /// cannot name — but carried onto the saved spray so the application still
+    /// states what it was for.
+    @State private var customSprayTargets: [String] = []
     @State private var sprayHeadTarget: SprayHeadTarget?
     @State private var bandWidthText: String = ""
     @State private var carrierBasisChoice: SprayCarrierBasis = .litresPerHectare
@@ -366,6 +371,7 @@ struct SprayCalculatorView: View {
         inputs.operationType = operationType
         inputs.blocks = selectedPaddocks.map { SprayBlockInput.from(paddock: $0) }
         inputs.targets = sprayTargets
+        inputs.customTargets = customSprayTargets
         inputs.sprayHeadTarget = sprayHeadTarget
         inputs.bandWidthTotalMetres = Double(bandWidthText)
         inputs.isGrowthStageResolved = isGrowthStageResolved
@@ -679,6 +685,14 @@ struct SprayCalculatorView: View {
         if !resolvedTargets.isEmpty {
             sprayTargets = Set(resolvedTargets)
         }
+
+        // The vineyard's own targets travel too. They have no Step 3 control —
+        // the calculator can only draw a chip for a target it has a case for —
+        // but dropping them would silently change what a Phomopsis spray claims
+        // to be for. They are never mapped onto a built-in target.
+        let programCustomTargets = prefillProgram?.customTargets ?? []
+        let recordCustomTargets = r.applicationGeometry?.customTargets ?? []
+        customSprayTargets = programCustomTargets.isEmpty ? recordCustomTargets : programCustomTargets
 
         // Growth stage (guided Step 4) from the canonical `growth_stage_code`,
         // mapped onto the calculator's own stage state rather than appended to

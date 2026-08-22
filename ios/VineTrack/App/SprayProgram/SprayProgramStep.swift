@@ -168,21 +168,34 @@ nonisolated struct SprayProgramStep: Identifiable, Sendable, Hashable {
 
     // MARK: - Targets
 
-    /// Typed targets this step is for, from the portal wording where present
-    /// and otherwise from the record's own frozen application snapshot.
-    var targets: [SprayTarget] {
-        let parsed = SprayProgramTargetParser.targets(from: targetRaw)
-        if !parsed.isEmpty { return parsed }
-        return record.applicationGeometry?.targets ?? []
+    /// This step's target selection, as removable tags.
+    ///
+    /// Reads the STRUCTURED identifiers the record carries (typed cases plus
+    /// this vineyard's own), and uses the verbatim wording line to recover how
+    /// each was written. A step that has only the old free-text wording — every
+    /// step written before targets became tags — is split on the conservative
+    /// separators instead, so its wording becomes tags rather than being lost.
+    ///
+    /// - Parameter labels: the vineyard's target library, for wording that is
+    ///   neither typed nor present on this step's own line.
+    func targetTags(labels: [String: String] = [:]) -> [SprayTargetTag] {
+        SprayTargetVocabulary.tags(
+            identifiers: record.applicationGeometry?.targetIdentifiers ?? [],
+            wording: targetRaw,
+            labels: labels
+        )
     }
 
-    /// What to SHOW as the step's target line: the portal's verbatim wording
-    /// when it exists, otherwise the typed labels.
+    /// Typed targets this step is for. Custom targets contribute nothing here
+    /// on purpose — the calculator has no case for them and forcing one would
+    /// claim the step is for a disease it is not.
+    var targets: [SprayTarget] {
+        SprayTargetVocabulary.builtIns(targetTags())
+    }
+
+    /// What to SHOW as the step's target line.
     var targetDisplay: String? {
-        if let targetRaw { return targetRaw }
-        let typed = targets
-        guard !typed.isEmpty else { return nil }
-        return typed.map(\.label).joined(separator: " · ")
+        SprayTargetVocabulary.displayString(targetTags()) ?? targetRaw
     }
 
     // MARK: - Prefill
@@ -194,9 +207,11 @@ nonisolated struct SprayProgramStep: Identifiable, Sendable, Hashable {
     /// against TODAY's Chemical Store and freezes fresh chemistry at save
     /// time, which is the contract every new application follows.
     var calculatorPrefill: SprayProgramPrefill {
-        SprayProgramPrefill(
+        let tags = targetTags()
+        return SprayProgramPrefill(
             growthStageCode: growthStageCode,
-            targets: targets,
+            targets: SprayTargetVocabulary.builtIns(tags),
+            customTargets: SprayTargetVocabulary.customs(tags).map(\.identifier),
             equipmentId: record.sprayEquipmentId,
             tractorId: record.tractorId
         )
@@ -213,7 +228,7 @@ nonisolated struct SprayProgramStep: Identifiable, Sendable, Hashable {
         if let code = elStageLabel { haystack.append(code) }
         if let description = growthStageDescription { haystack.append(description) }
         if let target = targetDisplay { haystack.append(target) }
-        haystack.append(contentsOf: targets.map(\.label))
+        haystack.append(contentsOf: targetTags().map(\.label))
         haystack.append(contentsOf: products.map(\.name))
 
         // "EL12" must also match a step whose stage came from a canonical code
@@ -240,23 +255,34 @@ nonisolated struct SprayProgramPrefill: Sendable, Hashable {
     let growthStageCode: String?
     /// Typed targets for the calculator's existing `sprayTargets`.
     let targets: [SprayTarget]
+    /// Targets this vineyard named that the calculator has no typed case for,
+    /// as stable identifiers.
+    ///
+    /// They travel so the spray this step plans still states what it is for.
+    /// Nothing coerces them onto a built-in target — recording a Phomopsis
+    /// spray as "Botrytis" because the enum has a Botrytis case would be a
+    /// false compliance claim, and an untyped truth beats a typed lie.
+    let customTargets: [String]
     let equipmentId: UUID?
     let tractorId: UUID?
 
     init(
         growthStageCode: String? = nil,
         targets: [SprayTarget] = [],
+        customTargets: [String] = [],
         equipmentId: UUID? = nil,
         tractorId: UUID? = nil
     ) {
         self.growthStageCode = growthStageCode
         self.targets = targets
+        self.customTargets = customTargets
         self.equipmentId = equipmentId
         self.tractorId = tractorId
     }
 
     var isEmpty: Bool {
-        growthStageCode == nil && targets.isEmpty && equipmentId == nil && tractorId == nil
+        growthStageCode == nil && targets.isEmpty && customTargets.isEmpty
+            && equipmentId == nil && tractorId == nil
     }
 }
 
@@ -363,6 +389,21 @@ nonisolated enum SprayProgramCatalog {
                 }
             }.map(\.step)
         }
+    }
+
+    /// Every custom target this vineyard's Program Steps already use.
+    ///
+    /// The reason the target chooser is useful on day one. A vineyard that has
+    /// been writing "Phomopsis" into its program for three seasons should not
+    /// have to re-type it into a library before it can reuse it — the evidence
+    /// that this vineyard sprays for Phomopsis is already in its own program.
+    static func observedTargetTags(
+        _ steps: [SprayProgramStep],
+        labels: [String: String] = [:]
+    ) -> [SprayTargetTag] {
+        let all = steps.flatMap { $0.targetTags(labels: labels) }
+        return SprayTargetVocabulary.customs(all)
+            .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
     }
 
     static func filtered(_ steps: [SprayProgramStep], query: String) -> [SprayProgramStep] {

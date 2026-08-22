@@ -296,7 +296,11 @@ extension BackendSprayRecord {
             diluteLitresPer100m: geometry?.diluteLitresPer100m,
             appliedLitresPer100m: geometry?.appliedLitresPer100m,
             concentrationFactor: geometry?.concentrationFactor,
-            targets: geometry?.targets?.map(\.rawValue),
+            // Typed cases AND this vineyard's own targets, in ONE array,
+            // because they are one selection. sql/193 put no value CHECK on
+            // this column precisely so the vocabulary could grow, so a custom
+            // target needs neither a column of its own nor a migration.
+            targets: geometry?.targetIdentifiers,
             sprayHeadTarget: geometry?.sprayHeadTarget?.rawValue,
             // Templates keep block IDENTITY (reusable intent) and lose the
             // per-block geometry outputs — `templateConfiguration()` above has
@@ -370,6 +374,11 @@ extension BackendSprayRecord {
             // stored-but-unrecognised array stays [] (recorded) not nil (never
             // recorded), preserving the distinction the planner relies on.
             targets: targets.map { $0.compactMap(SprayTarget.from) },
+            // Identifiers the typed enum does not cover are KEPT, not dropped.
+            // They are the vineyard's own targets (eutypa_dieback, phomopsis),
+            // and discarding them here is exactly what would delete
+            // "Phomopsis" from a spray that was for Phomopsis.
+            customTargets: targets.map { raw in raw.filter { SprayTarget.from($0) == nil } },
             sprayHeadTarget: SprayHeadTarget.from(sprayHeadTarget),
             // Read back VERBATIM. A record whose attribution is null stays null
             // — it must never acquire the vineyard's current blocks, which is
