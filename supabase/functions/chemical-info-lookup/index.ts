@@ -160,6 +160,7 @@ import {
 } from "./ingestion/review_preview.ts";
 import { runSeedApply } from "./ingestion/seed_apply.ts";
 import {
+  buildResolverAttempts,
   projectResearch,
   projectResearchToSearchResults,
   type ResearchProjection,
@@ -587,10 +588,19 @@ function buildStructuredResponse(parsed: any, countryCode: string): any {
     .map((a) => a.activity_group?.scheme)
     .find((s: string | undefined) => s && s !== "not_applicable") ?? null;
 
+  // Additive (§13): the registrant's own product page, when research found
+  // and CLASSIFIED one. It seeds the existing SavedChemical.productURL and is
+  // never an Official Label — `label_reference` is a separate field fed only
+  // by classified label documents, and a reseller/SDS/search page can reach
+  // neither. No schema change: the client field already exists.
+  const productUrl = parseString(parsed?.productURL) ??
+    parseString(parsed?.product_url) ?? null;
+
   return {
     product_name: parseString(parsed?.product_name),
     product_category: productCategory ?? "",
     form_type: parseString(parsed?.form_type),
+    product_url: productUrl,
     registration,
     active_ingredients: actives,
     // Bare codes for the queryable column: ["3", "11"] — never ["3 + 11"].
@@ -1185,7 +1195,11 @@ Deno.serve(async (req: Request) => {
           const seen = new Set(
             authoritative.map((m: any) => String(m.name).toLowerCase()),
           );
-          const researched = projectResearchToSearchResults(outcome.research)
+          const researched = projectResearchToSearchResults(
+            outcome.research,
+            countryCode,
+            registrationSchemeForCode(jur.code),
+          )
             .filter((r) => !seen.has(String(r?.name ?? "").toLowerCase()));
           return json({
             results: [...authoritative, ...researched],
@@ -1356,15 +1370,35 @@ Deno.serve(async (req: Request) => {
         // binds, so trying the best two costs at most one extra register
         // call and can never bind the wrong identity. Bounded deliberately —
         // this is a hint list, not a brute-force search.
-        const hints = projection?.resolverHints.slice(0, 2) ?? [];
-        const aiNumber = String(
-          structured?.registration?.registration_number ?? "",
-        ).trim();
-        if (!hints.length && /^\d{3,8}$/.test(aiNumber)) hints.push(aiNumber);
+        //
+        // A lead is a NUMBER **and** the register name it was discovered
+        // with, kept paired (research/authority.ts). Verifying 59688 against
+        // the operator's shorthand "Dithane Rainshield" fails on a register
+        // row named "Dithane Rainshield Neo Tec Fungicide" — correctly, since
+        // NEO/TEC are meaningful tokens — so the paired register name is what
+        // gets verified. The adapter still independently confirms that the
+        // number exists AND that its name corresponds; research has granted
+        // nothing.
+        const attempts = buildResolverAttempts(
+          projection?.resolverHints ?? [],
+          productName,
+          structured?.registration?.registration_number ?? null,
+        );
 
-        for (const hint of hints) {
-          if (!/^\d{3,8}$/.test(hint)) continue;
-          discovery = await discoverAuthoritative(countryCode, productName, hint, deps);
+        for (const attempt of attempts) {
+          discovery = await discoverAuthoritative(
+            countryCode,
+            attempt.name,
+            attempt.number,
+            deps,
+          );
+          console.log(JSON.stringify({
+            evt: "research_hint_reresolution",
+            registration_number: attempt.number,
+            verification_name: attempt.name,
+            name_source: attempt.source,
+            outcome: discovery.outcome,
+          }));
           if (discovery.outcome === "resolved") break;
         }
       }

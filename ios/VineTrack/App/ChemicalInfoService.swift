@@ -165,6 +165,25 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
     /// It is not a second label field — `ChemicalLabelReference` folds it into
     /// the same `registration.labelReference` every other tier writes.
     let labelExtraction: ChemicalLabelExtraction?
+    /// The registrant's own product information page, when the resolver found
+    /// and CLASSIFIED one (`product_url` wire key).
+    ///
+    /// Additive: the server can discover a manufacturer product page through
+    /// web research, and the client had no key to receive it, so it never
+    /// reached the existing `SavedChemical.productURL`. Strictly separate from
+    /// the Official Label — a product page is marketing, a label is evidence,
+    /// and this value can never populate `labelReference`.
+    let productURL: String?
+    /// Uses the resolver researched but could NOT back with authoritative
+    /// label evidence (`ai_suggested_uses` wire key).
+    ///
+    /// The server populates this instead of `registered_uses` when a product's
+    /// identity resolves but no approved label was extracted — correct, and
+    /// deliberately not weakened here. Without decoding it the operator saw an
+    /// empty Registered Uses section even though rates, WHP, REI and
+    /// restrictions had been found. Carried at `ai_interpretation` strength
+    /// only: it fills the editable draft and never becomes label evidence.
+    let aiSuggestedUses: [ChemicalRegisteredUse]
 
     /// True when this lookup was served from an APPROVED master catalogue row
     /// and carries the reference the saved record should retain.
@@ -197,6 +216,8 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         case guidance
         case discovery
         case labelExtraction = "label_extraction"
+        case productURL = "product_url"
+        case aiSuggestedUses = "ai_suggested_uses"
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -229,6 +250,10 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         labelExtraction = (try? c.decodeIfPresent(
             ChemicalLabelExtraction.self, forKey: .labelExtraction
         )) ?? nil
+        productURL = (try? c.decodeIfPresent(String.self, forKey: .productURL)) ?? nil
+        aiSuggestedUses = ((try? c.decodeIfPresent(
+            [ChemicalRegisteredUse].self, forKey: .aiSuggestedUses
+        )) ?? []) ?? []
     }
 
     /// True when the resolver established no chemistry at all.

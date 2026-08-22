@@ -24,6 +24,9 @@
 
 import type {
   ChemicalResearchResult,
+  ResearchConfidence,
+  ResearchRate,
+  ResearchRegisteredUse,
   ResearchRegistrationCandidate,
 } from "./schema.ts";
 import { classifyUrl, type ClassifiedUrl } from "./classify.ts";
@@ -37,6 +40,41 @@ const CONTRACT_RATE_BASES = new Set([
   "other",
 ]);
 
+/**
+ * A registration lead, with the registered name it was discovered WITH.
+ *
+ * THE INVARIANT THIS TYPE EXISTS FOR: a registration number and the register
+ * name found alongside it must travel together until the official adapter has
+ * verified them. Flattening a candidate to a bare number string was a real
+ * production defect — APVMA 59688 was discovered correctly, then re-resolved
+ * against the operator's original query ("Dithane Rainshield") instead of the
+ * discovered register name ("Dithane Rainshield Neo Tec Fungicide"). The
+ * strict matcher rightly refused to call those the same product, because NEO
+ * and TEC are meaningful remaining tokens, and the lead was discarded.
+ *
+ * The fix belongs here, in the handoff — NOT in the matcher. Nothing about
+ * this type grants authority: the adapter still independently checks that the
+ * number exists and that its register name corresponds to the name supplied.
+ */
+export interface ResearchResolverHint {
+  /** Register number, digits as the register prints them. */
+  registrationNumber: string;
+  /** The register name discovered WITH this number, if the research had one. */
+  registeredProductName: string | null;
+  /** The name the strict adapter should verify this number against (§5). */
+  verificationName: string;
+  /** Where `verificationName` came from — telemetry and tests read this. */
+  verificationNameSource:
+    | "candidate_registered_name"
+    | "canonical_product_name"
+    | "operator_query";
+  country: string;
+  scheme: string | null;
+  sourceUrl: string | null;
+  sourceDomain: string | null;
+  confidence: ResearchConfidence;
+}
+
 export interface ResearchProjection {
   /**
    * The legacy-shaped extraction object. Fed to the EXISTING
@@ -44,8 +82,8 @@ export interface ResearchProjection {
    * to what it was before this upgrade.
    */
   extraction: Record<string, unknown>;
-  /** Register numbers worth handing to the strict resolver, best first. */
-  resolverHints: string[];
+  /** Registration leads worth handing to the strict resolver, best first. */
+  resolverHints: ResearchResolverHint[];
   /** Every URL the research produced, server-classified. */
   classified: ClassifiedUrl[];
   /** The label document candidate that passed classification, if any. */
@@ -112,7 +150,7 @@ export function resolverHintsFor(
   research: ChemicalResearchResult,
   countryCode: string,
   expectedScheme: string | null,
-): string[] {
+): ResearchResolverHint[] {
   const code = countryCode.trim().toUpperCase();
   const eligible = research.registration_candidates.filter((c) => {
     const number = (c.number ?? "").trim();
@@ -125,15 +163,203 @@ export function resolverHintsFor(
   const ranked = [...eligible].sort(
     (a, b) => hintScore(b, expectedScheme) - hintScore(a, expectedScheme),
   );
+
+  const canonical = (research.product.canonical_name ?? "").trim();
+  const query = (research.product.searched_name ?? "").trim();
+  // The canonical name may only stand in for a candidate that has no register
+  // name of its own when there is exactly ONE eligible candidate — then the
+  // canonical name is demonstrably about that identity. With two or more
+  // candidates in play, borrowing it would risk pairing candidate A's number
+  // with candidate B's name, which §5 forbids outright.
+  const canonicalIsUnambiguous = eligible.length === 1 && canonical.length > 0;
+
   const seen = new Set<string>();
-  const out: string[] = [];
+  const out: ResearchResolverHint[] = [];
   for (const c of ranked) {
     const n = (c.number ?? "").trim();
     if (seen.has(n)) continue;
     seen.add(n);
-    out.push(n);
+
+    const registered = (c.registered_product_name ?? "").trim();
+    let verificationName = registered;
+    let verificationNameSource: ResearchResolverHint["verificationNameSource"] =
+      "candidate_registered_name";
+    if (!verificationName && canonicalIsUnambiguous) {
+      verificationName = canonical;
+      verificationNameSource = "canonical_product_name";
+    }
+    if (!verificationName) {
+      verificationName = query;
+      verificationNameSource = "operator_query";
+    }
+    if (!verificationName) continue;
+
+    out.push({
+      registrationNumber: n,
+      registeredProductName: registered || null,
+      verificationName,
+      verificationNameSource,
+      country: (c.country || code).toUpperCase(),
+      scheme: c.scheme,
+      sourceUrl: c.source_url,
+      sourceDomain: c.source_domain,
+      confidence: c.confidence,
+    });
   }
   return out;
+}
+
+/** One strict re-resolution attempt: a number and the name to verify it against. */
+export interface ResolverAttempt {
+  number: string;
+  name: string;
+  source: ResearchResolverHint["verificationNameSource"] | "legacy_ai_number";
+}
+
+/**
+ * Build the bounded list of strict re-resolution attempts for a lead set.
+ *
+ * Each attempt keeps its number with the name that number was discovered
+ * with (§3/§4). The operator's own query is appended ONCE, against the best
+ * lead, for the case where research mis-transcribed the register name but
+ * the number is right — so this can never become a brute-force search.
+ */
+export function buildResolverAttempts(
+  hints: ResearchResolverHint[],
+  operatorQuery: string,
+  legacyAiNumber?: string | null,
+  maxHints = 2,
+): ResolverAttempt[] {
+  const attempts: ResolverAttempt[] = hints
+    .filter((h) => /^\d{3,8}$/.test(h.registrationNumber))
+    .slice(0, maxHints)
+    .map((h) => ({
+      number: h.registrationNumber,
+      name: h.verificationName,
+      source: h.verificationNameSource,
+    }));
+
+  const legacy = (legacyAiNumber ?? "").trim();
+  if (!attempts.length && /^\d{3,8}$/.test(legacy)) {
+    attempts.push({ number: legacy, name: operatorQuery, source: "legacy_ai_number" });
+  }
+
+  const best = attempts[0];
+  const query = operatorQuery.trim();
+  if (best && query && best.name.trim().toLowerCase() !== query.toLowerCase()) {
+    attempts.push({ number: best.number, name: query, source: "operator_query" });
+  }
+  return attempts;
+}
+
+// ---------------------------------------------------------------------------
+// Use contexts — a rate belongs to the targets it was written for
+// ---------------------------------------------------------------------------
+
+/** Normalised comparison key for a rate row. */
+function rateKey(r: ResearchRate): string {
+  return [r.basis, r.value, r.min_value, r.max_value, (r.unit ?? "").toLowerCase()].join("|");
+}
+
+/** Normalised comparison key for everything that defines a use CONTEXT. */
+function useContextKey(u: ResearchRegisteredUse): string {
+  const rates = u.rates.map(rateKey).sort().join("~");
+  const restrictions = [...u.restrictions].map((r) => r.trim().toLowerCase()).sort().join("~");
+  return [
+    u.crop.trim().toLowerCase(),
+    rates,
+    (u.whp ?? "").trim().toLowerCase(),
+    (u.rei ?? "").trim().toLowerCase(),
+    restrictions,
+  ].join("||");
+}
+
+function normaliseTargetText(raw: string): string {
+  return raw.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * Split a multi-target use whose rate rows name the targets they belong to.
+ *
+ * The live Dithane research returned ONE use carrying three targets and two
+ * different rates, which the naive projection then copied onto all three —
+ * so Phomopsis appeared to accept 200 g/100 L and Blackspot appeared to
+ * accept 150–200 g/100 L. Neither is what the label says.
+ *
+ * This is deliberately CONSERVATIVE and text-driven, never inferential: a
+ * rate is attached to a target only when the rate's own label/verbatim text
+ * names that target. If no rate names any target, nothing is split — the
+ * grouping stays exactly as the model returned it and the prompt (§11) is
+ * what has to do the work. Research-tier data only; label extraction still
+ * overrules all of it (§12).
+ */
+export function splitUseByTargetSpecificRates(
+  use: ResearchRegisteredUse,
+): ResearchRegisteredUse[] {
+  if (use.targets.length < 2 || use.rates.length < 2) return [use];
+
+  const targetTexts = use.targets.map((t) => normaliseTargetText(t)).filter((t) => t.length > 2);
+  if (targetTexts.length !== use.targets.length) return [use];
+
+  const mentions = use.rates.map((r) => {
+    const hay = normaliseTargetText(`${r.label ?? ""} ${r.raw_text ?? ""}`);
+    if (!hay) return new Set<number>();
+    const hit = new Set<number>();
+    targetTexts.forEach((t, i) => {
+      if (hay.includes(t)) hit.add(i);
+    });
+    return hit;
+  });
+
+  const anyTargeted = mentions.some((m) => m.size > 0);
+  const allUniversal = mentions.every((m) => m.size === use.targets.length);
+  // Nothing to learn from the text, or every rate applies to every target.
+  if (!anyTargeted || allUniversal) return [use];
+
+  const perTarget: ResearchRegisteredUse[] = use.targets.map((target, i) => {
+    const own = use.rates.filter((_, j) => mentions[j].has(i));
+    // A rate that names no target at all is a general rate for this use.
+    const general = use.rates.filter((_, j) => mentions[j].size === 0);
+    const rates = own.length ? own : general;
+    return { ...use, targets: [target], rates };
+  });
+  // A split that would strip a target's rates entirely is worse than no
+  // split — fail back to the model's grouping rather than lose data.
+  if (perTarget.some((u) => u.rates.length === 0)) return [use];
+  return perTarget;
+}
+
+/**
+ * Regroup research uses into genuine label CONTEXTS.
+ *
+ * Targets share one context ONLY when crop, rate set, WHP, REI and
+ * restrictions are all equivalent (§10). Targets are never merged merely
+ * because they appeared in the same label table, and a rate is never copied
+ * onto a target that does not share its context.
+ */
+export function groupResearchUseContexts(
+  uses: ResearchRegisteredUse[],
+): ResearchRegisteredUse[] {
+  const split = uses.flatMap((u) => splitUseByTargetSpecificRates(u));
+  const byContext = new Map<string, ResearchRegisteredUse>();
+  for (const use of split) {
+    const key = useContextKey(use);
+    const existing = byContext.get(key);
+    if (!existing) {
+      byContext.set(key, { ...use, targets: [...use.targets] });
+      continue;
+    }
+    for (const t of use.targets) {
+      const already = existing.targets.some(
+        (x) => normaliseTargetText(x) === normaliseTargetText(t),
+      );
+      if (!already) existing.targets.push(t);
+    }
+    for (const ref of use.source_refs) {
+      if (!existing.source_refs.includes(ref)) existing.source_refs.push(ref);
+    }
+  }
+  return Array.from(byContext.values());
 }
 
 /**
@@ -211,8 +437,12 @@ export function projectResearch(
   // Multi-target preservation (§22): the contract carries one target per use
   // row, so a use with three targets becomes three rows that share the same
   // crop and rates. Nothing is dropped and no "primary target" is invented.
+  //
+  // Rates are bound to their OWN context first (§9/§10): targets share a rate
+  // set only when crop, rates, WHP, REI and restrictions all agree, so a rate
+  // can never be copied onto a target the label did not give it to.
   const registered_uses: Record<string, unknown>[] = [];
-  for (const use of research.registered_uses) {
+  for (const use of groupResearchUseContexts(research.registered_uses)) {
     const rates = use.rates
       .filter((r) => CONTRACT_RATE_BASES.has(r.basis) || r.raw_text)
       .map((r) => ({
@@ -251,7 +481,7 @@ export function projectResearch(
     form_type: research.product.form_type,
     // A LEAD, not a registration. Downstream, `discardUnverifiedAiIdentity`
     // strips this whenever the register was consulted and did not confirm it.
-    registration_number: resolverHints[0] ?? null,
+    registration_number: resolverHints[0]?.registrationNumber ?? null,
     registrant: research.product.registrant ?? research.product.manufacturer,
     label_reference: officialLabelCandidate?.url ?? null,
     label_version: null,
@@ -282,6 +512,8 @@ export function projectResearch(
  */
 export function projectResearchToSearchResults(
   research: ChemicalResearchResult,
+  countryCode?: string,
+  expectedScheme?: string | null,
 ): Record<string, unknown>[] {
   const groups = research.active_ingredients
     .map((a) => a.suggested_group)
@@ -296,6 +528,19 @@ export function projectResearchToSearchResults(
 
   const rows: Record<string, unknown>[] = [];
   const primary = research.product.canonical_name ?? research.product.searched_name;
+
+  // The identity the primary row belongs to, so selecting it hands the NEXT
+  // structured lookup a number it no longer has to rediscover (§6). Matched
+  // by name against the candidate list — never "the first candidate", which
+  // would risk stamping candidate A's number onto product B.
+  const code = (countryCode ?? research.product.country ?? "").trim().toUpperCase();
+  const primaryNorm = (primary ?? "").trim().toLowerCase();
+  const primaryCandidate = code
+    ? resolverHintsFor(research, code, expectedScheme ?? null).find(
+      (h) => (h.registeredProductName ?? "").trim().toLowerCase() === primaryNorm,
+    ) ?? null
+    : null;
+
   if (primary) {
     rows.push({
       name: primary,
@@ -305,14 +550,22 @@ export function projectResearchToSearchResults(
       primaryUse: "",
       modeOfAction: groups.join(" + "),
       source: "research",
+      ...(primaryCandidate
+        ? {
+          registration_number: primaryCandidate.registrationNumber,
+          registration_country: primaryCandidate.country,
+          registration_scheme: primaryCandidate.scheme ?? undefined,
+        }
+        : {}),
     });
   }
 
   // Alternate registered identities the research surfaced are legitimate
-  // separate products the operator might have meant.
+  // separate products the operator might have meant. Each keeps its OWN
+  // number/name pairing.
   for (const c of research.registration_candidates) {
     const name = (c.registered_product_name ?? "").trim();
-    if (!name || name.toLowerCase() === (primary ?? "").toLowerCase()) continue;
+    if (!name || name.toLowerCase() === primaryNorm) continue;
     rows.push({
       name,
       activeIngredient: actives,
@@ -322,6 +575,8 @@ export function projectResearchToSearchResults(
       modeOfAction: groups.join(" + "),
       source: "research",
       registration_number: c.number ?? undefined,
+      registration_country: (c.country || code) || undefined,
+      registration_scheme: c.scheme ?? undefined,
     });
   }
   return rows;

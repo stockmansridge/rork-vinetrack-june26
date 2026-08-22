@@ -37,6 +37,10 @@ nonisolated struct ChemicalLookupAdvisory: Sendable, Hashable {
     /// holding the label can confirm them in seconds, and cannot confirm a
     /// field they were never shown.
     let registeredUses: [ChemicalRegisteredUse]
+    /// The registrant's own product page, when research found and classified
+    /// one — UNVERIFIED, like everything else here. Never a label address:
+    /// the Official Label has its own field and its own evidence rules.
+    let productURL: String?
 
     var hasContent: Bool {
         !activeIngredients.isEmpty
@@ -57,6 +61,7 @@ nonisolated struct ChemicalLookupAdvisory: Sendable, Hashable {
         case productCategory = "product_category"
         case activeIngredients = "active_ingredients"
         case registeredUses = "registered_uses"
+        case productURL = "product_url"
     }
 }
 
@@ -76,6 +81,7 @@ extension ChemicalLookupAdvisory: Codable {
         registeredUses = ((try? c.decodeIfPresent(
             [ChemicalRegisteredUse].self, forKey: .registeredUses
         )) ?? []) ?? []
+        productURL = try? c.decodeIfPresent(String.self, forKey: .productURL)
     }
 }
 

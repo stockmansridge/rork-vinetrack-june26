@@ -54,8 +54,9 @@ Deno.test("§40.1 a web-found registration number is only ever a resolver hint",
   const research = cloneResearch();
   const projection = projectResearch(research, "AU", "apvma");
 
-  // It is offered to the resolver…
-  assertEquals(projection.resolverHints, ["59688"]);
+  // It is offered to the resolver… paired with the register name it was
+  // discovered with, never as a bare number.
+  assertEquals(projection.resolverHints.map((h) => h.registrationNumber), ["59688"]);
   // …and it sits in the extraction only as an AI-tier claim, which the
   // existing fail-closed gate strips when the register did not confirm it.
   assertEquals(projection.extraction.registration_number, "59688");
@@ -278,7 +279,7 @@ Deno.test("§12 country is a hard boundary — an AU registration is not an NZ h
   assertEquals(hints, [], "an APVMA number must never be resolved as an ACVM identity");
 
   const auHints = resolverHintsFor(research, "AU", "apvma");
-  assertEquals(auHints, ["59688"]);
+  assertEquals(auHints.map((h) => h.registrationNumber), ["59688"]);
 });
 
 Deno.test("§12 an APVMA host carries no label authority for an NZ lookup", () => {

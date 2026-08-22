@@ -108,7 +108,7 @@ HONESTY RULES, in order of importance:
 2. NEVER invent a registration number, concentration, rate, withholding period or re-entry interval. If you could not find it, name the gap in unresolved[].
 3. Every fact you report must list the URLs that support it in its source_refs. A fact with no source_refs is treated as your opinion and is handled accordingly downstream.
 4. A registration number you find on the web is a LEAD, not a fact. It will be re-checked against the official register before it is believed. Report what you actually saw and let the register decide.
-5. Report the registered product name EXACTLY as the register prints it, including formulation suffixes. Do not tidy it up.
+5. Report the registered product name EXACTLY as the register prints it, including formulation suffixes. Do not tidy it up. This matters more than it looks: the registered name you return for a registration number is re-checked against the register TOGETHER WITH that number, so a shortened or tidied name ('Dithane Rainshield' where the register says 'Dithane Rainshield Neo Tec Fungicide') will cause the lead to be rejected. Put the full register name in registration_candidates[].registered_product_name, and keep each number with the name it was found with — never mix a number from one product with a name from another.
 
 DOCUMENT CLASSIFICATION — get this right, it matters:
 - official_label_candidates: only regulator-hosted approved labels, or the registrant's own hosted LABEL document. A product marketing page is not a label. An SDS is not a label.
@@ -118,6 +118,8 @@ DOCUMENT CLASSIFICATION — get this right, it matters:
 RATES: preserve the label's own basis for every rate — per hectare, per 100 litres, per 100 metres of row, ranges, or reference-only. Never convert one basis into another, and never drop a basis because another one looks more useful.
 
 TARGETS: keep every pest and disease a use is registered against. Never reduce a use to a single primary target.
+
+USE CONTEXTS — one registered_uses entry per DISTINCT context, and this is where flattening does real harm. Targets may be listed together in ONE entry only when the crop, the rates, the withholding period, the re-entry interval and the restrictions are identical for all of them. The moment two targets take different rates they become two separate entries. Never emit one entry that lists several targets and several rates and leaves the reader to guess which rate belongs to which target — that reads as though every target accepts every rate, which is wrong and unsafe. Worked example: if a grapevine label gives 200 g/100 L for black spot and downy mildew, and 150-200 g/100 L for phomopsis cane and leaf spot, that is TWO entries: {crop: Grapevines, targets: [Black spot, Downy mildew], rates: [200 g/100 L]} and {crop: Grapevines, targets: [Phomopsis cane and leaf spot], rates: [150-200 g/100 L]}. Where the label prints a rate against a named target, name that target in the rate's raw_text as well.
 
 RESISTANCE GROUPS: suggested_scheme and suggested_group are suggestions only. They are cross-checked against an authoritative FRAC/HRAC/IRAC table. Never merge the three schemes.`;
 
@@ -136,7 +138,7 @@ export function buildResearchPrompt(
 
   const modeLine = mode === "candidate_discovery"
     ? `The operator is still searching, so favour breadth and speed: identify which product or products they most likely mean, including for a misspelling or a partial name, and return the registration leads and identity. Deep label detail is not required at this stage — leave registered_uses empty rather than guessing at it.`
-    : `The operator has selected this product, so favour depth: establish the full registered identity, the actives and their strengths, the official label document, the manufacturer's product page, and the registered uses with their crops, targets, rates, withholding periods, re-entry intervals and restrictions.`;
+    : `The operator has selected this product, so favour depth: establish the full registered identity, the actives and their strengths, the official label document, the manufacturer's product page, and the registered uses with their crops, targets, rates, withholding periods, re-entry intervals and restrictions. Split the registered uses by use context: targets that take different rates must not share an entry.`;
 
   const escalationLine = escalationReasons.length
     ? `\n\nA faster model already researched this and could not settle the following. Concentrate on exactly these: ${

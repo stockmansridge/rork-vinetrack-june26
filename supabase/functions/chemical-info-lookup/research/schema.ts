@@ -135,9 +135,12 @@ const registeredUseSchema = obj({
   crop: str("Crop as the label states it, e.g. 'Grapevines'."),
   targets: arr(
     str("One pest/disease per entry."),
-    "EVERY target this use covers. Do NOT reduce to a single primary target.",
+    "EVERY target that shares THIS EXACT use context. Do NOT reduce to a single primary target. Group targets here ONLY when the crop, the rates, the withholding period, the re-entry interval and the restrictions are all identical for them. If two targets take different rates they are TWO SEPARATE entries in registered_uses — never one entry listing both targets and both rates. Example: 'Grapevines / Blackspot + Downy mildew / 200 g per 100 L' is one entry, and 'Grapevines / Phomopsis cane and leaf spot / 150-200 g per 100 L' is a second, separate entry.",
   ),
-  rates: arr(rateSchema, "Every rate row for this use, in every basis the label states."),
+  rates: arr(
+    rateSchema,
+    "Every rate row that applies to EVERY target listed above, in every basis the label states. A rate that applies to only some of the targets means you have grouped the targets wrongly — split the use instead. Where the label prints a rate against a named target, repeat that target's name in the rate's raw_text.",
+  ),
   whp: nullableStr("Withholding period, verbatim."),
   rei: nullableStr("Re-entry interval, verbatim."),
   restrictions: arr(str("One restriction per entry."), "Use restrictions/critical comments."),
@@ -182,7 +185,10 @@ export const CHEMICAL_RESEARCH_SCHEMA = obj({
     "Possible register identities. These are LEADS for the official resolver, not registrations.",
   ),
   active_ingredients: arr(activeIngredientSchema, "Actives with strengths where published."),
-  registered_uses: arr(registeredUseSchema, "Label uses. Keep every crop, target, and rate basis."),
+  registered_uses: arr(
+    registeredUseSchema,
+    "Label uses, one entry per DISTINCT use context. Keep every crop, target and rate basis. Targets share an entry only when their rates, WHP, REI and restrictions are all the same; targets with different rates must be separate entries.",
+  ),
   documents: documentsSchema,
   sources: arr(sourceSchema, "Every source consulted, classified."),
   unresolved: arr(

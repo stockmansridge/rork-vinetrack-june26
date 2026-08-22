@@ -495,4 +495,169 @@ struct ChemicalReviewMergeTests {
         #expect(completed.tanks.first?.chemicals.first?.chemicalSnapshot == frozen)
         #expect(completed.tanks.first?.chemicals.first?.name == "Dithane Rainshield")
     }
+
+    // MARK: - Research delivery: product page + suggested uses
+
+    /// A register-RESOLVED identity whose approved label was not extracted.
+    ///
+    /// The server correctly refuses to put unbacked uses in `registered_uses`
+    /// and puts them in `ai_suggested_uses` instead, and it now also returns
+    /// the registrant's product page in `product_url`. Both keys used to be
+    /// dropped on the floor by the client.
+    private let resolvedWithoutLabelJSON = """
+    {
+      "product_name": "DITHANE RAINSHIELD NEO TEC FUNGICIDE",
+      "product_category": "fungicide",
+      "form_type": "solid",
+      "product_url": "https://crop-solutions.basf.com.au/products/dithane-rainshield",
+      "registration": {
+        "country_code": "AU",
+        "scheme": "apvma",
+        "registration_number": "59688",
+        "registrant": "UPL Australia Pty Ltd",
+        "registered_product_name": "DITHANE RAINSHIELD NEO TEC FUNGICIDE",
+        "label_reference": null
+      },
+      "active_ingredients": [
+        { "name": "Mancozeb", "concentration": 750, "concentration_unit": "g/kg" }
+      ],
+      "activity_groups": ["M3"],
+      "registered_uses": [],
+      "ai_suggested_uses": [
+        {
+          "crop": "Grapevines",
+          "target_raw": "Black spot",
+          "rates": [
+            { "label": "Protectant", "basis": "per_100_litres", "value": 200, "unit": "g" }
+          ],
+          "withholding_period_days": 14,
+          "re_entry_period_hours": 24,
+          "restrictions": "Do not apply after EL 31."
+        },
+        {
+          "crop": "Grapevines",
+          "target_raw": "Phomopsis cane and leaf spot",
+          "rates": [
+            { "label": "Protectant", "basis": "range_per_100_litres", "min_value": 150, "max_value": 200, "unit": "g" }
+          ],
+          "withholding_period_days": 14,
+          "re_entry_period_hours": 24
+        }
+      ],
+      "verification": {
+        "status": "partially_verified",
+        "sources": [],
+        "conflicts": [],
+        "unresolved_fields": ["label_reference", "registered_uses"]
+      },
+      "match_source": "authoritative_candidate",
+      "discovery": { "adapter": "apvma", "outcome": "resolved" }
+    }
+    """
+
+    @Test("The registrant product page reaches the saved record's productURL")
+    func productPageReachesTheRecord() throws {
+        let lookup = try decodeStructured(resolvedWithoutLabelJSON)
+        #expect(lookup.productURL == "https://crop-solutions.basf.com.au/products/dithane-rainshield")
+
+        let review = merge(lookup: lookup, selected: nil)
+        #expect(review.productURL == "https://crop-solutions.basf.com.au/products/dithane-rainshield")
+    }
+
+    @Test("A product page is never mistaken for the Official Label")
+    func productPageIsNotTheLabel() throws {
+        let review = merge(lookup: try decodeStructured(resolvedWithoutLabelJSON), selected: nil)
+
+        // The label was not extracted, so the label field stays honestly blank
+        // rather than borrowing the marketing page.
+        #expect(review.labelURL.isEmpty)
+        #expect(review.chemicalIntelligence?.registration?.labelReference == nil)
+        #expect(review.productURL != review.labelURL)
+    }
+
+    @Test("A blank product page from the resolver does not erase one already saved")
+    func productPageIsNotErased() throws {
+        var existing = SavedChemical(vineyardId: Self.vineyardId)
+        existing.name = "Dithane Rainshield"
+        existing.productURL = "https://example-registrant.com.au/products/dithane"
+
+        let review = merge(
+            lookup: try decodeStructured(dithaneStructuredJSON),
+            selected: nil,
+            existing: existing
+        )
+        #expect(review.productURL == "https://example-registrant.com.au/products/dithane")
+    }
+
+    @Test("Researched uses with no label backing still populate the Review draft")
+    func suggestedUsesReachReviewChemical() throws {
+        let lookup = try decodeStructured(resolvedWithoutLabelJSON)
+        #expect(lookup.registeredUses.isEmpty)
+        #expect(lookup.aiSuggestedUses.count == 2)
+
+        let review = merge(lookup: lookup, selected: nil)
+        let uses = try #require(review.chemicalIntelligence?.registeredUses)
+        #expect(uses.count == 2)
+
+        // Each target kept its OWN rate — no cross-contamination.
+        let blackSpot = try #require(uses.first { $0.targetRaw?.localizedCaseInsensitiveContains("black spot") == true })
+        #expect(blackSpot.rates.first?.value == 200)
+        let phomopsis = try #require(uses.first { $0.targetRaw?.localizedCaseInsensitiveContains("phomopsis") == true })
+        #expect(phomopsis.rates.first?.minValue == 150)
+        #expect(phomopsis.rates.first?.maxValue == 200)
+
+        // WHP and re-entry came through with them.
+        #expect(blackSpot.withholdingPeriodDays == 14)
+        #expect(blackSpot.reEntryPeriodHours == 24)
+    }
+
+    @Test("Suggested uses never upgrade the record's verification status")
+    func suggestedUsesAreNotEvidence() throws {
+        let review = merge(lookup: try decodeStructured(resolvedWithoutLabelJSON), selected: nil)
+        let intel = try #require(review.chemicalIntelligence)
+
+        // Populated, and still not label evidence: the server's own
+        // unresolved list keeps saying so, and nothing here overrode it.
+        #expect(!intel.registeredUses.isEmpty)
+        #expect(intel.verification.unresolvedFields.contains("registered_uses"))
+        #expect(intel.registration?.labelReference == nil)
+    }
+
+    @Test("An authoritative label still outranks the suggested uses")
+    func labelBackedUsesWin() throws {
+        let withLabel = """
+        {
+          "product_name": "DITHANE RAINSHIELD NEO TEC FUNGICIDE",
+          "registration": {
+            "country_code": "AU",
+            "scheme": "apvma",
+            "registration_number": "59688",
+            "label_reference": "https://elabels.apvma.gov.au/59688ELBL.pdf"
+          },
+          "active_ingredients": [{ "name": "Mancozeb", "concentration": 750, "concentration_unit": "g/kg" }],
+          "registered_uses": [
+            {
+              "crop": "Grapevines",
+              "target_raw": "Downy mildew",
+              "rates": [{ "basis": "per_100_litres", "value": 250, "unit": "g" }]
+            }
+          ],
+          "ai_suggested_uses": [
+            {
+              "crop": "Grapevines",
+              "target_raw": "Black spot",
+              "rates": [{ "basis": "per_100_litres", "value": 200, "unit": "g" }]
+            }
+          ],
+          "verification": { "status": "partially_verified", "sources": [], "conflicts": [], "unresolved_fields": [] },
+          "match_source": "authoritative_candidate"
+        }
+        """
+        let review = merge(lookup: try decodeStructured(withLabel), selected: nil)
+        let uses = try #require(review.chemicalIntelligence?.registeredUses)
+
+        #expect(uses.count == 1)
+        #expect(uses.first?.rates.first?.value == 250)
+        #expect(review.labelURL == "https://elabels.apvma.gov.au/59688ELBL.pdf")
+    }
 }

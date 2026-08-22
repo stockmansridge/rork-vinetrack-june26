@@ -110,8 +110,15 @@ nonisolated enum ChemicalReviewMerge {
         let actives = reconciledActives(foundActives)
 
         // ---- Uses, rates, WHP, re-entry, restrictions ------------------------
+        // `ai_suggested_uses` sits between the canonical uses and the advisory:
+        // the server puts researched uses there when the IDENTITY resolved but
+        // no approved label backed the claims. That is the correct authority
+        // call and this does not change it — the values arrive with
+        // `ai_interpretation` provenance, exactly like the advisory's, so they
+        // populate the editable draft without ever reading as label evidence.
         let uses = firstNonEmptyList([
             canonical?.registeredUses ?? [],
+            lookup?.aiSuggestedUses ?? [],
             advisory?.registeredUses ?? [],
             existing?.chemicalIntelligence?.registeredUses ?? []
         ])
@@ -175,6 +182,17 @@ nonisolated enum ChemicalReviewMerge {
         // ---- Presentation fields the store already has -----------------------
         if let reference = registration?.labelReference, !reference.isEmpty {
             chemical.labelURL = LabelURLValidator.sanitize(reference)
+        }
+        // The registrant's product page. Separate field, separate rules: it is
+        // never sanitised into `labelURL`, and a blank from the resolver does
+        // not erase a page the record already had.
+        let productPage = firstNonEmpty([
+            lookup?.productURL,
+            advisory?.productURL,
+            existing?.productURL
+        ])
+        if !productPage.isEmpty {
+            chemical.productURL = LabelURLValidator.sanitize(productPage)
         }
         if let form = ChemicalFormType.stated(formDescription(lookup?.formType)) {
             chemical.productForm = form == .liquid ? "liquid" : "solid"

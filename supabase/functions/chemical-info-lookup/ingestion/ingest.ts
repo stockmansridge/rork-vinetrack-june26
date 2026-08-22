@@ -483,6 +483,7 @@ export function quarantineUnverifiedAiFacts(
     active_ingredients: actives,
     registered_uses: uses,
   };
+  if (structured.product_url) suggestion.product_url = structured.product_url;
   if (aiConflicts.length) suggestion.conflicts = aiConflicts;
   structured.ai_suggestion = suggestion;
   structured.guidance =
@@ -508,6 +509,10 @@ export function quarantineUnverifiedAiFacts(
   structured.activity_group_scheme = null;
   structured.registered_uses = [];
   structured.label_rate_bases = [];
+  // A product page is a product-specific claim like any other: with the
+  // identity unverified it cannot stand in the canonical response. It stays
+  // available, clearly weaker, in the advisory above.
+  structured.product_url = null;
 
   // ---- Evidence state: honestly unverified ---------------------------------
   // The model consult stays cited (its output lives in the advisory); the
