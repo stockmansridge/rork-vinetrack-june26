@@ -173,7 +173,7 @@ struct ChemicalStoreConsolidationTests {
         var live = session(for: draft)
 
         live.name = "Dithane Rainshield NT"
-        live.ratePerHaText = "2.5"
+        live.chemistryDraft.actives[0].concentrationText = "640"
 
         // Simulate scroll / screenshot / background-foreground: the parent
         // rebuilds and re-runs the seeding expression. `@State` keeps the live
@@ -183,7 +183,7 @@ struct ChemicalStoreConsolidationTests {
         }
 
         #expect(live.name == "Dithane Rainshield NT")
-        #expect(live.ratePerHaText == "2.5")
+        #expect(live.chemistryDraft.actives.first?.concentrationText == "640")
         #expect(live.chemistryDraft.actives.first?.name == "Mancozeb")
     }
 
@@ -233,10 +233,12 @@ struct ChemicalStoreConsolidationTests {
         let built = session(for: draft)
 
         // The old scalars are a projection of the structure, never a parallel
-        // source. Note the group: the row said M5, the record says M3.
-        #expect(built.activeIngredient.contains("Mancozeb"))
-        #expect(built.chemicalGroup.contains("M3"))
-        #expect(!built.chemicalGroup.contains("M5"))
+        // source — and they exist only at save time, not as editable fields.
+        // Note the group: the row said M5, the record says M3.
+        let legacy = built.legacyProjection()
+        #expect(legacy.activeIngredient.contains("Mancozeb"))
+        #expect(legacy.chemicalGroup.contains("M3"))
+        #expect(!legacy.chemicalGroup.contains("M5"))
     }
 
     // MARK: - 10. Category

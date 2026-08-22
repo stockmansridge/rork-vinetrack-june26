@@ -169,7 +169,9 @@ nonisolated enum ChemicalReverification {
             return "Set your vineyard's country so this product can be checked against the right national register."
         }
         if chemical.verificationStatus == .needsMatch, plan.strength < .structuredIdentity {
-            return "This product has no registration details yet. Use Match & Verify to identify it first."
+            // Worded for the flow the operator actually has: search the
+            // register, pick the product, review what came back.
+            return "This product has no registration details yet. Search for it above to identify it first."
         }
         return nil
     }

@@ -177,41 +177,44 @@ struct SprayPresetsView: View {
 
 /// Which secondary screen the editor is showing.
 ///
-/// ONE sheet presenter instead of four stacked `.sheet` modifiers. Chaining
-/// several sheets onto the same view makes their content views share a
-/// presentation slot, and rebuilding the parent can tear down and re-create the
-/// one that is open — which is how a populated Review Chemical form could lose
-/// its contents just because the operator opened and closed Chemistry &
-/// Identity, or the store ticked underneath it.
+/// ONE sheet presenter instead of stacked `.sheet` modifiers. Chaining several
+/// onto the same view makes their content views share a presentation slot, and
+/// rebuilding the parent can tear down and re-create the one that is open —
+/// which is how a populated Review Chemical form could lose its contents just
+/// because the operator opened and closed a sub-editor.
+///
+/// The `chemistry` case is deliberately absent. There is no second chemical
+/// editor any more.
 private enum ChemicalEditorSheet: Identifiable {
     case search
-    case chemistry
     case reverify
 
     var id: Int {
         switch self {
         case .search: return 0
-        case .chemistry: return 1
-        case .reverify: return 2
+        case .reverify: return 1
         }
     }
 }
 
-/// THE Chemical Store editor — a pure editor over one stable draft.
+/// THE Chemical Store editor — one page, one record.
 ///
 /// # What it is not, any more
 ///
-/// It used to double as a second product-lookup pipeline: a "Search with AI"
-/// action called its own server endpoint and mapped the reply into its own
-/// fields, filling the legacy free-text chemistry while leaving the structured
-/// sql/194 record empty. Two pipelines producing two different answers for the
-/// same product is what put "No active ingredients recorded" directly above
-/// "Recorded as text: Mancozeb · M5" on the same screen.
+/// It used to double as a second product-lookup pipeline, and it used to show
+/// the operator two editable copies of the same product. The outer form had
+/// `Use / Problem`, `Target Problem`, `Rate per ha` and `Rate per 100L`; a
+/// second full editor behind an "Edit Chemistry & Identity" button had crop,
+/// target, structured rates, withholding and re-entry. On a real Dithane
+/// Rainshield lookup the inner screen held `2.5 kg/ha` while the outer one
+/// displayed `Rate per ha: 0` — not two records, but two UIs over one record,
+/// contradicting each other.
 ///
-/// Now there is one lookup implementation (`ChemicalProductSearchSheet`) and
-/// one mapping authority (`ChemicalReviewMerge`). This view resolves nothing on
-/// its own and runs no background lookup: it is handed a draft, it edits it,
-/// and it saves it.
+/// Both are gone. There is one lookup (`ChemicalProductSearchSheet`), one
+/// mapping authority (`ChemicalReviewMerge`), and one editor: this screen,
+/// which renders the structured sql/194 chemistry directly as its own sections.
+/// The legacy scalars are produced FROM that record at save time and are never
+/// edited beside it.
 ///
 /// # Draft lifecycle
 ///
@@ -267,6 +270,9 @@ struct EditSavedChemicalSheet: View {
     @State private var activeSheet: ChemicalEditorSheet?
     @State private var linkAlertMessage: String?
     @State private var showLinkAlert: Bool = false
+    /// Registration plumbing stays collapsed. A grower edits agronomy; the
+    /// identity fields underneath are VineTrack's problem unless they ask.
+    @State private var showTechnicalDetails: Bool = false
     @State private var deleteCoordinator = ChemicalDeleteCoordinator()
 
     init(
@@ -314,12 +320,19 @@ struct EditSavedChemicalSheet: View {
                     lookupSection
                 }
                 productSection
-                chemistrySection
+                activeIngredientsSection
+                registeredUsesSection
+                if showsProductRates {
+                    productRatesSection
+                }
+                if !session.hasStructuredUses {
+                    legacyUseSection
+                }
+                detailsSection
+                registrationSection
                 if chemical != nil {
                     reverifySection
                 }
-                detailsSection
-                ratesSection
                 if session.productCategory?.isFertiliser == true {
                     fertiliserSection
                 }
@@ -353,11 +366,6 @@ struct EditSavedChemicalSheet: View {
                     ) { reviewed in
                         session.apply(reviewed: reviewed, fallbackCountry: resolvedCountry)
                     }
-                case .chemistry:
-                    ChemicalManualEditorView(
-                        draft: $session.chemistryDraft,
-                        existing: session.seedIntelligence
-                    )
                 case .reverify:
                     if let chemical {
                         // Closing this form after a successful re-verification is
@@ -520,118 +528,110 @@ struct EditSavedChemicalSheet: View {
         }
     }
 
-    /// The product's chemistry, as structure rather than as free text.
+    /// The actives, EDITABLE, on the main screen.
     ///
-    /// This section is what replaced the `Active Ingredient` and `Chemical Group`
-    /// boxes. It shows each active with its own group, the derived product-level
-    /// summary, and how many label rates and uses are on record — then hands off
-    /// to the structured editor for the actual work.
-    private var chemistrySection: some View {
-        // Read from the STRUCTURED draft, which a lookup now hydrates directly.
-        // This list saying "none" while the legacy line below it read "Mancozeb"
-        // was the visible symptom of two pipelines disagreeing; there is one
-        // pipeline now, and this is its output.
-        let actives = session.populatedActives
-        let summary = ChemicalManualEntry.groupSummary(session.chemistryDraft)
-        let rateCount = session.chemistryDraft.productRates.count
-            + session.chemistryDraft.uses.reduce(0) { $0 + $1.rates.count }
-        return Section {
-            if actives.isEmpty {
-                Label("No active ingredients recorded", systemImage: "flask")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(actives) { active in
-                    HStack(alignment: .firstTextBaseline) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(active.name)
-                                .font(.subheadline.weight(.medium))
-                            if !active.concentrationText.isEmpty {
-                                Text("\(active.concentrationText) \(active.concentrationUnit?.label ?? "")")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer()
-                        if let scheme = active.scheme, scheme != .notApplicable,
-                           !ChemicalActivityGroup.normaliseCode(active.groupCode).isEmpty {
-                            Text("\(scheme.label) \(ChemicalActivityGroup.normaliseCode(active.groupCode))")
-                                .font(.caption2.weight(.semibold))
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(VineyardTheme.olive.opacity(0.12))
-                                .foregroundStyle(VineyardTheme.olive)
-                                .clipShape(Capsule())
-                        } else {
-                            Text("No group")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-                }
-            }
-
-            if !summary.isEmpty {
-                LabeledContent("Product groups") {
-                    Text(summary).font(.subheadline.weight(.semibold))
-                }
-            }
-            if rateCount > 0 || !session.chemistryDraft.uses.isEmpty {
-                LabeledContent("Label rates & uses") {
-                    Text("\(rateCount) rate\(rateCount == 1 ? "" : "s") · "
-                         + "\(session.chemistryDraft.uses.count) use\(session.chemistryDraft.uses.count == 1 ? "" : "s")")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Button {
-                activeSheet = .chemistry
-            } label: {
-                Label(
-                    actives.isEmpty ? "Enter Chemistry & Identity" : "Edit Chemistry & Identity",
-                    systemImage: "square.and.pencil"
+    /// This used to be a read-only summary with a button through to a second
+    /// editor that held the real thing. Mancozeb 640 g/kg FRAC M3 is what the
+    /// operator checks against the drum in their hand, so it lives here — and it
+    /// is the same value the resistance model reads, not a copy of it.
+    private var activeIngredientsSection: some View {
+        Section {
+            ForEach($session.chemistryDraft.actives) { $active in
+                ChemicalManualActiveEditor(
+                    active: $active,
+                    canRemove: session.chemistryDraft.actives.count > 1,
+                    onRemove: { removeActive(active.id) }
                 )
             }
-
-            // ONE quiet statement of fact, next to the identity it is about.
-            // Not a warning and not a blocker: an unconfirmed registration says
-            // nothing about whether the chemistry below is right, and repeating
-            // it on every screen is what made the old flow feel like a refusal.
-            if session.registrationNotConfirmed {
-                Label("Registration not confirmed", systemImage: "info.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Button {
+                session.chemistryDraft.actives.append(ChemicalManualActiveDraft())
+            } label: {
+                Label("Add Active Ingredient", systemImage: "plus.circle.fill")
             }
-
-            // A legacy record's free-text chemistry, shown read-only so the
-            // operator can see what the old columns hold while they restate it as
-            // structure. Nothing calculates from these strings.
-            //
-            // Only ever reachable for a record that has never been structured:
-            // when a lookup finds actives they appear in the list above, not
-            // here, and this block stays hidden.
-            if actives.isEmpty,
-               !session.activeIngredient.isEmpty || !session.chemicalGroup.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Recorded as text")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    Text([session.activeIngredient, session.chemicalGroup]
-                        .filter { !$0.isEmpty }
-                        .joined(separator: " · "))
-                        .font(.caption)
+        } header: {
+            HStack {
+                Text("Active Ingredients")
+                Spacer()
+                let summary = ChemicalManualEntry.groupSummary(session.chemistryDraft)
+                if !summary.isEmpty {
+                    Text(summary)
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
             }
-        } header: {
-            Text("Active Ingredients")
         } footer: {
-            Text("Each active ingredient carries its own resistance group, so a two-active product belongs to both groups independently. Anything you enter yourself stays unverified until Match & Verify or Re-verify confirms it.")
+            Text("Each active ingredient carries its own resistance group, so a two-active product genuinely belongs to both groups at once — which is what resistance planning needs to know.")
         }
     }
 
-    private var detailsSection: some View {
+    private func removeActive(_ id: UUID) {
+        session.chemistryDraft.actives.removeAll { $0.id == id }
+        if session.chemistryDraft.actives.isEmpty {
+            session.chemistryDraft.actives = [ChemicalManualActiveDraft()]
+        }
+    }
+
+    /// Crop, target, rate, basis, withholding, re-entry and restrictions — the
+    /// canonical rate UI.
+    ///
+    /// `Rate per ha` and `Rate per 100L` used to sit on this screen as separate
+    /// editable numbers, reading `0` while the real 2.5 kg/ha lived one screen
+    /// deeper. They are gone: a registered use carries its rate WITH the basis
+    /// the label quotes it against, and two scalars cannot express that.
+    private var registeredUsesSection: some View {
+        Section {
+            ForEach($session.chemistryDraft.uses) { $use in
+                ChemicalManualUseEditor(
+                    use: $use,
+                    onRemove: { session.chemistryDraft.uses.removeAll { $0.id == use.id } }
+                )
+            }
+            Button {
+                session.chemistryDraft.uses.append(ChemicalManualUseDraft())
+            } label: {
+                Label("Add Registered Use", systemImage: "plus.circle.fill")
+            }
+        } header: {
+            Text("Registered Uses & Rates")
+        } footer: {
+            Text("A use is a crop and a target the product is registered against, with the rate as the label states it and any withholding or re-entry period. The basis is kept exactly as printed — a per-100 L rate is never restated per hectare.")
+        }
+    }
+
+    /// Whether to offer product-level label rates.
+    ///
+    /// Shown when the record has some — including an older record whose scalar
+    /// rate was lifted into structure as this screen opened — or when there are
+    /// no uses yet to hang a rate on.
+    private var showsProductRates: Bool {
+        !session.chemistryDraft.productRates.isEmpty || session.chemistryDraft.uses.isEmpty
+    }
+
+    private var productRatesSection: some View {
+        Section {
+            ForEach($session.chemistryDraft.productRates) { $rate in
+                ChemicalManualRateEditor(
+                    rate: $rate,
+                    onRemove: { session.chemistryDraft.productRates.removeAll { $0.id == rate.id } }
+                )
+            }
+            Button {
+                session.chemistryDraft.productRates.append(ChemicalManualRateDraft())
+            } label: {
+                Label("Add Label Rate", systemImage: "plus.circle.fill")
+            }
+        } header: {
+            Text("Product Label Rates")
+        } footer: {
+            Text("Rates the label states for the product as a whole. This is not your spray rate or carrier volume — those belong to each spray job.")
+        }
+    }
+
+    /// The old free-text use, offered ONLY while nothing structured exists.
+    ///
+    /// Once a registered use is on record it is authoritative, and this section
+    /// disappears rather than competing with it.
+    private var legacyUseSection: some View {
         Section {
             LabeledField(label: "Use / Problem") {
                 TextField("e.g. Fungicide", text: $session.use)
@@ -639,6 +639,18 @@ struct EditSavedChemicalSheet: View {
             LabeledField(label: "Target Problem") {
                 TextField("e.g. Powdery Mildew", text: $session.problem)
             }
+        } header: {
+            Text("Use")
+        } footer: {
+            Text("No registered use is on record for this product yet. Adding one above records the crop, target, rate, withholding period and re-entry period properly — these two boxes cannot.")
+        }
+    }
+
+    private var detailsSection: some View {
+        Section {
+            // ONE manufacturer field. It writes the structured registrant, and
+            // `SavedChemical.manufacturer` is projected from it on save — there
+            // is no second box that could hold a different answer.
             LabeledField(label: "Manufacturer") {
                 TextField("e.g. Syngenta", text: $session.manufacturer)
             }
@@ -667,6 +679,92 @@ struct EditSavedChemicalSheet: View {
             Text("Details")
         } footer: {
             Text("Use Label URL only for the official product label, preferably a PDF. Product pages may be used for manufacturer or marketing information, but are never shown as the official label.")
+        }
+    }
+
+    /// Registration identity: a compact line, with the plumbing behind a
+    /// disclosure.
+    ///
+    /// The identifier matters enormously INTERNALLY — telling similarly named
+    /// products apart, matching the official register, linking the Master
+    /// Catalogue, re-verification, refusing cross-country matches. None of that
+    /// makes it something to hand a grower as a blank, required-looking box
+    /// labelled "Registration Number", which is jargon for a number they can
+    /// only find on the drum under its own national name.
+    ///
+    /// So VineTrack fills it in when a lookup finds one, states it in the
+    /// jurisdiction's own words, says plainly when there is none, and never asks.
+    private var registrationSection: some View {
+        Section {
+            if let line = session.registrationCompactLine {
+                Label(
+                    line,
+                    systemImage: session.hasRegistrationNumber ? "checkmark.seal" : "info.circle"
+                )
+                .font(.subheadline)
+                .foregroundStyle(session.hasRegistrationNumber ? Color.primary : Color.secondary)
+            }
+            DisclosureGroup("Technical Details", isExpanded: $showTechnicalDetails) {
+                technicalDetails
+            }
+            .font(.subheadline)
+        } header: {
+            Text("Registration")
+        } footer: {
+            if let terms = session.registrationTerms {
+                Text(terms.helpText)
+            } else {
+                Text("VineTrack does not match products against a national register for this country yet, so no registration identifier is recorded.")
+            }
+        }
+    }
+
+    /// Identity plumbing and evidence. Collapsed by default, never required.
+    @ViewBuilder
+    private var technicalDetails: some View {
+        Picker("Registered in", selection: $session.countryCode) {
+            Text("Not stated").tag("")
+            Text("Australia").tag("AU")
+            Text("New Zealand").tag("NZ")
+            // A vineyard may stock an imported product, so the product's own
+            // country is never assumed to be the vineyard's.
+            if !["", "AU", "NZ"].contains(session.countryCode) {
+                Text(session.countryCode).tag(session.countryCode)
+            }
+        }
+
+        // Only ever the registers that exist in this jurisdiction. An APVMA
+        // field has no meaning in New Zealand, and the reverse.
+        if let terms = session.registrationTerms {
+            Picker("Register", selection: $session.chemistryDraft.registrationScheme) {
+                Text("Not stated").tag(ChemicalRegistrationScheme?.none)
+                ForEach(terms.schemes, id: \.self) { scheme in
+                    Text(scheme.label).tag(ChemicalRegistrationScheme?.some(scheme))
+                }
+            }
+            LabeledField(label: terms.fieldLabel) {
+                TextField(terms.placeholder, text: $session.chemistryDraft.registrationNumber)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.characters)
+            }
+        }
+
+        if let intelligence = session.editOutcome?.intelligence ?? session.seedIntelligence {
+            LabeledContent("Evidence") {
+                Text(intelligence.resolvedVerificationStatus.label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if !intelligence.verification.conflicts.isEmpty {
+                ChemicalConflictCard(conflicts: intelligence.verification.conflicts)
+                    .padding(.vertical, 4)
+            }
+            if !intelligence.verification.unresolvedFields.isEmpty {
+                Text("Not established: "
+                     + intelligence.verification.unresolvedFields.joined(separator: ", "))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 
@@ -722,7 +820,7 @@ struct EditSavedChemicalSheet: View {
         } footer: {
             Text(offered
                  ? "Re-checks this product against the register using the registration details VineTrack already holds. Nothing is changed until you review and accept it."
-                 : "Products without registration details are identified through Match & Verify first.")
+                 : "Search for this product above to identify it against the register.")
         }
     }
 
@@ -740,33 +838,6 @@ struct EditSavedChemicalSheet: View {
         }
         .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
-    }
-
-    private var ratesSection: some View {
-        Section {
-            LabeledField(label: "Rate per ha") {
-                HStack {
-                    TextField("0", text: $session.ratePerHaText)
-                        .keyboardType(.decimalPad)
-                    Text("\(session.unit.rawValue)/ha")
-                        .foregroundStyle(.secondary)
-                        .font(.subheadline)
-                }
-            }
-            LabeledField(label: "Rate per 100L water") {
-                HStack {
-                    TextField("0", text: $session.ratePer100LText)
-                        .keyboardType(.decimalPad)
-                    Text("\(session.unit.rawValue)/100L")
-                        .foregroundStyle(.secondary)
-                        .font(.subheadline)
-                }
-            }
-        } header: {
-            Text("Rates")
-        } footer: {
-            Text("Enter either or both. The Spray Calculator lets the operator pick which basis to use per job.")
-        }
     }
 
     private var purchaseSection: some View {
@@ -875,26 +946,16 @@ struct EditSavedChemicalSheet: View {
     /// `saved_chemicals` written from here.
     @discardableResult
     private func save() -> SavedChemical? {
-        let perHaDisplay = Double(session.ratePerHaText) ?? 0
-        let per100LDisplay = Double(session.ratePer100LText) ?? 0
-
-        var rates: [ChemicalRate] = []
-        if perHaDisplay > 0 {
-            rates.append(ChemicalRate(
-                id: session.existingPerHaRateId ?? UUID(),
-                label: "Per Ha",
-                value: session.unit.toBase(perHaDisplay),
-                basis: .perHectare
-            ))
-        }
-        if per100LDisplay > 0 {
-            rates.append(ChemicalRate(
-                id: session.existingPer100LRateId ?? UUID(),
-                label: "Per 100L",
-                value: session.unit.toBase(per100LDisplay),
-                basis: .per100Litres
-            ))
-        }
+        // The legacy scalars are DERIVED here, from the structured record, and
+        // written alongside it for older clients and the existing API. Nothing
+        // on this screen edits them, so a stale scalar has no way back into the
+        // chemistry:
+        //
+        //     structured Chemical Intelligence  →  legacy compatibility fields
+        //
+        // and never the reverse.
+        let legacy = session.legacyProjection()
+        let rates = legacy.rates
 
         // Preserve existing purchase data when the editor cannot see/edit
         // financials so that owners/managers don't lose cost values when a
@@ -905,10 +966,10 @@ struct EditSavedChemicalSheet: View {
             let cost = Double(session.costText) ?? 0
             if containerSize > 0 || cost > 0 {
                 purchase = ChemicalPurchase(
-                    brand: session.manufacturer,
-                    activeIngredient: session.activeIngredient,
-                    chemicalGroup: session.chemicalGroup,
-                    labelURL: session.labelURL,
+                    brand: legacy.manufacturer,
+                    activeIngredient: legacy.activeIngredient,
+                    chemicalGroup: legacy.chemicalGroup,
+                    labelURL: legacy.labelURL,
                     costDollars: cost,
 
                     containerSizeML: containerSize,
@@ -921,33 +982,23 @@ struct EditSavedChemicalSheet: View {
         let productForm = session.formType == .liquid ? "liquid" : "solid"
         let packUnit = session.formType == .liquid ? "L" : "kg"
 
-        // Legacy scalars are now OUTPUTS of the structured record. They are
-        // rewritten only when there is structured chemistry to derive them from,
-        // so a record that has never been structured keeps its original text and
-        // is not blanked by the act of saving it.
         let outcome = session.editOutcome
-        let structured = outcome?.intelligence
-            ?? (session.hasAuthoredChemistry ? session.seedIntelligence : nil)
-        let projectedActive = structured?.legacyActiveIngredient ?? ""
-        let projectedGroup = structured?.legacyChemicalGroup ?? ""
-        let legacyActive = projectedActive.isEmpty ? session.activeIngredient : projectedActive
-        let legacyGroup = projectedGroup.isEmpty ? session.chemicalGroup : projectedGroup
 
         if var existing = chemical {
             existing.name = session.name
             existing.unit = session.unit
-            existing.chemicalGroup = legacyGroup
-            existing.use = session.use
-            existing.manufacturer = session.manufacturer
+            existing.chemicalGroup = legacy.chemicalGroup
+            existing.use = legacy.use
+            existing.manufacturer = legacy.manufacturer
             existing.notes = session.notes
-            existing.problem = session.problem
-            existing.ratePerHa = perHaDisplay
-            existing.activeIngredient = legacyActive
+            existing.problem = legacy.problem
+            existing.ratePerHa = legacy.ratePerHa
+            existing.activeIngredient = legacy.activeIngredient
             // Mode of action is no longer an editable chemistry input — the group
             // is structured per active now — so whatever the record already held
             // is carried through untouched rather than dropped.
             existing.modeOfAction = session.modeOfAction
-            existing.labelURL = session.labelURL
+            existing.labelURL = legacy.labelURL
             existing.productURL = session.productURL
             existing.rates = rates
             existing.purchase = purchase
@@ -991,17 +1042,17 @@ struct EditSavedChemicalSheet: View {
         } else {
             let new = SavedChemical(
                 name: session.name,
-                ratePerHa: perHaDisplay,
+                ratePerHa: legacy.ratePerHa,
                 unit: session.unit,
-                chemicalGroup: legacyGroup,
-                use: session.use,
-                manufacturer: session.manufacturer,
+                chemicalGroup: legacy.chemicalGroup,
+                use: legacy.use,
+                manufacturer: legacy.manufacturer,
                 notes: session.notes,
-                problem: session.problem,
-                activeIngredient: legacyActive,
+                problem: legacy.problem,
+                activeIngredient: legacy.activeIngredient,
                 rates: rates,
                 purchase: purchase,
-                labelURL: session.labelURL,
+                labelURL: legacy.labelURL,
                 productURL: session.productURL,
                 modeOfAction: session.modeOfAction,
                 productCategory: session.productCategory?.rawValue ?? "",

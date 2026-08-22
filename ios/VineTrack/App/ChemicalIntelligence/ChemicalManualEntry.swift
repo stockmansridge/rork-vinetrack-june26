@@ -117,6 +117,13 @@ nonisolated struct ChemicalManualDraft: Sendable, Hashable {
     var registrant: String
     var registrationScheme: ChemicalRegistrationScheme?
     var registrationNumber: String
+    /// The official label URL/document reference.
+    ///
+    /// Held here rather than separately on `SavedChemical.labelURL`, because
+    /// two independently editable label links is one too many: the structured
+    /// registration held the URL a lookup found while the outer field sat
+    /// blank, and the operator saw an app that had lost their label.
+    var labelReference: String
     var actives: [ChemicalManualActiveDraft]
     /// Label rates that apply to the product generally, rather than to one
     /// specific registered use.
@@ -130,6 +137,7 @@ nonisolated struct ChemicalManualDraft: Sendable, Hashable {
         registrant: String = "",
         registrationScheme: ChemicalRegistrationScheme? = nil,
         registrationNumber: String = "",
+        labelReference: String = "",
         actives: [ChemicalManualActiveDraft] = [],
         productRates: [ChemicalManualRateDraft] = [],
         uses: [ChemicalManualUseDraft] = []
@@ -140,6 +148,7 @@ nonisolated struct ChemicalManualDraft: Sendable, Hashable {
         self.registrant = registrant
         self.registrationScheme = registrationScheme
         self.registrationNumber = registrationNumber
+        self.labelReference = labelReference
         self.actives = actives
         self.productRates = productRates
         self.uses = uses
@@ -200,13 +209,14 @@ nonisolated enum ChemicalManualEntry {
         let registrant = draft.registrant.trimmingCharacters(in: .whitespacesAndNewlines)
         let number = draft.registrationNumber.trimmingCharacters(in: .whitespacesAndNewlines)
         let productName = draft.productName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let labelReference = draft.labelReference.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // A registration is only built when the operator actually stated
         // something about identity. An empty block stays nil rather than being
         // materialised as an empty shell that later looks like a failed lookup.
         var registration: ChemicalRegistration?
         _ = productName
-        if !country.isEmpty || !registrant.isEmpty || !number.isEmpty {
+        if !country.isEmpty || !registrant.isEmpty || !number.isEmpty || !labelReference.isEmpty {
             registration = ChemicalRegistration(
                 countryCode: country,
                 scheme: draft.registrationScheme,
@@ -216,7 +226,8 @@ nonisolated enum ChemicalManualEntry {
                 // product. Only a lookup can establish that, so a manually
                 // typed display name is never promoted into it.
                 registeredProductName: existing?.registration?.registeredProductName,
-                labelReference: existing?.registration?.labelReference,
+                // The ONE label link, edited in one place on the Review screen.
+                labelReference: labelReference.isEmpty ? nil : labelReference,
                 labelVersion: existing?.registration?.labelVersion
             )
         }
@@ -332,6 +343,9 @@ nonisolated enum ChemicalManualEntry {
             registrant: intel.registration?.registrant ?? chemical.manufacturer,
             registrationScheme: intel.registration?.scheme,
             registrationNumber: intel.registration?.registrationNumber ?? "",
+            // Structured value first, then the legacy column. A one-way
+            // hydration: from here on the structured reference is the truth.
+            labelReference: intel.registration?.labelReference ?? chemical.labelURL,
             // An empty editor is not useful, so a product with no actives on
             // record opens with one blank row to fill in.
             actives: actives.isEmpty ? [ChemicalManualActiveDraft()] : actives,
