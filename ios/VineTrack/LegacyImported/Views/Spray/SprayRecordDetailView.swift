@@ -159,7 +159,7 @@ struct SprayRecordDetailView: View {
         .padding(.horizontal, 4)
     }
 
-    // MARK: - Template
+    // MARK: - Add to Program
 
     private var currentRecord: SprayRecord {
         store.sprayRecords.first(where: { $0.id == record.id }) ?? record
@@ -175,9 +175,9 @@ struct SprayRecordDetailView: View {
                         .foregroundStyle(.secondary)
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Admin portal template")
+                        Text(SprayProgramTerminology.managedInAdminPortal)
                             .font(.headline)
-                        Text("This template is managed in the admin portal. Use it to start a new spray job — it can't be edited here.")
+                        Text("This Program Step is managed in the admin portal. Use it to plan a new spray — it can't be edited here.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -201,9 +201,11 @@ struct SprayRecordDetailView: View {
                         .foregroundStyle(.secondary)
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Template")
+                        Text(SprayProgramTerminology.addToProgram)
                             .font(.headline)
-                        Text("Mark as template to reuse for future trips")
+                        Text(currentRecord.isTemplate
+                             ? "\(SprayProgramTerminology.inProgram) — available as a \(SprayProgramTerminology.programStep) when planning a spray."
+                             : "Save this spray as a \(SprayProgramTerminology.programStep) for future use.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

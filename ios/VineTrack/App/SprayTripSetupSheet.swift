@@ -2,8 +2,11 @@ import SwiftUI
 
 /// Backend-safe Spray Trip Setup sheet.
 /// Restores the original two-option flow:
-///   1. Use an existing spray program (template or record)
-///   2. Create a new spray job (opens SprayRecordFormView)
+///   1. Plan from Program — start from an existing Program Step or record
+///   2. One-off Spray — configure a spray from scratch
+///
+/// Wording only speaks the Program vocabulary; the underlying source objects
+/// (`isTemplate`, `SprayJobTemplateService`) are unchanged.
 ///
 /// Uses MigratedDataStore + TripTrackingService only. No old DataStore /
 /// SprayCalculatorView dependencies.
@@ -55,10 +58,8 @@ struct SprayTripSetupSheet: View {
                 VStack(spacing: 12) {
                     SprayTripSetupCard(
                         icon: "doc.on.doc.fill",
-                        title: "Start from Template",
-                        subtitle: activeTemplates.isEmpty
-                            ? "No templates available — create one in the admin portal"
-                            : "Use a saved spray template to pre-fill a new job (\(activeTemplates.count) available)",
+                        title: SprayProgramTerminology.planFromProgram,
+                        subtitle: SprayProgramTerminology.planFromProgramSubtitle(count: activeTemplates.count),
                         color: .purple,
                         disabled: activeTemplates.isEmpty
                     ) {
@@ -67,8 +68,8 @@ struct SprayTripSetupSheet: View {
 
                     SprayTripSetupCard(
                         icon: "plus.rectangle.on.rectangle",
-                        title: "Custom Spray Job",
-                        subtitle: "Open the spray calculator and configure a new job from scratch",
+                        title: SprayProgramTerminology.oneOffSpray,
+                        subtitle: "Open the spray calculator and configure a spray from scratch",
                         color: VineyardTheme.leafGreen,
                         disabled: false
                     ) {
@@ -256,7 +257,7 @@ struct SprayTripProgramPickerSheet: View {
                                     pickerRow(record)
                                 }
                             } header: {
-                                Label("Templates", systemImage: "doc.on.doc")
+                                Label(SprayProgramTerminology.program, systemImage: "doc.on.doc")
                             }
                         }
 
@@ -381,11 +382,11 @@ private struct SprayTripProgramRow: View {
     }
 }
 
-// MARK: - Template Picker (read-only, active templates only)
+// MARK: - Program Step Picker (read-only, active steps only)
 
-/// Lists active spray templates (is_template = true, deleted_at IS NULL).
-/// Templates are deep-copied into a new spray job by `SprayCalculatorView`'s
-/// prefill flow — the source template is never mutated.
+/// Lists active Program Steps (is_template = true, deleted_at IS NULL).
+/// A Program Step is deep-copied into a new spray by `SprayCalculatorView`'s
+/// prefill flow — the source step is never mutated.
 struct SprayTemplatePickerSheet: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(SprayJobTemplateService.self) private var portalTemplates
@@ -417,9 +418,9 @@ struct SprayTemplatePickerSheet: View {
             Group {
                 if activeTemplates.isEmpty {
                     ContentUnavailableView {
-                        Label("No Templates Available", systemImage: "doc.on.doc")
+                        Label(SprayProgramTerminology.noProgramStepsAvailable, systemImage: "doc.on.doc")
                     } description: {
-                        Text("Spray templates are managed in the admin portal. Once created, they will appear here.")
+                        Text("Program Steps live in your Spray Program and the admin portal. Once created, they will appear here.")
                     }
                 } else {
                     List {
@@ -439,7 +440,7 @@ struct SprayTemplatePickerSheet: View {
 
                         Section {
                             Label {
-                                Text("Selecting a template will pre-fill a new spray job. The original template is not changed.")
+                                Text("Selecting a Program Step will pre-fill a new spray. The Program Step itself is not changed.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             } icon: {
@@ -452,7 +453,7 @@ struct SprayTemplatePickerSheet: View {
                     .listStyle(.insetGrouped)
                 }
             }
-            .navigationTitle("Choose a Template")
+            .navigationTitle(SprayProgramTerminology.chooseProgramStepTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -483,7 +484,7 @@ private struct SprayTemplateRow: View {
                 .clipShape(.rect(cornerRadius: 8))
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(template.sprayReference.isEmpty ? "Untitled Template" : template.sprayReference)
+                Text(template.sprayReference.isEmpty ? "Untitled Program Step" : template.sprayReference)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
 
