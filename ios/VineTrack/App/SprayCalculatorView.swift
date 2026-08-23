@@ -218,6 +218,38 @@ struct SprayCalculatorView: View {
         )
     }
 
+    /// The dilute / runoff reference the canopy model establishes, in L/100 m.
+    ///
+    /// This is the SAME number as `litresPer100mValue` — the canopy table is a
+    /// per-100 m table — named for the role it plays in the row-length
+    /// workflow. Row spacing is not involved, so unlike the L/ha figure it is
+    /// always available, even for a block that has never had a spacing entered.
+    private var canopyDiluteLitresPer100m: Double { litresPer100mValue }
+
+    /// The operator's own dilute / runoff figure, when they have typed one.
+    ///
+    /// An empty field is NOT an override — it means "use the canopy". Keeping
+    /// the override in the text field itself, rather than mirroring the canopy
+    /// value into it, is what makes a manual entry survive canopy changes and
+    /// redraws: nothing ever writes into this field except the operator.
+    private var manualDiluteLitresPer100m: Double? {
+        let trimmed = diluteLitresPer100mText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = Double(trimmed), value.isFinite, value > 0 else { return nil }
+        return value
+    }
+
+    /// The dilute / runoff rate actually fed to the engine, in L/100 m.
+    ///
+    /// A spreader has no canopy, so it has no canopy-derived dilute either: a
+    /// granular pass is not a concentration of anything, and inventing a
+    /// reference for it would multiply every per-100 L product on the job.
+    private var effectiveDiluteLitresPer100m: Double? {
+        if let manual = manualDiluteLitresPer100m { return manual }
+        guard operationType != .spreader else { return nil }
+        let canopy = canopyDiluteLitresPer100m
+        return canopy > 0 ? canopy : nil
+    }
+
     /// `nil` when row spacing could not be resolved, so callers must handle the
     /// unavailable case instead of receiving a confidently wrong number.
     private var waterRateEntry: CanopyWaterRate.RateEntry? {
@@ -406,7 +438,11 @@ struct SprayCalculatorView: View {
         inputs.carrierBasis = carrierBasisChoice
         inputs.litresPerHectare = Double(sprayRateText)
         inputs.diluteLitresPerHectare = waterRateEntry?.litresPerHa
-        inputs.diluteLitresPer100Metres = Double(diluteLitresPer100mText)
+        // The canopy drives dilute in BOTH carrier bases. Before this, the
+        // row-length path had no canopy at all, so this stayed nil, the
+        // concentration factor fell back to 1.0, and every per-100 L product
+        // on an SWNZ job was dosed as though the spray were dilute.
+        inputs.diluteLitresPer100Metres = effectiveDiluteLitresPer100m
         inputs.appliedLitresPer100Metres = Double(appliedLitresPer100mText)
         inputs.products = guidedProductLines
         inputs.notes = notes
@@ -1313,51 +1349,7 @@ struct SprayCalculatorView: View {
                 .foregroundStyle(.secondary)
 
             VStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("VSP Canopy Size")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    Picker("Canopy Size", selection: $canopySize) {
-                        ForEach(CanopySize.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    Text(canopySize.description)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    if let imageURL = canopySize.referenceImageURL {
-                        AsyncImage(url: imageURL) { phase in
-                            switch phase {
-                            case .success(let image):
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                            case .failure:
-                                Image(systemName: "leaf")
-                                    .font(.title)
-                                    .foregroundStyle(.tertiary)
-                            case .empty:
-                                ProgressView()
-                            @unknown default:
-                                EmptyView()
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 120)
-                        .padding(8)
-                        .background(Color.white)
-                        .clipShape(.rect(cornerRadius: 8))
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Canopy Density")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    Picker("Canopy Density", selection: $canopyDensity) {
-                        ForEach(CanopyDensity.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                }
+                SprayCanopyControls(size: $canopySize, density: $canopyDensity)
 
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -2658,25 +2650,96 @@ struct SprayCalculatorView: View {
         }
     }
 
-    /// Row-length carrier entry. The operator enters ONLY the two L/100 m rates;
-    /// concentration factor, total litres and equivalent L/ha are all read back
-    /// from the plan.
+    /// Row-length carrier entry, driven by the canopy model.
+    ///
+    /// # Why the canopy belongs here
+    ///
+    /// The dilute / runoff rate IS the canopy's answer: a small canopy wets out
+    /// around 10 L/100 m and a full one around 75. Asking a row-length vineyard
+    /// to type that figure from memory — while an L/ha vineyard has it computed
+    /// for them off the very same table — meant the canopy model silently
+    /// ceased to exist for every SWNZ grower. With no dilute reference the
+    /// concentration factor defaulted to 1.0, and a concentrate pass dosed its
+    /// per-100 L products as though it were spraying to runoff.
+    ///
+    /// So the canopy drives dilute in BOTH bases. The operator still owns the
+    /// number: anything typed into the override field wins, and keeps winning
+    /// through canopy changes and redraws, because nothing writes to that field
+    /// except the operator.
+    ///
+    /// Ordering is deliberate: canopy → dilute → actual applied → concentration
+    /// factor → totals. Each figure appears only after the one it is derived
+    /// from.
     @ViewBuilder
     private var litresPer100mFields: some View {
         let carrier = flow.plan.carrier
+        let canopyRate = canopyDiluteLitresPer100m
+        let isOverridden = manualDiluteLitresPer100m != nil
+        let supportsCanopy = operationType != .spreader
 
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Dilute / Runoff Volume")
-                    .font(.subheadline.weight(.medium))
+        VStack(alignment: .leading, spacing: 14) {
+            if supportsCanopy {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Canopy / Runoff")
+                        .font(.subheadline.weight(.semibold))
+                    Text("The canopy sets the dilute / runoff rate this job is concentrated from.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SprayCanopyControls(size: $canopySize, density: $canopyDensity)
+                }
+                .padding(12)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(.rect(cornerRadius: 10))
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Dilute / Runoff Volume")
+                        .font(.subheadline.weight(.medium))
+                    Spacer()
+                    if isOverridden, supportsCanopy {
+                        Button("Use calculated") { diluteLitresPer100mText = "" }
+                            .font(.caption.weight(.semibold))
+                            .buttonStyle(.plain)
+                            .foregroundStyle(VineyardTheme.olive)
+                    }
+                }
+
+                if supportsCanopy {
+                    HStack {
+                        Text("Calculated from canopy")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("\(String(format: "%.0f", canopyRate)) L/100 m")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(isOverridden ? .secondary : VineyardTheme.olive)
+                            .monospacedDigit()
+                    }
+                    .padding(10)
+                    .background(VineyardTheme.olive.opacity(isOverridden ? 0.05 : 0.10))
+                    .clipShape(.rect(cornerRadius: 8))
+                }
+
                 HStack(spacing: 8) {
-                    TextField("40", text: $diluteLitresPer100mText)
-                        .keyboardType(.decimalPad)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(Color(.tertiarySystemGroupedBackground))
-                        .clipShape(.rect(cornerRadius: 8))
+                    TextField(
+                        supportsCanopy ? String(format: "%.0f", canopyRate) : "40",
+                        text: $diluteLitresPer100mText
+                    )
+                    .keyboardType(.decimalPad)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color(.tertiarySystemGroupedBackground))
+                    .clipShape(.rect(cornerRadius: 8))
                     Text("L/100 m").font(.caption).foregroundStyle(.secondary)
+                }
+
+                if supportsCanopy {
+                    Text(isOverridden
+                         ? "Using your entered rate instead of the canopy figure."
+                         : "Leave blank to use the canopy figure, or type your own.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
             }
 
@@ -2699,7 +2762,10 @@ struct SprayCalculatorView: View {
                     VStack(spacing: 8) {
                         GuidedCalculatedRow(
                             label: "Concentration factor",
-                            value: SprayGuidedFormat.factor(carrier.concentrationFactor)
+                            value: SprayGuidedFormat.factor(carrier.concentrationFactor),
+                            caption: supportsCanopy && !isOverridden
+                                ? "Canopy dilute ÷ actual applied"
+                                : "Dilute ÷ actual applied"
                         )
                         GuidedCalculatedRow(
                             label: "Total carrier",

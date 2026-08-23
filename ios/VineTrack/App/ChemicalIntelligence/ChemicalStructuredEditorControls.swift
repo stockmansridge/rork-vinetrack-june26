@@ -179,6 +179,17 @@ struct ChemicalManualUseEditor: View {
     @Binding var use: ChemicalManualUseDraft
     let onRemove: () -> Void
 
+    /// Whether the typed target is this VineTrack target.
+    ///
+    /// Compared case- and whitespace-insensitively because the field is free
+    /// text: a target imported as `"powdery mildew "` is the same answer as the
+    /// chip's `"Powdery Mildew"`, and showing it as unselected would invite the
+    /// operator to tap the chip and create a second spelling of one target.
+    private func matchesTarget(_ target: SprayTarget) -> Bool {
+        use.targetRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .compare(target.label, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -197,20 +208,39 @@ struct ChemicalManualUseEditor: View {
             // VineTrack's own targets assist entry without bounding it: a label
             // may register a target VineTrack has no word for, and that use must
             // still be recordable.
+            //
+            // The chips carry their own selected state. Previously every chip
+            // looked identical whether or not it matched what was in the field,
+            // so a use already set to Powdery Mildew read as an unanswered
+            // question, and the only way to tell was to compare the row of
+            // chips against the text above it.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(SprayTarget.allCases) { target in
+                        let isSelected = matchesTarget(target)
                         Button {
-                            use.targetRaw = target.label
+                            // Tapping the chip that is already in the field
+                            // clears it. Without this the chips are one-way:
+                            // a mis-tap can be corrected only by selecting a
+                            // different target or editing the text by hand.
+                            use.targetRaw = isSelected ? "" : target.label
                         } label: {
-                            Text(target.label)
-                                .font(.caption2)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.accentColor.opacity(0.12))
-                                .clipShape(Capsule())
+                            HStack(spacing: 3) {
+                                if isSelected {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption2.weight(.bold))
+                                }
+                                Text(target.label)
+                                    .font(.caption2)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.accentColor.opacity(isSelected ? 0.28 : 0.12))
+                            .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                            .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
                     }
                 }
             }

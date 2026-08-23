@@ -115,6 +115,22 @@ struct ChemicalsManagementView: View {
                 }
             }
 
+            // Stated where the lookup STARTS, not only once it is running. The
+            // + in this toolbar opens a register search that can take minutes
+            // on a first-time product; an operator who learns that only after
+            // committing has already spent the wait deciding whether the app
+            // has hung.
+            //
+            // Only for those who can actually add: a viewer cannot start a
+            // lookup, so the duration is not their concern.
+            if canManageSetup {
+                Section {
+                    ChemicalLookupDurationNotice()
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                }
+            }
+
             ForEach(filteredChemicals) { chemical in
                 Group {
                     if canManageSetup {
