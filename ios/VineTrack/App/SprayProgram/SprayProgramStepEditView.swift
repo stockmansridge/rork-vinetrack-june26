@@ -312,9 +312,11 @@ struct SprayProgramStepEditView: View {
                 Label("Add Product", systemImage: "plus.circle.fill")
             }
         } header: {
-            Text("Products & Rates")
+            Text("Products")
         } footer: {
-            Text("Rates are the programmed rates. Quantities, tanks and carrier volume are worked out when you plan the spray.")
+            Text("A step sets which products this spray uses. The label rate, carrier volume, "
+                 + "tanks and quantities are chosen when you plan the spray against the canopy "
+                 + "on the day.")
         }
     }
 
@@ -360,32 +362,33 @@ struct SprayProgramStepEditView: View {
                 .foregroundStyle(VineyardTheme.warning)
             }
 
-            if let saved, !SprayRegisteredUseRates.selectableRates(for: saved).isEmpty {
-                registeredRateMenu(for: saved, product: product)
+            // NO rate, and no rate basis.
+            //
+            // A Program Step says WHICH product this spray uses, in what
+            // context. It does not say what dose to apply, because the dose
+            // depends on the canopy standing in front of the operator on the
+            // day and on the carrier volume that canopy demands — neither of
+            // which exists when a program is written in winter.
+            //
+            // The step detail already told the truth about this: it reads
+            // "Rate set when planning". The editor was contradicting its own
+            // detail view by demanding a number, and a number entered here
+            // months early is the one most likely to be stale and least likely
+            // to be re-read. The label rate is chosen in the Spray Calculator,
+            // against today's Chemical Store and today's registered uses.
+            //
+            // Stored legacy rates are NOT erased — they still decode, still
+            // report, and still round-trip through `toWireLine`. They are just
+            // no longer asked for.
+            if let existing = storedRateSummary(product.wrappedValue) {
+                Text(existing)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else {
+                Text("Rate set when planning")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
-
-            HStack {
-                Text("Rate")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                TextField("0", value: product.rate, format: .number)
-                    .keyboardType(.decimalPad)
-                    .multilineTextAlignment(.trailing)
-                    .frame(maxWidth: 90)
-                Picker("Unit", selection: product.unit) {
-                    ForEach(ChemicalUnit.allCases, id: \.self) { unit in
-                        Text(unit.rawValue).tag(unit)
-                    }
-                }
-                .labelsHidden()
-            }
-
-            Picker("Basis", selection: product.basis) {
-                Text("Per ha").tag(SprayProductRateBasis.wholeBlockArea)
-                Text("Per 100 L").tag(SprayProductRateBasis.per100Litres)
-            }
-            .pickerStyle(.segmented)
 
             if resolved, let saved {
                 Text("Saved as \(saved.name)")
@@ -396,46 +399,18 @@ struct SprayProgramStepEditView: View {
         .padding(.vertical, 4)
     }
 
-    /// Registered-use rates for the chosen product, grouped by the use they
-    /// belong to — the same source and the same rules the Spray Calculator
-    /// applies, so a rate never arrives detached from its crop and target.
-    @ViewBuilder
-    private func registeredRateMenu(
-        for chemical: SavedChemical,
-        product: Binding<SprayProgramProductDraft>
-    ) -> some View {
-        Menu {
-            ForEach(SprayRegisteredUseRates.rates(for: chemical)) { rate in
-                if rate.isSelectable {
-                    Button(rate.menuText) { apply(rate: rate, chemical: chemical, to: product) }
-                } else {
-                    // Shown so the label's own wording is readable, never
-                    // choosable: a reference-only or number-less entry is not
-                    // an application rate.
-                    Button {} label: { Label(rate.menuText, systemImage: "info.circle") }
-                        .disabled(true)
-                }
-            }
-        } label: {
-            Label("Use a registered rate", systemImage: "list.bullet.rectangle")
-                .font(.caption.weight(.semibold))
-        }
-    }
-
-    private func apply(
-        rate: SpraySelectableRate,
-        chemical: SavedChemical,
-        to product: Binding<SprayProgramProductDraft>
-    ) {
-        if let basis = rate.basis {
-            product.wrappedValue.basis = basis == .per100Litres ? .per100Litres : .wholeBlockArea
-        }
-        product.wrappedValue.unit = chemical.unit
-        // A band fixes the basis but never the number — choosing a point inside
-        // a registered range is the operator's call, not VineTrack's.
-        if let seed = rate.seed.seedableValue {
-            product.wrappedValue.rate = chemical.unit.fromBase(seed)
-        }
+    /// A rate already stored on this line by an older build or the portal.
+    ///
+    /// Read-only, and shown rather than hidden: a template that genuinely
+    /// carries `2 L/ha` should still say so, or an operator would think their
+    /// configuration had been thrown away. `nil` for the new normal case, where
+    /// there is no rate to report.
+    private func storedRateSummary(_ product: SprayProgramProductDraft) -> String? {
+        guard product.rate > 0 else { return nil }
+        let basis = product.basis == .per100Litres ? "/100 L" : "/ha"
+        return "Stored programme rate: "
+            + "\(SprayRateFormatter.format(product.rate)) \(product.unit.rawValue)\(basis)"
+            + " — you'll confirm the applied rate when you plan the spray."
     }
 
     // MARK: - Product replacement
@@ -465,11 +440,11 @@ struct SprayProgramStepEditView: View {
         // vineyard's workflow preference rather than inheriting the basis the
         // outgoing product happened to use. A 100 m runoff vineyard swapping in
         // a product with a per-100 L label rate gets that rate.
-        let seed = SprayRegisteredUseRates.defaultSelection(
-            for: chemical,
-            preferring: preferredRateBases
-        )
-        draft.products[index].replaceProduct(with: chemical, seedRate: seed)
+        // Deliberately NO seed rate. Choosing the product is choosing the
+        // product; the dose belongs to the spray, not to the programme. Passing
+        // a seed here would write today's label rate into a step that may not
+        // be sprayed for months.
+        draft.products[index].replaceProduct(with: chemical, seedRate: nil)
     }
 
     // MARK: - Application

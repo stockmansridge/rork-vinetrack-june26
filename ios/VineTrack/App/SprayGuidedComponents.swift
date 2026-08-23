@@ -336,6 +336,14 @@ struct GuidedProductCalculationRow: View {
                     .font(.footnote.weight(.bold))
                     .foregroundStyle(VineyardTheme.olive)
                     .monospacedDigit()
+                // Useful, and never authority. A per-100 L label has no
+                // registered hectare rate, so this can only ever be shown as
+                // something VineTrack worked out.
+                if let derived = SprayGuidedFormat.productDerivedPerHectare(line) {
+                    Text(derived)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             } else if let reason = line.unresolvedReason {
                 Text(reason.title)
                     .font(.caption.weight(.semibold))
@@ -461,10 +469,28 @@ enum SprayGuidedFormat {
         }
     }
 
-    /// The rate as written on the label, e.g. `2 L/ha` or `100 mL/100 L`.
+    /// The rate as written on the LABEL, e.g. `150 g/100 L` or `2 L/ha`.
+    ///
+    /// Reads the descriptor the plan carries. It used to compose the string
+    /// from `line.rate` — a BASE-unit number, grams — and `line.unit` — the
+    /// drum's stock unit, kilograms. That printed `150 Kg/100 L` directly above
+    /// the quantity an operator was about to measure out: the regulator's rate,
+    /// misstated by a factor of a thousand, in the one place it has to be
+    /// exact.
     static func productRate(_ line: SprayProductLineResult) -> String {
+        if let labelRate = line.labelRate { return labelRate.text }
         let decimals: Int = line.rate < 10 ? 1 : 0
         return "\(number(line.rate, decimals: decimals)) \(line.unit)\(line.basis.rateSuffix)"
+    }
+
+    /// A BASE-unit quantity rendered in the product's own stock unit.
+    ///
+    /// The engine works in base units throughout so a rate, a total and a tank
+    /// share can never mean different things by the same number. This is the
+    /// single conversion applied at the edge, for display only.
+    static func productQuantity(_ base: Double?, line: SprayProductLineResult) -> String {
+        guard let base, base.isFinite else { return "Unavailable" }
+        return quantity(line.unitDisplay.display(base), unit: line.unitDisplay.displayUnit)
     }
 
     /// The MEASURED half of the calculation, e.g. `10.00 ha whole block`.
@@ -500,10 +526,25 @@ enum SprayGuidedFormat {
     /// only "Unavailable" has to guess between the rate they have not picked
     /// and the canopy they have not set.
     static func productRequirement(_ line: SprayProductLineResult) -> String {
-        guard let total = line.totalQuantity else {
+        guard line.totalQuantity != nil else {
             return line.unresolvedReason?.title ?? "Unavailable"
         }
-        return "\(quantity(total, unit: line.unit)) required"
+        return "\(productQuantity(line.totalQuantity, line: line)) required"
+    }
+
+    /// The job's requirement per gross hectare, explicitly marked as DERIVED.
+    ///
+    /// A per-100 L label has no registered hectare rate. This figure is useful
+    /// — it is what an operator compares against last season — but the wording
+    /// must never let it be read back as authority, so "Derived" is part of the
+    /// string itself rather than a caption a layout change could drop.
+    static func productDerivedPerHectare(_ line: SprayProductLineResult) -> String? {
+        guard line.basis == .per100Litres,
+              let perHectare = line.derivedQuantityPerHectare else { return nil }
+        let value = line.unitDisplay.display(perHectare)
+        let decimals: Int = value < 10 ? 2 : (value < 100 ? 1 : 0)
+        return "Derived equivalent: \(number(value, decimals: decimals)) "
+            + "\(line.unitDisplay.displayUnit)/ha"
     }
 
     /// The action that would make an unresolved line calculable, in the

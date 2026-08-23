@@ -266,9 +266,23 @@ struct SprayCalculatorView: View {
         Double(sprayRateText) ?? (waterRateEntry?.litresPerHa ?? 0)
     }
 
+    /// THE concentration factor, read from the one engine that defines it.
+    ///
+    /// # Why this is no longer computed here
+    ///
+    /// This property used to be `dilute ÷ chosen`, with no floor, and it is
+    /// what the L/ha carrier screen displayed. The L/100 m screen displayed
+    /// `flow.plan.carrier.concentrationFactor`, which is `max(1.0, dilute ÷
+    /// actual)`. So the same physical relationship — dilute 357 L/ha against
+    /// actual 714 L/ha, and dilute 10 L/100 m against actual 20 L/100 m — read
+    /// as `CF 0.50` on one screen and `CF 1.00` on the other.
+    ///
+    /// The engine was never wrong: both its branches already floored at 1.0.
+    /// The defect was a second, unfloored definition living in the view, which
+    /// also reached the legacy `SprayCalculator` and could halve a per-100 L
+    /// dose on a dilute job. One definition now, in `SprayCarrierConversion`.
     private var concentrationFactor: Double {
-        guard chosenSprayRate > 0, let diluteRate = waterRateEntry?.litresPerHa else { return 1.0 }
-        return diluteRate / chosenSprayRate
+        flow.plan.carrier.concentrationFactor
     }
 
     private var formIsValid: Bool {
@@ -406,6 +420,28 @@ struct SprayCalculatorView: View {
                     return chosenAreaBasis ?? .wholeBlockArea
                 }
             }()
+            // THE label rate, carried verbatim into the plan.
+            //
+            // `rate` above is a BASE-unit number (grams, millilitres) and
+            // `chemical.unit` is the drum's stock unit. Composing a rate string
+            // from those two is what printed an authoritative `150 g/100 L` as
+            // `150 Kg/100 L` on the product card. The regulator's number and
+            // the regulator's unit now travel together so nothing downstream
+            // has to reconstruct them.
+            let selectedRate = SprayRegisteredUseRates.rate(
+                for: chemical,
+                id: line.selectedRateId
+            )
+            let labelUnit = selectedRate?.labelUnit.trimmedNonEmpty ?? chemical.unit.rawValue
+            let labelRate: SprayLabelRateDescriptor? = {
+                guard rate > 0 else { return nil }
+                let shown = SprayRegisteredUseRates.displayValue(
+                    rate,
+                    labelUnit: labelUnit,
+                    chemical: chemical
+                ) ?? chemical.unit.fromBase(rate)
+                return SprayLabelRateDescriptor(value: shown, unit: labelUnit, basis: basis)
+            }()
             return SprayProductLineInput(
                 productId: chemical.id.uuidString,
                 name: chemical.name,
@@ -417,7 +453,15 @@ struct SprayCalculatorView: View {
                 // chooses, but on a banded pass it is not yet a decision. The
                 // flag keeps that distinction so the flow can insist on an
                 // answer instead of persisting an unconfirmed default.
-                isAreaBasisExplicit: chosenAreaBasis != nil
+                isAreaBasisExplicit: chosenAreaBasis != nil,
+                labelRate: labelRate,
+                // TOTALS are the operator's stock unit's business — 0.53 Kg,
+                // not 526.5 of something unstated. This is the only place base
+                // units are converted, and it happens at the display edge.
+                unitDisplay: SprayProductUnitDisplay(
+                    displayUnit: chemical.unit.rawValue,
+                    baseUnitsPerDisplayUnit: chemical.unit.toBase(1)
+                )
             )
         }
     }
@@ -438,6 +482,9 @@ struct SprayCalculatorView: View {
         inputs.isCanopyConfirmed = canopy.isConfirmed
         inputs.carrierBasis = carrierBasisChoice
         inputs.litresPerHectare = Double(sprayRateText)
+        // The canopy's dilute demand, stated per hectare. The SAME canopy
+        // answer the row-length branch reads per 100 m — one table, one
+        // requirement, two ways of writing it down.
         inputs.diluteLitresPerHectare = waterRateEntry?.litresPerHa
         // The canopy drives dilute in BOTH carrier bases. Before this, the
         // row-length path had no canopy at all, so this stayed nil, the
@@ -2950,7 +2997,7 @@ struct SprayCalculatorView: View {
                                 Text(line.name)
                                     .font(.footnote.weight(.semibold))
                                 Spacer()
-                                Text(SprayGuidedFormat.quantity(line.totalQuantity, unit: line.unit))
+                                Text(SprayGuidedFormat.productQuantity(line.totalQuantity, line: line))
                                     .font(.footnote.weight(.bold))
                                     .foregroundStyle(line.isUnresolved ? .orange : VineyardTheme.olive)
                                     .monospacedDigit()
@@ -2965,8 +3012,13 @@ struct SprayCalculatorView: View {
                                     .font(.caption2)
                                     .foregroundStyle(.tertiary)
                             }
+                            if let derived = SprayGuidedFormat.productDerivedPerHectare(line) {
+                                Text(derived)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
                             if let perTank = line.quantityPerFullTank, plan.tankSplit.totalTanks > 1 {
-                                Text("Per full tank: \(SprayGuidedFormat.quantity(perTank, unit: line.unit))")
+                                Text("Per full tank: \(SprayGuidedFormat.productQuantity(perTank, line: line))")
                                     .font(.caption2)
                                     .foregroundStyle(.tertiary)
                             }

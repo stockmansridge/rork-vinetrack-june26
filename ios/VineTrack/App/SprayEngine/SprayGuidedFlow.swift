@@ -353,17 +353,16 @@ nonisolated struct SprayGuidedFlow: Sendable {
         switch effectiveCarrierBasis {
         case .litresPerHectare:
             guard let rate = Self.positive(inputs.litresPerHectare) else { return nil }
-            // Concentration keeps its established VineTrack meaning
-            // (dilute ÷ chosen) and floors at 1.0 so concentrating never
-            // reduces a per-100 L product dose.
-            let factor: Double = {
-                guard let dilute = Self.positive(inputs.diluteLitresPerHectare) else { return 1.0 }
-                return max(1.0, dilute / rate)
-            }()
+            // ONE definition of concentration, shared with the row-length
+            // branch. Computing it here — even identically — is how the two
+            // bases drifted apart in the first place.
+            let dilute = Self.positive(inputs.diluteLitresPerHectare)
+            let factor = SprayCarrierConversion.concentrationFactor(dilute: dilute, actual: rate)
             return SprayCarrierVolumeCalculator.perHectare(
                 litresPerHectare: rate,
                 areaHectares: geometry.grossAreaHectares,
                 concentrationFactor: factor,
+                diluteLitresPerHectare: dilute,
                 rowLengthMetres: geometry.totalRowLengthMetres,
                 rowSpacingMetres: geometry.uniformRowSpacingMetres
             )

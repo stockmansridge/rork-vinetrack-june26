@@ -8,10 +8,58 @@ nonisolated enum SprayApplicationMode: String, Sendable, Codable {
     case banded
 }
 
+/// The regulator's rate, exactly as the label prints it.
+///
+/// # Why this travels separately from the product's stock unit
+///
+/// `150 g/100 L` is a fact about the label. `Kg` is a fact about the drum in
+/// the shed. They are different statements about different things, and the
+/// calculator was formatting the first using the second — rendering an
+/// authoritative `150 g/100 L` as `150 Kg/100 L` on the product card, a
+/// thousand-fold misstatement of a legal rate sitting directly above the
+/// quantity an operator is about to measure out.
+///
+/// Carrying the label's own value and unit through the plan makes that
+/// impossible: nothing downstream has to reconstruct the rate, so nothing
+/// downstream can reconstruct it wrongly.
+nonisolated struct SprayLabelRateDescriptor: Sendable, Hashable {
+    /// The number as the label states it — 150, not 0.15.
+    let value: Double
+    /// The label's own unit — "g", not the store's "Kg".
+    let unit: String
+    let basis: SprayProductRateBasis
+
+    var text: String {
+        "\(SprayRateFormatter.format(value)) \(unit)\(basis.rateSuffix)"
+    }
+}
+
+/// How a base-unit quantity is presented in the product's own stock unit.
+///
+/// The engine works entirely in base units (mL / g) so that a rate, a total and
+/// a tank share can never mean different things by the same number. This is the
+/// single conversion applied at the edge, for display only.
+nonisolated struct SprayProductUnitDisplay: Sendable, Hashable {
+    /// What the operator's inventory calls it: "Kg", "L", "g", "mL".
+    let displayUnit: String
+    /// Base units in one display unit — 1000 for Kg and L, 1 for g and mL.
+    let baseUnitsPerDisplayUnit: Double
+
+    static func base(_ unit: String) -> SprayProductUnitDisplay {
+        SprayProductUnitDisplay(displayUnit: unit, baseUnitsPerDisplayUnit: 1)
+    }
+
+    func display(_ baseValue: Double) -> Double {
+        guard baseUnitsPerDisplayUnit.isFinite, baseUnitsPerDisplayUnit > 0 else { return baseValue }
+        return baseValue / baseUnitsPerDisplayUnit
+    }
+}
+
 /// One product line fed into the plan.
 ///
-/// `rate` is expressed in the product's own unit (L, mL, kg, g) per its `basis`.
-/// The engine is unit-agnostic: quantities come back in the SAME unit as `rate`.
+/// `rate` is expressed in the product's BASE unit (mL or g) per its `basis`.
+/// The engine is unit-agnostic: quantities come back in the SAME unit as `rate`,
+/// and `unitDisplay` is what converts them for the screen.
 nonisolated struct SprayProductLineInput: Sendable, Hashable {
     let productId: String
     let name: String
@@ -19,6 +67,11 @@ nonisolated struct SprayProductLineInput: Sendable, Hashable {
     let basis: SprayProductRateBasis
     let rate: Double
     let costPerUnit: Double?
+    /// The label rate behind `rate`, for display. `nil` for a line with no
+    /// authoritative label rate — a legacy hand-entered product, say.
+    let labelRate: SprayLabelRateDescriptor?
+    /// How to render totals in the operator's stock unit.
+    let unitDisplay: SprayProductUnitDisplay
     /// Whether the operator has EXPLICITLY chosen this line's area basis.
     ///
     /// Only meaningful for area-rated lines on a banded pass, where whole-block
@@ -37,7 +90,9 @@ nonisolated struct SprayProductLineInput: Sendable, Hashable {
         basis: SprayProductRateBasis,
         rate: Double,
         costPerUnit: Double? = nil,
-        isAreaBasisExplicit: Bool = true
+        isAreaBasisExplicit: Bool = true,
+        labelRate: SprayLabelRateDescriptor? = nil,
+        unitDisplay: SprayProductUnitDisplay? = nil
     ) {
         self.productId = productId
         self.name = name
@@ -46,6 +101,11 @@ nonisolated struct SprayProductLineInput: Sendable, Hashable {
         self.rate = rate
         self.costPerUnit = costPerUnit
         self.isAreaBasisExplicit = isAreaBasisExplicit
+        self.labelRate = labelRate
+        // Defaults to "already in the display unit", so every existing caller
+        // and every historical record replayed through the engine keeps its
+        // exact current meaning.
+        self.unitDisplay = unitDisplay ?? .base(unit)
     }
 
     /// True when this line still needs the operator to answer the Whole Block vs
@@ -81,6 +141,56 @@ nonisolated struct SprayProductLineResult: Sendable, Hashable {
     /// matches the persisted record. `nil` when the input was unavailable, which
     /// is exactly when `totalQuantity` is `nil` too.
     let basisInput: Double?
+    /// The label rate this line was calculated from, verbatim.
+    let labelRate: SprayLabelRateDescriptor?
+    /// How to present `totalQuantity` in the operator's stock unit.
+    let unitDisplay: SprayProductUnitDisplay
+    /// Gross hectares this job covered, so a DERIVED per-hectare equivalent can
+    /// be shown without the screen doing its own arithmetic.
+    let grossAreaHectares: Double?
+
+    init(
+        productId: String,
+        name: String,
+        unit: String,
+        basis: SprayProductRateBasis,
+        rate: Double,
+        totalQuantity: Double?,
+        quantityPerFullTank: Double?,
+        quantityInLastTank: Double?,
+        costPerUnit: Double?,
+        basisInput: Double?,
+        labelRate: SprayLabelRateDescriptor? = nil,
+        unitDisplay: SprayProductUnitDisplay? = nil,
+        grossAreaHectares: Double? = nil
+    ) {
+        self.productId = productId
+        self.name = name
+        self.unit = unit
+        self.basis = basis
+        self.rate = rate
+        self.totalQuantity = totalQuantity
+        self.quantityPerFullTank = quantityPerFullTank
+        self.quantityInLastTank = quantityInLastTank
+        self.costPerUnit = costPerUnit
+        self.basisInput = basisInput
+        self.labelRate = labelRate
+        self.unitDisplay = unitDisplay ?? .base(unit)
+        self.grossAreaHectares = grossAreaHectares
+    }
+
+    /// The job's product requirement expressed per gross hectare.
+    ///
+    /// DERIVED, always — it is `total ÷ hectares`, an operational convenience,
+    /// and it is never a registered rate. A `150 g/100 L` label that works out
+    /// to 1.07 Kg/ha is still registered at 150 g/100 L, and any screen showing
+    /// this figure must say "derived" beside it.
+    var derivedQuantityPerHectare: Double? {
+        guard let total = totalQuantity,
+              let hectares = grossAreaHectares,
+              hectares.isFinite, hectares > 0 else { return nil }
+        return total / hectares
+    }
 
     var totalCost: Double? {
         guard let total = totalQuantity, let cost = costPerUnit, cost > 0 else { return nil }
@@ -310,7 +420,10 @@ nonisolated enum SprayApplicationPlanner {
                 quantityPerFullTank: perFullTank,
                 quantityInLastTank: inLastTank,
                 costPerUnit: line.costPerUnit,
-                basisInput: basisInput
+                basisInput: basisInput,
+                labelRate: line.labelRate,
+                unitDisplay: line.unitDisplay,
+                grossAreaHectares: geometry.grossAreaHectares
             )
         }
 
