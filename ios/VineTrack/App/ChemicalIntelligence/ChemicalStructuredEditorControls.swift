@@ -172,6 +172,41 @@ struct ChemicalManualRateEditor: View {
     }
 }
 
+// MARK: - Target vocabulary policy
+
+/// When VineTrack's own target vocabulary may be offered as chips.
+///
+/// A registered use is the REGULATOR'S record. Showing VineTrack's generic
+/// target list under every authoritative APVMA use row presented those words as
+/// though the label registered them, when they are only VineTrack's vocabulary.
+/// An operator reading a use as evidence could not tell which targets came from
+/// the label and which came from the app.
+///
+/// The suggestions are therefore an EDITING aid, not part of the record's
+/// display: they appear only where the operator is actually choosing a target.
+nonisolated enum ChemicalTargetSuggestionPolicy {
+
+    /// Whether to offer the vineyard target vocabulary for this use.
+    ///
+    /// Shown while editing, and when there is no target yet — an empty use is
+    /// an unanswered question, so the vocabulary is help rather than a claim
+    /// about the label.
+    static func showsVocabularySuggestions(targetRaw: String, isEditingTarget: Bool) -> Bool {
+        isEditingTarget || targetRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Whether the given text names this VineTrack target.
+    ///
+    /// Compared case- and diacritic-insensitively because the field is free
+    /// text: a target imported as "powdery mildew " is the same answer as the
+    /// chip's "Powdery Mildew", and showing it as unselected would invite the
+    /// operator to tap the chip and create a second spelling of one target.
+    static func matches(targetRaw: String, target: SprayTarget) -> Bool {
+        targetRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .compare(target.label, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+    }
+}
+
 // MARK: - Use editor
 
 /// One registered use: crop, target, its own rates, and its restrictions.
@@ -179,15 +214,21 @@ struct ChemicalManualUseEditor: View {
     @Binding var use: ChemicalManualUseDraft
     let onRemove: () -> Void
 
-    /// Whether the typed target is this VineTrack target.
+    /// Whether the operator has opened this target for editing.
     ///
-    /// Compared case- and whitespace-insensitively because the field is free
-    /// text: a target imported as `"powdery mildew "` is the same answer as the
-    /// chip's `"Powdery Mildew"`, and showing it as unselected would invite the
-    /// operator to tap the chip and create a second spelling of one target.
+    /// Local to the row on purpose: opening one use's target must not reveal
+    /// the vocabulary under every other use on the label.
+    @State private var isEditingTarget: Bool = false
+
+    private var showsTargetSuggestions: Bool {
+        ChemicalTargetSuggestionPolicy.showsVocabularySuggestions(
+            targetRaw: use.targetRaw,
+            isEditingTarget: isEditingTarget
+        )
+    }
+
     private func matchesTarget(_ target: SprayTarget) -> Bool {
-        use.targetRaw.trimmingCharacters(in: .whitespacesAndNewlines)
-            .compare(target.label, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+        ChemicalTargetSuggestionPolicy.matches(targetRaw: use.targetRaw, target: target)
     }
 
     var body: some View {
@@ -202,48 +243,7 @@ struct ChemicalManualUseEditor: View {
                 .accessibilityLabel("Remove use")
             }
 
-            TextField("Target, e.g. Powdery Mildew", text: $use.targetRaw)
-                .font(.subheadline)
-
-            // VineTrack's own targets assist entry without bounding it: a label
-            // may register a target VineTrack has no word for, and that use must
-            // still be recordable.
-            //
-            // The chips carry their own selected state. Previously every chip
-            // looked identical whether or not it matched what was in the field,
-            // so a use already set to Powdery Mildew read as an unanswered
-            // question, and the only way to tell was to compare the row of
-            // chips against the text above it.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(SprayTarget.allCases) { target in
-                        let isSelected = matchesTarget(target)
-                        Button {
-                            // Tapping the chip that is already in the field
-                            // clears it. Without this the chips are one-way:
-                            // a mis-tap can be corrected only by selecting a
-                            // different target or editing the text by hand.
-                            use.targetRaw = isSelected ? "" : target.label
-                        } label: {
-                            HStack(spacing: 3) {
-                                if isSelected {
-                                    Image(systemName: "checkmark")
-                                        .font(.caption2.weight(.bold))
-                                }
-                                Text(target.label)
-                                    .font(.caption2)
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.accentColor.opacity(isSelected ? 0.28 : 0.12))
-                            .foregroundStyle(isSelected ? Color.accentColor : .primary)
-                            .clipShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
-                    }
-                }
-            }
+            targetField
 
             ForEach($use.rates) { $rate in
                 ChemicalManualRateEditor(
@@ -285,5 +285,77 @@ struct ChemicalManualUseEditor: View {
                 .lineLimit(1...3)
         }
         .padding(.vertical, 6)
+    }
+
+    /// The target, shown as the label states it until the operator chooses to
+    /// change it.
+    ///
+    /// In normal review the registered target reads as a plain authoritative
+    /// value with nothing of VineTrack's alongside it. "Change" is what turns
+    /// the row into an editor, and only then does the vineyard vocabulary
+    /// appear — where its role as a suggestion is unambiguous.
+    @ViewBuilder
+    private var targetField: some View {
+        if showsTargetSuggestions {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    TextField("Target, e.g. Powdery Mildew", text: $use.targetRaw)
+                        .font(.subheadline)
+                    if isEditingTarget {
+                        Button("Done") { isEditingTarget = false }
+                            .font(.caption.weight(.semibold))
+                            .buttonStyle(.borderless)
+                    }
+                }
+
+                // The vocabulary assists entry without bounding it: a label may
+                // register a target VineTrack has no word for, and that use must
+                // still be recordable — hence a free-text field with chips
+                // beside it rather than a picker.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(SprayTarget.allCases) { target in
+                            let isSelected = matchesTarget(target)
+                            Button {
+                                // Tapping the chip already in the field clears
+                                // it. Without this the chips are one-way: a
+                                // mis-tap could be corrected only by choosing a
+                                // different target or retyping by hand.
+                                use.targetRaw = isSelected ? "" : target.label
+                            } label: {
+                                HStack(spacing: 3) {
+                                    if isSelected {
+                                        Image(systemName: "checkmark")
+                                            .font(.caption2.weight(.bold))
+                                    }
+                                    Text(target.label)
+                                        .font(.caption2)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.accentColor.opacity(isSelected ? 0.28 : 0.12))
+                                .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                                .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+                        }
+                    }
+                }
+
+                Text("Suggestions from VineTrack's vineyard targets. Type the target exactly as the label words it if it is not listed.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        } else {
+            HStack(alignment: .firstTextBaseline) {
+                Text(use.targetRaw)
+                    .font(.subheadline)
+                Spacer()
+                Button("Change") { isEditingTarget = true }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.borderless)
+            }
+        }
     }
 }

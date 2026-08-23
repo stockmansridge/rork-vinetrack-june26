@@ -208,4 +208,111 @@ struct SprayCanopyCarrierRoutingTests {
                 - hectare.plan.carrier.concentrationFactor) < tolerance
         )
     }
+
+    // MARK: - Override resolution
+
+    /// THE property that makes the override trustworthy.
+    ///
+    /// The canopy value is never written into the operator's field, so changing
+    /// canopy size or density — or any redraw — cannot disturb what they typed.
+    /// Here the canopy moves across its whole range under a fixed entry.
+    @Test("A manual override survives every canopy change")
+    func overrideSurvivesCanopyChanges() {
+        for size in CanopySize.allCases {
+            for density in CanopyDensity.allCases {
+                let canopy = CanopyWaterRate.litresPer100m(size: size, density: density)
+                let resolved = SprayDiluteReference.effectiveLitresPer100m(
+                    manualText: "60",
+                    canopyLitresPer100m: canopy,
+                    supportsCanopy: true
+                )
+                #expect(resolved == 60, "\(size)/\(density) disturbed the override")
+            }
+        }
+    }
+
+    /// "Use calculated" restores the canopy by REMOVING the override, not by
+    /// copying a number in. Copying would turn the canopy figure into a stale
+    /// manual entry that then stopped tracking the canopy.
+    @Test("Use calculated clears the override and restores the canopy figure")
+    func useCalculatedRestoresCanopy() {
+        #expect(SprayDiluteReference.isOverridden(manualText: "60"))
+
+        let cleared = SprayDiluteReference.clearedOverrideText
+        #expect(!SprayDiluteReference.isOverridden(manualText: cleared))
+        #expect(
+            SprayDiluteReference.effectiveLitresPer100m(
+                manualText: cleared,
+                canopyLitresPer100m: 45,
+                supportsCanopy: true
+            ) == 45
+        )
+        // And having been cleared, it tracks the canopy again.
+        #expect(
+            SprayDiluteReference.effectiveLitresPer100m(
+                manualText: cleared,
+                canopyLitresPer100m: 20,
+                supportsCanopy: true
+            ) == 20
+        )
+    }
+
+    /// A half-typed or nonsense entry is not an override. A zero dilute in
+    /// particular must never reach the engine — it would define a job with no
+    /// runoff reference at all.
+    @Test("Unusable entries fall back to the canopy rather than to zero")
+    func unusableEntriesAreNotOverrides() {
+        for text in ["", "   ", "0", "-5", "abc", "."] {
+            #expect(SprayDiluteReference.manualLitresPer100m(from: text) == nil, "\(text)")
+            #expect(
+                SprayDiluteReference.effectiveLitresPer100m(
+                    manualText: text,
+                    canopyLitresPer100m: 45,
+                    supportsCanopy: true
+                ) == 45
+            )
+        }
+    }
+
+    /// The spreader rule stated at the resolution layer: no canopy dilute is
+    /// produced at all, so nothing downstream can concentrate a granular pass.
+    @Test("Spreader resolves no canopy dilute")
+    func spreaderResolvesNoCanopyDilute() {
+        #expect(
+            SprayDiluteReference.effectiveLitresPer100m(
+                manualText: "",
+                canopyLitresPer100m: 45,
+                supportsCanopy: false
+            ) == nil
+        )
+    }
+
+    // MARK: - Actual applied stays the operator's own number
+
+    /// Dilute describes the reference; applied describes what goes on the vine.
+    /// Moving the canopy must not move the tank: if it did, choosing a denser
+    /// canopy would silently change how much water the sprayer puts out.
+    @Test("Changing the canopy dilute leaves the actual applied volume alone")
+    func actualAppliedIsIndependentOfCanopy() {
+        let sparse = SprayGuidedFlow(inputs: inputs(dilute: 20, applied: 30)).plan.carrier
+        let dense = SprayGuidedFlow(inputs: inputs(dilute: 45, applied: 30)).plan.carrier
+
+        #expect(sparse.appliedLitresPer100Metres == dense.appliedLitresPer100Metres)
+        #expect(abs(sparse.totalLitres - dense.totalLitres) < tolerance)
+        #expect(abs((sparse.litresPerHectare ?? 0) - (dense.litresPerHectare ?? 0)) < tolerance)
+        // Only the concentration — the thing dilute actually defines — moves.
+        #expect(dense.concentrationFactor > sparse.concentrationFactor)
+    }
+
+    /// And the converse: changing what is applied moves the factor without
+    /// touching the canopy reference it is measured against.
+    @Test("Concentration factor tracks the applied volume against a fixed canopy")
+    func factorTracksAppliedVolume() {
+        let full = SprayGuidedFlow(inputs: inputs(dilute: 45, applied: 45)).plan.carrier
+        let half = SprayGuidedFlow(inputs: inputs(dilute: 45, applied: 22.5)).plan.carrier
+
+        #expect(abs(full.concentrationFactor - 1.0) < tolerance)
+        #expect(abs(half.concentrationFactor - 2.0) < tolerance)
+        #expect(full.diluteLitresPer100Metres == half.diluteLitresPer100Metres)
+    }
 }

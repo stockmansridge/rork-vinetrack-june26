@@ -233,9 +233,7 @@ struct SprayCalculatorView: View {
     /// value into it, is what makes a manual entry survive canopy changes and
     /// redraws: nothing ever writes into this field except the operator.
     private var manualDiluteLitresPer100m: Double? {
-        let trimmed = diluteLitresPer100mText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let value = Double(trimmed), value.isFinite, value > 0 else { return nil }
-        return value
+        SprayDiluteReference.manualLitresPer100m(from: diluteLitresPer100mText)
     }
 
     /// The dilute / runoff rate actually fed to the engine, in L/100 m.
@@ -244,10 +242,11 @@ struct SprayCalculatorView: View {
     /// granular pass is not a concentration of anything, and inventing a
     /// reference for it would multiply every per-100 L product on the job.
     private var effectiveDiluteLitresPer100m: Double? {
-        if let manual = manualDiluteLitresPer100m { return manual }
-        guard operationType != .spreader else { return nil }
-        let canopy = canopyDiluteLitresPer100m
-        return canopy > 0 ? canopy : nil
+        SprayDiluteReference.effectiveLitresPer100m(
+            manualText: diluteLitresPer100mText,
+            canopyLitresPer100m: canopyDiluteLitresPer100m,
+            supportsCanopy: operationType != .spreader
+        )
     }
 
     /// `nil` when row spacing could not be resolved, so callers must handle the
@@ -2698,7 +2697,9 @@ struct SprayCalculatorView: View {
                         .font(.subheadline.weight(.medium))
                     Spacer()
                     if isOverridden, supportsCanopy {
-                        Button("Use calculated") { diluteLitresPer100mText = "" }
+                        Button("Use calculated") {
+                            diluteLitresPer100mText = SprayDiluteReference.clearedOverrideText
+                        }
                             .font(.caption.weight(.semibold))
                             .buttonStyle(.plain)
                             .foregroundStyle(VineyardTheme.olive)
