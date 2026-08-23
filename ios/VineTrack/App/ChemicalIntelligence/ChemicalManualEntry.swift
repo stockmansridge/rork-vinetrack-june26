@@ -100,6 +100,16 @@ nonisolated struct ChemicalManualUseDraft: Sendable, Hashable, Identifiable {
         self.reEntryPeriodHoursText = reEntryPeriodHoursText
         self.restrictions = restrictions
     }
+
+    /// Whether this use concerns grapevines.
+    ///
+    /// An approved label may register forty crops — peaches, tobacco, turf,
+    /// bananas — and every one of them is kept. This only decides what a
+    /// vineyard operator is shown FIRST; nothing is filtered away or dropped.
+    var isViticultural: Bool {
+        let c = crop.lowercased()
+        return c.contains("grape") || c.contains("vine")
+    }
 }
 
 /// Everything the structured manual editor collects, before it becomes a

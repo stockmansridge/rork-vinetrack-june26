@@ -273,6 +273,11 @@ struct EditSavedChemicalSheet: View {
     /// Registration plumbing stays collapsed. A grower edits agronomy; the
     /// identity fields underneath are VineTrack's problem unless they ask.
     @State private var showTechnicalDetails: Bool = false
+    /// An approved label can register dozens of crops. A vineyard operator
+    /// should not scroll past peaches, tobacco and turf to reach grapevines,
+    /// so the rest stay collapsed until asked for. Presentation only — every
+    /// use is still on the record and still saved.
+    @State private var showsNonVineyardUses: Bool = false
     @State private var deleteCoordinator = ChemicalDeleteCoordinator()
 
     init(
@@ -581,10 +586,32 @@ struct EditSavedChemicalSheet: View {
     private var registeredUsesSection: some View {
         Section {
             ForEach($session.chemistryDraft.uses) { $use in
-                ChemicalManualUseEditor(
-                    use: $use,
-                    onRemove: { session.chemistryDraft.uses.removeAll { $0.id == use.id } }
-                )
+                if use.isViticultural {
+                    ChemicalManualUseEditor(
+                        use: $use,
+                        onRemove: { session.chemistryDraft.uses.removeAll { $0.id == use.id } }
+                    )
+                }
+            }
+            if nonVineyardUseCount > 0 {
+                DisclosureGroup(isExpanded: $showsNonVineyardUses) {
+                    ForEach($session.chemistryDraft.uses) { $use in
+                        if !use.isViticultural {
+                            ChemicalManualUseEditor(
+                                use: $use,
+                                onRemove: {
+                                    session.chemistryDraft.uses.removeAll { $0.id == use.id }
+                                }
+                            )
+                        }
+                    }
+                } label: {
+                    Label(
+                        "Other crops on this label (\(nonVineyardUseCount))",
+                        systemImage: "list.bullet.rectangle"
+                    )
+                    .font(.subheadline)
+                }
             }
             Button {
                 session.chemistryDraft.uses.append(ChemicalManualUseDraft())
@@ -594,8 +621,18 @@ struct EditSavedChemicalSheet: View {
         } header: {
             Text("Registered Uses & Rates")
         } footer: {
-            Text("A use is a crop and a target the product is registered against, with the rate as the label states it and any withholding or re-entry period. The basis is kept exactly as printed — a per-100 L rate is never restated per hectare.")
+            Text(vineyardUseCount > 0 && nonVineyardUseCount > 0
+                ? "A use is a crop and a target the product is registered against, with the rate as the label states it and any withholding or re-entry period. The basis is kept exactly as printed — a per-100 L rate is never restated per hectare. Grapevine uses are shown first; the label's other crops are kept in full under “Other crops”."
+                : "A use is a crop and a target the product is registered against, with the rate as the label states it and any withholding or re-entry period. The basis is kept exactly as printed — a per-100 L rate is never restated per hectare.")
         }
+    }
+
+    private var vineyardUseCount: Int {
+        session.chemistryDraft.uses.count(where: \.isViticultural)
+    }
+
+    private var nonVineyardUseCount: Int {
+        session.chemistryDraft.uses.count - vineyardUseCount
     }
 
     /// Whether to offer product-level label rates.

@@ -145,6 +145,18 @@ export interface LabelStatement {
 const CROP_LINE = /^([A-Z][A-Z0-9 ()/&,.'-]{0,60}?):\s*(\S.*)$/;
 
 /**
+ * The same "<crops>: <statement>" shape, but tolerating the Title Case APVMA
+ * actually prints in the WITHHOLDING PERIODS section ("Bananas:",
+ * "Grapevines:", "Custard apples and Pawpaws (papaya):").
+ *
+ * This is used ONLY where the right-hand side is itself a recognised WHP
+ * wording, which is what keeps it safe: an unrelated Title Case line such as
+ * "First Aid Instructions: If poisoning occurs…" can never be mistaken for a
+ * crop, because its statement states no withholding period.
+ */
+const TITLE_CASE_CROP_LINE = /^([A-Za-z][A-Za-z0-9 ()/&,.'-]{0,60}?):\s*(\S.*)$/;
+
+/**
  * Split reassembled label comments into statements. Section headers (all-caps
  * lines without a crop prefix) scope what a crop line may assert: WHP numbers
  * are only read inside a withholding section or from self-descriptive
@@ -161,6 +173,27 @@ export function parseLabelStatements(text: string): LabelStatement[] {
       out.push({
         crop: cropMatch[1].trim(),
         statement: cropMatch[2].trim(),
+        section,
+      });
+      continue;
+    }
+    // A Title Case crop prefix, proven to BE one by the statement after the
+    // colon stating a withholding period. Without this,
+    // "Bananas: NOT REQUIRED WHEN USED AS DIRECTED" reads as a PRODUCT-WIDE
+    // statement and becomes every crop's WHP — including grapevines'.
+    //
+    // Section-independent on purpose: a long withholding block wraps, and a
+    // wrapped ALL-CAPS continuation line ("APPLICATION PAPAYA LEAVES MUST
+    // NOT BE…") looks exactly like a new section heading, so by the time the
+    // grapevine line is reached the parser no longer believes it is in the
+    // withholding section. `whpDaysFromStatement` still applies its own
+    // section rule to "not required", which is the wording that actually
+    // needs the context; "DO NOT HARVEST FOR 30 DAYS" describes itself.
+    const titled = TITLE_CASE_CROP_LINE.exec(line);
+    if (titled && whpDaysFromStatement(titled[2].trim(), section) !== null) {
+      out.push({
+        crop: titled[1].trim(),
+        statement: titled[2].trim(),
         section,
       });
       continue;

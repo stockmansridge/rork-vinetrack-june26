@@ -54,7 +54,7 @@ import {
 } from "./label.ts";
 
 /** Bumped whenever the deterministic grammar changes (refresh comparability). */
-export const LABEL_PARSER_VERSION = 1;
+export const LABEL_PARSER_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // Default PDF text extractor (production) — unpdf, the serverless pdf.js
@@ -266,6 +266,56 @@ function collectMatches(
 }
 
 /**
+ * A rate column's basis, taken from the COLUMN HEADER rather than the cell.
+ *
+ * APVMA tables print the unit once, in the heading ("RATE PER 100 L"), and
+ * then a bare quantity in every cell ("200 g"). The quantity alone carries no
+ * basis, so without the header the grammar can only quote it verbatim. This
+ * is the header speaking for its own column — not an inference.
+ */
+export type RateBasisHint = "per_100_litres" | "per_hectare" | null;
+
+/**
+ * A cell holding NOTHING but a quantity: "200 g", "150 to 200 g",
+ * "1.7-2.2 kg", "2.2 to 4.5 kg", optionally with a single footnote marker.
+ * Anchored end to end on purpose — "200g + 600mL miscible summer oil" is a
+ * tank mix, not a rate this grammar may reduce to one number.
+ */
+const BARE_QUANTITY_RE = new RegExp(
+  `^${NUM}(?:\\s*${RANGE_SEP}\\s*${NUM})?\\s*${UNIT_PATTERN}\\s*\\*?$`,
+  "i",
+);
+
+/** A cell that states no rate at all: the table's "this column is empty" mark. */
+const EMPTY_RATE_CELL_RE = /^(?:[-–—]|nil|n\/a|none)$/i;
+
+/**
+ * Wording that belongs to the WITHHOLDING or GRAZING column, never to a rate
+ * column. Finding any of it inside a "rate" cell proves the cell was
+ * assembled across a column boundary — the reading is corrupt, not merely
+ * unparsed, and §10 says corrupt authoritative data must never be served.
+ */
+const WHP_IN_RATE_CELL_RE =
+  /\b\d+\s*(?:days?|weeks?|months?)\b|\((?:H|G)\)|\bWHP\b|\bnot\s+required\b|\bnil\b/i;
+
+/**
+ * Whether a rate cell has visibly crossed a column boundary.
+ *
+ * This is the safety net that would have caught the production defect on its
+ * own: "30 days (H) 150 to 200 g" is not a rate wording the grammar failed to
+ * parse, it is two columns glued together.
+ */
+export function rateCellCrossesColumns(rawCell: string): boolean {
+  const cell = rawCell.replace(/\s+/g, " ").trim();
+  if (!cell) return false;
+  // A genuine rate may legitimately mention an interval ("every 14 days") in
+  // its own qualifier, so require BOTH a WHP signature AND a quantity that
+  // the rate grammar can see — the mixed cell, not the wordy one.
+  if (!WHP_IN_RATE_CELL_RE.test(cell)) return false;
+  return /\d/.test(cell.replace(WHP_IN_RATE_CELL_RE, ""));
+}
+
+/**
  * Parse one DFU rate cell into wire rates. Bounded grammar over measured
  * label forms ("Mix 30 mL of X per 100 litres of water", "35 or 54 mL/100 L",
  * "540 mL/ha", ranges with –/to/or). Every entry carries the verbatim cell
@@ -273,10 +323,19 @@ function collectMatches(
  * DIFFERENT numbers on the SAME basis in one cell → the whole cell fails
  * closed to verbatim (a dilute/concentrate distinction the grammar cannot
  * prove is never guessed). An empty cell → no rates at all.
+ *
+ * `basisHint` is the column header's own basis and is consulted ONLY for a
+ * cell that is nothing but a quantity. It never overrides wording the cell
+ * states for itself: a cell reading "540 mL/ha" in a per-100-L column stays
+ * per-hectare, because the cell is more specific than the heading.
  */
-export function parseRateCell(rawCell: string): WireLabelRate[] {
+export function parseRateCell(
+  rawCell: string,
+  basisHint: RateBasisHint = null,
+): WireLabelRate[] {
   const cell = rawCell.replace(/\s+/g, " ").trim();
   if (!cell) return [];
+  if (EMPTY_RATE_CELL_RE.test(cell)) return [];
   const masked = new Array<boolean>(cell.length).fill(false);
 
   const matches: RateMatch[] = [
@@ -305,6 +364,30 @@ export function parseRateCell(rawCell: string): WireLabelRate[] {
   ];
 
   if (!matches.length) {
+    const bare = BARE_QUANTITY_RE.exec(cell);
+    if (bare && basisHint) {
+      const unit = canonicalUnit(bare[3]);
+      return [
+        bare[2] !== undefined
+          ? {
+            label: "",
+            basis: basisHint === "per_hectare"
+              ? "range_per_hectare"
+              : "range_per_100_litres",
+            min_value: Number.parseFloat(bare[1]),
+            max_value: Number.parseFloat(bare[2]),
+            unit,
+            raw_text: cell,
+          }
+          : {
+            label: "",
+            basis: basisHint,
+            value: Number.parseFloat(bare[1]),
+            unit,
+            raw_text: cell,
+          },
+      ];
+    }
     return [{ label: "", basis: "other", unit: "", raw_text: cell }];
   }
 
@@ -330,17 +413,36 @@ export function parseRateCell(rawCell: string): WireLabelRate[] {
 }
 
 // ---------------------------------------------------------------------------
-// Directions-for-Use table parsing (measured layouts: single table WITH a
-// CROP column — Sprayseal; per-crop "Table N. <Crop>" tables WITHOUT one —
-// Custodia Forte. Columns are reconstructed from header anchor x-positions;
-// wrapped cells are reassembled from the y-ordered lines of each column.)
+// Directions-for-Use table parsing
+//
+// Measured layouts:
+//   * one table WITH a CROP column (Sprayseal 80160);
+//   * per-crop "Table N. <Crop>" tables WITHOUT one (Custodia Forte 91636);
+//   * one document mixing a SIX-column layout (CROP | DISEASE | RATE PER
+//     100 L | RATE PER HECTARE | WHP | CRITICAL COMMENTS) with a FIVE-column
+//     one (no per-hectare column) and stacking the rate heading across two
+//     printed lines — "RATE PER" above "100 L" (Dithane 59688).
+//
+// Columns are reconstructed from header anchor x-positions. The heading text
+// itself is assembled ACROSS printed lines, because a heading that wraps is
+// still one heading: reading only the first line turns "RATE PER 100 L" into
+// "RATE PER", which matches no rate pattern, which silently leaves the table
+// with the PREVIOUS page's column map. That is how a withholding period ends
+// up inside a rate cell.
 // ---------------------------------------------------------------------------
 
 export interface DfuRow {
   crop_text: string;
   /** The target cell's visual lines, verbatim (wrap-aware candidates). */
   target_lines: string[];
+  /** The rate cell this row's rate should be read from, verbatim. */
   rate_text: string;
+  /** Basis the rate COLUMN's heading states, when it states one. */
+  rate_basis: RateBasisHint;
+  /** A separate per-hectare column's cell, when the table prints one. */
+  rate_ha_text: string;
+  /** The WHP column's cell, verbatim — captured, never merged into a rate. */
+  whp_text: string;
   comments_text: string;
 }
 
@@ -348,39 +450,178 @@ const DFU_HEADING = /DIRECTIONS\s+FOR\s+USE/i;
 const DFU_FOOTER = /NOT\s+TO\s+BE\s+USED\s+FOR\s+ANY\s+PURPOSE/i;
 const TABLE_TITLE = /^Table\s+\d+\s*[.:]?\s+(.+)$/i;
 
-type ColumnKind = "crop" | "target" | "rate" | "comments" | "ignored";
+type ColumnKind =
+  | "crop"
+  | "target"
+  | "rate"
+  | "rate_100l"
+  | "rate_ha"
+  | "whp"
+  | "comments"
+  | "ignored";
 
-const HEADER_TOKENS: ReadonlyArray<{ re: RegExp; kind: ColumnKind }> = [
-  { re: /^(CROP|CROPS|SITUATION)$/i, kind: "crop" },
-  {
-    re: /^(DISEASE|DISEASES|PEST|PESTS|DISEASE\/PEST|DISEASES\/PESTS|WEED|WEEDS|INSECT|INSECTS)$/i,
-    kind: "target",
-  },
-  { re: /^RATE(?:\/HA)?$/i, kind: "rate" },
-  { re: /^(CRITICAL\s+COMMENTS|CRITICAL\s+USE\s+COMMENTS|COMMENTS)$/i, kind: "comments" },
-  { re: /^(STATE|STATES|WHP)$/i, kind: "ignored" },
+/**
+ * Words that START a column heading. Deliberately prefix-anchored on RATE and
+ * WHP: the rest of the heading may be printed on the line below, and the
+ * anchor has to exist before those continuations can be attached to it.
+ */
+const HEADER_START: ReadonlyArray<RegExp> = [
+  /^(CROP|CROPS|SITUATION)$/i,
+  /^(DISEASE|DISEASES|PEST|PESTS|DISEASE\/PEST|DISEASES\/PESTS|WEED|WEEDS|INSECT|INSECTS)$/i,
+  /^RATE\b/i,
+  /^WHP\b/i,
+  /^(CRITICAL\s+COMMENTS|CRITICAL\s+USE\s+COMMENTS|COMMENTS):?$/i,
+  /^(STATE|STATES)$/i,
 ];
+
+/**
+ * The bounded vocabulary of heading CONTINUATION fragments measured on real
+ * eLabels documents. A line built only from these is the rest of the heading,
+ * not the table's first row — nothing else is ever absorbed into a heading.
+ */
+const HEADER_FRAGMENT =
+  /^(?:PER|PER\s+100\s*L|PER\s+HECTARE|100\s*L|100|L|HECTARE|HA|Harvest\s*\(H\)|Grazing\s*\(G\)|\(H\)|\(G\)|\(WHP\)|COMMENTS:?|USE\s+COMMENTS)$/i;
+
+/** Classify one FULLY ASSEMBLED heading. */
+function classifyHeader(raw: string): ColumnKind {
+  const text = raw.replace(/\s+/g, " ").trim();
+  if (/^(CROP|CROPS|SITUATION)\b/i.test(text)) return "crop";
+  if (/^(DISEASE|DISEASES|PEST|PESTS|WEED|WEEDS|INSECT|INSECTS)\b/i.test(text)) {
+    return "target";
+  }
+  if (/^RATE\b/i.test(text)) {
+    // The heading names its own basis. "RATE PER 100 L" and "RATE PER
+    // HECTARE" are DIFFERENT columns and must never share a bucket — that
+    // is what allowed two independent numbers to be concatenated.
+    if (/\b100\s*L\b/i.test(text)) return "rate_100l";
+    if (/\b(HECTARE|HA)\b/i.test(text)) return "rate_ha";
+    return "rate";
+  }
+  if (/^WHP\b/i.test(text)) return "whp";
+  if (/COMMENTS/i.test(text)) return "comments";
+  return "ignored";
+}
 
 interface HeaderColumn {
   kind: ColumnKind;
   anchorX: number;
 }
 
-/** Header detection runs on RAW items — the header row's wide justification
- * spacers would otherwise chain its tokens into one cell. */
-function detectHeader(line: TextLine): HeaderColumn[] | null {
-  const anchors: HeaderColumn[] = [];
+interface HeaderAnchor {
+  anchorX: number;
+  parts: string[];
+}
+
+/** How far a continuation fragment may sit from its heading's anchor. */
+const HEADER_FRAGMENT_TOLERANCE = 45;
+
+/**
+ * Seed anchors from one line's RAW items — the header row's wide
+ * justification spacers would otherwise chain its tokens into one cell.
+ */
+function seedHeaderAnchors(line: TextLine): HeaderAnchor[] | null {
+  const anchors: HeaderAnchor[] = [];
   for (const item of line.items) {
     const text = item.str.trim();
     if (!text) continue;
-    const token = HEADER_TOKENS.find((t) => t.re.test(text));
-    if (token) anchors.push({ kind: token.kind, anchorX: item.x });
+    if (HEADER_START.some((re) => re.test(text))) {
+      anchors.push({ anchorX: item.x, parts: [text] });
+    }
   }
-  const hasRate = anchors.some((a) => a.kind === "rate");
-  const hasTarget = anchors.some((a) => a.kind === "target");
-  if (!hasRate || !hasTarget) return null;
+  if (!anchors.length) return null;
   anchors.sort((a, b) => a.anchorX - b.anchorX);
   return anchors;
+}
+
+/**
+ * The critical-comments column when its heading is printed somewhere else.
+ *
+ * Measured on Dithane 59688 page 12: the TREE AND VINE table prints
+ * "CRITICAL COMMENTS" in a merged banner ABOVE the column row, so the column
+ * row itself carries only the comments cell's first line of text. That text's
+ * left edge IS the column's left edge, and it is the right-most thing on the
+ * line — a position, not a guess.
+ */
+function synthesiseCommentsAnchor(
+  line: TextLine,
+  anchors: HeaderAnchor[],
+): HeaderAnchor | null {
+  const rightMost = anchors[anchors.length - 1].anchorX;
+  const trailing = line.items
+    .filter((i) => i.str.trim().length > 0 && i.x > rightMost + 20)
+    .sort((a, b) => a.x - b.x);
+  const first = trailing[0];
+  if (!first) return null;
+  if (HEADER_FRAGMENT.test(first.str.trim())) return null;
+  return { anchorX: first.x, parts: ["CRITICAL COMMENTS"] };
+}
+
+/**
+ * Whether `line` is the continuation of a heading already seeded from the
+ * line above: it must contribute at least one fragment, and everything else
+ * on it must belong to the comments column (whose cell text starts level
+ * with the heading and simply keeps going).
+ */
+function isHeaderContinuation(
+  line: TextLine,
+  anchors: HeaderAnchor[],
+  commentsX: number | null,
+): boolean {
+  let fragments = 0;
+  for (const item of line.items) {
+    const text = item.str.trim();
+    if (!text) continue;
+    if (HEADER_FRAGMENT.test(text)) {
+      const nearest = anchors.reduce(
+        (best, a) =>
+          Math.abs(a.anchorX - item.x) < Math.abs(best.anchorX - item.x) ? a : best,
+        anchors[0],
+      );
+      if (Math.abs(nearest.anchorX - item.x) <= HEADER_FRAGMENT_TOLERANCE) {
+        fragments++;
+        continue;
+      }
+      return false;
+    }
+    if (commentsX !== null && item.x >= commentsX - 4) continue;
+    return false;
+  }
+  return fragments > 0;
+}
+
+/** Attach one continuation line's fragments to their headings. */
+function absorbHeaderContinuation(line: TextLine, anchors: HeaderAnchor[]): void {
+  for (const item of line.items) {
+    const text = item.str.trim();
+    if (!text || !HEADER_FRAGMENT.test(text)) continue;
+    const nearest = anchors.reduce(
+      (best, a) =>
+        Math.abs(a.anchorX - item.x) < Math.abs(best.anchorX - item.x) ? a : best,
+      anchors[0],
+    );
+    if (Math.abs(nearest.anchorX - item.x) <= HEADER_FRAGMENT_TOLERANCE) {
+      nearest.parts.push(text);
+    }
+  }
+}
+
+/**
+ * Turn assembled anchors into a column map, or null when this is not a table
+ * header. A header needs a target column and at least one rate column —
+ * without both there is no rate to bind and nothing may be served.
+ */
+function finaliseHeader(anchors: HeaderAnchor[]): HeaderColumn[] | null {
+  const columns = anchors.map((a) => ({
+    kind: classifyHeader(a.parts.join(" ")),
+    anchorX: a.anchorX,
+  }));
+  const hasTarget = columns.some((c) => c.kind === "target");
+  const hasRate = columns.some(
+    (c) => c.kind === "rate" || c.kind === "rate_100l" || c.kind === "rate_ha",
+  );
+  if (!hasTarget || !hasRate) return null;
+  columns.sort((a, b) => a.anchorX - b.anchorX);
+  return columns;
 }
 
 /**
@@ -394,6 +635,8 @@ function detectHeader(line: TextLine): HeaderColumn[] | null {
 interface ColumnGeometry {
   columns: HeaderColumn[];
   learned: number[] | null;
+  /** The basis this table's rate column states in its own heading. */
+  rateBasis: RateBasisHint;
 }
 
 function assignCells(
@@ -429,29 +672,125 @@ function assignCells(
   return out;
 }
 
+/** Positioned text from one column of one printed line. */
+interface PlacedCell {
+  y: number;
+  text: string;
+}
+
+function joinCells(cells: PlacedCell[]): string {
+  return cells.map((c) => c.text).join(" ").replace(/\s+/g, " ").trim();
+}
+
 /** Vertical gap beyond which a trigger-column line starts a NEW row (the
  * measured intra-cell wrap pitch is 10–12pt; inter-row gaps are ≥50pt). */
 const ROW_GAP = 18;
 
 interface RowAccumulator {
-  cropLines: string[];
-  targetLines: string[];
-  rateLines: string[];
-  commentLines: string[];
+  cropLines: PlacedCell[];
+  targetLines: PlacedCell[];
+  rate100Lines: PlacedCell[];
+  rateHaLines: PlacedCell[];
+  rateGenericLines: PlacedCell[];
+  whpLines: PlacedCell[];
+  commentLines: PlacedCell[];
   titleCrop: string | null;
+  rateBasis: RateBasisHint;
   lastTriggerY: number;
   page: number;
 }
 
+/**
+ * One crop block's target lines, split into the sub-rows the label printed.
+ *
+ * Inside a merged crop cell the label stacks several use rows: the wrap pitch
+ * between the lines of ONE target cell is 10–12pt, while the gap to the next
+ * sub-row is far larger. Splitting on that measured gap is what keeps a rate
+ * with the target it was printed beside, instead of spreading it across every
+ * target the crop happens to list.
+ */
+function splitTargetBands(targets: PlacedCell[]): PlacedCell[][] {
+  if (targets.length <= 1) return targets.length ? [targets] : [];
+  const ordered = [...targets].sort((a, b) => b.y - a.y);
+  const bands: PlacedCell[][] = [[ordered[0]]];
+  for (let i = 1; i < ordered.length; i++) {
+    const gap = Math.abs(ordered[i - 1].y - ordered[i].y);
+    if (gap > ROW_GAP) bands.push([ordered[i]]);
+    else bands[bands.length - 1].push(ordered[i]);
+  }
+  return bands;
+}
+
+/**
+ * Which sub-row a positioned cell belongs to: the band whose printed extent
+ * contains it, with the boundary halfway between neighbouring bands. Cells
+ * above the first band (a comment that starts higher than its row) belong to
+ * the first band; cells below the last belong to the last.
+ */
+function bandIndexFor(bands: PlacedCell[][], y: number): number {
+  for (let i = 0; i < bands.length - 1; i++) {
+    const bottomOfThis = Math.min(...bands[i].map((c) => c.y));
+    const topOfNext = Math.max(...bands[i + 1].map((c) => c.y));
+    if (y > (bottomOfThis + topOfNext) / 2) return i;
+  }
+  return bands.length - 1;
+}
+
 function finishRow(acc: RowAccumulator | null, rows: DfuRow[]): void {
   if (!acc) return;
-  const crop = acc.cropLines.join(" ").replace(/\s+/g, " ").trim() ||
-    (acc.titleCrop ?? "");
-  const targets = acc.targetLines.map((t) => t.replace(/\s+/g, " ").trim()).filter(Boolean);
-  const rate = acc.rateLines.join(" ").replace(/\s+/g, " ").trim();
-  const comments = acc.commentLines.join(" ").replace(/\s+/g, " ").trim();
-  if (!crop && !targets.length && !rate) return;
-  rows.push({ crop_text: crop, target_lines: targets, rate_text: rate, comments_text: comments });
+  const crop = joinCells(acc.cropLines) || (acc.titleCrop ?? "");
+  const comments = joinCells(acc.commentLines);
+  const targets = acc.targetLines.filter((t) => t.text.trim().length > 0);
+
+  // The per-100-L column is the rate a vineyard operator dilutes to; a table
+  // with only a generic RATE column keeps using it.
+  const primary = acc.rate100Lines.length ? acc.rate100Lines : acc.rateGenericLines;
+  const primaryBasis: RateBasisHint = acc.rate100Lines.length
+    ? "per_100_litres"
+    : acc.rateBasis;
+
+  const bands = splitTargetBands(targets);
+  if (bands.length <= 1) {
+    const rate = joinCells(primary);
+    const rateHa = joinCells(acc.rateHaLines);
+    const whp = joinCells(acc.whpLines);
+    if (!crop && !targets.length && !rate) return;
+    rows.push({
+      crop_text: crop,
+      target_lines: targets.map((t) => t.text),
+      rate_text: rate,
+      rate_basis: primaryBasis,
+      rate_ha_text: rateHa,
+      whp_text: whp,
+      comments_text: comments,
+    });
+    return;
+  }
+
+  // Several sub-rows share this crop cell. Rates and WHP go to the sub-row
+  // whose printed band contains them; the critical comments describe the crop
+  // block as a whole and stay with every sub-row (they are carried verbatim,
+  // never parsed, so sharing them states nothing the label does not).
+  const perBand = bands.map(() => ({
+    rate: [] as PlacedCell[],
+    rateHa: [] as PlacedCell[],
+    whp: [] as PlacedCell[],
+  }));
+  for (const cell of primary) perBand[bandIndexFor(bands, cell.y)].rate.push(cell);
+  for (const cell of acc.rateHaLines) perBand[bandIndexFor(bands, cell.y)].rateHa.push(cell);
+  for (const cell of acc.whpLines) perBand[bandIndexFor(bands, cell.y)].whp.push(cell);
+
+  bands.forEach((band, i) => {
+    rows.push({
+      crop_text: crop,
+      target_lines: band.map((t) => t.text),
+      rate_text: joinCells(perBand[i].rate),
+      rate_basis: primaryBasis,
+      rate_ha_text: joinCells(perBand[i].rateHa),
+      whp_text: joinCells(perBand[i].whp),
+      comments_text: comments,
+    });
+  });
 }
 
 export interface DfuParse {
@@ -474,7 +813,8 @@ export function parseDirectionsForUse(items: PdfTextItem[]): DfuParse {
   const cropColumn = (): boolean =>
     Boolean(geometry?.columns.some((c) => c.kind === "crop"));
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
     if (!inSection) {
       if (DFU_HEADING.test(line.text)) inSection = true;
       continue;
@@ -492,12 +832,42 @@ export function parseDirectionsForUse(items: PdfTextItem[]): DfuParse {
       titleCrop = title[1].trim();
       continue;
     }
-    const header = detectHeader(line);
-    if (header) {
-      finishRow(acc, rows);
-      acc = null;
-      geometry = { columns: header, learned: null };
-      continue;
+
+    // ---- Header block: seed anchors, then absorb the wrapped heading ----
+    const seeds = seedHeaderAnchors(line);
+    if (seeds) {
+      const commentsSeed = seeds.some((a) => /COMMENTS/i.test(a.parts[0]))
+        ? null
+        : synthesiseCommentsAnchor(line, seeds);
+      const anchors = commentsSeed ? [...seeds, commentsSeed] : seeds;
+      anchors.sort((a, b) => a.anchorX - b.anchorX);
+      const commentsX = anchors.find((a) => /COMMENTS/i.test(a.parts[0]))?.anchorX ?? null;
+
+      let consumed = index;
+      while (consumed + 1 < lines.length) {
+        const next = lines[consumed + 1];
+        if (next.page !== line.page) break;
+        if (!isHeaderContinuation(next, anchors, commentsX)) break;
+        absorbHeaderContinuation(next, anchors);
+        consumed++;
+      }
+
+      const header = finaliseHeader(anchors);
+      if (header) {
+        finishRow(acc, rows);
+        acc = null;
+        geometry = {
+          columns: header,
+          learned: null,
+          rateBasis: header.some((c) => c.kind === "rate_100l")
+            ? "per_100_litres"
+            : header.some((c) => c.kind === "rate_ha")
+            ? "per_hectare"
+            : null,
+        };
+        index = consumed;
+        continue;
+      }
     }
     if (!geometry) continue;
 
@@ -520,9 +890,13 @@ export function parseDirectionsForUse(items: PdfTextItem[]): DfuParse {
         acc = {
           cropLines: [],
           targetLines: [],
-          rateLines: [],
+          rate100Lines: [],
+          rateHaLines: [],
+          rateGenericLines: [],
+          whpLines: [],
           commentLines: [],
           titleCrop,
+          rateBasis: geometry.rateBasis,
           lastTriggerY: line.y,
           page: line.page,
         };
@@ -533,14 +907,17 @@ export function parseDirectionsForUse(items: PdfTextItem[]): DfuParse {
     }
     if (!acc) continue;
 
-    const crop = cellText("crop");
-    if (crop) acc.cropLines.push(crop);
-    const target = cellText("target");
-    if (target) acc.targetLines.push(target);
-    const rate = cellText("rate");
-    if (rate) acc.rateLines.push(rate);
-    const comments = cellText("comments");
-    if (comments) acc.commentLines.push(comments);
+    const place = (bucket: PlacedCell[], kind: ColumnKind): void => {
+      const text = cellText(kind);
+      if (text) bucket.push({ y: line.y, text });
+    };
+    place(acc.cropLines, "crop");
+    place(acc.targetLines, "target");
+    place(acc.rate100Lines, "rate_100l");
+    place(acc.rateHaLines, "rate_ha");
+    place(acc.rateGenericLines, "rate");
+    place(acc.whpLines, "whp");
+    place(acc.commentLines, "comments");
   }
   finishRow(acc, rows);
   return { found: inSection, rows };
@@ -580,13 +957,30 @@ export interface DfuBinding {
 }
 
 function toUnbound(row: DfuRow, reason: UnboundDfuRow["reason"]): UnboundDfuRow {
-  return {
+  const rateTexts = [row.rate_text, row.rate_ha_text].filter((t) => t.length > 0);
+  const unbound: UnboundDfuRow = {
     crop_text: row.crop_text,
     target_texts: row.target_lines,
-    rate_texts: row.rate_text ? [row.rate_text] : [],
+    rate_texts: rateTexts,
     comments_text: row.comments_text,
     reason,
   };
+  if (row.whp_text) unbound.whp_text = row.whp_text;
+  return unbound;
+}
+
+/**
+ * Every rate this row states, read from its own columns.
+ *
+ * Each rate column is parsed SEPARATELY, with the basis its heading states.
+ * Two columns are never concatenated: that is precisely how "30 days (H)"
+ * ended up glued to "150 to 200 g" and served as authoritative evidence.
+ */
+function rowRates(row: DfuRow): WireLabelRate[] {
+  return [
+    ...parseRateCell(row.rate_text, row.rate_basis),
+    ...parseRateCell(row.rate_ha_text, "per_hectare"),
+  ];
 }
 
 /**
@@ -622,7 +1016,19 @@ export function bindDfuRows(rows: DfuRow[], claims: LabelUseClaim[]): DfuBinding
       unbound.push(toUnbound(row, "no_corresponding_claim"));
       return;
     }
-    const rates = parseRateCell(row.rate_text);
+    // §10 — a rate cell holding a withholding period crossed a column
+    // boundary. Serving it as manufacturer_label evidence would publish a
+    // number the label never printed in that column, so the row serves
+    // NOTHING and is preserved for review instead. A missing rate is a gap;
+    // a corrupt rate is a lie.
+    if (
+      rateCellCrossesColumns(row.rate_text) ||
+      rateCellCrossesColumns(row.rate_ha_text)
+    ) {
+      unbound.push(toUnbound(row, "column_geometry_uncertain"));
+      return;
+    }
+    const rates = rowRates(row);
     for (const claimIndex of matched) {
       const list = contributions.get(claimIndex) ?? [];
       list.push({ rowIndex, rates, comments: row.comments_text });
@@ -718,6 +1124,14 @@ export function applyLabelDocumentExtraction(
   const unresolved = new Set<string>(evidence.unresolved);
   const documentConflicts: WireConflict[] = [];
 
+  // Does this label scope its withholding periods per crop? APVMA labels that
+  // list "Bananas: …", "Grapevines: …" have NO product-wide WHP: every entry
+  // belongs to the crops it names. Reading an unscoped one as product-wide is
+  // how a banana's "NOT REQUIRED" became the grapevine WHP of 0 days.
+  const hasCropScopedWhp = statements.some(
+    (s) => s.crop !== null && whpDaysFromStatement(s.statement, s.section) !== null,
+  );
+
   // Document-side WHP/re-entry readings (strict Stage 4 patterns only).
   const cropWhp = (crop: string): { days: number; statement: string } | null => {
     for (const s of statements) {
@@ -725,6 +1139,11 @@ export function applyLabelDocumentExtraction(
       const days = whpDaysFromStatement(s.statement, s.section);
       if (days !== null) return { days, statement: `${s.crop}: ${s.statement}` };
     }
+    // The product-wide fallback exists for labels that state ONE withholding
+    // period for the whole product. Where the label speaks per crop and this
+    // crop was not among them, the honest answer is "not stated" — never
+    // another crop's number.
+    if (hasCropScopedWhp) return null;
     for (const s of statements) {
       if (s.crop !== null) continue;
       const days = whpDaysFromStatement(s.statement, s.section);

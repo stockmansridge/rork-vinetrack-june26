@@ -486,7 +486,19 @@ function schemeFromCategory(category: string | null): ActivityGroupScheme | null
  * is partially verified. Promotion to Verified is a human decision made in the
  * app's verify step. That ceiling is the entire point of Phase 4.
  */
-function buildStructuredResponse(parsed: any, countryCode: string): any {
+/**
+ * Provenance label for the model/path that actually produced an extraction.
+ *
+ * This has to be passed in, never assumed: the legacy chat-completions model
+ * and the research model are different models reached by different code
+ * paths, and stamping one path's model name on the other's output makes the
+ * evidence trail lie about where a fact came from.
+ */
+function buildStructuredResponse(
+  parsed: any,
+  countryCode: string,
+  extractionSource: string,
+): any {
   const unresolved = new Set<string>(
     Array.isArray(parsed?.unresolved)
       ? parsed.unresolved.filter((x: any) => typeof x === "string")
@@ -560,7 +572,7 @@ function buildStructuredResponse(parsed: any, countryCode: string): any {
   const sources: any[] = [
     {
       kind: "ai_interpretation",
-      name: `Model extraction (${OPENAI_MODEL})`,
+      name: extractionSource,
       reference: null,
       retrieved_at: new Date().toISOString(),
     },
@@ -1332,7 +1344,37 @@ Deno.serve(async (req: Request) => {
           // Research enters through the EXISTING extraction door, so every
           // downstream authority rule (register merge, unverified-identity
           // discard, group reconciliation, provenance) applies unchanged.
-          structured = buildStructuredResponse(projection.extraction, countryCode);
+          // The model that actually ran, from the winning attempt's own
+          // telemetry — Terra normally, Sol when it escalated.
+          const producedBy = researchOutcome.telemetry.attempts
+            .filter((a) => a.ok)
+            .map((a) => a.model)
+            .pop() ?? researchConfig.model;
+          structured = buildStructuredResponse(
+            projection.extraction,
+            countryCode,
+            `Web research extraction (${producedBy})`,
+          );
+
+          // §11 audit trail: every product-page candidate research offered,
+          // with the server's verdict on each. When `product_url` comes back
+          // null this line says WHY, in the logs, without loosening a rule.
+          console.log(JSON.stringify({
+            evt: "research_product_page_audit",
+            candidates: researchOutcome.research.documents.product_page_candidates
+              .map((d) => {
+                const c = projection!.classified.find((x) => x.url === d.url);
+                return {
+                  url: d.url,
+                  domain: c?.domain ?? null,
+                  trust: c?.trust ?? null,
+                  kind: c?.kind ?? null,
+                  accepted: c?.isProductPageCandidate ?? false,
+                  reason: c?.reason ?? "not classified (unparseable URL)",
+                };
+              }),
+            chosen: projection.productPageCandidate?.url ?? null,
+          }));
         } else if (researchOutcome.error) {
           aiError = new Error(
             `Chemical research unavailable (${researchOutcome.error.category}): ${researchOutcome.error.message}`,
@@ -1351,7 +1393,11 @@ Deno.serve(async (req: Request) => {
           );
           const raw = await callOpenAI(system, user, apiKey);
           const parsed = extractJSON(raw);
-          structured = buildStructuredResponse(parsed, countryCode);
+          structured = buildStructuredResponse(
+            parsed,
+            countryCode,
+            `Model extraction (${OPENAI_MODEL})`,
+          );
         } catch (err) {
           aiError = err;
         }

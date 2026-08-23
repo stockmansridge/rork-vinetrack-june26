@@ -137,6 +137,11 @@ const REGISTRANT_HOSTS = [
   "nufarm.com",
   "nufarm.com.au",
   "upl-ltd.com",
+  // UPL's corporate/product site, where the AU and NZ product pages live
+  // (uplcorp.com/au/product-details/...). Same registrant, second domain —
+  // completing the registry, NOT relaxing the rule: it still has to serve a
+  // product page, and a reseller listing the same product still cannot.
+  "uplcorp.com",
   "fmc.com",
   "sumitomo-chem.com.au",
   "agnova.com.au",
@@ -215,7 +220,7 @@ function looksLikeProductPage(url: string): boolean {
   try {
     const path = new URL(url).pathname.toLowerCase();
     if (path === "/" || path === "") return false;
-    return /\/(products?|crop-protection|solutions?|brands?|portfolio|our-products)(\/|$)/
+    return /\/(products?|product-details?|crop-protection|solutions?|brands?|portfolio|our-products)(\/|$)/
       .test(path);
   } catch {
     return false;

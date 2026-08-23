@@ -191,7 +191,18 @@ export interface UnboundDfuRow {
   target_texts: string[];
   rate_texts: string[];
   comments_text: string;
-  reason: "no_corresponding_claim" | "conflicting_rates";
+  reason:
+    | "no_corresponding_claim"
+    | "conflicting_rates"
+    /**
+     * The rate cell carried wording that belongs to a NEIGHBOURING column
+     * (a withholding period, a grazing marker). The table geometry could
+     * not be trusted for this row, so nothing is served from it — a rate
+     * that crossed a column boundary is corrupt, not merely unparsed.
+     */
+    | "column_geometry_uncertain";
+  /** The row's WHP cell verbatim, when the table printed one (review aid). */
+  whp_text?: string;
 }
 
 /** Provenance of a completed label-document text extraction pass. */
