@@ -79,6 +79,8 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
     /// The operator has not said whether the sprayer applies the recommended
     /// dilute volume or its own calibrated output.
     case sprayVolumeChoiceRequired
+    /// Manual spray volume was chosen but no total water has been entered.
+    case manualTotalWaterRequired
     case carrierRateRequired
     case carrierNotCalculable
     case noProductsAdded
@@ -105,6 +107,7 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case .equipmentRequired: return "Select spray unit"
         case .canopyConfirmationRequired: return "Select canopy type, size and density"
         case .sprayVolumeChoiceRequired: return "Choose your spray volume"
+        case .manualTotalWaterRequired: return "Enter total spray water"
         case .carrierRateRequired: return "Enter carrier volume"
         case .carrierNotCalculable: return "Carrier volume unavailable"
         case .noProductsAdded: return "Add products"
@@ -139,6 +142,8 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case .sprayVolumeChoiceRequired:
             return "Say whether your sprayer will apply the recommended dilute volume "
                 + "or its own calibrated rate."
+        case .manualTotalWaterRequired:
+            return "Enter the total spray water you intend to mix or apply."
         case .carrierRateRequired:
             return "Enter the carrier volume for this application."
         case .carrierNotCalculable:
@@ -226,6 +231,8 @@ nonisolated struct SprayGuidedInputs: Sendable {
     /// The unit `customSprayerRate` was entered in — normally the vineyard's
     /// spray volume basis. One value, one unit, converted centrally.
     var customSprayerBasis: SprayCarrierBasis = .litresPerHectare
+    /// Manual mode: the total water the operator intends to mix or apply.
+    var manualTotalLitres: Double?
 
     var carrierBasis: SprayCarrierBasis = .litresPerHectare
     /// L/ha mode: the rate the operator entered.
@@ -305,7 +312,16 @@ nonisolated struct SprayGuidedFlow: Sendable {
     /// spreader has no canopy at all, and a banded pass is governed by its band
     /// width — neither is gated here, because a prompt raised where it cannot
     /// change the arithmetic is a prompt operators learn to dismiss.
-    var requiresCanopyConfirmation: Bool { inputs.operationType == .foliarSpray }
+    /// True when this application may not proceed on an unconfirmed canopy.
+    ///
+    /// Manual is excluded deliberately. The operator has told VineTrack the
+    /// total water directly, so there is nothing for the canopy model to
+    /// establish — asking anyway would demand three answers that cannot change
+    /// a single number on the job.
+    var requiresCanopyConfirmation: Bool {
+        inputs.operationType == .foliarSpray
+            && effectiveCarrierBasis.usesCanopyRecommendation
+    }
 
     /// Whether the canopy has actually been answered — training system
     /// included. Falls back to the legacy flag when no canopy is supplied.
@@ -333,6 +349,10 @@ nonisolated struct SprayGuidedFlow: Sendable {
     /// output, and the concentration factor between them. Both carrier bases
     /// read this one value, so the two screens cannot disagree.
     var volumeDecision: SprayVolumeDecision? {
+        // Manual has no canopy recommendation to accept or override, so it has
+        // no decision. Returning one would let a stale canopy selection leak a
+        // concentration factor into a job that never asked for it.
+        guard effectiveCarrierBasis.usesCanopyRecommendation else { return nil }
         guard let canopy = inputs.canopy else { return nil }
         return SprayVolumeDecisionResolver.decide(
             canopy: canopy,
@@ -436,6 +456,17 @@ nonisolated struct SprayGuidedFlow: Sendable {
                 appliedLitresPer100Metres: applied,
                 diluteLitresPer100Metres: Self.positive(inputs.diluteLitresPer100Metres),
                 geometry: geometry
+            )
+        case .manualTotalVolume:
+            // The operator's own total. No canopy, no row spacing, no row
+            // length — the geometry below is passed only so the plan can show
+            // an equivalent where it happens to exist, and its absence never
+            // stops the calculation.
+            return SprayCarrierVolumeCalculator.manual(
+                totalLitres: inputs.manualTotalLitres ?? 0,
+                areaHectares: geometry.grossAreaHectares,
+                rowLengthMetres: geometry.totalRowLengthMetres,
+                rowSpacingMetres: geometry.uniformRowSpacingMetres
             )
         }
     }
@@ -566,6 +597,15 @@ nonisolated struct SprayGuidedFlow: Sendable {
                 guard Self.positive(inputs.litresPerHectare) != nil else { return .carrierRateRequired }
             case .litresPer100Metres:
                 guard Self.positive(inputs.appliedLitresPer100Metres) != nil else { return .carrierRateRequired }
+            case .manualTotalVolume:
+                // ONE requirement, and it is the only one this path has. A
+                // manual job must never be blocked for row spacing or row
+                // length it does not use — that was the whole point of
+                // choosing it.
+                guard Self.positive(inputs.manualTotalLitres) != nil else {
+                    return .manualTotalWaterRequired
+                }
+                return isCarrierResolved ? nil : .carrierNotCalculable
             }
             return isCarrierResolved ? nil : .carrierNotCalculable
 

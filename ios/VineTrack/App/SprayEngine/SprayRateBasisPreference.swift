@@ -46,6 +46,10 @@ nonisolated enum SprayRateBasisPreference {
         switch carrier {
         case .litresPer100Metres: return [.per100Litres, .perHectare]
         case .litresPerHectare: return [.perHectare, .per100Litres]
+        // A manual job states total litres, so a per-100 L label rate is the
+        // one that reads straight off it. Per-hectare rates remain fully
+        // available — the order is a preference, never a restriction.
+        case .manualTotalVolume: return [.per100Litres, .perHectare]
         }
     }
 

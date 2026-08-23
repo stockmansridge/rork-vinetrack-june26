@@ -155,6 +155,53 @@ nonisolated enum SprayCalculationReferenceBuilder {
         let carrier = plan.carrier
         var lines: [SprayCalculationReference.Line] = []
         let treated = plan.treatedAreaHectares ?? plan.grossAreaHectares
+
+        // Manual reverses the direction of every derivation on this panel, so
+        // it cannot share the calibrated branch below. There the total is the
+        // RESULT of `rate x area`; here the total is the INPUT and the rate is
+        // what falls out of it. Printing "6.7 L/ha x 0.6 ha" underneath a total
+        // the operator typed would show them a derivation that never happened,
+        // and invite them to trust a per-hectare figure as though VineTrack had
+        // calibrated it.
+        if carrier.basis == .manualTotalVolume {
+            lines.append(.init(
+                id: "totalWater",
+                label: "Total water",
+                value: "\(number(carrier.totalLitres, decimals: 0)) L",
+                workings: "Entered directly — not calculated from a rate or an area"
+            ))
+            if treated > 0 {
+                lines.append(.init(
+                    id: "treatedArea",
+                    label: "Treated area",
+                    value: "\(number(treated, decimals: 2)) ha",
+                    workings: plan.treatedAreaHectares == nil
+                        ? "Whole block area"
+                        : "Treated band area"
+                ))
+            }
+            if let perHectare = carrier.litresPerHectare, perHectare > 0, treated > 0 {
+                lines.append(.init(
+                    id: "impliedPerHa",
+                    label: "Works out to",
+                    value: "\(number(perHectare, decimals: 1)) L/ha",
+                    workings: "\(number(carrier.totalLitres, decimals: 0)) L ÷ "
+                        + "\(number(treated, decimals: 2)) ha — for reference only"
+                ))
+            }
+            if let per100m = carrier.appliedLitresPer100Metres,
+               let metres = carrier.rowLengthMetres, metres > 0 {
+                lines.append(.init(
+                    id: "impliedPer100m",
+                    label: "Works out to",
+                    value: "\(number(per100m, decimals: 1)) L/100 m",
+                    workings: "\(number(carrier.totalLitres, decimals: 0)) L ÷ "
+                        + "\(number(metres, decimals: 0)) m × 100 — for reference only"
+                ))
+            }
+            return lines
+        }
+
         lines.append(.init(
             id: "treatedArea",
             label: "Treated area",
@@ -184,6 +231,7 @@ nonisolated enum SprayCalculationReferenceBuilder {
         decision: SprayVolumeDecision?
     ) -> [SprayCalculationReference.ProductReference] {
         let factor = plan.carrier.concentrationFactor
+        let isManualVolume = plan.carrier.basis == .manualTotalVolume
         return plan.productLines.map { line in
             var lines: [SprayCalculationReference.Line] = []
             if let labelRate = line.labelRate {
@@ -195,21 +243,36 @@ nonisolated enum SprayCalculationReferenceBuilder {
             }
             switch line.basis {
             case .per100Litres:
-                lines.append(.init(
-                    id: "cf",
-                    label: "Concentration factor",
-                    value: "\(number(factor, decimals: 2))×"
-                ))
-                if let labelRate = line.labelRate {
-                    // Presentation of the CF, not a second dosing path — the
-                    // engine's total below does not read this figure.
-                    let concentrated = labelRate.value * factor
+                if isManualVolume {
+                    // "1.00x" is arithmetically true here, but it reads as a
+                    // FINDING — as though a canopy comparison had been run and
+                    // come back neutral. Nothing was compared. Naming that is
+                    // the difference between a reference panel that explains
+                    // the job and one that quietly invents a step.
                     lines.append(.init(
-                        id: "tankConcentration",
-                        label: "Tank concentration",
-                        value: "\(number(concentrated, decimals: 2)) \(labelRate.unit)/100 L",
-                        workings: "\(trim(labelRate.value)) × \(number(factor, decimals: 2))"
+                        id: "cf",
+                        label: "Concentration factor",
+                        value: "Not used",
+                        workings: "Manual spray volume isn't compared to a canopy "
+                            + "recommendation, so there is nothing to concentrate"
                     ))
+                } else {
+                    lines.append(.init(
+                        id: "cf",
+                        label: "Concentration factor",
+                        value: "\(number(factor, decimals: 2))×"
+                    ))
+                    if let labelRate = line.labelRate {
+                        // Presentation of the CF, not a second dosing path — the
+                        // engine's total below does not read this figure.
+                        let concentrated = labelRate.value * factor
+                        lines.append(.init(
+                            id: "tankConcentration",
+                            label: "Tank concentration",
+                            value: "\(number(concentrated, decimals: 2)) \(labelRate.unit)/100 L",
+                            workings: "\(trim(labelRate.value)) × \(number(factor, decimals: 2))"
+                        ))
+                    }
                 }
                 if let basisInput = line.basisInput {
                     lines.append(.init(

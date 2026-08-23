@@ -92,6 +92,10 @@ struct SprayCalculatorView: View {
     /// figure is never read as a rate, and retained across canopy changes so
     /// re-choosing a canopy does not wipe what the operator entered.
     @State private var customSprayerRateText: String = ""
+    /// Manual mode: the total water the operator intends to mix or apply, as
+    /// typed. Text for the same reason as the sprayer rate — a half-entered
+    /// "4" must never be read as a 4 L job.
+    @State private var manualTotalLitresText: String = ""
     /// Per-product-line area basis for banded jobs. Keyed by `ChemicalLine.id`
     /// because the decision belongs to the individual product, never the job.
     @State private var productAreaBasis: [UUID: SprayProductRateBasis] = [:]
@@ -510,6 +514,9 @@ struct SprayCalculatorView: View {
         // this is the same answer without the cycle.
         inputs.customSprayerBasis = effectiveCarrierBasis
         inputs.carrierBasis = carrierBasisChoice
+        inputs.manualTotalLitres = Double(
+            manualTotalLitresText.trimmingCharacters(in: .whitespaces)
+        )
         inputs.litresPerHectare = Double(sprayRateText)
         // The canopy's dilute demand, stated per hectare. The SAME canopy
         // answer the row-length branch reads per 100 m — one table, one
@@ -2577,6 +2584,11 @@ struct SprayCalculatorView: View {
             return "\(SprayGuidedFormat.litresPerHectare(carrier.litresPerHectare)) — \(SprayGuidedFormat.litres(carrier.totalLitres)) total"
         case .litresPer100Metres:
             return "\(SprayGuidedFormat.litresPer100m(carrier.appliedLitresPer100Metres)) — \(SprayGuidedFormat.litres(carrier.totalLitres)) total"
+        case .manualTotalVolume:
+            // No rate to quote — the operator gave the total directly, and
+            // restating it as an implied L/ha would put a number on the summary
+            // line that nobody entered.
+            return "Manual — \(SprayGuidedFormat.litres(carrier.totalLitres)) total"
         }
     }
 
@@ -2743,53 +2755,59 @@ struct SprayCalculatorView: View {
         VStack(alignment: .leading, spacing: 14) {
             // Only offer a choice when the vineyard profile genuinely allows one.
             // An NZ/SWNZ vineyard is locked to L/100 m and sees no L/ha option.
-            if flow.isCarrierBasisLocked {
+            VStack(alignment: .leading, spacing: 8) {
+                // "Spray volume", not "carrier volume" — and deliberately
+                // NOT "rate per 100 L" / "rate per ha". These are units of
+                // WATER. A product's registered rate basis is a different
+                // question answered inside Products, and naming the two
+                // controls alike is how an operator comes to believe that
+                // choosing L/ha here changed their label's rate basis.
                 HStack(spacing: 0) {
-                    Label(
-                        "This vineyard records spray volume in \(SprayGuidedFormat.carrierBasisLabel(flow.effectiveCarrierBasis)).",
-                        systemImage: "lock.fill"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    Text("Spray volume basis")
+                        .font(.subheadline.weight(.semibold))
                     SprayFieldHelp(
                         title: "Spray volume basis",
                         message: SprayVolumeHelp.sprayVolumeBasis
                     )
                     Spacer(minLength: 0)
                 }
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    // "Spray volume", not "carrier volume" — and deliberately
-                    // NOT "rate per 100 L" / "rate per ha". These are units of
-                    // WATER. A product's registered rate basis is a different
-                    // question answered inside Products, and naming the two
-                    // controls alike is how an operator comes to believe that
-                    // choosing L/ha here changed their label's rate basis.
-                    HStack(spacing: 0) {
-                        Text("Spray volume basis")
-                            .font(.subheadline.weight(.semibold))
-                        SprayFieldHelp(
-                            title: "Spray volume basis",
-                            message: SprayVolumeHelp.sprayVolumeBasis
-                        )
-                        Spacer(minLength: 0)
+                // Manual is ALWAYS present, including under a locked profile.
+                // The lock governs which calibrated canopy workflow the
+                // vineyard may use; it has no say over a knapsack job where the
+                // operator already knows the litres in the drum.
+                Picker("Spray volume basis", selection: $carrierBasisChoice) {
+                    ForEach(availableCarrierBases, id: \.self) { basis in
+                        Text(SprayGuidedFormat.volumeSourceLabel(basis)).tag(basis)
                     }
-                    Picker("Spray volume basis", selection: $carrierBasisChoice) {
-                        Text("L/100 m").tag(SprayCarrierBasis.litresPer100Metres)
-                        Text("L/ha").tag(SprayCarrierBasis.litresPerHectare)
-                    }
-                    .pickerStyle(.segmented)
+                }
+                .pickerStyle(.segmented)
+                if flow.isCarrierBasisLocked {
+                    Label(
+                        "This vineyard records calibrated spray volume in "
+                            + "\(SprayGuidedFormat.carrierBasisLabel(flow.profile.defaultCarrierBasis)).",
+                        systemImage: "lock.fill"
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 }
             }
 
-            // A foliar pass is the case the canopy governs, and it gets the
-            // canopy → recommendation → sprayer → concentration sequence. A
-            // spreader has no canopy at all and a banded pass is governed by
-            // its band width, so both keep the existing controls rather than
-            // being asked a question that cannot change their arithmetic.
-            if flow.requiresCanopyConfirmation {
+            // Three paths, and the routing says which question each one asks.
+            //
+            // Manual comes FIRST because it overrides everything else: the
+            // operator has already answered the only question this step has, so
+            // no canopy, no calibrated rate and no row geometry is requested.
+            if flow.effectiveCarrierBasis == .manualTotalVolume {
+                manualTotalWaterFields
+            } else if flow.requiresCanopyConfirmation {
+                // A foliar pass is the case the canopy governs, and it gets the
+                // canopy → recommendation → sprayer → concentration sequence.
                 canopyAndSprayVolumeFields
             } else if flow.effectiveCarrierBasis == .litresPer100Metres {
+                // A spreader has no canopy at all and a banded pass is governed
+                // by its band width, so both keep the existing controls rather
+                // than being asked a question that cannot change their
+                // arithmetic.
                 litresPer100mFields
             } else {
                 waterRateSection
@@ -2909,16 +2927,21 @@ struct SprayCalculatorView: View {
                 Spacer(minLength: 0)
             }
 
-            HStack(spacing: 8) {
+            // Stacked, full width, one per line. Side by side these two chips
+            // shrank to fit and truncated on a standard phone — "Different
+            // sprayer rate" is not a label that survives half a screen width,
+            // and a choice the operator cannot read is a choice they cannot
+            // safely make.
+            VStack(spacing: 8) {
                 GuidedChip(
-                    label: "Use recommended",
+                    label: "Use recommended rate",
                     icon: sprayVolumeChoice == .useRecommended ? "checkmark" : nil,
                     isSelected: sprayVolumeChoice == .useRecommended
                 ) {
                     sprayVolumeChoice = .useRecommended
                 }
                 GuidedChip(
-                    label: "Different sprayer rate",
+                    label: "Set my own rate",
                     icon: sprayVolumeChoice == .useCustomSprayerRate ? "checkmark" : nil,
                     isSelected: sprayVolumeChoice == .useCustomSprayerRate
                 ) {
@@ -3017,6 +3040,93 @@ struct SprayCalculatorView: View {
     /// Ordering is deliberate: canopy → dilute → actual applied → concentration
     /// factor → totals. Each figure appears only after the one it is derived
     /// from.
+    /// The bases the picker may offer.
+    ///
+    /// A locked vineyard still gets Manual — see `SprayCarrierVolumePolicy.allows`.
+    private var availableCarrierBases: [SprayCarrierBasis] {
+        if flow.isCarrierBasisLocked {
+            return [flow.profile.defaultCarrierBasis, .manualTotalVolume]
+        }
+        return [.litresPer100Metres, .litresPerHectare, .manualTotalVolume]
+    }
+
+    /// Manual mode — ONE question, and nothing else.
+    ///
+    /// No canopy, no calibrated rate, no row spacing prompt. Every figure below
+    /// the field is read-only reference derived from geometry that already
+    /// exists; none of it is required, and none of it blocks the job.
+    @ViewBuilder
+    private var manualTotalWaterFields: some View {
+        let carrier = flow.isCarrierResolved ? flow.plan.carrier : nil
+
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 0) {
+                    Text("Total spray water")
+                        .font(.subheadline.weight(.semibold))
+                    SprayFieldHelp(
+                        title: "Total spray water",
+                        message: SprayVolumeHelp.manualTotalWater
+                    )
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: 8) {
+                    TextField("400", text: $manualTotalLitresText)
+                        .keyboardType(.decimalPad)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(Color(.tertiarySystemGroupedBackground))
+                        .clipShape(.rect(cornerRadius: 8))
+                    Text("L")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                Text("The whole job's water — what you'll actually mix. Product rates are dosed against this total.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(12)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(.rect(cornerRadius: 10))
+
+            if let carrier {
+                GuidedCalculatedPanel(title: "Spray volume") {
+                    VStack(spacing: 8) {
+                        GuidedCalculatedRow(
+                            label: "Total spray water",
+                            value: SprayGuidedFormat.litres(carrier.totalLitres),
+                            emphasis: true,
+                            caption: "As entered — not calculated"
+                        )
+                        // Reference only, and labelled as such. These are what
+                        // the stated total WORKS OUT TO over the selected
+                        // blocks; they were not used to arrive at it, and if the
+                        // geometry is missing they simply do not appear.
+                        if let perHectare = carrier.litresPerHectare {
+                            GuidedCalculatedRow(
+                                label: "Works out to",
+                                value: SprayGuidedFormat.litresPerHectare(perHectare),
+                                caption: "Across the selected blocks — for reference"
+                            )
+                        }
+                        if let per100m = carrier.appliedLitresPer100Metres {
+                            GuidedCalculatedRow(
+                                label: "Works out to",
+                                value: SprayGuidedFormat.litresPer100m(per100m),
+                                caption: "Across the selected rows — for reference"
+                            )
+                        }
+                        GuidedCalculatedRow(
+                            label: "Concentration factor",
+                            value: "Not used",
+                            caption: "Manual volume isn't compared to a canopy recommendation"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private var litresPer100mFields: some View {
         let carrier = flow.plan.carrier

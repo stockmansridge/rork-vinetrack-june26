@@ -11,6 +11,24 @@ nonisolated enum SprayCarrierBasis: String, Sendable, Codable, CaseIterable {
     case litresPerHectare = "l_per_ha"
     /// Row-length-based carrier volume — authoritative for NZ/SWNZ workflows.
     case litresPer100Metres = "l_per_100m"
+    /// The operator states the TOTAL water directly.
+    ///
+    /// # Why this is a basis and not a shortcut
+    ///
+    /// A knapsack, a hand-gun or a small tank job does not have a calibrated
+    /// output per hectare or per 100 m — it has a drum with a known number of
+    /// litres in it. Forcing that through the canopy model would make VineTrack
+    /// derive a figure the operator already knows better than it does, and
+    /// would demand row spacing and row length that a hand-spray has no use
+    /// for. Manual is a deliberate bypass of the canopy calculation, not a
+    /// third way of expressing a rate.
+    ///
+    /// It is emphatically NOT "per 100 L" — that is a chemical label rate basis
+    /// and lives on the product, never on the water.
+    case manualTotalVolume = "manual"
+
+    /// True when the canopy model supplies the recommendation for this basis.
+    var usesCanopyRecommendation: Bool { self != .manualTotalVolume }
 }
 
 /// A fully resolved carrier-volume calculation.
@@ -50,6 +68,14 @@ nonisolated struct SprayCarrierVolume: Sendable, Hashable {
     /// Dilute-equivalent litres — the volume a per-100 L label rate is written
     /// against. Equals `totalLitres × concentrationFactor`.
     var diluteEquivalentLitres: Double { totalLitres * concentrationFactor }
+
+    /// True when the concentration factor came from a canopy comparison.
+    ///
+    /// Manual mode carries `1.0` because the arithmetic needs a multiplier, but
+    /// that 1.0 is not a finding — nothing was compared. The UI reads this to
+    /// say "not used" rather than presenting a canopy result that was never
+    /// calculated.
+    var hasCanopyConcentration: Bool { basis.usesCanopyRecommendation }
 }
 
 nonisolated enum SprayCarrierVolumeCalculator {
@@ -154,6 +180,40 @@ nonisolated enum SprayCarrierVolumeCalculator {
             rowLengthMetres: metres,
             areaHectaresUsed: nil,
             rowSpacingMetres: spacing
+        )
+    }
+
+    /// Manual mode — the operator states the total water.
+    ///
+    /// No canopy, no row spacing, no row length. The hectare and per-100 m
+    /// figures are filled in ONLY where the geometry to derive them happens to
+    /// exist, because they are a convenience here rather than an input: nothing
+    /// in this path is calculated from them, and their absence must never block
+    /// a job whose water volume is already known.
+    ///
+    /// The concentration factor is fixed at 1.0. A per-100 L label rate is
+    /// applied against the stated total directly, which is exactly what an
+    /// operator mixing 400 L expects.
+    static func manual(
+        totalLitres: Double,
+        areaHectares: Double? = nil,
+        rowLengthMetres: Double? = nil,
+        rowSpacingMetres: Double? = nil
+    ) -> SprayCarrierVolume? {
+        guard let total = positive(totalLitres) else { return nil }
+        let area = positive(areaHectares)
+        let metres = positive(rowLengthMetres)
+        return SprayCarrierVolume(
+            basis: .manualTotalVolume,
+            totalLitres: total,
+            litresPerHectare: area.map { total / $0 },
+            diluteLitresPer100Metres: nil,
+            appliedLitresPer100Metres: metres.map { total / $0 * 100.0 },
+            diluteLitresPerHectare: nil,
+            concentrationFactor: 1.0,
+            rowLengthMetres: metres,
+            areaHectaresUsed: area,
+            rowSpacingMetres: positive(rowSpacingMetres)
         )
     }
 

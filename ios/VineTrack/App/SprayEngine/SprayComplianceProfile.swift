@@ -26,6 +26,11 @@ nonisolated enum SprayCarrierVolumePolicy: String, Sendable, Codable, CaseIterab
     case either = "either"
 
     func allows(_ basis: SprayCarrierBasis) -> Bool {
+        // Manual is always available. The policy governs which CALIBRATED
+        // canopy workflow a vineyard may use; it has no view on an operator
+        // who already knows they are mixing 400 L in a knapsack, and an SWNZ
+        // vineyard hand-spraying a few vines is not breaching anything.
+        if basis == .manualTotalVolume { return true }
         switch self {
         case .either: return true
         case .litresPerHectareOnly: return basis == .litresPerHectare

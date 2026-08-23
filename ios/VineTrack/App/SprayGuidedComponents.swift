@@ -466,6 +466,16 @@ enum SprayGuidedFormat {
         switch basis {
         case .litresPerHectare: return "L/ha"
         case .litresPer100Metres: return "L/100 m"
+        case .manualTotalVolume: return "L"
+        }
+    }
+
+    /// The picker's own wording for a spray-volume path.
+    static func volumeSourceLabel(_ basis: SprayCarrierBasis) -> String {
+        switch basis {
+        case .litresPerHectare: return "L/ha"
+        case .litresPer100Metres: return "L/100 m"
+        case .manualTotalVolume: return "Manual"
         }
     }
 

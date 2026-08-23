@@ -111,6 +111,13 @@ nonisolated struct SprayVolumeDecision: Sendable, Hashable {
                     litresPer100Metres: rate,
                     rowSpacingMetres: recommendation?.rowSpacingMetres
                 )
+            case .manualTotalVolume:
+                // A manual TOTAL is not a rate per anything. Manual bypasses
+                // this whole decision — the flow returns no decision at all in
+                // that mode — so reaching here means the state is inconsistent,
+                // and inventing a per-hectare figure from a total would be the
+                // worst possible way to recover.
+                return nil
             }
         }
     }
@@ -134,6 +141,8 @@ nonisolated struct SprayVolumeDecision: Sendable, Hashable {
                     litresPerHectare: rate,
                     rowSpacingMetres: recommendation?.rowSpacingMetres
                 )
+            case .manualTotalVolume:
+                return nil
             }
         }
     }
@@ -233,15 +242,37 @@ nonisolated enum SprayVolumeHelp {
         + "rate per 100 L."
 
     static let sprayVolumeBasis = """
-        Choose how your sprayer's application volume is expressed.
+        Choose how this job's spray water is expressed.
 
         L/100 m is the litres applied for each 100 metres of vine row.
 
         L/ha is the litres applied per hectare of vineyard area.
 
-        VineTrack uses row spacing to convert between them where required.
+        Manual is the total litres for the whole job, entered directly — for \
+        knapsack, hand-gun and small tank work where you already know how much \
+        water you are mixing. VineTrack skips the canopy calculation entirely \
+        and doses products against your total.
+
+        VineTrack uses row spacing to convert between L/100 m and L/ha where \
+        required.
 
         This does not change the registered rate or rate basis of any chemical.
+        """
+
+    static let manualTotalWater = """
+        The total litres of water for this whole job — what you will actually \
+        mix and apply.
+
+        Use this for knapsack, hand-gun or small tank work where you already \
+        know the volume. VineTrack will not ask for canopy, row spacing or a \
+        calibrated sprayer rate, because none of them change a total you have \
+        already measured.
+
+        Products registered per 100 L are dosed against this total. There is no \
+        concentration factor, because nothing is being compared to a canopy \
+        recommendation.
+
+        This is the WATER volume, not a chemical label rate.
         """
 
     /// The Unit Canopy Row model, behind the canopy-size info control.
