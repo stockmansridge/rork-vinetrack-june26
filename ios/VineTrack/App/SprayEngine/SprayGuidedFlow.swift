@@ -220,8 +220,12 @@ nonisolated struct SprayGuidedInputs: Sendable {
     var canopyWaterRates: CanopyWaterRateEntry = .defaults
     /// Whether the sprayer applies the recommended dilute volume, or its own.
     var sprayVolumeChoice: SprayVolumeChoice = .undecided
-    /// The machine's calibrated output, L/ha. Retained across canopy changes.
-    var customSprayerLitresPerHectare: Double?
+    /// The machine's calibrated output, as typed. Retained across canopy
+    /// changes so re-choosing a canopy never wipes the operator's figure.
+    var customSprayerRate: Double?
+    /// The unit `customSprayerRate` was entered in — normally the vineyard's
+    /// spray volume basis. One value, one unit, converted centrally.
+    var customSprayerBasis: SprayCarrierBasis = .litresPerHectare
 
     var carrierBasis: SprayCarrierBasis = .litresPerHectare
     /// L/ha mode: the rate the operator entered.
@@ -335,7 +339,8 @@ nonisolated struct SprayGuidedFlow: Sendable {
             settings: inputs.canopyWaterRates,
             rowSpacingMetres: geometry.uniformRowSpacingMetres,
             choice: inputs.sprayVolumeChoice,
-            customLitresPerHectare: inputs.customSprayerLitresPerHectare
+            customRate: inputs.customSprayerRate,
+            customBasis: inputs.customSprayerBasis
         )
     }
 
@@ -544,6 +549,18 @@ nonisolated struct SprayGuidedFlow: Sendable {
             // Asked only once the canopy can actually recommend something —
             // there is nothing to accept or override before that.
             if isSprayVolumeChoiceOutstanding { return .sprayVolumeChoiceRequired }
+            // A resolved volume decision IS the carrier volume, so the step is
+            // done. Falling through to the legacy `litresPerHectare` /
+            // `appliedLitresPer100Metres` fields asked for the same decision a
+            // second time in a field the new path never fills: the operator
+            // entered 600 L/ha, saw the actual output and CF 1.19× render
+            // correctly, and was still told "Enter carrier volume" with Products
+            // locked. The fix is to stop asking twice — NOT to copy the value
+            // into the old fields, which would put the same decision in two
+            // places and invite them to disagree.
+            if let decision = volumeDecision, decision.isResolved {
+                return isCarrierResolved ? nil : .carrierNotCalculable
+            }
             switch effectiveCarrierBasis {
             case .litresPerHectare:
                 guard Self.positive(inputs.litresPerHectare) != nil else { return .carrierRateRequired }

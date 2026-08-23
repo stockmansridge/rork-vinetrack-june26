@@ -63,10 +63,18 @@ nonisolated enum SprayVolumeChoice: String, Sendable, Hashable, Codable, CaseIte
 nonisolated struct SprayVolumeDecision: Sendable, Hashable {
     let recommendation: SprayCanopyRecommendation?
     let choice: SprayVolumeChoice
-    /// The operator's own sprayer output, in L/ha. Retained even while
-    /// `choice` is `.useRecommended`, so switching back and forth does not
-    /// destroy a number they typed.
-    let customLitresPerHectare: Double?
+    /// The operator's own sprayer output, as typed — ONE number.
+    ///
+    /// Retained even while `choice` is `.useRecommended`, so switching back and
+    /// forth does not destroy a figure they entered.
+    let customRate: Double?
+    /// The unit `customRate` was entered in.
+    ///
+    /// Held beside the value rather than as a second field, because 600 L/ha
+    /// and 16.8 L/100 m at 2.8 m spacing are the SAME sprayer output. Keeping
+    /// an independent number per basis would let the two drift, and the
+    /// operator would have no way to tell which one the tank was mixed from.
+    let customBasis: SprayCarrierBasis
 
     // MARK: - Recommended (CF 1.00 reference)
 
@@ -94,7 +102,16 @@ nonisolated struct SprayVolumeDecision: Sendable, Hashable {
         case .useRecommended:
             return recommendedLitresPerHectare
         case .useCustomSprayerRate:
-            return positive(customLitresPerHectare)
+            guard let rate = positive(customRate) else { return nil }
+            switch customBasis {
+            case .litresPerHectare:
+                return rate
+            case .litresPer100Metres:
+                return SprayCarrierConversion.litresPerHectare(
+                    litresPer100Metres: rate,
+                    rowSpacingMetres: recommendation?.rowSpacingMetres
+                )
+            }
         }
     }
 
@@ -108,11 +125,16 @@ nonisolated struct SprayVolumeDecision: Sendable, Hashable {
             // an unknown row spacing still yields a usable row-length figure.
             return recommendedLitresPer100Metres
         case .useCustomSprayerRate:
-            guard let perHa = positive(customLitresPerHectare) else { return nil }
-            return SprayCarrierConversion.litresPer100Metres(
-                litresPerHectare: perHa,
-                rowSpacingMetres: recommendation?.rowSpacingMetres
-            )
+            guard let rate = positive(customRate) else { return nil }
+            switch customBasis {
+            case .litresPer100Metres:
+                return rate
+            case .litresPerHectare:
+                return SprayCarrierConversion.litresPer100Metres(
+                    litresPerHectare: rate,
+                    rowSpacingMetres: recommendation?.rowSpacingMetres
+                )
+            }
         }
     }
 
@@ -178,7 +200,8 @@ nonisolated enum SprayVolumeDecisionResolver {
         settings: CanopyWaterRateEntry,
         rowSpacingMetres: Double?,
         choice: SprayVolumeChoice,
-        customLitresPerHectare: Double?
+        customRate: Double?,
+        customBasis: SprayCarrierBasis
     ) -> SprayVolumeDecision {
         SprayVolumeDecision(
             recommendation: recommendation(
@@ -187,7 +210,8 @@ nonisolated enum SprayVolumeDecisionResolver {
                 rowSpacingMetres: rowSpacingMetres
             ),
             choice: choice,
-            customLitresPerHectare: customLitresPerHectare
+            customRate: customRate,
+            customBasis: customBasis
         )
     }
 }
@@ -207,4 +231,37 @@ nonisolated enum SprayVolumeHelp {
     static let concentrationFactor = "Compares the recommended dilute volume with the volume "
         + "your sprayer will actually apply. It is used to adjust products registered at a "
         + "rate per 100 L."
+
+    static let sprayVolumeBasis = """
+        Choose how your sprayer's application volume is expressed.
+
+        L/100 m is the litres applied for each 100 metres of vine row.
+
+        L/ha is the litres applied per hectare of vineyard area.
+
+        VineTrack uses row spacing to convert between them where required.
+
+        This does not change the registered rate or rate basis of any chemical.
+        """
+
+    /// The Unit Canopy Row model, behind the canopy-size info control.
+    ///
+    /// The AWRI diagram's printed per-hectare ranges are named as INDICATIVE
+    /// here on purpose. They assume roughly 3 m rows and are rounded, so a
+    /// 2.8 m vineyard reading them as a target would carry the wrong water.
+    /// VineTrack derives the hectare figure from this block's own spacing.
+    static let unitCanopyRow = """
+        The canopy water rate is based on the Unit Canopy Row (UCR): a one-metre \
+        by one-metre cross-section of canopy along 100 metres of row.
+
+        Choose the picture whose canopy cross-section most closely matches the \
+        block you are spraying. This describes the canopy, not the vineyard area.
+
+        The AWRI diagram also shows indicative per-hectare ranges based on \
+        approximately 3 m row spacing. VineTrack instead calculates the \
+        equivalent from this vineyard's actual row spacing.
+        """
+
+    /// The bundled UCR diagram shown alongside `unitCanopyRow`.
+    static let unitCanopyRowImageName = "canopy-ucr"
 }

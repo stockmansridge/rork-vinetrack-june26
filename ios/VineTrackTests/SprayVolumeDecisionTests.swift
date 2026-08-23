@@ -47,14 +47,16 @@ struct SprayVolumeDecisionTests {
     private func decision(
         canopy: SprayCanopySelection,
         choice: SprayVolumeChoice,
-        custom: Double? = nil
+        custom: Double? = nil,
+        customBasis: SprayCarrierBasis = .litresPerHectare
     ) -> SprayVolumeDecision {
         SprayVolumeDecisionResolver.decide(
             canopy: canopy,
             settings: .defaults,
             rowSpacingMetres: spacing,
             choice: choice,
-            customLitresPerHectare: custom
+            customRate: custom,
+            customBasis: customBasis
         )
     }
 
@@ -71,7 +73,8 @@ struct SprayVolumeDecisionTests {
         inputs.canopy = canopy
         inputs.canopyWaterRates = .defaults
         inputs.sprayVolumeChoice = choice
-        inputs.customSprayerLitresPerHectare = custom
+        inputs.customSprayerRate = custom
+        inputs.customSprayerBasis = basis
         inputs.carrierBasis = basis
         inputs.products = products
         return SprayGuidedFlow(inputs: inputs)
@@ -391,6 +394,189 @@ struct SprayVolumeDecisionTests {
         #expect(decoded.density == .high)
         #expect(decoded.isConfirmed)
         #expect(decoded.litresPer100m() == 45)
+    }
+
+    // MARK: - AWRI matrices, derived at 2.8 m
+
+    /// The AWRI L/100 m table is the ONLY lookup. Every hectare figure below is
+    /// derived from this vineyard's own 2.8 m spacing, not read from the
+    /// diagram's printed L/ha ranges — those assume roughly 3 m rows and are
+    /// rounded, so at 2.8 m they would carry the wrong water.
+    @Test("VSP: every combination derives the expected L/ha at 2.8 m")
+    func vspDerivedHectareMatrix() {
+        let expected: [(CanopySize, CanopyDensity, Double, Double)] = [
+            (.small, .low, 10, 357.142857),
+            (.small, .high, 20, 714.285714),
+            (.medium, .low, 20, 714.285714),
+            (.medium, .high, 40, 1_428.571429),
+            (.large, .low, 30, 1_071.428571),
+            (.large, .high, 45, 1_607.142857),
+            (.full, .low, 45, 1_607.142857),
+            (.full, .high, 75, 2_678.571429)
+        ]
+        for (size, density, per100m, perHa) in expected {
+            let result = decision(
+                canopy: canopy(type: .vsp, size: size, density: density),
+                choice: .useRecommended
+            )
+            #expect(result.recommendedLitresPer100Metres == per100m)
+            #expect(isClose(result.recommendedLitresPerHectare, perHa, tolerance: 0.000_1))
+        }
+    }
+
+    @Test("Sprawl: every combination derives the expected L/ha at 2.8 m")
+    func sprawlDerivedHectareMatrix() {
+        let expected: [(CanopySize, CanopyDensity, Double, Double)] = [
+            (.small, .low, 10, 357.142857),
+            (.small, .high, 20, 714.285714),
+            (.medium, .low, 20, 714.285714),
+            (.medium, .high, 40, 1_428.571429),
+            (.large, .low, 45, 1_607.142857),
+            (.large, .high, 60, 2_142.857143),
+            (.full, .low, 60, 2_142.857143),
+            (.full, .high, 90, 3_214.285714)
+        ]
+        for (size, density, per100m, perHa) in expected {
+            let result = decision(
+                canopy: canopy(type: .sprawl, size: size, density: density),
+                choice: .useRecommended
+            )
+            #expect(result.recommendedLitresPer100Metres == per100m)
+            #expect(isClose(result.recommendedLitresPerHectare, perHa, tolerance: 0.000_1))
+        }
+    }
+
+    /// A second, spacing-independent lookup would show the same L/ha at every
+    /// row spacing. Changing the spacing must change the answer.
+    @Test("No printed L/ha table drives the calculation")
+    func hectareFiguresAreDerivedNotLookedUp() {
+        let at2point8 = SprayVolumeDecisionResolver.decide(
+            canopy: canopy(),
+            settings: .defaults,
+            rowSpacingMetres: 2.8,
+            choice: .useRecommended,
+            customRate: nil,
+            customBasis: .litresPerHectare
+        )
+        let at3 = SprayVolumeDecisionResolver.decide(
+            canopy: canopy(),
+            settings: .defaults,
+            rowSpacingMetres: 3.0,
+            choice: .useRecommended,
+            customRate: nil,
+            customBasis: .litresPerHectare
+        )
+        // Same canopy, same 20 L/100 m — different vineyards.
+        #expect(at2point8.recommendedLitresPer100Metres == at3.recommendedLitresPer100Metres)
+        #expect(isClose(at2point8.recommendedLitresPerHectare, 714.285714, tolerance: 0.000_1))
+        #expect(isClose(at3.recommendedLitresPerHectare, 666.666667, tolerance: 0.000_1))
+    }
+
+    // MARK: - Test case 2. Canopy type reaches the water-rate engine
+
+    @Test("VSP Large Low → Sprawl Large Low changes the recommendation")
+    func canopyTypeReachesTheEngine() {
+        var selection = canopy(type: .vsp, size: .large, density: .low)
+        let vsp = decision(canopy: selection, choice: .useRecommended)
+        #expect(vsp.recommendedLitresPer100Metres == 30)
+        #expect(isClose(vsp.recommendedLitresPerHectare, 1_071.428571, tolerance: 0.000_1))
+
+        // ONLY the training system changes.
+        selection.choose(type: .sprawl)
+        let sprawl = decision(canopy: selection, choice: .useRecommended)
+        #expect(sprawl.recommendedLitresPer100Metres == 45)
+        #expect(isClose(sprawl.recommendedLitresPerHectare, 1_607.142857, tolerance: 0.000_1))
+
+        #expect(CanopyWaterRate.litresPer100m(type: .vsp, size: .full, density: .high) == 75)
+        #expect(CanopyWaterRate.litresPer100m(type: .sprawl, size: .full, density: .high) == 90)
+    }
+
+    // MARK: - Test case 1. The false "Enter carrier volume" blocker
+
+    /// The TestFlight defect: the calculation accepted 600 L/ha and rendered
+    /// CF 1.19×, while validation still demanded a carrier volume and kept
+    /// Products locked — because it fell through to the legacy
+    /// `litresPerHectare` field the new path never fills.
+    @Test("A custom sprayer rate resolves Step 6 and unlocks Products")
+    func customRateResolvesStepSix() throws {
+        let built = flow(canopy: canopy(), choice: .useCustomSprayerRate, custom: 600)
+        let decided = try #require(built.volumeDecision)
+
+        #expect(decided.actualLitresPerHectare == 600)
+        #expect(isClose(decided.actualLitresPer100Metres, 16.8, tolerance: 0.000_1))
+        #expect(isClose(decided.concentrationFactor, 1.190_476, tolerance: 0.000_01))
+        #expect(decided.isResolved)
+
+        // The step is DONE, with no lingering carrier prompt...
+        #expect(built.blocker(for: .carrier) == nil)
+        #expect(built.isComplete(.carrier))
+        // ...and the legacy fields are still empty, proving the fix is not a
+        // quiet copy of the value into a second home.
+        #expect(built.inputs.litresPerHectare == nil)
+        #expect(built.inputs.appliedLitresPer100Metres == nil)
+        // Products unlock.
+        #expect(built.isUnlocked(.products))
+        #expect(built.blocker(for: .products) == .noProductsAdded)
+    }
+
+    /// 600 L/ha and 16.8 L/100 m at 2.8 m are the SAME sprayer output, so
+    /// entering either must produce the same job.
+    @Test("The sprayer output is one value, expressible in either basis")
+    func sprayerOutputIsOneValue() throws {
+        let perHa = flow(
+            canopy: canopy(),
+            choice: .useCustomSprayerRate,
+            custom: 600,
+            basis: .litresPerHectare
+        )
+        let per100m = flow(
+            canopy: canopy(),
+            choice: .useCustomSprayerRate,
+            custom: 16.8,
+            basis: .litresPer100Metres
+        )
+        let a = try #require(perHa.volumeDecision)
+        let b = try #require(per100m.volumeDecision)
+
+        #expect(isClose(a.actualLitresPer100Metres, 16.8, tolerance: 0.000_1))
+        #expect(isClose(b.actualLitresPerHectare, 600, tolerance: 0.000_1))
+        #expect(isClose(a.concentrationFactor, b.concentrationFactor, tolerance: 0.000_001))
+        #expect(isClose(
+            perHa.plan.carrier.totalLitres,
+            per100m.plan.carrier.totalLitres,
+            tolerance: 0.01
+        ))
+        #expect(perHa.isComplete(.carrier))
+        #expect(per100m.isComplete(.carrier))
+    }
+
+    /// Non-canopy flows still genuinely need the explicit carrier fields, and
+    /// must keep asking for them.
+    @Test("A non-canopy flow still requires its explicit carrier volume")
+    func nonCanopyFlowsStillRequireCarrier() {
+        var inputs = SprayGuidedInputs()
+        inputs.operationType = .spreader
+        inputs.blocks = blocks
+        inputs.carrierBasis = .litresPerHectare
+        #expect(SprayGuidedFlow(inputs: inputs).blocker(for: .carrier) == .carrierRateRequired)
+    }
+
+    // MARK: - Section navigation
+
+    /// Completion and expansion are separate concerns. The flow reports what is
+    /// complete and what is unlocked; it deliberately has no say in which
+    /// section is on screen, which is what stopped the calculator collapsing a
+    /// section under the operator the instant they finished answering it.
+    @Test("Completing a step unlocks the next without demanding focus")
+    func completionDoesNotMoveTheOperator() {
+        let built = flow(canopy: canopy(), choice: .useCustomSprayerRate, custom: 600)
+        #expect(built.isComplete(.carrier))
+        #expect(built.isUnlocked(.products))
+        // `activeStep` still reports the next outstanding step — it is advice
+        // for the initial seed, and the view no longer follows it on every
+        // change.
+        #expect(built.activeStep == .products)
+        #expect(!built.isComplete)
     }
 
     /// Existing users have a persisted settings blob with the eight VSP keys and

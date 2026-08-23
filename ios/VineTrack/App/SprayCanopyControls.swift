@@ -1,16 +1,36 @@
 import SwiftUI
 
-/// A short explanation behind the app's existing info affordance.
+/// A short explanation behind the app's info affordance.
 ///
-/// Matches the pattern already used by the Irrigation recommendation screen: a
-/// small `info.circle` button that presents a compact popover. Kept as one
-/// component so the wording lives beside the field it explains and the screen
-/// stays free of permanent explanatory paragraphs.
+/// # Why this is a sheet on iPhone
+///
+/// It was a popover forced into compact width with
+/// `.presentationCompactAdaptation(.popover)`. On a phone that renders a small
+/// fixed-width bubble, and anything longer than a line or two was clipped — the
+/// spray-volume-basis explanation lost most of its text, and larger Dynamic
+/// Type sizes truncated even the short ones. Help that cannot be read is worse
+/// than no help: the operator has already spent the tap.
+///
+/// So compact width gets a native sheet — full title, wrapped body, scrollable
+/// when it needs to be, dismissible like every other sheet. Regular width
+/// (iPad) keeps a popover, where there is genuinely room for one.
 struct SprayFieldHelp: View {
     let title: String
     let message: String
+    /// An optional bundled diagram shown above the text — the UCR model, for
+    /// the canopy-size control.
+    var imageName: String?
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var isPresented: Bool = false
+
+    init(title: String, message: String, imageName: String? = nil) {
+        self.title = title
+        self.message = message
+        self.imageName = imageName
+    }
+
+    private var isCompact: Bool { horizontalSizeClass == .compact }
 
     var body: some View {
         Button {
@@ -24,18 +44,74 @@ struct SprayFieldHelp: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("About \(title)")
-        .popover(isPresented: $isPresented) {
-            VStack(alignment: .leading, spacing: 8) {
+        .sheet(isPresented: $isPresented) {
+            if isCompact {
+                compactSheet
+            } else {
+                regularPopoverBody
+            }
+        }
+    }
+
+    /// iPhone. A real sheet, so the text has the width of the screen and can
+    /// scroll rather than being cut off.
+    private var compactSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    diagram
+                    Text(message)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(20)
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { isPresented = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        // Without this a drag inside the scroll view resizes the sheet instead
+        // of scrolling the text it was trying to read.
+        .presentationContentInteraction(.scrolls)
+    }
+
+    /// iPad, where a popover genuinely fits.
+    private var regularPopoverBody: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
                 Text(title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.headline)
+                diagram
                 Text(message)
-                    .font(.caption)
+                    .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(16)
-            .frame(maxWidth: 280)
-            .presentationCompactAdaptation(.popover)
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(minWidth: 360, minHeight: 260)
+        .presentationCompactAdaptation(.popover)
+    }
+
+    @ViewBuilder
+    private var diagram: some View {
+        if let imageName, UIImage(named: imageName) != nil {
+            Image(imageName)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .frame(maxHeight: 160)
+                .padding(8)
+                .background(Color.white)
+                .clipShape(.rect(cornerRadius: 8))
         }
     }
 }
@@ -145,7 +221,20 @@ struct SprayCanopyControls: View {
 
     private func canopySizeSection(type: CanopyType) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            SprayFieldLabel(text: "Canopy Size", help: CanopySize.help)
+            HStack(spacing: 0) {
+                Text("Canopy Size")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                // Carries the UCR diagram: the size question is really "which
+                // one-metre canopy cross-section matches your block", and the
+                // picture explains that far faster than the sentence does.
+                SprayFieldHelp(
+                    title: "Canopy size",
+                    message: SprayVolumeHelp.unitCanopyRow,
+                    imageName: SprayVolumeHelp.unitCanopyRowImageName
+                )
+                Spacer(minLength: 0)
+            }
             Picker("Canopy Size", selection: sizeBinding) {
                 ForEach(CanopySize.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }

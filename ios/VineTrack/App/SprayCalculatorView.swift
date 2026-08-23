@@ -98,6 +98,9 @@ struct SprayCalculatorView: View {
     /// The section the operator has explicitly opened. `nil` follows the flow's
     /// own `activeStep`, so the screen advances by itself as decisions are made.
     @State private var openedStep: SprayGuidedStep?
+    /// Whether the initial section has been opened. Guards a one-time seed, so
+    /// a redraw cannot re-open a section the operator deliberately closed.
+    @State private var hasSeededOpenedStep: Bool = false
 
     // UI
     @State private var isPaddocksExpanded: Bool = true
@@ -491,9 +494,13 @@ struct SprayCalculatorView: View {
         inputs.canopy = canopy
         inputs.canopyWaterRates = store.settings.canopyWaterRates
         inputs.sprayVolumeChoice = sprayVolumeChoice
-        inputs.customSprayerLitresPerHectare = Double(
+        inputs.customSprayerRate = Double(
             customSprayerRateText.trimmingCharacters(in: .whitespaces)
         )
+        // The figure is entered in whichever unit the operator chose for spray
+        // volume, and converted centrally. There is one sprayer output, not an
+        // L/ha one and an L/100 m one that could disagree.
+        inputs.customSprayerBasis = flow.effectiveCarrierBasis
         inputs.carrierBasis = carrierBasisChoice
         inputs.litresPerHectare = Double(sprayRateText)
         // The canopy's dilute demand, stated per hectare. The SAME canopy
@@ -608,15 +615,36 @@ struct SprayCalculatorView: View {
         )
     }
 
-    /// The section currently expanded: the operator's explicit choice, otherwise
-    /// whatever the flow says still needs attention.
-    private var expandedStep: SprayGuidedStep {
-        openedStep ?? flow.activeStep
+    /// The section currently expanded — the operator's choice, and ONLY the
+    /// operator's choice.
+    ///
+    /// # Why this no longer falls back to `flow.activeStep`
+    ///
+    /// It used to read `openedStep ?? flow.activeStep`, so whenever nothing was
+    /// explicitly open the screen followed whichever step the flow considered
+    /// outstanding. `activeStep` moves the instant a step validates — which is
+    /// the moment the operator finishes answering it. Confirming a canopy,
+    /// entering a sprayer rate or tapping a product rate therefore collapsed
+    /// the section under their hands and opened the next one, mid-task.
+    ///
+    /// Completion and expansion are now separate concerns: `SprayGuidedFlow`
+    /// still decides what is complete and what is unlocked, and this decides
+    /// what is on screen. The one-time seed below is the only place they meet.
+    private var expandedStep: SprayGuidedStep? {
+        openedStep
+    }
+
+    /// Opens the first outstanding step, once per session.
+    private func seedOpenedStepIfNeeded() {
+        guard !hasSeededOpenedStep else { return }
+        hasSeededOpenedStep = true
+        openedStep = flow.activeStep
     }
 
     private func toggle(_ step: SprayGuidedStep) {
         withAnimation(.spring(duration: 0.3)) {
-            openedStep = expandedStep == step ? nil : step
+            // Tapping the open section closes it. Nothing reopens on its own.
+            openedStep = openedStep == step ? nil : step
         }
     }
 
@@ -697,6 +725,7 @@ struct SprayCalculatorView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 32)
             }
+            .onAppear { seedOpenedStepIfNeeded() }
             .scrollDismissesKeyboard(.interactively)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Spray Calculator")
@@ -2217,12 +2246,10 @@ struct SprayCalculatorView: View {
 
             // Leaving Products is the operator's move, never the form's.
             //
-            // The screen expands whichever step the flow reports as active, so
-            // the moment the last product resolved, Products became complete,
-            // Review became active, and the section the operator was working in
-            // collapsed underneath them — mid-task, after a single tap on a
-            // rate. Adding a second chemical then meant going back to a step
-            // they had not chosen to leave.
+            // Expansion no longer follows `flow.activeStep` at all, so this
+            // button is the only thing that moves the screen forward. Adding a
+            // second chemical, or changing a rate, leaves the operator exactly
+            // where they were.
             Button {
                 withAnimation(.spring(duration: 0.3)) { openedStep = .review }
             } label: {
@@ -2242,10 +2269,6 @@ struct SprayCalculatorView: View {
             .disabled(!flow.isComplete(.products))
             .padding(.top, 4)
         }
-        // Pins the section open for as long as the operator is working in it.
-        // Without this the `openedStep ?? flow.activeStep` fallback moves the
-        // expansion the instant Products validates.
-        .onAppear { if openedStep == nil { openedStep = .products } }
     }
 
 
@@ -2713,17 +2736,37 @@ struct SprayCalculatorView: View {
             // Only offer a choice when the vineyard profile genuinely allows one.
             // An NZ/SWNZ vineyard is locked to L/100 m and sees no L/ha option.
             if flow.isCarrierBasisLocked {
-                Label(
-                    "This vineyard records carrier volume in \(SprayGuidedFormat.carrierBasisLabel(flow.effectiveCarrierBasis)).",
-                    systemImage: "lock.fill"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                HStack(spacing: 0) {
+                    Label(
+                        "This vineyard records spray volume in \(SprayGuidedFormat.carrierBasisLabel(flow.effectiveCarrierBasis)).",
+                        systemImage: "lock.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    SprayFieldHelp(
+                        title: "Spray volume basis",
+                        message: SprayVolumeHelp.sprayVolumeBasis
+                    )
+                    Spacer(minLength: 0)
+                }
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Carrier volume basis")
-                        .font(.subheadline.weight(.semibold))
-                    Picker("Carrier basis", selection: $carrierBasisChoice) {
+                    // "Spray volume", not "carrier volume" — and deliberately
+                    // NOT "rate per 100 L" / "rate per ha". These are units of
+                    // WATER. A product's registered rate basis is a different
+                    // question answered inside Products, and naming the two
+                    // controls alike is how an operator comes to believe that
+                    // choosing L/ha here changed their label's rate basis.
+                    HStack(spacing: 0) {
+                        Text("Spray volume basis")
+                            .font(.subheadline.weight(.semibold))
+                        SprayFieldHelp(
+                            title: "Spray volume basis",
+                            message: SprayVolumeHelp.sprayVolumeBasis
+                        )
+                        Spacer(minLength: 0)
+                    }
+                    Picker("Spray volume basis", selection: $carrierBasisChoice) {
                         Text("L/100 m").tag(SprayCarrierBasis.litresPer100Metres)
                         Text("L/ha").tag(SprayCarrierBasis.litresPerHectare)
                     }
@@ -2778,7 +2821,7 @@ struct SprayCalculatorView: View {
 
             if let decision, let recommendation = decision.recommendation {
                 recommendedVolumePanel(recommendation)
-                sprayVolumeChoiceControls
+                sprayVolumeChoiceControls(decision)
                 if decision.isResolved {
                     concentrationFactorPanel(decision)
                 }
@@ -2825,10 +2868,28 @@ struct SprayCalculatorView: View {
         }
     }
 
+    /// The same sprayer output stated in the other unit — derived, never a
+    /// second thing the operator maintains.
+    private func equivalentOutputCaption(
+        _ decision: SprayVolumeDecision,
+        isPerHectare: Bool
+    ) -> String {
+        if isPerHectare {
+            guard let per100m = decision.actualLitresPer100Metres else {
+                return "Equivalent per 100 m needs one matching row spacing."
+            }
+            return "Equivalent: \(SprayGuidedFormat.litresPer100m(per100m))"
+        }
+        guard let perHa = decision.actualLitresPerHectare else {
+            return "Equivalent per hectare needs one matching row spacing."
+        }
+        return "Equivalent: \(SprayGuidedFormat.litresPerHectare(perHa))"
+    }
+
     /// "Spray at the recommended volume?" — exactly two answers, neither
     /// pre-selected.
     @ViewBuilder
-    private var sprayVolumeChoiceControls: some View {
+    private func sprayVolumeChoiceControls(_ decision: SprayVolumeDecision) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 0) {
                 Text("Spray at the recommended volume?")
@@ -2858,22 +2919,33 @@ struct SprayCalculatorView: View {
             }
 
             if sprayVolumeChoice == .useCustomSprayerRate {
+                // Entered in the vineyard's own spray volume basis. One number,
+                // one unit — the equivalent in the other unit is derived below
+                // rather than kept as a second editable field.
+                let isPerHectare = flow.effectiveCarrierBasis == .litresPerHectare
                 VStack(alignment: .leading, spacing: 6) {
                     Text("What is your sprayer set to apply?")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     HStack(spacing: 8) {
-                        TextField("600", text: $customSprayerRateText)
+                        TextField(isPerHectare ? "600" : "16.8", text: $customSprayerRateText)
                             .keyboardType(.decimalPad)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
                             .background(Color(.tertiarySystemGroupedBackground))
                             .clipShape(.rect(cornerRadius: 8))
-                        Text("L/ha").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        Text(SprayGuidedFormat.carrierBasisLabel(flow.effectiveCarrierBasis))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
                     }
                     Text("Your machine's calibrated water rate — not the chemical label rate.")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
+                    if decision.isResolved {
+                        Text(equivalentOutputCaption(decision, isPerHectare: isPerHectare))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
             }
         }
