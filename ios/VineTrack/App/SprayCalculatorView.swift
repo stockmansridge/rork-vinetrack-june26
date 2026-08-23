@@ -3320,6 +3320,126 @@ private struct CalcChemicalLineCard: View {
         offeredRates.first { $0.id == line.selectedRateId }
     }
 
+    // MARK: - P6 — rate basis as a primary control
+
+    /// True when a GRAPEVINE registered use states a real per-100 L rate.
+    ///
+    /// This is the whole 100 m recommendation rule. A per-100 L rate is what
+    /// makes the dilute/runoff calculation lawful: litres per 100 m of row come
+    /// from the canopy, and the label's concentration turns those litres into
+    /// product. A per-hectare rate contains no concentration, so deriving a
+    /// per-100 L figure from one would be inventing a label rate that the
+    /// regulator never approved.
+    private var hasGenuinePer100LVineyardRate: Bool {
+        offeredRates.contains { $0.isSelectable && $0.basis == .per100Litres }
+    }
+
+    private var hasGenuinePerHectareVineyardRate: Bool {
+        offeredRates.contains { $0.isSelectable && $0.basis == .perHectare }
+    }
+
+    /// 100 m is recommended only where the label supports it.
+    private var recommendsHundredMetres: Bool { hasGenuinePer100LVineyardRate }
+
+    /// Move the line onto a basis by selecting a rate that genuinely states it.
+    ///
+    /// Deliberately a no-op when no offered rate carries the basis: flipping
+    /// `line.basis` on its own would reinterpret the CURRENT rate under a
+    /// different denominator, which is exactly the cross-conversion this
+    /// control exists to prevent.
+    private func selectBasis(_ basis: ChemicalRateBasis) {
+        guard let rate = offeredRates.first(where: { $0.isSelectable && $0.basis == basis })
+        else { return }
+        line.selectedRateId = rate.id
+        line.basis = basis
+    }
+
+    /// The large `[ 100 m — Recommended ] [ Per ha ]` control.
+    ///
+    /// Replaces a caption-sized capsule that read "Per Ha"/"Per 100L". Which
+    /// denominator a spray is calculated on changes the amount of product in
+    /// the tank, so it is not a detail to be tucked beside a delete button.
+    @ViewBuilder
+    private var rateBasisControl: some View {
+        let current = selectedOfferedRate?.basis ?? line.basis
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Application basis")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                basisOption(
+                    .per100Litres,
+                    title: "100 m",
+                    isCurrent: current == .per100Litres,
+                    isAvailable: hasGenuinePer100LVineyardRate,
+                    isRecommended: recommendsHundredMetres
+                )
+                basisOption(
+                    .perHectare,
+                    title: "Per ha",
+                    isCurrent: current == .perHectare,
+                    isAvailable: hasGenuinePerHectareVineyardRate,
+                    isRecommended: !recommendsHundredMetres && hasGenuinePerHectareVineyardRate
+                )
+            }
+
+            if !hasGenuinePer100LVineyardRate {
+                Text("This label states no per-100 L grapevine rate, so a 100 m "
+                     + "volume cannot be calculated from it.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private func basisOption(
+        _ basis: ChemicalRateBasis,
+        title: String,
+        isCurrent: Bool,
+        isAvailable: Bool,
+        isRecommended: Bool
+    ) -> some View {
+        Button {
+            selectBasis(basis)
+        } label: {
+            VStack(spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                if isRecommended {
+                    Text("Recommended")
+                        .font(.caption2)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 44)
+            .background(
+                isCurrent
+                    ? VineyardTheme.leafGreen.opacity(0.18)
+                    : Color(.tertiarySystemGroupedBackground)
+            )
+            .foregroundStyle(isCurrent ? VineyardTheme.leafGreen : Color.secondary)
+            .clipShape(.rect(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(
+                        isCurrent ? VineyardTheme.leafGreen : Color.clear,
+                        lineWidth: 1.5
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!isAvailable)
+        .opacity(isAvailable ? 1 : 0.4)
+        .accessibilityLabel(
+            isRecommended ? "\(title), recommended" : title
+        )
+    }
+
     /// Offered rates grouped by the registered use they belong to.
     ///
     /// A rate detached from its crop and target is just a number, so the menu
@@ -3389,76 +3509,78 @@ private struct CalcChemicalLineCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Image(systemName: "flask.fill")
-                    .foregroundStyle(VineyardTheme.leafGreen)
-                    .font(.subheadline)
-                Text(selectedChemical?.name ?? "Select Chemical")
-                    .font(.subheadline.weight(.semibold))
-                if let chem = selectedChemical,
-                   let url = Self.normalizedLabelURL(chem.labelURL) {
-                    Button {
-                        #if DEBUG
-                        print("[SprayCalc] open label url=\(url.absoluteString) for chem=\(chem.name)")
-                        #endif
-                        openURL(url) { accepted in
-                            #if DEBUG
-                            print("[SprayCalc] openURL accepted=\(accepted) url=\(url.absoluteString)")
-                            #endif
+            // P5 — ROW 1: the product name owns the full card width.
+            //
+            // "DITHANE RAINSHIELD NEO TEC FUNGICIDE" was being squeezed into
+            // whatever space the label, product-page, basis and remove controls
+            // left over, which on a phone is a narrow column that truncates the
+            // one string identifying what is about to be sprayed. Actions moved
+            // to their own row below; the name is never shrunk to fit them.
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "flask.fill")
+                        .foregroundStyle(VineyardTheme.leafGreen)
+                        .font(.subheadline)
+                    Text(selectedChemical?.name ?? "Select Chemical")
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                // P5 — ROW 2: actions.
+                HStack(spacing: 2) {
+                    if let chem = selectedChemical,
+                       let url = Self.normalizedLabelURL(chem.labelURL) {
+                        Button {
+                            openURL(url)
+                        } label: {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .font(.subheadline)
+                                .foregroundStyle(VineyardTheme.olive)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Open chemical label")
+                    }
+                    if let chem = selectedChemical,
+                       let url = Self.normalizedLabelURL(chem.productURL) {
+                        Button {
+                            openURL(url)
+                        } label: {
+                            Image(systemName: "globe")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Open product page (not the official label)")
+                    }
+                    Spacer(minLength: 0)
+                    Button(role: .destructive) {
+                        onDelete()
                     } label: {
-                        Image(systemName: "doc.text.magnifyingglass")
-                            .font(.subheadline)
-                            .foregroundStyle(VineyardTheme.olive)
-                            .padding(6)
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.tertiary)
+                            .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Open chemical label")
-                }
-                if let chem = selectedChemical,
-                   let url = Self.normalizedLabelURL(chem.productURL) {
-                    Button {
-                        openURL(url)
-                    } label: {
-                        Image(systemName: "globe")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .padding(6)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Open product page (not the official label)")
-                }
-                Spacer()
-                if !offeredRates.isEmpty {
-                    Menu {
-                        rateMenuItems(showsCheckmark: false)
-                    } label: {
-                        let currentBasis = selectedOfferedRate?.basis ?? line.basis
-                        HStack(spacing: 4) {
-                            Text(currentBasis == .perHectare ? "Per Ha" : "Per 100L")
-                                .font(.caption2.weight(.medium))
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.caption2)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(currentBasis == .perHectare ? VineyardTheme.olive.opacity(0.15) : Color.blue.opacity(0.15))
-                        .foregroundStyle(currentBasis == .perHectare ? VineyardTheme.olive : .blue)
-                        .clipShape(Capsule())
-                    }
-                }
-                Button(role: .destructive) {
-                    onDelete()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(.tertiary)
+                    .accessibilityLabel("Remove product")
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
+
+            if !offeredRates.isEmpty {
+                Divider().padding(.leading, 14)
+                rateBasisControl
+            }
 
             Divider().padding(.leading, 14)
 

@@ -40,6 +40,8 @@ struct ChemicalProductSearchSheet: View {
     @State private var rows: [ChemicalSearchRow] = []
     @State private var isSearching: Bool = false
     @State private var isResolving: Bool = false
+    @State private var searchTask: Task<Void, Never>?
+    @State private var resolveTask: Task<Void, Never>?
     @State private var searchError: String?
     @State private var hasSeededQuery: Bool = false
     /// The row whose RESOLUTION failed, kept so the operator can retry it or
@@ -72,6 +74,11 @@ struct ChemicalProductSearchSheet: View {
         NavigationStack {
             List {
                 searchSection
+                Section {
+                    ChemicalLookupDurationNotice(showsRepeatHint: true)
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                }
                 if let searchError { errorSection(searchError) }
                 if isResolving {
                     Section {
@@ -102,6 +109,13 @@ struct ChemicalProductSearchSheet: View {
                 hasSeededQuery = true
                 if query.isEmpty { query = initialQuery }
             }
+            .onDisappear {
+                // A 180 s resolve must not outlive the screen that asked for
+                // it. These are unstructured tasks (started from Button
+                // actions), so nothing cancels them implicitly.
+                searchTask?.cancel()
+                resolveTask?.cancel()
+            }
         }
     }
 
@@ -113,10 +127,10 @@ struct ChemicalProductSearchSheet: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Product name", text: $query)
                     .autocorrectionDisabled()
-                    .onSubmit { Task { await runSearch() } }
+                    .onSubmit { startSearch() }
             }
             Button {
-                Task { await runSearch() }
+                startSearch()
             } label: {
                 if isSearching {
                     HStack { ProgressView(); Text("Searching…") }
@@ -150,13 +164,13 @@ struct ChemicalProductSearchSheet: View {
                 // Retrying is the RIGHT first move: the resolver caches its
                 // slow first pass, so a second attempt normally returns the
                 // full register record immediately.
-                Button("Try Again") { Task { await select(unresolvedRow) } }
+                Button("Try Again") { startSelect(unresolvedRow) }
                 Button("Continue Without Register Details") {
                     handOff(unresolvedRow, lookup: nil)
                 }
                 .foregroundStyle(.secondary)
             } else {
-                Button("Try Again") { Task { await runSearch() } }
+                Button("Try Again") { startSearch() }
             }
         } footer: {
             if unresolvedRow != nil {
@@ -174,7 +188,7 @@ struct ChemicalProductSearchSheet: View {
                 Section {
                     ForEach(tierRows) { row in
                         Button {
-                            Task { await select(row) }
+                            startSelect(row)
                         } label: {
                             resultRow(row)
                         }
@@ -235,6 +249,21 @@ struct ChemicalProductSearchSheet: View {
 
     // MARK: - Actions
 
+    /// Own the search task so leaving the screen can cancel it.
+    private func startSearch() {
+        searchTask?.cancel()
+        searchTask = Task { await runSearch() }
+    }
+
+    /// Own the resolve task so leaving the screen can cancel it.
+    ///
+    /// This is the long one — up to 180 s — and it is started from a Button,
+    /// which means SwiftUI ties it to nothing at all.
+    private func startSelect(_ row: ChemicalSearchRow) {
+        resolveTask?.cancel()
+        resolveTask = Task { await select(row) }
+    }
+
     private func runSearch() async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -253,6 +282,9 @@ struct ChemicalProductSearchSheet: View {
             if rows.isEmpty {
                 searchError = "No products found. Try a different spelling, or enter the product manually."
             }
+        } catch is CancellationError {
+            // The operator left, or searched again. Not a failure to report.
+            return
         } catch {
             // The typed query is deliberately left intact so a failed lookup
             // never costs the operator their input.
@@ -295,6 +327,10 @@ struct ChemicalProductSearchSheet: View {
                     fallbackQuery: query
                 )
             )
+        } catch is CancellationError {
+            // Cancelled by leaving the screen. Raising "could not load" here
+            // would blame the server for the operator's own navigation.
+            return
         } catch {
             unresolvedRow = row
             searchError = (error as? LocalizedError)?.errorDescription

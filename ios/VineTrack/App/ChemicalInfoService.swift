@@ -498,7 +498,12 @@ nonisolated enum ChemicalLookupError: Error, LocalizedError, Sendable {
 
 nonisolated struct ChemicalInfoService: Sendable {
 
-    /// How long a plain search may take. Search is a list query and stays snappy.
+    /// How long a plain search may take.
+    ///
+    /// Search is DISCOVERY — a register candidate query and a ranked list. It
+    /// does not fetch labels or run research, so it stays snappy on purpose:
+    /// an operator typing a product name must not be made to wait on the
+    /// budget the detail lookup needs.
     static let searchTimeout: TimeInterval = 30
 
     /// How long resolving ONE selected product may take.
@@ -515,8 +520,14 @@ nonisolated struct ChemicalInfoService: Sendable {
     /// "Uncategorised", a default unit, no label link and no registered uses
     /// while the server had answered all four correctly.
     ///
-    /// The resolver caches its answer, so this ceiling is paid once per product.
-    static let structuredLookupTimeout: TimeInterval = 120
+    /// Raised to 180 s after the Dithane timeout audit. The register +
+    /// label-fetch + DFU-extraction + web-research chain legitimately exceeds
+    /// two minutes on a cold product, and the server-side cache that was
+    /// supposed to make the retry instant is per-isolate and in-memory — so a
+    /// second attempt frequently lands on a fresh isolate and pays the full
+    /// cost again. Retrying against a deadline the work cannot fit inside just
+    /// produces a second failure.
+    static let structuredLookupTimeout: TimeInterval = 180
 
     /// Resolves the jurisdiction country for chemical lookups.
     ///
@@ -626,6 +637,7 @@ nonisolated struct ChemicalInfoService: Sendable {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.timeoutInterval = timeout
+        req.cachePolicy = .reloadIgnoringLocalCacheData
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(anonKey, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
@@ -634,11 +646,15 @@ nonisolated struct ChemicalInfoService: Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: req)
+            (data, response) = try await Self.session(timeout: timeout).data(for: req)
         } catch let error as URLError where error.code == .timedOut {
             // Reported as its own case so the caller can say "ask again"
             // instead of quietly falling back to a half-populated draft.
             throw ChemicalLookupError.timedOut
+        } catch let error as URLError where error.code == .cancelled {
+            // The operator left the screen. Their decision, not a fault:
+            // surface it as cancellation so no error banner is raised for it.
+            throw CancellationError()
         }
         guard let http = response as? HTTPURLResponse else {
             throw ChemicalLookupError.network("No HTTP response")
@@ -653,5 +669,28 @@ nonisolated struct ChemicalInfoService: Sendable {
             throw ChemicalLookupError.network(msg)
         }
         throw ChemicalLookupError.network("HTTP \(http.statusCode)")
+    }
+
+    /// A session whose deadline is the WHOLE request, not the idle gap.
+    ///
+    /// # Why `URLSession.shared` was the wrong tool
+    ///
+    /// `URLRequest.timeoutInterval` is a STALL timer: it measures the gap
+    /// between bytes, and it was the only bound this code set. A structured
+    /// lookup sends its request and then receives nothing at all until the
+    /// server has finished the register + label + research chain, so the whole
+    /// silent think-time counts as one idle gap. `URLSession.shared` also
+    /// carries a fixed `timeoutIntervalForResource` that no per-request value
+    /// can raise.
+    ///
+    /// Setting both bounds on a purpose-built configuration makes the deadline
+    /// mean what the constant says it means.
+    private static func session(timeout: TimeInterval) -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = timeout
+        config.timeoutIntervalForResource = timeout
+        config.waitsForConnectivity = false
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: config)
     }
 }

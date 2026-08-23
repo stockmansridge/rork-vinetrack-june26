@@ -114,6 +114,12 @@ struct ChemicalReverifyFlowView: View {
                 Text("Your saved chemical is not changed until you accept an update.")
             }
 
+            Section {
+                ChemicalLookupDurationNotice(showsRepeatHint: true)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+            }
+
             identitySection
         }
     }

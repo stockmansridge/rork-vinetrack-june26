@@ -359,22 +359,40 @@ struct SprayRecordFormView: View {
             let chemId = tanks[tIdx].chemicals[cIdx].id
             VStack(spacing: 8) {
                 chemicalIdentityRow(tIdx: tIdx, cIdx: cIdx, chemId: chemId)
+                // P0 — these two fields edit values that are STORED IN BASE
+                // UNITS (grams / millilitres) but are read by an operator in
+                // the product's own unit.
+                //
+                // They used to bind the stored number directly. For a solid
+                // product that is the 1000× defect in the flesh: a 2.2 kg/ha
+                // rate is held as 2200 g and rendered as "2200" beside a Kg
+                // label, and 0.49 ha of it is held as 1078 g and rendered as
+                // "1078" — the exact 2,200 Kg/ha and 1,080 Kg an operator
+                // reported from the field. `SprayChemical` already defines
+                // `displayVolume` and `displayRate` for precisely this
+                // boundary; this view simply was not crossing it.
+                //
+                // Writes convert back with `toBase`, so what is persisted stays
+                // in base units and every other reader is unaffected.
+                let unit = tanks[tIdx].chemicals[cIdx].unit
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Rate/Ha").font(.caption).foregroundStyle(.secondary)
+                        Text("Rate/Ha (\(unit.rawValue))")
+                            .font(.caption).foregroundStyle(.secondary)
                         TextField("0", value: Binding(
-                            get: { tanks[tIdx].chemicals[cIdx].ratePerHa },
-                            set: { tanks[tIdx].chemicals[cIdx].ratePerHa = $0 }
+                            get: { unit.fromBase(tanks[tIdx].chemicals[cIdx].ratePerHa) },
+                            set: { tanks[tIdx].chemicals[cIdx].ratePerHa = unit.toBase($0) }
                         ), format: .number)
                             .keyboardType(.decimalPad)
                             .font(.subheadline)
                     }
                     Divider().frame(height: 30)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Vol/Tank").font(.caption).foregroundStyle(.secondary)
+                        Text("Vol/Tank (\(unit.rawValue))")
+                            .font(.caption).foregroundStyle(.secondary)
                         TextField("0", value: Binding(
-                            get: { tanks[tIdx].chemicals[cIdx].volumePerTank },
-                            set: { tanks[tIdx].chemicals[cIdx].volumePerTank = $0 }
+                            get: { unit.fromBase(tanks[tIdx].chemicals[cIdx].volumePerTank) },
+                            set: { tanks[tIdx].chemicals[cIdx].volumePerTank = unit.toBase($0) }
                         ), format: .number)
                             .keyboardType(.decimalPad)
                             .font(.subheadline)
