@@ -3,8 +3,13 @@ import Foundation
 /// The ordered decisions in the guided Spray Calculator.
 ///
 /// ```text
-/// Application → Blocks → Target → Growth Stage → Equipment → Carrier → Products → Review
+/// Application → Blocks → Target → Growth Stage → Equipment → Canopy & Carrier → Products → Review
 /// ```
+///
+/// The canopy belongs in step 6, before Products, because it is what the
+/// products are measured against. Discovering it only after choosing a
+/// chemical — by meeting an "Unavailable" quantity and going looking for the
+/// reason — is the wrong way round.
 ///
 /// Shared verbatim by iOS and Android so an operator moving between platforms
 /// meets the same decisions in the same order.
@@ -27,7 +32,7 @@ nonisolated enum SprayGuidedStep: String, Sendable, CaseIterable, Identifiable, 
         case .target: return "Target"
         case .growthStage: return "Growth Stage"
         case .equipment: return "Equipment"
-        case .carrier: return "Carrier Volume"
+        case .carrier: return "Canopy & Carrier"
         case .products: return "Products"
         case .review: return "Review"
         }
@@ -68,6 +73,9 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
     /// optional — explicitly choosing Not Set satisfies this step.
     case growthStageRequired
     case equipmentRequired
+    /// The canopy is still showing the controls' opening position rather than a
+    /// choice anybody made.
+    case canopyConfirmationRequired
     case carrierRateRequired
     case carrierNotCalculable
     case noProductsAdded
@@ -92,6 +100,7 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case .treatedAreaUnavailable: return "Treated area unavailable"
         case .growthStageRequired: return "Choose growth stage or Not Set"
         case .equipmentRequired: return "Select spray unit"
+        case .canopyConfirmationRequired: return "Select canopy size and density"
         case .carrierRateRequired: return "Enter carrier volume"
         case .carrierNotCalculable: return "Carrier volume unavailable"
         case .noProductsAdded: return "Add products"
@@ -119,6 +128,10 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
             return "Choose an E-L growth stage for the selected blocks, or choose Not Set."
         case .equipmentRequired:
             return "Select the spray unit used for this application."
+        case .canopyConfirmationRequired:
+            return "Choose the canopy size and density for this spray. They set the "
+                + "dilute / runoff rate every per-100 L product is measured against, "
+                + "so VineTrack will not assume them for you."
         case .carrierRateRequired:
             return "Enter the carrier volume for this application."
         case .carrierNotCalculable:
@@ -179,6 +192,15 @@ nonisolated struct SprayGuidedInputs: Sendable {
     var isGrowthStageResolved: Bool = false
     var isEquipmentSelected: Bool = false
     var tankCapacityLitres: Double = 0
+
+    /// Whether the canopy on screen is a DECISION rather than the controls'
+    /// opening position.
+    ///
+    /// Carried as its own flag rather than inferred from the values, because
+    /// nothing about Medium / Low distinguishes "the operator looked at their
+    /// vines and chose this" from "nobody has been asked yet". Same shape as
+    /// `isGrowthStageResolved`, and for the same reason.
+    var isCanopyConfirmed: Bool = false
 
     var carrierBasis: SprayCarrierBasis = .litresPerHectare
     /// L/ha mode: the rate the operator entered.
@@ -249,6 +271,21 @@ nonisolated struct SprayGuidedFlow: Sendable {
 
     /// True when canopy-specific settings apply. Spreader has no canopy.
     var supportsCanopySettings: Bool { inputs.operationType != .spreader }
+
+    /// True when this application may not proceed on an unconfirmed canopy.
+    ///
+    /// A foliar spray is the case where the canopy decides the answer: dilute /
+    /// runoff comes from the canopy table, the concentration factor comes from
+    /// dilute, and every per-100 L product dose comes from the factor. A
+    /// spreader has no canopy at all, and a banded pass is governed by its band
+    /// width — neither is gated here, because a prompt raised where it cannot
+    /// change the arithmetic is a prompt operators learn to dismiss.
+    var requiresCanopyConfirmation: Bool { inputs.operationType == .foliarSpray }
+
+    /// True when a foliar spray still needs its canopy answered.
+    var isCanopyOutstanding: Bool {
+        requiresCanopyConfirmation && !inputs.isCanopyConfirmed
+    }
 
     // MARK: - Application intent
 
@@ -442,6 +479,10 @@ nonisolated struct SprayGuidedFlow: Sendable {
             return inputs.isEquipmentSelected ? nil : .equipmentRequired
 
         case .carrier:
+            // The canopy is asked FIRST because everything else in this step is
+            // derived from it. Reporting "enter carrier volume" while the canopy
+            // is still unanswered names the second question and hides the first.
+            if isCanopyOutstanding { return .canopyConfirmationRequired }
             switch effectiveCarrierBasis {
             case .litresPerHectare:
                 guard Self.positive(inputs.litresPerHectare) != nil else { return .carrierRateRequired }

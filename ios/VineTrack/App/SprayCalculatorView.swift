@@ -27,8 +27,13 @@ struct SprayCalculatorView: View {
     @State private var selectedPaddockIds: Set<UUID> = []
     @State private var selectedEquipmentId: UUID?
     @State private var selectedTractorId: UUID?
-    @State private var canopySize: CanopySize = .medium
-    @State private var canopyDensity: CanopyDensity = .low
+    /// The canopy, together with whether anybody actually chose it.
+    ///
+    /// Was two plain `@State` defaults (`.medium` / `.low`). A segmented picker
+    /// always shows a selection, so those defaults looked like an answer from
+    /// the moment the screen opened — and a canopy nobody chose was setting the
+    /// dilute rate that every per-100 L product is measured against.
+    @State private var canopy: SprayCanopySelection = .unconfirmed
     /// Growth stage (guided Step 4).
     ///
     /// One value holds the mode, the shared decision and the per-block
@@ -211,11 +216,7 @@ struct SprayCalculatorView: View {
     /// Litres per 100 m of row — independent of row spacing, so it is always
     /// displayable even when spacing is unknown.
     private var litresPer100mValue: Double {
-        CanopyWaterRate.litresPer100m(
-            size: canopySize,
-            density: canopyDensity,
-            settings: store.settings.canopyWaterRates
-        )
+        canopy.litresPer100m(settings: store.settings.canopyWaterRates)
     }
 
     /// The dilute / runoff reference the canopy model establishes, in L/100 m.
@@ -254,8 +255,8 @@ struct SprayCalculatorView: View {
     private var waterRateEntry: CanopyWaterRate.RateEntry? {
         guard let spacing = resolvedRowSpacingMetres else { return nil }
         return CanopyWaterRate.rate(
-            size: canopySize,
-            density: canopyDensity,
+            size: canopy.size,
+            density: canopy.density,
             rowSpacingMetres: spacing,
             settings: store.settings.canopyWaterRates
         )
@@ -434,6 +435,7 @@ struct SprayCalculatorView: View {
         inputs.isGrowthStageResolved = isGrowthStageResolved
         inputs.isEquipmentSelected = selectedEquipmentId != nil
         inputs.tankCapacityLitres = selectedTankCapacityLitres
+        inputs.isCanopyConfirmed = canopy.isConfirmed
         inputs.carrierBasis = carrierBasisChoice
         inputs.litresPerHectare = Double(sprayRateText)
         inputs.diluteLitresPerHectare = waterRateEntry?.litresPerHa
@@ -1348,7 +1350,7 @@ struct SprayCalculatorView: View {
                 .foregroundStyle(.secondary)
 
             VStack(spacing: 12) {
-                SprayCanopyControls(size: $canopySize, density: $canopyDensity)
+                SprayCanopyControls(selection: $canopy)
 
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -2151,7 +2153,38 @@ struct SprayCalculatorView: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
+
+            // Leaving Products is the operator's move, never the form's.
+            //
+            // The screen expands whichever step the flow reports as active, so
+            // the moment the last product resolved, Products became complete,
+            // Review became active, and the section the operator was working in
+            // collapsed underneath them — mid-task, after a single tap on a
+            // rate. Adding a second chemical then meant going back to a step
+            // they had not chosen to leave.
+            Button {
+                withAnimation(.spring(duration: 0.3)) { openedStep = .review }
+            } label: {
+                Text("Continue")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 44)
+                    .background(
+                        flow.isComplete(.products)
+                            ? VineyardTheme.olive
+                            : Color.secondary.opacity(0.25)
+                    )
+                    .foregroundStyle(flow.isComplete(.products) ? Color.white : Color.secondary)
+                    .clipShape(.rect(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .disabled(!flow.isComplete(.products))
+            .padding(.top, 4)
         }
+        // Pins the section open for as long as the operator is working in it.
+        // Without this the `openedStep ?? flow.activeStep` fallback moves the
+        // expansion the instant Products validates.
+        .onAppear { if openedStep == nil { openedStep = .products } }
     }
 
 
@@ -2684,7 +2717,7 @@ struct SprayCalculatorView: View {
                     Text("The canopy sets the dilute / runoff rate this job is concentrated from.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    SprayCanopyControls(size: $canopySize, density: $canopyDensity)
+                    SprayCanopyControls(selection: $canopy)
                 }
                 .padding(12)
                 .background(Color(.secondarySystemGroupedBackground))
@@ -3559,6 +3592,11 @@ private struct CalcChemicalLineCard: View {
         let id: String
         let title: String?
         let rates: [SpraySelectableRate]
+
+        /// True when VineTrack derived selectable points from this use's band.
+        /// The band itself then becomes context rather than an option, because
+        /// choosing "150–200" calculates nothing.
+        var hasPresets: Bool { rates.contains { $0.isRangePreset } }
     }
 
     /// The unit the applied-rate field reads and writes in.
@@ -3577,11 +3615,39 @@ private struct CalcChemicalLineCard: View {
         return chem.unit.rawValue
     }
 
-    /// The label's stated band for the selected rate, e.g. `"150–200 g/100 L"`.
-    /// `nil` unless the selection genuinely is a range.
+    /// The label's stated band behind the current selection, e.g.
+    /// `"150–200 g/100 L"`.
+    ///
+    /// Present for the band itself AND for a point chosen inside it: an
+    /// operator who picked 175 still needs to see what the label actually
+    /// permits, because 175 is VineTrack's arithmetic and 150–200 is the
+    /// regulator's.
     private var appliedRateRangeText: String? {
-        guard let rate = selectedOfferedRate, rate.requiresOperatorRate else { return nil }
-        return rate.displayText
+        selectedOfferedRate?.labelRangeText
+    }
+
+    /// The applied rate in BASE units — manual entry first, otherwise whatever
+    /// the selected rate seeds. `nil` while the line is still unresolved.
+    private var effectiveAppliedBaseValue: Double? {
+        line.overrideRate ?? selectedOfferedRate?.seed.seedableValue
+    }
+
+    /// The applied rate as the operator should read it, in the label's unit.
+    private var effectiveAppliedDisplay: Double? {
+        guard let chem = selectedChemical, let base = effectiveAppliedBaseValue else { return nil }
+        return SprayRegisteredUseRates.displayValue(
+            base,
+            labelUnit: appliedRateUnit,
+            chemical: chem
+        ) ?? chem.unit.fromBase(base)
+    }
+
+    /// The label-range warning, when a manual entry sits outside the band.
+    private var appliedRateRangeWarning: String? {
+        SprayLabelRangeCheck.warning(
+            appliedBaseValue: effectiveAppliedBaseValue,
+            rate: selectedOfferedRate
+        )
     }
 
     /// The seedable rate in the applied-rate field's own unit, when the current
@@ -3603,7 +3669,13 @@ private struct CalcChemicalLineCard: View {
         ForEach(rateGroups) { group in
             Section(group.title ?? "Saved rates") {
                 ForEach(group.rates) { rate in
-                    if rate.isSelectable {
+                    // A band whose points are offered below it stops being an
+                    // option and becomes the heading those points sit under.
+                    // Leaving it selectable gave the operator a fourth choice
+                    // that calculated nothing — which is the defect this whole
+                    // change exists to remove.
+                    let isBandWithPoints = rate.requiresOperatorRate && group.hasPresets
+                    if rate.isSelectable, !isBandWithPoints {
                         Button {
                             line.selectedRateId = rate.id
                             if let basis = rate.basis { line.basis = basis }
@@ -3616,6 +3688,11 @@ private struct CalcChemicalLineCard: View {
                                 }
                             }
                         }
+                    } else if isBandWithPoints {
+                        Button {} label: {
+                            Label("Label range: \(rate.displayText)", systemImage: "ruler")
+                        }
+                        .disabled(true)
                     } else {
                         // Reference-only (`basis:"other"`) and number-less rates
                         // are SHOWN so the operator can read what the label
@@ -3821,7 +3898,7 @@ private struct CalcChemicalLineCard: View {
         let isOverridden = line.overrideRate != nil
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(appliedRateRangeText == nil ? "Applied label rate" : "Applied label rate")
+                Text("Applied label rate")
                     .font(.caption).foregroundStyle(.secondary)
                 if isOverridden {
                     Text("Manual")
@@ -3845,6 +3922,34 @@ private struct CalcChemicalLineCard: View {
                     .foregroundStyle(VineyardTheme.olive)
                 }
             }
+
+            // What is ACTUALLY being applied, resolved from wherever it came
+            // from. Picking 175 from the menu and picking it by typing must
+            // read identically here — the difference between them is
+            // provenance, and provenance is what the Manual badge is for.
+            if let applied = effectiveAppliedDisplay {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("\(SprayRateFormatter.format(applied)) \(unitLabel)\(basisLabel)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(VineyardTheme.olive)
+                        .monospacedDigit()
+                    Spacer()
+                    Text(isOverridden ? "Entered manually" : "From selected rate")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(VineyardTheme.olive.opacity(0.10))
+                .clipShape(.rect(cornerRadius: 8))
+            }
+
+            if let rangeText = appliedRateRangeText {
+                Text("Label range: \(rangeText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             HStack(spacing: 8) {
                 TextField(
                     recommendedRateDisplay.map { SprayRateFormatter.format($0) } ?? "Enter rate",
@@ -3875,6 +3980,17 @@ private struct CalcChemicalLineCard: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
+
+            // An off-label rate is the operator's call to make and to record.
+            // It is NOT presented as though the regulator sanctioned it, and
+            // the band is never rewritten to fit what was typed.
+            if let warning = appliedRateRangeWarning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             rateGuidanceText(chem: chem, basisLabel: basisLabel)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -3892,14 +4008,20 @@ private struct CalcChemicalLineCard: View {
     /// (`basis:"other"`) entry says so in the label's own words.
     @ViewBuilder
     private func rateGuidanceText(chem: SavedChemical, basisLabel: String) -> some View {
-        if let recommendedRateDisplay {
+        if let rate = selectedOfferedRate, rate.isRangePreset {
+            // The point came from VineTrack's arithmetic on the label's band,
+            // and says so. Calling it "Recommended" would attribute a choice to
+            // the regulator that the regulator explicitly left open.
+            Text("A point inside the registered range, chosen by you. "
+                 + "Type a different value to apply your own.")
+        } else if let recommendedRateDisplay {
             Text("Recommended: \(SprayRateFormatter.format(recommendedRateDisplay)) "
                  + "\(appliedRateUnit)\(basisLabel)")
         } else if let rate = selectedOfferedRate, rate.requiresOperatorRate {
             // Named bounds, in the label's own unit, so the operator is never
             // left to work out what a valid answer looks like.
-            Text("Label range: \(rate.displayText). Enter the rate you are "
-                 + "applying, in \(appliedRateUnit)\(basisLabel).")
+            Text("Choose a rate from the Rate menu, or type the rate you are "
+                 + "applying in \(appliedRateUnit)\(basisLabel).")
         } else if let rate = selectedOfferedRate {
             Text("\(rate.displayText) — enter the rate you are applying.")
         } else if hasVineyardUseWithoutRate {

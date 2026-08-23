@@ -35,6 +35,37 @@ nonisolated enum SprayRateSeed: Sendable, Hashable {
     }
 }
 
+/// Which point of a registered range a quick-selection entry represents.
+///
+/// # Why the midpoint is offered but never recommended
+///
+/// A label that says `150–200 g/100 L` is not offering advice — it states the
+/// band inside which the product is registered, and choosing a point in it is
+/// an agronomic decision belonging to the operator. VineTrack showing the band
+/// and then stopping was right in principle and useless in practice: the device
+/// build made the operator read `150–200`, decide on 175, and type it before
+/// anything calculated at all.
+///
+/// So the endpoints and the arithmetic midpoint are offered as CHOICES. The
+/// minimum and maximum are label facts. The midpoint is arithmetic, and is
+/// labelled as arithmetic — never as a recommendation, because no regulator
+/// recommended it. Nothing is selected automatically.
+nonisolated enum SprayRatePreset: String, Sendable, Hashable, CaseIterable {
+    case minimum
+    case midpoint
+    case maximum
+
+    /// A neutral description of where the value came from. Deliberately says
+    /// nothing about what the operator should apply.
+    var qualifier: String {
+        switch self {
+        case .minimum: return "label minimum"
+        case .midpoint: return "mid-range"
+        case .maximum: return "label maximum"
+        }
+    }
+}
+
 /// One rate the operator can pick in the Spray Tool.
 ///
 /// Flattened out of the structured registered uses so the existing picker can
@@ -63,6 +94,18 @@ nonisolated struct SpraySelectableRate: Identifiable, Sendable, Hashable {
     /// rate came from the legacy scalar array, where the store's own unit is
     /// the only unit there has ever been.
     let labelUnit: String
+    /// The registered band this entry belongs to, in BASE units.
+    ///
+    /// Carried by the band itself AND by every quick-selection point derived
+    /// from it, so a manual entry can be checked against the label however the
+    /// operator arrived. `nil` for a fixed rate, which has no band to be
+    /// outside of.
+    let labelRange: ClosedRange<Double>?
+    /// The band exactly as the label states it, e.g. `"150–200 g/100 L"`.
+    let labelRangeText: String?
+    /// Which point of `labelRange` this entry is, when it is a derived
+    /// quick-selection rather than a rate the label printed on its own.
+    let preset: SprayRatePreset?
 
     init(
         id: UUID,
@@ -73,7 +116,10 @@ nonisolated struct SpraySelectableRate: Identifiable, Sendable, Hashable {
         basis: ChemicalRateBasis?,
         seed: SprayRateSeed,
         displayText: String,
-        labelUnit: String = ""
+        labelUnit: String = "",
+        labelRange: ClosedRange<Double>? = nil,
+        labelRangeText: String? = nil,
+        preset: SprayRatePreset? = nil
     ) {
         self.id = id
         self.origin = origin
@@ -84,7 +130,14 @@ nonisolated struct SpraySelectableRate: Identifiable, Sendable, Hashable {
         self.seed = seed
         self.displayText = displayText
         self.labelUnit = labelUnit
+        self.labelRange = labelRange
+        self.labelRangeText = labelRangeText
+        self.preset = preset
     }
+
+    /// True when this entry is a point VineTrack derived from a label band,
+    /// rather than a rate the label itself states.
+    var isRangePreset: Bool { preset != nil }
 
     /// `"GRAPEVINE · POWDERY MILDEW"`, or `nil` for a legacy rate.
     var useTitle: String? {
@@ -113,9 +166,46 @@ nonisolated struct SpraySelectableRate: Identifiable, Sendable, Hashable {
     }
 
     /// Menu wording: the label's name and its rate, e.g. `"Dilute: 35–54 mL/100 L"`.
+    ///
+    /// A derived point reads as its value plus a neutral qualifier —
+    /// `"175 g/100 L (mid-range)"` — so the operator can tell at a glance which
+    /// numbers the label printed and which one is arithmetic.
     var menuText: String {
+        if let preset {
+            return "\(displayText) (\(preset.qualifier))"
+        }
         let name = label.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? displayText : "\(name): \(displayText)"
+    }
+}
+
+/// Checks an applied rate against the registered band it claims to sit in.
+///
+/// VineTrack does not stop an operator applying what they judge is right — an
+/// off-label decision is theirs to make and theirs to record. What it will not
+/// do is present that number as though the regulator sanctioned it. Rewriting
+/// the band to fit the entry, or silently accepting it, would both amount to
+/// inventing authority.
+nonisolated enum SprayLabelRangeCheck {
+
+    /// The warning to show beside an applied rate, or `nil` when there is
+    /// nothing to say.
+    ///
+    /// - Parameter appliedBaseValue: the applied rate in BASE units — the same
+    ///   space `labelRange` is expressed in, so a gram/kilogram mix-up cannot
+    ///   produce a false warning.
+    static func warning(
+        appliedBaseValue: Double?,
+        rate: SpraySelectableRate?
+    ) -> String? {
+        guard let applied = appliedBaseValue,
+              applied.isFinite,
+              let rate,
+              let range = rate.labelRange,
+              let rangeText = rate.labelRangeText,
+              !range.contains(applied)
+        else { return nil }
+        return "Outside the registered label range of \(rangeText)."
     }
 }
 
@@ -297,13 +387,20 @@ nonisolated enum SprayRegisteredUseRates {
             ? selectableVineyardRates(for: chemical)
             : selectableRates(for: chemical)
         guard !candidates.isEmpty else { return nil }
+        // A derived point inside a band is never a DEFAULT. Auto-selecting one
+        // would answer the operator's question for them — and the whole reason
+        // the label prints a band is that the answer depends on conditions
+        // VineTrack cannot see. The band itself is seeded instead, which sets
+        // the basis and leaves the line honestly unresolved until someone
+        // chooses. A FIXED rate has no such choice in it, so it still seeds.
+        let seedable = candidates.filter { !$0.isRangePreset }
         for basis in order {
-            let matching = candidates.filter { $0.basis == basis }
+            let matching = seedable.filter { $0.basis == basis }
             if let single = matching.first(where: { $0.seed.seedableValue != nil }) { return single }
             if let first = matching.first { return first }
         }
-        if let single = candidates.first(where: { $0.seed.seedableValue != nil }) { return single }
-        return candidates.first
+        if let single = seedable.first(where: { $0.seed.seedableValue != nil }) { return single }
+        return seedable.first ?? candidates.first
     }
 
     /// The default selection for a carrier workflow.
@@ -320,7 +417,8 @@ nonisolated enum SprayRegisteredUseRates {
 
     // MARK: - Structured
 
-    /// Flattens `registeredUses[].rates` while keeping each rate's use.
+    /// Flattens `registeredUses[].rates` while keeping each rate's use, and
+    /// expands a lone registered band into selectable points inside it.
     static func structuredRates(
         for chemical: SavedChemical,
         scope: UseScope = .allCrops
@@ -329,11 +427,93 @@ nonisolated enum SprayRegisteredUseRates {
         var seen = Set<UUID>()
         var out: [SpraySelectableRate] = []
         for use in uses where includes(use, scope: scope) {
+            var pairs: [(labelRate: ChemicalLabelRate, entry: SpraySelectableRate)] = []
             for labelRate in use.rates {
                 let entry = selectable(labelRate, use: use, chemical: chemical)
                 guard seen.insert(entry.id).inserted else { continue }
-                out.append(entry)
+                pairs.append((labelRate, entry))
             }
+            out.append(contentsOf: expandingPresets(pairs, use: use, chemical: chemical, seen: &seen))
+        }
+        return out
+    }
+
+    /// Adds quick-selection points beneath a registered band — but only when
+    /// that band is the ONLY rate its registered use states.
+    ///
+    /// # Why the "only rate" condition matters
+    ///
+    /// A label that prints several rates against named conditions — low versus
+    /// high disease pressure, pre- versus post-bunch-closure — has already told
+    /// the operator how to choose: by reading the condition. Synthesising a
+    /// midpoint for each of those bands would bury the label's own choices
+    /// under twice as many numbers VineTrack made up, and would quietly invite
+    /// picking a rate without reading the condition attached to it.
+    ///
+    /// So a lone band gets its endpoints and midpoint, and a set of named rates
+    /// is presented exactly as the label states them.
+    private static func expandingPresets(
+        _ pairs: [(labelRate: ChemicalLabelRate, entry: SpraySelectableRate)],
+        use: ChemicalRegisteredUse,
+        chemical: SavedChemical,
+        seen: inout Set<UUID>
+    ) -> [SpraySelectableRate] {
+        let entries = pairs.map(\.entry)
+        guard entries.filter(\.isSelectable).count == 1,
+              let only = pairs.first(where: { $0.entry.isSelectable }),
+              case let .range(minimum, maximum) = only.entry.seed
+        else { return entries }
+
+        var out = entries
+        for point in presetPoints(minimum: minimum, maximum: maximum) {
+            let id = stableIdentifier(
+                "preset|\(use.crop)|\(use.targetRaw)|\(only.labelRate.basis.rawValue)"
+                    + "|\(only.labelRate.unit)|\(minimum)|\(maximum)|\(point.preset.rawValue)"
+            )
+            guard seen.insert(id).inserted else { continue }
+            let shown = displayValue(
+                point.value,
+                labelUnit: only.labelRate.unit,
+                chemical: chemical
+            ) ?? point.value
+            let text = "\(SprayRateFormatter.format(shown)) \(only.labelRate.unit)"
+                + only.labelRate.basis.suffix
+            out.append(SpraySelectableRate(
+                id: id,
+                origin: .registeredUse,
+                crop: use.crop,
+                targetRaw: use.targetRaw,
+                label: only.labelRate.label,
+                basis: only.entry.basis,
+                seed: .value(point.value),
+                displayText: text.trimmingCharacters(in: .whitespaces),
+                labelUnit: only.labelRate.unit,
+                labelRange: minimum...maximum,
+                labelRangeText: only.entry.displayText,
+                preset: point.preset
+            ))
+        }
+        return out
+    }
+
+    /// The points to offer inside a band: minimum, arithmetic midpoint, maximum.
+    ///
+    /// De-duplicated, so a degenerate band never offers the same number twice,
+    /// and empty for anything that is not a usable ascending range.
+    static func presetPoints(
+        minimum: Double,
+        maximum: Double
+    ) -> [(preset: SprayRatePreset, value: Double)] {
+        guard minimum.isFinite, maximum.isFinite, minimum > 0, maximum > minimum else { return [] }
+        let candidates: [(SprayRatePreset, Double)] = [
+            (.minimum, minimum),
+            (.midpoint, (minimum + maximum) / 2),
+            (.maximum, maximum)
+        ]
+        var out: [(preset: SprayRatePreset, value: Double)] = []
+        for candidate in candidates
+        where !out.contains(where: { abs($0.value - candidate.1) < 0.000_000_1 }) {
+            out.append((preset: candidate.0, value: candidate.1))
         }
         return out
     }
@@ -359,6 +539,10 @@ nonisolated enum SprayRegisteredUseRates {
     ) -> SpraySelectableRate {
         let basis = sprayBasis(for: rate.basis)
         let seed = self.seed(for: rate, chemical: chemical, hasBasis: basis != nil)
+        let range: ClosedRange<Double>? = {
+            guard case let .range(minimum, maximum) = seed, maximum >= minimum else { return nil }
+            return minimum...maximum
+        }()
         // Built from explicit locals rather than one inline literal: the
         // optional-to-String conversions defeat the type checker when inlined.
         let singleValue: String = rate.value.map { String($0) } ?? ""
@@ -383,7 +567,9 @@ nonisolated enum SprayRegisteredUseRates {
             basis: basis,
             seed: seed,
             displayText: rate.displayRate,
-            labelUnit: rate.unit
+            labelUnit: rate.unit,
+            labelRange: range,
+            labelRangeText: range == nil ? nil : rate.displayRate
         )
     }
 
