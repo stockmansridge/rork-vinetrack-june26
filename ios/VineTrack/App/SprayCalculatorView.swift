@@ -39,6 +39,12 @@ struct SprayCalculatorView: View {
     @State private var growthStage: SprayGrowthStageSelection = SprayGrowthStageSelection()
     @State private var chemicalLines: [ChemicalLine] = []
     @State private var showAddChemicalToList: Bool = false
+    /// Presents the product picker for a NEW spray line.
+    ///
+    /// "Add Chemical" used to append `savedChemicals.first` — whichever product
+    /// happened to sort first in the store — so a line arrived pre-bound to a
+    /// product nobody chose. Adding a line now starts by asking which product.
+    @State private var showAddChemicalPicker: Bool = false
     @State private var sprayRateText: String = ""
     @State private var hasEditedSprayRate: Bool = false
     @State private var notes: String = ""
@@ -631,6 +637,15 @@ struct SprayCalculatorView: View {
             }
             .sheet(isPresented: $showStartConfirmation) {
                 startConfirmationSheet
+            }
+            .sheet(isPresented: $showAddChemicalPicker) {
+                NavigationStack {
+                    SprayLineChemicalPicker(selectedId: nil) { chosen in
+                        showAddChemicalPicker = false
+                        guard let chosen else { return }
+                        appendChemicalLine(for: chosen)
+                    }
+                }
             }
             .onAppear {
                 applyPrefillIfNeeded()
@@ -2114,21 +2129,9 @@ struct SprayCalculatorView: View {
             }
 
             Button {
-                if let chem = store.savedChemicals.first {
-                    // A product added by hand seeds from the same workflow
-                    // preference as everything else on this screen.
-                    let selection = SprayRegisteredUseRates.defaultSelection(
-                        for: chem, preferring: preferredRateBases
-                    )
-                    chemicalLines.append(
-                        ChemicalLine(
-                            chemicalId: chem.id,
-                            selectedRateId: selection?.id ?? UUID(),
-                            basis: selection?.basis
-                                ?? SprayRateBasisPreference.fallbackBasis(for: effectiveCarrierBasis)
-                        )
-                    )
-                }
+                // Ask which product. Appending `savedChemicals.first` put a
+                // product in the tank list that the operator never picked.
+                showAddChemicalPicker = true
             } label: {
                 Label("Add Chemical", systemImage: "plus.circle.fill")
                     .font(.subheadline.weight(.medium))
@@ -2887,6 +2890,26 @@ struct SprayCalculatorView: View {
         }
     }
 
+    /// Adds a product line for a product the operator explicitly chose.
+    ///
+    /// The rate is seeded from the product's VINEYARD registered uses only, on
+    /// this vineyard's preferred basis. When the label binds no usable
+    /// grapevine rate the line still opens — with no rate selected — so the
+    /// operator establishes it rather than inheriting another crop's.
+    private func appendChemicalLine(for chemical: SavedChemical) {
+        let selection = SprayRegisteredUseRates.defaultSelection(
+            for: chemical, preferring: preferredRateBases
+        )
+        chemicalLines.append(
+            ChemicalLine(
+                chemicalId: chemical.id,
+                selectedRateId: selection?.id ?? UUID(),
+                basis: selection?.basis
+                    ?? SprayRateBasisPreference.fallbackBasis(for: effectiveCarrierBasis)
+            )
+        )
+    }
+
     // MARK: - Calculation & Save
 
     private func performCalculation(jobDurationHours: Double = 0) {
@@ -3269,11 +3292,28 @@ private struct CalcChemicalLineCard: View {
         chemicals.first(where: { $0.id == line.chemicalId })
     }
 
-    /// Every rate this product offers — structured registered-use rates when
-    /// the record has them, the legacy `rates` array only when it does not.
+    /// The rates this product offers FOR A VINEYARD SPRAY.
+    ///
+    /// Scoped to grapevine registered uses. An approved label may register
+    /// dozens of crops — Dithane Rainshield's carries tobacco blue mould,
+    /// brown spot on mandarin and citrus black spot — and offering those here
+    /// is how a tobacco `2.2 kg/ha` rate became selectable for a grapevine
+    /// spray. Nothing is deleted: every other crop stays on the record and in
+    /// the Chemical editor's own all-crops view.
     private var offeredRates: [SpraySelectableRate] {
         guard let chem = selectedChemical else { return [] }
-        return SprayRegisteredUseRates.rates(for: chem)
+        return SprayRegisteredUseRates.vineyardRates(for: chem)
+    }
+
+    /// True when the label registers this product on grapevines but bound no
+    /// usable rate to any of those uses.
+    ///
+    /// Deliberately distinct from "not registered on grapevines": the two need
+    /// different words in front of an operator, and an empty picker says
+    /// neither.
+    private var hasVineyardUseWithoutRate: Bool {
+        guard let chem = selectedChemical else { return false }
+        return offeredRates.isEmpty && SprayRegisteredUseRates.hasVineyardUse(chem)
     }
 
     private var selectedOfferedRate: SpraySelectableRate? {
@@ -3593,6 +3633,13 @@ private struct CalcChemicalLineCard: View {
             Text("Label rate: \(rate.displayText) — enter the rate you are applying.")
         } else if let rate = selectedOfferedRate {
             Text("\(rate.displayText) — enter the rate you are applying.")
+        } else if hasVineyardUseWithoutRate {
+            // Registered on grapevines, but the label bound no rate to those
+            // uses. Said plainly, because the alternative an operator reaches
+            // for is another crop's rate off the same label.
+            Text("Registered on grapevines, but this label states no grapevine "
+                 + "rate in VineTrack. Check the approved label and enter the "
+                 + "rate you are applying.")
         } else {
             Text("Enter the rate you are applying.")
         }

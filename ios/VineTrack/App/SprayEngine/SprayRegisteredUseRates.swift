@@ -109,6 +109,63 @@ nonisolated enum SprayRegisteredUseRates {
         chemical.chemicalIntelligence?.registeredUses.contains { !$0.rates.isEmpty } ?? false
     }
 
+    /// The rates a VINEYARD spray job may be calculated from.
+    ///
+    /// # Why the operational picker is scoped and the record is not
+    ///
+    /// An approved label may register forty crops. Dithane Rainshield's carries
+    /// tobacco blue mould, brown spot on mandarin and citrus black spot — real,
+    /// authoritative registered uses, and every one of them was being offered in
+    /// the vineyard Spray Calculator's Rate menu. That is how a `2.2 kg/ha`
+    /// tobacco rate became selectable for a grapevine spray: not a data defect,
+    /// but the operational picker declining to say what the job is FOR.
+    ///
+    /// So the calculator asks for vineyard rates. Nothing is deleted, nothing is
+    /// rewritten, and every other crop stays in full on the record and in the
+    /// Chemical editor's "Other crops on this label" disclosure — they simply
+    /// are not rates for THIS job.
+    ///
+    /// Legacy rates are returned unscoped: they carry no crop at all, so there
+    /// is nothing to scope by, and hiding them would silently empty the picker
+    /// for every pre-Chemical-Intelligence product.
+    static func vineyardRates(for chemical: SavedChemical) -> [SpraySelectableRate] {
+        // A record that states ANY structured rate is answered only from its
+        // structured rates. Falling back to the legacy array here would let a
+        // product whose only structured rates are tobacco's offer a stale
+        // hand-typed number in their place — which is the same borrowing this
+        // scoping exists to stop, just from a different direction.
+        if hasStructuredRates(chemical) {
+            return structuredRates(for: chemical, scope: .vineyardOnly)
+        }
+        return legacyRates(for: chemical)
+    }
+
+    /// The vineyard rates that can actually be picked.
+    static func selectableVineyardRates(for chemical: SavedChemical) -> [SpraySelectableRate] {
+        vineyardRates(for: chemical).filter(\.isSelectable)
+    }
+
+    /// Whether this product states a vineyard registered use at all.
+    ///
+    /// Distinguishes "this product is not registered on grapevines" from "it is,
+    /// but the label bound no rate to the use you picked". The two need
+    /// different words in front of an operator, and an empty picker says
+    /// neither.
+    static func hasVineyardUse(_ chemical: SavedChemical) -> Bool {
+        chemical.chemicalIntelligence?.registeredUses.contains {
+            !ChemicalManualEntry.isProductRateCarrier($0) && $0.isViticultural
+        } ?? false
+    }
+
+    /// Which registered uses a rate list is drawn from.
+    nonisolated enum UseScope: Sendable, Hashable {
+        /// Every registered use on the label — the Chemical record's own view.
+        case allCrops
+        /// Grapevine uses only, plus product-level rate carriers, which state a
+        /// rate for the product as a whole and belong to no crop.
+        case vineyardOnly
+    }
+
     /// Every rate to OFFER for this chemical, in label order.
     ///
     /// Includes reference-only and unresolved entries: the operator needs to
@@ -200,9 +257,14 @@ nonisolated enum SprayRegisteredUseRates {
     /// the band.
     static func defaultSelection(
         for chemical: SavedChemical,
-        preferring order: [ChemicalRateBasis]
+        preferring order: [ChemicalRateBasis],
+        scope: UseScope = .vineyardOnly
     ) -> SpraySelectableRate? {
-        let candidates = selectableRates(for: chemical)
+        // Seeding is scoped for the same reason the picker is: a product line
+        // opened in a vineyard spray must never START on a tobacco rate.
+        let candidates = scope == .vineyardOnly
+            ? selectableVineyardRates(for: chemical)
+            : selectableRates(for: chemical)
         guard !candidates.isEmpty else { return nil }
         for basis in order {
             let matching = candidates.filter { $0.basis == basis }
@@ -228,11 +290,14 @@ nonisolated enum SprayRegisteredUseRates {
     // MARK: - Structured
 
     /// Flattens `registeredUses[].rates` while keeping each rate's use.
-    static func structuredRates(for chemical: SavedChemical) -> [SpraySelectableRate] {
+    static func structuredRates(
+        for chemical: SavedChemical,
+        scope: UseScope = .allCrops
+    ) -> [SpraySelectableRate] {
         guard let uses = chemical.chemicalIntelligence?.registeredUses else { return [] }
         var seen = Set<UUID>()
         var out: [SpraySelectableRate] = []
-        for use in uses {
+        for use in uses where includes(use, scope: scope) {
             for labelRate in use.rates {
                 let entry = selectable(labelRate, use: use, chemical: chemical)
                 guard seen.insert(entry.id).inserted else { continue }
@@ -240,6 +305,20 @@ nonisolated enum SprayRegisteredUseRates {
             }
         }
         return out
+    }
+
+    /// Whether a registered use belongs in a scoped rate list.
+    ///
+    /// A product-level rate carrier (no crop, no target) is always included: it
+    /// states a rate for the product as a whole, so scoping it out by crop
+    /// would discard a rate that was never claimed for any crop in particular.
+    private static func includes(_ use: ChemicalRegisteredUse, scope: UseScope) -> Bool {
+        switch scope {
+        case .allCrops:
+            return true
+        case .vineyardOnly:
+            return ChemicalManualEntry.isProductRateCarrier(use) || use.isViticultural
+        }
     }
 
     private static func selectable(
