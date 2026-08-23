@@ -42,6 +42,10 @@ struct ChemicalProductSearchSheet: View {
     @State private var isResolving: Bool = false
     @State private var searchError: String?
     @State private var hasSeededQuery: Bool = false
+    /// The row whose RESOLUTION failed, kept so the operator can retry it or
+    /// deliberately go on with only what the search row carried. Never taken
+    /// automatically — see `select(_:)`.
+    @State private var unresolvedRow: ChemicalSearchRow?
 
     init(
         initialQuery: String = "",
@@ -136,12 +140,28 @@ struct ChemicalProductSearchSheet: View {
         }
     }
 
+    @ViewBuilder
     private func errorSection(_ message: String) -> some View {
         Section {
             Label(message, systemImage: "exclamationmark.triangle")
                 .font(.caption)
                 .foregroundStyle(VineyardTheme.warning)
-            Button("Try Again") { Task { await runSearch() } }
+            if let unresolvedRow {
+                // Retrying is the RIGHT first move: the resolver caches its
+                // slow first pass, so a second attempt normally returns the
+                // full register record immediately.
+                Button("Try Again") { Task { await select(unresolvedRow) } }
+                Button("Continue Without Register Details") {
+                    handOff(unresolvedRow, lookup: nil)
+                }
+                .foregroundStyle(.secondary)
+            } else {
+                Button("Try Again") { Task { await runSearch() } }
+            }
+        } footer: {
+            if unresolvedRow != nil {
+                Text("Continuing fills in only what the search result carried — no category, no label link and no registered uses. Everything stays editable, and nothing is saved until you press Save.")
+            }
         }
     }
 
@@ -220,6 +240,7 @@ struct ChemicalProductSearchSheet: View {
         guard !trimmed.isEmpty else { return }
         isSearching = true
         searchError = nil
+        unresolvedRow = nil
         defer { isSearching = false }
         do {
             let results = try await ChemicalInfoService()
@@ -243,16 +264,26 @@ struct ChemicalProductSearchSheet: View {
 
     /// Resolve the selected product and hand back the merged draft.
     ///
-    /// A structured-lookup failure does NOT dead-end here. The search row
-    /// already carries a canonical name, a manufacturer and usually an active,
-    /// and throwing that away because a second request failed is the same
-    /// data-loss this flow exists to stop.
+    /// # A failed resolution is not a product with an empty label
+    ///
+    /// This used to swallow every error and hand back a draft built from the
+    /// search row alone. That is how a register-confirmed product reached
+    /// Review Chemical showing "Uncategorised", a default unit, a blank
+    /// Official Label URL and "No registered use is on record" — while the
+    /// server had answered all four correctly and the request had merely timed
+    /// out. A degraded draft is indistinguishable from a complete one on
+    /// screen, so producing one silently is the worst of the options.
+    ///
+    /// The fallback still exists — an operator with no connection must still be
+    /// able to record the product they are holding — but it is now a decision
+    /// they take, with the consequence stated.
     private func select(_ row: ChemicalSearchRow) async {
         isResolving = true
         searchError = nil
+        unresolvedRow = nil
         defer { isResolving = false }
 
-        var lookup: ChemicalStructuredLookup?
+        let lookup: ChemicalStructuredLookup
         do {
             // The SELECTED candidate defines identity from here on — the typed
             // query ("Dithaine rainshield") is dead the moment an exact result
@@ -265,18 +296,27 @@ struct ChemicalProductSearchSheet: View {
                 )
             )
         } catch {
-            lookup = nil
+            unresolvedRow = row
+            searchError = (error as? LocalizedError)?.errorDescription
+                ?? "Could not load this product's registered details. Check your connection and try again."
+            return
         }
 
         // Jurisdiction rejection stays absolute: another country's rates, WHP
         // and re-entry statements are another country's law, and this is the
         // one case where populating the form would be worse than refusing.
-        if let lookup,
-           let reason = ChemicalJurisdiction.rejectionReason(for: lookup, requestCountry: countryCode) {
+        if let reason = ChemicalJurisdiction.rejectionReason(for: lookup, requestCountry: countryCode) {
             searchError = reason
             return
         }
 
+        handOff(row, lookup: lookup)
+    }
+
+    /// The ONE projection from a selected row (plus whatever was resolved for
+    /// it) into the reviewable draft. Both the Add Chemical flow and the
+    /// editor's own "Search the register again" arrive here.
+    private func handOff(_ row: ChemicalSearchRow, lookup: ChemicalStructuredLookup?) {
         onReviewed(ChemicalReviewMerge.reviewChemical(
             lookup: lookup,
             selected: row.result,

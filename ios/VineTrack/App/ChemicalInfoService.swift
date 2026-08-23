@@ -472,6 +472,12 @@ nonisolated enum ChemicalLookupError: Error, LocalizedError, Sendable {
     case missingProviderKey
     case network(String)
     case parseFailed
+    /// The request outlived its own deadline.
+    ///
+    /// Distinguished from `network` because it is the one failure whose
+    /// remedy is simply to ask again: the resolver's slow first pass caches
+    /// its result server-side, so the retry answers from the cache.
+    case timedOut
 
     var errorDescription: String? {
         switch self {
@@ -483,11 +489,34 @@ nonisolated enum ChemicalLookupError: Error, LocalizedError, Sendable {
             return "AI lookup failed: \(m)"
         case .parseFailed:
             return "AI returned an unexpected response. Please try again."
+        case .timedOut:
+            return "Reading the official register took longer than expected. "
+                + "Tap the product again — the details are usually ready straight away on a second attempt."
         }
     }
 }
 
 nonisolated struct ChemicalInfoService: Sendable {
+
+    /// How long a plain search may take. Search is a list query and stays snappy.
+    static let searchTimeout: TimeInterval = 30
+
+    /// How long resolving ONE selected product may take.
+    ///
+    /// # Why this is not 30 seconds
+    ///
+    /// Resolving an identity is not a list query. On a product the resolver has
+    /// not seen before it queries the national register, discovers and fetches
+    /// the approved label PDF, extracts its Directions For Use table and runs a
+    /// web-research pass — measured at ~55 s end to end for APVMA 59688.
+    /// Against a 30 s deadline that request could only ever fail, and the
+    /// failure was swallowed: the Review screen then rebuilt itself from the
+    /// search row alone, which is why a register-confirmed product arrived with
+    /// "Uncategorised", a default unit, no label link and no registered uses
+    /// while the server had answered all four correctly.
+    ///
+    /// The resolver caches its answer, so this ceiling is paid once per product.
+    static let structuredLookupTimeout: TimeInterval = 120
 
     /// Resolves the jurisdiction country for chemical lookups.
     ///
@@ -508,7 +537,11 @@ nonisolated struct ChemicalInfoService: Sendable {
             "query": query,
         ]
         if !country.isEmpty { payload["country"] = country }
-        let data = try await postEdge(path: "chemical-info-lookup", payload: payload)
+        let data = try await postEdge(
+            path: "chemical-info-lookup",
+            payload: payload,
+            timeout: ChemicalInfoService.searchTimeout
+        )
         do {
             let decoded = try JSONDecoder().decode(ChemicalSearchResponse.self, from: data)
             return decoded.results
@@ -555,7 +588,11 @@ nonisolated struct ChemicalInfoService: Sendable {
         if let registrationNumber, !registrationNumber.isEmpty {
             payload["registrationNumber"] = registrationNumber
         }
-        let data = try await postEdge(path: "chemical-info-lookup", payload: payload)
+        let data = try await postEdge(
+            path: "chemical-info-lookup",
+            payload: payload,
+            timeout: ChemicalInfoService.structuredLookupTimeout
+        )
         do {
             return try JSONDecoder().decode(ChemicalStructuredLookup.self, from: data)
         } catch {
@@ -572,7 +609,11 @@ nonisolated struct ChemicalInfoService: Sendable {
     // `ChemicalReviewMerge`. The Edge Function still serves the action for other
     // clients; nothing here calls it.
 
-    private func postEdge(path: String, payload: [String: Any]) async throws -> Data {
+    private func postEdge(
+        path: String,
+        payload: [String: Any],
+        timeout: TimeInterval
+    ) async throws -> Data {
         guard AppConfig.isSupabaseConfigured else { throw ChemicalLookupError.notConfigured }
         let base = AppConfig.supabaseURL.absoluteString
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -584,13 +625,21 @@ nonisolated struct ChemicalInfoService: Sendable {
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.timeoutInterval = 30
+        req.timeoutInterval = timeout
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(anonKey, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: req)
+        } catch let error as URLError where error.code == .timedOut {
+            // Reported as its own case so the caller can say "ask again"
+            // instead of quietly falling back to a half-populated draft.
+            throw ChemicalLookupError.timedOut
+        }
         guard let http = response as? HTTPURLResponse else {
             throw ChemicalLookupError.network("No HTTP response")
         }

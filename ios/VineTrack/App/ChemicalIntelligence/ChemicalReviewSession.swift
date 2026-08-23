@@ -201,12 +201,21 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     ///   - fallbackCountry: the vineyard's country, used only when the record
     ///     does not already name one. An imported product's own country is
     ///     never overwritten just because it was opened.
+    ///
+    /// # The prefill wins, when there is one
+    ///
+    /// `prefill` is not a second, weaker copy of `chemical` — it IS `chemical`
+    /// after `ChemicalReviewMerge` folded the lookup into it. Reading `chemical`
+    /// first therefore threw away every field the lookup had just established,
+    /// silently, on the one path where a lookup had definitely run: Match &
+    /// Verify on a product already in the store. `chemical` still decides what
+    /// Save does (update, not create); it no longer decides what is displayed.
     static func make(
         chemical: SavedChemical?,
         prefill: SavedChemical?,
         fallbackCountry: String
     ) -> ChemicalReviewSession {
-        guard let source = chemical ?? prefill else {
+        guard let source = prefill ?? chemical else {
             return ChemicalReviewSession(
                 chemistryDraft: ChemicalManualEntry.draft(from: nil, fallbackCountry: fallbackCountry)
             )

@@ -48,6 +48,38 @@ nonisolated enum ChemicalReviewMerge {
         return ""
     }
 
+    /// The same name, in the wording the operator actually read.
+    ///
+    /// National registers store names in capitals — `DITHANE RAINSHIELD NEO TEC
+    /// FUNGICIDE`, `UPL AUSTRALIA PTY LTD` — because that is an indexing
+    /// convention, not how the product is written on the drum or in the search
+    /// result the operator tapped. When a weaker tier holds THE SAME name in
+    /// mixed case, that casing is preferred.
+    ///
+    /// Strictly presentation, and strictly conservative: it only ever swaps in
+    /// a string that is the same name (whitespace-collapsed, case-insensitive),
+    /// and only when the stronger value is shouted. `Topas 100 EC Fungicide`
+    /// never collapses to the shorter `Topas 100 EC` the operator searched for.
+    static func presentable(_ chosen: String, preferringWordingOf alternatives: [String?]) -> String {
+        guard !chosen.isEmpty, chosen == chosen.uppercased() else { return chosen }
+        for alternative in alternatives {
+            guard let candidate = alternative?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !candidate.isEmpty,
+                  candidate != candidate.uppercased(),
+                  sameWording(candidate, chosen)
+            else { continue }
+            return candidate
+        }
+        return chosen
+    }
+
+    private static func sameWording(_ a: String, _ b: String) -> Bool {
+        func collapse(_ raw: String) -> String {
+            raw.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
+        }
+        return collapse(a).caseInsensitiveCompare(collapse(b)) == .orderedSame
+    }
+
     /// Build the reviewable record.
     ///
     /// - Parameters:
@@ -72,22 +104,29 @@ nonisolated enum ChemicalReviewMerge {
         var chemical = existing ?? SavedChemical(vineyardId: vineyardId)
 
         // ---- Identity -------------------------------------------------------
-        chemical.name = firstNonEmpty([
-            canonical?.registration?.registeredProductName,
-            lookup?.productName,
-            advisory?.productName,
-            selected?.name,
-            existing?.name
-        ])
+        chemical.name = presentable(
+            firstNonEmpty([
+                canonical?.registration?.registeredProductName,
+                lookup?.productName,
+                advisory?.productName,
+                selected?.name,
+                existing?.name
+            ]),
+            preferringWordingOf: [selected?.name, existing?.name]
+        )
 
-        chemical.manufacturer = firstNonEmpty([
-            canonical?.registration?.registrant,
-            advisory?.registrant,
-            // The brand on the row the operator chose. Display metadata: it
-            // cites no source and classifies nothing, so it cannot move trust.
-            selected?.brand,
-            existing?.manufacturer
-        ])
+        let registrant = presentable(
+            firstNonEmpty([
+                canonical?.registration?.registrant,
+                advisory?.registrant,
+                // The brand on the row the operator chose. Display metadata: it
+                // cites no source and classifies nothing, so it cannot move trust.
+                selected?.brand,
+                existing?.manufacturer
+            ]),
+            preferringWordingOf: [selected?.brand, existing?.manufacturer]
+        )
+        chemical.manufacturer = registrant
 
         // Normalised to the stored key so "fungicide", "Fungicide" and
         // "fungicides" all land on the same category instead of falling through
@@ -143,7 +182,11 @@ nonisolated enum ChemicalReviewMerge {
             existing: existing?.chemicalIntelligence?.registration,
             selected: selected,
             countryCode: countryCode,
-            labelReference: labelReference?.url
+            labelReference: labelReference?.url,
+            // ONE manufacturer value. The Review screen edits the structured
+            // registrant and projects `SavedChemical.manufacturer` from it, so
+            // the two must be the same string — including its casing.
+            registrant: registrant.isEmpty ? nil : registrant
         )
 
         // ---- Evidence -------------------------------------------------------
@@ -339,14 +382,33 @@ nonisolated enum ChemicalReviewMerge {
     /// Read `"Mancozeb 750 g/kg"` or `"Spinetoram 120 g/L + Pyraclostrobin 200 g/L"`
     /// off a search row.
     ///
-    /// The weakest tier, and the only one that has to guess at structure. It
-    /// takes a name and — only when the text plainly states one — a
-    /// concentration. A number it cannot read confidently is left off rather
-    /// than approximated: a wrong concentration silently mis-doses.
+    /// The weakest tier, and the only one that has to guess at structure. It is
+    /// reached ONLY when no structured active array exists anywhere in the
+    /// response — see `mergedActives`. It takes a name and, only when the text
+    /// plainly states one, a concentration. A number it cannot read confidently
+    /// is left off rather than approximated: a wrong concentration silently
+    /// mis-doses.
+    ///
+    /// # `/` is a unit divider, not a list separator
+    ///
+    /// Splitting on `/` turned `"Mancozeb 750 g/kg"` into `"Mancozeb 750 g"`
+    /// and `"kg"`. The first lost its concentration — `g` alone is not a
+    /// concentration unit, so the 750 was correctly refused — and the second
+    /// became an active ingredient called "kg", which the Review screen then
+    /// showed as a second constituent of the product, blank and ungrouped.
+    /// Every unit this field can carry (`g/kg`, `g/L`, `% w/w`, `CFU/g`) has a
+    /// slash in it, so `/` can never be a separator here.
     static func parseActives(_ raw: String?) -> [ChemicalActiveIngredient] {
         guard let raw, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
         let parts = raw
-            .components(separatedBy: CharacterSet(charactersIn: "+,;/"))
+            .components(separatedBy: CharacterSet(charactersIn: "+;&·"))
+            .flatMap { piece in
+                piece.replacingOccurrences(
+                    of: #"\s+and\s+"#,
+                    with: "\n",
+                    options: [.regularExpression, .caseInsensitive]
+                ).components(separatedBy: "\n")
+            }
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
@@ -360,17 +422,27 @@ nonisolated enum ChemicalReviewMerge {
         return out
     }
 
+    /// Tokens that are a unit of measure, never the name of an active.
+    ///
+    /// A belt-and-braces guard beside the separator fix: whatever a search row
+    /// puts in front of us, `kg` is not a constituent of the product.
+    private static let unitTokens: Set<String> = [
+        "g", "kg", "mg", "l", "ml", "g/l", "g/kg", "w/w", "w/v", "cfu", "cfu/g",
+        "%", "%w/w", "%w/v", "ppm", "iu",
+    ]
+
     private static func parseActive(_ text: String) -> ChemicalActiveIngredient? {
         // Split at the first digit: everything before is the name, everything
         // from there is the concentration and its unit.
         guard let digitIndex = text.firstIndex(where: \.isNumber) else {
             let name = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard name.count >= 2 else { return nil }
+            guard !isUnitToken(name) else { return nil }
             return ChemicalActiveIngredient(name: name, identitySource: .aiInterpretation)
         }
         let name = String(text[text.startIndex..<digitIndex])
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard name.count >= 2 else { return nil }
+        guard name.count >= 2, !isUnitToken(name) else { return nil }
 
         let remainder = String(text[digitIndex...])
         let numberText = remainder.prefix { $0.isNumber || $0 == "." || $0 == "," }
@@ -393,6 +465,14 @@ nonisolated enum ChemicalReviewMerge {
         )
     }
 
+    private static func isUnitToken(_ raw: String) -> Bool {
+        unitTokens.contains(
+            raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: " ", with: "")
+                .lowercased()
+        )
+    }
+
     // MARK: - Registration
 
     /// Merge registration identity WITHOUT ever inventing one.
@@ -404,12 +484,15 @@ nonisolated enum ChemicalReviewMerge {
     /// - Parameter labelReference: the already-resolved Official Label link.
     ///   Passing `nil` keeps the historic behaviour of reading the canonical
     ///   and existing registration blocks directly.
+    /// - Parameter registrant: the display-cased registrant the draft will
+    ///   show. Passing `nil` reads the canonical and existing blocks directly.
     static func mergedRegistration(
         canonical: ChemicalRegistration?,
         existing: ChemicalRegistration?,
         selected: ChemicalSearchResult?,
         countryCode: String,
-        labelReference: String? = nil
+        labelReference: String? = nil,
+        registrant: String? = nil
     ) -> ChemicalRegistration? {
         let country = firstNonEmpty([
             canonical?.countryCode,
@@ -438,7 +521,8 @@ nonisolated enum ChemicalReviewMerge {
             canonical?.labelVersion,
             existing?.labelVersion
         ])
-        let registrant = firstNonEmpty([
+        let registrantText = firstNonEmpty([
+            registrant,
             canonical?.registrant,
             existing?.registrant
         ])
@@ -454,7 +538,7 @@ nonisolated enum ChemicalReviewMerge {
                 : (canonical?.scheme ?? existing?.scheme
                    ?? ChemicalRegistrationScheme.schemes(forCountryCode: country).first),
             registrationNumber: number.isEmpty ? nil : number,
-            registrant: registrant.isEmpty ? nil : registrant,
+            registrant: registrantText.isEmpty ? nil : registrantText,
             registeredProductName: registeredName.isEmpty ? nil : registeredName,
             labelReference: reference.isEmpty ? nil : reference,
             labelVersion: version.isEmpty ? nil : version
