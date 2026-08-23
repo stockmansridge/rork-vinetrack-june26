@@ -3421,23 +3421,42 @@ private struct CalcChemicalLineCard: View {
         line.basis = basis
     }
 
-    /// The large `[ 100 m — Recommended ] [ Per ha ]` control.
+    /// The `[ Per 100 L ] [ Per ha ]` control — the PRODUCT'S LABEL RATE BASIS.
     ///
-    /// Replaces a caption-sized capsule that read "Per Ha"/"Per 100L". Which
-    /// denominator a spray is calculated on changes the amount of product in
-    /// the tank, so it is not a detail to be tucked beside a delete button.
+    /// # This is not the carrier control, and it used to look like one
+    ///
+    /// It was headed "Application basis" and its buttons read `100 m` and
+    /// `Per ha` — the exact words on the Carrier Volume step's own selector.
+    /// So a Dithane line, whose label states `150–200 g/100 L` and no
+    /// per-hectare grapevine rate at all, rendered as `[100 m — Recommended]`
+    /// beside a greyed-out `[Per ha]`, and read as VineTrack refusing to let
+    /// the operator spray that product on a hectare basis. It was never saying
+    /// that. It was saying the LABEL has no per-hectare rate.
+    ///
+    /// The two are genuinely independent:
+    ///
+    /// ```text
+    /// carrier basis   L/100 m  or  L/ha     — how this vineyard measures water
+    /// label rate basis  /100 L  or  /ha     — what the regulator printed
+    /// ```
+    ///
+    /// A `150–200 g/100 L` label is calculated identically from either carrier
+    /// basis: the concentration is multiplied by the dilute carrier volume,
+    /// whether that volume was reached through row metres or through hectares.
+    /// Nothing here converts one into the other, and greying out a button on
+    /// this control never restricts the carrier workflow.
     @ViewBuilder
     private var rateBasisControl: some View {
         let current = selectedOfferedRate?.basis ?? line.basis
         VStack(alignment: .leading, spacing: 8) {
-            Text("Application basis")
+            Text("Label rate basis")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 8) {
                 basisOption(
                     .per100Litres,
-                    title: "100 m",
+                    title: "Per 100 L",
                     isCurrent: current == .per100Litres,
                     isAvailable: hasGenuinePer100LVineyardRate,
                     isRecommended: recommendsHundredMetres
@@ -3451,9 +3470,20 @@ private struct CalcChemicalLineCard: View {
                 )
             }
 
+            Text("What the label's rate is measured against. Your water volume "
+                 + "basis is chosen in Carrier Volume and is not changed by this.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
             if !hasGenuinePer100LVineyardRate {
-                Text("This label states no per-100 L grapevine rate, so a 100 m "
-                     + "volume cannot be calculated from it.")
+                Text("This label states no per-100 L grapevine rate.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !hasGenuinePerHectareVineyardRate {
+                Text("This label states no per-hectare grapevine rate.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -3531,13 +3561,40 @@ private struct CalcChemicalLineCard: View {
         let rates: [SpraySelectableRate]
     }
 
-    /// The seedable rate in the chemical's display unit, when the current
+    /// The unit the applied-rate field reads and writes in.
+    ///
+    /// The LABEL's unit whenever the selected rate states one that converts,
+    /// otherwise the product's Chemical Store unit. A label that says
+    /// `150–200 g/100 L` must be answered in grams: asking an operator to
+    /// express `175 g` as `0.175 Kg`, because the drum happens to be stocked
+    /// in kilograms, is an invitation to enter a rate 1000× wrong.
+    private var appliedRateUnit: String {
+        guard let chem = selectedChemical else { return "" }
+        if let labelUnit = selectedOfferedRate?.labelUnit.trimmedNonEmpty,
+           SprayRegisteredUseRates.baseValue(1, labelUnit: labelUnit, chemical: chem) != nil {
+            return labelUnit
+        }
+        return chem.unit.rawValue
+    }
+
+    /// The label's stated band for the selected rate, e.g. `"150–200 g/100 L"`.
+    /// `nil` unless the selection genuinely is a range.
+    private var appliedRateRangeText: String? {
+        guard let rate = selectedOfferedRate, rate.requiresOperatorRate else { return nil }
+        return rate.displayText
+    }
+
+    /// The seedable rate in the applied-rate field's own unit, when the current
     /// selection actually provides one. `nil` for a range, a reference-only
     /// entry or an unresolved rate — all of which the operator must resolve.
     private var recommendedRateDisplay: Double? {
         guard let chem = selectedChemical,
               let base = selectedOfferedRate?.seed.seedableValue else { return nil }
-        return chem.unit.fromBase(base)
+        return SprayRegisteredUseRates.displayValue(
+            base,
+            labelUnit: appliedRateUnit,
+            chemical: chem
+        ) ?? chem.unit.fromBase(base)
     }
 
     /// The rate menu, shared by the compact basis chip and the Rate row.
@@ -3747,13 +3804,25 @@ private struct CalcChemicalLineCard: View {
         }
     }
 
+    /// The applied label rate the operator is using.
+    ///
+    /// # Why this is not called "Override Rate" any more
+    ///
+    /// For a fixed label rate it genuinely is an override. For a RANGE it is
+    /// not: `150–200 g/100 L` is not a recommendation VineTrack is offering
+    /// and the operator is overruling — it is a band the label requires them
+    /// to choose a point inside. Heading that field "Override Rate" over an
+    /// empty box, with the store's kilogram unit beside it, produced the
+    /// summary `0.0 Kg/100 L — Unavailable` and gave no clue what was wanted.
     @ViewBuilder
     private func overrideRateRow(chem: SavedChemical) -> some View {
-        let basisLabel = line.basis == .perHectare ? "/ha" : "/100L"
+        let basisLabel = line.basis == .perHectare ? "/ha" : "/100 L"
+        let unitLabel = appliedRateUnit
         let isOverridden = line.overrideRate != nil
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Override Rate").font(.caption).foregroundStyle(.secondary)
+                Text(appliedRateRangeText == nil ? "Applied label rate" : "Applied label rate")
+                    .font(.caption).foregroundStyle(.secondary)
                 if isOverridden {
                     Text("Manual")
                         .font(.caption2.weight(.semibold))
@@ -3790,11 +3859,19 @@ private struct CalcChemicalLineCard: View {
                     let trimmed = newValue.trimmingCharacters(in: .whitespaces)
                     if trimmed.isEmpty {
                         line.overrideRate = nil
-                    } else if let v = Double(trimmed), v > 0 {
-                        line.overrideRate = v
+                    } else if let typed = Double(trimmed), typed > 0 {
+                        // Stored in BASE units, the same space
+                        // `SprayRegisteredUseRates.seedValue` returns, so the
+                        // typed and the seeded paths cannot mean different
+                        // things by the same number.
+                        line.overrideRate = SprayRegisteredUseRates.baseValue(
+                            typed,
+                            labelUnit: unitLabel,
+                            chemical: chem
+                        ) ?? typed
                     }
                 }
-                Text("\(chem.unit.rawValue)\(basisLabel)")
+                Text("\(unitLabel)\(basisLabel)")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
@@ -3817,9 +3894,12 @@ private struct CalcChemicalLineCard: View {
     private func rateGuidanceText(chem: SavedChemical, basisLabel: String) -> some View {
         if let recommendedRateDisplay {
             Text("Recommended: \(SprayRateFormatter.format(recommendedRateDisplay)) "
-                 + "\(chem.unit.rawValue)\(basisLabel)")
+                 + "\(appliedRateUnit)\(basisLabel)")
         } else if let rate = selectedOfferedRate, rate.requiresOperatorRate {
-            Text("Label rate: \(rate.displayText) — enter the rate you are applying.")
+            // Named bounds, in the label's own unit, so the operator is never
+            // left to work out what a valid answer looks like.
+            Text("Label range: \(rate.displayText). Enter the rate you are "
+                 + "applying, in \(appliedRateUnit)\(basisLabel).")
         } else if let rate = selectedOfferedRate {
             Text("\(rate.displayText) — enter the rate you are applying.")
         } else if hasVineyardUseWithoutRate {
@@ -3836,8 +3916,15 @@ private struct CalcChemicalLineCard: View {
 
     private func syncOverrideText() {
         if let value = line.overrideRate {
-            let formatted = SprayRateFormatter.format(value)
-            if overrideText != formatted, Double(overrideText) != value {
+            let shown = selectedChemical.flatMap {
+                SprayRegisteredUseRates.displayValue(
+                    value,
+                    labelUnit: appliedRateUnit,
+                    chemical: $0
+                )
+            } ?? value
+            let formatted = SprayRateFormatter.format(shown)
+            if overrideText != formatted, Double(overrideText) != shown {
                 overrideText = formatted
             }
         } else if !overrideText.isEmpty {

@@ -13,19 +13,21 @@ import SwiftUI
 /// nothing they could do about it.
 ///
 /// So the wizard is now a search screen that hands straight to the existing
-/// Chemical Store editor, pre-populated with everything the lookup found. The
-/// operator reviews real values, corrects anything wrong, and saves. Confirming
-/// a product is an act of editing it, not an act of clicking through warnings
-/// about it.
+/// Chemical Store editor, pre-populated with everything the lookup found.
 ///
-/// # It owns no lookup of its own
+/// # It owns the SESSION, not the screens
 ///
-/// Search, ranking and resolution live in `ChemicalProductSearchSheet`; mapping
-/// lives in `ChemicalReviewMerge`; editing and saving live in
-/// `EditSavedChemicalSheet`. This type is the wiring between them and nothing
-/// else, which is what keeps the Chemical Store, the Spray Calculator and the
-/// Spray Program's "Add New Chemical" on genuinely the same path rather than on
-/// three that merely look alike.
+/// The lookup session — query, results, in-flight tasks and the resolved draft
+/// — lives in a `ChemicalLookupCoordinator` held here in `@State`. SwiftUI
+/// keeps that object alive across every reconstruction of the views below, so
+/// rotating the phone or taking a screenshot cannot cancel a resolve or send a
+/// populated Review Chemical back to Add Chemical.
+///
+/// Previously the resolved draft was `@State` here and the editor was presented
+/// through a Binding whose setter cleared it. Any dismissal SwiftUI decided to
+/// perform — including one the operator never asked for — ran that setter and
+/// silently discarded the draft. Now the draft belongs to the coordinator and
+/// is cleared only by Save or an explicit Cancel.
 struct ChemicalMatchFlowView: View {
     /// Existing chemical being matched (legacy `needs_match` cleanup), or nil
     /// when adding something new.
@@ -39,10 +41,8 @@ struct ChemicalMatchFlowView: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    /// The populated, unsaved record under review. Presenting it IS the match
-    /// step — there is no separate read-only confirmation of it.
-    @State private var reviewDraft: SavedChemical?
-    @State private var showManualEntry: Bool = false
+    /// THE session. Created once, survives every redraw below it.
+    @State private var coordinator = ChemicalLookupCoordinator()
 
     init(
         existing: SavedChemical? = nil,
@@ -56,29 +56,33 @@ struct ChemicalMatchFlowView: View {
 
     var body: some View {
         ChemicalProductSearchSheet(
+            coordinator: coordinator,
             initialQuery: prefillQuery,
             existing: existing,
-            onManualEntry: { showManualEntry = true }
-        ) { draft in
-            // Resolved ONCE, here. The draft is a stable value from this moment
-            // until Save or Cancel; nothing downstream re-runs the lookup.
-            reviewDraft = draft
+            onManualEntry: { coordinator.showManualEntry = true }
+        ) { _ in
+            // The coordinator already holds the draft. Nothing to copy — a
+            // second copy is exactly what used to go missing.
         }
-        // ONE sheet presenter for both destinations. Two chained `.sheet`
-        // modifiers on the same view share a presentation slot, and a rebuild
-        // of this view while one was open could tear down the editor inside it.
+        // ONE sheet presenter for both destinations, driven by coordinator
+        // state so a rebuild of this view cannot tear the editor down.
         .sheet(item: editorTarget) { target in
             // THE Chemical Store editor. `chemical:` stays the record being
             // matched (nil when adding) so Save still takes the right
-            // create/update path; `prefill:` is what to show. Same screen,
-            // same Save, same `saved_chemicals` row.
+            // create/update path; `prefill:` is what to show.
             EditSavedChemicalSheet(
                 chemical: existing,
                 prefill: target.draft
             ) { saved in
                 onSaved?(saved)
+                coordinator.finishReview()
                 dismiss()
             }
+            // A review session ends because the operator ended it. Interactive
+            // swipe-to-dismiss is the one gesture indistinguishable from an
+            // accidental drag while scrolling a long form, and it was the most
+            // likely way a populated Review Chemical vanished mid-inspection.
+            .interactiveDismissDisabled()
         }
     }
 
@@ -92,15 +96,14 @@ struct ChemicalMatchFlowView: View {
     private var editorTarget: Binding<EditorTarget?> {
         Binding(
             get: {
-                if let reviewDraft { return EditorTarget(draft: reviewDraft) }
-                if showManualEntry { return EditorTarget(draft: nil) }
+                if let draft = coordinator.reviewDraft { return EditorTarget(draft: draft) }
+                if coordinator.showManualEntry { return EditorTarget(draft: nil) }
                 return nil
             },
             set: { newValue in
-                if newValue == nil {
-                    reviewDraft = nil
-                    showManualEntry = false
-                }
+                // Reached only after `interactiveDismissDisabled`, i.e. from
+                // the editor's own Cancel or Save.
+                if newValue == nil { coordinator.finishReview() }
             }
         )
     }

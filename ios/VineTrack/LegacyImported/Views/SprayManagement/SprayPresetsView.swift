@@ -279,6 +279,12 @@ struct EditSavedChemicalSheet: View {
     /// use is still on the record and still saved.
     @State private var showsNonVineyardUses: Bool = false
     @State private var deleteCoordinator = ChemicalDeleteCoordinator()
+    /// The lookup session for "search the register again".
+    ///
+    /// Held HERE rather than inside the search sheet so a rotation, a
+    /// screenshot or any other view reconstruction cannot cancel a resolve
+    /// that is already running.
+    @State private var lookupCoordinator = ChemicalLookupCoordinator()
 
     init(
         chemical: SavedChemical?,
@@ -366,10 +372,13 @@ struct EditSavedChemicalSheet: View {
                     // merged draft, which is applied to this session — one
                     // lookup, one merge, one review. Nothing is saved here.
                     ChemicalProductSearchSheet(
+                        coordinator: lookupCoordinator,
                         initialQuery: session.name,
                         existing: chemical
                     ) { reviewed in
                         session.apply(reviewed: reviewed, fallbackCountry: resolvedCountry)
+                        lookupCoordinator.finishReview()
+                        activeSheet = nil
                     }
                 case .reverify:
                     if let chemical {

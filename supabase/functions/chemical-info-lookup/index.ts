@@ -1179,31 +1179,63 @@ Deno.serve(async (req: Request) => {
 
       const authoritative = [...masterHits, ...registerCandidates];
 
-      // WEB RESEARCH IS NOT FREE (task §24). The cheap deterministic tiers
-      // run first, and Terra is only asked when they did not answer well:
-      // enough authoritative candidates already on screen means the operator
-      // has what they came for, and a two-character fragment is still
-      // typing, not a question.
+      // WEB RESEARCH IS NOT FREE (task §24), and it is not FAST either.
+      //
+      // # Why an authoritative hit now ends the request
+      //
+      // The gate used to be `authoritative.length < 3`, which meant a query
+      // answered by exactly one official-register row still went on to spend
+      // up to RESEARCH_CANDIDATE_TIMEOUT_MS (30 s, plus one retry) looking for
+      // more. The iOS search timeout is 30 s in total, so those requests could
+      // not finish: the client gave up, cleared its rows, and reported "no
+      // products found" for a product the register had already returned in
+      // under a second.
+      //
+      // "CHATEAU HERBICIDE" (APVMA 80647) is exactly that shape — one exact
+      // register match, niche enough that research burns its whole budget. The
+      // register was never the problem; waiting for a second opinion about an
+      // answer we already had was.
+      //
+      // So research is now the fallback it was meant to be: it runs when the
+      // deterministic tiers found NOTHING, or when the client explicitly asks
+      // to broaden. A register hit is a complete answer and is returned
+      // immediately.
       const researchConfig = readResearchConfig();
       const wantsBroaderResults = body?.broaden === true;
       const shouldResearch = researchConfig.enabled &&
         query.length >= 3 &&
-        (wantsBroaderResults || authoritative.length < 3);
+        (wantsBroaderResults || authoritative.length === 0);
+
+      if (!shouldResearch && authoritative.length) {
+        return json({ results: authoritative, jurisdiction: jurEnv });
+      }
 
       if (shouldResearch) {
-        const outcome = await runChemicalResearch({
-          query,
-          countryCode,
-          countryLabel,
-          mode: "candidate_discovery",
-          apiKey,
-          fetchFn: fetch,
-          config: researchConfig,
-          registerResolved: registerCandidates.length > 0,
-        });
-        console.log(researchLog(outcome.telemetry));
+        // Fail-soft, like every other stage of search. An exception escaping
+        // here reached the outer handler as a 502, so a research provider
+        // outage destroyed the register candidates sitting in `authoritative`
+        // — the one part of the answer that was already correct.
+        let outcome = null;
+        try {
+          outcome = await runChemicalResearch({
+            query,
+            countryCode,
+            countryLabel,
+            mode: "candidate_discovery",
+            apiKey,
+            fetchFn: fetch,
+            config: researchConfig,
+            registerResolved: registerCandidates.length > 0,
+          });
+          console.log(researchLog(outcome.telemetry));
+        } catch (err) {
+          console.warn(
+            "candidate research failed:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
 
-        if (outcome.research) {
+        if (outcome?.research) {
           const seen = new Set(
             authoritative.map((m: any) => String(m.name).toLowerCase()),
           );

@@ -12,22 +12,28 @@ import SwiftUI
 /// product could show "No active ingredients recorded" and, two lines below,
 /// "Recorded as text: Mancozeb · M5". Two pipelines, two answers, one screen.
 ///
-/// So this view owns search and selection, and `ChemicalReviewMerge` owns
-/// mapping. It never saves anything: it hands back a populated, unsaved
-/// `SavedChemical` draft and lets its caller decide what that means — the Add
-/// Chemical flow opens the editor on it, and the editor's own "Search again"
-/// applies it to the session in place. One lookup, one merge, one shape of
-/// result.
+/// So this view owns the PRESENTATION of search and selection, and
+/// `ChemicalReviewMerge` owns mapping. It never saves anything.
+///
+/// # It owns no state and no tasks
+///
+/// Everything that outlives a layout pass — the query, the rows, the in-flight
+/// tasks and the resolved draft — lives in `ChemicalLookupCoordinator`, held by
+/// the PRESENTING view. This view reads and writes that object and nothing
+/// else. There is deliberately no `.onDisappear` cancellation here: on a real
+/// phone `onDisappear` fires for rotation and for the system snapshot a
+/// screenshot takes, and cancelling a 180 s resolve from it meant turning the
+/// phone sideways killed the lookup.
 struct ChemicalProductSearchSheet: View {
+    /// The session. Owned by the presenter, not by this view.
+    @Bindable var coordinator: ChemicalLookupCoordinator
     /// Seeds the search box.
     let initialQuery: String
     /// The record being re-identified, if any. Its id and operational data are
     /// preserved through the merge so a re-search corrects a product rather
     /// than replacing it with a stranger.
     let existing: SavedChemical?
-    /// Receives the merged, unsaved draft. This view does NOT dismiss itself:
-    /// the Add Chemical flow stays open to present the editor, while the
-    /// editor's own "search again" closes it. The caller knows which.
+    /// Receives the merged, unsaved draft. This view does NOT dismiss itself.
     let onReviewed: (SavedChemical) -> Void
     /// Shown as "Enter Manually" when provided. Absent inside the editor,
     /// where the operator is already looking at the manual form.
@@ -36,25 +42,14 @@ struct ChemicalProductSearchSheet: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.dismiss) private var dismiss
 
-    @State private var query: String = ""
-    @State private var rows: [ChemicalSearchRow] = []
-    @State private var isSearching: Bool = false
-    @State private var isResolving: Bool = false
-    @State private var searchTask: Task<Void, Never>?
-    @State private var resolveTask: Task<Void, Never>?
-    @State private var searchError: String?
-    @State private var hasSeededQuery: Bool = false
-    /// The row whose RESOLUTION failed, kept so the operator can retry it or
-    /// deliberately go on with only what the search row carried. Never taken
-    /// automatically — see `select(_:)`.
-    @State private var unresolvedRow: ChemicalSearchRow?
-
     init(
+        coordinator: ChemicalLookupCoordinator,
         initialQuery: String = "",
         existing: SavedChemical? = nil,
         onManualEntry: (() -> Void)? = nil,
         onReviewed: @escaping (SavedChemical) -> Void
     ) {
+        self.coordinator = coordinator
         self.initialQuery = initialQuery
         self.existing = existing
         self.onManualEntry = onManualEntry
@@ -70,6 +65,8 @@ struct ChemicalProductSearchSheet: View {
         )
     }
 
+    private var vineyardId: UUID { store.selectedVineyard?.id ?? UUID() }
+
     var body: some View {
         NavigationStack {
             List {
@@ -79,8 +76,8 @@ struct ChemicalProductSearchSheet: View {
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Color.clear)
                 }
-                if let searchError { errorSection(searchError) }
-                if isResolving {
+                if let searchError = coordinator.searchError { errorSection(searchError) }
+                if coordinator.isResolving {
                     Section {
                         HStack { ProgressView(); Text("Loading product details…") }
                     }
@@ -98,23 +95,24 @@ struct ChemicalProductSearchSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    // The ONE place a lookup is cancelled by leaving.
+                    Button("Cancel") {
+                        coordinator.cancel(.operatorDismissed)
+                        dismiss()
+                    }
                 }
             }
             .onAppear {
-                // Once-guarded. `onAppear` fires again whenever this sheet
-                // re-appears, and re-seeding would throw away whatever the
-                // operator had retyped.
-                guard !hasSeededQuery else { return }
-                hasSeededQuery = true
-                if query.isEmpty { query = initialQuery }
+                ChemicalLookupTrace.log("search_view_appear")
+                coordinator.seedQueryIfNeeded(initialQuery)
             }
             .onDisappear {
-                // A 180 s resolve must not outlive the screen that asked for
-                // it. These are unstructured tasks (started from Button
-                // actions), so nothing cancels them implicitly.
-                searchTask?.cancel()
-                resolveTask?.cancel()
+                // Deliberately NOT a cancellation point. Rotation, screenshots
+                // and ordinary reconstruction all land here.
+                ChemicalLookupTrace.log("search_view_disappear", "no cancellation")
+            }
+            .onChange(of: coordinator.reviewDraft?.id) { _, _ in
+                if let draft = coordinator.reviewDraft { onReviewed(draft) }
             }
         }
     }
@@ -125,22 +123,22 @@ struct ChemicalProductSearchSheet: View {
         Section {
             HStack {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Product name", text: $query)
+                TextField("Product name", text: $coordinator.query)
                     .autocorrectionDisabled()
                     .onSubmit { startSearch() }
             }
             Button {
                 startSearch()
             } label: {
-                if isSearching {
+                if coordinator.isSearching {
                     HStack { ProgressView(); Text("Searching…") }
                 } else {
                     Text("Search")
                 }
             }
             .disabled(
-                query.trimmingCharacters(in: .whitespaces).isEmpty
-                    || isSearching
+                coordinator.query.trimmingCharacters(in: .whitespaces).isEmpty
+                    || coordinator.isSearching
                     || countryCode.isEmpty
             )
         } header: {
@@ -160,20 +158,24 @@ struct ChemicalProductSearchSheet: View {
             Label(message, systemImage: "exclamationmark.triangle")
                 .font(.caption)
                 .foregroundStyle(VineyardTheme.warning)
-            if let unresolvedRow {
+            if let unresolvedRow = coordinator.unresolvedRow {
                 // Retrying is the RIGHT first move: the resolver caches its
                 // slow first pass, so a second attempt normally returns the
                 // full register record immediately.
                 Button("Try Again") { startSelect(unresolvedRow) }
                 Button("Continue Without Register Details") {
-                    handOff(unresolvedRow, lookup: nil)
+                    coordinator.continueWithoutRegisterDetails(
+                        country: countryCode,
+                        existing: existing,
+                        vineyardId: vineyardId
+                    )
                 }
                 .foregroundStyle(.secondary)
             } else {
                 Button("Try Again") { startSearch() }
             }
         } footer: {
-            if unresolvedRow != nil {
+            if coordinator.unresolvedRow != nil {
                 Text("Continuing fills in only what the search result carried — no category, no label link and no registered uses. Everything stays editable, and nothing is saved until you press Save.")
             }
         }
@@ -183,7 +185,7 @@ struct ChemicalProductSearchSheet: View {
     @ViewBuilder
     private var resultSections: some View {
         ForEach(ChemicalSearchTier.allCases, id: \.rawValue) { tier in
-            let tierRows = rows.filter { $0.tier == tier }
+            let tierRows = coordinator.rows.filter { $0.tier == tier }
             if !tierRows.isEmpty {
                 Section {
                     ForEach(tierRows) { row in
@@ -192,7 +194,7 @@ struct ChemicalProductSearchSheet: View {
                         } label: {
                             resultRow(row)
                         }
-                        .disabled(isResolving)
+                        .disabled(coordinator.isResolving)
                     }
                 } header: {
                     Text(tier.label)
@@ -214,6 +216,8 @@ struct ChemicalProductSearchSheet: View {
             Text("Listed in the national register. Choose the one on your label — you'll review every detail before saving.")
         case .suggestion:
             Text("Not confirmed against the register. You can still use it: everything found is filled in for you to check against the label.")
+        case .weakMatch:
+            Text("These only mention your search words somewhere in their registered name. They are shown in case one is the product you meant.")
         }
     }
 
@@ -249,118 +253,16 @@ struct ChemicalProductSearchSheet: View {
 
     // MARK: - Actions
 
-    /// Own the search task so leaving the screen can cancel it.
     private func startSearch() {
-        searchTask?.cancel()
-        searchTask = Task { await runSearch() }
+        coordinator.startSearch(country: countryCode, savedChemicals: store.savedChemicals)
     }
 
-    /// Own the resolve task so leaving the screen can cancel it.
-    ///
-    /// This is the long one — up to 180 s — and it is started from a Button,
-    /// which means SwiftUI ties it to nothing at all.
     private func startSelect(_ row: ChemicalSearchRow) {
-        resolveTask?.cancel()
-        resolveTask = Task { await select(row) }
-    }
-
-    private func runSearch() async {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        isSearching = true
-        searchError = nil
-        unresolvedRow = nil
-        defer { isSearching = false }
-        do {
-            let results = try await ChemicalInfoService()
-                .searchChemicals(query: trimmed, country: countryCode)
-            rows = ChemicalSearchRanking.ordered(
-                results: results,
-                savedChemicals: store.savedChemicals,
-                vineyardCountry: countryCode
-            )
-            if rows.isEmpty {
-                searchError = "No products found. Try a different spelling, or enter the product manually."
-            }
-        } catch is CancellationError {
-            // The operator left, or searched again. Not a failure to report.
-            return
-        } catch {
-            // The typed query is deliberately left intact so a failed lookup
-            // never costs the operator their input.
-            rows = []
-            searchError = (error as? LocalizedError)?.errorDescription
-                ?? "Lookup is unavailable. Check your connection and try again."
-        }
-    }
-
-    /// Resolve the selected product and hand back the merged draft.
-    ///
-    /// # A failed resolution is not a product with an empty label
-    ///
-    /// This used to swallow every error and hand back a draft built from the
-    /// search row alone. That is how a register-confirmed product reached
-    /// Review Chemical showing "Uncategorised", a default unit, a blank
-    /// Official Label URL and "No registered use is on record" — while the
-    /// server had answered all four correctly and the request had merely timed
-    /// out. A degraded draft is indistinguishable from a complete one on
-    /// screen, so producing one silently is the worst of the options.
-    ///
-    /// The fallback still exists — an operator with no connection must still be
-    /// able to record the product they are holding — but it is now a decision
-    /// they take, with the consequence stated.
-    private func select(_ row: ChemicalSearchRow) async {
-        isResolving = true
-        searchError = nil
-        unresolvedRow = nil
-        defer { isResolving = false }
-
-        let lookup: ChemicalStructuredLookup
-        do {
-            // The SELECTED candidate defines identity from here on — the typed
-            // query ("Dithaine rainshield") is dead the moment an exact result
-            // is chosen.
-            lookup = try await ChemicalInfoService().lookupStructured(
-                ChemicalStructuredLookupRequest(
-                    selected: row.result,
-                    country: countryCode,
-                    fallbackQuery: query
-                )
-            )
-        } catch is CancellationError {
-            // Cancelled by leaving the screen. Raising "could not load" here
-            // would blame the server for the operator's own navigation.
-            return
-        } catch {
-            unresolvedRow = row
-            searchError = (error as? LocalizedError)?.errorDescription
-                ?? "Could not load this product's registered details. Check your connection and try again."
-            return
-        }
-
-        // Jurisdiction rejection stays absolute: another country's rates, WHP
-        // and re-entry statements are another country's law, and this is the
-        // one case where populating the form would be worse than refusing.
-        if let reason = ChemicalJurisdiction.rejectionReason(for: lookup, requestCountry: countryCode) {
-            searchError = reason
-            return
-        }
-
-        handOff(row, lookup: lookup)
-    }
-
-    /// The ONE projection from a selected row (plus whatever was resolved for
-    /// it) into the reviewable draft. Both the Add Chemical flow and the
-    /// editor's own "Search the register again" arrive here.
-    private func handOff(_ row: ChemicalSearchRow, lookup: ChemicalStructuredLookup?) {
-        onReviewed(ChemicalReviewMerge.reviewChemical(
-            lookup: lookup,
-            selected: row.result,
-            // Selecting a row that matches something already in the store
-            // corrects THAT record rather than creating a duplicate.
-            existing: existing ?? row.existing,
-            countryCode: countryCode,
-            vineyardId: store.selectedVineyard?.id ?? UUID()
-        ))
+        coordinator.startSelect(
+            row,
+            country: countryCode,
+            existing: existing,
+            vineyardId: vineyardId
+        )
     }
 }

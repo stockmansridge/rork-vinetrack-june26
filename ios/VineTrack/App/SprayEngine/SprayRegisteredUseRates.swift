@@ -54,6 +54,37 @@ nonisolated struct SpraySelectableRate: Identifiable, Sendable, Hashable {
     let seed: SprayRateSeed
     /// The rate exactly as the label states it, e.g. `"35–54 mL/100 L"`.
     let displayText: String
+    /// The unit the LABEL quotes this rate in, e.g. `"g"` for `150–200 g/100 L`.
+    ///
+    /// Kept separate from the product's Chemical Store unit on purpose. A
+    /// product stocked in Kg can carry a label rate written in grams, and an
+    /// operator asked to "enter the rate you are applying" for a `150–200
+    /// g/100 L` band must be able to type `175`, not `0.175`. Empty when the
+    /// rate came from the legacy scalar array, where the store's own unit is
+    /// the only unit there has ever been.
+    let labelUnit: String
+
+    init(
+        id: UUID,
+        origin: SprayRateOrigin,
+        crop: String?,
+        targetRaw: String?,
+        label: String,
+        basis: ChemicalRateBasis?,
+        seed: SprayRateSeed,
+        displayText: String,
+        labelUnit: String = ""
+    ) {
+        self.id = id
+        self.origin = origin
+        self.crop = crop
+        self.targetRaw = targetRaw
+        self.label = label
+        self.basis = basis
+        self.seed = seed
+        self.displayText = displayText
+        self.labelUnit = labelUnit
+    }
 
     /// `"GRAPEVINE · POWDERY MILDEW"`, or `nil` for a legacy rate.
     var useTitle: String? {
@@ -351,7 +382,8 @@ nonisolated enum SprayRegisteredUseRates {
             label: rate.label,
             basis: basis,
             seed: seed,
-            displayText: rate.displayRate
+            displayText: rate.displayRate,
+            labelUnit: rate.unit
         )
     }
 
@@ -426,6 +458,38 @@ nonisolated enum SprayRegisteredUseRates {
 
     /// The legacy `rates` array, presented through the same shape.
     ///
+    /// The value to SHOW for a rate held in base units, expressed in the
+    /// label's own unit.
+    ///
+    /// The exact inverse of `baseValue`, and deliberately built from the same
+    /// switch: a display path that converted independently is how a field ends
+    /// up showing `0.15` for `150 g`.
+    static func displayValue(
+        _ baseValue: Double,
+        labelUnit: String,
+        chemical: SavedChemical
+    ) -> Double? {
+        guard baseValue.isFinite, baseValue > 0 else { return nil }
+        let unit = labelUnit
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let isLiquidProduct = chemical.unit.baseLabel == "mL"
+        switch unit {
+        case "ml", "millilitre", "millilitres", "milliliter", "milliliters":
+            return isLiquidProduct ? baseValue : nil
+        case "l", "litre", "litres", "liter", "liters":
+            return isLiquidProduct ? baseValue / 1000 : nil
+        case "g", "gram", "grams":
+            return isLiquidProduct ? nil : baseValue
+        case "kg", "kilogram", "kilograms":
+            return isLiquidProduct ? nil : baseValue / 1000
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - Legacy fallback
+
     /// Values are already stored in base units, so they pass straight through.
     static func legacyRates(for chemical: SavedChemical) -> [SpraySelectableRate] {
         chemical.rates.map { rate in
@@ -439,7 +503,8 @@ nonisolated enum SprayRegisteredUseRates {
                 label: rate.label,
                 basis: rate.basis,
                 seed: rate.value.isFinite && rate.value > 0 ? .value(rate.value) : .unresolved,
-                displayText: display
+                displayText: display,
+                labelUnit: ""
             )
         }
     }

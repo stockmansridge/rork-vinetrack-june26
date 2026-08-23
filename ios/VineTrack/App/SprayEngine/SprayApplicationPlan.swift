@@ -135,14 +135,24 @@ nonisolated enum SprayProductUnresolvedReason: Sendable, Hashable {
     var message: String {
         switch self {
         case .rateUnavailable:
-            return "Enter the label rate for this product. VineTrack does not apply a "
-                + "product at an assumed rate."
+            // A label BAND is the common case here: the regulator printed
+            // `150–200 g/100 L` and the point inside it is the operator's
+            // decision, never VineTrack's. Saying "choose" rather than
+            // "enter" is the difference between a prompt and an accusation.
+            return "Choose the applied label rate for this product. Where the label "
+                + "states a range, VineTrack will not pick a point inside it for you."
         case .grossAreaUnavailable:
             return "Select blocks with an area before this product can be calculated."
         case .treatedAreaUnavailable:
             return "Complete the band width and block geometry before this product can be calculated."
         case .carrierUnavailable:
-            return "Complete the Carrier Volume step before this product quantity can be calculated."
+            // Names the canopy explicitly. On the 100 m workflow the canopy IS
+            // the dilute/runoff figure this product's per-100 L rate is
+            // written against, and an operator sent to "Carrier Volume"
+            // without being told what is missing there has been given the
+            // room number but not the question.
+            return "Set the canopy / runoff and the actual applied volume in Carrier "
+                + "Volume before this product quantity can be calculated."
         case .rowLengthUnavailable:
             return "Complete the block row geometry before this product can be calculated."
         }

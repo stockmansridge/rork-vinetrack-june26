@@ -479,15 +479,37 @@ enum SprayGuidedFormat {
     }
 
     /// The full one-line explanation, e.g. `2 L/ha × 10.00 ha whole block`.
+    ///
+    /// Suppressed entirely when the line has no rate. A product whose label
+    /// band the operator has not yet resolved was rendering as
+    /// `0.0 Kg/100 L × 351 L carrier`, which states two things that are not
+    /// true: that a rate of zero has been chosen, and that an arithmetic is
+    /// under way. There is no calculation to explain until there is a rate.
     static func productCalculation(_ line: SprayProductLineResult) -> String? {
+        guard line.rate.isFinite, line.rate > 0 else { return nil }
         guard let measured = productMeasuredInput(line) else { return nil }
         return "\(productRate(line)) × \(measured)"
     }
 
     /// The resulting requirement, e.g. `20.0 L required`.
+    ///
+    /// Never a bare "Unavailable". The engine already knows WHICH single input
+    /// is missing — `SprayProductUnresolvedReason` has distinguished a missing
+    /// product rate from a missing carrier volume from missing band geometry
+    /// since it was written — and nothing was rendering it. An operator told
+    /// only "Unavailable" has to guess between the rate they have not picked
+    /// and the canopy they have not set.
     static func productRequirement(_ line: SprayProductLineResult) -> String {
-        guard let total = line.totalQuantity else { return "Unavailable" }
+        guard let total = line.totalQuantity else {
+            return line.unresolvedReason?.title ?? "Unavailable"
+        }
         return "\(quantity(total, unit: line.unit)) required"
+    }
+
+    /// The action that would make an unresolved line calculable, in the
+    /// operator's own terms. `nil` once the line resolves.
+    static func productBlockerPrompt(_ line: SprayProductLineResult) -> String? {
+        line.unresolvedReason?.message
     }
 
     /// User-facing wording for a product's label rate basis.
