@@ -84,6 +84,14 @@ struct SprayCalculatorView: View {
     @State private var carrierBasisChoice: SprayCarrierBasis = .litresPerHectare
     @State private var diluteLitresPer100mText: String = ""
     @State private var appliedLitresPer100mText: String = ""
+    /// Whether the sprayer applies the canopy's recommended dilute volume, or
+    /// its own calibrated output. Starts undecided — pre-selecting either would
+    /// put a volume nobody chose into the calculation.
+    @State private var sprayVolumeChoice: SprayVolumeChoice = .undecided
+    /// The machine's calibrated output, as typed. Held as text so a part-typed
+    /// figure is never read as a rate, and retained across canopy changes so
+    /// re-choosing a canopy does not wipe what the operator entered.
+    @State private var customSprayerRateText: String = ""
     /// Per-product-line area basis for banded jobs. Keyed by `ChemicalLine.id`
     /// because the decision belongs to the individual product, never the job.
     @State private var productAreaBasis: [UUID: SprayProductRateBasis] = [:]
@@ -480,6 +488,12 @@ struct SprayCalculatorView: View {
         inputs.isEquipmentSelected = selectedEquipmentId != nil
         inputs.tankCapacityLitres = selectedTankCapacityLitres
         inputs.isCanopyConfirmed = canopy.isConfirmed
+        inputs.canopy = canopy
+        inputs.canopyWaterRates = store.settings.canopyWaterRates
+        inputs.sprayVolumeChoice = sprayVolumeChoice
+        inputs.customSprayerLitresPerHectare = Double(
+            customSprayerRateText.trimmingCharacters(in: .whitespaces)
+        )
         inputs.carrierBasis = carrierBasisChoice
         inputs.litresPerHectare = Double(sprayRateText)
         // The canopy's dilute demand, stated per hectare. The SAME canopy
@@ -2691,7 +2705,7 @@ struct SprayCalculatorView: View {
         }
     }
 
-    // MARK: - Step 6 — Carrier Volume
+    // MARK: - Step 6 — Canopy & Spray Volume
 
     @ViewBuilder
     private var carrierVolumeSection: some View {
@@ -2717,7 +2731,14 @@ struct SprayCalculatorView: View {
                 }
             }
 
-            if flow.effectiveCarrierBasis == .litresPer100Metres {
+            // A foliar pass is the case the canopy governs, and it gets the
+            // canopy → recommendation → sprayer → concentration sequence. A
+            // spreader has no canopy at all and a banded pass is governed by
+            // its band width, so both keep the existing controls rather than
+            // being asked a question that cannot change their arithmetic.
+            if flow.requiresCanopyConfirmation {
+                canopyAndSprayVolumeFields
+            } else if flow.effectiveCarrierBasis == .litresPer100Metres {
                 litresPer100mFields
             } else {
                 waterRateSection
@@ -2725,6 +2746,173 @@ struct SprayCalculatorView: View {
 
             if let blocker = flow.blocker(for: .carrier) {
                 GuidedBlockerBanner(blocker: blocker) { showSprayPaddockPicker = true }
+            }
+        }
+    }
+
+    /// The foliar decision path, in the order the arithmetic runs:
+    ///
+    /// ```text
+    /// canopy type → size → density
+    ///   → recommended dilute volume (CF 1.00)
+    ///   → does the sprayer apply that?
+    ///   → concentration factor
+    /// ```
+    ///
+    /// Each figure appears only after the one it is derived from. The screen
+    /// computes none of them — every value is read off `flow.volumeDecision`,
+    /// which is the same object the planner uses to build the carrier volume.
+    @ViewBuilder
+    private var canopyAndSprayVolumeFields: some View {
+        let decision = flow.volumeDecision
+
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Canopy")
+                    .font(.subheadline.weight(.semibold))
+                SprayCanopyControls(selection: $canopy)
+            }
+            .padding(12)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(.rect(cornerRadius: 10))
+
+            if let decision, let recommendation = decision.recommendation {
+                recommendedVolumePanel(recommendation)
+                sprayVolumeChoiceControls
+                if decision.isResolved {
+                    concentrationFactorPanel(decision)
+                }
+            }
+        }
+    }
+
+    /// The CF 1.00 reference. Read-only, and deliberately NOT called the
+    /// operator's spray volume — that is the next question, not this one.
+    @ViewBuilder
+    private func recommendedVolumePanel(_ recommendation: SprayCanopyRecommendation) -> some View {
+        GuidedCalculatedPanel(title: "Recommended spray volume — CF 1.00") {
+            VStack(spacing: 8) {
+                HStack(spacing: 0) {
+                    Text("Dilute / runoff volume")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SprayFieldHelp(
+                        title: "Recommended spray volume",
+                        message: SprayVolumeHelp.recommendedVolume
+                    )
+                    Spacer(minLength: 8)
+                    Text(SprayGuidedFormat.litresPer100m(recommendation.diluteLitresPer100Metres))
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(VineyardTheme.olive)
+                        .monospacedDigit()
+                }
+                if let perHectare = recommendation.diluteLitresPerHectare,
+                   let spacing = recommendation.rowSpacingMetres {
+                    GuidedCalculatedRow(
+                        label: "Equivalent",
+                        value: SprayGuidedFormat.litresPerHectare(perHectare),
+                        caption: "\(SprayGuidedFormat.number(recommendation.diluteLitresPer100Metres)) "
+                            + "L/100 m × 100 ÷ \(String(format: "%.1f", spacing)) m row spacing"
+                    )
+                } else {
+                    GuidedCalculatedRow(
+                        label: "Equivalent",
+                        value: "—",
+                        caption: "Needs one matching row spacing across the selected blocks"
+                    )
+                }
+            }
+        }
+    }
+
+    /// "Spray at the recommended volume?" — exactly two answers, neither
+    /// pre-selected.
+    @ViewBuilder
+    private var sprayVolumeChoiceControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 0) {
+                Text("Spray at the recommended volume?")
+                    .font(.subheadline.weight(.medium))
+                SprayFieldHelp(
+                    title: "Actual sprayer output",
+                    message: SprayVolumeHelp.actualSprayerOutput
+                )
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 8) {
+                GuidedChip(
+                    label: "Use recommended",
+                    icon: sprayVolumeChoice == .useRecommended ? "checkmark" : nil,
+                    isSelected: sprayVolumeChoice == .useRecommended
+                ) {
+                    sprayVolumeChoice = .useRecommended
+                }
+                GuidedChip(
+                    label: "Different sprayer rate",
+                    icon: sprayVolumeChoice == .useCustomSprayerRate ? "checkmark" : nil,
+                    isSelected: sprayVolumeChoice == .useCustomSprayerRate
+                ) {
+                    sprayVolumeChoice = .useCustomSprayerRate
+                }
+            }
+
+            if sprayVolumeChoice == .useCustomSprayerRate {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("What is your sprayer set to apply?")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        TextField("600", text: $customSprayerRateText)
+                            .keyboardType(.decimalPad)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(Color(.tertiarySystemGroupedBackground))
+                            .clipShape(.rect(cornerRadius: 8))
+                        Text("L/ha").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                    Text("Your machine's calibrated water rate — not the chemical label rate.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func concentrationFactorPanel(_ decision: SprayVolumeDecision) -> some View {
+        GuidedCalculatedPanel(title: "Spray volume & concentration") {
+            VStack(spacing: 8) {
+                if let actual = decision.actualLitresPerHectare {
+                    GuidedCalculatedRow(
+                        label: "Actual sprayer output",
+                        value: SprayGuidedFormat.litresPerHectare(actual),
+                        caption: decision.choice == .useRecommended
+                            ? "Following the canopy recommendation"
+                            : "Your sprayer's calibrated rate"
+                    )
+                }
+                HStack(spacing: 0) {
+                    Text("Concentration factor")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SprayFieldHelp(
+                        title: "Concentration factor",
+                        message: SprayVolumeHelp.concentrationFactor
+                    )
+                    Spacer(minLength: 8)
+                    Text(SprayGuidedFormat.factor(decision.concentrationFactor))
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(decision.isConcentrated ? .orange : VineyardTheme.olive)
+                        .monospacedDigit()
+                }
+                if flow.isCarrierResolved {
+                    GuidedCalculatedRow(
+                        label: "Total water",
+                        value: SprayGuidedFormat.litres(flow.plan.carrier.totalLitres),
+                        emphasis: true
+                    )
+                }
             }
         }
     }
@@ -3027,6 +3215,8 @@ struct SprayCalculatorView: View {
                 }
             }
 
+            calculationReferenceGroup
+
             if !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 GuidedReviewGroup(title: "Notes") {
                     Text(notes)
@@ -3038,6 +3228,64 @@ struct SprayCalculatorView: View {
 
             if let blocker = flow.firstBlocker {
                 GuidedBlockerBanner(blocker: blocker)
+            }
+        }
+    }
+
+    /// Every operand and result behind this spray, written out so the numbers
+    /// can be checked against a calculator standing in the block.
+    ///
+    /// Built by `SprayCalculationReferenceBuilder` from the SAME plan and the
+    /// SAME volume decision the rest of the screen reads. It recomputes
+    /// nothing: a reference that derived its own operands could agree with
+    /// itself perfectly while disagreeing with the spray actually recorded,
+    /// which would verify nothing at all.
+    @ViewBuilder
+    private var calculationReferenceGroup: some View {
+        let reference = SprayCalculationReferenceBuilder.make(flow: flow)
+        if !reference.isEmpty {
+            GuidedReviewGroup(title: "Calculation reference") {
+                VStack(alignment: .leading, spacing: 14) {
+                    referenceBlock("Canopy", lines: reference.canopy)
+                    referenceBlock("Spray volume", lines: reference.volume)
+                    referenceBlock("Water", lines: reference.water)
+                    ForEach(reference.products) { product in
+                        referenceBlock(product.name, lines: product.lines)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func referenceBlock(
+        _ title: String,
+        lines: [SprayCalculationReference.Line]
+    ) -> some View {
+        if !lines.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(VineyardTheme.olive)
+                ForEach(lines) { line in
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(line.label)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 8)
+                            Text(line.value)
+                                .font(.caption.weight(.semibold))
+                                .monospacedDigit()
+                        }
+                        if let workings = line.workings {
+                            Text(workings)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
             }
         }
     }

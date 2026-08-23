@@ -3,7 +3,7 @@ import Foundation
 /// The ordered decisions in the guided Spray Calculator.
 ///
 /// ```text
-/// Application → Blocks → Target → Growth Stage → Equipment → Canopy & Carrier → Products → Review
+/// Application → Blocks → Target → Growth Stage → Equipment → Canopy & Spray Volume → Products → Review
 /// ```
 ///
 /// The canopy belongs in step 6, before Products, because it is what the
@@ -32,7 +32,7 @@ nonisolated enum SprayGuidedStep: String, Sendable, CaseIterable, Identifiable, 
         case .target: return "Target"
         case .growthStage: return "Growth Stage"
         case .equipment: return "Equipment"
-        case .carrier: return "Canopy & Carrier"
+        case .carrier: return "Canopy & Spray Volume"
         case .products: return "Products"
         case .review: return "Review"
         }
@@ -76,6 +76,9 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
     /// The canopy is still showing the controls' opening position rather than a
     /// choice anybody made.
     case canopyConfirmationRequired
+    /// The operator has not said whether the sprayer applies the recommended
+    /// dilute volume or its own calibrated output.
+    case sprayVolumeChoiceRequired
     case carrierRateRequired
     case carrierNotCalculable
     case noProductsAdded
@@ -100,7 +103,8 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case .treatedAreaUnavailable: return "Treated area unavailable"
         case .growthStageRequired: return "Choose growth stage or Not Set"
         case .equipmentRequired: return "Select spray unit"
-        case .canopyConfirmationRequired: return "Select canopy size and density"
+        case .canopyConfirmationRequired: return "Select canopy type, size and density"
+        case .sprayVolumeChoiceRequired: return "Choose your spray volume"
         case .carrierRateRequired: return "Enter carrier volume"
         case .carrierNotCalculable: return "Carrier volume unavailable"
         case .noProductsAdded: return "Add products"
@@ -129,9 +133,12 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case .equipmentRequired:
             return "Select the spray unit used for this application."
         case .canopyConfirmationRequired:
-            return "Choose the canopy size and density for this spray. They set the "
-                + "dilute / runoff rate every per-100 L product is measured against, "
+            return "Choose the canopy type, size and density for this spray. They set "
+                + "the dilute / runoff rate every per-100 L product is measured against, "
                 + "so VineTrack will not assume them for you."
+        case .sprayVolumeChoiceRequired:
+            return "Say whether your sprayer will apply the recommended dilute volume "
+                + "or its own calibrated rate."
         case .carrierRateRequired:
             return "Enter the carrier volume for this application."
         case .carrierNotCalculable:
@@ -201,6 +208,20 @@ nonisolated struct SprayGuidedInputs: Sendable {
     /// vines and chose this" from "nobody has been asked yet". Same shape as
     /// `isGrowthStageResolved`, and for the same reason.
     var isCanopyConfirmed: Bool = false
+
+    /// The canopy, including its training system and whether it was chosen.
+    ///
+    /// `nil` for a caller that predates the Canopy & Spray Volume step. The
+    /// legacy `dilute*` inputs below then apply exactly as before, which is
+    /// what keeps historical records and existing tests reproducing their
+    /// original numbers.
+    var canopy: SprayCanopySelection?
+    /// The vineyard's own canopy water-rate table.
+    var canopyWaterRates: CanopyWaterRateEntry = .defaults
+    /// Whether the sprayer applies the recommended dilute volume, or its own.
+    var sprayVolumeChoice: SprayVolumeChoice = .undecided
+    /// The machine's calibrated output, L/ha. Retained across canopy changes.
+    var customSprayerLitresPerHectare: Double?
 
     var carrierBasis: SprayCarrierBasis = .litresPerHectare
     /// L/ha mode: the rate the operator entered.
@@ -282,9 +303,47 @@ nonisolated struct SprayGuidedFlow: Sendable {
     /// change the arithmetic is a prompt operators learn to dismiss.
     var requiresCanopyConfirmation: Bool { inputs.operationType == .foliarSpray }
 
+    /// Whether the canopy has actually been answered — training system
+    /// included. Falls back to the legacy flag when no canopy is supplied.
+    var isCanopyAnswered: Bool {
+        inputs.canopy?.isConfirmed ?? inputs.isCanopyConfirmed
+    }
+
     /// True when a foliar spray still needs its canopy answered.
     var isCanopyOutstanding: Bool {
-        requiresCanopyConfirmation && !inputs.isCanopyConfirmed
+        requiresCanopyConfirmation && !isCanopyAnswered
+    }
+
+    /// True when a training system has yet to be chosen. Distinct from the
+    /// size/density question so the screen can name the one that is missing.
+    var isCanopyTypeOutstanding: Bool {
+        guard requiresCanopyConfirmation, let canopy = inputs.canopy else { return false }
+        return canopy.type == nil
+    }
+
+    // MARK: - Recommended volume vs actual sprayer output
+
+    /// THE recommended-versus-actual decision.
+    ///
+    /// Single authority for the CF 1.00 reference volume, the machine's actual
+    /// output, and the concentration factor between them. Both carrier bases
+    /// read this one value, so the two screens cannot disagree.
+    var volumeDecision: SprayVolumeDecision? {
+        guard let canopy = inputs.canopy else { return nil }
+        return SprayVolumeDecisionResolver.decide(
+            canopy: canopy,
+            settings: inputs.canopyWaterRates,
+            rowSpacingMetres: geometry.uniformRowSpacingMetres,
+            choice: inputs.sprayVolumeChoice,
+            customLitresPerHectare: inputs.customSprayerLitresPerHectare
+        )
+    }
+
+    /// True when the operator has not yet said whether the sprayer will apply
+    /// the recommended volume.
+    var isSprayVolumeChoiceOutstanding: Bool {
+        guard requiresCanopyConfirmation, inputs.canopy != nil, isCanopyAnswered else { return false }
+        return inputs.sprayVolumeChoice == .undecided
     }
 
     // MARK: - Application intent
@@ -482,6 +541,9 @@ nonisolated struct SprayGuidedFlow: Sendable {
             // derived from it. Reporting "enter carrier volume" while the canopy
             // is still unanswered names the second question and hides the first.
             if isCanopyOutstanding { return .canopyConfirmationRequired }
+            // Asked only once the canopy can actually recommend something —
+            // there is nothing to accept or override before that.
+            if isSprayVolumeChoiceOutstanding { return .sprayVolumeChoiceRequired }
             switch effectiveCarrierBasis {
             case .litresPerHectare:
                 guard Self.positive(inputs.litresPerHectare) != nil else { return .carrierRateRequired }
