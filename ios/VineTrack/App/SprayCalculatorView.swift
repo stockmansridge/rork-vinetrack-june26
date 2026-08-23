@@ -500,7 +500,15 @@ struct SprayCalculatorView: View {
         // The figure is entered in whichever unit the operator chose for spray
         // volume, and converted centrally. There is one sprayer output, not an
         // L/ha one and an L/100 m one that could disagree.
-        inputs.customSprayerBasis = flow.effectiveCarrierBasis
+        //
+        // Read from `effectiveCarrierBasis`, NEVER from `flow`. `flow` is built
+        // FROM `guidedInputs`, so reaching for it here is unbounded recursion:
+        // guidedInputs → flow → guidedInputs → … until the thread runs off its
+        // stack guard page and the app is killed with SIGSEGV. That is the
+        // build-64 crash on opening a spray from a Program. The two properties
+        // resolve identically — same profile, same policy, same choice — so
+        // this is the same answer without the cycle.
+        inputs.customSprayerBasis = effectiveCarrierBasis
         inputs.carrierBasis = carrierBasisChoice
         inputs.litresPerHectare = Double(sprayRateText)
         // The canopy's dilute demand, stated per hectare. The SAME canopy
