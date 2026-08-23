@@ -331,6 +331,22 @@ export function targetsCorrespond(a: string, b: string): boolean {
   return na.startsWith(`${nb} `) || nb.startsWith(`${na} `);
 }
 
+/**
+ * Whether two target wordings are the SAME target, with no prefix latitude.
+ *
+ * Prefix correspondence is right for a COMPLETE target context: a label cell
+ * reading "Botrytis" really is the register's "BOTRYTIS CINEREA". It is wrong
+ * for a wrapped FRAGMENT of a longer target, where the same latitude lets
+ * "Leaf spot" — the third printed line of "Phomopsis Cane and Leaf spot" —
+ * claim to be the unrelated register target "LEAF SPOT - ALTERNARIA
+ * CERCOSPORA". A fragment must name its target exactly or not at all.
+ */
+export function targetsAreEquivalent(a: string, b: string): boolean {
+  const na = targetNorm(a);
+  const nb = targetNorm(b);
+  return Boolean(na) && na === nb;
+}
+
 /** VineTrack spray-target enum, only when the register wording maps cleanly. */
 export function targetEnumFor(pestDesc: string): string | undefined {
   const value = String(pestDesc).toUpperCase();
@@ -484,7 +500,20 @@ export function buildLabelEvidence(input: LabelEvidenceInput): LabelEvidence {
 
 export interface LabelUseMergeResult {
   uses: any[];
+  /**
+   * Disagreements a HUMAN still needs to resolve. Under the document-authority
+   * rule this is now only ever document-vs-register, never AI-vs-label.
+   */
   conflicts: WireConflict[];
+  /**
+   * AI readings that stronger authority has already settled — recorded for
+   * audit, never surfaced as an operator-blocking conflict.
+   *
+   * A grower cannot adjudicate "the model said 200 g, the approved label did
+   * not". The label already won; asking them to resolve it makes a correctly
+   * resolved product look broken.
+   */
+  superseded: WireConflict[];
 }
 
 function pushConflict(list: WireConflict[], entry: WireConflict): void {
@@ -558,7 +587,18 @@ export function mergeLabelEvidenceIntoUses(
   evidence: LabelEvidence,
 ): LabelUseMergeResult {
   const conflicts: WireConflict[] = [];
+  const superseded: WireConflict[] = [];
   const matchedAi = new Set<number>();
+
+  // Did a label DOCUMENT extraction pass actually complete for this product?
+  //
+  // This is the whole authority question for rates. Before Stage LD-2 existed,
+  // an AI rate riding alongside a label claim was the only rate available and
+  // was better than nothing. Now, when the approved document has been read,
+  // the document IS the rate authority — and a use it gave no rate to has no
+  // registered rate. Absence in a successfully parsed authoritative source is
+  // a fact about the label, not an invitation for the model to fill the gap.
+  const documentParsed = evidence.document !== undefined;
 
   const uses = evidence.claims.map((claim) => {
     const aiIndex = aiUses.findIndex(
@@ -579,10 +619,15 @@ export function mergeLabelEvidenceIntoUses(
       ? claim.rates
       : null;
     const aiRates: any[] = Array.isArray(ai?.rates) ? ai.rates : [];
+    // Rule B: with the document parsed, canonical rates are the document's or
+    // they are empty. Rule A (no usable document) keeps the previous
+    // behaviour, where a clearly-attributed AI rate is still the only reading
+    // anyone has.
+    const canonicalRates = docRates ?? (documentParsed ? [] : aiRates);
     const use: any = {
       crop: claim.crop,
       target_raw: claim.target_raw,
-      rates: docRates ?? aiRates,
+      rates: canonicalRates,
     };
     if (claim.target) use.target = claim.target;
     else if (ai?.target) use.target = ai.target;
@@ -597,16 +642,17 @@ export function mergeLabelEvidenceIntoUses(
       restrictions: null,
     };
 
-    // ---- Rates: document evidence wins; AI disagreement is a conflict -----
+    // ---- Rates: the document is authority; an AI reading is superseded ----
     if (
-      docRates && aiRates.length &&
-      carried("rates") === "ai_interpretation" &&
-      !ratesEquivalent(aiRates, docRates)
+      aiRates.length && carried("rates") === "ai_interpretation" &&
+      (docRates ? !ratesEquivalent(aiRates, docRates) : documentParsed)
     ) {
-      pushConflict(conflicts, {
+      pushConflict(superseded, {
         field: "label_rates",
         extracted_value: `${ratesSummary(aiRates)} (${claim.crop} — ${claim.target_raw})`,
-        authoritative_value: `${ratesSummary(docRates)} — official label document`,
+        authoritative_value: docRates
+          ? `${ratesSummary(docRates)} — official label document`
+          : "the approved label document states no rate for this use",
         extracted_source: "ai_interpretation",
         authoritative_source: "manufacturer_label",
       });
@@ -620,7 +666,7 @@ export function mergeLabelEvidenceIntoUses(
       use.withholding_period_days = claim.withholding_period_days;
       provenance.withholding_period = "manufacturer_label";
       if (aiWhp !== null && aiWhp !== claim.withholding_period_days) {
-        pushConflict(conflicts, {
+        pushConflict(superseded, {
           field: "withholding_period_days",
           extracted_value: `${aiWhp} days (${claim.crop})`,
           authoritative_value:
@@ -642,7 +688,7 @@ export function mergeLabelEvidenceIntoUses(
       use.re_entry_period_hours = claim.re_entry_period_hours;
       provenance.re_entry = "manufacturer_label";
       if (aiReentry !== null && aiReentry !== claim.re_entry_period_hours) {
-        pushConflict(conflicts, {
+        pushConflict(superseded, {
           field: "re_entry_period_hours",
           extracted_value: `${aiReentry} hours (${claim.crop})`,
           authoritative_value: `${claim.re_entry_period_hours} hours — label statement`,
@@ -675,7 +721,7 @@ export function mergeLabelEvidenceIntoUses(
     const crop = String(u?.crop ?? "").trim();
     const targetRaw = String(u?.target_raw ?? "").trim();
     if (!crop && !targetRaw) return;
-    pushConflict(conflicts, {
+    pushConflict(superseded, {
       field: "registered_uses",
       extracted_value: [crop, targetRaw].filter(Boolean).join(" — "),
       authoritative_value: "not a registered use claim on the current approved label",
@@ -684,7 +730,7 @@ export function mergeLabelEvidenceIntoUses(
     });
   });
 
-  return { uses, conflicts };
+  return { uses, conflicts, superseded };
 }
 
 // ---------------------------------------------------------------------------

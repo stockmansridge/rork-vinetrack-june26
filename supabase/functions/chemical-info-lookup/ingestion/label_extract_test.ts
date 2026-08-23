@@ -673,7 +673,7 @@ Deno.test("LD2-B: Custodia Forte 91636 — grape rows bind dilute+concentrate ra
 // LD2-C — document rate vs AI rate: conflict, never AI-established
 // ===========================================================================
 
-Deno.test("LD2-C: an AI rate disagreeing with the document rate → document served, structured conflict recorded; an agreeing AI rate produces no conflict", async () => {
+Deno.test("LD2-C: an AI rate disagreeing with the document rate → document served, disagreement recorded as superseded (not an operator conflict); an agreeing AI rate records nothing", async () => {
   clearApvmaCache();
   const h = fullDocumentHarness(sprayRegisterLd2(), "80160", SPRAYSEAL_ITEMS);
   const discovery = await discoverAuthoritative("AU", "Spray Seal", null, h.deps);
@@ -702,20 +702,31 @@ Deno.test("LD2-C: an AI rate disagreeing with the document rate → document ser
   assertEquals(use.rates[0].value, 30, "the document rate is served");
   assertEquals(use.provenance.rates, "manufacturer_label");
   // deno-lint-ignore no-explicit-any
-  const conflict = disagreeing.verification.conflicts.find((c: any) => c.field === "label_rates");
-  assert(conflict, "the AI disagreement is a structured conflict");
-  assertEquals(conflict.extracted_source, "ai_interpretation");
-  assertEquals(conflict.authoritative_source, "manufacturer_label");
-  assert(conflict.extracted_value.includes("50"));
-  assert(conflict.authoritative_value.includes("30"));
-  assertEquals(disagreeing.verification.status, "conflict");
+  const note = disagreeing.verification.superseded_ai_interpretations.find((c: any) =>
+    c.field === "label_rates"
+  );
+  assert(note, "the AI disagreement is recorded");
+  assertEquals(note.extracted_source, "ai_interpretation");
+  assertEquals(note.authoritative_source, "manufacturer_label");
+  assert(note.extracted_value.includes("50"));
+  assert(note.authoritative_value.includes("30"));
+  // The approved document settled it — a grower is not asked to arbitrate
+  // between the label and a model.
+  assertEquals(
+    // deno-lint-ignore no-explicit-any
+    disagreeing.verification.conflicts.filter((c: any) => c.field === "label_rates"),
+    [],
+  );
+  assertEquals(disagreeing.verification.status, "partially_verified");
 
   const agreeing = mergeDiscoveryIntoStructured(aiStructured(30), reg);
   assertEquals(
     // deno-lint-ignore no-explicit-any
-    agreeing.verification.conflicts.filter((c: any) => c.field === "label_rates"),
+    (agreeing.verification.superseded_ai_interpretations ?? []).filter((c: any) =>
+      c.field === "label_rates"
+    ),
     [],
-    "an equal reading is corroboration, not conflict",
+    "an equal reading is corroboration, not a disagreement",
   );
 });
 

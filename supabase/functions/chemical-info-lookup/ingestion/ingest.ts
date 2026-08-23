@@ -258,13 +258,23 @@ export function mergeDiscoveryIntoStructured(
     : [];
   const evidence = reg.label_evidence ?? null;
   let uses: any[] = [];
+  const superseded: WireConflict[] = [];
   if (evidence && evidence.claims.length) {
     const labelMerge = mergeLabelEvidenceIntoUses(aiUses, evidence);
     uses = labelMerge.uses;
     for (const c of labelMerge.conflicts) conflicts.push(c);
+    // AI readings the label has already settled are audit material, not
+    // something a grower can adjudicate (see `superseded` in label.ts).
+    for (const c of labelMerge.superseded) superseded.push(c);
     // Stage LD-2: label DOCUMENT vs register-statement disagreements (both
     // manufacturer_label) always surface for review — never silently won.
     for (const c of evidence.document_conflicts ?? []) conflicts.push(c);
+    // The researched uses survive alongside the authoritative claim set,
+    // clearly outside it. Under the document-authority rule the canonical
+    // rate for an unrated use is now empty, and this is where the model's
+    // reading of that same use goes — still ai_interpretation, still never
+    // described as a registered label rate.
+    if (aiUses.length) merged.ai_suggested_uses = aiUses;
   } else if (aiUses.length) {
     merged.ai_suggested_uses = aiUses;
   }
@@ -328,6 +338,21 @@ export function mergeDiscoveryIntoStructured(
     }
   }
 
+  // §9 — final unresolved_fields carries machine-stable field/context gaps.
+  //
+  // Research narrative arrives as prose ("A current regulator-hosted PubCRIS
+  // label PDF could not be retrieved…"). Once the register has resolved the
+  // identity and the eLabel has been fetched and parsed, that prose is not
+  // merely untidy — it contradicts the very same response. Machine keys have
+  // no spaces (`label_reference`, `rates:Grapevines`); prose does. The prose
+  // is kept for debugging, out of the verification state it would otherwise
+  // falsify.
+  const machineGaps: string[] = [];
+  const researchNotes: string[] = [];
+  for (const entry of unresolved) {
+    (/\s/.test(entry) ? researchNotes : machineGaps).push(entry);
+  }
+
   merged.verification = {
     ...(structured?.verification ?? {}),
     status: conflicts.length
@@ -337,9 +362,16 @@ export function mergeDiscoveryIntoStructured(
       : "unverified",
     sources,
     conflicts,
-    unresolved_fields: Array.from(unresolved).sort(),
+    unresolved_fields: machineGaps.sort(),
     verified_at: null,
   };
+  // Additive, debug-only envelopes. Both apps ignore unknown keys.
+  if (researchNotes.length) {
+    merged.verification.research_notes = researchNotes.sort();
+  }
+  if (superseded.length) {
+    merged.verification.superseded_ai_interpretations = superseded;
+  }
   merged.field_provenance = buildFieldProvenance(
     merged,
     reg,

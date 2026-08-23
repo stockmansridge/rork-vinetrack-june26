@@ -524,10 +524,14 @@ Deno.test("R07: authoritative label enrichment — registered uses, WHP and rest
     merged.verification.sources.some((s: Row) => s.kind === "manufacturer_label"),
     "label evidence cited as manufacturer_label",
   );
-  // The AI's fabricated use (Apples × Collar rot) is NOT served — it is a conflict.
+  // The AI's fabricated use (Apples × Collar rot) is NOT served. The label's
+  // claim set already answered it, so it is recorded as superseded rather
+  // than handed to a grower as something to resolve.
   assert(
-    merged.verification.conflicts.some((c: Row) => c.field === "registered_uses"),
-    "AI-only use recorded as a conflict, not served",
+    merged.verification.superseded_ai_interpretations.some(
+      (c: Row) => c.field === "registered_uses",
+    ),
+    "AI-only use recorded as superseded, not served",
   );
 });
 

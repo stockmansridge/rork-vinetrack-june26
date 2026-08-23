@@ -49,6 +49,7 @@ import {
   isReentryStatement,
   parseLabelStatements,
   reentryHoursFromStatement,
+  targetsAreEquivalent,
   targetsCorrespond,
   whpDaysFromStatement,
 } from "./label.ts";
@@ -927,25 +928,80 @@ export function parseDirectionsForUse(items: PdfTextItem[]): DfuParse {
 // Fail-closed binding (document rows → register claims)
 // ---------------------------------------------------------------------------
 
-/** Candidate wordings for the row's targets: cell, lines, separator splits,
- * and parenthetical-stripped variants (Latin names in brackets). */
-export function targetCandidates(row: DfuRow): string[] {
-  const out = new Set<string>();
-  const push = (raw: string): void => {
+/**
+ * One candidate wording for a row's target, and how much authority it carries.
+ *
+ * `complete` marks a wording the LABEL ITSELF delimited: the whole target
+ * cell, or a segment the label separated with "/", "," or ";". Those may match
+ * a register claim with prefix latitude, which is what makes the cell
+ * "Botrytis" correspond to the register's "BOTRYTIS CINEREA".
+ *
+ * Everything else is a FRAGMENT — a run of printed lines carved out of a cell
+ * by nothing more than where the column happened to wrap. A fragment must
+ * name its target exactly.
+ */
+export interface TargetCandidate {
+  text: string;
+  complete: boolean;
+}
+
+/**
+ * Candidate wordings for the row's targets.
+ *
+ * Line RUNS, not individual lines: a cell that prints "Botryosphaeria" above
+ * "dieback" is one target split by the column width, and only the run of both
+ * lines names it. Taking each line alone was how "Leaf spot", the tail of
+ * "Phomopsis Cane and Leaf spot", came to look like a target in its own right.
+ */
+export function targetCandidates(row: DfuRow): TargetCandidate[] {
+  const byText = new Map<string, boolean>();
+  const push = (raw: string, complete: boolean): void => {
     const text = raw.replace(/\s+/g, " ").trim();
-    if (text) {
-      out.add(text);
-      const stripped = text.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
-      if (stripped) out.add(stripped);
+    if (!text) return;
+    // A wording offered as complete stays complete even if a later, weaker
+    // derivation produces the same string.
+    byText.set(text, (byText.get(text) ?? false) || complete);
+    const stripped = text.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+    if (stripped && stripped !== text) {
+      byText.set(stripped, (byText.get(stripped) ?? false) || complete);
     }
   };
-  const whole = row.target_lines.join(" ");
-  push(whole);
-  for (const line of row.target_lines) push(line);
-  for (const source of [whole, ...row.target_lines]) {
-    for (const segment of source.split(/[/,;]/)) push(segment);
+
+  const lines = row.target_lines;
+  const whole = lines.join(" ");
+
+  // Label-delimited wordings: the whole cell and its separator segments.
+  push(whole, true);
+  for (const segment of whole.split(/[/,;]/)) push(segment, true);
+
+  // Wrap-derived wordings: every run of consecutive printed lines.
+  for (let i = 0; i < lines.length; i++) {
+    for (let j = i; j < lines.length; j++) {
+      const run = lines.slice(i, j + 1).join(" ");
+      push(run, false);
+      for (const segment of run.split(/[/,;]/)) push(segment, false);
+    }
   }
-  return Array.from(out);
+
+  return Array.from(byText, ([text, complete]) => ({ text, complete }));
+}
+
+/**
+ * Whether this row's targets name the register claim's target.
+ *
+ * The two tiers are the whole point: a label-delimited wording may correspond
+ * by prefix, a wrap fragment must be exactly equivalent. Without that split,
+ * one printed rate cell binds to two unrelated register claims.
+ */
+export function rowNamesTarget(
+  candidates: TargetCandidate[],
+  claimTargetRaw: string,
+): boolean {
+  return candidates.some((c) =>
+    c.complete
+      ? targetsCorrespond(c.text, claimTargetRaw)
+      : targetsAreEquivalent(c.text, claimTargetRaw)
+  );
 }
 
 export interface DfuBinding {
@@ -1009,7 +1065,7 @@ export function bindDfuRows(rows: DfuRow[], claims: LabelUseClaim[]): DfuBinding
     const matched: number[] = [];
     claims.forEach((claim, claimIndex) => {
       if (!cropsCorrespond(row.crop_text, claim.crop)) return;
-      if (!candidates.some((c) => targetsCorrespond(c, claim.target_raw))) return;
+      if (!rowNamesTarget(candidates, claim.target_raw)) return;
       matched.push(claimIndex);
     });
     if (!matched.length) {

@@ -1129,7 +1129,7 @@ Deno.test("51: merged uses are label-backed with field-level provenance; AI rate
   );
 });
 
-Deno.test("52: AI WHP disagreement with the label is a structured conflict; the label value is served", async () => {
+Deno.test("52: an AI WHP disagreement is recorded as SUPERSEDED, not as an operator conflict — the label value is served and the product does not read as unresolved", async () => {
   clearApvmaCache();
   const discovery = await discoverAuthoritative("AU", "Custodia Forte", null, makeDeps({ ...FULL_REGISTER }));
   const ai = forteAi();
@@ -1139,15 +1139,27 @@ Deno.test("52: AI WHP disagreement with the label is a structured conflict; the 
   // deno-lint-ignore no-explicit-any
   const powdery = merged.registered_uses.find((u: any) => u.crop === "GRAPEVINE" && u.target_raw === "POWDERY MILDEW");
   assertEquals(powdery.withholding_period_days, 28, "label value served");
+
+  // The disagreement is still recorded — nothing is hidden.
   // deno-lint-ignore no-explicit-any
-  const conflict = merged.verification.conflicts.find((c: any) => c.field === "withholding_period_days");
-  assert(conflict !== undefined, "disagreement recorded");
-  assertEquals(conflict.extracted_source, "ai_interpretation", "AI side attributed");
-  assertEquals(conflict.authoritative_source, "manufacturer_label", "label side attributed");
-  assertEquals(merged.verification.status, "conflict", "status honesty");
+  const note = merged.verification.superseded_ai_interpretations.find((c: any) =>
+    c.field === "withholding_period_days"
+  );
+  assert(note !== undefined, "disagreement recorded for audit");
+  assertEquals(note.extracted_source, "ai_interpretation", "AI side attributed");
+  assertEquals(note.authoritative_source, "manufacturer_label", "label side attributed");
+
+  // But it is NOT something a grower must adjudicate: the label already won.
+  assertEquals(
+    // deno-lint-ignore no-explicit-any
+    merged.verification.conflicts.filter((c: any) => c.field === "withholding_period_days").length,
+    0,
+    "a settled AI reading is not an operator conflict",
+  );
+  assertEquals(merged.verification.status, "partially_verified", "status is not degraded by it");
 });
 
-Deno.test("53: AI-only uses are dropped with a conflict — the label's claim set is authoritative", async () => {
+Deno.test("53: AI-only uses are dropped and recorded as superseded — the label's claim set is authoritative", async () => {
   clearApvmaCache();
   const discovery = await discoverAuthoritative("AU", "Custodia Forte", null, makeDeps({ ...FULL_REGISTER }));
   const ai = forteAi();
@@ -1163,9 +1175,18 @@ Deno.test("53: AI-only uses are dropped with a conflict — the label's claim se
   // deno-lint-ignore no-explicit-any
   assert(!merged.registered_uses.some((u: any) => /citrus/i.test(String(u.crop))), "no invented claim");
   // deno-lint-ignore no-explicit-any
-  const conflict = merged.verification.conflicts.find((c: any) => c.field === "registered_uses");
-  assert(conflict !== undefined && conflict.extracted_value.includes("Citrus"), "dropped use recorded as a conflict");
-  assertEquals(conflict.authoritative_source, "manufacturer_label", "label authority cited");
+  const note = merged.verification.superseded_ai_interpretations.find((c: any) =>
+    c.field === "registered_uses"
+  );
+  assert(note !== undefined && note.extracted_value.includes("Citrus"), "dropped use recorded");
+  assertEquals(note.authoritative_source, "manufacturer_label", "label authority cited");
+  // The label's claim set answered this. There is nothing for a human to do.
+  assertEquals(
+    // deno-lint-ignore no-explicit-any
+    merged.verification.conflicts.filter((c: any) => c.field === "registered_uses").length,
+    0,
+    "a settled AI use is not an operator conflict",
+  );
 });
 
 Deno.test("54: distinct grape uses stay distinct — rates never collapse across targets", async () => {
