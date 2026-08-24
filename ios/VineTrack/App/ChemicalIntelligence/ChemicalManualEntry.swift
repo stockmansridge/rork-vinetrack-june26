@@ -502,6 +502,19 @@ nonisolated enum ChemicalManualEntry {
         drafts.compactMap(labelRate)
     }
 
+    /// The registered rate a draft represents, exactly as the label states it —
+    /// original unit, original basis, no conversion.
+    ///
+    /// This is the ONLY formatter the Edit Chemical screen uses to show an
+    /// already-captured registered rate back to the operator: it feeds the
+    /// same `ChemicalLabelRate.displayRate` the Spray Calculator's own rate
+    /// resolution reads, so the editor and the calculator can never disagree
+    /// about what a stored rate says. Returns `nil` only when the draft has
+    /// no value at all — never a fabricated or borrowed figure.
+    static func displayRate(for draft: ChemicalManualRateDraft) -> String? {
+        labelRate(draft)?.displayRate
+    }
+
     private static func labelRate(_ draft: ChemicalManualRateDraft) -> ChemicalLabelRate? {
         let unit = draft.unit.trimmingCharacters(in: .whitespacesAndNewlines)
         let label = draft.label.trimmingCharacters(in: .whitespacesAndNewlines)

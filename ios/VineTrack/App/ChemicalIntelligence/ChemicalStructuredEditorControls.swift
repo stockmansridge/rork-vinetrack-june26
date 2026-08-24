@@ -231,6 +231,29 @@ struct ChemicalManualUseEditor: View {
         ChemicalTargetSuggestionPolicy.matches(targetRaw: use.targetRaw, target: target)
     }
 
+    /// The rate(s) already captured for THIS use, rendered exactly as the
+    /// label states them — original unit, original basis, never converted
+    /// and never borrowed from a sibling use on the same product.
+    @ViewBuilder
+    private var registeredRateSummary: some View {
+        let displayed = use.rates.compactMap { ChemicalManualEntry.displayRate(for: $0) }
+        if displayed.isEmpty {
+            Text("No registered rate captured for this use")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(displayed.count > 1 ? "REGISTERED RATES" : "Registered rate")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(Array(displayed.enumerated()), id: \.offset) { _, text in
+                    Text(text)
+                        .font(.subheadline.weight(.semibold))
+                }
+            }
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -244,6 +267,13 @@ struct ChemicalManualUseEditor: View {
             }
 
             targetField
+
+            // The registered rate(s) already captured for THIS use — the
+            // label's own unit and basis, never converted, never borrowed
+            // from another use on the same product. A use the label states
+            // no canonical rate for says so plainly rather than looking like
+            // an oversight.
+            registeredRateSummary
 
             ForEach($use.rates) { $rate in
                 ChemicalManualRateEditor(

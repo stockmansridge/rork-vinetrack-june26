@@ -2171,36 +2171,21 @@ struct SprayCalculatorView: View {
     ) -> some View {
         let saved = store.savedChemicals.first(where: { $0.id == line.chemicalId })
         let labelURL = saved?.labelURL ?? ""
-        let productURL = saved?.productURL ?? ""
-        // Restrictions belong to the registered use the operator actually
-        // picked a rate from. The product-level field is the fallback for
-        // records with no structured uses, never a substitute for a use that
-        // states its own — a second crop's wording is not this job's law.
-        let selectedUse: ChemicalRegisteredUse? = {
-            guard let saved else { return nil }
-            return SprayRegisteredUseRates.registeredUse(for: saved, rateId: line.selectedRateId)
-        }()
-        let useRestrictions = selectedUse?.restrictions?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let restrictions = useRestrictions.isEmpty ? (saved?.restrictions ?? "") : useRestrictions
-        let isOverridden: Bool = line.overrideRate != nil
         let totalTanks = tankSplit.totalTanks
 
+        // This card answers exactly three things: what product, how much to
+        // add, and where the official label is if the operator needs the
+        // full legal detail. Override state, the product's marketing page,
+        // restriction text, the registered use and rate-basis workings,
+        // WHP/REI and verification state all belong to the Chemical Store
+        // record and the Products-step inspector — never duplicated on this
+        // operational screen.
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Image(systemName: "flask.fill")
                     .foregroundStyle(VineyardTheme.leafGreen)
                 Text(planLine.name)
                     .font(.subheadline.weight(.semibold))
-                if isOverridden {
-                    Text("Override")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.orange.opacity(0.15))
-                        .foregroundStyle(.orange)
-                        .clipShape(Capsule())
-                }
                 Spacer()
                 if let url = Self.normalizedLabelURL(labelURL) {
                     Button {
@@ -2213,23 +2198,7 @@ struct SprayCalculatorView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Open chemical label")
-                }
-                // Manufacturer/product page — visually distinct (globe) and
-                // never labelled "Label". Shown in addition to, or instead
-                // of, the official label icon.
-                if let url = Self.normalizedLabelURL(productURL) {
-                    Button {
-                        openURL(url)
-                    } label: {
-                        Image(systemName: "globe")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .padding(6)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Open product page (not the official label)")
+                    .accessibilityLabel("Open official label")
                 }
             }
 
@@ -2271,17 +2240,6 @@ struct SprayCalculatorView: View {
                 }
             }
 
-            if !restrictions.isEmpty {
-                // Verbatim, with the shared expand control. A two-line clamp
-                // used to hide the rest of a legal statement at the one moment
-                // the operator is deciding what to put in the tank.
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "exclamationmark.shield.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                    ChemicalUseRestrictionsView(text: restrictions)
-                }
-            }
         }
         .padding(10)
         .background(Color(.secondarySystemGroupedBackground))
