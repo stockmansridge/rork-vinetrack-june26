@@ -624,8 +624,8 @@ struct SprayProgramView: View {
             vineyardName: vineyardName,
             timeZone: store.settings.resolvedTimeZone,
             includeCostings: includeCostings,
-            tractors: includeCostings ? store.tractors : [],
-            fuelPurchases: includeCostings ? store.fuelPurchases : [],
+            tractors: includeCostings ? store.currentTractors : [],
+            fuelPurchases: includeCostings ? store.currentFuelPurchases : [],
             operatorCategories: includeCostings ? store.operatorCategories : [],
             operatorCategoryForName: includeCostings ? { store.operatorCategoryForName($0) } : nil,
             savedChemicals: includeCostings ? store.savedChemicals : [],
@@ -648,8 +648,12 @@ struct SprayProgramView: View {
         let records = operationalRecords
         let trips = store.trips
         let paddocks = store.paddocks
-        let tractors = store.tractors
-        let machines = store.vineyardMachines
+        // Reference data for resolving the exported records' own equipment.
+        // The records being exported all belong to the selected vineyard, so
+        // the selected-vineyard slice is the correct — and only safe — lookup
+        // table here.
+        let tractors = store.currentTractors
+        let machines = store.currentVineyardMachines
         let sprayEquipment = store.sprayEquipment
         let fuelCost = store.seasonFuelCostPerLitre
         let operatorCategories = store.operatorCategories

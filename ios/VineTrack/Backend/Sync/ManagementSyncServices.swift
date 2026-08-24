@@ -121,6 +121,19 @@ final class ManagementSyncMetadata {
         save()
     }
 
+    /// Every row this device still has unfinished business with: queued
+    /// uploads, queued deletes, and rows the server refused on revision
+    /// grounds.
+    ///
+    /// Full-pull reconciliation treats these as locally-authored work, never as
+    /// ghosts — deleting them would throw away the only copy of an edit that
+    /// has not reached the server yet.
+    var queuedIds: Set<UUID> {
+        Set(state.pendingUpserts.keys)
+            .union(state.pendingDeletes.keys)
+            .union(conflictedIds)
+    }
+
     /// Reset all per-vineyard last-sync timestamps so the next sync is treated
     /// as an initial sync. Used by one-time migrations that need to re-attempt
     /// the initial seed push for data that pre-dates the sync wiring.
@@ -165,6 +178,52 @@ nonisolated enum ManagementSyncStatus: Equatable, Sendable {
     case syncing
     case success
     case failure(String)
+}
+
+// MARK: - Full-pull reconciliation
+
+/// How a full (authoritative) pull should treat local rows the server did not
+/// return for the vineyard being synced.
+nonisolated struct FullPullReconciliation<Row: Sendable>: Sendable {
+    /// Locally-authored rows with unfinished sync business (queued upload,
+    /// queued delete, or a revision conflict). The server has not seen them
+    /// yet — seed them up, never delete them.
+    let seedable: [Row]
+    /// Rows this device believes are clean and synced, yet the authoritative
+    /// response for their vineyard no longer contains them. These are
+    /// server-side hard deletes ('ghosts') and must be retired locally.
+    let ghosts: [Row]
+}
+
+/// Plans a full-pull reconciliation for ONE vineyard.
+///
+/// Contract, deliberately narrow:
+/// * Only ever called when `since == nil`. A delta response is not a complete
+///   authoritative list, so absence in a delta means nothing.
+/// * `local` must already be restricted to the vineyard being synced, so rows
+///   belonging to any other vineyard are structurally untouchable.
+/// * `remoteIds` must include TOMBSTONES. Server queries intentionally return
+///   soft-deleted rows so the delete can be replayed locally; a tombstoned row
+///   is therefore "returned by the server" and is handled by the normal
+///   `deletedAt != nil` branch rather than by ghost removal. Both routes end
+///   with the row gone from operational state.
+/// * Rows in `queuedIds` are never ghosts — see `ManagementSyncMetadata.queuedIds`.
+nonisolated func planFullPullReconciliation<Row: Sendable>(
+    local: [Row],
+    remoteIds: Set<UUID>,
+    queuedIds: Set<UUID>,
+    id: (Row) -> UUID
+) -> FullPullReconciliation<Row> {
+    var seedable: [Row] = []
+    var ghosts: [Row] = []
+    for row in local where !remoteIds.contains(id(row)) {
+        if queuedIds.contains(id(row)) {
+            seedable.append(row)
+        } else {
+            ghosts.append(row)
+        }
+    }
+    return FullPullReconciliation(seedable: seedable, ghosts: ghosts)
 }
 
 // MARK: - SavedChemicalSyncService
@@ -705,7 +764,10 @@ final class TractorSyncService {
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
-            let byId = Dictionary(store.tractors.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            // Read from the PERSISTED multi-vineyard slice, not the
+            // selected-vineyard in-memory state: a queued edit from another
+            // vineyard must still upload, not be reclaimed as an orphan.
+            let byId = Dictionary(store.persistedTractors().map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendTractorUpsert] = []
             var pushed: [UUID] = []
             var orphans: [UUID] = []
@@ -746,25 +808,24 @@ final class TractorSyncService {
         let lastSync = metadata.lastSync(for: vineyardId)
         let remote = try await repository.fetch(vineyardId: vineyardId, since: lastSync)
 
-        // Initial sync: push any local tractors that don't yet exist remotely.
-        // Previously this only ran when `remote.isEmpty`, which missed cases
-        // where some (but not all) local tractors had been pushed.
+        // Full pull (since == nil) => `remote` is the AUTHORITATIVE set for
+        // this vineyard, tombstones included. Reconcile it against the
+        // persisted slice for the same vineyard: seed up locally-authored work
+        // the server has never seen, retire rows the server hard-deleted.
+        // Rows for every other vineyard are structurally out of scope.
         if lastSync == nil {
-            let allRemote: [BackendTractor]
-            if remote.isEmpty {
-                allRemote = remote
-            } else {
-                // `remote` already contains every row for this vineyard when
-                // since is nil, so we can reuse it.
-                allRemote = remote
-            }
-            let remoteIds = Set(allRemote.map { $0.id })
-            let local = store.tractors.filter { $0.vineyardId == vineyardId }
-            let missing = local.filter { !remoteIds.contains($0.id) }
-            if !missing.isEmpty {
+            let remoteIds = Set(remote.map { $0.id })
+            let local = store.persistedTractors(forVineyard: vineyardId)
+            let plan = planFullPullReconciliation(
+                local: local,
+                remoteIds: remoteIds,
+                queuedIds: metadata.queuedIds,
+                id: { $0.id }
+            )
+            if !plan.seedable.isEmpty {
                 let now = Date()
                 let createdBy = auth?.userId
-                let payloads = missing.map { BackendTractor.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now) }
+                let payloads = plan.seedable.map { BackendTractor.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now) }
                 do {
                     try await repository.upsertMany(payloads)
                     #if DEBUG
@@ -776,6 +837,16 @@ final class TractorSyncService {
                     #endif
                 }
             }
+            for ghost in plan.ghosts {
+                store.applyRemoteTractorDelete(ghost.id)
+                metadata.clearDirty([ghost.id])
+                metadata.clearDeleted([ghost.id])
+            }
+            #if DEBUG
+            if !plan.ghosts.isEmpty {
+                print("[TractorSync] full pull retired \(plan.ghosts.count) stale local tractor(s) for vineyard \(vineyardId)")
+            }
+            #endif
             if remote.isEmpty { return }
         }
 
@@ -861,7 +932,8 @@ final class VineyardMachineSyncService {
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
-            let byId = Dictionary(store.vineyardMachines.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            // Persisted multi-vineyard slice — see TractorSyncService.push.
+            let byId = Dictionary(store.persistedVineyardMachines().map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendVineyardMachineUpsert] = []
             var pushed: [UUID] = []
             var orphans: [UUID] = []
@@ -902,16 +974,22 @@ final class VineyardMachineSyncService {
         let lastSync = metadata.lastSync(for: vineyardId)
         let remote = try await repository.fetch(vineyardId: vineyardId, since: lastSync)
 
-        // Initial sync: push any local machines not yet present remotely so a
-        // device that created machines offline does not lose them.
+        // Full pull => authoritative. Seed locally-authored machines the
+        // server has never seen; retire ghosts it hard-deleted. See
+        // `planFullPullReconciliation` for the contract.
         if lastSync == nil {
             let remoteIds = Set(remote.map { $0.id })
-            let local = store.vineyardMachines.filter { $0.vineyardId == vineyardId }
-            let missing = local.filter { !remoteIds.contains($0.id) }
-            if !missing.isEmpty {
+            let local = store.persistedVineyardMachines(forVineyard: vineyardId)
+            let plan = planFullPullReconciliation(
+                local: local,
+                remoteIds: remoteIds,
+                queuedIds: metadata.queuedIds,
+                id: { $0.id }
+            )
+            if !plan.seedable.isEmpty {
                 let now = Date()
                 let createdBy = auth?.userId
-                let payloads = missing.map { BackendVineyardMachine.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now) }
+                let payloads = plan.seedable.map { BackendVineyardMachine.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now) }
                 do {
                     try await repository.upsertMany(payloads)
                     #if DEBUG
@@ -923,6 +1001,16 @@ final class VineyardMachineSyncService {
                     #endif
                 }
             }
+            for ghost in plan.ghosts {
+                store.applyRemoteVineyardMachineDelete(ghost.id)
+                metadata.clearDirty([ghost.id])
+                metadata.clearDeleted([ghost.id])
+            }
+            #if DEBUG
+            if !plan.ghosts.isEmpty {
+                print("[VineyardMachineSync] full pull retired \(plan.ghosts.count) stale local machine(s) for vineyard \(vineyardId)")
+            }
+            #endif
             if remote.isEmpty { return }
         }
 
@@ -1013,7 +1101,8 @@ final class FuelPurchaseSyncService {
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
-            let byId = Dictionary(store.fuelPurchases.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            // Persisted multi-vineyard slice — see TractorSyncService.push.
+            let byId = Dictionary(store.persistedFuelPurchases().map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendFuelPurchaseUpsert] = []
             var pushed: [UUID] = []
             var orphans: [UUID] = []
@@ -1053,14 +1142,21 @@ final class FuelPurchaseSyncService {
         guard let store else { return }
         let lastSync = metadata.lastSync(for: vineyardId)
         let remote = try await repository.fetch(vineyardId: vineyardId, since: lastSync)
+        // Full pull => authoritative for this vineyard. See
+        // `planFullPullReconciliation` for the contract.
         if lastSync == nil {
             let remoteIds = Set(remote.map { $0.id })
-            let local = store.fuelPurchases.filter { $0.vineyardId == vineyardId }
-            let missing = local.filter { !remoteIds.contains($0.id) }
-            if !missing.isEmpty {
+            let local = store.persistedFuelPurchases(forVineyard: vineyardId)
+            let plan = planFullPullReconciliation(
+                local: local,
+                remoteIds: remoteIds,
+                queuedIds: metadata.queuedIds,
+                id: { $0.id }
+            )
+            if !plan.seedable.isEmpty {
                 let now = Date()
                 let createdBy = auth?.userId
-                let payloads = missing.map { BackendFuelPurchase.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now) }
+                let payloads = plan.seedable.map { BackendFuelPurchase.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now) }
                 do {
                     try await repository.upsertMany(payloads)
                     #if DEBUG
@@ -1072,6 +1168,16 @@ final class FuelPurchaseSyncService {
                     #endif
                 }
             }
+            for ghost in plan.ghosts {
+                store.applyRemoteFuelPurchaseDelete(ghost.id)
+                metadata.clearDirty([ghost.id])
+                metadata.clearDeleted([ghost.id])
+            }
+            #if DEBUG
+            if !plan.ghosts.isEmpty {
+                print("[FuelPurchaseSync] full pull retired \(plan.ghosts.count) stale local row(s) for vineyard \(vineyardId)")
+            }
+            #endif
             if remote.isEmpty { return }
         }
         for item in remote {
@@ -1155,7 +1261,8 @@ final class TractorFuelLogSyncService {
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
-            let byId = Dictionary(store.tractorFuelLogs.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            // Persisted multi-vineyard slice — see TractorSyncService.push.
+            let byId = Dictionary(store.persistedTractorFuelLogs().map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendTractorFuelLogUpsert] = []
             var pushed: [UUID] = []
             var orphans: [UUID] = []
@@ -1195,14 +1302,21 @@ final class TractorFuelLogSyncService {
         guard let store else { return }
         let lastSync = metadata.lastSync(for: vineyardId)
         let remote = try await repository.fetch(vineyardId: vineyardId, since: lastSync)
+        // Full pull => authoritative for this vineyard. See
+        // `planFullPullReconciliation` for the contract.
         if lastSync == nil {
             let remoteIds = Set(remote.map { $0.id })
-            let local = store.tractorFuelLogs.filter { $0.vineyardId == vineyardId }
-            let missing = local.filter { !remoteIds.contains($0.id) }
-            if !missing.isEmpty {
+            let local = store.persistedTractorFuelLogs(forVineyard: vineyardId)
+            let plan = planFullPullReconciliation(
+                local: local,
+                remoteIds: remoteIds,
+                queuedIds: metadata.queuedIds,
+                id: { $0.id }
+            )
+            if !plan.seedable.isEmpty {
                 let now = Date()
                 let createdBy = auth?.userId
-                let payloads = missing.map { BackendTractorFuelLog.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now) }
+                let payloads = plan.seedable.map { BackendTractorFuelLog.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now) }
                 do {
                     try await repository.upsertMany(payloads)
                     #if DEBUG
@@ -1214,6 +1328,16 @@ final class TractorFuelLogSyncService {
                     #endif
                 }
             }
+            for ghost in plan.ghosts {
+                store.applyRemoteTractorFuelLogDelete(ghost.id)
+                metadata.clearDirty([ghost.id])
+                metadata.clearDeleted([ghost.id])
+            }
+            #if DEBUG
+            if !plan.ghosts.isEmpty {
+                print("[TractorFuelLogSync] full pull retired \(plan.ghosts.count) stale local row(s) for vineyard \(vineyardId)")
+            }
+            #endif
             if remote.isEmpty { return }
         }
         for item in remote {

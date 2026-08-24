@@ -155,9 +155,9 @@ struct AddEditWorkTaskMachineLineView: View {
     private var equipmentSection: some View {
         Section {
             Menu {
-                if !store.tractors.isEmpty {
+                if !store.currentTractors.isEmpty {
                     Section("Tractors") {
-                        ForEach(store.tractors) { tractor in
+                        ForEach(store.currentTractorsSorted) { tractor in
                             Button(tractor.displayName) {
                                 select(name: tractor.displayName, source: "tractor", refId: tractor.id)
                             }

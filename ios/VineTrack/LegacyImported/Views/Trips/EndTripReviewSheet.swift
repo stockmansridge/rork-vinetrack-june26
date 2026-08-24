@@ -260,22 +260,17 @@ struct EndTripReviewSheet: View {
         return t
     }
 
+    /// Historical read — scoped to the TRIP's own vineyard.
     private var fuelTractor: Tractor? {
-        guard let tid = liveTrip.tractorId else { return nil }
-        return store.tractors.first { $0.id == tid }
+        store.historicalTractor(id: liveTrip.tractorId, inVineyard: liveTrip.vineyardId)
     }
 
     /// Vineyard machine linked to this trip (preferred fuel source). Resolves
-    /// from `machineId` first, then the legacy tractor link.
+    /// from `machineId` first, then the legacy tractor link — both inside the
+    /// trip's own vineyard.
     private var fuelMachine: VineyardMachine? {
-        if let mid = liveTrip.machineId,
-           let m = store.vineyardMachines.first(where: { $0.id == mid }) {
-            return m
-        }
-        if let tid = liveTrip.tractorId {
-            return store.vineyardMachines.first { $0.legacyTractorId == tid && $0.vineyardId == liveTrip.vineyardId }
-        }
-        return nil
+        store.historicalMachine(id: liveTrip.machineId, inVineyard: liveTrip.vineyardId)
+            ?? store.historicalMachine(legacyTractorId: liveTrip.tractorId, inVineyard: liveTrip.vineyardId)
     }
 
     /// Fuel-only breakdown reused from the shared `TripCostService` so the

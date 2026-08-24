@@ -270,6 +270,10 @@ final class MigratedDataStore {
         }
 
         savedCustomPatterns = persistence.load(key: Keys.savedCustomPatterns) ?? []
+        // Loaded UNSCOPED on purpose: `deduplicateManagementCollections()`
+        // below rewrites the multi-vineyard blob and must see every vineyard's
+        // rows. `reloadCurrentVineyardData()` immediately narrows these four
+        // collections to the selected vineyard.
         tractors = persistence.load(key: Keys.tractors) ?? []
         vineyardMachines = persistence.load(key: Keys.vineyardMachines) ?? []
         fuelPurchases = persistence.load(key: Keys.fuelPurchases) ?? []
@@ -431,6 +435,13 @@ final class MigratedDataStore {
             workTaskPieceRateRows = []
             workTaskTypes = []
             equipmentItems = []
+            // Equipment is vineyard-scoped operational state: with nothing
+            // selected there is no correct answer, so expose none rather than
+            // leaking the last vineyard's machinery.
+            tractors = []
+            vineyardMachines = []
+            fuelPurchases = []
+            tractorFuelLogs = []
             settings = AppSettings()
             return
         }
@@ -466,6 +477,22 @@ final class MigratedDataStore {
 
         let allPaddocks: [Paddock] = persistence.load(key: Keys.paddocks) ?? []
         paddocks = allPaddocks.filter { $0.vineyardId == vineyardId }
+
+        // Equipment: the persisted blobs stay MULTI-vineyard (a device syncs
+        // several vineyards and every slice must survive a save of a different
+        // one), but in-memory operational state represents ONLY the selected
+        // vineyard. Reading from disk here — instead of filtering whatever is
+        // already in memory — is what makes a vineyard switch symmetric:
+        // switching away drops the old slice, switching back restores it, with
+        // no logout, reinstall or manual cache wipe.
+        let allTractors: [Tractor] = persistence.load(key: Keys.tractors) ?? []
+        tractors = allTractors.filter { $0.vineyardId == vineyardId }
+        let allMachines: [VineyardMachine] = persistence.load(key: Keys.vineyardMachines) ?? []
+        vineyardMachines = allMachines.filter { $0.vineyardId == vineyardId }
+        let allFuelPurchases: [FuelPurchase] = persistence.load(key: Keys.fuelPurchases) ?? []
+        fuelPurchases = allFuelPurchases.filter { $0.vineyardId == vineyardId }
+        let allFuelLogs: [TractorFuelLog] = persistence.load(key: Keys.tractorFuelLogs) ?? []
+        tractorFuelLogs = allFuelLogs.filter { $0.vineyardId == vineyardId }
 
         loadButtonsForCurrentVineyard()
 

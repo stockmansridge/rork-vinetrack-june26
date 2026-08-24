@@ -358,7 +358,7 @@ struct SprayCalculatorView: View {
 
     private var selectedTractorName: String {
         selectedTractorId.flatMap { id in
-            store.tractors.first(where: { $0.id == id })?.displayName
+            store.currentTractors.first(where: { $0.id == id })?.displayName
         } ?? "Not selected"
     }
 
@@ -903,11 +903,15 @@ struct SprayCalculatorView: View {
         } else if !r.equipmentType.isEmpty {
             selectedEquipmentId = store.sprayEquipment.first(where: { $0.name == r.equipmentType })?.id
         }
+        // Prefill is a NEW job draft, so it resolves against the selected
+        // vineyard's tractors only. A prefill source that points at another
+        // vineyard's tractor leaves the step unset for the operator rather
+        // than quietly binding a machine this vineyard does not own.
         let tractorId = r.tractorId ?? prefillProgram?.tractorId
-        if let tractorId, store.tractors.contains(where: { $0.id == tractorId }) {
+        if let tractorId, store.currentTractors.contains(where: { $0.id == tractorId }) {
             selectedTractorId = tractorId
         } else if !r.tractor.isEmpty {
-            selectedTractorId = store.tractors.first(where: { $0.displayName == r.tractor || $0.name == r.tractor })?.id
+            selectedTractorId = store.currentTractors.first(where: { $0.displayName == r.tractor || $0.name == r.tractor })?.id
         }
 
         // Targets (guided Step 3). Taken from the Program Step's declared
@@ -1671,27 +1675,36 @@ struct SprayCalculatorView: View {
     // trip setup feels identical to the maintenance trip setup.
 
     /// THE tractor list — Equipment, Review and Tank Mixing all read this ONE
-    /// property, sorted for display but otherwise unfiltered.
+    /// property.
     ///
-    /// Tank Mixing used to compute its own list filtered by
-    /// `store.selectedVineyardId`, a rule Equipment's own tractor picker never
-    /// applied. A tractor confirmed in Equipment — New Holland T4.85N — could
-    /// therefore fall outside that narrower list and Tank Mixing would report
-    /// "No tractors configured" for a selection that was never lost, only
-    /// re-resolved through a second, stricter source. There is exactly one
-    /// list now, so a confirmed `selectedTractorId` can never fall outside it.
+    /// Two rules had to hold at once, and they are not in tension:
+    ///
+    /// 1. *One list.* Tank Mixing used to compute its own, differently-filtered
+    ///    list, so a tractor confirmed in Equipment could fall outside it and
+    ///    Tank Mixing would report "No tractors configured" for a selection
+    ///    that was never lost, only re-resolved through a stricter source.
+    /// 2. *Selected vineyard only.* A new Spray Job must never be offered a
+    ///    machine belonging to another vineyard.
+    ///
+    /// The earlier fix satisfied (1) by dropping the vineyard filter entirely,
+    /// which broke (2). Both now hold because there is still exactly ONE list
+    /// and it is the authoritative selected-vineyard accessor — every picker,
+    /// the review step and Tank Mixing read it, so a confirmed
+    /// `selectedTractorId` can never fall outside it. Historical Spray Records
+    /// keep resolving their own equipment through the record-scoped historical
+    /// resolvers, not through this new-job picker.
     private var availableTractors: [Tractor] {
-        store.tractors.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        store.currentTractorsSorted
     }
 
-    /// The confirmed tractor's name, resolved against `store.tractors`
-    /// directly — never against a filtered subset — so a valid
-    /// `selectedTractorId` can never render as unresolved.
+    /// The confirmed tractor's name, resolved against the same single list the
+    /// pickers use, so a valid `selectedTractorId` can never render as
+    /// unresolved.
     private var selectedTractorLabel: String {
-        if let id = selectedTractorId, let t = store.tractors.first(where: { $0.id == id }) {
+        if let id = selectedTractorId, let t = availableTractors.first(where: { $0.id == id }) {
             return t.displayName
         }
-        return store.tractors.isEmpty ? "No tractors configured" : "No tractor selected"
+        return availableTractors.isEmpty ? "No tractors configured" : "No tractor selected"
     }
 
     @ViewBuilder
@@ -3758,7 +3771,7 @@ struct SprayCalculatorView: View {
               let equip = store.sprayEquipment.first(where: { $0.id == equipId }) else { return }
 
         let tractor: Tractor? = selectedTractorId.flatMap { id in
-            store.tractors.first(where: { $0.id == id })
+            store.currentTractors.first(where: { $0.id == id })
         }
 
         calculationResult = SprayCalculator.calculate(
@@ -4011,7 +4024,7 @@ struct SprayCalculatorView: View {
         store.updateTrip(tripWithTanks)
 
         let tractorName = selectedTractorId.flatMap { id in
-            store.tractors.first(where: { $0.id == id })?.displayName
+            store.currentTractors.first(where: { $0.id == id })?.displayName
         } ?? ""
 
         let record = SprayRecord(
@@ -4083,7 +4096,7 @@ struct SprayCalculatorView: View {
         let tanks: [SprayTank] = buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
 
         let tractorName = selectedTractorId.flatMap { id in
-            store.tractors.first(where: { $0.id == id })?.displayName
+            store.currentTractors.first(where: { $0.id == id })?.displayName
         } ?? ""
 
         let record = SprayRecord(

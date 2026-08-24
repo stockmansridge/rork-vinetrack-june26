@@ -17,6 +17,56 @@ extension MigratedDataStore {
 
     private var persistenceStore: PersistenceStore { .shared }
 
+    // MARK: - Persisted equipment slices (authoritative, multi-vineyard)
+
+    /// EVERY persisted tractor row, across every vineyard on this device.
+    ///
+    /// In-memory state holds only the selected vineyard, so the sync PUSH path
+    /// must read from disk: a row edited in Vineyard A and still queued when
+    /// the grower switches to Vineyard B would otherwise look like an orphan
+    /// and have its queued upload silently discarded.
+    func persistedTractors() -> [Tractor] {
+        persistenceStore.load(key: MgmtKeys.tractors) ?? []
+    }
+
+    /// EVERY persisted vineyard machine row, across every vineyard.
+    func persistedVineyardMachines() -> [VineyardMachine] {
+        persistenceStore.load(key: MgmtKeys.vineyardMachines) ?? []
+    }
+
+    /// EVERY persisted fuel purchase row, across every vineyard.
+    func persistedFuelPurchases() -> [FuelPurchase] {
+        persistenceStore.load(key: MgmtKeys.fuelPurchases) ?? []
+    }
+
+    /// EVERY persisted fuel log row, across every vineyard.
+    func persistedTractorFuelLogs() -> [TractorFuelLog] {
+        persistenceStore.load(key: MgmtKeys.tractorFuelLogs) ?? []
+    }
+
+    /// Every persisted tractor row for `vineyardId`, read straight from the
+    /// multi-vineyard blob rather than the (single-vineyard) in-memory state.
+    /// Used by full-pull reconciliation so ghost rows can be retired even when
+    /// the vineyard being synced is not the selected one.
+    func persistedTractors(forVineyard vineyardId: UUID) -> [Tractor] {
+        persistedTractors().filter { $0.vineyardId == vineyardId }
+    }
+
+    /// Every persisted vineyard machine row for `vineyardId`.
+    func persistedVineyardMachines(forVineyard vineyardId: UUID) -> [VineyardMachine] {
+        persistedVineyardMachines().filter { $0.vineyardId == vineyardId }
+    }
+
+    /// Every persisted fuel purchase row for `vineyardId`.
+    func persistedFuelPurchases(forVineyard vineyardId: UUID) -> [FuelPurchase] {
+        persistedFuelPurchases().filter { $0.vineyardId == vineyardId }
+    }
+
+    /// Every persisted fuel log row for `vineyardId`.
+    func persistedTractorFuelLogs(forVineyard vineyardId: UUID) -> [TractorFuelLog] {
+        persistedTractorFuelLogs().filter { $0.vineyardId == vineyardId }
+    }
+
     // MARK: - Spray Equipment
 
     func addSprayEquipment(_ item: SprayEquipmentItem) {
@@ -107,10 +157,17 @@ extension MigratedDataStore {
     }
 
     func applyRemoteTractorUpsert(_ tractor: Tractor) {
-        if let idx = tractors.firstIndex(where: { $0.id == tractor.id }) {
-            tractors[idx] = tractor
+        // In-memory operational state holds ONLY the selected vineyard. A row
+        // for another vineyard is still persisted (its slice stays intact) but
+        // must never enter the operational set.
+        if tractor.vineyardId == selectedVineyardId {
+            if let idx = tractors.firstIndex(where: { $0.id == tractor.id }) {
+                tractors[idx] = tractor
+            } else {
+                tractors.append(tractor)
+            }
         } else {
-            tractors.append(tractor)
+            tractors.removeAll { $0.id == tractor.id }
         }
         var all: [Tractor] = persistenceStore.load(key: MgmtKeys.tractors) ?? []
         if let idx = all.firstIndex(where: { $0.id == tractor.id }) {
@@ -168,10 +225,14 @@ extension MigratedDataStore {
     }
 
     func applyRemoteVineyardMachineUpsert(_ machine: VineyardMachine) {
-        if let idx = vineyardMachines.firstIndex(where: { $0.id == machine.id }) {
-            vineyardMachines[idx] = machine
+        if machine.vineyardId == selectedVineyardId {
+            if let idx = vineyardMachines.firstIndex(where: { $0.id == machine.id }) {
+                vineyardMachines[idx] = machine
+            } else {
+                vineyardMachines.append(machine)
+            }
         } else {
-            vineyardMachines.append(machine)
+            vineyardMachines.removeAll { $0.id == machine.id }
         }
         var all: [VineyardMachine] = persistenceStore.load(key: MgmtKeys.vineyardMachines) ?? []
         if let idx = all.firstIndex(where: { $0.id == machine.id }) {
@@ -222,10 +283,14 @@ extension MigratedDataStore {
     }
 
     func applyRemoteFuelPurchaseUpsert(_ purchase: FuelPurchase) {
-        if let idx = fuelPurchases.firstIndex(where: { $0.id == purchase.id }) {
-            fuelPurchases[idx] = purchase
+        if purchase.vineyardId == selectedVineyardId {
+            if let idx = fuelPurchases.firstIndex(where: { $0.id == purchase.id }) {
+                fuelPurchases[idx] = purchase
+            } else {
+                fuelPurchases.append(purchase)
+            }
         } else {
-            fuelPurchases.append(purchase)
+            fuelPurchases.removeAll { $0.id == purchase.id }
         }
         var all: [FuelPurchase] = persistenceStore.load(key: MgmtKeys.fuelPurchases) ?? []
         if let idx = all.firstIndex(where: { $0.id == purchase.id }) {
@@ -334,10 +399,14 @@ extension MigratedDataStore {
     }
 
     func applyRemoteTractorFuelLogUpsert(_ log: TractorFuelLog) {
-        if let idx = tractorFuelLogs.firstIndex(where: { $0.id == log.id }) {
-            tractorFuelLogs[idx] = log
+        if log.vineyardId == selectedVineyardId {
+            if let idx = tractorFuelLogs.firstIndex(where: { $0.id == log.id }) {
+                tractorFuelLogs[idx] = log
+            } else {
+                tractorFuelLogs.append(log)
+            }
         } else {
-            tractorFuelLogs.append(log)
+            tractorFuelLogs.removeAll { $0.id == log.id }
         }
         var all: [TractorFuelLog] = persistenceStore.load(key: MgmtKeys.tractorFuelLogs) ?? []
         if let idx = all.firstIndex(where: { $0.id == log.id }) {

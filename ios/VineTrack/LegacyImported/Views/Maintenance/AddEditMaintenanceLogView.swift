@@ -65,9 +65,9 @@ struct AddEditMaintenanceLogView: View {
                 Section("Item / Machine") {
                     HStack(spacing: 8) {
                         Menu {
-                            if !store.tractors.isEmpty {
+                            if !store.currentTractors.isEmpty {
                                 Section("Tractors") {
-                                    ForEach(store.tractors) { tractor in
+                                    ForEach(store.currentTractorsSorted) { tractor in
                                         Button(tractor.displayName) {
                                             itemName = tractor.displayName
                                             equipmentSource = "tractor"
@@ -151,7 +151,7 @@ struct AddEditMaintenanceLogView: View {
                             .accessibilityLabel("Add item")
                         }
                     }
-                    if store.tractors.isEmpty && store.sprayEquipment.isEmpty && vineyardMachineItems.isEmpty && otherEquipmentItems.isEmpty {
+                    if store.currentTractors.isEmpty && store.sprayEquipment.isEmpty && vineyardMachineItems.isEmpty && otherEquipmentItems.isEmpty {
                         Text("No tractors, spray equipment, vineyard machines, or other items yet. Tap + to add an Other item, or visit Equipment in Settings.")
                             .font(.caption)
                             .foregroundStyle(.secondary)

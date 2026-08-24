@@ -16,7 +16,7 @@ struct TractorManagementView: View {
     var body: some View {
         List {
             Section {
-                ForEach(store.tractors) { tractor in
+                ForEach(store.currentTractorsSorted) { tractor in
                     Group {
                         if canManageSetup {
                             Button { editingTractor = tractor } label: { TractorRow(tractor: tractor) }
@@ -61,7 +61,7 @@ struct TractorManagementView: View {
         .navigationTitle("Tractors")
         .navigationBarTitleDisplayMode(.inline)
         .overlay {
-            if store.tractors.isEmpty {
+            if store.currentTractors.isEmpty {
                 ContentUnavailableView {
                     Label("No Tractors", systemImage: "truck.pickup.side.fill")
                 } description: {

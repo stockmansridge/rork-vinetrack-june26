@@ -315,8 +315,12 @@ struct SprayProgramStepDetailView: View {
     }
 
     private var tractorName: String? {
-        if let id = currentStep.record.tractorId,
-           let match = store.tractors.first(where: { $0.id == id }) {
+        // Historical read: the step's saved tractor, resolved inside the
+        // record's own vineyard.
+        if let match = store.historicalTractor(
+            id: currentStep.record.tractorId,
+            inVineyard: currentStep.record.vineyardId
+        ) {
             return match.displayName
         }
         let typed = currentStep.record.tractor.trimmingCharacters(in: .whitespacesAndNewlines)

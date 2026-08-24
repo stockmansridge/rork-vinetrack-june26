@@ -419,23 +419,19 @@ struct TripDetailView: View {
         return nil
     }
 
+    /// Historical read — scoped to the TRIP's own vineyard so a saved trip
+    /// keeps naming its machine correctly after a vineyard switch.
     private var resolvedTractor: Tractor? {
-        guard let tid = currentTrip.tractorId else { return nil }
-        return store.tractors.first { $0.id == tid }
+        store.historicalTractor(id: currentTrip.tractorId, inVineyard: currentTrip.vineyardId)
     }
 
     /// Vineyard machine linked to this trip (preferred fuel source). Resolves
     /// from `machineId` first, then falls back to the legacy tractor link so
-    /// older trips still surface their backfilled machine.
+    /// older trips still surface their backfilled machine. Both lookups stay
+    /// inside the trip's own vineyard.
     private var resolvedMachine: VineyardMachine? {
-        if let mid = currentTrip.machineId,
-           let m = store.vineyardMachines.first(where: { $0.id == mid }) {
-            return m
-        }
-        if let tid = currentTrip.tractorId {
-            return store.vineyardMachines.first { $0.legacyTractorId == tid && $0.vineyardId == currentTrip.vineyardId }
-        }
-        return nil
+        store.historicalMachine(id: currentTrip.machineId, inVineyard: currentTrip.vineyardId)
+            ?? store.historicalMachine(legacyTractorId: currentTrip.tractorId, inVineyard: currentTrip.vineyardId)
     }
 
     private var tripFuelPurchases: [FuelPurchase] {

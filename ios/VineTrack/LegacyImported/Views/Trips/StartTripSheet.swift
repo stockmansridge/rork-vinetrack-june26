@@ -1122,7 +1122,7 @@ struct StartTripSheet: View {
     private var lastKnownEngineHours: Double? {
         guard let machineId = selectedMachineId else { return nil }
         let legacyTractorId = selectedMachine?.legacyTractorId
-        return store.tractorFuelLogs
+        return store.currentTractorFuelLogs
             .filter {
                 $0.engineHours != nil &&
                 ($0.machineId == machineId || ($0.machineId == nil && legacyTractorId != nil && $0.tractorId == legacyTractorId))

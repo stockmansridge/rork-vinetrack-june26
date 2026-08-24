@@ -12,7 +12,7 @@ struct SetupWizardView: View {
     @State private var showAddRig: Bool = false
 
     private var hasBlock: Bool { !store.paddocks.isEmpty }
-    private var hasTractor: Bool { !store.tractors.isEmpty }
+    private var hasTractor: Bool { !store.currentTractors.isEmpty }
     private var hasRig: Bool { !store.sprayEquipment.isEmpty }
 
     private var totalSteps: Int { 3 }
@@ -127,7 +127,7 @@ struct SetupWizardView: View {
                 actionTitle: hasTractor ? "Add Another Tractor" : "Add Tractor",
                 actionIcon: "plus",
                 isComplete: hasTractor,
-                completedMessage: "\(store.tractors.count) tractor\(store.tractors.count == 1 ? "" : "s") added",
+                completedMessage: "\(store.currentTractors.count) tractor\(store.currentTractors.count == 1 ? "" : "s") added",
                 action: { showAddTractor = true }
             )
         case 2:

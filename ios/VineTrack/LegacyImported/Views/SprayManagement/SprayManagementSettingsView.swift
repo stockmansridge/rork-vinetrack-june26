@@ -46,7 +46,7 @@ struct SprayManagementSettingsView: View {
                         Label("Equipment", systemImage: "wrench.and.screwdriver")
                             .foregroundStyle(.primary)
                         Spacer()
-                        let total = store.sprayEquipment.count + store.tractors.count
+                        let total = store.sprayEquipment.count + store.currentTractors.count
                         if total > 0 {
                             Text("\(total)")
                                 .font(.caption)

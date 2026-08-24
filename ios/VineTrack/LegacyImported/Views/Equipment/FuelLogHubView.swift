@@ -49,10 +49,7 @@ struct FuelLogHubView: View {
     // MARK: - Data
 
     private var purchases: [FuelPurchase] {
-        guard let vid = store.selectedVineyardId else { return [] }
-        return store.fuelPurchases
-            .filter { $0.vineyardId == vid }
-            .sorted { $0.date > $1.date }
+        store.currentFuelPurchases.sorted { $0.date > $1.date }
     }
 
     private var seasonPurchases: [FuelPurchase] {
@@ -60,10 +57,7 @@ struct FuelLogHubView: View {
     }
 
     private var logs: [TractorFuelLog] {
-        guard let vid = store.selectedVineyardId else { return [] }
-        return store.tractorFuelLogs
-            .filter { $0.vineyardId == vid }
-            .sorted { $0.fillDateTime > $1.fillDateTime }
+        store.currentTractorFuelLogs.sorted { $0.fillDateTime > $1.fillDateTime }
     }
 
     private var seasonLogs: [TractorFuelLog] {
@@ -91,8 +85,10 @@ struct FuelLogHubView: View {
         if let m = store.machine(forFuelLog: log) {
             return "\(m.displayName) · \(m.machineType.displayName)"
         }
-        if let tid = log.tractorId,
-           let t = store.tractors.first(where: { $0.id == tid && $0.vineyardId == store.selectedVineyardId }) {
+        // Historical read: resolve the legacy link inside the LOG's own
+        // vineyard so a fill can never be labelled with another vineyard's
+        // tractor.
+        if let t = store.historicalTractor(id: log.tractorId, inVineyard: log.vineyardId) {
             return t.displayName
         }
         return "Unassigned machine"

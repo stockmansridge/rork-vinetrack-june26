@@ -503,7 +503,9 @@ struct SprayRecordDetailView: View {
 
     private var fuelCostForTrip: Double {
         guard let trip = tripForRecord else { return 0 }
-        let tractor = store.tractors.first(where: { $0.displayName == record.tractor || $0.name == record.tractor })
+        // Historical read: resolve against the RECORD's own vineyard so a
+        // saved spray keeps showing the right machine after a vineyard switch.
+        let tractor = store.historicalTractor(named: record.tractor, inVineyard: record.vineyardId)
         guard let tractor, tractor.fuelUsageLPerHour > 0 else { return 0 }
         let fuelPrice = store.seasonFuelCostPerLitre
         guard fuelPrice > 0 else { return 0 }
@@ -814,11 +816,13 @@ extension SprayRecordDetailView {
                 }
                 return nil
             }()
+            // Historical reads: both the trip's tractor id and the record's
+            // legacy tractor name resolve inside the TRIP's own vineyard.
             let tractor: Tractor? = {
                 if let tid = trip.tractorId {
-                    return store.tractors.first { $0.id == tid }
+                    return store.historicalTractor(id: tid, inVineyard: trip.vineyardId)
                 }
-                return store.tractors.first { $0.displayName == recordCopy.tractor || $0.name == recordCopy.tractor }
+                return store.historicalTractor(named: recordCopy.tractor, inVineyard: trip.vineyardId)
             }()
             let fuelPurchases = store.fuelPurchases.filter { $0.vineyardId == trip.vineyardId }
             var areasById: [UUID: Double] = [:]

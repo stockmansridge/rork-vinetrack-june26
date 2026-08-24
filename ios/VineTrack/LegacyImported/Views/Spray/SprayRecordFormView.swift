@@ -491,16 +491,12 @@ struct SprayRecordFormView: View {
     /// Non-tractor vineyard machines plus tractor-backed machines, used to
     /// offer a stable pick for the "Tractor" field.
     private var machineOptions: [VineyardMachine] {
-        guard let vid = store.selectedVineyardId else { return [] }
-        return store.vineyardMachines
-            .filter { $0.vineyardId == vid }
+        store.currentVineyardMachines
             .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
     }
 
     private var tractorOptions: [Tractor] {
-        guard let vid = store.selectedVineyardId else { return [] }
-        return store.tractors
-            .filter { $0.vineyardId == vid }
+        store.currentTractors
             .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
     }
 

@@ -478,9 +478,10 @@ struct SprayProgramStepEditView: View {
         return store.sprayEquipment.filter { vineyardId == nil || $0.vineyardId == vineyardId }
     }
 
+    /// Operational picker for a Program Step: selected vineyard only. With no
+    /// vineyard selected the correct answer is "nothing", not "everything".
     private var availableTractors: [Tractor] {
-        let vineyardId = store.selectedVineyardId
-        return store.tractors.filter { vineyardId == nil || $0.vineyardId == vineyardId }
+        store.currentTractors
     }
 
     // MARK: - Save

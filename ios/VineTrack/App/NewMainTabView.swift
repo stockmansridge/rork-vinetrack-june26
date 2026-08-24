@@ -719,7 +719,7 @@ private struct NewHomeTabView: View {
         guard setupWizardEnabled else { return false }
         guard accessControl.canChangeSettings else { return false }
         let hasBlock = !store.paddocks.isEmpty
-        let hasTractor = !store.tractors.isEmpty
+        let hasTractor = !store.currentTractors.isEmpty
         let hasRig = !store.sprayEquipment.isEmpty
         return !(hasBlock && hasTractor && hasRig)
     }
@@ -769,7 +769,7 @@ private struct NewHomeTabView: View {
     private var setupWizardSubtitle: String {
         var remaining: [String] = []
         if store.paddocks.isEmpty { remaining.append("block") }
-        if store.tractors.isEmpty { remaining.append("tractor") }
+        if store.currentTractors.isEmpty { remaining.append("tractor") }
         if store.sprayEquipment.isEmpty { remaining.append("spray rig") }
         if remaining.isEmpty {
             return "All set — tap to review"

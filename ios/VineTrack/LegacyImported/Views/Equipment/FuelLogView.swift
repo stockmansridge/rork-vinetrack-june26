@@ -94,6 +94,18 @@ struct FuelFillFormSheet: View {
     @State private var savedResult: TractorFuelRateResult?
     @State private var savedMachineId: UUID?
     @State private var didApplyDefault: Bool = false
+    /// Non-nil while the replace-default confirmation is on screen. The
+    /// configured machine rate is NOT touched until this is confirmed.
+    @State private var pendingDefault: PendingMachineDefault?
+
+    /// A proposed — not yet applied — replacement of a machine's configured
+    /// fuel rate with a rate calculated from one fill interval.
+    private struct PendingMachineDefault: Identifiable {
+        let id: UUID
+        let machine: VineyardMachine
+        let currentRate: Double
+        let proposedRate: Double
+    }
 
     init(log: TractorFuelLog?) {
         self.log = log
@@ -118,7 +130,7 @@ struct FuelFillFormSheet: View {
 
     private var selectedMachine: VineyardMachine? {
         guard let mid = machineId else { return nil }
-        return store.vineyardMachines.first { $0.id == mid }
+        return store.currentVineyardMachines.first { $0.id == mid }
     }
 
     private var litres: Double { Double(litresText) ?? 0 }
@@ -163,12 +175,53 @@ struct FuelFillFormSheet: View {
                 if log == nil, operatorName.isEmpty {
                     operatorName = auth.userName ?? ""
                 }
-                // Resolve a machine for legacy logs that only carry a tractorId.
-                if let l = log, machineId == nil, let tid = l.tractorId {
-                    machineId = store.vineyardMachines.first { $0.legacyTractorId == tid }?.id
+                // Resolve a machine for legacy logs that only carry a
+                // tractorId. Historical read: constrained to the LOG's own
+                // vineyard, so a legacy tractor id can never cross-bind to a
+                // machine belonging to a different vineyard.
+                if let l = log, machineId == nil {
+                    machineId = store.historicalMachine(
+                        legacyTractorId: l.tractorId,
+                        inVineyard: l.vineyardId
+                    )?.id
                 }
             }
+            .alert(
+                "Replace machine default?",
+                isPresented: Binding(
+                    get: { pendingDefault != nil },
+                    set: { if !$0 { pendingDefault = nil } }
+                ),
+                presenting: pendingDefault
+            ) { pending in
+                Button("Cancel", role: .cancel) { pendingDefault = nil }
+                Button("Replace Default") {
+                    applyAsMachineDefault(lph: pending.proposedRate, machine: pending.machine)
+                    pendingDefault = nil
+                }
+            } message: { pending in
+                Text(confirmationMessage(for: pending))
+            }
         }
+    }
+
+    private func confirmationMessage(for pending: PendingMachineDefault) -> String {
+        let current = pending.currentRate > 0
+            ? "\(Self.rateText(pending.currentRate)) L/hr"
+            : "not set"
+        return """
+        \(pending.machine.displayName)'s configured rate is \(current). \
+        This fill interval calculates \(Self.rateText(pending.proposedRate)) L/hr.
+
+        Fill-to-fill figures can be unreliable if a fill was missed, the tank \
+        was not filled to the same level both times, or an engine-hour reading \
+        was skipped. Only replace the configured rate if this interval is a \
+        fair reflection of how the machine actually runs.
+        """
+    }
+
+    private static func rateText(_ value: Double) -> String {
+        String(format: "%.2f", value)
     }
 
     private var navTitle: String {
@@ -300,20 +353,41 @@ struct FuelFillFormSheet: View {
 
         if let lph = result.litresPerHour,
            let mid = savedMachineId,
-           let machine = store.vineyardMachines.first(where: { $0.id == mid }) {
+           let machine = store.currentVineyardMachines.first(where: { $0.id == mid }) {
+            // The configured machine rate is a DECLARED expectation. The value
+            // above is an OBSERVATION from a single fill interval. They are
+            // shown side by side and the configured value is never touched
+            // without an explicit, confirmed action.
             Section {
+                LabeledContent("Current default") {
+                    Text(machine.hasFuelUsageRate
+                         ? "\(Self.rateText(machine.fuelUsageLPerHour)) L/hr"
+                         : "Not set")
+                        .foregroundStyle(.secondary)
+                }
+                LabeledContent("Calculated from this interval") {
+                    Text("\(Self.rateText(lph)) L/hr")
+                        .foregroundStyle(result.reliability == .reliable ? VineyardTheme.olive : .orange)
+                }
                 if didApplyDefault {
-                    Label("Updated \(machine.displayName) default to \(String(format: "%.1f", lph)) L/hr", systemImage: "checkmark.circle.fill")
+                    Label("Updated \(machine.displayName) default to \(Self.rateText(lph)) L/hr", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(VineyardTheme.olive)
                 } else {
                     Button {
-                        applyAsMachineDefault(lph: lph, machine: machine)
+                        pendingDefault = PendingMachineDefault(
+                            id: machine.id,
+                            machine: machine,
+                            currentRate: machine.fuelUsageLPerHour,
+                            proposedRate: lph
+                        )
                     } label: {
-                        Label("Use \(String(format: "%.1f", lph)) L/hr as machine default", systemImage: "arrow.up.circle")
+                        Label("Use as machine default\u{2026}", systemImage: "arrow.up.circle")
                     }
                 }
+            } header: {
+                Text("Machine Default Fuel Rate")
             } footer: {
-                Text("The machine's default fuel rate is only changed if you choose to update it here.")
+                Text("The calculated rate is an observation from this fill interval only. \(machine.displayName)'s configured rate stays as it is unless you deliberately replace it, and you'll be asked to confirm first. Fill-to-fill figures can be unreliable when a fill is missed, tanks aren't filled to the same level, or an engine-hour reading is skipped.")
             }
         }
     }
@@ -408,9 +482,11 @@ struct FuelFillFormSheet: View {
         store.updateVineyardMachine(updatedMachine)
         Task { await machineSync.syncForSelectedVineyard() }
 
+        // Legacy cascade: the backing tractor lives in the SAME vineyard as
+        // the machine, resolved explicitly so the cascade can never reach
+        // another vineyard's tractor row.
         if machine.machineType == .tractor,
-           let tid = machine.legacyTractorId,
-           var tractor = store.tractors.first(where: { $0.id == tid }) {
+           var tractor = store.historicalTractor(id: machine.legacyTractorId, inVineyard: machine.vineyardId) {
             tractor.fuelUsageLPerHour = lph
             store.updateTractor(tractor)
             Task { await tractorSync.syncForSelectedVineyard() }

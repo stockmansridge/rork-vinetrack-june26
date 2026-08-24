@@ -41,7 +41,7 @@ struct EquipmentManagementView: View {
     }
 
     private var tractorSubtitle: String {
-        let count = store.tractors.count
+        let count = store.currentTractors.count
         if count == 0 { return "Add tractors for fuel use and trip costing" }
         return "\(count) tractor\(count == 1 ? "" : "s")"
     }
@@ -54,15 +54,12 @@ struct EquipmentManagementView: View {
 
     private var fuelSubtitle: String {
         let fills = fuelLogCount
-        let purchases = store.fuelPurchases.count
+        let purchases = store.currentFuelPurchases.count
         if fills == 0 && purchases == 0 { return "Record purchases and fuel fills" }
         return "\(purchases) purchase\(purchases == 1 ? "" : "s") · \(fills) fill\(fills == 1 ? "" : "s")"
     }
 
-    private var fuelLogCount: Int {
-        guard let vid = store.selectedVineyardId else { return 0 }
-        return store.tractorFuelLogs.filter { $0.vineyardId == vid }.count
-    }
+    private var fuelLogCount: Int { store.currentTractorFuelLogs.count }
 
     private func navCard(title: String, subtitle: String) -> some View {
         HStack {

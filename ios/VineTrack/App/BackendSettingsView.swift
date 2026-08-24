@@ -1679,10 +1679,7 @@ private struct TractorSyncDiagnosticsRows: View {
         }
     }
 
-    private var localCount: Int {
-        guard let vid = store.selectedVineyardId else { return 0 }
-        return store.tractors.filter { $0.vineyardId == vid }.count
-    }
+    private var localCount: Int { store.currentTractors.count }
 
     private func refreshRemote() async {
         guard !isFetching else { return }
