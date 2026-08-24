@@ -104,15 +104,26 @@ nonisolated enum ChemicalReviewMerge {
         var chemical = existing ?? SavedChemical(vineyardId: vineyardId)
 
         // ---- Identity -------------------------------------------------------
-        chemical.name = presentable(
-            firstNonEmpty([
-                canonical?.registration?.registeredProductName,
-                lookup?.productName,
-                advisory?.productName,
-                selected?.name,
-                existing?.name
-            ]),
-            preferringWordingOf: [selected?.name, existing?.name]
+        // Two steps, in this order, and only ever presentation:
+        //
+        //  1. `presentable` prefers a weaker tier that holds THE SAME name in
+        //     the wording the operator actually read.
+        //  2. `ChemicalDisplayName.cased` catches what is left — a register
+        //     name that nothing else restated, which would otherwise be stored
+        //     shouting. It mirrors the database rule (sql/205) that every
+        //     client's writes pass through anyway, so the record reads the same
+        //     offline as it will after sync.
+        chemical.name = ChemicalDisplayName.cased(
+            presentable(
+                firstNonEmpty([
+                    canonical?.registration?.registeredProductName,
+                    lookup?.productName,
+                    advisory?.productName,
+                    selected?.name,
+                    existing?.name
+                ]),
+                preferringWordingOf: [selected?.name, existing?.name]
+            )
         )
 
         let registrant = presentable(
