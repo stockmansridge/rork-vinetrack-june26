@@ -17,7 +17,7 @@ import Testing
 /// A SECOND active          "kg"                 the server said no such thing
 /// Official Label URL       blank                server said the 59688 eLabel
 /// Registered Uses          "No registered use is on record for this product yet."
-///                                               server said four GRAPEVINE uses
+///                                               server said three GRAPEVINE uses
 /// ```
 ///
 /// The four fields that DID populate are exactly the four the search row
@@ -37,9 +37,14 @@ struct ChemicalReviewHydrationTests {
 
     // MARK: - The production response, verbatim in shape
 
-    /// APVMA 59688, as production serves it after the authority-purity fixes:
-    /// one printed rate owned by PHOMOPSIS CANE, three uses correctly carrying
-    /// no rate, Terra's 200 g/100 L reading quarantined in `ai_suggested_uses`.
+    /// APVMA 59688, as production serves it after the authority-purity and
+    /// target-wording fixes: the three uses the approved label actually prints,
+    /// worded as the LABEL words them — the register's "BLACK SPOT -
+    /// COLLETOTRICHUM ACUTATUM" taxonomy rides along non-authoritatively in
+    /// `register_target_raw`, and its separate "LEAF SPOT - ALTERNARIA
+    /// CERCOSPORA" pest code is a synonym of the one printed "Phomopsis Cane
+    /// and Leaf spot" row. One printed rate, owned by that one printed cell;
+    /// Terra's 200 g/100 L quarantined in `ai_suggested_uses`.
     private let dithaneStructuredJSON = """
     {
       "product_name": "DITHANE RAINSHIELD NEO TEC FUNGICIDE",
@@ -74,21 +79,17 @@ struct ChemicalReviewHydrationTests {
       "registered_uses": [
         {
           "crop": "GRAPEVINE",
-          "target_raw": "BLACK SPOT - COLLETOTRICHUM ACUTATUM",
+          "target_raw": "Blackspot",
+          "register_target_raw": "BLACK SPOT - COLLETOTRICHUM ACUTATUM",
           "rates": [],
           "withholding_period_days": 30,
           "provenance": { "claim": "manufacturer_label", "withholding_period": "manufacturer_label" }
         },
         {
           "crop": "GRAPEVINE",
-          "target_raw": "LEAF SPOT - ALTERNARIA CERCOSPORA",
-          "rates": [],
-          "withholding_period_days": 30,
-          "provenance": { "claim": "manufacturer_label", "withholding_period": "manufacturer_label" }
-        },
-        {
-          "crop": "GRAPEVINE",
-          "target_raw": "PHOMOPSIS CANE",
+          "target_raw": "Phomopsis Cane and Leaf spot",
+          "register_target_raw": "PHOMOPSIS CANE",
+          "target_synonyms": ["LEAF SPOT - ALTERNARIA CERCOSPORA"],
           "rates": [
             {
               "label": "",
@@ -108,7 +109,8 @@ struct ChemicalReviewHydrationTests {
         },
         {
           "crop": "GRAPEVINE",
-          "target_raw": "DOWNY MILDEW",
+          "target_raw": "Downy mildew",
+          "register_target_raw": "DOWNY MILDEW",
           "rates": [],
           "withholding_period_days": 30,
           "provenance": { "claim": "manufacturer_label", "withholding_period": "manufacturer_label" }
@@ -294,8 +296,9 @@ struct ChemicalReviewHydrationTests {
         // product_url was null on this lookup, and null is not a blank to fill.
         #expect(session.productURL.isEmpty)
 
-        // Four vineyard uses, and therefore no false empty state.
-        #expect(session.chemistryDraft.uses.count == 4)
+        // The three vineyard uses the label prints, and therefore no false
+        // empty state.
+        #expect(session.chemistryDraft.uses.count == 3)
         #expect(session.chemistryDraft.uses.allSatisfy(\.isViticultural))
         #expect(session.hasStructuredUses)
     }
@@ -304,17 +307,13 @@ struct ChemicalReviewHydrationTests {
     func registeredUsesKeepTheirLabelValues() throws {
         let session = try hydratedSession()
 
-        for target in [
-            "BLACK SPOT - COLLETOTRICHUM ACUTATUM",
-            "LEAF SPOT - ALTERNARIA CERCOSPORA",
-            "DOWNY MILDEW",
-        ] {
+        for target in ["Blackspot", "Downy mildew"] {
             let entry = try use(session, target: target)
             #expect(entry.rates.isEmpty, "\(target) must carry no rate")
             #expect(entry.withholdingPeriodDaysText == "30", "\(target) WHP")
         }
 
-        let phomopsis = try use(session, target: "PHOMOPSIS CANE")
+        let phomopsis = try use(session, target: "Phomopsis Cane and Leaf spot")
         #expect(phomopsis.rates.count == 1)
         let rate = try #require(phomopsis.rates.first)
         #expect(rate.basis == .rangePer100Litres)
@@ -332,11 +331,13 @@ struct ChemicalReviewHydrationTests {
         #expect(lookup.aiSuggestedUses.count == 2)
 
         let session = try hydratedSession()
-        let downy = try use(session, target: "DOWNY MILDEW")
+        let downy = try use(session, target: "Downy mildew")
         #expect(downy.rates.isEmpty)
-        // And it did not sneak in as a fifth use either.
-        #expect(session.chemistryDraft.uses.count == 4)
-        #expect(!session.chemistryDraft.uses.contains { $0.targetRaw == "Downy mildew" })
+        // And it did not sneak in as a fourth use either. The label's own
+        // "Downy mildew" row and Terra's "Downy mildew" reading are worded
+        // identically now, so the count is what proves nothing was minted.
+        #expect(session.chemistryDraft.uses.count == 3)
+        #expect(session.chemistryDraft.uses.filter { $0.targetRaw == "Downy mildew" }.count == 1)
     }
 
     // MARK: - 10. No false empty state
@@ -431,7 +432,7 @@ struct ChemicalReviewHydrationTests {
         )
         let session = try hydratedSession(existing: legacy)
 
-        #expect(session.chemistryDraft.uses.count == 4)
+        #expect(session.chemistryDraft.uses.count == 3)
         #expect(session.chemistryDraft.registrationNumber == "59688")
         #expect(session.productCategory == .fungicide)
         #expect(session.formType == .solid)
@@ -483,16 +484,20 @@ struct ChemicalReviewHydrationTests {
         #expect(active.scheme == .frac)
         #expect(active.groupCode == "M3")
 
-        #expect(reopened.chemistryDraft.uses.count == 4)
-        let phomopsis = try use(reopened, target: "PHOMOPSIS CANE")
+        #expect(reopened.chemistryDraft.uses.count == 3)
+        let phomopsis = try use(reopened, target: "Phomopsis Cane and Leaf spot")
         #expect(phomopsis.rates.first?.basis == .rangePer100Litres)
         #expect(phomopsis.rates.first?.minText == "150")
         #expect(phomopsis.rates.first?.maxText == "200")
         #expect(phomopsis.rates.first?.unit == "g")
         #expect(phomopsis.withholdingPeriodDaysText == "30")
-        let downy = try use(reopened, target: "DOWNY MILDEW")
+        let downy = try use(reopened, target: "Downy mildew")
         #expect(downy.rates.isEmpty)
         #expect(downy.withholdingPeriodDaysText == "30")
+
+        // The label's wording survives the round trip — no layer between the
+        // server and the reopened editor re-imposes the register's taxonomy.
+        #expect(!reopened.chemistryDraft.uses.contains { $0.targetRaw.contains(" - ") })
     }
 
     // MARK: - The deadline that started all of it

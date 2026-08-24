@@ -229,7 +229,30 @@ export interface LabelDocumentExtraction {
  */
 export interface LabelUseClaim {
   crop: string; // verbatim register host wording, e.g. "GRAPEVINE"
-  target_raw: string; // verbatim register pest wording
+  /**
+   * The AUTHORITATIVE target wording for this use.
+   *
+   * Starts as the register's pest wording and is superseded, where the label
+   * DOCUMENT prints its own wording for the same use, by that printed cell
+   * text verbatim (Stage LD-3). The register's pest vocabulary carries a
+   * taxonomy the label itself does not state — "BLACK SPOT - COLLETOTRICHUM
+   * ACUTATUM" where the grapevine row simply reads "Blackspot" — and an
+   * operator reading an approved label must see the label's words.
+   */
+  target_raw: string;
+  /**
+   * The register (PubCRIS pest.csv) wording, retained ONLY when the label
+   * document's printed wording superseded it above. Non-authoritative: a
+   * search/synonym aid, never presented as something the label stated.
+   */
+  register_target_raw?: string;
+  /**
+   * Further register wordings this one printed row covers, for rows whose
+   * single target cell answers more than one register pest code (the label
+   * prints "Phomopsis Cane and Leaf spot" once; the register publishes it as
+   * two pest codes). Non-authoritative naming aids, never separate uses.
+   */
+  target_synonyms?: string[];
   target?: string; // VineTrack target enum, only when it maps cleanly
   withholding_period_days?: number; // only when a label statement states it (0 = "not required")
   re_entry_period_hours?: number; // only when a label statement states it

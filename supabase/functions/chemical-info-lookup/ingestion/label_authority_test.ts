@@ -141,9 +141,32 @@ function terraStructured(): any {
 }
 
 // deno-lint-ignore no-explicit-any
+function squashTarget(text: unknown): string {
+  return String(text ?? "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
+}
+
+/**
+ * Whether this entry is the use the REGISTER words `targetRaw`.
+ *
+ * Stage LD-3 serves the label DOCUMENT's own printed wording as `target_raw`
+ * ("Blackspot" where PubCRIS publishes "BLACKSPOT", "Phomopsis Cane and Leaf
+ * spot" for the one printed cell the register splits into two pest codes),
+ * keeping the register wording in `register_target_raw`/`target_synonyms`.
+ * These tests are about RATE AUTHORITY, so they address a use by either
+ * wording; the wording itself is pinned in label_target_wording_test.ts.
+ */
+// deno-lint-ignore no-explicit-any
+function matchesTarget(entry: any, targetRaw: string): boolean {
+  const want = squashTarget(targetRaw);
+  if (squashTarget(entry?.target_raw) === want) return true;
+  if (squashTarget(entry?.register_target_raw) === want) return true;
+  return (entry?.target_synonyms ?? []).some((s: string) => squashTarget(s) === want);
+}
+
+// deno-lint-ignore no-explicit-any
 function useFor(merged: any, targetRaw: string): any {
   // deno-lint-ignore no-explicit-any
-  const found = merged.registered_uses.find((u: any) => u.target_raw === targetRaw);
+  const found = merged.registered_uses.find((u: any) => matchesTarget(u, targetRaw));
   assert(found, `no served use for ${targetRaw}`);
   return found;
 }
@@ -154,20 +177,24 @@ function useFor(merged: any, targetRaw: string): any {
 
 Deno.test("§12.5: a wrapped target fragment cannot mint a second authoritative rate claim", () => {
   const evidence = parsedEvidence();
-  const phomopsis = evidence.claims.find((c) => c.target_raw === "PHOMOPSIS CANE");
-  const leafSpot = evidence.claims.find((c) =>
-    c.target_raw === "LEAF SPOT - ALTERNARIA CERCOSPORA"
-  );
+  const phomopsis = evidence.claims.find((c) => matchesTarget(c, "PHOMOPSIS CANE"));
 
-  // The label prints "Phomopsis Cane and Leaf spot" as ONE target cell. It
-  // corresponds to the register's "PHOMOPSIS CANE"…
+  // The label prints "Phomopsis Cane and Leaf spot" as ONE target cell, and
+  // that cell owns the one printed rate…
   assertEquals(phomopsis?.rates?.length, 1);
   assertEquals(phomopsis?.rates?.[0].min_value, 150);
   assertEquals(phomopsis?.rates?.[0].max_value, 200);
+  assertEquals(phomopsis?.target_raw, "Phomopsis Cane and Leaf spot");
 
-  // …and NOT to a different register target that merely shares the tail
-  // words of that cell.
-  assertEquals(leafSpot?.rates ?? [], []);
+  // …once, as ONE use. The register's second pest code for that same printed
+  // row is carried as a synonym of it, never as a second use able to mint a
+  // second authoritative rate claim.
+  assertEquals(phomopsis?.target_synonyms, ["LEAF SPOT - ALTERNARIA CERCOSPORA"]);
+  assertEquals(
+    evidence.claims.filter((c) => (c.rates ?? []).length > 0).length,
+    1,
+    "one printed rate cell, one claim carrying it",
+  );
 });
 
 Deno.test("§12.5: prefix correspondence still works for a genuinely complete target wording", () => {
@@ -199,7 +226,7 @@ Deno.test("§12.6: real 59688 — exactly one grapevine use owns 150–200 g/100
   // deno-lint-ignore no-explicit-any
   const owners = merged.registered_uses.filter((u: any) => (u.rates ?? []).length > 0);
   assertEquals(owners.length, 1, "one printed rate cell, one owning use");
-  assertEquals(owners[0].target_raw, "PHOMOPSIS CANE");
+  assertEquals(owners[0].target_raw, "Phomopsis Cane and Leaf spot");
   assertEquals(owners[0].rates[0].basis, "range_per_100_litres");
   assertEquals(owners[0].rates[0].min_value, 150);
   assertEquals(owners[0].rates[0].max_value, 200);

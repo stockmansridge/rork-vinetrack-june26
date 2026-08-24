@@ -439,9 +439,32 @@ function fullDocumentHarness(register: RegisterData, pcode: string, items: PdfTe
 }
 
 // deno-lint-ignore no-explicit-any
+function squashTarget(text: unknown): string {
+  return String(text ?? "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
+}
+
+/**
+ * The use the REGISTER calls `targetRaw`.
+ *
+ * Stage LD-3 serves the label DOCUMENT's own printed wording as `target_raw`
+ * ("Eutypa dieback" where the register publishes "EUTYPA DIEBACK"), keeping
+ * the register wording beside it in `register_target_raw`/`target_synonyms`.
+ * These tests are about which use owns which printed RATE cell, so they find
+ * the use by either wording — the wording itself is pinned, separately and
+ * exactly, in label_target_wording_test.ts.
+ */
+// deno-lint-ignore no-explicit-any
+function matchesTarget(entry: any, targetRaw: string): boolean {
+  const want = squashTarget(targetRaw);
+  if (squashTarget(entry?.target_raw) === want) return true;
+  if (squashTarget(entry?.register_target_raw) === want) return true;
+  return (entry?.target_synonyms ?? []).some((s: string) => squashTarget(s) === want);
+}
+
+// deno-lint-ignore no-explicit-any
 function useFor(merged: any, targetRaw: string): any {
   // deno-lint-ignore no-explicit-any
-  return merged.registered_uses.find((u: any) => u.target_raw === targetRaw);
+  return merged.registered_uses.find((u: any) => matchesTarget(u, targetRaw));
 }
 
 // ===========================================================================
@@ -563,7 +586,7 @@ Deno.test("LD2-A: Sprayseal 80160 — the label statement binds to BOTH register
   };
   const evidence = reg.label_evidence!;
   for (const target of ["EUTYPA DIEBACK", "BOTRYOSPHAERIA DIEBACK"]) {
-    const claim = evidence.claims.find((c) => c.target_raw === target)!;
+    const claim = evidence.claims.find((c) => matchesTarget(c, target))!;
     assertEquals(claim.rates, [expectedRate], `${target} carries the document rate`);
     assertEquals(claim.withholding_period_days, 0, "NOT REQUIRED → authoritative 0 days");
   }
@@ -598,7 +621,7 @@ Deno.test("LD2-A: Sprayseal 80160 — the label statement binds to BOTH register
   // Candidate rows carry the document rates.
   const payload = buildCandidatePayload(merged, "Spray Seal", reg, "2026-08-20T00:00:00Z", 1);
   // deno-lint-ignore no-explicit-any
-  const payloadUse = payload!.registered_uses.find((u: any) => u.target_raw === "EUTYPA DIEBACK");
+  const payloadUse = payload!.registered_uses.find((u: any) => matchesTarget(u, "EUTYPA DIEBACK"));
   assertEquals(payloadUse.rates, [expectedRate]);
   assertEquals(payload!.label_rate_bases, ["per_100_litres"]);
 });
@@ -972,7 +995,7 @@ Deno.test("LD2-I: repeat lookups reuse the cached document text — the extracto
   assert(h.extractorCalls >= 1);
   const reg = again.registration!;
   assertEquals(
-    reg.label_evidence?.claims.find((c) => c.target_raw === "EUTYPA DIEBACK")?.rates?.[0].value,
+    reg.label_evidence?.claims.find((c) => matchesTarget(c, "EUTYPA DIEBACK"))?.rates?.[0].value,
     30,
   );
   assert(h.log.length > requestsAfterFirst, "cache cleared — hosts re-consulted");

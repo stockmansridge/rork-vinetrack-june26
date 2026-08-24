@@ -53,6 +53,7 @@ import {
   targetsCorrespond,
   whpDaysFromStatement,
 } from "./label.ts";
+import { deriveLabelTargetWordings } from "./label_target_wording.ts";
 
 /** Bumped whenever the deterministic grammar changes (refresh comparability). */
 export const LABEL_PARSER_VERSION = 2;
@@ -1176,6 +1177,9 @@ export function applyLabelDocumentExtraction(
   const statements = parseLabelStatements(lines.map((l) => l.text).join("\n"));
   const dfu = parseDirectionsForUse(items);
   const binding = bindDfuRows(dfu.rows, evidence.claims);
+  // Stage LD-3 — wording only. Derived from the SAME parsed rows, and
+  // deliberately AFTER the rate join so it cannot influence it.
+  const wordings = deriveLabelTargetWordings(dfu.rows, evidence.claims);
 
   const unresolved = new Set<string>(evidence.unresolved);
   const documentConflicts: WireConflict[] = [];
@@ -1219,8 +1223,17 @@ export function applyLabelDocumentExtraction(
   };
   const reentry = productReentry();
 
-  const claims: LabelUseClaim[] = evidence.claims.map((claim, index) => {
+  const mapped: LabelUseClaim[] = evidence.claims.map((claim, index) => {
     const next: LabelUseClaim = { ...claim, statements: [...claim.statements] };
+
+    // The label's own printed wording supersedes the register's pest
+    // vocabulary as the authoritative target, and the register wording is
+    // kept beside it, non-authoritative, for search.
+    const printed = wordings.wordingByClaim.get(index);
+    if (printed) {
+      if (printed !== claim.target_raw) next.register_target_raw = claim.target_raw;
+      next.target_raw = printed;
+    }
 
     const rates = binding.ratesByClaim.get(index);
     if (rates?.length) next.rates = rates;
@@ -1275,6 +1288,28 @@ export function applyLabelDocumentExtraction(
     }
     return next;
   });
+
+  // One printed row, one registered use. Where the label's own target cell
+  // already names another register pest code, that code is not served as a
+  // separate use — its wording joins the printed use as a synonym, with its
+  // statements preserved. A claim that BOUND A RATE is never absorbed: rate
+  // ownership is decided by the join above and nothing here may disturb it.
+  const absorbed = new Set<number>();
+  for (const [absorbedIndex, ownerIndex] of wordings.absorbedInto) {
+    if ((binding.ratesByClaim.get(absorbedIndex) ?? []).length) continue;
+    const owner = mapped[ownerIndex];
+    const source = mapped[absorbedIndex];
+    if (!owner || !source || absorbed.has(ownerIndex)) continue;
+    const synonyms = owner.target_synonyms ?? [];
+    const registerWording = evidence.claims[absorbedIndex].target_raw;
+    if (registerWording && !synonyms.includes(registerWording)) synonyms.push(registerWording);
+    if (synonyms.length) owner.target_synonyms = synonyms;
+    for (const statement of source.statements) {
+      if (!owner.statements.includes(statement)) owner.statements.push(statement);
+    }
+    absorbed.add(absorbedIndex);
+  }
+  const claims: LabelUseClaim[] = mapped.filter((_, index) => !absorbed.has(index));
 
   // `rates:<crop>` clears ONLY where a structured rate was bound — a
   // verbatim-only ("other") reading keeps the structured gap honestly listed.

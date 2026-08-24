@@ -632,6 +632,12 @@ export function mergeLabelEvidenceIntoUses(
     if (claim.target) use.target = claim.target;
     else if (ai?.target) use.target = ai.target;
 
+    // Non-authoritative naming aids. `target_raw` above is what the approved
+    // label prints; these are the register's pest-taxonomy wordings for the
+    // same use, kept for search and audit and never presented as label text.
+    if (claim.register_target_raw) use.register_target_raw = claim.register_target_raw;
+    if (claim.target_synonyms?.length) use.target_synonyms = [...claim.target_synonyms];
+
     const provenance: Record<string, string | null> = {
       claim: "manufacturer_label",
       rates: docRates
