@@ -62,6 +62,13 @@ struct SprayCalculatorView: View {
     /// happened to sort first in the store — so a line arrived pre-bound to a
     /// product nobody chose. Adding a line now starts by asking which product.
     @State private var showAddChemicalPicker: Bool = false
+    /// The chemical line whose product is currently open in the Chemical
+    /// Store editor, so the sheet's dismissal/save handler knows which
+    /// `ChemicalLine` to re-validate.
+    @State private var inspectingChemicalLineId: UUID?
+    /// The Chemical Store record open in that sheet. `Identifiable`, so
+    /// `.sheet(item:)` presents it without a second boolean to keep in sync.
+    @State private var inspectingChemical: SavedChemical?
     @State private var sprayRateText: String = ""
     @State private var hasEditedSprayRate: Bool = false
     @State private var notes: String = ""
@@ -801,6 +808,18 @@ struct SprayCalculatorView: View {
                         guard let chosen else { return }
                         appendChemicalLine(for: chosen)
                     }
+                }
+            }
+            // Inspect / edit / re-verify a Products-step chemical WITHOUT
+            // leaving the calculator. Reuses the existing Chemical Store
+            // editor — the same screen `ChemicalsManagementView` opens — rather
+            // than a second, parallel chemical editor. Dismissing (by any
+            // route) returns straight to this same Products step: nothing
+            // here touches `openedStep`, blocks, canopy, equipment, product
+            // lines or the custom sprayer rate.
+            .sheet(item: $inspectingChemical, onDismiss: { inspectingChemicalLineId = nil }) { chemical in
+                EditSavedChemicalSheet(chemical: chemical) { saved in
+                    revalidateSelectedRate(afterEditing: saved)
                 }
             }
             .onAppear {
@@ -1625,17 +1644,28 @@ struct SprayCalculatorView: View {
     // `StartTripSheet` (Start Maintenance Trip Tracking) so the spray
     // trip setup feels identical to the maintenance trip setup.
 
+    /// THE tractor list — Equipment, Review and Tank Mixing all read this ONE
+    /// property, sorted for display but otherwise unfiltered.
+    ///
+    /// Tank Mixing used to compute its own list filtered by
+    /// `store.selectedVineyardId`, a rule Equipment's own tractor picker never
+    /// applied. A tractor confirmed in Equipment — New Holland T4.85N — could
+    /// therefore fall outside that narrower list and Tank Mixing would report
+    /// "No tractors configured" for a selection that was never lost, only
+    /// re-resolved through a second, stricter source. There is exactly one
+    /// list now, so a confirmed `selectedTractorId` can never fall outside it.
     private var availableTractors: [Tractor] {
-        let vineyardId = store.selectedVineyardId
-        let filtered = store.tractors.filter { vineyardId == nil || $0.vineyardId == vineyardId }
-        return filtered.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        store.tractors.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
     }
 
+    /// The confirmed tractor's name, resolved against `store.tractors`
+    /// directly — never against a filtered subset — so a valid
+    /// `selectedTractorId` can never render as unresolved.
     private var selectedTractorLabel: String {
-        if let id = selectedTractorId, let t = availableTractors.first(where: { $0.id == id }) {
+        if let id = selectedTractorId, let t = store.tractors.first(where: { $0.id == id }) {
             return t.displayName
         }
-        return availableTractors.isEmpty ? "No tractors configured" : "No tractor selected"
+        return store.tractors.isEmpty ? "No tractors configured" : "No tractor selected"
     }
 
     @ViewBuilder
@@ -1989,70 +2019,121 @@ struct SprayCalculatorView: View {
         .buttonStyle(.plain)
     }
 
+    /// The plan's product lines paired with the chemical line each came from,
+    /// in the operator's own Products order.
+    ///
+    /// THE single chemistry source for Tank Mixing and for the tanks that get
+    /// persisted. Mirrors `planLinesByChemicalLineId`, which Review already
+    /// reads — so a product Review shows correctly calculated can no longer
+    /// vanish downstream.
+    ///
+    /// The screen this replaced re-resolved chemistry through legacy
+    /// `SprayCalculator.calculate`, which required
+    /// `chemical.rates.first(where: { $0.id == line.selectedRateId })` — a
+    /// lookup the guided Products path's structured registered-use rates do
+    /// not populate. That mismatch, not a missing SwiftUI row, is why Tank
+    /// Mixing showed water and tank counts but never the chemical itself, and
+    /// why the persisted `SprayTank.chemicals` was equally empty.
+    private var guidedTankLines: [(chemicalLine: ChemicalLine, planLine: SprayProductLineResult)] {
+        let mapping = planLinesByChemicalLineId
+        return chemicalLines.compactMap { line in
+            guard let planLine = mapping[line.id] else { return nil }
+            return (line, planLine)
+        }
+    }
+
     /// Tank mix preview shown on the Spray Tank Mixing screen so the operator
     /// can review chemical quantities and label notes before tapping Start.
+    ///
+    /// Every figure here is read straight off `flow.plan` — the SAME
+    /// authoritative plan Review displays — so this screen cannot disagree
+    /// with the one the operator already verified.
     @ViewBuilder
     private var tankMixPreviewSection: some View {
-        if let result = calculationResult {
-            VStack(alignment: .leading, spacing: 12) {
-                SectionHeader(title: "Tank Mix", icon: "drop.fill")
+        let plan = flow.plan
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Tank Mix", icon: "drop.fill")
 
-                LazyVGrid(
-                    columns: [GridItem(.flexible()), GridItem(.flexible())],
-                    spacing: 8
-                ) {
-                    mixStatTile(
-                        label: "Total Area",
-                        value: String(format: "%.2f ha", result.totalAreaHectares),
-                        icon: "square.dashed",
-                        color: VineyardTheme.olive
-                    )
-                    mixStatTile(
-                        label: "Total Water",
-                        value: String(format: "%.0f L", result.totalWaterLitres),
-                        icon: "drop.fill",
-                        color: .blue
-                    )
-                    mixStatTile(
-                        label: "Full Tanks",
-                        value: "\(result.fullTankCount)",
-                        icon: "fuelpump.fill",
-                        color: VineyardTheme.earthBrown
-                    )
-                    mixStatTile(
-                        label: "Last Tank",
-                        value: String(format: "%.0f L", result.lastTankLitres),
-                        icon: "drop.halffull",
-                        color: .orange
-                    )
-                }
-
-                ForEach(result.chemicalResults) { chemResult in
-                    mixChemicalRow(chemResult)
-                }
-
-                if result.concentrationFactor != 1.0 {
-                    HStack(spacing: 8) {
-                        Image(systemName: "arrow.up.arrow.down.circle.fill")
-                            .foregroundStyle(.orange)
-                        Text("Concentration Factor \(String(format: "%.2f", result.concentrationFactor))×")
-                            .font(.caption.weight(.semibold))
-                        Spacer()
-                        Text(result.concentrationFactor > 1.0 ? "Concentrate" : "Dilute")
-                            .font(.caption2.weight(.medium))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(.orange.opacity(0.15))
-                            .foregroundStyle(.orange)
-                            .clipShape(Capsule())
-                    }
-                    .padding(10)
-                    .background(.orange.opacity(0.08))
-                    .clipShape(.rect(cornerRadius: 8))
-                }
+            LazyVGrid(
+                columns: [GridItem(.flexible()), GridItem(.flexible())],
+                spacing: 8
+            ) {
+                mixStatTile(
+                    label: "Total Area",
+                    value: SprayGuidedFormat.hectares(plan.grossAreaHectares),
+                    icon: "square.dashed",
+                    color: VineyardTheme.olive
+                )
+                mixStatTile(
+                    label: "Total Water",
+                    value: SprayGuidedFormat.litres(plan.totalCarrierLitres),
+                    icon: "drop.fill",
+                    color: .blue
+                )
+                mixStatTile(
+                    label: "Full Tanks",
+                    value: "\(plan.tankSplit.fullTankCount)",
+                    icon: "fuelpump.fill",
+                    color: VineyardTheme.earthBrown
+                )
+                mixStatTile(
+                    label: "Last Tank",
+                    value: SprayGuidedFormat.litres(plan.tankSplit.lastTankLitres),
+                    icon: "drop.halffull",
+                    color: .orange
+                )
             }
-            .padding(.horizontal)
+
+            ForEach(guidedTankLines, id: \.chemicalLine.id) { entry in
+                mixChemicalRow(
+                    chemicalLine: entry.chemicalLine,
+                    planLine: entry.planLine,
+                    tankSplit: plan.tankSplit
+                )
+            }
+
+            // A line the plan could not resolve must still be named here —
+            // never silently dropped from the mix the operator is about to
+            // measure out.
+            ForEach(plan.unresolvedProductLines, id: \.productId) { unresolved in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(unresolved.name)
+                            .font(.subheadline.weight(.semibold))
+                        Text(unresolved.unresolvedReason?.title ?? "Cannot be calculated")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(10)
+                .background(.orange.opacity(0.08))
+                .clipShape(.rect(cornerRadius: 8))
+            }
+
+            if plan.concentrationFactor != 1.0 {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.up.arrow.down.circle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Concentration Factor \(SprayGuidedFormat.factor(plan.concentrationFactor))")
+                        .font(.caption.weight(.semibold))
+                    Spacer()
+                    Text(plan.concentrationFactor > 1.0 ? "Concentrate" : "Dilute")
+                        .font(.caption2.weight(.medium))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.orange.opacity(0.15))
+                        .foregroundStyle(.orange)
+                        .clipShape(Capsule())
+                }
+                .padding(10)
+                .background(.orange.opacity(0.08))
+                .clipShape(.rect(cornerRadius: 8))
+            }
         }
+        .padding(.horizontal)
     }
 
     private func mixStatTile(label: String, value: String, icon: String, color: Color) -> some View {
@@ -2072,32 +2153,44 @@ struct SprayCalculatorView: View {
         .clipShape(.rect(cornerRadius: 10))
     }
 
+    /// One product's row on the Spray Tank Mixing screen.
+    ///
+    /// The total is the SAME `planLine.totalQuantity` Review already showed —
+    /// nothing here recalculates a label rate. The per-tank amounts are that
+    /// same total, already split by the planner using the authoritative tank
+    /// water split (`quantityPerFullTank` / `quantityInLastTank`), so
+    /// `sum(per-tank amounts) == planLine.totalQuantity` by construction. Only
+    /// the rows that actually exist are shown: a job with one partial tank
+    /// never shows a "Full tank" line, and a job with no partial tank never
+    /// shows a "Last tank" line.
     @ViewBuilder
-    private func mixChemicalRow(_ chemResult: ChemicalCalculationResult) -> some View {
-        let saved = chemResult.savedChemicalId.flatMap { id in
-            store.savedChemicals.first(where: { $0.id == id })
-        }
+    private func mixChemicalRow(
+        chemicalLine line: ChemicalLine,
+        planLine: SprayProductLineResult,
+        tankSplit: SprayTankSplit
+    ) -> some View {
+        let saved = store.savedChemicals.first(where: { $0.id == line.chemicalId })
         let labelURL = saved?.labelURL ?? ""
         let productURL = saved?.productURL ?? ""
-        let line = chemicalLines.first(where: { $0.chemicalId == chemResult.savedChemicalId })
         // Restrictions belong to the registered use the operator actually
         // picked a rate from. The product-level field is the fallback for
         // records with no structured uses, never a substitute for a use that
         // states its own — a second crop's wording is not this job's law.
         let selectedUse: ChemicalRegisteredUse? = {
-            guard let saved, let line else { return nil }
+            guard let saved else { return nil }
             return SprayRegisteredUseRates.registeredUse(for: saved, rateId: line.selectedRateId)
         }()
         let useRestrictions = selectedUse?.restrictions?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let restrictions = useRestrictions.isEmpty ? (saved?.restrictions ?? "") : useRestrictions
-        let isOverridden: Bool = line?.overrideRate != nil
+        let isOverridden: Bool = line.overrideRate != nil
+        let totalTanks = tankSplit.totalTanks
 
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Image(systemName: "flask.fill")
                     .foregroundStyle(VineyardTheme.leafGreen)
-                Text(chemResult.chemicalName)
+                Text(planLine.name)
                     .font(.subheadline.weight(.semibold))
                 if isOverridden {
                     Text("Override")
@@ -2111,14 +2204,7 @@ struct SprayCalculatorView: View {
                 Spacer()
                 if let url = Self.normalizedLabelURL(labelURL) {
                     Button {
-                        #if DEBUG
-                        print("[SprayMix] open label url=\(url.absoluteString) chem=\(chemResult.chemicalName)")
-                        #endif
-                        openURL(url) { accepted in
-                            #if DEBUG
-                            print("[SprayMix] openURL accepted=\(accepted) url=\(url.absoluteString)")
-                            #endif
-                        }
+                        openURL(url)
                     } label: {
                         Image(systemName: "doc.text.magnifyingglass")
                             .font(.subheadline)
@@ -2146,20 +2232,45 @@ struct SprayCalculatorView: View {
                     .accessibilityLabel("Open product page (not the official label)")
                 }
             }
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Rate").font(.caption2).foregroundStyle(.secondary)
-                    Text("\(SprayRateFormatter.format(chemResult.unit.fromBase(chemResult.selectedRate))) \(chemResult.unit.rawValue)/\(chemResult.basis == .perHectare ? "ha" : "100L")")
-                        .font(.caption.weight(.medium))
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("Total").font(.caption2).foregroundStyle(.secondary)
-                    Text("\(String(format: "%.1f", chemResult.unit.fromBase(chemResult.totalAmountRequired))) \(chemResult.unit.rawValue)")
-                        .font(.caption.weight(.semibold))
+
+            if let total = planLine.totalQuantity {
+                let displayUnit = planLine.unitDisplay.displayUnit
+                HStack(alignment: .firstTextBaseline) {
+                    Text(SprayGuidedFormat.quantity(planLine.unitDisplay.display(total), unit: displayUnit))
+                        .font(.subheadline.weight(.bold))
                         .foregroundStyle(VineyardTheme.olive)
+                        .monospacedDigit()
+                    Spacer()
+                    if totalTanks <= 1 {
+                        // The one-tank case: the whole amount goes in the one
+                        // tank there is — named so the operator sees the tank
+                        // size beside what goes in it, not just a bare total.
+                        Text("\(SprayGuidedFormat.number(tankSplit.lastTankLitres > 0 ? tankSplit.lastTankLitres : tankSplit.tankCapacityLitres)) L tank")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                // Multi-tank jobs: how much goes in EACH tank, not only the
+                // whole-job figure — this screen mixes tanks, not the job.
+                if totalTanks > 1 {
+                    VStack(alignment: .leading, spacing: 2) {
+                        if tankSplit.fullTankCount > 0, let perFullTank = planLine.quantityPerFullTank {
+                            Text("Full \(SprayGuidedFormat.number(tankSplit.tankCapacityLitres)) L tank\(tankSplit.fullTankCount > 1 ? "s" : "") (\(tankSplit.fullTankCount)): "
+                                 + "\(SprayGuidedFormat.quantity(planLine.unitDisplay.display(perFullTank), unit: displayUnit)) each")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if tankSplit.lastTankLitres > 0, let inLastTank = planLine.quantityInLastTank {
+                            Text("Last \(SprayGuidedFormat.number(tankSplit.lastTankLitres)) L tank: "
+                                 + SprayGuidedFormat.quantity(planLine.unitDisplay.display(inLastTank), unit: displayUnit))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
+
             if !restrictions.isEmpty {
                 // Verbatim, with the shared expand control. A two-line clamp
                 // used to hide the rest of a legal statement at the one moment
@@ -2193,7 +2304,7 @@ struct SprayCalculatorView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                 }
-                ForEach(store.tractors) { tractor in
+                ForEach(availableTractors) { tractor in
                     let isSelected = selectedTractorId == tractor.id
                     Divider().padding(.leading, 40)
                     Button {
@@ -2258,7 +2369,8 @@ struct SprayCalculatorView: View {
                     CalcChemicalLineCard(
                         line: $line,
                         chemicals: store.savedChemicals,
-                        preferredRateBases: preferredRateBases
+                        preferredRateBases: preferredRateBases,
+                        onInspect: { openChemicalInspector(for: line) }
                     ) {
                         chemicalLines.removeAll { $0.id == line.id }
                     }
@@ -3624,6 +3736,37 @@ struct SprayCalculatorView: View {
         )
     }
 
+    /// Opens the Chemical Store record for a Products-step line.
+    private func openChemicalInspector(for line: ChemicalLine) {
+        guard let chemical = store.savedChemicals.first(where: { $0.id == line.chemicalId }) else { return }
+        inspectingChemicalLineId = line.id
+        inspectingChemical = chemical
+    }
+
+    /// Re-checks a line's selected rate after its product was edited or
+    /// re-verified in the Chemical Store.
+    ///
+    /// The refreshed record is read straight from `store.savedChemicals` —
+    /// `EditSavedChemicalSheet`'s Save already wrote it there before calling
+    /// back — so this asks the SAME `SprayRegisteredUseRates.vineyardRates`
+    /// the card itself offers. If the line's `selectedRateId` still resolves,
+    /// it is left exactly alone. If re-verification moved or removed that
+    /// registered use, the id is reset to a fresh one that matches nothing —
+    /// the card then reads as "Select rate", the same unresolved state a brand
+    /// new line starts in. It never borrows another crop's or another
+    /// target's rate to keep the line looking complete.
+    private func revalidateSelectedRate(afterEditing saved: SavedChemical) {
+        guard let lineId = inspectingChemicalLineId,
+              let index = chemicalLines.firstIndex(where: { $0.id == lineId }),
+              chemicalLines[index].chemicalId == saved.id else { return }
+        let stillResolves = SprayRegisteredUseRates.vineyardRates(for: saved)
+            .contains { $0.id == chemicalLines[index].selectedRateId }
+        if !stillResolves {
+            chemicalLines[index].selectedRateId = UUID()
+            chemicalLines[index].overrideRate = nil
+        }
+    }
+
     // MARK: - Calculation & Save
 
     private func performCalculation(jobDurationHours: Double = 0) {
@@ -3656,11 +3799,8 @@ struct SprayCalculatorView: View {
     /// block — the legacy `per_hectare` meaning — so historical behaviour is
     /// never restated. On a banded pass the flow will not let the spray be saved
     /// until that choice has actually been made.
-    private func persistedRateBasis(for chemResult: ChemicalCalculationResult) -> SprayProductRateBasis {
-        if chemResult.basis == .per100Litres { return .per100Litres }
-        guard let savedId = chemResult.savedChemicalId,
-              let line = chemicalLines.first(where: { $0.chemicalId == savedId })
-        else { return .wholeBlockArea }
+    private func persistedRateBasis(for line: ChemicalLine, planLine: SprayProductLineResult) -> SprayProductRateBasis {
+        if planLine.basis == .per100Litres { return .per100Litres }
         return productAreaBasis[line.id] ?? .wholeBlockArea
     }
 
@@ -3674,10 +3814,10 @@ struct SprayCalculatorView: View {
     ///
     /// Returns `nil` for a product with nothing structured, so a line stays
     /// honestly empty rather than implying knowledge that never existed.
-    private func chemicalSnapshot(for chemResult: ChemicalCalculationResult) -> ChemicalLineSnapshot? {
+    private func chemicalSnapshot(for line: ChemicalLine, planLine: SprayProductLineResult) -> ChemicalLineSnapshot? {
         ChemicalSnapshotCapture.captureForNewApplication(
-            savedChemicalId: chemResult.savedChemicalId,
-            productName: chemResult.chemicalName,
+            savedChemicalId: line.chemicalId,
+            productName: planLine.name,
             library: store.savedChemicals,
             // Identity only. Every line on this screen was either picked from the
             // Chemical Store (so it carries an id) or deliberately typed, and a
@@ -3689,8 +3829,22 @@ struct SprayCalculatorView: View {
         ).snapshot
     }
 
-    private func buildSprayTanks(result: SprayCalculationResult, tankCapacity: Double) -> [SprayTank] {
-        let totalTanks = result.fullTankCount + (result.lastTankLitres > 0 ? 1 : 0)
+    /// Builds the tanks that get persisted onto the started trip's
+    /// `SprayRecord`.
+    ///
+    /// Reads chemistry EXCLUSIVELY from `guidedTankLines` — the same
+    /// `SprayApplicationPlan.productLines` Review and Tank Mixing already
+    /// display — and splits each product across tanks using the plan's own
+    /// `quantityPerFullTank` / `quantityInLastTank`. The legacy
+    /// `SprayCalculator.calculate` chemistry (`chemical.rates.first(where:
+    /// { $0.id == line.selectedRateId })`) plays NO part here any more: that
+    /// lookup is exactly what silently dropped a structured registered-use
+    /// product from the persisted tanks even though Review had already
+    /// resolved and displayed it correctly.
+    private func buildSprayTanks(tankCapacity: Double) -> [SprayTank] {
+        let split = flow.plan.tankSplit
+        let totalTanks = split.totalTanks
+        let lines = guidedTankLines
         guard totalTanks > 0 else {
             return [SprayTank(tankNumber: 1, waterVolume: 0, sprayRatePerHa: chosenSprayRate, concentrationFactor: concentrationFactor)]
         }
@@ -3698,25 +3852,31 @@ struct SprayCalculatorView: View {
         var tanks: [SprayTank] = []
         for i in 0..<totalTanks {
             let isLast = (i == totalTanks - 1)
-            let waterVolume = isLast && result.lastTankLitres > 0 ? result.lastTankLitres : tankCapacity
-            let chemicals: [SprayChemical] = result.chemicalResults.map { chemResult in
-                let amount = isLast ? chemResult.amountInLastTank : chemResult.amountPerFullTank
+            let waterVolume = isLast && split.lastTankLitres > 0 ? split.lastTankLitres : tankCapacity
+            let chemicals: [SprayChemical] = lines.compactMap { entry in
+                let (line, planLine) = entry
+                // A line the plan could not resolve carries no amount to put
+                // in ANY tank — it must not silently contribute zero as though
+                // it had been calculated and come out empty.
+                guard let perFullTank = planLine.quantityPerFullTank,
+                      let inLastTank = planLine.quantityInLastTank else { return nil }
+                let amount = isLast ? inLastTank : perFullTank
                 // Snapshot the saved chemical's costPerBaseUnit (if any) so
                 // TripCostService can calculate chemical cost reliably without
                 // having to re-resolve the saved chemical later.
                 return SprayChemical(
-                    name: chemResult.chemicalName,
+                    name: planLine.name,
                     volumePerTank: amount,
-                    ratePerHa: chemResult.basis == .perHectare ? chemResult.selectedRate : 0,
-                    ratePer100L: chemResult.basis == .per100Litres ? chemResult.selectedRate : 0,
-                    costPerUnit: chemResult.costPerBaseUnit ?? 0,
-                    unit: chemResult.unit,
+                    ratePerHa: planLine.basis == .wholeBlockArea || planLine.basis == .treatedArea ? planLine.rate : 0,
+                    ratePer100L: planLine.basis == .per100Litres ? planLine.rate : 0,
+                    costPerUnit: planLine.costPerUnit ?? 0,
+                    unit: ChemicalUnit(rawValue: planLine.unit) ?? .litres,
                     // Snapshot the basis the operator actually chose for THIS
                     // line. Without it a banded treated-band quantity would
                     // reload as a whole-block one and silently restate itself.
-                    rateBasis: persistedRateBasis(for: chemResult),
-                    savedChemicalId: chemResult.savedChemicalId,
-                    chemicalSnapshot: chemicalSnapshot(for: chemResult)
+                    rateBasis: persistedRateBasis(for: line, planLine: planLine),
+                    savedChemicalId: line.chemicalId,
+                    chemicalSnapshot: chemicalSnapshot(for: line, planLine: planLine)
                 )
             }
             tanks.append(
@@ -3786,9 +3946,8 @@ struct SprayCalculatorView: View {
         // Mixing screen before tapping Start Spray Trip.
         performCalculation()
         if let equipId = selectedEquipmentId,
-           let equip = store.sprayEquipment.first(where: { $0.id == equipId }),
-           let result = calculationResult {
-            pendingTanks = buildSprayTanks(result: result, tankCapacity: equip.tankCapacityLitres)
+           let equip = store.sprayEquipment.first(where: { $0.id == equipId }) {
+            pendingTanks = buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
         }
         showStartConfirmation = true
     }
@@ -3812,9 +3971,7 @@ struct SprayCalculatorView: View {
         await captureWeather()
         performCalculation()
 
-        if let result = calculationResult {
-            pendingTanks = buildSprayTanks(result: result, tankCapacity: equip.tankCapacityLitres)
-        }
+        pendingTanks = buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
 
         // Skip the intermediate readyToStart summary sheet — the Spray Tank
         // Mixing screen now shows the mix preview, so tapping Start Spray Trip
@@ -3855,7 +4012,7 @@ struct SprayCalculatorView: View {
 
         let weather = currentWeatherSnapshot()
         let tanks = pendingTanks.isEmpty
-            ? (calculationResult.map { buildSprayTanks(result: $0, tankCapacity: equip.tankCapacityLitres) } ?? [])
+            ? buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
             : pendingTanks
 
         var tripWithTanks = activeTrip
@@ -3939,10 +4096,7 @@ struct SprayCalculatorView: View {
         store.addInactiveTrip(placeholderTrip)
 
         let weather = currentWeatherSnapshot()
-        let tanks: [SprayTank] = {
-            guard let result = calculationResult else { return [] }
-            return buildSprayTanks(result: result, tankCapacity: equip.tankCapacityLitres)
-        }()
+        let tanks: [SprayTank] = buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
 
         let tractorName = selectedTractorId.flatMap { id in
             store.tractors.first(where: { $0.id == id })?.displayName
@@ -3987,6 +4141,10 @@ private struct CalcChemicalLineCard: View {
     /// Passed in rather than re-derived: one rule, decided once, so swapping a
     /// product here seeds the same basis the rest of the screen would.
     let preferredRateBases: [ChemicalRateBasis]
+    /// Opens the existing Chemical Store record for THIS line's product, as a
+    /// sheet over the calculator, so the operator can inspect, correct or
+    /// re-verify it without leaving the spray they are composing.
+    let onInspect: () -> Void
     let onDelete: () -> Void
 
     @Environment(\.openURL) private var openURL
@@ -4332,17 +4490,34 @@ private struct CalcChemicalLineCard: View {
             // one string identifying what is about to be sprayed. Actions moved
             // to their own row below; the name is never shrunk to fit them.
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "flask.fill")
-                        .foregroundStyle(VineyardTheme.leafGreen)
-                        .font(.subheadline)
-                    Text(selectedChemical?.name ?? "Select Chemical")
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                // The name itself opens the Chemical Store record — the
+                // operator's one route to inspect, correct or re-verify this
+                // product without leaving the calculator. Disabled while no
+                // chemical is chosen: there is nothing yet to inspect.
+                Button {
+                    onInspect()
+                } label: {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "flask.fill")
+                            .foregroundStyle(VineyardTheme.leafGreen)
+                            .font(.subheadline)
+                        Text(selectedChemical?.name ?? "Select Chemical")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if selectedChemical != nil {
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
                 }
+                .buttonStyle(.plain)
+                .disabled(selectedChemical == nil)
+                .accessibilityHint("Opens this product's Chemical Store record to review or edit")
 
                 // P5 — ROW 2: actions.
                 HStack(spacing: 2) {
@@ -4380,7 +4555,7 @@ private struct CalcChemicalLineCard: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.title3)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.red)
                             .frame(width: 44, height: 44)
                             .contentShape(Rectangle())
                     }
