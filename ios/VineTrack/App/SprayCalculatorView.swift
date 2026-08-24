@@ -700,6 +700,9 @@ struct SprayCalculatorView: View {
             onToggle: { toggle(step) },
             content: content
         )
+        // Addressable so opening a step can bring THIS card's header to the
+        // top of the screen. See the scroll anchoring in `body`.
+        .id(step)
     }
 
     // MARK: - Body
@@ -707,59 +710,82 @@ struct SprayCalculatorView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 12) {
-                    guidedCard(.application, 1, summary: applicationSummary) {
-                        sprayNameSection
-                        operationTypeSection
-                    }
-                    guidedCard(.blocks, 2, summary: blocksSummary) {
-                        paddockSelection
-                        blockGeometrySummary
-                    }
-                    guidedCard(.target, 3, summary: targetSummary) {
-                        targetSection
-                    }
-                    guidedCard(.growthStage, 4, summary: growthStageSummaryLine) {
-                        growthStageSection
-                    }
-                    guidedCard(.equipment, 5, summary: equipmentSummary) {
-                        equipmentSelection
-                        tractorSelection
-                        mixTripSetupSection
-                        equipmentConfirmation
-                    }
-                    guidedCard(.carrier, 6, summary: carrierSummary) {
-                        carrierVolumeSection
-                    }
-                    guidedCard(.products, 7, summary: productsSummary) {
-                        chemicalLinesSection
-                    }
-                    guidedCard(.review, 8, summary: reviewSummary) {
-                        reviewSection
-                    }
+                ScrollViewReader { proxy in
+                    VStack(spacing: 12) {
+                        guidedCard(.application, 1, summary: applicationSummary) {
+                            sprayNameSection
+                            operationTypeSection
+                        }
+                        guidedCard(.blocks, 2, summary: blocksSummary) {
+                            paddockSelection
+                            blockGeometrySummary
+                        }
+                        guidedCard(.target, 3, summary: targetSummary) {
+                            targetSection
+                        }
+                        guidedCard(.growthStage, 4, summary: growthStageSummaryLine) {
+                            growthStageSection
+                        }
+                        guidedCard(.equipment, 5, summary: equipmentSummary) {
+                            equipmentSelection
+                            tractorSelection
+                            mixTripSetupSection
+                            equipmentConfirmation
+                        }
+                        guidedCard(.carrier, 6, summary: carrierSummary) {
+                            carrierVolumeSection
+                        }
+                        guidedCard(.products, 7, summary: productsSummary) {
+                            chemicalLinesSection
+                        }
+                        guidedCard(.review, 8, summary: reviewSummary) {
+                            reviewSection
+                        }
 
-                    notesSection
-                    actionButtons
+                        notesSection
+                        actionButtons
 
-                    if showResults, let result = calculationResult {
-                        ResultsCard(result: result)
-                        if let costing = result.costingSummary, accessControl.canViewFinancials {
-                            CostingsCard(summary: costing)
+                        if showResults, let result = calculationResult {
+                            ResultsCard(result: result)
+                            if let costing = result.costingSummary, accessControl.canViewFinancials {
+                                CostingsCard(summary: costing)
+                            }
+                        }
+
+                        if let errorMessage {
+                            Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.orange.opacity(0.1))
+                                .clipShape(.rect(cornerRadius: 8))
                         }
                     }
-
-                    if let errorMessage {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.orange.opacity(0.1))
-                            .clipShape(.rect(cornerRadius: 8))
+                    .padding(.horizontal)
+                    .padding(.bottom, 32)
+                    // Opening a step must land on its HEADING, not somewhere in
+                    // the middle of it.
+                    //
+                    // Without this the scroll offset simply stays where it was:
+                    // the section that was open collapses, everything below it
+                    // slides up by that height, and the card the operator just
+                    // tapped ends up with its header pushed off the top of the
+                    // screen — so they land at the BOTTOM of the section they
+                    // opened and have to scroll back up to read it.
+                    //
+                    // Driven from `openedStep` rather than from the header tap,
+                    // so the same anchoring applies however a step is opened —
+                    // including the Products step's own "Continue" button.
+                    // Collapsing (`nil`) deliberately leaves the scroll
+                    // position alone: nothing new needs reading.
+                    .onChange(of: openedStep) { _, step in
+                        guard let step else { return }
+                        withAnimation(.spring(duration: 0.3)) {
+                            proxy.scrollTo(step, anchor: .top)
+                        }
                     }
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 32)
             }
             .onAppear { seedOpenedStepIfNeeded() }
             .scrollDismissesKeyboard(.interactively)
