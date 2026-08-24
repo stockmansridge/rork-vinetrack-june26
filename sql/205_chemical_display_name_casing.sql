@@ -57,10 +57,13 @@
 -- carry meaning:
 --   * anything containing a digit is kept verbatim  -> 500SC, 750DF, 2,4
 --   * single characters are kept                    -> the D of 2,4-D
---   * words with no vowel are kept                  -> WG, SC, EC, MZ, XL, NT
---   * a short list of vowel-carrying formulation and
---     active codes is kept                          -> ULV, RTU, MCPA, OD
+--   * a formulation / active code is kept           -> EC, WG, SC, ULV, MCPA
+--   * words with no vowel are kept                  -> MZ, XL, NT
 -- Hyphenated words are cased part by part; the hyphen is preserved.
+--
+-- The code LIST has to come first and cannot be replaced by the no-vowel test:
+-- `EC` carries a vowel and `initcap` would happily produce "Topas 100 Ec".
+-- Every code that carries a vowel therefore has to be named explicitly.
 --
 --   'DITHANE RAINSHIELD NEO TEC FUNGICIDE' -> 'Dithane Rainshield Neo Tec Fungicide'
 --   'TOPAS 100 EC'                         -> 'Topas 100 EC'
@@ -81,11 +84,17 @@ language plpgsql
 immutable
 as $$
 declare
-  -- Vowel-carrying tokens that are codes, not words. Everything without a
-  -- vowel is already handled by the general rule below, so this list only
-  -- needs the exceptions to it.
+  -- Formulation codes (CropLife two- and three-letter suffixes) and the few
+  -- active/scheme acronyms that appear in product names. The no-vowel test
+  -- below catches MZ, XL, NT and friends; anything here that carries a vowel
+  -- (EC, ME, OD, ULV, MCPA) is ONLY protected because it is named here.
   keep_upper constant text[] := array[
-    'ULV', 'RTU', 'ME', 'EW', 'OD', 'GR', 'UL', 'EG', 'SE', 'ZC', 'AF',
+    -- formulation codes
+    'EC', 'SC', 'WG', 'WP', 'SL', 'SG', 'SP', 'DF', 'DC', 'CS', 'SE', 'ME',
+    'EW', 'OD', 'GR', 'WS', 'FS', 'ZC', 'AF', 'UL', 'EG', 'DP', 'DS', 'EO',
+    'GL', 'KN', 'LS', 'RB', 'TB', 'WT', 'ULV', 'RTU', 'WDG', 'WSB', 'WSC',
+    'SDS',
+    -- actives and classification schemes written as acronyms
     'MCPA', 'NPK', 'IPM', 'II', 'III'
   ];
   token       text;
@@ -118,9 +127,9 @@ begin
       elsif length(part) = 1 then
         cased := part;                       -- the D of 2,4-D
       elsif part = any (keep_upper) then
-        cased := part;                       -- ULV, MCPA
+        cased := part;                       -- EC, WG, ULV, MCPA
       elsif part !~ '[AEIOUY]' then
-        cased := part;                       -- WG, SC, EC, MZ, XL, NT
+        cased := part;                       -- MZ, XL, NT
       else
         cased := initcap(part);
       end if;
@@ -177,5 +186,24 @@ update public.saved_chemicals c
  where c.deleted_at is null
    and c.name <> ''
    and public.vt_display_chemical_name(c.name) is distinct from c.name;
+
+-- ---------------------------------------------------------------------------
+-- 4. Repair: undo the first version of this migration
+-- ---------------------------------------------------------------------------
+-- The first cut of `vt_display_chemical_name` protected codes with the no-vowel
+-- test alone, so the two codes that carry a vowel and were not on the original
+-- keep list came out title-cased: 'TOPAS 100 EC' -> 'Topas 100 Ec'.
+--
+-- Those names now contain lower case, which means the corrected function reads
+-- them as deliberately-cased and returns them untouched forever. The backfill
+-- above cannot fix them; only this can.
+--
+-- Scoped to exactly the two damaged tokens, as whole words (\m..\M). 'Ec' and
+-- 'Eo' are not words, so this cannot reach a name an operator typed. On a
+-- database where the first version never ran, it matches nothing.
+update public.saved_chemicals c
+   set name = regexp_replace(regexp_replace(c.name, '\mEc\M', 'EC', 'g'), '\mEo\M', 'EO', 'g')
+ where c.deleted_at is null
+   and c.name ~ '\m(Ec|Eo)\M';
 
 commit;

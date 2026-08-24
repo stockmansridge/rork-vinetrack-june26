@@ -25,16 +25,24 @@ import Foundation
 ///
 /// Within a shouted name each word is capitalised, except where the capitals
 /// carry meaning: anything containing a digit (`500SC`), single characters
-/// (the `D` of `2,4-D`), words with no vowel (`WG`, `SC`, `EC`, `MZ`) and a
-/// short list of vowel-carrying codes (`ULV`, `MCPA`). Hyphenated words are
+/// (the `D` of `2,4-D`), formulation and active codes (`EC`, `WG`, `ULV`,
+/// `MCPA`) and words with no vowel (`MZ`, `XL`, `NT`). Hyphenated words are
 /// cased part by part.
+///
+/// The code list is checked BEFORE the no-vowel test and cannot be folded into
+/// it: `EC` carries a vowel, and capitalising it gives `Topas 100 Ec`.
 nonisolated enum ChemicalDisplayName {
 
-    /// Vowel-carrying tokens that are codes, not words. Anything WITHOUT a
-    /// vowel is already covered by the general rule, so this only holds the
-    /// exceptions to it. Mirrors `keep_upper` in sql/205.
+    /// Formulation codes (the CropLife two- and three-letter suffixes) plus the
+    /// few active and scheme acronyms that appear in product names. The
+    /// no-vowel test below covers `MZ`, `XL`, `NT`; anything here that carries a
+    /// vowel (`EC`, `ME`, `OD`, `ULV`, `MCPA`) is protected ONLY because it is
+    /// named here. Mirrors `keep_upper` in sql/205.
     private static let keepUpper: Set<String> = [
-        "ULV", "RTU", "ME", "EW", "OD", "GR", "UL", "EG", "SE", "ZC", "AF",
+        "EC", "SC", "WG", "WP", "SL", "SG", "SP", "DF", "DC", "CS", "SE", "ME",
+        "EW", "OD", "GR", "WS", "FS", "ZC", "AF", "UL", "EG", "DP", "DS", "EO",
+        "GL", "KN", "LS", "RB", "TB", "WT", "ULV", "RTU", "WDG", "WSB", "WSC",
+        "SDS",
         "MCPA", "NPK", "IPM", "II", "III"
     ]
 
@@ -64,8 +72,8 @@ nonisolated enum ChemicalDisplayName {
         if part.isEmpty { return part }
         if part.contains(where: { $0.isNumber }) { return part }   // 500SC, 750DF, 2,4
         if part.count == 1 { return part }                          // the D of 2,4-D
-        if keepUpper.contains(part) { return part }                 // ULV, MCPA
-        if !part.contains(where: { vowels.contains($0) }) { return part } // WG, SC, EC, MZ
+        if keepUpper.contains(part) { return part }                 // EC, WG, ULV, MCPA
+        if !part.contains(where: { vowels.contains($0) }) { return part } // MZ, XL, NT
         return initcap(part)
     }
 

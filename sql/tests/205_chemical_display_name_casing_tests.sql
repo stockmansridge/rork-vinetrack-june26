@@ -16,7 +16,8 @@
 --      key) is untouched — no trigger, byte-identical after an update
 --   T6 spray_records snapshots (frozen evidence) are untouched
 --   T7 the backfill predicate is settled: no live saved_chemicals row is left
---      shouting
+--      shouting, and none still carries the 'Ec'/'Eo' damage the FIRST version
+--      of the migration could produce
 --
 -- Expected final line:
 --   NOTICE: sql/205 chemical display name casing tests: ALL PASSED
@@ -52,8 +53,11 @@ declare
     array['DITHANE RAINSHIELD NEO TEC FUNGICIDE', 'Dithane Rainshield Neo Tec Fungicide'],
     array['CUSTODIA FORTE FUNGICIDE',             'Custodia Forte Fungicide'],
     array['SPRAYSEAL PRUNING WOUND TREATMENT',    'Sprayseal Pruning Wound Treatment'],
-    -- formulation codes have no vowel: they stay codes
+    -- Formulation codes stay codes. EC and EO carry a vowel, so these only
+    -- pass if the code list is consulted BEFORE the no-vowel test — the first
+    -- version of this migration produced 'Topas 100 Ec' here.
     array['TOPAS 100 EC',                         'Topas 100 EC'],
+    array['SUPERWAY GLYPHOSATE EO',               'Superway Glyphosate EO'],
     array['COPPER OXYCHLORIDE WG',                'Copper Oxychloride WG'],
     array['MANCOZEB DF',                          'Mancozeb DF'],
     -- anything with a digit is kept verbatim
@@ -207,10 +211,11 @@ begin
 end;
 $$;
 
--- ---------------- T7 nothing left shouting ----------------
+-- ---------------- T7 nothing left shouting, nothing left mis-cased ----------
 do $$
 declare
-  v_left bigint;
+  v_left    bigint;
+  v_damaged bigint;
 begin
   select count(*) into v_left
     from public.saved_chemicals c
@@ -222,7 +227,21 @@ begin
     raise exception 'T7 FAILED: % live saved_chemicals rows still need casing', v_left;
   end if;
 
-  raise notice 'T7 passed: no live chemical name is left shouting';
+  -- The first version of this migration title-cased the two vowel-carrying
+  -- codes it did not know about ('Topas 100 Ec'). Those names now contain
+  -- lower case, so the corrected function reads them as deliberate and will
+  -- NEVER fix them — only the repair pass in section 4 can. The check above
+  -- passes happily on a damaged name, which is exactly why this one exists.
+  select count(*) into v_damaged
+    from public.saved_chemicals c
+   where c.deleted_at is null
+     and c.name ~ '\m(Ec|Eo)\M';
+
+  if v_damaged > 0 then
+    raise exception 'T7 FAILED: % live rows still carry Ec/Eo damage from the first run', v_damaged;
+  end if;
+
+  raise notice 'T7 passed: nothing left shouting, nothing left mis-cased';
 end;
 $$;
 

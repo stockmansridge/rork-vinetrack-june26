@@ -32,11 +32,15 @@ struct ChemicalDisplayNameTests {
 
     @Test
     func formulationCodesStayCapitals() {
-        // No vowel: it is a code, not a word.
+        // EC and EO carry a vowel, so these only pass because the code list is
+        // consulted BEFORE the no-vowel test. The first cut of this rule leaned
+        // on "no vowel means it is a code" alone and produced "Topas 100 Ec".
         #expect(ChemicalDisplayName.cased("TOPAS 100 EC") == "Topas 100 EC")
+        #expect(ChemicalDisplayName.cased("SUPERWAY GLYPHOSATE EO") == "Superway Glyphosate EO")
+        // No vowel at all: covered by the general test.
         #expect(ChemicalDisplayName.cased("COPPER OXYCHLORIDE WG") == "Copper Oxychloride WG")
         #expect(ChemicalDisplayName.cased("MANCOZEB DF") == "Mancozeb DF")
-        // Vowel-carrying codes on the keep list.
+        // Three-letter codes and acronym actives.
         #expect(ChemicalDisplayName.cased("GLYPHOSATE ULV") == "Glyphosate ULV")
         #expect(ChemicalDisplayName.cased("MCPA 750") == "MCPA 750")
     }
