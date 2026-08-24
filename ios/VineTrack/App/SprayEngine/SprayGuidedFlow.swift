@@ -73,6 +73,9 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
     /// optional — explicitly choosing Not Set satisfies this step.
     case growthStageRequired
     case equipmentRequired
+    /// A spray unit is present — often prefilled from a Program Step — but the
+    /// operator has not confirmed the equipment for THIS application.
+    case equipmentConfirmationRequired
     /// The canopy is still showing the controls' opening position rather than a
     /// choice anybody made.
     case canopyConfirmationRequired
@@ -105,11 +108,14 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case .treatedAreaUnavailable: return "Treated area unavailable"
         case .growthStageRequired: return "Choose growth stage or Not Set"
         case .equipmentRequired: return "Select spray unit"
+        case .equipmentConfirmationRequired: return "Confirm equipment"
         case .canopyConfirmationRequired: return "Select canopy type, size and density"
         case .sprayVolumeChoiceRequired: return "Choose your spray volume"
         case .manualTotalWaterRequired: return "Enter total spray water"
         case .carrierRateRequired: return "Enter carrier volume"
-        case .carrierNotCalculable: return "Carrier volume unavailable"
+        // "Spray volume", not "carrier" — the operator chose a "Spray volume
+        // basis" three steps ago and should not have to translate the word.
+        case .carrierNotCalculable: return "Spray volume unavailable"
         case .noProductsAdded: return "Add products"
         case .unresolvedProducts: return "Product rate unavailable"
         case .treatedAreaBasisUnavailable: return "Treated area required"
@@ -135,6 +141,9 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
             return "Choose an E-L growth stage for the selected blocks, or choose Not Set."
         case .equipmentRequired:
             return "Select the spray unit used for this application."
+        case .equipmentConfirmationRequired:
+            return "Check the spray unit and tractor for this spray, then confirm. "
+                + "A tractor is optional — Not Set is a valid answer."
         case .canopyConfirmationRequired:
             return "Choose the canopy type, size and density for this spray. They set "
                 + "the dilute / runoff rate every per-100 L product is measured against, "
@@ -203,6 +212,19 @@ nonisolated struct SprayGuidedInputs: Sendable {
     /// satisfy the step.
     var isGrowthStageResolved: Bool = false
     var isEquipmentSelected: Bool = false
+    /// Whether the operator has CONFIRMED the equipment for this application.
+    ///
+    /// Separate from `isEquipmentSelected` because a Program Step prefills the
+    /// spray unit, and `selectedEquipmentId != nil` was being read as
+    /// confirmation. Equipment therefore completed before the screen was ever
+    /// shown, the guided flow skipped straight past it, and the operator never
+    /// saw the tractor decision — which is optional, so nothing else would ever
+    /// have prompted for it.
+    ///
+    /// A prefilled value is a useful default. It is not a statement about this
+    /// spray. Same shape as `isGrowthStageResolved` and the canopy's own
+    /// confirmation flag, for exactly the same reason.
+    var isEquipmentConfirmed: Bool = false
     var tankCapacityLitres: Double = 0
 
     /// Whether the canopy on screen is a DECISION rather than the controls'
@@ -434,6 +456,48 @@ nonisolated struct SprayGuidedFlow: Sendable {
     /// Built only by `SprayCarrierVolumeCalculator`; the flow never does the
     /// arithmetic itself.
     var carrier: SprayCarrierVolume? {
+        // THE foliar handoff: SprayVolumeDecision → SprayCarrierVolume.
+        //
+        // # Why this branch exists
+        //
+        // The canopy path resolves its spray volume in `volumeDecision`, but
+        // the switch below reads `inputs.litresPerHectare` /
+        // `inputs.appliedLitresPer100Metres` — legacy fields that path never
+        // writes. So a Cab Franc job could display 20 L/100 m, 714 L/ha and
+        // CF 1.00×, report `volumeDecision.isResolved == true`, and still
+        // produce `carrier == nil`. The blocker turned that contradiction into
+        // "row geometry is incomplete", pointing at geometry sitting complete
+        // and correct on the very same screen.
+        //
+        // Fixed by changing the HANDOFF rather than mirroring resolved values
+        // back into the old fields: two homes for one decision is what caused
+        // this in the first place.
+        if let decision = volumeDecision, decision.isResolved {
+            switch effectiveCarrierBasis {
+            case .litresPerHectare:
+                guard let actual = Self.positive(decision.actualLitresPerHectare) else { return nil }
+                return SprayCarrierVolumeCalculator.perHectare(
+                    litresPerHectare: actual,
+                    areaHectares: geometry.grossAreaHectares,
+                    concentrationFactor: decision.concentrationFactor,
+                    diluteLitresPerHectare: decision.recommendedLitresPerHectare,
+                    rowLengthMetres: geometry.totalRowLengthMetres,
+                    rowSpacingMetres: geometry.uniformRowSpacingMetres
+                )
+            case .litresPer100Metres:
+                guard let actual = Self.positive(decision.actualLitresPer100Metres) else { return nil }
+                return SprayCarrierVolumeCalculator.per100Metres(
+                    appliedLitresPer100Metres: actual,
+                    diluteLitresPer100Metres: decision.recommendedLitresPer100Metres,
+                    geometry: geometry
+                )
+            case .manualTotalVolume:
+                break // Manual owns its own path below.
+            }
+        }
+
+        // Banded, spreader and legacy callers still enter their spray volume
+        // directly. Only the FOLIAR canopy path stops reading these fields.
         switch effectiveCarrierBasis {
         case .litresPerHectare:
             guard let rate = Self.positive(inputs.litresPerHectare) else { return nil }
@@ -570,7 +634,11 @@ nonisolated struct SprayGuidedFlow: Sendable {
             return inputs.isGrowthStageResolved ? nil : .growthStageRequired
 
         case .equipment:
-            return inputs.isEquipmentSelected ? nil : .equipmentRequired
+            // A spray unit is REQUIRED; a tractor is not. Both may arrive
+            // prefilled from a Program Step, and neither counts as an answer
+            // until the operator confirms.
+            guard inputs.isEquipmentSelected else { return .equipmentRequired }
+            return inputs.isEquipmentConfirmed ? nil : .equipmentConfirmationRequired
 
         case .carrier:
             // The canopy is asked FIRST because everything else in this step is

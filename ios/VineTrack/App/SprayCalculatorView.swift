@@ -27,6 +27,18 @@ struct SprayCalculatorView: View {
     @State private var selectedPaddockIds: Set<UUID> = []
     @State private var selectedEquipmentId: UUID?
     @State private var selectedTractorId: UUID?
+    /// Whether the operator has CONFIRMED equipment for this spray.
+    ///
+    /// A Program Step prefills the spray unit, and completion used to be read
+    /// straight off `selectedEquipmentId != nil` — so Equipment was already
+    /// complete before the screen appeared and the guided flow skipped it
+    /// entirely. The operator never saw the tractor, which is optional and so
+    /// has no other prompt anywhere in the flow.
+    @State private var isEquipmentConfirmed: Bool = false
+    /// The block whose setup the operator asked to edit from a blocker banner.
+    @State private var blockDetailsTarget: Paddock?
+    /// Offending blocks to choose between when a blocker names more than one.
+    @State private var blockDetailsChoices: [Paddock] = []
     /// The canopy, together with whether anybody actually chose it.
     ///
     /// Was two plain `@State` defaults (`.medium` / `.low`). A segmented picker
@@ -493,6 +505,7 @@ struct SprayCalculatorView: View {
         inputs.bandWidthTotalMetres = Double(bandWidthText)
         inputs.isGrowthStageResolved = isGrowthStageResolved
         inputs.isEquipmentSelected = selectedEquipmentId != nil
+        inputs.isEquipmentConfirmed = isEquipmentConfirmed
         inputs.tankCapacityLitres = selectedTankCapacityLitres
         inputs.isCanopyConfirmed = canopy.isConfirmed
         inputs.canopy = canopy
@@ -706,6 +719,7 @@ struct SprayCalculatorView: View {
                         equipmentSelection
                         tractorSelection
                         mixTripSetupSection
+                        equipmentConfirmation
                     }
                     guidedCard(.carrier, 6, summary: carrierSummary) {
                         carrierVolumeSection
@@ -1088,6 +1102,60 @@ struct SprayCalculatorView: View {
         }
         .sheet(isPresented: $showSprayPaddockPicker) {
             SprayPaddockPickerSheet(selectedIds: $selectedPaddockIds)
+        }
+        // "Edit block details" opens the block's OWN setup editor — the same
+        // one Vineyard Setup uses. It was wired to the paddock PICKER, which
+        // only re-selects which blocks are being sprayed and cannot change a
+        // row spacing, so the link never did what its label promised.
+        .sheet(item: $blockDetailsTarget) { paddock in
+            EditPaddockSheet(paddock: paddock)
+        }
+        .confirmationDialog(
+            "Which block needs setting up?",
+            isPresented: Binding(
+                get: { !blockDetailsChoices.isEmpty },
+                set: { if !$0 { blockDetailsChoices = [] } }
+            ),
+            titleVisibility: .visible
+        ) {
+            // Several blocks are incomplete. Rather than guessing one, name
+            // them and let the operator pick; each opens the same editor.
+            ForEach(blockDetailsChoices) { paddock in
+                Button(paddock.name) {
+                    blockDetailsChoices = []
+                    blockDetailsTarget = paddock
+                }
+            }
+            Button("Cancel", role: .cancel) { blockDetailsChoices = [] }
+        }
+    }
+
+    /// Opens block setup for whichever block the blocker is actually about.
+    ///
+    /// Resolution order: the blocks the blocker itself names, then the geometry
+    /// resolver's own unresolved list, then the selected blocks. One match opens
+    /// the editor directly; several offer a choice.
+    private func openBlockDetails(for blocker: SprayGuidedBlocker) {
+        let namedIds: [String] = {
+            if case let .blockSetupRequired(_, blockIds) = blocker, !blockIds.isEmpty {
+                return blockIds
+            }
+            let unresolved = applicationGeometry.unresolvedBlocks.map(\.blockId)
+            if !unresolved.isEmpty { return unresolved }
+            return selectedPaddocks.map { $0.id.uuidString }
+        }()
+
+        let matches = namedIds.compactMap { id in
+            store.paddocks.first { $0.id.uuidString == id }
+        }
+        if matches.count == 1 {
+            blockDetailsTarget = matches[0]
+        } else if matches.count > 1 {
+            blockDetailsChoices = matches
+        } else {
+            // Nothing identifiable to edit — the honest fallback is the block
+            // selection the operator can actually act on.
+            showSprayPaddockPicker = true
         }
     }
 
@@ -2571,9 +2639,65 @@ struct SprayCalculatorView: View {
     private var equipmentSummary: String {
         guard selectedEquipmentId != nil else { return "Not selected" }
         let jets = numberOfFansJets.trimmingCharacters(in: .whitespacesAndNewlines)
-        return jets.isEmpty
+        let base = jets.isEmpty
             ? selectedEquipmentName
             : "\(selectedEquipmentName) — \(jets) fans/jets"
+        // A prefilled unit is not a confirmed one, and the summary must not
+        // imply otherwise while the step is still outstanding.
+        return isEquipmentConfirmed ? base : "\(base) — not confirmed"
+    }
+
+    /// The explicit Equipment confirmation.
+    ///
+    /// The spray unit is required; the tractor is NOT. This exists so the
+    /// operator actually sees the tractor decision — including a deliberate
+    /// "Not Set" — before the flow moves on, which a prefilled Program Step
+    /// value would otherwise skip past silently.
+    @ViewBuilder
+    private var equipmentConfirmation: some View {
+        let hasUnit = selectedEquipmentId != nil
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Tractor")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(selectedTractorId == nil ? "Not Set" : selectedTractorLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(selectedTractorId == nil ? .secondary : .primary)
+            }
+            Text("A tractor is optional — Not Set is a valid answer.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+
+            if isEquipmentConfirmed {
+                Label("Equipment confirmed", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(VineyardTheme.olive)
+            } else {
+                Button {
+                    isEquipmentConfirmed = true
+                } label: {
+                    Text("Confirm Equipment")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: 44)
+                        .background(hasUnit ? VineyardTheme.olive : Color.secondary.opacity(0.25))
+                        .foregroundStyle(hasUnit ? Color.white : Color.secondary)
+                        .clipShape(.rect(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasUnit)
+            }
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(.rect(cornerRadius: 10))
+        // Changing either machine invalidates the confirmation. Otherwise
+        // "confirm croplands → change tractor" would leave a confirmation
+        // standing for a setup the operator never actually agreed to.
+        .onChange(of: selectedEquipmentId) { _, _ in isEquipmentConfirmed = false }
+        .onChange(of: selectedTractorId) { _, _ in isEquipmentConfirmed = false }
     }
 
     private var carrierSummary: String {
@@ -2641,7 +2765,7 @@ struct SprayCalculatorView: View {
         }
 
         if let blocker = flow.blocker(for: .blocks), blocker != .noBlocksSelected {
-            GuidedBlockerBanner(blocker: blocker) { showSprayPaddockPicker = true }
+            GuidedBlockerBanner(blocker: blocker) { openBlockDetails(for: blocker) }
         }
     }
 
@@ -2743,7 +2867,7 @@ struct SprayCalculatorView: View {
             }
 
             if let blocker = flow.blocker(for: .target) {
-                GuidedBlockerBanner(blocker: blocker) { showSprayPaddockPicker = true }
+                GuidedBlockerBanner(blocker: blocker) { openBlockDetails(for: blocker) }
             }
         }
     }
@@ -2814,7 +2938,7 @@ struct SprayCalculatorView: View {
             }
 
             if let blocker = flow.blocker(for: .carrier) {
-                GuidedBlockerBanner(blocker: blocker) { showSprayPaddockPicker = true }
+                GuidedBlockerBanner(blocker: blocker) { openBlockDetails(for: blocker) }
             }
         }
     }
