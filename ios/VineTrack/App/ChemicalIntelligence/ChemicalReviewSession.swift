@@ -157,6 +157,26 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// already on file.
     let isReviewingLookup: Bool
 
+    /// The save-contract violations the record ALREADY had when this session
+    /// opened (task §11).
+    ///
+    /// # Why a baseline exists rather than a flat rule
+    ///
+    /// The mandatory contract must stop a NEW chemical entering the store
+    /// unusable. Applied flatly it would also strand every legacy record: a
+    /// pre-Chemical-Intelligence product has no structured grapevine use and
+    /// no structured rate, so an operator opening one to fix a typo or update
+    /// a price would find Save permanently disabled — and would lose the edit.
+    /// A record that cannot be saved cannot be repaired, which makes the data
+    /// worse rather than better.
+    ///
+    /// So the rule is "never make it worse": a violation blocks Save only if
+    /// the record did not already have it. A legacy chemical stays editable
+    /// and can be brought up to contract a field at a time; a compliant
+    /// chemical can never be edited INTO non-compliance; and a brand-new
+    /// chemical has an empty baseline, so the full contract applies.
+    let baselineViolationCodes: Set<ChemicalSaveViolationCode>
+
     // MARK: - One value, one place: computed views onto the structured draft
 
     /// The product name. Stored once, in the structured record.
@@ -238,6 +258,23 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         let perHa = source.rates.first { $0.basis == .perHectare }
         let per100L = source.rates.first { $0.basis == .per100Litres }
 
+        // Measure the record AS OPENED, before the operator touches anything.
+        // Only a record already on file earns a baseline: a lookup being
+        // reviewed for the first time is a NEW chemical and must satisfy the
+        // contract in full, however complete the lookup happened to be.
+        let baseline: Set<ChemicalSaveViolationCode> = chemical == nil
+            ? []
+            : Set(
+                ChemicalSaveContract.evaluate(
+                    productName: source.name,
+                    productCategory: chemistry.productCategory,
+                    intelligence: ChemicalManualEntry.proposedIntelligence(
+                        from: chemistry, existing: stored
+                    ),
+                    intent: .sprayReady
+                ).violations.map(\.code)
+            )
+
         return ChemicalReviewSession(
             isReviewingLookup: chemical == nil && prefill != nil,
             chemistryDraft: chemistry,
@@ -271,7 +308,8 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
             existingPerHaRateId: perHa?.id,
             existingPer100LRateId: per100L?.id,
             masterChemicalId: source.masterChemicalId,
-            masterSourceRevision: source.masterSourceRevision
+            masterSourceRevision: source.masterSourceRevision,
+            baselineViolationCodes: baseline
         )
     }
 
@@ -336,9 +374,11 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         existingPerHaRateId: UUID? = nil,
         existingPer100LRateId: UUID? = nil,
         masterChemicalId: UUID? = nil,
-        masterSourceRevision: Int? = nil
+        masterSourceRevision: Int? = nil,
+        baselineViolationCodes: Set<ChemicalSaveViolationCode> = []
     ) {
         self.isReviewingLookup = isReviewingLookup
+        self.baselineViolationCodes = baselineViolationCodes
         self.chemistryDraft = chemistryDraft
         self.formType = formType
         self.unit = unit
@@ -580,8 +620,55 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         )
     }
 
+    // MARK: - Save contract (task §11)
+
+    /// The record as it stands, measured against the shared mandatory
+    /// contract.
+    ///
+    /// The contract itself lives in `ChemicalSaveContract`, mirroring the edge
+    /// function's `save_contract.ts` so iOS and the Portal cannot disagree
+    /// about what "ready to use" means.
+    var saveEvaluation: ChemicalSaveEvaluation {
+        ChemicalSaveContract.evaluate(
+            productName: name,
+            productCategory: chemistryDraft.productCategory,
+            intelligence: ChemicalManualEntry.proposedIntelligence(
+                from: chemistryDraft, existing: seedIntelligence
+            ),
+            intent: .sprayReady
+        )
+    }
+
+    /// Violations that must be fixed before THIS save.
+    ///
+    /// Pre-existing faults are excluded — see `baselineViolationCodes`. What
+    /// remains is everything this edit would ADD, plus everything a brand-new
+    /// record is missing.
+    var blockingViolations: [ChemicalSaveViolation] {
+        saveEvaluation.violations.filter { !baselineViolationCodes.contains($0.code) }
+    }
+
+    /// Faults the record arrived with. Shown as guidance, never as a block, so
+    /// a legacy product can be repaired incrementally.
+    var carriedOverViolations: [ChemicalSaveViolation] {
+        saveEvaluation.violations.filter { baselineViolationCodes.contains($0.code) }
+    }
+
+    /// True when a calculation must ask which conditional rate applies before
+    /// using this product (task §5).
+    ///
+    /// Never blocks Save: the label genuinely states those rates, and only the
+    /// operator can say which condition they are spraying under today.
+    var requiresRateConditionChoice: Bool {
+        saveEvaluation.requiresRateConditionChoice
+    }
+
+    /// The resistance state this record will persist.
+    var resistanceState: ChemicalResistanceState { saveEvaluation.resistanceState }
+
     var isValid: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return blockingViolations.isEmpty
     }
 
     // MARK: - Formatting
