@@ -11,9 +11,11 @@ import { assert, assertEquals } from "jsr:@std/assert@1";
 import {
   decodeHtmlEntities,
   extractLinks,
-  inspectCandidateProductPages,
   extractPageProductName,
+  inspectCandidateProductPages,
   inspectProductPage,
+  MAX_PAGE_BYTES,
+  MAX_PAGE_FETCH_ATTEMPTS,
   resolveHref,
 } from "./page_inspector.ts";
 import {
@@ -588,4 +590,232 @@ Deno.test("a rate printed on the product page never becomes a rate", async () =>
   ]);
   const serialised = JSON.stringify(result);
   assert(!serialised.includes("30 mL"), "no rate text is carried out of the page");
+});
+
+// ---------------------------------------------------------------------------
+// The fetch cap counts ATTEMPTS, not successes
+// ---------------------------------------------------------------------------
+
+Deno.test("three rapidly FAILING eligible pages still cost only two fetches", async () => {
+  // The cap exists to bound REQUESTS. Counting successful inspections would
+  // let a registrant serving 404s on every candidate URL draw an unbounded
+  // number of requests out of one lookup, because no attempt would ever
+  // increment the counter.
+  const { fetchFn, calls } = fetchReturning(() =>
+    stubResponse("<html>Not found</html>", { status: 404, url: OMNIA_PAGE })
+  );
+  const { pages, attempts } = await inspectCandidateProductPages(
+    { fetchFn },
+    [
+      "https://www.omnia.com.au/products/sprayseal",
+      "https://www.omnia.com.au/products/sprayseal-5l",
+      "https://www.omnia.com.au/products/sprayseal-20l",
+      "https://www.omnia.com.au/products/sprayseal-200l",
+    ],
+    "AU",
+  );
+  assertEquals(calls.length, MAX_PAGE_FETCH_ATTEMPTS);
+  assertEquals(calls.length, 2);
+  assertEquals(pages.length, 0);
+  assertEquals(attempts.length, 2);
+  assert(attempts.every((a) => a.outcome === "rejected_http_error"));
+});
+
+Deno.test("a MIX of failure kinds is still capped at two attempts", async () => {
+  // Each failure short-circuits at a different point in the function — one
+  // before the body is touched, one after headers. Neither may reset the cap.
+  const responses = [
+    () => stubResponse("{}", { status: 200, contentType: "application/json", url: OMNIA_PAGE }),
+    () => stubResponse("", { status: 500, url: OMNIA_PAGE }),
+    () => stubResponse(OMNIA_HTML, { url: OMNIA_PAGE }),
+  ];
+  let i = 0;
+  const { fetchFn, calls } = fetchReturning(() => responses[Math.min(i++, 2)]());
+  const { pages, attempts } = await inspectCandidateProductPages(
+    { fetchFn },
+    [
+      "https://www.omnia.com.au/products/a",
+      "https://www.omnia.com.au/products/b",
+      "https://www.omnia.com.au/products/c",
+    ],
+    "AU",
+  );
+  assertEquals(calls.length, 2);
+  assertEquals(pages.length, 0, "the third page — the good one — was never reached");
+  assertEquals(attempts.map((a) => a.outcome), [
+    "rejected_not_html",
+    "rejected_http_error",
+  ]);
+});
+
+Deno.test("two SUCCESSFUL inspections still cap at two attempts", async () => {
+  const { fetchFn, calls } = fetchReturning(() => stubResponse(OMNIA_HTML, { url: OMNIA_PAGE }));
+  const { pages } = await inspectCandidateProductPages(
+    { fetchFn },
+    [
+      "https://www.omnia.com.au/products/a",
+      "https://www.omnia.com.au/products/b",
+      "https://www.omnia.com.au/products/c",
+    ],
+    "AU",
+  );
+  assertEquals(calls.length, 2);
+  assertEquals(pages.length, 2);
+});
+
+// ---------------------------------------------------------------------------
+// The byte limit is a real read bound
+// ---------------------------------------------------------------------------
+
+/**
+ * A response whose body is produced lazily, so a test can observe how much of
+ * it was actually pulled. `chunks` counts what the reader consumed; `cancelled`
+ * records whether the stream was shut down early.
+ */
+function streamingResponse(
+  chunk: Uint8Array,
+  totalChunks: number,
+  options: StubOptions = {},
+): { res: Response; state: { chunks: number; cancelled: boolean } } {
+  const state = { chunks: 0, cancelled: false };
+  let produced = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (produced >= totalChunks) {
+        controller.close();
+        return;
+      }
+      produced++;
+      state.chunks++;
+      controller.enqueue(chunk);
+    },
+    cancel() {
+      state.cancelled = true;
+    },
+  });
+  const headers = new Headers();
+  if (options.contentType !== null) {
+    headers.set("content-type", options.contentType ?? "text/html; charset=utf-8");
+  }
+  if (options.contentLength) headers.set("content-length", options.contentLength);
+  const res = new Response(stream, { status: options.status ?? 200, headers });
+  Object.defineProperty(res, "url", { value: options.url ?? OMNIA_PAGE, configurable: true });
+  return { res, state };
+}
+
+Deno.test("an oversized DECLARED Content-Length is refused without reading", async () => {
+  const chunk = new Uint8Array(64 * 1024);
+  const { res, state } = streamingResponse(chunk, 1000, {
+    contentLength: String(MAX_PAGE_BYTES + 1),
+  });
+  const { fetchFn } = fetchReturning(() => res);
+  const result = await inspectProductPage({ fetchFn }, OMNIA_PAGE, "AU");
+
+  assertEquals(result.outcome, "rejected_too_large");
+  // A ReadableStream with the default queuing strategy pre-produces one chunk
+  // at construction, before anything reads it. That is the stream's own
+  // behaviour; what matters is that the inspector consumed nothing beyond it
+  // and shut the body down.
+  assert(state.chunks <= 1, `body was read (${state.chunks} chunks) despite the declared size`);
+  assertEquals(state.cancelled, true, "the body was cancelled, not drained");
+});
+
+Deno.test("an oversized CHUNKED response is refused WITHOUT buffering it all", async () => {
+  // No Content-Length at all — the case the old `await res.text()` could not
+  // defend against. The stream offers 64 MB; the reader must stop just past
+  // the 2 MB budget and cancel, rather than buffering the lot and trimming.
+  const chunkSize = 256 * 1024;
+  const chunk = new Uint8Array(chunkSize);
+  chunk.fill(0x61); // "a"
+  const totalChunks = 256; // 64 MB on offer
+  const { res, state } = streamingResponse(chunk, totalChunks);
+  const { fetchFn } = fetchReturning(() => res);
+
+  const result = await inspectProductPage({ fetchFn }, OMNIA_PAGE, "AU");
+
+  assertEquals(result.outcome, "rejected_too_large");
+  assert(
+    result.outcome !== "inspected" && result.reason.includes("never"),
+    "the refusal says the page was not parsed from a truncated body",
+  );
+
+  // The bound in numbers: 2 MB / 256 KB = 8 chunks fit, the 9th trips it.
+  // Allow one extra for the stream's own look-ahead buffering.
+  const chunksToExceed = Math.floor(MAX_PAGE_BYTES / chunkSize) + 1;
+  assert(
+    state.chunks <= chunksToExceed + 1,
+    `read ${state.chunks} chunks; expected to stop around ${chunksToExceed}`,
+  );
+  assert(
+    state.chunks < totalChunks / 10,
+    "nowhere near the whole body was read — the 64 MB on offer was never buffered",
+  );
+  assertEquals(state.cancelled, true, "the stream was cancelled, not drained");
+});
+
+Deno.test("a body EXACTLY at the limit is accepted and parsed", async () => {
+  const head = `<html><head><title>Sprayseal | Omnia</title></head><body><h1>Sprayseal</h1>` +
+    `<a href="/files/2025/07/Sprayseal 5L_Digi.pdf">Label</a><!--`;
+  const tail = `--></body></html>`;
+  const padding = "x".repeat(MAX_PAGE_BYTES - head.length - tail.length);
+  const exact = `${head}${padding}${tail}`;
+  assertEquals(new TextEncoder().encode(exact).byteLength, MAX_PAGE_BYTES);
+
+  const result = await inspectHtml(exact);
+  assertEquals(result.outcome, "inspected");
+  if (result.outcome !== "inspected") return;
+  assertEquals(result.pageProductName, "Sprayseal");
+  assertEquals(result.links[0].url, OMNIA_LABEL);
+  assertEquals(result.truncated, false);
+});
+
+Deno.test("one byte OVER the limit is refused", async () => {
+  const body = "x".repeat(MAX_PAGE_BYTES + 1);
+  const result = await inspectHtml(body);
+  assertEquals(result.outcome, "rejected_too_large");
+});
+
+Deno.test("an ordinary small page is unaffected by the bound", async () => {
+  const result = await inspectHtml(OMNIA_HTML);
+  assertEquals(result.outcome, "inspected");
+  if (result.outcome !== "inspected") return;
+  // Four documents plus the two nav links; the mailto/fragment/javascript
+  // hrefs are not documents and never enter the list.
+  assertEquals(result.links.length, 6);
+  assertEquals(result.truncated, false);
+});
+
+Deno.test("UTF-8 survives a character split across chunk boundaries", async () => {
+  // "Sprayseal®" with the ® (0xC2 0xAE) deliberately torn in half between two
+  // chunks. Decoded per-chunk without streaming state, this becomes U+FFFD and
+  // the product name no longer matches the register — so a real page could
+  // fail correspondence purely because of where the network split the body.
+  const encoder = new TextEncoder();
+  const full = encoder.encode(`<h1>Sprayseal\u00ae Pruning</h1><a href="/a.pdf">Label</a>`);
+  const cut = full.indexOf(0xc2) + 1;
+  const first = full.slice(0, cut);
+  const second = full.slice(cut);
+
+  let index = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (index === 0) controller.enqueue(first);
+      else if (index === 1) controller.enqueue(second);
+      else controller.close();
+      index++;
+    },
+  });
+  const res = new Response(stream, {
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+  Object.defineProperty(res, "url", { value: OMNIA_PAGE, configurable: true });
+
+  const { fetchFn } = fetchReturning(() => res);
+  const result = await inspectProductPage({ fetchFn }, OMNIA_PAGE, "AU");
+
+  assertEquals(result.outcome, "inspected");
+  if (result.outcome !== "inspected") return;
+  assertEquals(result.pageProductName, "Sprayseal\u00ae Pruning");
+  assert(!result.pageProductName.includes("\ufffd"), "no replacement characters");
 });

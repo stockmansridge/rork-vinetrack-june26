@@ -45,12 +45,26 @@ import type { LinkedDocument } from "./linked_documents.ts";
 
 /** Per-attempt network timeout. Matches the label-document fetcher. */
 const FETCH_TIMEOUT_MS = 6000;
-/** A product page far past this is not a product page. */
-const MAX_HTML_BYTES = 2 * 1024 * 1024;
+/**
+ * A product page far past this is not a product page.
+ *
+ * Enforced as a HARD read bound, not a post-hoc trim: the body is consumed
+ * incrementally and the stream is cancelled the moment the count is exceeded,
+ * so a hostile or misconfigured host cannot make this function buffer an
+ * unbounded response before the limit is noticed.
+ */
+export const MAX_PAGE_BYTES = 2 * 1024 * 1024;
 /** Anchor cap — a document list is small; a sitemap is not what we want. */
 const MAX_LINKS = 400;
-/** At most this many pages per lookup, however many the model volunteered. */
-const MAX_PAGES_PER_LOOKUP = 2;
+/**
+ * At most this many product-page fetch ATTEMPTS per lookup.
+ *
+ * Attempts, not successes. Counting successful inspections would let a run of
+ * fast failures (404, wrong content-type, off-host redirect) keep the loop
+ * going, so a registrant serving errors on every candidate URL could draw far
+ * more than two requests out of a single lookup.
+ */
+export const MAX_PAGE_FETCH_ATTEMPTS = 2;
 /** Total wall-clock budget for ALL inspection in one lookup. */
 const INSPECTION_BUDGET_MS = 9000;
 
@@ -326,6 +340,68 @@ function isHtmlContentType(value: string | null): boolean {
   return type === "text/html" || type === "application/xhtml+xml";
 }
 
+type BoundedBody =
+  | { ok: true; html: string }
+  | { ok: false; bytesRead: number };
+
+/**
+ * Read a response body incrementally, refusing to hold more than
+ * `MAX_PAGE_BYTES` of it.
+ *
+ * # Why streaming rather than `res.text()` followed by a length check
+ *
+ * `await res.text()` buffers the WHOLE body first. Trimming afterwards makes
+ * the string shorter but does nothing about the memory already committed, so a
+ * host that omits Content-Length — or declares a false one — decides how much
+ * this function allocates. On a shared Edge runtime that is a denial-of-service
+ * surface, not a tidiness issue.
+ *
+ * Here the count is checked per chunk and the stream is CANCELLED as soon as it
+ * is exceeded, so peak memory is bounded by the limit plus one chunk.
+ *
+ * UTF-8 is decoded with `{ stream: true }` so a multi-byte character split
+ * across a chunk boundary is reassembled rather than becoming replacement
+ * characters — which matters here, because a mangled `®` or `–` inside a
+ * heading is a mangled product name, and product names decide correspondence.
+ */
+async function readBoundedHtml(res: Response): Promise<BoundedBody> {
+  if (!res.body) {
+    // No stream to meter (some runtimes give a null body for empty responses).
+    const text = await res.text();
+    const size = new TextEncoder().encode(text).byteLength;
+    return size > MAX_PAGE_BYTES ? { ok: false, bytesRead: size } : { ok: true, html: text };
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let bytesRead = 0;
+  let html = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+
+      bytesRead += value.byteLength;
+      if (bytesRead > MAX_PAGE_BYTES) {
+        try {
+          await reader.cancel();
+        } catch { /* ignore */ }
+        return { ok: false, bytesRead };
+      }
+      html += decoder.decode(value, { stream: true });
+    }
+    // Flush any trailing partial sequence.
+    html += decoder.decode();
+    return { ok: true, html };
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch { /* already released by cancel() */ }
+  }
+}
+
 /**
  * Fetch and inspect ONE trusted registrant product page.
  *
@@ -423,28 +499,38 @@ export async function inspectProductPage(
       };
     }
 
+    // A DECLARED oversize is refused without reading a byte. This is an
+    // optimisation only — an absent or dishonest Content-Length is caught by
+    // the incremental read below, which is the actual bound.
     const declared = Number.parseInt(res.headers.get("content-length") ?? "", 10);
-    if (Number.isFinite(declared) && declared > MAX_HTML_BYTES) {
+    if (Number.isFinite(declared) && declared > MAX_PAGE_BYTES) {
       try {
         await res.body?.cancel();
       } catch { /* ignore */ }
       return {
         outcome: "rejected_too_large",
         pageUrl: trimmed,
-        reason: `declared ${declared} bytes, over the ${MAX_HTML_BYTES}-byte page budget`,
+        reason: `declared ${declared} bytes, over the ${MAX_PAGE_BYTES}-byte page budget`,
       };
     }
 
-    const body = await res.text();
-    let html = body;
-    let truncatedByBytes = false;
-    if (body.length > MAX_HTML_BYTES) {
-      html = body.slice(0, MAX_HTML_BYTES);
-      truncatedByBytes = true;
+    const body = await readBoundedHtml(res);
+    if (!body.ok) {
+      // Deliberately NOT parsed. A truncated page is a page whose document
+      // list may have been cut in half, and half a document list is an
+      // excellent way to promote the wrong PDF as the label.
+      return {
+        outcome: "rejected_too_large",
+        pageUrl: trimmed,
+        reason:
+          `response exceeded the ${MAX_PAGE_BYTES}-byte page budget (stopped ` +
+          `after ${body.bytesRead} bytes); an oversized page is refused, never ` +
+          `parsed from a truncated body`,
+      };
     }
 
-    const { name, source } = extractPageProductName(html);
-    const { links, truncated } = extractLinks(html, finalUrl);
+    const { name, source } = extractPageProductName(body.html);
+    const { links, truncated } = extractLinks(body.html, finalUrl);
 
     return {
       outcome: "inspected",
@@ -453,7 +539,7 @@ export async function inspectProductPage(
       pageProductName: name,
       pageProductNameSource: source,
       links,
-      truncated: truncated || truncatedByBytes,
+      truncated,
     };
   } catch (err) {
     // Timeout, DNS failure, TLS failure, aborted body — all the same answer:
@@ -485,10 +571,11 @@ export interface PageInspectionAttempt {
  *
  * Discovery hands this function a list of URLs it believes are the registrant's
  * product page — from the research model's candidates and from its relationship
- * hints. Those are LEADS. This function fetches at most
- * `MAX_PAGES_PER_LOOKUP` of the ones that already classify as trusted
- * registrant product pages, and stops early once the wall-clock budget is
- * spent, so a slow registrant site degrades enrichment instead of the lookup.
+ * hints. Those are LEADS. This function makes at most
+ * `MAX_PAGE_FETCH_ATTEMPTS` fetch ATTEMPTS among the ones that already classify
+ * as trusted registrant product pages, and stops early once the wall-clock
+ * budget is spent, so a slow or broken registrant site degrades enrichment
+ * instead of the lookup.
  *
  * Never throws. An empty result simply means no manufacturer promotion.
  */
@@ -514,8 +601,11 @@ export async function inspectCandidateProductPages(
     queue.push(url);
   }
 
+  // ATTEMPTS, not successes: a page that 404s or serves the wrong content type
+  // still cost a request, and the cap exists to bound requests.
+  let attemptsMade = 0;
   for (const url of queue) {
-    if (pages.length >= MAX_PAGES_PER_LOOKUP) break;
+    if (attemptsMade >= MAX_PAGE_FETCH_ATTEMPTS) break;
     if (now().getTime() - startedMs > INSPECTION_BUDGET_MS) {
       attempts.push({
         url,
@@ -525,6 +615,7 @@ export async function inspectCandidateProductPages(
       });
       break;
     }
+    attemptsMade++;
     const result = await inspectProductPage(deps, url, countryCode);
     if (result.outcome === "inspected") {
       pages.push(result);

@@ -314,3 +314,79 @@ Deno.test("80160: restrictions survive on every grapevine use", () => {
     assert(/pruning wounds/i.test(use.restrictions));
   }
 });
+
+// ===========================================================================
+// The STRUCTURED WIRE CONTRACT — exact field names
+//
+// These five names are the contract. They are asserted as an exact key set,
+// not with `assert(x in y)`, so that adding, renaming or dropping one fails
+// here rather than silently in a client that stops finding a URL it decodes.
+// ===========================================================================
+
+/** The five source-identity fields the `registration` block carries. */
+const REGISTRATION_URL_FIELDS = [
+  "label_reference",
+  "manufacturer_label_url",
+  "regulator_label_url",
+  "manufacturer_product_url",
+  "sds_url",
+] as const;
+
+Deno.test("WIRE: the registration block names its URL fields in snake_case", () => {
+  const refs = selectLabelReferences({
+    manufacturerLabelUrl: OMNIA_LABEL,
+    regulatorLabelUrl: APVMA_LABEL,
+    productUrl: OMNIA_PAGE,
+    sdsUrl: OMNIA_SDS,
+  });
+
+  // EXACT key set. `productURL` / `sdsURL` are the camelCase keys of the
+  // internal extraction shape that feeds this function; they are NOT the wire.
+  assertEquals(Object.keys(refs).sort(), [...REGISTRATION_URL_FIELDS].sort());
+  assert(!("productURL" in refs));
+  assert(!("sdsURL" in refs));
+  assert(!("labelURL" in refs));
+});
+
+Deno.test("WIRE: 80160's five fields carry their intended documents", () => {
+  const refs = selectLabelReferences({
+    manufacturerLabelUrl: OMNIA_LABEL,
+    regulatorLabelUrl: APVMA_LABEL,
+    productUrl: OMNIA_PAGE,
+    sdsUrl: OMNIA_SDS,
+  });
+
+  assertEquals(refs.regulator_label_url, APVMA_LABEL);
+  assertEquals(refs.manufacturer_label_url, OMNIA_LABEL);
+  assertEquals(refs.manufacturer_product_url, OMNIA_PAGE);
+  assertEquals(refs.sds_url, OMNIA_SDS);
+  // Legacy readers keep receiving the AUTHORITATIVE document.
+  assertEquals(refs.label_reference, APVMA_LABEL);
+});
+
+Deno.test("WIRE: with no regulator label, the legacy field falls back to the manufacturer's", () => {
+  // A client that only decodes `label_reference` still gets a label rather
+  // than nothing — but the two remain distinguishable in their own fields.
+  const refs = selectLabelReferences({
+    manufacturerLabelUrl: OMNIA_LABEL,
+    regulatorLabelUrl: null,
+    productUrl: OMNIA_PAGE,
+    sdsUrl: OMNIA_SDS,
+  });
+  assertEquals(refs.regulator_label_url, null);
+  assertEquals(refs.manufacturer_label_url, OMNIA_LABEL);
+  assertEquals(refs.label_reference, OMNIA_LABEL);
+});
+
+Deno.test("WIRE: the SDS never appears in any label field", () => {
+  const refs = selectLabelReferences({
+    manufacturerLabelUrl: null,
+    regulatorLabelUrl: null,
+    productUrl: OMNIA_PAGE,
+    sdsUrl: OMNIA_SDS,
+  });
+  assertEquals(refs.sds_url, OMNIA_SDS);
+  assertEquals(refs.label_reference, null);
+  assertEquals(refs.manufacturer_label_url, null);
+  assertEquals(refs.regulator_label_url, null);
+});
