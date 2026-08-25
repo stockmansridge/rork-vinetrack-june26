@@ -295,6 +295,67 @@ export function rankScore(tier: RankTier, relevance: NameRelevance): number {
   return Math.max(0, Math.min(100, raw));
 }
 
+/**
+ * What KIND of thing a row is, independent of where it sorted (Stage 2 §2).
+ *
+ * # Why the tier was not enough
+ *
+ * `rank_tier` answers "where does this go in the list". It cannot answer "may
+ * this establish a product identity", and the two are not the same question.
+ * A web-research guess and a demoted register row both land in a low tier, but
+ * only one of them was ever in the register.
+ *
+ * "Hortitrol Winter Oil" is the measured case: the APVMA register matches
+ * NOTHING, the request falls through to `runChemicalResearch`, and the model's
+ * associations were served in the same shape as register candidates. Two
+ * clients then auto-continued into two different registrations (33182 and
+ * 50067) from what was never a register answer at all.
+ */
+export type CandidateClass =
+  /** From the approved master catalogue or the jurisdiction's register. May
+   *  stand as a product identity. */
+  | "authoritative"
+  /** Research SUGGESTED this identity and the register CONFIRMED the exact
+   *  registration number — name, number and registrant below are the
+   *  register's own. Selectable, but still a suggestion: the register
+   *  confirmed the product exists, not that it is what the operator meant. */
+  | "validated_suggestion"
+  /** A research suggestion with no confirmed registration behind it. Never
+   *  canonical, never auto-selectable. */
+  | "unverified_suggestion";
+
+/** Whether a class may stand as a register-backed identity. */
+export function isAuthoritativeClass(c: CandidateClass): boolean {
+  return c === "authoritative";
+}
+
+/**
+ * Classify a row by its PROVENANCE, never by its score.
+ *
+ * `registration_validated` is set only by `validateResearchSuggestions`, which
+ * re-reads the exact registration from the register before setting it. A row
+ * cannot claim it for itself: research output arrives with the flag absent.
+ *
+ * # Why this defers to `isUsableMaster`
+ *
+ * A master row that is not approved, or belongs to another country, is already
+ * demoted to `suggestion` by `baseTier`. If it were still counted as
+ * authoritative here, an UNAPPROVED catalogue row could set `search_state`
+ * and license auto-selection from the one tier that has not been reviewed yet
+ * — the two rules must agree, or the tier and the class would disagree about
+ * the same row.
+ */
+export function candidateClass(row: any, countryCode = ""): CandidateClass {
+  const source = String(row?.source ?? "").trim();
+  if (source === "master") {
+    return isUsableMaster(row, countryCode) ? "authoritative" : "unverified_suggestion";
+  }
+  if (source === "official_register") return "authoritative";
+  return row?.registration_validated === true
+    ? "validated_suggestion"
+    : "unverified_suggestion";
+}
+
 export interface RankedRow {
   /** Position in the list the upstream tiers produced, before ranking.
    *  Kept for debugging: it is the only way to see that ranking CHANGED
@@ -304,16 +365,73 @@ export interface RankedRow {
   rank_relevance: NameRelevance;
   rank_score: number;
   rank_reason: string;
+  candidate_class: CandidateClass;
 }
 
+/**
+ * What the search actually FOUND (Stage 2 §1).
+ *
+ * # The invalid state this replaces
+ *
+ * The summary used to be able to say:
+ *
+ * ```jsonc
+ * { "ambiguous": false, "strong_candidate_count": 0, "exact_registration_number": null }
+ * ```
+ *
+ * `ambiguous: false` reads as confidence, and a client is entitled to treat it
+ * as licence to continue. Here it meant the exact opposite — not "one clear
+ * answer" but "no answer at all". Zero strong candidates is the LEAST certain
+ * outcome search has, and it was being reported in the same words as the most
+ * certain one.
+ */
+export type SearchState =
+  /** Exactly one register-backed row whose name IS the query, with no rival.
+   *  The ONLY state in which a client may continue without asking. */
+  | "exact"
+  /** Register-backed candidates exist, but which one the operator means is a
+   *  human decision. */
+  | "ambiguous"
+  /** The official register produced no candidate whose NAME answers the
+   *  query. Anything in `results` is a suggestion, not a finding. */
+  | "no_official_match";
+
 export interface RankingSummary {
-  /** True when several credible products answer the query. */
+  /** What search found. Read THIS, not `ambiguous`, when deciding how to
+   *  present the list. */
+  search_state: SearchState;
+  /**
+   * True whenever the answer is not a proven exact identity.
+   *
+   * Deliberately `search_state !== "exact"`, so the invalid
+   * "zero candidates, therefore unambiguous" state is now unrepresentable.
+   * `no_official_match` reports `true`: no answer is not an unambiguous one.
+   */
   ambiguous: boolean;
+  /**
+   * Whether a client may continue WITHOUT an explicit human selection.
+   *
+   * The one flag a client needs. True only in `exact`, which by construction
+   * requires a register-backed row — so a research suggestion can never set
+   * it, even when research returned exactly one row (Stage 2 §3).
+   */
+  auto_select_allowed: boolean;
   /** Count of rows that may stand as primary candidates. */
   strong_candidate_count: number;
+  /** Of those, how many are register- or catalogue-backed. This is the count
+   *  `search_state` is derived from — a screen full of research suggestions
+   *  is still `no_official_match`. */
+  strong_official_candidate_count: number;
+  /** Register/catalogue rows in the answer, at any relevance. */
+  official_candidate_count: number;
+  /** Research suggestions in the answer, validated or not. */
+  suggestion_count: number;
+  /** Of those, how many had their registration confirmed against the
+   *  register (Stage 2 §5). */
+  validated_suggestion_count: number;
   /** The registration number of a genuinely unambiguous exact identity, or
    *  null. A client may treat THIS as safe to auto-select; anything else
-   *  requires a human choice. */
+   *  requires a human choice. Never set from a suggestion. */
   exact_registration_number: string | null;
   /** How many rows were demoted for being incidental word matches. */
   demoted_count: number;
@@ -391,28 +509,61 @@ export function rankCandidates<T extends Record<string, any>>(
     rank_relevance: s.relevance,
     rank_score: rankScore(s.tier, s.relevance),
     rank_reason: `${s.relevance}/${s.tier}`,
+    candidate_class: candidateClass(s.row, countryCode),
   }));
 
   const strongRows = adjusted.filter((s) => isStrong(s.relevance));
 
+  // # Only the register decides whether search FOUND anything (Stage 2 §1)
+  //
+  // Every count below that gates continuation is taken over authoritative
+  // rows alone. A research pass can return three confident-looking rows for a
+  // product that is not in the register at all; counting them here would let
+  // a model's confidence masquerade as a register finding, which is the whole
+  // Hortitrol defect.
+  const authoritativeRows = adjusted.filter(
+    (s) => isAuthoritativeClass(candidateClass(s.row, countryCode)),
+  );
+  const strongOfficialRows = authoritativeRows.filter((s) => isStrong(s.relevance));
+  const suggestionRows = adjusted.filter(
+    (s) => !isAuthoritativeClass(candidateClass(s.row, countryCode)),
+  );
+
   // # When ONE result may be treated as an exact identity (task §1)
   //
-  // Only when the identity is genuinely unambiguous: exactly one row whose
-  // name IS the query, and no OTHER row credible enough to be a rival. An
-  // exact name sitting beside a second strong candidate is still a choice for
-  // a human — "Hortitrol winter oil" must not silently become one product
-  // because it happened to sort first.
-  const exactRows = adjusted.filter((s) => s.relevance === "exact_name");
+  // Only when the identity is genuinely unambiguous: exactly one AUTHORITATIVE
+  // row whose name IS the query, and no OTHER row credible enough to be a
+  // rival. An exact name sitting beside a second strong candidate is still a
+  // choice for a human — "Hortitrol winter oil" must not silently become one
+  // product because it happened to sort first.
+  //
+  // Rivals are counted across ALL strong rows, not just authoritative ones: a
+  // credible suggestion beside an exact register hit is still a reason to ask.
+  const exactRows = authoritativeRows.filter((s) => s.relevance === "exact_name");
   const rivals = strongRows.filter((s) => s.relevance !== "exact_name");
   const exactRegistration = exactRows.length === 1 && rivals.length === 0
     ? (String(exactRows[0].row?.registration_number ?? "").trim() || null)
     : null;
 
+  const searchState: SearchState = strongOfficialRows.length === 0
+    ? "no_official_match"
+    : exactRegistration
+    ? "exact"
+    : "ambiguous";
+
   return {
     results,
     summary: {
-      ambiguous: strongRows.length > 1,
+      search_state: searchState,
+      ambiguous: searchState !== "exact",
+      auto_select_allowed: searchState === "exact",
       strong_candidate_count: strongRows.length,
+      strong_official_candidate_count: strongOfficialRows.length,
+      official_candidate_count: authoritativeRows.length,
+      suggestion_count: suggestionRows.length,
+      validated_suggestion_count: suggestionRows.filter(
+        (s) => candidateClass(s.row, countryCode) === "validated_suggestion",
+      ).length,
       exact_registration_number: exactRegistration,
       demoted_count: demotedCount,
     },

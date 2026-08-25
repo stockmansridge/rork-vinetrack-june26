@@ -173,6 +173,12 @@ import {
 } from "./research/research.ts";
 import { rankCandidates } from "./ranking.ts";
 import {
+  createPostgrestSuggestionStore,
+  SUGGESTION_CACHE_TTL_SECONDS,
+  suggestionCacheKey,
+  validateResearchSuggestions,
+} from "./research_suggestions.ts";
+import {
   buildDiagnostics,
   type CandidateDiagnostic,
   candidatesFromSearchResults,
@@ -1255,7 +1261,11 @@ Deno.serve(async (req: Request) => {
        * diagnostics are built from the RANKED rows, so the recorded candidate
        * order is always the order the client actually received.
        */
-      const servedSearch = (rows: any[], method: LookupMethod) => {
+      const servedSearch = (
+        rows: any[],
+        method: LookupMethod,
+        cache: LookupCacheState = "none",
+      ) => {
         const ranked = rankCandidates(rows ?? [], query, countryCode);
         return json(withDiagnostics(
           {
@@ -1267,9 +1277,42 @@ Deno.serve(async (req: Request) => {
             query,
             candidates: candidatesFromSearchResults(ranked.results),
             method,
+            cache,
           },
         ));
       };
+
+      // ---- Stage 2: research suggestions are stabilised and validated -----
+      //
+      // Reached ONLY when the register found nothing. Everything below is
+      // about a query the register could not answer.
+
+      /**
+       * Read ONE exact registration from the official register (Stage 2 §5).
+       *
+       * Reuses the adapter's digit-query path, so a research-suggested number
+       * is confirmed by the same code that serves a user typing that number
+       * into search. Returns null when the register does not hold it — at
+       * which point the number is stripped rather than served.
+       */
+      const lookupRegistrationNumber = async (number: string) => {
+        if (jurEnv.register_support !== "supported") return null;
+        if (!/^\d{3,8}$/.test(number)) return null;
+        const rows = await discoverRegisterCandidates(
+          countryCode,
+          number,
+          { fetchFn: fetch, now: () => new Date() },
+          2,
+        );
+        return rows.find((r) => r.registration_number === number) ?? null;
+      };
+
+      const suggestionStore = createPostgrestSuggestionStore(
+        Deno.env.get("SUPABASE_URL") ?? "",
+        MASTER_SERVICE_KEY,
+        fetch,
+      );
+      const suggestionKey = suggestionCacheKey(countryCode, query);
 
       // WEB RESEARCH IS NOT FREE (task §24), and it is not FAST either.
       //
@@ -1300,6 +1343,24 @@ Deno.serve(async (req: Request) => {
 
       if (!shouldResearch && authoritative.length) {
         return servedSearch(authoritative, deterministicMethod());
+      }
+
+      // # Cross-isolate stability (Stage 2 §4)
+      //
+      // The per-isolate `SourceCache` cannot deliver parity: Portal and iOS
+      // land on different isolates, so each ran its OWN research pass and each
+      // got its own answer — which is how one query reached 33182 on one
+      // platform and 50067 on the other. This shared read makes the same
+      // country + normalised query return the same suggestion set for the
+      // cache lifetime, whichever isolate serves it.
+      //
+      // Only for the register-found-nothing case. A register answer is already
+      // deterministic and must never be served from a suggestion cache.
+      if (shouldResearch && suggestionStore && authoritative.length === 0) {
+        const cached = await suggestionStore.read(suggestionKey);
+        if (cached?.length) {
+          return servedSearch(cached, "research", "hit");
+        }
       }
 
       if (shouldResearch) {
@@ -1338,9 +1399,35 @@ Deno.serve(async (req: Request) => {
             registrationSchemeForCode(jur.code),
           )
             .filter((r) => !seen.has(String(r?.name ?? "").toLowerCase()));
-          return servedSearch(
+
+          // # Nothing model-generated becomes canonical unvalidated (§5)
+          //
+          // Every suggested registration number is read back from the
+          // register. Confirmed → the row is rebuilt from the REGISTER's name,
+          // number and registrant. Not confirmed → the number is stripped, so
+          // a downstream structured lookup can never be handed a pointer to a
+          // registration that may not exist.
+          const validated = await validateResearchSuggestions(
             [...authoritative, ...researched],
+            { countryCode, lookup: lookupRegistrationNumber },
+          );
+          degradedStages.push(...validated.degraded);
+
+          // Cache the SERVED rows, so the next isolate answers identically.
+          if (suggestionStore && authoritative.length === 0) {
+            await suggestionStore.write(
+              suggestionKey,
+              countryCode,
+              query,
+              validated.rows,
+              SUGGESTION_CACHE_TTL_SECONDS,
+            );
+          }
+
+          return servedSearch(
+            validated.rows,
             authoritative.length ? "official_register_and_research" : "research",
+            suggestionStore && authoritative.length === 0 ? "miss" : "none",
           );
         }
         // Research failed. Authoritative hits alone are a complete answer;
