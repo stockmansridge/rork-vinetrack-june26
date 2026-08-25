@@ -75,9 +75,46 @@ nonisolated enum ChemicalLabelRateBasis: String, Codable, Sendable, CaseIterable
 
 /// One rate option from a registered label.
 nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable {
-    nonisolated var id: String { "\(basis.rawValue)|\(label)|\(minValue ?? value ?? 0)" }
+
+    /// Content-addressed identity.
+    ///
+    /// # The collision this replaces
+    ///
+    /// The identity was `basis|label|minValue ?? value ?? 0`, which omitted the
+    /// unit, the range's upper bound and the ambiguity flag. A label stating
+    /// `2 L/100 L` and `2 kg/100 L`, or `1–2 L/ha` and `1–5 L/ha`, produced ONE
+    /// id for two different rates — and a SwiftUI `ForEach` over colliding ids
+    /// drops rows and mis-animates the ones it keeps. Multi-rate labels are
+    /// exactly what this work introduces, so that collision would have gone
+    /// from an edge case to the normal condition.
+    ///
+    /// Every field that can distinguish two rates now participates. It is
+    /// deliberately NOT index-based: a positional id changes when the server
+    /// reorders or a sibling is deleted, which breaks selection and animation
+    /// for a rate that did not itself change.
+    nonisolated var id: String {
+        [
+            basis.rawValue,
+            label,
+            value.map(Self.idNumber) ?? "-",
+            minValue.map(Self.idNumber) ?? "-",
+            maxValue.map(Self.idNumber) ?? "-",
+            unit,
+            conditionIsAmbiguous ? "amb" : "-",
+            rawText ?? "-"
+        ].joined(separator: "|")
+    }
+
+    /// Stable numeric rendering for identity — never locale-formatted.
+    private static func idNumber(_ value: Double) -> String {
+        String(format: "%.6g", value)
+    }
 
     /// What the label calls this rate, e.g. `"Low disease pressure"`.
+    ///
+    /// This is the CONDITION under which the rate applies — `"Dilute
+    /// spraying"`, `"Early season"`, `"High disease pressure"`. Read verbatim
+    /// from the label; never synthesised.
     var label: String
     var basis: ChemicalLabelRateBasis
     /// A single rate value, for the non-range bases.
@@ -88,9 +125,17 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
     var maxValue: Double?
     /// The unit the rate is quoted in, e.g. `"L"`, `"mL"`, `"kg"`, `"g"`.
     var unit: String
-    /// Verbatim label text when `basis == .other`, so an unusual basis is
-    /// preserved rather than discarded.
+    /// Verbatim label text the rate was read from. Always present on
+    /// document-derived rates, so the authoritative source wording survives
+    /// alongside the structured values.
     var rawText: String?
+    /// The label states SEVERAL rates on this basis and the server could not
+    /// prove which condition governs which number.
+    ///
+    /// The numbers remain authoritative — only the ASSOCIATION is unproven.
+    /// A client must make the operator choose rather than silently applying
+    /// the first one. Never `true` for a rate whose condition is known.
+    var conditionIsAmbiguous: Bool
 
     init(
         label: String = "",
@@ -99,7 +144,8 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
         minValue: Double? = nil,
         maxValue: Double? = nil,
         unit: String = "",
-        rawText: String? = nil
+        rawText: String? = nil,
+        conditionIsAmbiguous: Bool = false
     ) {
         self.label = label.trimmingCharacters(in: .whitespacesAndNewlines)
         self.basis = basis
@@ -109,6 +155,7 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
         self.unit = unit.trimmingCharacters(in: .whitespacesAndNewlines)
         let raw = rawText?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.rawText = (raw?.isEmpty ?? true) ? nil : raw
+        self.conditionIsAmbiguous = conditionIsAmbiguous
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -116,6 +163,7 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
         case minValue = "min_value"
         case maxValue = "max_value"
         case rawText = "raw_text"
+        case conditionIsAmbiguous = "condition_ambiguous"
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -128,6 +176,11 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
         maxValue = try c.decodeIfPresent(Double.self, forKey: .maxValue)
         unit = try c.decodeIfPresent(String.self, forKey: .unit) ?? ""
         rawText = try c.decodeIfPresent(String.self, forKey: .rawText)
+        // Additive and tolerant: absence means "the association is sound",
+        // which is the correct reading for every record written before the
+        // multi-rate contract existed.
+        conditionIsAmbiguous =
+            ((try? c.decodeIfPresent(Bool.self, forKey: .conditionIsAmbiguous)) ?? nil) ?? false
     }
 
     /// `"1.5 L/ha"` or `"1.0–2.0 L/ha"`.
@@ -166,7 +219,34 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
 /// needs to evaluate chemistry against the disease actually being targeted,
 /// and that mapping only exists on the label.
 nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifiable {
-    nonisolated var id: String { "\(crop)|\(targetRaw)" }
+
+    /// Content-addressed identity.
+    ///
+    /// # The collision this replaces
+    ///
+    /// The identity was `crop|targetRaw`, which assumed one registered use per
+    /// crop+target pair. A label may register the same crop and target under
+    /// several distinct conditions — different growth stages, different WHPs,
+    /// different restrictions — and the server-side merge can also present a
+    /// label-backed use beside an AI-suggested one for the same pair. Both
+    /// collided onto a single id, so a SwiftUI `ForEach` would drop one of
+    /// them silently.
+    ///
+    /// The distinguishing facts now participate: the periods, the restriction
+    /// wording, and a digest of the rate set. Content-addressed rather than
+    /// positional, so an id stays stable when a sibling use is added, removed
+    /// or reordered.
+    nonisolated var id: String {
+        let rateDigest = rates.map(\.id).joined(separator: ";")
+        return [
+            crop,
+            targetRaw,
+            withholdingPeriodDays.map(String.init) ?? "-",
+            reEntryPeriodHours.map(String.init) ?? "-",
+            restrictions ?? "-",
+            rateDigest.isEmpty ? "-" : String(rateDigest.hashValue, radix: 16)
+        ].joined(separator: "|")
+    }
 
     /// The crop the use is registered for, e.g. `"Grapes"`. Kept as label text
     /// because registrations distinguish winegrapes from tablegrapes.
@@ -246,6 +326,79 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
         return c.contains("grape") || c.contains("vine")
     }
 
+    // MARK: - Rate bases (task §4)
+    //
+    // VineTrack retains EVERY authoritative basis the label states. These
+    // accessors partition the rates for presentation and calculation; not one
+    // of them converts, derives or discards a rate. A label that states only
+    // a hectare rate has no /100 L rate, and VineTrack says so rather than
+    // manufacturing one from a carrier volume the label never mentioned.
+
+    /// Rates the label quotes against spray mixture volume.
+    nonisolated var ratesPer100L: [ChemicalLabelRate] {
+        rates.filter(\.basis.isVolumeBased)
+    }
+
+    /// Rates the label quotes against ground area.
+    nonisolated var ratesPerHectare: [ChemicalLabelRate] {
+        rates.filter(\.basis.isAreaBased)
+    }
+
+    /// Rates the label expresses some other way (per vine, per metre of row),
+    /// carried verbatim rather than forced into a shape they do not fit.
+    nonisolated var ratesOtherBasis: [ChemicalLabelRate] {
+        rates.filter { $0.basis == .other }
+    }
+
+    /// True when the label states rates on BOTH bases for this use.
+    ///
+    /// Not an error and not a duplicate: they are two ways of expressing one
+    /// instruction, and a grower legitimately needs whichever matches how they
+    /// are spraying today.
+    nonisolated var hasBothRateBases: Bool {
+        !ratesPer100L.isEmpty && !ratesPerHectare.isEmpty
+    }
+
+    /// The rates VineTrack's spray workflow should lead with.
+    ///
+    /// /100 L is preferred because it is the basis VineTrack's dilute and
+    /// concentrate spray calculations are built on. This is a PRESENTATION
+    /// preference applied at the point of use — it is emphatically not an
+    /// extraction rule, and `ratesPerHectare` stays populated and available
+    /// whenever the label states one.
+    nonisolated var preferredRates: [ChemicalLabelRate] {
+        if !ratesPer100L.isEmpty { return ratesPer100L }
+        if !ratesPerHectare.isEmpty { return ratesPerHectare }
+        return ratesOtherBasis
+    }
+
+    /// The single rate a calculation should start from, or `nil`.
+    ///
+    /// Returns `nil` when the choice is not VineTrack's to make: several
+    /// candidate rates, or an unproven rate/condition association. Picking one
+    /// in either case would apply a dose the label did not authorise for the
+    /// situation, so the operator is asked instead.
+    nonisolated var unambiguousPreferredRate: ChemicalLabelRate? {
+        let candidates = preferredRates
+        guard candidates.count == 1, let only = candidates.first else { return nil }
+        guard !only.conditionIsAmbiguous, only.proposedValue != nil else { return nil }
+        return only
+    }
+
+    /// True when this use carries a rate whose governing condition is unproven.
+    nonisolated var hasAmbiguousRateCondition: Bool {
+        rates.contains { $0.conditionIsAmbiguous }
+    }
+
+    /// True when the use states at least one rate a calculation could use.
+    ///
+    /// A `basis: .other` rate is verbatim wording, not a usable number, so it
+    /// does not count — this is the signal the save contract will need for
+    /// "registered on grapevines but no usable grapevine rate".
+    nonisolated var hasUsableRate: Bool {
+        rates.contains { $0.basis != .other && $0.proposedValue != nil }
+    }
+
     /// Conservative mapping from label wording onto VineTrack's typed targets.
     ///
     /// Only maps when the wording is unambiguous. Anything else stays `nil`
@@ -284,4 +437,15 @@ extension Array where Element == ChemicalRegisteredUse {
         var seen = Set<String>()
         return viticultural.compactMap(\.target).filter { seen.insert($0.rawValue).inserted }
     }
+
+    /// Every /100 L rate across these uses, in order.
+    var allRatesPer100L: [ChemicalLabelRate] { flatMap(\.ratesPer100L) }
+
+    /// Every /hectare rate across these uses, in order.
+    var allRatesPerHectare: [ChemicalLabelRate] { flatMap(\.ratesPerHectare) }
+
+    /// True when at least one grapevine use states a rate a calculation can
+    /// actually use. The save contract's "grapevine use but no usable rate"
+    /// check reads this.
+    var hasUsableViticulturalRate: Bool { viticultural.contains { $0.hasUsableRate } }
 }

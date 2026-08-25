@@ -471,7 +471,7 @@ function useFor(merged: any, targetRaw: string): any {
 // Rate grammar units (bounded, deterministic)
 // ===========================================================================
 
-Deno.test("LD2 grammar: measured label wordings parse exactly; unparseable wording stays verbatim; same-basis disagreement fails the whole cell closed", () => {
+Deno.test("LD2 grammar: measured label wordings parse exactly; unparseable wording stays verbatim; multiple same-basis rates are kept independently", () => {
   // The Sprayseal regression statement.
   assertEquals(parseRateCell(SPRAYSEAL_RATE_TEXT), [{
     label: "",
@@ -520,14 +520,53 @@ Deno.test("LD2 grammar: measured label wordings parse exactly; unparseable wordi
     raw_text: "Apply as directed by an agronomist",
   }]);
 
-  // Two different numbers on the SAME basis in one cell → whole cell verbatim.
+  // Two different numbers on the SAME basis in one cell.
+  //
+  // This USED to collapse the whole cell into one unusable `basis:"other"`
+  // entry — the defect that produced "2 L / 100 L 3 L / 100 L 3 L / 100 L…".
+  // Both readings are now kept as independent structured rates. The trailing
+  // "early season" / "late season" wording is NOT a qualifier the grammar can
+  // attribute (it follows the rate rather than introducing it), so the
+  // association is declared unproven instead of being guessed.
   const conflicted = "30 mL/100 L early season 60 mL/100 L late season";
-  assertEquals(parseRateCell(conflicted), [{
-    label: "",
-    basis: "other",
-    unit: "",
-    raw_text: conflicted,
-  }]);
+  assertEquals(parseRateCell(conflicted), [
+    {
+      label: "",
+      raw_text: conflicted,
+      basis: "per_100_litres",
+      value: 30,
+      unit: "mL",
+      condition_ambiguous: true,
+    },
+    {
+      label: "",
+      raw_text: conflicted,
+      basis: "per_100_litres",
+      value: 60,
+      unit: "mL",
+      condition_ambiguous: true,
+    },
+  ]);
+
+  // The same shape WITH attributable qualifiers: two rates, each owning its
+  // condition, and nothing ambiguous.
+  const qualified = "Dilute spraying: 2 L/100 L Concentrate spraying: 3 L/100 L";
+  assertEquals(parseRateCell(qualified), [
+    {
+      label: "Dilute spraying",
+      raw_text: qualified,
+      basis: "per_100_litres",
+      value: 2,
+      unit: "L",
+    },
+    {
+      label: "Concentrate spraying",
+      raw_text: qualified,
+      basis: "per_100_litres",
+      value: 3,
+      unit: "L",
+    },
+  ]);
 
   // Empty cell → no rates at all (a rate the label does not give is absent).
   assertEquals(parseRateCell("   "), []);
@@ -754,11 +793,12 @@ Deno.test("LD2-C: an AI rate disagreeing with the document rate → document ser
 });
 
 // ===========================================================================
-// LD2-D — ambiguous binding fails closed
+// LD2-D — conditional rates across rows are KEPT, each with its condition
 // ===========================================================================
 
-/** Synthetic crop-column table: two rows for the SAME claim with different
- * same-basis rates (nothing deterministic can pick one). */
+/** Synthetic crop-column table: two rows for the SAME claim, each stating a
+ * different same-basis rate under its own critical-comments condition. This
+ * is the normal shape of a seasonal label, not a conflict. */
 const AMBIGUOUS_ITEMS: PdfTextItem[] = [
   T(1, 90, 720, 120, "DIRECTIONS FOR USE"),
   T(1, 100, 700, 30, "CROP"),
@@ -775,7 +815,7 @@ const AMBIGUOUS_ITEMS: PdfTextItem[] = [
   T(1, 400, 600, 80, "Late season"),
 ];
 
-Deno.test("LD2-D: two rows binding one claim with conflicting same-basis rates → NO rate served, both rows preserved in unbound_rows, the gap stays", async () => {
+Deno.test("LD2-D: two rows binding one claim serve BOTH rates, each carrying its own row condition", async () => {
   clearApvmaCache();
   const register = sprayRegisterLd2();
   register.produse["80160"] = [{ pcode: "80160", hostcode: "FRVG", pestcode: "YDIEB" }];
@@ -786,24 +826,45 @@ Deno.test("LD2-D: two rows binding one claim with conflicting same-basis rates �
   const merged = buildRegisterOnlyStructured(reg, 1);
 
   const use = useFor(merged, "EUTYPA DIEBACK");
-  assertEquals(use.rates, [], "ambiguity serves nothing");
-  assert(
-    merged.verification.unresolved_fields.includes("rates:GRAPEVINE"),
-    "the structured-rate gap stays honestly listed",
-  );
-  assertEquals(merged.label_extraction.unbound_rows.length, 2);
+
+  // Both label rates survive. Discarding them (the old behaviour) threw away
+  // two correct readings because the parser could not choose between them —
+  // but the label never asked anyone to choose: it states both, seasonally.
+  assertEquals(use.rates.length, 2, "both conditional rates are served");
   assertEquals(
     // deno-lint-ignore no-explicit-any
-    merged.label_extraction.unbound_rows.every((r: any) => r.reason === "conflicting_rates"),
-    true,
+    use.rates.map((r: any) => r.value).sort((a: number, b: number) => a - b),
+    [30, 60],
   );
   assert(
     // deno-lint-ignore no-explicit-any
-    merged.label_extraction.unbound_rows.some((r: any) => r.rate_texts[0] === "30 mL/100 L") &&
-      // deno-lint-ignore no-explicit-any
-      merged.label_extraction.unbound_rows.some((r: any) => r.rate_texts[0] === "60 mL/100 L"),
-    "both verbatim readings preserved for review",
+    use.rates.every((r: any) => r.basis === "per_100_litres"),
+    "the authoritative basis is preserved exactly on both",
   );
+
+  // Each rate carries the condition its own row printed — which is the whole
+  // point of keeping them apart.
+  assertEquals(
+    // deno-lint-ignore no-explicit-any
+    use.rates.map((r: any) => r.label).sort(),
+    ["Early season", "Late season"],
+  );
+
+  // Conditions are attributable, so nothing is flagged ambiguous.
+  assert(
+    // deno-lint-ignore no-explicit-any
+    use.rates.every((r: any) => r.condition_ambiguous === undefined),
+    "distinguishable conditions must not be reported as ambiguous",
+  );
+
+  // The rate gap clears: structured rates WERE bound for this crop.
+  assert(
+    !merged.verification.unresolved_fields.includes("rates:GRAPEVINE"),
+    "the rate gap must clear once structured rates are served",
+  );
+
+  // Nothing was filed for review: both rows bound successfully.
+  assertEquals(merged.label_extraction.unbound_rows.length, 0);
 });
 
 // ===========================================================================

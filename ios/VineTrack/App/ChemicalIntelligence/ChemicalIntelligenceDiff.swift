@@ -492,20 +492,43 @@ nonisolated enum ChemicalIntelligenceDiffer {
     /// Rates within one use. A changed VALUE on the same basis is reported as a
     /// change rather than an add + remove pair, because "100 → 80–100 mL/100 L"
     /// is one decision for the operator, not two facts.
+    ///
+    /// # Why this groups into slots rather than keying a dictionary directly
+    ///
+    /// `rateKey` is `basis|label|unit` — deliberately WITHOUT the numbers, so a
+    /// changed value reads as one `.changed` rather than a remove/add pair.
+    /// That was safe only while a use held at most one rate per basis.
+    ///
+    /// Multi-rate labels break it: two unattributed rates on one basis (the
+    /// `2 L/100 L` + `3 L/100 L` case) share a key, and `dict[key] = rate`
+    /// silently kept whichever came last. Re-verify would then compare one
+    /// stored rate against one fresh rate and report nothing while a second
+    /// rate quietly appeared or vanished — data loss in the one screen whose
+    /// entire job is to tell the operator what changed.
+    ///
+    /// A slot now holds every rate sharing a key. One rate on each side keeps
+    /// the readable message; anything else is compared by full rate identity,
+    /// so nothing can be dropped.
     private static func diffRates(
         _ current: [ChemicalLabelRate],
         _ candidate: [ChemicalLabelRate],
         subject: String,
         into changes: inout [ChemicalIntelligenceChange]
     ) {
-        var currentByBasis: [String: ChemicalLabelRate] = [:]
-        for rate in current { currentByBasis[rateKey(rate)] = rate }
-        var candidateByBasis: [String: ChemicalLabelRate] = [:]
-        for rate in candidate { candidateByBasis[rateKey(rate)] = rate }
+        var currentSlots: [String: [ChemicalLabelRate]] = [:]
+        for rate in current { currentSlots[rateKey(rate), default: []].append(rate) }
+        var candidateSlots: [String: [ChemicalLabelRate]] = [:]
+        for rate in candidate { candidateSlots[rateKey(rate), default: []].append(rate) }
 
-        // Same basis + label on both sides: compare the numbers.
-        for rate in candidate {
-            if let prior = currentByBasis[rateKey(rate)] {
+        for key in Set(currentSlots.keys).union(candidateSlots.keys).sorted() {
+            let priors = currentSlots[key] ?? []
+            let fresh = candidateSlots[key] ?? []
+
+            // One rate on each side of the slot: keep the readable
+            // single-decision message.
+            if priors.count == 1, fresh.count == 1 {
+                let prior = priors[0]
+                let rate = fresh[0]
                 if prior.displayRate != rate.displayRate {
                     changes.append(
                         ChemicalIntelligenceChange(
@@ -519,27 +542,33 @@ nonisolated enum ChemicalIntelligenceDiffer {
                 }
                 continue
             }
-            // A rate on a basis the record did not have at all.
-            changes.append(
-                ChemicalIntelligenceChange(
-                    field: .labelRate,
-                    kind: .added,
-                    subject: subject,
-                    currentValue: nil,
-                    candidateValue: rate.displayRate
+
+            // Otherwise compare by FULL rate identity, so a slot holding
+            // several rates can never lose one.
+            let priorIds = Set(priors.map(\.id))
+            let freshIds = Set(fresh.map(\.id))
+            for rate in fresh where !priorIds.contains(rate.id) {
+                changes.append(
+                    ChemicalIntelligenceChange(
+                        field: .labelRate,
+                        kind: .added,
+                        subject: subject,
+                        currentValue: nil,
+                        candidateValue: rate.displayRate
+                    )
                 )
-            )
-        }
-        for rate in current where candidateByBasis[rateKey(rate)] == nil {
-            changes.append(
-                ChemicalIntelligenceChange(
-                    field: .labelRate,
-                    kind: .removed,
-                    subject: subject,
-                    currentValue: rate.displayRate,
-                    candidateValue: nil
+            }
+            for rate in priors where !freshIds.contains(rate.id) {
+                changes.append(
+                    ChemicalIntelligenceChange(
+                        field: .labelRate,
+                        kind: .removed,
+                        subject: subject,
+                        currentValue: rate.displayRate,
+                        candidateValue: nil
+                    )
                 )
-            )
+            }
         }
     }
 

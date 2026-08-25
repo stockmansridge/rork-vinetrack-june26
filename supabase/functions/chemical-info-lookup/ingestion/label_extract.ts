@@ -321,10 +321,29 @@ export function rateCellCrossesColumns(rawCell: string): boolean {
  * Parse one DFU rate cell into wire rates. Bounded grammar over measured
  * label forms ("Mix 30 mL of X per 100 litres of water", "35 or 54 mL/100 L",
  * "540 mL/ha", ranges with –/to/or). Every entry carries the verbatim cell
- * text. Unparseable wording → ONE `basis:"other"` verbatim entry. Two
- * DIFFERENT numbers on the SAME basis in one cell → the whole cell fails
- * closed to verbatim (a dilute/concentrate distinction the grammar cannot
- * prove is never guessed). An empty cell → no rates at all.
+ * text. Unparseable wording → ONE `basis:"other"` verbatim entry. An empty
+ * cell → no rates at all.
+ *
+ * # Multiple rates on one basis (task §4, §5)
+ *
+ * A registered use legitimately carries SEVERAL rates: a dilute rate and a
+ * concentrate rate, an early-season and a late-season rate, a per-100 L and
+ * a per-hectare rate side by side. Every one is preserved as its own record.
+ *
+ * This function previously kept at most ONE rate per basis, and when a cell
+ * held two different numbers on the same basis it discarded BOTH and emitted
+ * a single `basis:"other"` entry whose `raw_text` was the whole cell — which
+ * is how `"2 L / 100 L 3 L / 100 L 3 L / 100 L…"` reached the app. The
+ * instinct was sound (never guess which rate applies); the remedy threw away
+ * the readings instead of keeping them.
+ *
+ * Now every distinct reading survives in printed order; an identical repeated
+ * reading is deduplicated; where two rates on one basis each carry a
+ * DISTINGUISHING qualifier the condition is attached to its own rate; and
+ * where they do not, every rate on that basis is flagged
+ * `condition_ambiguous` — numbers kept verbatim, association declared
+ * unproven. No rate is ever converted between bases, and no condition is
+ * ever invented.
  *
  * `basisHint` is the column header's own basis and is consulted ONLY for a
  * cell that is nothing but a quantity. It never overrides wording the cell
@@ -393,25 +412,61 @@ export function parseRateCell(
     return [{ label: "", basis: "other", unit: "", raw_text: cell }];
   }
 
-  // Dedupe identical readings; fail the WHOLE cell closed when the same
-  // basis carries different numbers (nothing in the grammar can prove which
-  // applies where).
-  const byBasis = new Map<string, WireLabelRate>();
-  for (const { rate } of matches.sort((a, b) => a.start - b.start)) {
-    const existing = byBasis.get(rate.basis);
-    if (!existing) {
-      byBasis.set(rate.basis, rate);
-      continue;
-    }
-    const same = existing.value === rate.value &&
-      existing.min_value === rate.min_value &&
-      existing.max_value === rate.max_value &&
-      existing.unit === rate.unit;
-    if (!same) {
-      return [{ label: "", basis: "other", unit: "", raw_text: cell }];
-    }
+  // Keep every DISTINCT reading, in printed order. Identity covers the
+  // numbers, the unit AND the label: "Dilute: 35 mL/100 L" and
+  // "Concentrate: 35 mL/100 L" are two real rates that happen to share a
+  // number, and collapsing them would lose a condition the label states.
+  const ordered = matches.sort((a, b) => a.start - b.start).map((m) => m.rate);
+  const distinct: WireLabelRate[] = [];
+  for (const rate of ordered) {
+    const duplicate = distinct.some(
+      (r) => sameRateReading(r, rate) && r.label === rate.label,
+    );
+    if (!duplicate) distinct.push(rate);
   }
-  return Array.from(byBasis.values());
+  return flagAmbiguousConditions(distinct);
+}
+
+/** Whether two rates state the same numbers, unit and basis. */
+export function sameRateReading(a: WireLabelRate, b: WireLabelRate): boolean {
+  return a.basis === b.basis && a.value === b.value &&
+    a.min_value === b.min_value && a.max_value === b.max_value &&
+    a.unit === b.unit;
+}
+
+/**
+ * Flag rates whose governing condition the grammar could not establish.
+ *
+ * Applied per BASIS. Several rates on one basis need a distinguishing
+ * qualifier each, or a reader cannot tell which applies when — the
+ * conservative half of task §5. Rates on DIFFERENT bases are never ambiguous
+ * with respect to each other: a /100 L rate and a /ha rate are two ways of
+ * expressing one instruction, not a choice between two doses.
+ *
+ * Conditions must be present AND distinct. Two rates both labelled
+ * "Grapevines" are no more attributable than two labelled nothing.
+ */
+export function flagAmbiguousConditions(rates: WireLabelRate[]): WireLabelRate[] {
+  const byBasis = new Map<string, WireLabelRate[]>();
+  for (const rate of rates) {
+    const list = byBasis.get(rate.basis) ?? [];
+    list.push(rate);
+    byBasis.set(rate.basis, list);
+  }
+
+  const ambiguousBases = new Set<string>();
+  for (const [basis, list] of byBasis) {
+    if (list.length < 2) continue;
+    const labels = list.map((r) => r.label.trim().toLowerCase());
+    const allLabelled = labels.every((l) => l.length > 0);
+    const allDistinct = new Set(labels).size === labels.length;
+    if (!allLabelled || !allDistinct) ambiguousBases.add(basis);
+  }
+
+  if (!ambiguousBases.size) return rates;
+  return rates.map((rate) =>
+    ambiguousBases.has(rate.basis) ? { ...rate, condition_ambiguous: true } : rate
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1041,6 +1096,15 @@ function rowRates(row: DfuRow): WireLabelRate[] {
 }
 
 /**
+ * The longest CRITICAL COMMENTS cell that still reads as a rate condition.
+ *
+ * "Early season" qualifies a rate. Four sentences of spray-programme guidance
+ * do not — promoting that to a rate's condition would make the rate list
+ * unreadable and imply a precision the table does not have.
+ */
+const ROW_CONDITION_MAX_LENGTH = 80;
+
+/**
  * Attach parsed DFU rows to register claims — THE fail-closed join.
  * A row binds only where `cropsCorrespond` AND at least one target
  * candidate corresponds. Rows that bind nowhere, and rows whose rates
@@ -1093,48 +1157,58 @@ export function bindDfuRows(rows: DfuRow[], claims: LabelUseClaim[]): DfuBinding
     }
   });
 
-  // Cross-row ambiguity per claim: the same basis with different numbers
-  // from different rows → the claim serves nothing from the document.
+  // Several rows binding ONE claim is the normal shape of a conditional
+  // label: an early-season row and a late-season row, or a dilute row and a
+  // concentrate row, all registered against the same crop and target.
+  //
+  // This used to be treated as a conflict — the same basis with different
+  // numbers from different rows made the claim serve NOTHING, and both rows
+  // were filed as `conflicting_rates`. That is the cross-row form of the
+  // collapse repaired in `parseRateCell`: it threw away two correct label
+  // rates because it could not choose between them, when the label never
+  // asked anyone to choose — it stated both, under different conditions.
+  //
+  // Every rate is now kept. The row's own CRITICAL COMMENTS cell is the
+  // condition the label prints for that rate, so it becomes the rate's
+  // condition where the rate does not already carry one from its own cell.
+  // Where rows cannot be told apart that way, the rates are kept and flagged
+  // `condition_ambiguous` — never discarded, never guessed.
   const ratesByClaim = new Map<number, WireLabelRate[]>();
   const commentsByClaim = new Map<number, string[]>();
   for (const [claimIndex, list] of contributions) {
-    const seen = new Map<string, WireLabelRate>();
-    let conflicted = false;
-    for (const contribution of list) {
-      for (const rate of contribution.rates) {
-        const existing = seen.get(rate.basis);
-        if (!existing) {
-          seen.set(rate.basis, rate);
-          continue;
-        }
-        const same = existing.value === rate.value &&
-          existing.min_value === rate.min_value &&
-          existing.max_value === rate.max_value &&
-          existing.unit === rate.unit;
-        if (!same) conflicted = true;
-      }
-    }
-    if (conflicted) {
-      for (const contribution of list) conflictedRows.add(contribution.rowIndex);
-      continue;
-    }
     const rates: WireLabelRate[] = [];
     const comments: string[] = [];
     for (const contribution of list) {
       for (const rate of contribution.rates) {
+        // The rate cell's own qualifier wins; the row's comment is the
+        // fallback condition. Only a SHORT comment reads as a qualifier — a
+        // paragraph of critical comments is guidance, not a rate condition,
+        // and it stays in the claim statements where it belongs.
+        //
+        // A `basis: "other"` rate is unparsed verbatim wording, NOT a
+        // structured rate. Giving it a condition would dress a quote up as an
+        // attributable rate and imply the grammar understood something it
+        // explicitly did not.
+        const condition = rate.basis === "other" ? rate.label : (rate.label ||
+          (contribution.comments.length <= ROW_CONDITION_MAX_LENGTH
+            ? contribution.comments
+            : ""));
+        const withCondition = condition && condition !== rate.label
+          ? { ...rate, label: condition }
+          : rate;
         const dup = rates.some(
           (r) =>
-            r.basis === rate.basis && r.value === rate.value &&
-            r.min_value === rate.min_value && r.max_value === rate.max_value &&
-            r.unit === rate.unit && r.raw_text === rate.raw_text,
+            sameRateReading(r, withCondition) &&
+            r.label === withCondition.label &&
+            r.raw_text === withCondition.raw_text,
         );
-        if (!dup) rates.push(rate);
+        if (!dup) rates.push(withCondition);
       }
       if (contribution.comments && !comments.includes(contribution.comments)) {
         comments.push(contribution.comments);
       }
     }
-    if (rates.length) ratesByClaim.set(claimIndex, rates);
+    if (rates.length) ratesByClaim.set(claimIndex, flagAmbiguousConditions(rates));
     if (comments.length) commentsByClaim.set(claimIndex, comments);
   }
   for (const rowIndex of Array.from(conflictedRows).sort((a, b) => a - b)) {

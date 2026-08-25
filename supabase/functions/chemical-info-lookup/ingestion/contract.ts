@@ -169,6 +169,28 @@ export interface WireLabelRate {
   max_value?: number; // range bases only
   unit: string; // "mL", "L", "g", "kg" — "" for basis "other"
   raw_text: string; // verbatim label wording (always, for document rates)
+  /**
+   * The label states SEVERAL rates on this basis, and the deterministic
+   * grammar could not prove which condition governs which number.
+   *
+   * # Why this exists instead of discarding the rates
+   *
+   * The parser used to fail the WHOLE cell closed in this situation, emitting
+   * one `basis: "other"` entry whose `raw_text` was the entire cell. That is
+   * how a grapevine label reached the app as the unusable string
+   * `"2 L / 100 L 3 L / 100 L 3 L / 100 L…"`. The intent was right — never
+   * guess which rate applies — but the remedy destroyed both readings
+   * instead of keeping them.
+   *
+   * Every rate is now preserved as its own structured record. This flag says
+   * the ASSOCIATION between rate and condition is unproven, so a client must
+   * make the operator choose rather than silently applying the first one. It
+   * never means the numbers are wrong: they are read verbatim from the label,
+   * and `raw_text` carries the source wording for a human to adjudicate.
+   *
+   * Absent (undefined) means the association is sound.
+   */
+  condition_ambiguous?: boolean;
 }
 
 /** One positioned text item from the label PDF's text layer. */
