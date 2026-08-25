@@ -339,6 +339,34 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
     /// assuming that will always be true.
     let reviewStatus: String?
 
+    // MARK: - Server ranking (task §1)
+    //
+    // Ordering is decided by the edge function so iOS, Android and the Portal
+    // cannot disagree about which product a query means. These carry the
+    // server's DECISION and its stated reason; the app displays the order it
+    // was given and never re-sorts on them.
+
+    /// "approved_master" | "official_register" | "suggestion" | "weak_match".
+    let rankTier: String?
+    /// Server name-relevance verdict, e.g. "exact_name", "incidental".
+    let rankRelevance: String?
+    /// 0–100 readable projection of tier + relevance.
+    let rankScore: Double?
+    /// "<relevance>/<tier>", for diagnostics and support conversations.
+    let rankReason: String?
+    /// The row's position BEFORE ranking, so support can see that ranking
+    /// actually changed something.
+    let registerOrder: Int?
+
+    /// True when the SERVER ordered this row.
+    ///
+    /// The reason string is the signal because it is the one field the server
+    /// always sets when it ranks. Used solely to decide whether the deprecated
+    /// on-device fallback ordering is needed.
+    var isServerRanked: Bool {
+        !((rankReason ?? "").trimmingCharacters(in: .whitespacesAndNewlines)).isEmpty
+    }
+
     /// Wire value for a row the jurisdiction's official register returned.
     static let officialRegisterSource: String = "official_register"
     /// Wire value for a row served from the approved master catalogue.
@@ -377,6 +405,11 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
         case source
         case countryCode = "country_code"
         case reviewStatus = "review_status"
+        case rankTier = "rank_tier"
+        case rankRelevance = "rank_relevance"
+        case rankScore = "rank_score"
+        case rankReason = "rank_reason"
+        case registerOrder = "register_order"
     }
 
     init(
@@ -389,7 +422,12 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
         registrationNumber: String? = nil,
         source: String? = nil,
         countryCode: String? = nil,
-        reviewStatus: String? = nil
+        reviewStatus: String? = nil,
+        rankTier: String? = nil,
+        rankRelevance: String? = nil,
+        rankScore: Double? = nil,
+        rankReason: String? = nil,
+        registerOrder: Int? = nil
     ) {
         self.name = name
         self.activeIngredient = activeIngredient
@@ -401,6 +439,11 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
         self.source = source
         self.countryCode = countryCode
         self.reviewStatus = reviewStatus
+        self.rankTier = rankTier
+        self.rankRelevance = rankRelevance
+        self.rankScore = rankScore
+        self.rankReason = rankReason
+        self.registerOrder = registerOrder
     }
 
     /// Tolerant decoding: a row missing any optional field still decodes.
@@ -421,6 +464,11 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
         source = try? c.decodeIfPresent(String.self, forKey: .source)
         countryCode = try? c.decodeIfPresent(String.self, forKey: .countryCode)
         reviewStatus = try? c.decodeIfPresent(String.self, forKey: .reviewStatus)
+        rankTier = (try? c.decodeIfPresent(String.self, forKey: .rankTier)) ?? nil
+        rankRelevance = (try? c.decodeIfPresent(String.self, forKey: .rankRelevance)) ?? nil
+        rankScore = (try? c.decodeIfPresent(Double.self, forKey: .rankScore)) ?? nil
+        rankReason = (try? c.decodeIfPresent(String.self, forKey: .rankReason)) ?? nil
+        registerOrder = (try? c.decodeIfPresent(Int.self, forKey: .registerOrder)) ?? nil
     }
 }
 

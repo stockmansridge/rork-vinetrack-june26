@@ -171,6 +171,7 @@ import {
   runChemicalResearch,
   type ResearchOutcome,
 } from "./research/research.ts";
+import { rankCandidates } from "./ranking.ts";
 import {
   buildDiagnostics,
   type CandidateDiagnostic,
@@ -1244,6 +1245,32 @@ Deno.serve(async (req: Request) => {
         return "unresolved";
       };
 
+      /**
+       * The ONE way the search action may answer (task §1, §2).
+       *
+       * Ranking happens HERE, at the single exit, rather than at each of the
+       * five return sites — a path that forgot to rank would serve raw
+       * register order to one platform and ranked order to another, which is
+       * precisely the divergence this whole task exists to remove. The
+       * diagnostics are built from the RANKED rows, so the recorded candidate
+       * order is always the order the client actually received.
+       */
+      const servedSearch = (rows: any[], method: LookupMethod) => {
+        const ranked = rankCandidates(rows ?? [], query, countryCode);
+        return json(withDiagnostics(
+          {
+            results: ranked.results,
+            ranking: ranked.summary,
+            jurisdiction: jurEnv,
+          },
+          {
+            query,
+            candidates: candidatesFromSearchResults(ranked.results),
+            method,
+          },
+        ));
+      };
+
       // WEB RESEARCH IS NOT FREE (task §24), and it is not FAST either.
       //
       // # Why an authoritative hit now ends the request
@@ -1272,14 +1299,7 @@ Deno.serve(async (req: Request) => {
         (wantsBroaderResults || authoritative.length === 0);
 
       if (!shouldResearch && authoritative.length) {
-        return json(withDiagnostics(
-          { results: authoritative, jurisdiction: jurEnv },
-          {
-            query,
-            candidates: candidatesFromSearchResults(authoritative),
-            method: deterministicMethod(),
-          },
-        ));
+        return servedSearch(authoritative, deterministicMethod());
       }
 
       if (shouldResearch) {
@@ -1318,29 +1338,15 @@ Deno.serve(async (req: Request) => {
             registrationSchemeForCode(jur.code),
           )
             .filter((r) => !seen.has(String(r?.name ?? "").toLowerCase()));
-          const merged = [...authoritative, ...researched];
-          return json(withDiagnostics(
-            { results: merged, jurisdiction: jurEnv },
-            {
-              query,
-              candidates: candidatesFromSearchResults(merged),
-              method: authoritative.length
-                ? "official_register_and_research"
-                : "research",
-            },
-          ));
+          return servedSearch(
+            [...authoritative, ...researched],
+            authoritative.length ? "official_register_and_research" : "research",
+          );
         }
         // Research failed. Authoritative hits alone are a complete answer;
         // only fall through to the legacy model when there is nothing else.
         if (authoritative.length) {
-          return json(withDiagnostics(
-            { results: authoritative, jurisdiction: jurEnv },
-            {
-              query,
-              candidates: candidatesFromSearchResults(authoritative),
-              method: deterministicMethod(),
-            },
-          ));
+          return servedSearch(authoritative, deterministicMethod());
         }
       }
 
@@ -1360,25 +1366,14 @@ Deno.serve(async (req: Request) => {
             ),
           ];
         }
-        return json(withDiagnostics(
-          { ...normalized, jurisdiction: jurEnv },
-          {
-            query,
-            candidates: candidatesFromSearchResults(normalized.results ?? []),
-            method: authoritative.length ? deterministicMethod() : "ai_legacy",
-          },
-        ));
+        return servedSearch(
+          normalized.results ?? [],
+          authoritative.length ? deterministicMethod() : "ai_legacy",
+        );
       } catch (err) {
         degradedStages.push("ai_legacy_search_failed");
         if (authoritative.length) {
-          return json(withDiagnostics(
-            { results: authoritative, jurisdiction: jurEnv },
-            {
-              query,
-              candidates: candidatesFromSearchResults(authoritative),
-              method: deterministicMethod(),
-            },
-          ));
+          return servedSearch(authoritative, deterministicMethod());
         }
         throw err;
       }

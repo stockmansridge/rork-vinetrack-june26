@@ -125,8 +125,8 @@ nonisolated enum ChemicalNameRelevanceScorer {
                 : .leadingToken
         }
 
-        // The query's whole words, contiguously, somewhere inside the name.
-        if containsRun(nameTokens, queryTokens) { return .containedPhrase }
+        // A contiguous whole-word occurrence, classified by what FOLLOWS it.
+        if let contained = classifyContainedRun(nameTokens, queryTokens) { return contained }
 
         // Every query word present as a whole word, but not contiguously, OR a
         // single query word appearing anywhere that is not the start. Both are
@@ -144,12 +144,56 @@ nonisolated enum ChemicalNameRelevanceScorer {
         return .unrelated
     }
 
-    private static func containsRun(_ haystack: [String], _ needle: [String]) -> Bool {
-        guard needle.count <= haystack.count else { return false }
+    /// Classify a contiguous whole-word occurrence of the query in the name.
+    ///
+    /// # The defect this repairs
+    ///
+    /// This was a plain `containsRun` returning `.containedPhrase` for ANY
+    /// contiguous run, which made two opposite cases identical:
+    ///
+    /// ```text
+    ///   "Copper" → TRI-BASE BLUE COPPER FUNGICIDE              (wanted)
+    ///   "Switch" → MORTEIN … WITH AUTO SWITCH OFF TECHNOLOGY   (noise)
+    /// ```
+    ///
+    /// Both scored `.containedPhrase`, which `isStrong` treats as a primary
+    /// candidate — so the Mortein row was never demoted and the protection
+    /// this type exists for never fired. Two tests in
+    /// `ChemicalSearchRelevanceTests` already asserted the intended behaviour;
+    /// the code never implemented it, and because that suite is not run by the
+    /// build the contradiction stood.
+    ///
+    /// # The rule
+    ///
+    /// What FOLLOWS the match decides. A query landing at the end of the
+    /// product's identity — only formulation words after it, or nothing — is
+    /// describing the product. A query buried mid-phrase with substantive
+    /// words after it is incidental:
+    ///
+    /// ```text
+    ///   … BLUE COPPER | FUNGICIDE        tail = [fungicide]       → contained
+    ///   … AUTO SWITCH | OFF TECHNOLOGY   tail = [off, technology] → incidental
+    /// ```
+    ///
+    /// Every occurrence is tried and the BEST verdict wins, so one incidental
+    /// mention cannot bury a name that also uses the word properly.
+    ///
+    /// Mirrors `classifyContainedRun` in the edge function's `ranking.ts` —
+    /// the two must agree, or this fallback would order differently from the
+    /// server it stands in for.
+    private static func classifyContainedRun(
+        _ haystack: [String],
+        _ needle: [String]
+    ) -> ChemicalNameRelevance? {
+        guard !needle.isEmpty, needle.count <= haystack.count else { return nil }
+        var found = false
         for start in 0...(haystack.count - needle.count) {
-            if Array(haystack[start..<(start + needle.count)]) == needle { return true }
+            guard Array(haystack[start..<(start + needle.count)]) == needle else { continue }
+            found = true
+            let tail = haystack[(start + needle.count)...]
+            if tail.allSatisfy(formulationTokens.contains) { return .containedPhrase }
         }
-        return false
+        return found ? .incidental : nil
     }
 }
 
@@ -215,6 +259,86 @@ nonisolated enum ChemicalSearchRanking {
         savedChemicals: [SavedChemical],
         vineyardCountry: String,
         query: String = ""
+    ) -> [ChemicalSearchRow] {
+        // SERVER-AUTHORITATIVE PATH (task §1).
+        //
+        // When the edge function ranked, its order IS the order. Re-sorting
+        // here — even by rules that agree most of the time — is what let iOS,
+        // Android and the Portal show three different "best" products for one
+        // query, which is the defect this work exists to remove.
+        if results.contains(where: \.isServerRanked) {
+            return servedOrder(results: results, savedChemicals: savedChemicals)
+        }
+        return legacyOrder(
+            results: results,
+            savedChemicals: savedChemicals,
+            vineyardCountry: vineyardCountry,
+            query: query
+        )
+    }
+
+    /// Present the server's order verbatim.
+    ///
+    /// The one thing still computed on device is `existing` — whether this
+    /// vineyard already stocks the product. That is local data the server
+    /// cannot know, and it drives the "you already have this" affordance.
+    /// Deliberately it does NOT reorder: the duplicate is flagged where it
+    /// stands, so the served order survives intact.
+    private static func servedOrder(
+        results: [ChemicalSearchResult],
+        savedChemicals: [SavedChemical]
+    ) -> [ChemicalSearchRow] {
+        results.map { result in
+            ChemicalSearchRow(
+                result: result,
+                tier: tier(fromServer: result.rankTier),
+                existing: existingMatch(for: result, in: savedChemicals),
+                relevance: relevance(fromServer: result.rankRelevance)
+            )
+        }
+    }
+
+    /// Map the server's tier string onto the display tier.
+    static func tier(fromServer raw: String?) -> ChemicalSearchTier {
+        switch (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "approved_master": return .approvedMaster
+        case "official_register": return .officialRegister
+        case "weak_match": return .weakMatch
+        default: return .suggestion
+        }
+    }
+
+    /// Map the server's relevance string onto the display relevance.
+    static func relevance(fromServer raw: String?) -> ChemicalNameRelevance {
+        switch (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "exact_name": return .exactName
+        case "leading_product_name": return .leadingProductName
+        case "leading_token": return .leadingToken
+        case "contained_phrase": return .containedPhrase
+        case "incidental": return .incidental
+        default: return .unrelated
+        }
+    }
+
+    /// DEPRECATED on-device ordering — deployment transition shim only.
+    ///
+    /// # Why this still exists
+    ///
+    /// Ranking is server-authoritative, but the app and the edge function
+    /// deploy independently. Between an App Store release and the function
+    /// being deployed, a build that had deleted this would show RAW register
+    /// order — `MORTEIN … AUTO SWITCH OFF TECHNOLOGY` above `SWITCH FUNGICIDE`
+    /// — with none of the protection. Keeping it costs one branch and removes
+    /// that window entirely.
+    ///
+    /// Delete once the ranked function is deployed to every environment a
+    /// shipped build can reach. It is reached ONLY when no row carries
+    /// `rank_reason`, so a ranked server silences it completely.
+    private static func legacyOrder(
+        results: [ChemicalSearchResult],
+        savedChemicals: [SavedChemical],
+        vineyardCountry: String,
+        query: String
     ) -> [ChemicalSearchRow] {
         let country = ChemicalRegistration.normaliseCountry(vineyardCountry)
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
