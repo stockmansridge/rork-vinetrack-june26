@@ -22,8 +22,10 @@
 --   T2  SAME-vineyard legacy_tractor_id -> ACCEPTED
 --   T3  CROSS-vineyard legacy_tractor_id, tractor HIDDEN from the caller by
 --       RLS -> REJECTED  *** the case a caller-rights guard would miss ***
---   T4  legacy_tractor_id matching NO tractor row -> ACCEPTED
---       (the guard must not become a second foreign key)
+--   T4  legacy_tractor_id matching NO tractor row -> refused by the EXISTING
+--       foreign key with errcode 23503, NOT by our guard with 23514. The
+--       guard must not pre-empt the foreign key and mislabel an unknown id
+--       as a wrong-vineyard error.
 --   T5  A pre-existing inconsistent row stays readable, editable and
 --       soft-deletable — the guard may never strand production data
 --   T6  Fuel log: cross-vineyard machine_id and cross-vineyard tractor_id are
@@ -31,7 +33,8 @@
 --   T7  Fuel log carrying BOTH links that disagree, both in-vineyard ->
 --       ACCEPTED (reportable warning, not a write error)
 --   T8  The report counts the planted defects exactly, and reports 0 for the
---       checks that are clean
+--       checks that are clean — including the two canary checks (C2, C3) that
+--       the sql/097 foreign key and unique index make structurally impossible
 --   T9  Nothing was inserted or duplicated: active machine counts are
 --       unchanged by running the audit, and no legacy tractor has two active
 --       machines
@@ -65,7 +68,6 @@ declare
   t_b          uuid := gen_random_uuid();   -- tractor in B (hidden from u_a)
   t_ghost      uuid := gen_random_uuid();   -- id with no tractor row, ever
   m_a          uuid := gen_random_uuid();   -- machine in A, linked to t_a
-  m_ghost      uuid := gen_random_uuid();   -- machine in A, dangling legacy link
   m_bad        uuid := gen_random_uuid();   -- planted cross-vineyard machine
   m_deleted    uuid := gen_random_uuid();   -- soft-deleted machine in A
   m_hist       uuid := gen_random_uuid();   -- machine in A linked to t_a2
@@ -204,18 +206,36 @@ begin
   raise notice 'T3 passed (the cross-vineyard regression case)';
 
   -- =====================================================================
-  -- T4. legacy_tractor_id matching no tractor row -> ACCEPTED
+  -- T4. An unknown legacy_tractor_id belongs to the FOREIGN KEY, not to us
   --
-  -- The FK is ON DELETE SET NULL. Turning this guard into an existence check
-  -- would make it a second foreign key and could block a legitimate write.
+  -- `vineyard_machines.legacy_tractor_id references public.tractors(id) on
+  -- delete set null` (sql/097) already owns existence, and it makes a dangling
+  -- link structurally impossible. Our guard is a BEFORE trigger, so it runs
+  -- AHEAD of that constraint: if it treated a missing tractor row as a
+  -- failure it would pre-empt the FK and report an unknown id as 23514
+  -- ("wrong vineyard") instead of 23503 ("no such tractor") — a materially
+  -- misleading error for a client to surface.
+  --
+  -- So the assertion is about WHICH constraint speaks, not merely that the
+  -- write fails.
   -- =====================================================================
-  insert into public.vineyard_machines (id, vineyard_id, name, machine_type, legacy_tractor_id)
-  values (m_ghost, v_a, 'T206 Dangling', 'tractor', t_ghost);
-
-  if not exists (select 1 from public.vineyard_machines where id = m_ghost) then
-    raise exception 'T4 FAILED: a machine with an unknown legacy_tractor_id was rejected';
+  v_state := null;
+  begin
+    insert into public.vineyard_machines (id, vineyard_id, name, machine_type, legacy_tractor_id)
+    values (gen_random_uuid(), v_a, 'T206 Dangling', 'tractor', t_ghost);
+  exception when others then
+    v_state := sqlstate;
+  end;
+  if v_state = '23514' then
+    raise exception
+      'T4 FAILED: the guard pre-empted the foreign key and reported an unknown tractor id as a vineyard mismatch';
   end if;
-  raise notice 'T4 passed';
+  if v_state is distinct from '23503' then
+    raise exception
+      'T4 FAILED: expected the foreign key to refuse an unknown legacy_tractor_id with 23503, got %',
+      coalesce(v_state, 'no error at all — the FK is missing');
+  end if;
+  raise notice 'T4 passed (unknown id refused by the FK, not by the vineyard guard)';
 
   -- =====================================================================
   -- T5. A pre-existing inconsistent row stays fully usable
@@ -338,12 +358,16 @@ begin
     raise exception 'T8 FAILED: the report did not name the planted machine';
   end if;
 
-  -- The dangling link is a warning and must be counted separately.
+  -- C2 is a canary for a dropped foreign key, not a live defect class: T4 just
+  -- proved the FK refuses a dangling link, so this can only ever be 0 while
+  -- that FK exists. A non-zero value here means the schema changed underneath
+  -- us and C1's join can no longer be trusted.
   select offending_count into v_cnt
     from public.vt_equipment_integrity_report()
    where check_name = 'machine_legacy_tractor_missing';
-  if v_cnt <> 1 then
-    raise exception 'T8 FAILED: expected exactly 1 dangling legacy link, report said %', v_cnt;
+  if v_cnt <> 0 then
+    raise exception
+      'T8 FAILED: % dangling legacy link(s) reported — vineyard_machines_legacy_tractor_id_fkey has been dropped', v_cnt;
   end if;
 
   -- The disagreeing fuel log is a warning, not an error.
@@ -361,6 +385,8 @@ begin
   if v_cnt <> 0 then
     raise exception 'T8 FAILED: false positive on fuel_log_machine_cross_vineyard (%)', v_cnt;
   end if;
+  -- C3 is the second canary, for sql/097's partial unique index
+  -- uq_vineyard_machines_legacy_tractor.
   select offending_count into v_cnt
     from public.vt_equipment_integrity_report()
    where check_name = 'duplicate_active_machines_per_legacy_tractor';
@@ -397,7 +423,10 @@ begin
       v_before, v_after;
   end if;
 
-  -- No legacy tractor may back two ACTIVE machines.
+  -- No legacy tractor may back two ACTIVE machines. Enforced by sql/097's
+  -- partial unique index; asserted here so that a future migration dropping
+  -- that index fails this suite instead of silently re-opening the duplicate
+  -- machine defect that C3 exists to watch for.
   select count(*) into v_cnt
     from (
       select legacy_tractor_id

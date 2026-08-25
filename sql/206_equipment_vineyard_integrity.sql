@@ -119,9 +119,15 @@ as $$
 
   union all
   -- C2. An ACTIVE machine pointing at a tractor row that no longer exists.
-  --     Not an error on its own (the FK is ON DELETE SET NULL, so this can
-  --     only happen through a direct write), but it means the legacy grouping
-  --     for that machine's fuel logs is dangling.
+  --
+  --     STRUCTURALLY IMPOSSIBLE while sql/097's foreign key
+  --     `vineyard_machines_legacy_tractor_id_fkey` (ON DELETE SET NULL) is in
+  --     place: the FK refuses an unknown id on write, and nulls the column if
+  --     the tractor is hard-deleted. Retained as a CANARY, not as a live
+  --     defect class — a non-zero count here means that FK has been dropped,
+  --     at which point C1 can no longer be trusted either, because a machine
+  --     could point at an id with no vineyard to compare against.
+  --     Expected value: always 0.
   select
     'machine_legacy_tractor_missing'::text,
     'warning'::text,
@@ -133,11 +139,16 @@ as $$
     and not exists (select 1 from public.tractors t where t.id = m.legacy_tractor_id)
 
   union all
-  -- C3. Two or more ACTIVE machines claiming the same legacy tractor. The
-  --     sql/097 backfill creates exactly one, so a duplicate means a second
-  --     backfill ran against a differently-shaped row set. Reported, never
-  --     auto-merged: choosing which machine's fuel history survives is a
-  --     commercial decision, not a migration's.
+  -- C3. Two or more ACTIVE machines claiming the same legacy tractor.
+  --
+  --     Also structurally impossible while sql/097's partial unique index
+  --     `uq_vineyard_machines_legacy_tractor` (legacy_tractor_id, where not
+  --     null and deleted_at is null) exists — that index is precisely what
+  --     makes the backfill safe to re-run. Retained as a second canary for an
+  --     index that was dropped or created NOT VALID. If it ever does return a
+  --     row it is reported and never auto-merged: choosing which machine's
+  --     fuel history survives is a commercial decision, not a migration's.
+  --     Expected value: always 0.
   select
     'duplicate_active_machines_per_legacy_tractor'::text,
     'error'::text,
@@ -256,9 +267,13 @@ begin
     from public.tractors t
    where t.id = new.legacy_tractor_id;
 
-  -- A missing tractor row is NOT rejected. The FK is ON DELETE SET NULL, and
-  -- turning this into an existence check would make the guard a second foreign
-  -- key that could block legitimate writes during a delete race.
+  -- A missing tractor row is NOT rejected here. Existence is already owned by
+  -- `vineyard_machines_legacy_tractor_id_fkey`, and this BEFORE trigger runs
+  -- ahead of that constraint's check. If the guard raised on a missing row it
+  -- would PRE-EMPT the foreign key and report an unknown id as errcode 23514
+  -- ("wrong vineyard") instead of the accurate 23503 ("no such tractor"),
+  -- which is a materially misleading error for a client to surface. Pass it
+  -- through and let the FK speak. This is a vineyard check, nothing more.
   if v_tractor_vineyard is null then
     return new;
   end if;
