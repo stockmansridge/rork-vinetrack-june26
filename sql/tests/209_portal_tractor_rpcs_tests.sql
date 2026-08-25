@@ -29,7 +29,9 @@
 --   T9  Repeated updates never create a second mirror
 --   T10 Update cannot cross vineyards (wrong vineyard for the tractor id)
 --   T11 A cross-vineyard MIRROR is refused, and the failure leaves NEITHER
---       side written — the atomicity guarantee
+--       side written — the atomicity guarantee. Its cross-vineyard assertions
+--       run with owner rights, because RLS hides the foreign row from the
+--       caller and would make the check pass for the wrong reason.
 --   T12 Self-repair: an active tractor with no mirror gains one, and an
 --       ARCHIVED mirror is not resurrected
 --   T13 No fabricated fuel rate: null -> 0, and a 0-rate tractor stays editable
@@ -472,16 +474,39 @@ begin
     raise exception
       'T11 FAILED: the tractor side persisted after the mirror side failed — the write is not atomic';
   end if;
-  -- And no replacement mirror was created alongside the foreign one.
+
+  -- And no REPLACEMENT mirror was created alongside the foreign one.
+  --
+  -- This count MUST run with owner rights. The mirror was deliberately moved
+  -- to vineyard B, and the caller is a member of A only — as `authenticated`
+  -- RLS hides exactly the row being counted. That is not a detail: counting as
+  -- the caller would report 0 for a mirror that is present but invisible, and
+  -- would report 1 ("correct") in the genuinely broken case where the RPC had
+  -- created a replacement in A while the foreign row stayed hidden. The
+  -- assertion would then pass while the defect it exists to catch was live.
+  -- Same blindness as sql/197, this time in the test rather than the guard.
+  perform set_config('role', 'postgres', true);
   select count(*) into v_cnt
     from public.vineyard_machines m
    where m.legacy_tractor_id = v_t and m.deleted_at is null;
   if v_cnt <> 1 then
-    raise exception 'T11 FAILED: the failed call left % mirrors', v_cnt;
+    raise exception
+      'T11 FAILED: expected exactly 1 mirror (the planted foreign one) after the refused call, found % — %',
+      v_cnt,
+      case
+        when v_cnt = 0 then 'the foreign mirror vanished'
+        else 'the RPC created a replacement mirror instead of refusing'
+      end;
+  end if;
+  -- The surviving mirror must still be the untouched foreign row.
+  if not exists (
+    select 1 from public.vineyard_machines m
+     where m.id = v_m and m.vineyard_id = v_b and m.legacy_tractor_id = v_t
+  ) then
+    raise exception 'T11 FAILED: the refused call modified the foreign mirror';
   end if;
 
-  -- Restore the fixture.
-  perform set_config('role', 'postgres', true);
+  -- Restore the fixture (already running as postgres).
   alter table public.vineyard_machines disable trigger trg_vineyard_machines_validate_legacy_tractor;
   update public.vineyard_machines set vineyard_id = v_a where id = v_m;
   alter table public.vineyard_machines enable trigger trg_vineyard_machines_validate_legacy_tractor;
