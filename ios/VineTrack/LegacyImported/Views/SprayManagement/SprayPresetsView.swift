@@ -330,8 +330,17 @@ struct EditSavedChemicalSheet: View {
                 if store.settings.aiSuggestionsEnabled {
                     lookupSection
                 }
+                // Task §7 information architecture. The order is the WORKFLOW:
+                // identify the product → confirm its chemistry and resistance
+                // → confirm the grapevine rates → reach the labels → save.
+                // Pricing, notes and research provenance follow, in that order,
+                // because none of them is why the operator opened the screen.
+                //
+                // 1. Product
                 productSection
+                // 2. Active Ingredients & Resistance
                 activeIngredientsSection
+                // 3. Grapevine Uses & Rates — the most important section
                 registeredUsesSection
                 if showsProductRates {
                     productRatesSection
@@ -339,19 +348,24 @@ struct EditSavedChemicalSheet: View {
                 if !session.hasStructuredUses {
                     legacyUseSection
                 }
-                detailsSection
-                registrationSection
-                if chemical != nil {
-                    reverifySection
-                }
+                // 4. Labels & References
+                labelsSection
+                // Fertiliser pack/N-P-K stays with the operational data it
+                // belongs to, not among the label evidence.
                 if session.productCategory?.isFertiliser == true {
                     fertiliserSection
                 }
+                // 5. Purchase / Pricing
                 if canViewFinancials {
                     purchaseSection
                 }
-                sharingSection
+                // 6. Notes
                 notesSection
+                // 7. Advanced / Verification Evidence — collapsed by default
+                advancedSection
+                if chemical != nil {
+                    reverifySection
+                }
                 if chemical != nil {
                     dangerZoneSection
                 }
@@ -452,12 +466,35 @@ struct EditSavedChemicalSheet: View {
             LabeledField(label: "Chemical / Product Name") {
                 TextField("e.g. Synertrol Horti Oil", text: $session.name)
             }
+            ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "product_name"))
+
+            // The registration identity, in the jurisdiction's own words, and
+            // on the FIRST section — it is how two similarly named products are
+            // told apart, so hiding it behind a disclosure made the one fact
+            // that establishes identity the hardest thing on the screen to
+            // find. VineTrack still fills it in from a lookup and still never
+            // demands it for an unverified record.
+            if let terms = session.registrationTerms {
+                LabeledField(label: terms.fieldLabel) {
+                    TextField(terms.placeholder, text: $session.chemistryDraft.registrationNumber)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.characters)
+                }
+            } else if let line = session.registrationCompactLine {
+                Label(line, systemImage: "info.circle")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "registration"))
+
             Picker("Category", selection: $session.productCategory) {
                 Text("Uncategorised").tag(ProductCategory?.none)
                 ForEach(ProductCategory.allCases) { option in
                     Text(option.label).tag(ProductCategory?.some(option))
                 }
             }
+            ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "product_category"))
+
             Picker("Form", selection: $session.formType) {
                 ForEach(ChemicalFormType.allCases) { f in
                     Text(f.rawValue).tag(f)
@@ -469,10 +506,21 @@ struct EditSavedChemicalSheet: View {
                     Text(u.rawValue).tag(u)
                 }
             }
+
+            // ONE manufacturer field. It writes the structured registrant, and
+            // `SavedChemical.manufacturer` is projected from it on save — there
+            // is no second box that could hold a different answer.
+            LabeledField(label: "Manufacturer") {
+                TextField("e.g. Syngenta", text: $session.manufacturer)
+            }
         } header: {
             Text("Product")
         } footer: {
-            Text("Fertiliser and nutrient categories unlock pack, N-P-K and inventory fields used by the Fertiliser Calculator.")
+            if let terms = session.registrationTerms {
+                Text(terms.helpText)
+            } else {
+                Text("Fertiliser and nutrient categories unlock pack, N-P-K and inventory fields used by the Fertiliser Calculator.")
+            }
         }
     }
 
@@ -692,19 +740,18 @@ struct EditSavedChemicalSheet: View {
         }
     }
 
-    private var detailsSection: some View {
+    /// Two DISTINCT external references (task §8).
+    ///
+    /// The regulator label is the authoritative document — APVMA in Australia,
+    /// ACVM/EPA in New Zealand — and it leads the section with its own Open
+    /// action. The manufacturer page is supplementary and is drawn as such:
+    /// separate label, separate row, secondary wording. A marketing page must
+    /// never be able to pass for an approved label, which is why these are two
+    /// fields and not one "link".
+    private var labelsSection: some View {
         Section {
-            // ONE manufacturer field. It writes the structured registrant, and
-            // `SavedChemical.manufacturer` is projected from it on save — there
-            // is no second box that could hold a different answer.
-            LabeledField(label: "Manufacturer") {
-                TextField("e.g. Syngenta", text: $session.manufacturer)
-            }
-            if let warning = session.editOutcome?.warning {
-                verificationWarning(warning)
-            }
             LabeledURLField(
-                label: "Official Label URL",
+                label: officialLabelFieldLabel,
                 placeholder: "https://...",
                 text: $session.labelURL,
                 onOpenFailure: { message in
@@ -712,8 +759,10 @@ struct EditSavedChemicalSheet: View {
                     showLinkAlert = true
                 }
             )
+            ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "label_reference"))
+
             LabeledURLField(
-                label: "Product Page URL",
+                label: "Manufacturer product page (optional)",
                 placeholder: "https://...",
                 text: $session.productURL,
                 onOpenFailure: { message in
@@ -722,10 +771,22 @@ struct EditSavedChemicalSheet: View {
                 }
             )
         } header: {
-            Text("Details")
+            Text("Labels & References")
         } footer: {
-            Text("Use Label URL only for the official product label, preferably a PDF. Product pages may be used for manufacturer or marketing information, but are never shown as the official label.")
+            Text("The regulator label is the authoritative document — use the official PDF where there is one. A manufacturer page is supplementary information and is never shown as the approved label.")
         }
+    }
+
+    /// The regulator's own name for its label, so the field says what it IS.
+    ///
+    /// "Official Label URL" was true but anonymous. In Australia the
+    /// authoritative document is the APVMA label, and naming it is what makes
+    /// the distinction from the manufacturer page below self-evident.
+    private var officialLabelFieldLabel: String {
+        guard let scheme = session.registrationTerms?.schemes.first else {
+            return "Official regulator label"
+        }
+        return "\(scheme.label) label"
     }
 
     /// Registration identity: a compact line, with the plumbing behind a
@@ -740,28 +801,33 @@ struct EditSavedChemicalSheet: View {
     ///
     /// So VineTrack fills it in when a lookup finds one, states it in the
     /// jurisdiction's own words, says plainly when there is none, and never asks.
-    private var registrationSection: some View {
+    private var advancedSection: some View {
         Section {
-            if let line = session.registrationCompactLine {
-                Label(
-                    line,
-                    systemImage: session.hasRegistrationNumber ? "checkmark.seal" : "info.circle"
-                )
-                .font(.subheadline)
-                .foregroundStyle(session.hasRegistrationNumber ? Color.primary : Color.secondary)
+            // The RESULT of verification stays visible — that is what the
+            // operator needs. The machinery that produced it goes inside.
+            if let intelligence = session.editOutcome?.intelligence ?? session.seedIntelligence {
+                LabeledContent("Verification") {
+                    Text(intelligence.resolvedVerificationStatus.label)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
             }
-            DisclosureGroup("Technical Details", isExpanded: $showTechnicalDetails) {
+            DisclosureGroup("Verification evidence", isExpanded: $showTechnicalDetails) {
                 technicalDetails
             }
             .font(.subheadline)
-        } header: {
-            Text("Registration")
-        } footer: {
-            if let terms = session.registrationTerms {
-                Text(terms.helpText)
-            } else {
-                Text("VineTrack does not match products against a national register for this country yet, so no registration identifier is recorded.")
+
+            HStack(spacing: 8) {
+                Image(systemName: "person.2.fill")
+                    .foregroundStyle(.secondary)
+                Text("Saved chemicals are shared with all users of this vineyard.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+        } header: {
+            Text("Advanced")
+        } footer: {
+            Text("Research provenance, source URLs and extraction details are kept for auditing. You should not need them for normal use.")
         }
     }
 

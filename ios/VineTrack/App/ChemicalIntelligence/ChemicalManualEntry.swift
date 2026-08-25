@@ -49,6 +49,12 @@ nonisolated struct ChemicalManualRateDraft: Sendable, Hashable, Identifiable {
     var unit: String
     /// Verbatim label wording, for a basis VineTrack has no shape for.
     var rawText: String
+    /// The server could not prove which condition governs this rate (task §5).
+    ///
+    /// Carried THROUGH the editor. Dropping it on the way in would turn every
+    /// unproven rate into a confirmed one the moment a record was opened and
+    /// saved — laundering an ambiguity the label never resolved.
+    var conditionIsAmbiguous: Bool
 
     init(
         id: UUID = UUID(),
@@ -58,7 +64,8 @@ nonisolated struct ChemicalManualRateDraft: Sendable, Hashable, Identifiable {
         minText: String = "",
         maxText: String = "",
         unit: String = "L",
-        rawText: String = ""
+        rawText: String = "",
+        conditionIsAmbiguous: Bool = false
     ) {
         self.id = id
         self.label = label
@@ -68,6 +75,22 @@ nonisolated struct ChemicalManualRateDraft: Sendable, Hashable, Identifiable {
         self.maxText = maxText
         self.unit = unit
         self.rawText = rawText
+        self.conditionIsAmbiguous = conditionIsAmbiguous
+    }
+
+    /// Whether the operator has answered the question the flag asks.
+    ///
+    /// The flag means "the label states several rates on this basis and nothing
+    /// proved which applies when". Naming the condition IS the answer, so a
+    /// rate the operator has labelled is no longer ambiguous. Editing the
+    /// number or the unit resolves nothing — neither says WHEN it applies.
+    var isConditionResolved: Bool {
+        !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Whether this rate still needs the operator to say when it applies.
+    var needsConditionChoice: Bool {
+        conditionIsAmbiguous && !isConditionResolved
     }
 }
 
@@ -519,10 +542,18 @@ nonisolated enum ChemicalManualEntry {
         let unit = draft.unit.trimmingCharacters(in: .whitespacesAndNewlines)
         let label = draft.label.trimmingCharacters(in: .whitespacesAndNewlines)
         let raw = draft.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Clears ONLY when the operator has named the condition.
+        let stillAmbiguous = draft.needsConditionChoice
         switch draft.basis {
         case .perHectare, .per100Litres:
             guard let value = parseDouble(draft.valueText) else { return nil }
-            return ChemicalLabelRate(label: label, basis: draft.basis, value: value, unit: unit)
+            return ChemicalLabelRate(
+                label: label,
+                basis: draft.basis,
+                value: value,
+                unit: unit,
+                conditionIsAmbiguous: stillAmbiguous
+            )
         case .rangePerHectare, .rangePer100Litres:
             guard let low = parseDouble(draft.minText),
                   let high = parseDouble(draft.maxText) else { return nil }
@@ -533,11 +564,18 @@ nonisolated enum ChemicalManualEntry {
                 basis: draft.basis,
                 minValue: min(low, high),
                 maxValue: max(low, high),
-                unit: unit
+                unit: unit,
+                conditionIsAmbiguous: stillAmbiguous
             )
         case .other:
             guard !raw.isEmpty else { return nil }
-            return ChemicalLabelRate(label: label, basis: .other, unit: unit, rawText: raw)
+            return ChemicalLabelRate(
+                label: label,
+                basis: .other,
+                unit: unit,
+                rawText: raw,
+                conditionIsAmbiguous: stillAmbiguous
+            )
         }
     }
 
@@ -567,7 +605,8 @@ nonisolated enum ChemicalManualEntry {
             minText: rate.minValue.map { ChemicalActiveIngredient.formatConcentration($0) } ?? "",
             maxText: rate.maxValue.map { ChemicalActiveIngredient.formatConcentration($0) } ?? "",
             unit: rate.unit,
-            rawText: rate.rawText ?? ""
+            rawText: rate.rawText ?? "",
+            conditionIsAmbiguous: rate.conditionIsAmbiguous
         )
     }
 
