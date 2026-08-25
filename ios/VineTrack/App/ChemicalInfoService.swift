@@ -546,6 +546,7 @@ nonisolated struct ChemicalInfoService: Sendable {
         var payload: [String: Any] = [
             "action": "search",
             "query": query,
+            "client": ChemicalLookupClientContext().wirePayload,
         ]
         if !country.isEmpty { payload["country"] = country }
         let data = try await postEdge(
@@ -553,11 +554,29 @@ nonisolated struct ChemicalInfoService: Sendable {
             payload: payload,
             timeout: ChemicalInfoService.searchTimeout
         )
+        Self.recordDiagnostics(from: data)
         do {
             let decoded = try JSONDecoder().decode(ChemicalSearchResponse.self, from: data)
             return decoded.results
         } catch {
             throw ChemicalLookupError.parseFailed
+        }
+    }
+
+    /// Decode and record the server's diagnostics envelope (task §14).
+    ///
+    /// Best-effort, and deliberately the ONLY place the envelope is read: a
+    /// malformed or absent envelope costs the diagnostics and never the
+    /// lookup, and no caller can start BRANCHING on diagnostics — which would
+    /// defeat the parity guarantee the envelope exists to prove.
+    private static func recordDiagnostics(from data: Data) {
+        guard let envelope = try? JSONDecoder().decode(ChemicalDiagnosticsEnvelope.self, from: data),
+              let diagnostics = envelope.diagnostics,
+              !diagnostics.requestId.isEmpty
+        else { return }
+        print(diagnostics.logLine)
+        Task { @MainActor in
+            ChemicalLookupDiagnosticsRecorder.shared.record(diagnostics)
         }
     }
 
@@ -591,6 +610,7 @@ nonisolated struct ChemicalInfoService: Sendable {
         var payload: [String: Any] = [
             "action": "structured",
             "productName": productName,
+            "client": ChemicalLookupClientContext().wirePayload,
         ]
         if !country.isEmpty { payload["country"] = country }
         // Identity hint from a selected register candidate. Only ever a
@@ -604,6 +624,7 @@ nonisolated struct ChemicalInfoService: Sendable {
             payload: payload,
             timeout: ChemicalInfoService.structuredLookupTimeout
         )
+        Self.recordDiagnostics(from: data)
         do {
             return try JSONDecoder().decode(ChemicalStructuredLookup.self, from: data)
         } catch {

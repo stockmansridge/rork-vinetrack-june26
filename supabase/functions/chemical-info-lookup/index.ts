@@ -171,6 +171,17 @@ import {
   runChemicalResearch,
   type ResearchOutcome,
 } from "./research/research.ts";
+import {
+  buildDiagnostics,
+  type CandidateDiagnostic,
+  candidatesFromSearchResults,
+  diagnosticsLog,
+  type LookupCacheState,
+  type LookupClientContext,
+  type LookupMethod,
+  newRequestId,
+  readClientContext,
+} from "./diagnostics.ts";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -1106,6 +1117,49 @@ Deno.serve(async (req: Request) => {
   }
 
   const action = String(body?.action ?? "").toLowerCase();
+
+  // Task §14 production diagnostics.
+  //
+  // Built from decisions the pipeline has ALREADY made. Nothing downstream
+  // may read these values back to influence ranking, selection or
+  // extraction — a diagnostic that changes the answer is not a diagnostic.
+  const requestId = newRequestId();
+  const clientCtx: LookupClientContext = readClientContext(body);
+  const requestStartedAt = Date.now();
+  const requestedCountryRaw = typeof body?.country === "string" ? body.country : "";
+  // Fail-soft stages are invisible by design; this is where a register
+  // timeout or a research outage becomes visible to a parity investigation.
+  const degradedStages: string[] = [];
+
+  /** Assemble + emit the envelope, and attach it to the response body. */
+  const withDiagnostics = <T extends Record<string, unknown>>(
+    payload: T,
+    d: {
+      query: string;
+      candidates?: CandidateDiagnostic[];
+      selectedRegistration?: string | null;
+      method: LookupMethod;
+      cache?: LookupCacheState;
+    },
+  ): T & { diagnostics: unknown } => {
+    const diagnostics = buildDiagnostics({
+      requestId,
+      client: clientCtx,
+      action,
+      requestedCountry: requestedCountryRaw,
+      resolvedCountryCode: countryCode || null,
+      query: d.query,
+      candidates: d.candidates,
+      selectedRegistration: d.selectedRegistration ?? null,
+      method: d.method,
+      cache: d.cache,
+      startedAt: requestStartedAt,
+      degraded: degradedStages,
+    });
+    console.log(diagnosticsLog(diagnostics));
+    return { ...payload, diagnostics };
+  };
+
   // Lookup jurisdiction — resolved ONCE, from the request's country value
   // (the vineyard's country, sent verbatim by the apps/portal), through the
   // vineyard-country contract table. Every response carries the resulting
@@ -1170,6 +1224,10 @@ Deno.serve(async (req: Request) => {
               registration_number: c.registration_number,
             }));
         } catch (err) {
+          // Fail-soft, and now VISIBLE. A register hiccup on one platform and
+          // not another is a leading explanation for a parity split, and it
+          // used to leave no trace in the response at all.
+          degradedStages.push("register_discovery_failed");
           console.error(
             "register candidate search skipped:",
             err instanceof Error ? err.message : String(err),
@@ -1178,6 +1236,13 @@ Deno.serve(async (req: Request) => {
       }
 
       const authoritative = [...masterHits, ...registerCandidates];
+
+      /** The method label for an answer carried by the deterministic tiers. */
+      const deterministicMethod = (): LookupMethod => {
+        if (masterHits.length) return "master_catalogue";
+        if (registerCandidates.length) return "official_register";
+        return "unresolved";
+      };
 
       // WEB RESEARCH IS NOT FREE (task §24), and it is not FAST either.
       //
@@ -1207,7 +1272,14 @@ Deno.serve(async (req: Request) => {
         (wantsBroaderResults || authoritative.length === 0);
 
       if (!shouldResearch && authoritative.length) {
-        return json({ results: authoritative, jurisdiction: jurEnv });
+        return json(withDiagnostics(
+          { results: authoritative, jurisdiction: jurEnv },
+          {
+            query,
+            candidates: candidatesFromSearchResults(authoritative),
+            method: deterministicMethod(),
+          },
+        ));
       }
 
       if (shouldResearch) {
@@ -1229,6 +1301,7 @@ Deno.serve(async (req: Request) => {
           });
           console.log(researchLog(outcome.telemetry));
         } catch (err) {
+          degradedStages.push("candidate_research_failed");
           console.warn(
             "candidate research failed:",
             err instanceof Error ? err.message : String(err),
@@ -1245,15 +1318,29 @@ Deno.serve(async (req: Request) => {
             registrationSchemeForCode(jur.code),
           )
             .filter((r) => !seen.has(String(r?.name ?? "").toLowerCase()));
-          return json({
-            results: [...authoritative, ...researched],
-            jurisdiction: jurEnv,
-          });
+          const merged = [...authoritative, ...researched];
+          return json(withDiagnostics(
+            { results: merged, jurisdiction: jurEnv },
+            {
+              query,
+              candidates: candidatesFromSearchResults(merged),
+              method: authoritative.length
+                ? "official_register_and_research"
+                : "research",
+            },
+          ));
         }
         // Research failed. Authoritative hits alone are a complete answer;
         // only fall through to the legacy model when there is nothing else.
         if (authoritative.length) {
-          return json({ results: authoritative, jurisdiction: jurEnv });
+          return json(withDiagnostics(
+            { results: authoritative, jurisdiction: jurEnv },
+            {
+              query,
+              candidates: candidatesFromSearchResults(authoritative),
+              method: deterministicMethod(),
+            },
+          ));
         }
       }
 
@@ -1273,10 +1360,25 @@ Deno.serve(async (req: Request) => {
             ),
           ];
         }
-        return json({ ...normalized, jurisdiction: jurEnv });
+        return json(withDiagnostics(
+          { ...normalized, jurisdiction: jurEnv },
+          {
+            query,
+            candidates: candidatesFromSearchResults(normalized.results ?? []),
+            method: authoritative.length ? deterministicMethod() : "ai_legacy",
+          },
+        ));
       } catch (err) {
+        degradedStages.push("ai_legacy_search_failed");
         if (authoritative.length) {
-          return json({ results: authoritative, jurisdiction: jurEnv });
+          return json(withDiagnostics(
+            { results: authoritative, jurisdiction: jurEnv },
+            {
+              query,
+              candidates: candidatesFromSearchResults(authoritative),
+              method: deterministicMethod(),
+            },
+          ));
         }
         throw err;
       }
@@ -1321,9 +1423,19 @@ Deno.serve(async (req: Request) => {
             durationMs: Date.now() - startedAt,
             cache: "none",
           }));
-          return json({ ...buildMasterStructuredResponse(masterRow), jurisdiction: jurEnv });
+          return json(withDiagnostics(
+            { ...buildMasterStructuredResponse(masterRow), jurisdiction: jurEnv },
+            {
+              query: productName,
+              selectedRegistration: registrationNumber ||
+                (masterRow.registration_number ?? null),
+              method: "master_catalogue",
+              cache: "hit",
+            },
+          ));
         }
       } catch (err) {
+        degradedStages.push("master_name_lookup_failed");
         console.error(
           "master lookup fell through:",
           err instanceof Error ? err.message : String(err),
@@ -1510,9 +1622,19 @@ Deno.serve(async (req: Request) => {
               durationMs: Date.now() - startedAt,
               cache: discovery.cache,
             }));
-            return json({ ...buildMasterStructuredResponse(byIdentity), jurisdiction: jurEnv });
+            return json(withDiagnostics(
+              { ...buildMasterStructuredResponse(byIdentity), jurisdiction: jurEnv },
+              {
+                query: productName,
+                selectedRegistration: registrationNumber ||
+                  (byIdentity.registration_number ?? null),
+                method: "master_catalogue",
+                cache: discovery.cache === "hit" ? "hit" : "miss",
+              },
+            ));
           }
         } catch (err) {
+          degradedStages.push("master_identity_lookup_failed");
           console.error(
             "identity master lookup fell through:",
             err instanceof Error ? err.message : String(err),
@@ -1642,7 +1764,16 @@ Deno.serve(async (req: Request) => {
           // The identity's row is already approved (an alias the name path
           // missed, or a review that landed mid-request): serve the approved
           // master, create nothing.
-          return json({ ...buildMasterStructuredResponse(outcome.row), jurisdiction: jurEnv });
+          return json(withDiagnostics(
+            { ...buildMasterStructuredResponse(outcome.row), jurisdiction: jurEnv },
+            {
+              query: productName,
+              selectedRegistration: registrationNumber ||
+                (outcome.row.registration_number ?? null),
+              method: "master_catalogue",
+              cache: discovery.cache === "hit" ? "hit" : "miss",
+            },
+          ));
         }
         if (outcome.row && outcome.row.review_status === "candidate") {
           candidateRow = outcome.row;
@@ -1671,7 +1802,30 @@ Deno.serve(async (req: Request) => {
         errorCategory: discovery.error_category,
       }));
 
-      return json(structured);
+      // The identity actually served, preferring what the register RESOLVED
+      // over what the caller asked for — a parity check compares the answer,
+      // not the question.
+      const servedRegistration = resolved?.registration_number ??
+        structured?.registration?.registration_number ??
+        (registrationNumber || null);
+      const structuredMethod: LookupMethod = discovery.outcome === "resolved"
+        ? "official_register"
+        : projection
+        ? "research"
+        : structured
+        ? "ai_legacy"
+        : "unresolved";
+
+      return json(withDiagnostics(structured, {
+        query: productName,
+        selectedRegistration: servedRegistration,
+        method: structuredMethod,
+        cache: discovery.cache === "hit"
+          ? "hit"
+          : discovery.cache === "none"
+          ? "none"
+          : "miss",
+      }));
     }
 
     if (action === "info") {
