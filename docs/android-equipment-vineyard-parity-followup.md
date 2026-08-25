@@ -74,17 +74,66 @@ The corrected contract, now implemented on iOS and enforced server-side:
   for the vineyard being synced, never for rows with queued local work, and
   never from a delta response.
 
-### 5. Server-side guards now in place (no Android change required, but note them)
+### 5. Tractor vs Vineyard Machine UI boundary (added after the JH Testing repair)
+
+This is the *cause* of the JH Testing defect, and Android still has the same
+open path today. Until it is closed, Android can keep creating the exact orphan
+records that sql/207 had to repair by hand.
+
+- **Remove Tractor from the Vineyard Machines creation picker.** Android must
+  offer only ATV, Side-by-side, Harvester, Utility vehicle and Other vineyard
+  machine. Do NOT remove `tractor` from the Kotlin enum, from the
+  `machine_type` CHECK constraint, or from any decoding path — tractor-backed
+  machine rows remain required internally. This is a creation restriction only.
+- **Keep the current type visible when editing.** If a row is already
+  tractor-typed, the picker must still show Tractor while it is being edited.
+  A dropdown whose selection is missing from its own options renders blank and
+  silently re-types the record on save — corrupting precisely the
+  mis-classified rows the change exists to protect. iOS does this through
+  `VineyardMachineType.pickerCases(editing:)`.
+- **Add the save-path backstop.** Refuse to CREATE a machine with
+  `machineType == tractor && legacyTractorId == null`, and refuse an edit that
+  turns a legitimate machine into one. Do NOT block edits to a row that is
+  already in that state — same restraint as the sql/206 triggers, or existing
+  records become unrepairable from the app. iOS exposes this as
+  `VineyardMachine.isUnlinkedTractorMachine` and returns a `Bool` from the
+  add/update store methods so the form can show an error instead of dismissing
+  on a write that never happened.
+- **Hide tractor-backed machines from the Vineyard Machines list** (filter
+  `legacyTractorId == null`), so a tractor appears to the user under Tractors
+  only, even though a machine row exists underneath for the Fuel Log and legacy
+  costing.
+- **Audit the equipment help text.** iOS removed "Tractors also appear under
+  Vineyard Machines" in favour of "Add tractors used for vineyard work, fuel
+  tracking and trip costing", and points users at Equipment → Tractors from the
+  machine screens. Android copy must not teach the old model.
+- **Allow an unknown fuel rate on a tractor.** The promoted JH tractor has
+  `fuel_usage_l_per_hour = 0` ("not set"). If the Android tractor form requires
+  a value greater than zero to save, that record cannot be edited without
+  someone inventing a consumption figure. iOS now relaxes the rule for a
+  tractor that already lacks a rate, shows blank rather than "0.0", and
+  displays "Fuel usage not set" in the list.
+
+### 6. Server-side guards now in place (no Android change required, but note them)
 - `sql/206` refuses **new** cross-vineyard `vineyard_machines.legacy_tractor_id`
   and `tractor_fuel_logs.machine_id` / `.tractor_id` links with errcode `23514`.
   Android must surface that as a clean, user-readable sync error rather than a
   raw Postgres message.
+- `sql/207` adds report check **C9 `native_tractor_machine_unlinked`**. If
+  Android keeps creating tractor-typed machines with no backing tractor, that
+  count will climb — it is the detector for this exact Android gap.
 
-### 6. Tests
-Port the iOS regression suite (`ios/VineTrackTests/EquipmentVineyardIsolationTests.swift`):
-vineyard isolation across a switch, multi-vineyard persistence, ghost
-reconciliation (full vs delta), soft delete, scoped pickers, legacy-id
-cross-binding, historical resolution, and the fuel-default confirmation flow.
+### 7. Tests
+Port both iOS suites:
+- `ios/VineTrackTests/EquipmentVineyardIsolationTests.swift` — vineyard
+  isolation across a switch, multi-vineyard persistence, ghost reconciliation
+  (full vs delta), soft delete, scoped pickers, legacy-id cross-binding,
+  historical resolution, and the fuel-default confirmation flow.
+- `ios/VineTrackTests/EquipmentTaxonomyBoundaryTests.swift` — picker excludes
+  Tractor, unlinked tractor-machines are rejected on create, the other five
+  types still save, tractor-backed machines stay supported internally and
+  hidden from the machines list, an existing orphan stays editable, and the JH
+  promotion preserves the machine id and its fuel history.
 
 ---
 

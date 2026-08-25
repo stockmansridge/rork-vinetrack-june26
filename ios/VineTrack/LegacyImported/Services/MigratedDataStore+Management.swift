@@ -202,20 +202,57 @@ extension MigratedDataStore {
             .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
     }
 
-    func addVineyardMachine(_ machine: VineyardMachine) {
-        guard let vineyardId = selectedVineyardId else { return }
+    /// Creates a machine for the selected vineyard.
+    ///
+    /// Refuses a native tractor-typed machine that has no backing `tractors`
+    /// row (`isUnlinkedTractorMachine`). Tractors are created under
+    /// Equipment → Tractors; a tractor created here would be invisible on the
+    /// Tractors screen and unavailable to legacy trip costing. The UI no longer
+    /// offers Tractor in the creation picker — this is the defensive backstop
+    /// for any other caller, and the client-side mirror of the `sql/206`
+    /// database guard.
+    ///
+    /// - Returns: `false` when the machine was rejected or no vineyard is
+    ///   selected, so callers can surface the failure instead of dismissing a
+    ///   form that saved nothing.
+    @discardableResult
+    func addVineyardMachine(_ machine: VineyardMachine) -> Bool {
+        guard let vineyardId = selectedVineyardId else { return false }
+        guard !machine.isUnlinkedTractorMachine else {
+            print("[MigratedDataStore] Refused to create a tractor-typed vineyard machine with no linked tractor. Add tractors under Equipment → Tractors.")
+            return false
+        }
         var entry = machine
         entry.vineyardId = vineyardId
         vineyardMachines.append(entry)
         saveVineyardMachinesToDisk()
         onVineyardMachineChanged?(entry.id)
+        return true
     }
 
-    func updateVineyardMachine(_ machine: VineyardMachine) {
-        guard let idx = vineyardMachines.firstIndex(where: { $0.id == machine.id }) else { return }
+    /// Updates an existing machine.
+    ///
+    /// Mirrors the restraint of the `sql/206` triggers: the guard refuses to
+    /// CREATE the orphan state, never to maintain one that already exists. An
+    /// edit that turns a legitimate machine into an unlinked tractor is
+    /// rejected; a row that is ALREADY an unlinked tractor stays fully
+    /// editable, so records like the JH Testing New Holland can be renamed,
+    /// re-typed or corrected instead of being stranded by the guard that
+    /// shipped after them.
+    ///
+    /// - Returns: `false` when the machine is unknown or the edit was rejected.
+    @discardableResult
+    func updateVineyardMachine(_ machine: VineyardMachine) -> Bool {
+        guard let idx = vineyardMachines.firstIndex(where: { $0.id == machine.id }) else { return false }
+        let existing = vineyardMachines[idx]
+        if machine.isUnlinkedTractorMachine && !existing.isUnlinkedTractorMachine {
+            print("[MigratedDataStore] Refused to convert a vineyard machine into a tractor with no linked tractor. Add tractors under Equipment → Tractors.")
+            return false
+        }
         vineyardMachines[idx] = machine
         saveVineyardMachinesToDisk()
         onVineyardMachineChanged?(machine.id)
+        return true
     }
 
     func deleteVineyardMachine(_ machine: VineyardMachine) {

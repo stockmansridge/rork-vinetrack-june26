@@ -59,6 +59,12 @@ nonisolated struct Tractor: Codable, Identifiable, Sendable, Hashable {
         return combined.isEmpty ? name : combined
     }
 
+    /// Whether a real, usable hourly fuel rate has been set. 0 means "not set",
+    /// matching `VineyardMachine.hasFuelUsageRate`. A tractor promoted from an
+    /// older record can legitimately have no known rate — that must stay
+    /// visible as unknown rather than be displayed or saved as a real 0 L/hr.
+    var hasFuelUsageRate: Bool { fuelUsageLPerHour > 0 }
+
     init(
         id: UUID = UUID(),
         vineyardId: UUID = UUID(),

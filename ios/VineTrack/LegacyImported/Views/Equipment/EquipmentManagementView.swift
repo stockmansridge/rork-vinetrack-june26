@@ -192,9 +192,16 @@ struct TractorRow: View {
                 Text(tractor.displayName)
                     .font(.body.weight(.medium))
                     .foregroundStyle(.primary)
-                Label("\(String(format: "%.1f", tractor.fuelUsageLPerHour)) L/hr fuel usage", systemImage: "fuelpump.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                // 0 means "not known", not a real rate — say so rather than
+                // presenting a fabricated 0.0 L/hr as configured data.
+                Label(
+                    tractor.hasFuelUsageRate
+                        ? "\(String(format: "%.1f", tractor.fuelUsageLPerHour)) L/hr fuel usage"
+                        : "Fuel usage not set",
+                    systemImage: "fuelpump.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 if let identifier {
                     Text(identifier)
                         .font(.caption2)
@@ -372,7 +379,9 @@ struct TractorFormSheet: View {
             _brand = State(initialValue: t.brand)
             _model = State(initialValue: t.model)
             _modelYearText = State(initialValue: t.modelYear.map { String($0) } ?? "")
-            _fuelUsage = State(initialValue: String(format: "%.1f", t.fuelUsageLPerHour))
+            // Show an unknown rate as blank, never as "0.0" — a fabricated
+            // zero would look like a deliberate setting.
+            _fuelUsage = State(initialValue: t.hasFuelUsageRate ? String(format: "%.1f", t.fuelUsageLPerHour) : "")
             _serialNumber = State(initialValue: t.serialNumber ?? "")
             _vinNumber = State(initialValue: t.vinNumber ?? "")
         }
@@ -384,8 +393,23 @@ struct TractorFormSheet: View {
         return y
     }
 
+    /// True when this tractor already exists WITHOUT a known fuel rate, e.g. a
+    /// record promoted from an older equipment representation.
+    ///
+    /// Such a tractor must stay readable and editable without forcing someone
+    /// to invent a consumption figure, so the "rate required" rule is relaxed
+    /// for it. A NEW tractor still requires a real rate, and once a rate has
+    /// been set it can no longer be cleared.
+    private var allowsUnknownFuelRate: Bool {
+        guard let tractor else { return false }
+        return !tractor.hasFuelUsageRate
+    }
+
+    private var enteredFuelUsage: Double { Double(fuelUsage.trimmingCharacters(in: .whitespaces)) ?? 0 }
+
     private var isValid: Bool {
-        !brand.isEmpty && !model.isEmpty && (Double(fuelUsage) ?? 0) > 0
+        guard !brand.isEmpty, !model.isEmpty else { return false }
+        return enteredFuelUsage > 0 || allowsUnknownFuelRate
     }
 
     var body: some View {
@@ -421,7 +445,11 @@ struct TractorFormSheet: View {
                 } header: {
                     Text("Fuel Usage (L/hr)")
                 } footer: {
-                    Text("Fuel consumption rate in litres per hour under working load. AI estimates are approximate — actual fuel use varies by load, terrain, implement, speed, and conditions.")
+                    if allowsUnknownFuelRate && enteredFuelUsage <= 0 {
+                        Text("This tractor has no fuel rate recorded yet. You can leave it blank and still save — fuel costing simply won't estimate fuel for it until a rate is entered. Don't guess a figure to get past this screen.")
+                    } else {
+                        Text("Fuel consumption rate in litres per hour under working load. AI estimates are approximate — actual fuel use varies by load, terrain, implement, speed, and conditions.")
+                    }
                 }
 
                 if let outcome = lookupOutcome {
@@ -626,7 +654,7 @@ struct TractorFormSheet: View {
     }
 
     private func save() {
-        let usage = Double(fuelUsage) ?? 0
+        let usage = enteredFuelUsage
         let displayName = "\(brand) \(model)".trimmingCharacters(in: .whitespaces)
         let trimmedSerial = serialNumber.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedVin = vinNumber.trimmingCharacters(in: .whitespacesAndNewlines)

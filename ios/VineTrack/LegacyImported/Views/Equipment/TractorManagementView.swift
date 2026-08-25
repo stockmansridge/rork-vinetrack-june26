@@ -1,9 +1,12 @@
 import SwiftUI
 
-/// Manages legacy `tractors` for the selected vineyard. Tractors remain a
-/// distinct model (they back trip costing and tractor-typed Vineyard Machines),
-/// so they keep their own screen — now reached from inside Vineyard Machines
-/// rather than as a competing top-level Equipment section.
+/// Manages `tractors` for the selected vineyard. This is the ONLY place a
+/// tractor is created or edited.
+///
+/// A tractor keeps its own model because it backs trip costing and, where the
+/// architecture needs one, a linked `vineyard_machines` row. That linked row is
+/// an internal compatibility record: it is deliberately hidden from the
+/// Vineyard Machines screen so the user sees each tractor in one place only.
 struct TractorManagementView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.accessControl) private var accessControl
@@ -51,7 +54,7 @@ struct TractorManagementView: View {
                 }
             } footer: {
                 if canManageSetup {
-                    Text("Tractors also appear under Vineyard Machines. Fuel usage (L/hr) can typically be found in your tractor's user manual under engine specifications.")
+                    Text("Add tractors used for vineyard work, fuel tracking and trip costing. Fuel usage (L/hr) can typically be found in your tractor's user manual under engine specifications.")
                 } else {
                     Text("Tractors are managed by vineyard owners and managers.")
                 }

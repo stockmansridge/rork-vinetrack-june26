@@ -4,9 +4,12 @@ import SwiftUI
 /// managers add ATVs, side-by-sides, harvesters, utility vehicles and other
 /// machines that can appear in the Fuel Log picker.
 ///
-/// Tractor-backed machines (those with a `legacyTractorId`) are shown read-only
-/// here and edited from the existing Tractors section, so the legacy Tractor
-/// model and trip costing remain untouched (see `canEdit(_:)`).
+/// Tractors are NOT managed here. A tractor-backed machine (one with a
+/// `legacyTractorId`) is hidden from this list entirely and edited under
+/// Equipment → Tractors, so a tractor appears to the user in exactly one
+/// place even though a machine row exists underneath it for the Fuel Log and
+/// legacy costing. `canEdit(_:)` keeps the read-only rule as a backstop in
+/// case a tractor-backed row ever reaches the list.
 struct VineyardMachineManagementView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(VineyardMachineSyncService.self) private var machineSync
@@ -69,7 +72,7 @@ struct VineyardMachineManagementView: View {
                 }
             } footer: {
                 if canManageSetup {
-                    Text("Add ATVs, side-by-sides, harvesters, utility vehicles and other powered vineyard machines. Machines with fuel tracking on appear in the Fuel Log.")
+                    Text("Add ATVs, side-by-sides, harvesters, utility vehicles and other powered vineyard machines. Machines with fuel tracking on appear in the Fuel Log. Tractors are added under Equipment → Tractors.")
                 } else {
                     Text("Vineyard machines are managed by vineyard owners and managers.")
                 }
@@ -85,7 +88,7 @@ struct VineyardMachineManagementView: View {
                     Label("No Vineyard Machines", systemImage: "gearshape.2")
                 } description: {
                     Text(canManageSetup
-                         ? "Add your ATVs, side-by-sides, harvesters and other machines to track their fuel use."
+                         ? "Add your ATVs, side-by-sides, harvesters and other machines to track their fuel use. Tractors are added under Equipment → Tractors."
                          : "No vineyard machines have been added yet.")
                 }
             }
@@ -176,6 +179,7 @@ struct VineyardMachineFormSheet: View {
     @State private var notes: String = ""
     @State private var serialNumber: String = ""
     @State private var vinNumber: String = ""
+    @State private var saveError: String?
 
     init(machine: VineyardMachine?) {
         self.machine = machine
@@ -195,6 +199,12 @@ struct VineyardMachineFormSheet: View {
         !name.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    /// Machine types offered in the picker. Tractor is not creatable here —
+    /// see `VineyardMachineType.pickerCases(editing:)`.
+    private var availableTypes: [VineyardMachineType] {
+        VineyardMachineType.pickerCases(editing: machine?.machineType)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -206,12 +216,14 @@ struct VineyardMachineFormSheet: View {
 
                 Section {
                     Picker("Machine", selection: $machineType) {
-                        ForEach(VineyardMachineType.allCases, id: \.self) { type in
+                        ForEach(availableTypes, id: \.self) { type in
                             Text(type.displayName).tag(type)
                         }
                     }
                 } header: {
                     Text("Machine Type")
+                } footer: {
+                    Text("Adding a tractor? Use Equipment → Tractors so it appears under Tractors and can be used for trip costing.")
                 }
 
                 Section {
@@ -253,16 +265,26 @@ struct VineyardMachineFormSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        save()
-                        dismiss()
+                        // Only dismiss on a real save — a rejected write must
+                        // never look like it succeeded.
+                        if save() { dismiss() }
                     }
                     .disabled(!isValid)
                 }
             }
+            .alert("Can't save machine", isPresented: Binding(
+                get: { saveError != nil },
+                set: { if !$0 { saveError = nil } }
+            )) {
+                Button("OK", role: .cancel) { saveError = nil }
+            } message: {
+                Text(saveError ?? "")
+            }
         }
     }
 
-    private func save() {
+    @discardableResult
+    private func save() -> Bool {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         let usage = Double(fuelUsage.trimmingCharacters(in: .whitespaces)) ?? 0
         let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -270,6 +292,7 @@ struct VineyardMachineFormSheet: View {
         let trimmedVin = vinNumber.trimmingCharacters(in: .whitespacesAndNewlines)
         let serial = trimmedSerial.isEmpty ? nil : trimmedSerial
         let vin = trimmedVin.isEmpty ? nil : trimmedVin
+        let saved: Bool
         if var existing = machine {
             existing.name = trimmedName
             existing.machineType = machineType
@@ -279,10 +302,10 @@ struct VineyardMachineFormSheet: View {
             existing.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
             existing.serialNumber = serial
             existing.vinNumber = vin
-            store.updateVineyardMachine(existing)
+            saved = store.updateVineyardMachine(existing)
         } else {
             // Never create a legacy tractor link for natively-created machines.
-            store.addVineyardMachine(VineyardMachine(
+            saved = store.addVineyardMachine(VineyardMachine(
                 name: trimmedName,
                 machineType: machineType,
                 fuelTrackingEnabled: fuelTrackingEnabled,
@@ -293,7 +316,16 @@ struct VineyardMachineFormSheet: View {
                 vinNumber: vin
             ))
         }
+
+        guard saved else {
+            saveError = machineType == .tractor
+                ? "Tractors are added under Equipment → Tractors so they appear on the Tractors screen and can be used for trip costing. Choose a different machine type, or add this as a tractor instead."
+                : "This machine couldn't be saved. Check that a vineyard is selected and try again."
+            return false
+        }
+
         // Push immediately so other devices and the Fuel Log picker stay current.
         Task { await machineSync.syncForSelectedVineyard() }
+        return true
     }
 }

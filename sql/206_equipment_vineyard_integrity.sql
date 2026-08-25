@@ -24,6 +24,12 @@
 -- ---------------------------------------------------------------------------
 -- WHAT IT DOES
 -- ---------------------------------------------------------------------------
+-- !! PARTLY SUPERSEDED: sql/207 redefines vt_equipment_integrity_report() to
+-- !! add check C9 (native tractor-typed machines with no backing tractor). If
+-- !! this file is ever re-run ON ITS OWN it reverts the function to the
+-- !! 8-check version below and silently drops C9 — re-run sql/207 straight
+-- !! after. The two triggers created here are unaffected.
+--
 -- 1. `public.vt_equipment_integrity_report()` — a read-only, auditable report
 --    of every cross-vineyard or logically inconsistent equipment link. This is
 --    how a defect gets PROVEN before anyone repairs data. Run it, read it,

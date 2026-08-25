@@ -22,6 +22,37 @@ nonisolated enum VineyardMachineType: String, Codable, Sendable, Hashable, CaseI
         case .otherVineyardMachine: return "Other vineyard machine"
         }
     }
+
+    /// The types a user may choose when creating a Vineyard Machine.
+    ///
+    /// `.tractor` is deliberately absent. A tractor is added under
+    /// Equipment → Tractors, which creates a `tractors` row and — where the
+    /// architecture needs one — a machine row linked back to it through
+    /// `legacyTractorId`. Creating a tractor from the Vineyard Machines screen
+    /// instead produces a native tractor-typed machine with no backing tractor,
+    /// which is invisible under Tractors and cannot take part in legacy trip
+    /// costing.
+    ///
+    /// This is a CREATION restriction only. `.tractor` remains a valid case, a
+    /// valid `machine_type` value, and a valid stored state, because
+    /// tractor-backed machine rows are still required internally.
+    static let userCreatableCases: [VineyardMachineType] = allCases.filter { $0 != .tractor }
+
+    /// The options a Vineyard Machine type picker should show.
+    ///
+    /// - Parameter current: the type of the row being edited, or nil when
+    ///   creating.
+    ///
+    /// When editing a row that is already tractor-typed, `.tractor` is
+    /// included even though it is not creatable. A SwiftUI `Picker` whose
+    /// selection is absent from its own options renders blank and re-types the
+    /// record on the next save — so hiding the real current value would
+    /// silently corrupt exactly the mis-classified rows this boundary exists
+    /// to protect. Showing it also lets the user reclassify the machine.
+    static func pickerCases(editing current: VineyardMachineType?) -> [VineyardMachineType] {
+        guard let current, !userCreatableCases.contains(current) else { return userCreatableCases }
+        return [current] + userCreatableCases
+    }
 }
 
 /// A vineyard machine used for fuel tracking and (later) job costing. This is
@@ -56,6 +87,18 @@ nonisolated struct VineyardMachine: Codable, Identifiable, Sendable, Hashable {
     /// Whether a real, usable hourly fuel rate has been set. 0 is treated as
     /// "not set" so costing never silently uses a zero rate.
     var hasFuelUsageRate: Bool { fuelUsageLPerHour > 0 }
+
+    /// A tractor-typed machine with no backing `tractors` row.
+    ///
+    /// This is the orphan state the Vineyard Machines creation path used to be
+    /// able to produce: the asset is a real tractor to the user, but it is
+    /// invisible under Tractors and unavailable to legacy trip costing. New
+    /// rows in this state are refused by `addVineyardMachine` and by the
+    /// `sql/206` database guard; EXISTING rows are still readable and editable
+    /// so they can be reviewed and repaired rather than stranded.
+    var isUnlinkedTractorMachine: Bool {
+        machineType == .tractor && legacyTractorId == nil
+    }
 
     /// Display name, falling back to the machine type label when unnamed.
     var displayName: String {
