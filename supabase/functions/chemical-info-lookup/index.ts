@@ -457,12 +457,20 @@ function normaliseRegisteredUses(raw: any): any[] {
         });
       }
     }
+    // A CONDITIONAL re-entry rule ("until the spray has dried") has no number
+    // in it. Carrying only the hours dropped the rule entirely, and the app
+    // then reported "Not stated on label" about a label that states it
+    // plainly. The wording travels BESIDE the hours, never instead of them,
+    // and never becomes a fabricated number.
+    const reEntryStatement = parseString(use?.re_entry_statement);
+
     out.push({
       crop: crop ?? "",
       target_raw: target ?? "",
       rates,
       withholding_period_days: parseNumber(use?.withholding_period_days),
       re_entry_period_hours: parseNumber(use?.re_entry_period_hours),
+      ...(reEntryStatement ? { re_entry_statement: reEntryStatement } : {}),
       restrictions: parseString(use?.restrictions),
     });
   }
@@ -585,6 +593,7 @@ function buildStructuredResponse(
       parsed?.manufacturer_label_url,
     regulatorLabelUrl: parsed?.label_reference ?? parsed?.regulator_label_url,
     productUrl: parsed?.productURL ?? parsed?.product_url,
+    sdsUrl: parsed?.sdsURL ?? parsed?.sds_url,
   });
 
   const registration = registrationNumber || countryCode
@@ -599,6 +608,8 @@ function buildStructuredResponse(
       label_reference: labelRefs.label_reference,
       manufacturer_label_url: labelRefs.manufacturer_label_url,
       regulator_label_url: labelRefs.regulator_label_url,
+      manufacturer_product_url: labelRefs.manufacturer_product_url,
+      sds_url: labelRefs.sds_url,
       label_version: parseString(parsed?.label_version),
     }
     : null;

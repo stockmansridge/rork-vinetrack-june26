@@ -30,6 +30,10 @@ import type {
   ResearchRegistrationCandidate,
 } from "./schema.ts";
 import { classifyUrl, type ClassifiedUrl } from "./classify.ts";
+import {
+  type LinkedDocument,
+  selectManufacturerLabel,
+} from "./linked_documents.ts";
 
 /** Rate bases the existing structured contract accepts (index.ts RATE_BASES). */
 const CONTRACT_RATE_BASES = new Set([
@@ -90,6 +94,15 @@ export interface ResearchProjection {
   officialLabelCandidate: ClassifiedUrl | null;
   /** The registrant product page that passed classification, if any. */
   productPageCandidate: ClassifiedUrl | null;
+  /**
+   * The registrant-hosted label, promoted from a trusted product-page link
+   * relationship.
+   *
+   * COMPLEMENTARY evidence. It never touches registration identity — the
+   * register remains the authority for the number, the registered name and
+   * the registrant. This is the practical label document.
+   */
+  manufacturerLabelCandidate: ClassifiedUrl | null;
   /** SDS URLs — retained for debugging, NEVER offered as a label. */
   sdsCandidates: ClassifiedUrl[];
   /** URLs rejected as evidence, with the reason. Debug/admin only. */
@@ -363,6 +376,76 @@ export function groupResearchUseContexts(
 }
 
 /**
+ * Promote a registrant PDF to manufacturer-label evidence, or nothing.
+ *
+ * Split out so the promotion rule is testable on its own and so
+ * `projectResearch` reads as a pipeline rather than hiding a security-relevant
+ * decision inside a loop.
+ *
+ * Returns null unless the register has already named the product: identity is
+ * the register's, and without it there is nothing to check a page against.
+ */
+function promoteManufacturerLabel(input: {
+  research: ChemicalResearchResult;
+  countryCode: string;
+  registeredProductName?: string | null;
+  classified: ClassifiedUrl[];
+  rejected: { url: string; reason: string }[];
+}): ClassifiedUrl | null {
+  const registeredName = (input.registeredProductName ?? "").trim();
+  if (!registeredName) return null;
+
+  const linked: LinkedDocument[] = [];
+  const pages = new Map<string, { pageUrl: string; pageProductName: string }>();
+
+  for (
+    const d of [
+      ...input.research.documents.official_label_candidates,
+      ...input.research.documents.product_page_candidates,
+      ...input.research.documents.sds_candidates,
+    ]
+  ) {
+    const from = (d.linked_from_url ?? "").trim();
+    const text = (d.link_text ?? "").trim();
+    if (!from || !text) continue;
+    linked.push({ url: d.url, linkText: text });
+    if (!pages.has(from)) {
+      pages.set(from, {
+        pageUrl: from,
+        pageProductName: (d.linked_from_product_name ?? "").trim(),
+      });
+    }
+  }
+
+  for (const page of pages.values()) {
+    // The linking page must ITSELF classify as a trusted registrant product
+    // page. A search-results page or a reseller listing can never qualify,
+    // which is what keeps search engines a discovery route only.
+    const pageClass = classifyUrl(page.pageUrl, input.countryCode);
+    const selection = selectManufacturerLabel({
+      page,
+      pageIsTrustedProductPage: pageClass.isProductPageCandidate,
+      registeredProductName: registeredName,
+      documents: linked.filter((l) => l.url !== page.pageUrl),
+    });
+
+    if (selection.label) {
+      const existing = input.classified.find((c) => c.url === selection.label!.url);
+      return {
+        ...(existing ?? classifyUrl(selection.label.url, input.countryCode)),
+        kind: "label_document",
+        isOfficialLabelCandidate: true,
+        reason: selection.reason,
+      };
+    }
+    for (const r of selection.rejected) {
+      input.rejected.push({ url: r.url, reason: `${r.outcome}: ${r.reason}` });
+    }
+  }
+  return null;
+}
+
+/**
  * Project a research result into the existing extraction shape.
  *
  * Everything produced here is AI-tier by construction. It populates the
@@ -373,6 +456,14 @@ export function projectResearch(
   research: ChemicalResearchResult,
   countryCode: string,
   expectedScheme: string | null,
+  /**
+   * The REGISTER-resolved product name, when the register has already spoken.
+   *
+   * Required before any registrant PDF may be promoted to a label: identity
+   * belongs to the register, and a page about a different product cannot
+   * confer label status on its documents. Absent means no promotion at all.
+   */
+  registeredProductName?: string | null,
 ): ResearchProjection {
   const classified: ClassifiedUrl[] = [];
   const rejected: { url: string; reason: string }[] = [];
@@ -425,6 +516,25 @@ export function projectResearch(
 
   const sdsCandidates = classified.filter((c) => c.kind === "safety_data_sheet");
 
+  // ---- Manufacturer label via a trusted product-page relationship ---------
+  //
+  // `classifyUrl` reads the URL alone, so a registrant label whose filename
+  // carries no label signature classifies as a generic PDF and never becomes
+  // evidence — taking its rate table and its re-entry condition with it.
+  //
+  // Promotion is deliberately narrow: the link must have been found ON the
+  // registrant's own product page, that page must be about the
+  // register-resolved product, the PDF must be on the same host, and the link
+  // text must say label without saying SDS/brochure/TDS. Anything looser
+  // promotes marketing collateral to label authority.
+  const manufacturerLabelCandidate = promoteManufacturerLabel({
+    research,
+    countryCode,
+    registeredProductName,
+    classified,
+    rejected,
+  });
+
   const active_ingredients = research.active_ingredients.map((a) => ({
     name: a.name,
     concentration: a.concentration,
@@ -473,7 +583,11 @@ export function projectResearch(
   const resolverHints = resolverHintsFor(research, countryCode, expectedScheme);
 
   const unresolved = [...research.unresolved];
-  if (!officialLabelCandidate) unresolved.push("label_reference");
+  // A manufacturer label IS a label. `label_reference` is unresolved only when
+  // neither source produced one.
+  if (!officialLabelCandidate && !manufacturerLabelCandidate) {
+    unresolved.push("label_reference");
+  }
 
   const extraction: Record<string, unknown> = {
     product_name: research.product.canonical_name ?? research.product.searched_name,
@@ -483,8 +597,15 @@ export function projectResearch(
     // strips this whenever the register was consulted and did not confirm it.
     registration_number: resolverHints[0]?.registrationNumber ?? null,
     registrant: research.product.registrant ?? research.product.manufacturer,
+    // The REGULATOR's approved label stays in the legacy field — it is the
+    // authoritative document and what existing clients already decode.
     label_reference: officialLabelCandidate?.url ?? null,
     label_version: null,
+    // Additive, each with its own provenance. Never collapsed into one URL:
+    // losing the distinction is how a marketing PDF becomes the label.
+    manufacturer_label_url: manufacturerLabelCandidate?.url ?? null,
+    regulator_label_url: officialLabelCandidate?.url ?? null,
+    sdsURL: sdsCandidates[0]?.url ?? null,
     productURL: productPageCandidate?.url ?? null,
     active_ingredients,
     registered_uses,
@@ -497,6 +618,7 @@ export function projectResearch(
     classified,
     officialLabelCandidate,
     productPageCandidate,
+    manufacturerLabelCandidate,
     sdsCandidates,
     rejected,
   };

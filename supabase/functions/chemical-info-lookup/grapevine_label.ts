@@ -318,6 +318,14 @@ export interface LabelReferences {
   regulator_label_url: string | null;
   /** The registrant's marketing/product page. Never a label. */
   manufacturer_product_url: string | null;
+  /**
+   * The Safety Data Sheet, when one was found.
+   *
+   * Carried as its OWN identity so it can never drift into a label slot. An
+   * SDS describes handling and first aid; its wording beside a rate table
+   * would read as label direction.
+   */
+  sds_url: string | null;
   /** Back-compat: the single field older clients read. */
   label_reference: string | null;
 }
@@ -362,6 +370,7 @@ export function selectLabelReferences(input: {
   manufacturerLabelUrl?: unknown;
   regulatorLabelUrl?: unknown;
   productUrl?: unknown;
+  sdsUrl?: unknown;
 }): LabelReferences {
   const regulatorFromInput = cleanUrl(input.regulatorLabelUrl);
   const manufacturerRaw = cleanUrl(input.manufacturerLabelUrl);
@@ -378,6 +387,7 @@ export function selectLabelReferences(input: {
     manufacturer_label_url: manufacturer,
     regulator_label_url: regulator,
     manufacturer_product_url: cleanUrl(input.productUrl),
+    sds_url: cleanUrl(input.sdsUrl),
     // Authoritative document first for legacy readers.
     label_reference: regulator ?? manufacturer,
   };

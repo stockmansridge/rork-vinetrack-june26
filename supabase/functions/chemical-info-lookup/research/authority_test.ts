@@ -427,6 +427,12 @@ Deno.test("§28 unknown model fields cannot reach the extraction", () => {
       "form_type",
       "label_reference",
       "label_version",
+      // The four source identities are kept SEPARATE on purpose. Collapsing
+      // them into one URL is how a marketing PDF becomes "the label" — each
+      // is server-derived from classification, never copied from the model.
+      "manufacturer_label_url",
+      "regulator_label_url",
+      "sdsURL",
       "product_category",
       "product_name",
       "productURL",
@@ -436,4 +442,21 @@ Deno.test("§28 unknown model fields cannot reach the extraction", () => {
       "unresolved",
     ].sort(),
   );
+});
+
+Deno.test("§28 the model cannot inject a manufacturer label URL", () => {
+  // The allow-list above grew, so this proves the NEW keys are still
+  // server-derived: a model that states its own manufacturer label URL must
+  // not have it served. Promotion requires a trusted product-page link
+  // relationship, which this payload has none of.
+  const research = cloneResearch() as unknown as Record<string, unknown>;
+  (research.documents as Record<string, unknown>).official_label_candidates = [{
+    url: "https://marketing.example.com/brochure.pdf",
+    title: "Label",
+    domain: "marketing.example.com",
+    reason: "model claimed this is the label",
+  }];
+  const projection = projectResearch(research as never, "AU", "apvma");
+  assertEquals(projection.extraction.manufacturer_label_url, null);
+  assertEquals(projection.manufacturerLabelCandidate, null);
 });

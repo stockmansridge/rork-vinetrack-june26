@@ -434,6 +434,13 @@ export function buildLabelEvidence(input: LabelEvidenceInput): LabelEvidence {
       if (reentry !== null && claim.re_entry_period_hours === undefined) {
         claim.re_entry_period_hours = reentry;
       }
+      // The WORDING is captured whenever the label speaks about re-entry,
+      // whether or not it states a number. A conditional instruction
+      // ("until the spray has dried") is a complete re-entry rule; without
+      // this the fact was lost and the app reported "not stated".
+      if (claim.re_entry_statement === undefined && isReentryStatement(s.statement)) {
+        claim.re_entry_statement = s.statement;
+      }
     }
     if (
       claim.re_entry_period_hours === undefined && productReentry.length
@@ -443,6 +450,9 @@ export function buildLabelEvidence(input: LabelEvidenceInput): LabelEvidence {
         .find((h) => h !== null);
       if (hours !== null && hours !== undefined) {
         claim.re_entry_period_hours = hours;
+      }
+      if (claim.re_entry_statement === undefined) {
+        claim.re_entry_statement = productReentry[0]?.statement;
       }
       claim.statements = [
         ...claim.statements,
@@ -464,7 +474,15 @@ export function buildLabelEvidence(input: LabelEvidenceInput): LabelEvidence {
       unresolved.add(`withholding_period:${claim.crop}`);
     }
   }
-  if (claims.length && claims.every((c) => c.re_entry_period_hours === undefined)) {
+  // Unresolved means "the label did not say". A conditional re-entry rule IS
+  // the label saying, so a claim carrying the verbatim wording is resolved
+  // even though its numeric hours are legitimately absent.
+  if (
+    claims.length &&
+    claims.every((c) =>
+      c.re_entry_period_hours === undefined && c.re_entry_statement === undefined
+    )
+  ) {
     const hasReentryWording = statements.some((s) => isReentryStatement(s.statement));
     if (!hasReentryWording) unresolved.add("re_entry_period_hours");
   }
@@ -690,6 +708,13 @@ export function mergeLabelEvidenceIntoUses(
     const aiReentry = typeof ai?.re_entry_period_hours === "number"
       ? ai.re_entry_period_hours
       : null;
+    // The verbatim wording travels with the use whenever the label states a
+    // re-entry rule, INDEPENDENTLY of whether it states hours. This is what
+    // lets a client distinguish "conditional re-entry" from "not stated".
+    if (claim.re_entry_statement !== undefined) {
+      use.re_entry_statement = claim.re_entry_statement;
+      provenance.re_entry = "manufacturer_label";
+    }
     if (claim.re_entry_period_hours !== undefined) {
       use.re_entry_period_hours = claim.re_entry_period_hours;
       provenance.re_entry = "manufacturer_label";

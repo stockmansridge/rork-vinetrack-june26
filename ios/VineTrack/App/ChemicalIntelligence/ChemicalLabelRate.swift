@@ -212,6 +212,42 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
     }
 }
 
+/// How a label's re-entry rule should be presented.
+///
+/// # Why "not stated" and "conditional" must not be the same case
+///
+/// A label can state a complete, binding re-entry rule with no number in it:
+/// "DO NOT allow entry until the spray has dried". VineTrack refuses to invent
+/// an hour value for that — correctly — but for as long as the only field was
+/// numeric, refusing to invent meant having nothing to show, and the app told
+/// the operator the label said nothing. It said plenty.
+nonisolated enum ChemicalReEntryDisplay: Sendable, Hashable {
+    /// The label states a period. Any accompanying wording rides along.
+    case hours(Int, statement: String?)
+    /// The label states a CONDITION rather than a period. Verbatim.
+    case conditional(String)
+    /// The label genuinely says nothing about re-entry.
+    case notStated
+
+    /// Whether the label stated a re-entry rule of any kind.
+    var isStated: Bool {
+        if case .notStated = self { return false }
+        return true
+    }
+
+    /// One line for the review screen, in the label's own terms.
+    var summary: String {
+        switch self {
+        case .hours(let hours, _):
+            return hours == 1 ? "1 hour" : "\(hours) hours"
+        case .conditional(let statement):
+            return statement
+        case .notStated:
+            return "Not stated on label"
+        }
+    }
+}
+
 /// A registered use: which crop, which target, at which rates.
 ///
 /// Structured as crop + target + rate because "Group 11 therefore powdery" is
@@ -243,6 +279,7 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
             targetRaw,
             withholdingPeriodDays.map(String.init) ?? "-",
             reEntryPeriodHours.map(String.init) ?? "-",
+            reEntryStatement ?? "-",
             restrictions ?? "-",
             rateDigest.isEmpty ? "-" : String(rateDigest.hashValue, radix: 16)
         ].joined(separator: "|")
@@ -263,6 +300,22 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
     var withholdingPeriodDays: Int?
     /// Re-entry interval in hours, where the label states one.
     var reEntryPeriodHours: Int?
+    /// The label's VERBATIM re-entry wording, whenever the label states a
+    /// re-entry rule at all — including a CONDITION with no number in it.
+    ///
+    /// # Why this is separate from the hours
+    ///
+    /// "DO NOT allow entry until the spray has dried" is a complete, binding
+    /// re-entry instruction that contains no hour value. The server correctly
+    /// refuses to invent one, so `reEntryPeriodHours` stays nil — and with
+    /// nowhere to put the wording the rule was dropped entirely, so the app
+    /// told the operator "Not stated on label" about a label that states it
+    /// plainly.
+    ///
+    /// Non-nil here means the label DID state a re-entry rule. Nil hours PLUS
+    /// this text is *conditional re-entry*, which is a different answer from
+    /// "not stated" and must be rendered as such.
+    var reEntryStatement: String?
     /// Any label restriction text worth surfacing verbatim.
     var restrictions: String?
     /// Per-fact evidence tiers recorded by the server's label merge, keyed by
@@ -281,6 +334,7 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
         rates: [ChemicalLabelRate] = [],
         withholdingPeriodDays: Int? = nil,
         reEntryPeriodHours: Int? = nil,
+        reEntryStatement: String? = nil,
         restrictions: String? = nil,
         provenance: [String: String]? = nil
     ) {
@@ -290,6 +344,8 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
         self.rates = rates
         self.withholdingPeriodDays = withholdingPeriodDays
         self.reEntryPeriodHours = reEntryPeriodHours
+        let rei = reEntryStatement?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.reEntryStatement = (rei?.isEmpty ?? true) ? nil : rei
         let r = restrictions?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.restrictions = (r?.isEmpty ?? true) ? nil : r
         self.provenance = provenance
@@ -300,6 +356,7 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
         case targetRaw = "target_raw"
         case withholdingPeriodDays = "withholding_period_days"
         case reEntryPeriodHours = "re_entry_period_hours"
+        case reEntryStatement = "re_entry_statement"
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -314,10 +371,37 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
         rates = try c.decodeIfPresent([ChemicalLabelRate].self, forKey: .rates) ?? []
         withholdingPeriodDays = try c.decodeIfPresent(Int.self, forKey: .withholdingPeriodDays)
         reEntryPeriodHours = try c.decodeIfPresent(Int.self, forKey: .reEntryPeriodHours)
+        // Additive: absent on records saved before the server published the
+        // wording. Absence means "not stated"; presence means the label spoke.
+        reEntryStatement = ChemicalRegisteredUse.trimmedNonEmpty(
+            try? c.decodeIfPresent(String.self, forKey: .reEntryStatement)
+        )
         restrictions = try c.decodeIfPresent(String.self, forKey: .restrictions)
         // Additive and tolerant: a malformed or missing provenance map reads
         // as nil so the use itself always loads; the value is never guessed.
         provenance = try? c.decodeIfPresent([String: String].self, forKey: .provenance)
+    }
+
+    /// Trimmed, or nil when empty — whitespace is not a statement.
+    nonisolated static func trimmedNonEmpty(_ raw: String??) -> String? {
+        guard let value = raw ?? nil else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// How this use's re-entry rule should be presented.
+    ///
+    /// Three genuinely different answers, and the middle one is the whole
+    /// point of `reEntryStatement`: a label CAN state a binding re-entry rule
+    /// without stating a number.
+    nonisolated var reEntryDisplay: ChemicalReEntryDisplay {
+        if let hours = reEntryPeriodHours {
+            return .hours(hours, statement: reEntryStatement)
+        }
+        if let statement = reEntryStatement {
+            return .conditional(statement)
+        }
+        return .notStated
     }
 
     /// Whether this use concerns grapevines.

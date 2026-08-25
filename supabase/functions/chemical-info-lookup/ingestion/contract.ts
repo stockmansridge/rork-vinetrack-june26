@@ -278,6 +278,25 @@ export interface LabelUseClaim {
   target?: string; // VineTrack target enum, only when it maps cleanly
   withholding_period_days?: number; // only when a label statement states it (0 = "not required")
   re_entry_period_hours?: number; // only when a label statement states it
+  /**
+   * The label's VERBATIM re-entry wording, whenever the label speaks about
+   * re-entry at all — including when it states a CONDITION rather than a
+   * period.
+   *
+   * # Why this is separate from the hours
+   *
+   * "DO NOT allow entry until the spray has dried" is a complete, binding
+   * re-entry instruction with no number in it. The parser correctly refuses
+   * to invent one, so `re_entry_period_hours` stays undefined — but with
+   * nowhere to put the wording the fact was dropped entirely, and the app
+   * told the operator "Not stated on label" about a label that states it
+   * plainly.
+   *
+   * Present here means the label DID state a re-entry rule. Null hours PLUS
+   * this text is "conditional re-entry", which is a different answer from
+   * "not stated" and must be rendered as such.
+   */
+  re_entry_statement?: string;
   /** Verbatim crop-scoped label statements backing the fields above. */
   statements: string[];
   /**

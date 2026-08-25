@@ -152,6 +152,19 @@ const documentCandidateSchema = obj({
   title: nullableStr("Document/page title."),
   domain: str("Host of the URL."),
   reason: str("Why this URL is believed to be this kind of document."),
+  // Additive. A registrant PDF whose FILENAME carries no label signature can
+  // still be the approved label; the only safe evidence for that is how the
+  // registrant's own product page labelled the link. Captured verbatim and
+  // never trusted on its own — see research/linked_documents.ts.
+  link_text: nullableStr(
+    "The exact anchor text of the link, when this document was found as a link on a page, e.g. 'Label', 'Product Label', 'SDS', 'Brochure'. Copy it verbatim. Null when the URL was not found as a page link.",
+  ),
+  linked_from_url: nullableStr(
+    "The URL of the page this link was found on. Null when the URL was not found as a page link.",
+  ),
+  linked_from_product_name: nullableStr(
+    "The product name that linking page is about, verbatim. Null when the URL was not found as a page link.",
+  ),
 });
 
 const documentsSchema = obj({
@@ -265,6 +278,20 @@ export interface ResearchDocumentCandidate {
   title: string | null;
   domain: string;
   reason: string;
+  /**
+   * Verbatim anchor text, when this document was found as a link on a page.
+   *
+   * The ONLY safe signal that a registrant PDF with no label signature in its
+   * filename is in fact the approved label. Never trusted alone: promotion
+   * also requires a trusted registrant product page whose product identity
+   * corresponds to the register-resolved product, on the same host
+   * (research/linked_documents.ts).
+   */
+  link_text?: string | null;
+  /** The page the link was found on. */
+  linked_from_url?: string | null;
+  /** The product that linking page is about, verbatim. */
+  linked_from_product_name?: string | null;
 }
 
 export interface ResearchSource {
@@ -359,6 +386,13 @@ function parseDocumentCandidates(
       title: optString(row, "title", `${path}[${i}]`),
       domain: optString(row, "domain", `${path}[${i}]`) ?? hostOf(url),
       reason: optString(row, "reason", `${path}[${i}]`) ?? "",
+      link_text: optString(row, "link_text", `${path}[${i}]`),
+      linked_from_url: optString(row, "linked_from_url", `${path}[${i}]`),
+      linked_from_product_name: optString(
+        row,
+        "linked_from_product_name",
+        `${path}[${i}]`,
+      ),
     });
   });
   return out;
