@@ -598,6 +598,21 @@ struct EditSavedChemicalSheet: View {
     /// is the same value the resistance model reads, not a copy of it.
     private var activeIngredientsSection: some View {
         Section {
+            // The product-level resistance state, stated rather than inferred
+            // (task §10, sql/210). A blank used to mean three different things
+            // — classified, group-free by design, or simply unestablished — and
+            // the Resistance Planner consumes the difference, so the operator
+            // is shown the same three answers instead of a gap.
+            LabeledContent("Resistance") {
+                ChemicalResistanceStateBadge(state: session.resistanceState)
+            }
+            if session.resistanceState == .unresolved, !session.populatedActives.isEmpty {
+                Text("Add the resistance group for each active, or mark it Not applicable. Until then this product is left out of resistance warnings and the Resistance Planner.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             ForEach($session.chemistryDraft.actives) { $active in
                 ChemicalManualActiveEditor(
                     active: $active,
@@ -605,6 +620,7 @@ struct EditSavedChemicalSheet: View {
                     onRemove: { removeActive(active.id) }
                 )
             }
+            ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "active_ingredients"))
             Button {
                 session.chemistryDraft.actives.append(ChemicalManualActiveDraft())
             } label: {
@@ -612,7 +628,7 @@ struct EditSavedChemicalSheet: View {
             }
         } header: {
             HStack {
-                Text("Active Ingredients")
+                Text("Active Ingredients & Resistance")
                 Spacer()
                 let summary = ChemicalManualEntry.groupSummary(session.chemistryDraft)
                 if !summary.isEmpty {
@@ -670,13 +686,24 @@ struct EditSavedChemicalSheet: View {
                     .font(.subheadline)
                 }
             }
+            ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "rates"))
+            ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "registered_uses"))
+
+            // Valid label rates whose governing condition the label never
+            // attributed (task §5). The numbers are authoritative; the
+            // association is not, so the operator has to say which applies
+            // before a spray calculation may use one.
+            if session.ratesNeedingConditionChoice > 0 {
+                ChemicalRateAmbiguityNotice(count: session.ratesNeedingConditionChoice)
+            }
+
             Button {
                 session.chemistryDraft.uses.append(ChemicalManualUseDraft())
             } label: {
                 Label("Add Registered Use", systemImage: "plus.circle.fill")
             }
         } header: {
-            Text("Registered Uses & Rates")
+            Text("Grapevine Uses & Rates")
         } footer: {
             Text(vineyardUseCount > 0 && nonVineyardUseCount > 0
                 ? "A use is a crop and a target the product is registered against, with the rate as the label states it and any withholding or re-entry period. The basis is kept exactly as printed — a per-100 L rate is never restated per hectare. Grapevine uses are shown first; the label's other crops are kept in full under “Other crops”."
