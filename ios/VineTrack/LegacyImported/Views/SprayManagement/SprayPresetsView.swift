@@ -777,6 +777,22 @@ struct EditSavedChemicalSheet: View {
     /// fields and not one "link".
     private var labelsSection: some View {
         Section {
+            // MANUFACTURER LABEL FIRST.
+            //
+            // This is the label a grower physically holds and the one whose
+            // rate table VineTrack reads. The regulator's copy stays directly
+            // beneath it and is never replaced — leading with the practical
+            // document is not the same as discarding the authoritative one.
+            LabeledURLField(
+                label: "Manufacturer label",
+                placeholder: "https://...",
+                text: $session.manufacturerLabelURL,
+                onOpenFailure: { message in
+                    linkAlertMessage = message
+                    showLinkAlert = true
+                }
+            )
+
             LabeledURLField(
                 label: officialLabelFieldLabel,
                 placeholder: "https://...",
@@ -800,7 +816,7 @@ struct EditSavedChemicalSheet: View {
         } header: {
             Text("Labels & References")
         } footer: {
-            Text("The regulator label is the authoritative document — use the official PDF where there is one. A manufacturer page is supplementary information and is never shown as the approved label.")
+            Text("The manufacturer label is the practical label VineTrack reads rates from. The \(officialLabelFieldLabel.lowercased()) is the authoritative registration document and is always kept. A manufacturer product page is supplementary and is never shown as an approved label.")
         }
     }
 

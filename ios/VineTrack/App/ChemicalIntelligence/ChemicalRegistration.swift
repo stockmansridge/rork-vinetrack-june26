@@ -57,7 +57,24 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
     /// the operator typed.
     var registeredProductName: String?
     /// URL or document identifier of the label the information came from.
+    ///
+    /// The LEGACY single field. The server keeps it pointing at the
+    /// authoritative document, so builds that predate the split below still
+    /// show the approved label rather than nothing.
     var labelReference: String?
+    /// The registrant/manufacturer-hosted label document.
+    ///
+    /// The PRIMARY "Open label" link for growers: it is the label they
+    /// physically hold, and usually the more readable rendering. Never a
+    /// marketing page — the server classifies those separately and a
+    /// regulator-hosted URL offered here is reclassified rather than
+    /// duplicated.
+    var manufacturerLabelURL: String?
+    /// The regulator's approved label (APVMA eLabels and equivalents).
+    ///
+    /// Authoritative for registration and always retained. A manufacturer
+    /// document can lead in the UI but can never SUBSTITUTE for this one.
+    var regulatorLabelURL: String?
     /// Label version/approval date, so a future re-verification can tell that
     /// the official data has moved on.
     var labelVersion: String?
@@ -69,6 +86,8 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
         registrant: String? = nil,
         registeredProductName: String? = nil,
         labelReference: String? = nil,
+        manufacturerLabelURL: String? = nil,
+        regulatorLabelURL: String? = nil,
         labelVersion: String? = nil
     ) {
         self.countryCode = ChemicalRegistration.normaliseCountry(countryCode)
@@ -77,6 +96,8 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
         self.registrant = ChemicalRegistration.trimmed(registrant)
         self.registeredProductName = ChemicalRegistration.trimmed(registeredProductName)
         self.labelReference = ChemicalRegistration.trimmed(labelReference)
+        self.manufacturerLabelURL = ChemicalRegistration.trimmed(manufacturerLabelURL)
+        self.regulatorLabelURL = ChemicalRegistration.trimmed(regulatorLabelURL)
         self.labelVersion = ChemicalRegistration.trimmed(labelVersion)
     }
 
@@ -87,6 +108,8 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
         case registrant
         case registeredProductName = "registered_product_name"
         case labelReference = "label_reference"
+        case manufacturerLabelURL = "manufacturer_label_url"
+        case regulatorLabelURL = "regulator_label_url"
         case labelVersion = "label_version"
     }
 
@@ -108,8 +131,28 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
             try c.decodeIfPresent(String.self, forKey: .registeredProductName))
         labelReference = ChemicalRegistration.trimmed(
             try c.decodeIfPresent(String.self, forKey: .labelReference))
+        manufacturerLabelURL = ChemicalRegistration.trimmed(
+            try c.decodeIfPresent(String.self, forKey: .manufacturerLabelURL))
+        regulatorLabelURL = ChemicalRegistration.trimmed(
+            try c.decodeIfPresent(String.self, forKey: .regulatorLabelURL))
         labelVersion = ChemicalRegistration.trimmed(
             try c.decodeIfPresent(String.self, forKey: .labelVersion))
+    }
+
+    /// The label to lead with, and the one to keep beside it.
+    ///
+    /// Manufacturer first (task §2): it is the practical label. The regulator
+    /// document is never dropped — it is what makes the record defensible.
+    /// Falls back to `labelReference` so a server that has not been redeployed
+    /// still renders a label rather than an empty section.
+    nonisolated var primaryLabelURL: String? {
+        manufacturerLabelURL ?? regulatorLabelURL ?? labelReference
+    }
+
+    /// The authoritative document, when it is not already the primary one.
+    nonisolated var secondaryLabelURL: String? {
+        guard manufacturerLabelURL != nil else { return nil }
+        return regulatorLabelURL ?? labelReference
     }
 
     /// Whether this identity is strong enough to underwrite a Verified claim:

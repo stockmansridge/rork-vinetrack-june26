@@ -25,6 +25,10 @@ import {
   compactProductName,
   normaliseProductNameLoose,
 } from "./matching.ts";
+import {
+  projectGrapevineUses,
+  selectLabelReferences,
+} from "../grapevine_label.ts";
 
 /** PostgREST query executor over master_chemicals. Null = table unavailable. */
 export type MasterSelect = (query: string) => Promise<any[] | null>;
@@ -137,6 +141,22 @@ function masterFieldProvenance(row: any): Record<string, FieldProvenance> {
  * travels with it — no AI source, no AI confidence.
  */
 export function buildMasterStructuredResponse(row: any): any {
+  const registeredUses = Array.isArray(row.registered_uses) ? row.registered_uses : [];
+
+  // Grapevine-first projection, and the manufacturer/regulator label split.
+  //
+  // This path serves REGISTER-RESOLVED products — which is how the acceptance
+  // product (APVMA 33182) actually arrives. Wiring the projection only into
+  // the AI builder would have left every real register lookup on the old
+  // shape, so the change would have looked correct in tests and done nothing
+  // in production.
+  const grapevine = projectGrapevineUses(registeredUses);
+  const labelRefs = selectLabelReferences({
+    manufacturerLabelUrl: row.manufacturer_label_url,
+    regulatorLabelUrl: row.regulator_label_url ?? row.label_reference,
+    productUrl: row.product_url,
+  });
+
   const served = {
     product_name: row.registered_product_name ?? null,
     product_category: row.product_category ?? "",
@@ -147,13 +167,19 @@ export function buildMasterStructuredResponse(row: any): any {
       registration_number: row.registration_number ?? null,
       registrant: row.registrant ?? null,
       registered_product_name: row.registered_product_name ?? null,
-      label_reference: row.label_reference ?? null,
+      label_reference: labelRefs.label_reference ?? row.label_reference ?? null,
+      manufacturer_label_url: labelRefs.manufacturer_label_url,
+      regulator_label_url: labelRefs.regulator_label_url,
       label_version: row.label_version ?? null,
     },
     active_ingredients: Array.isArray(row.active_ingredients) ? row.active_ingredients : [],
     activity_groups: Array.isArray(row.activity_groups) ? row.activity_groups : [],
     activity_group_scheme: row.activity_group_scheme ?? null,
-    registered_uses: Array.isArray(row.registered_uses) ? row.registered_uses : [],
+    registered_uses: registeredUses,
+    grapevine_uses: grapevine.grapevine_uses,
+    other_crop_uses: grapevine.other_crop_uses,
+    registered_for_grapevine: grapevine.registered_for_grapevine,
+    label_reference_rate_ranges: grapevine.label_reference_rate_ranges,
     label_rate_bases: Array.isArray(row.label_rate_bases) ? row.label_rate_bases : [],
     verification: {
       status: row.verification_status ?? "unverified",

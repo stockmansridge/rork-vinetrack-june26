@@ -192,11 +192,24 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         set { chemistryDraft.registrant = newValue }
     }
 
-    /// The official label link. ONE editable value: whatever the lookup found
-    /// in `registration.labelReference` IS what the operator sees.
+    /// The REGULATOR's approved label link (APVMA and equivalents).
+    ///
+    /// ONE editable value: whatever the lookup found in
+    /// `registration.regulatorLabelURL` IS what the operator sees.
     var labelURL: String {
         get { chemistryDraft.labelReference }
         set { chemistryDraft.labelReference = newValue }
+    }
+
+    /// The manufacturer-hosted label — the PRIMARY "Open label" link.
+    ///
+    /// Separate from `labelURL` because the regulator document must stay
+    /// available even when the manufacturer's rendering is the one a grower
+    /// reads. Leading with the practical label never means discarding the
+    /// authoritative one.
+    var manufacturerLabelURL: String {
+        get { chemistryDraft.manufacturerLabelReference }
+        set { chemistryDraft.manufacturerLabelReference = newValue }
     }
 
     var productCategory: ProductCategory? {

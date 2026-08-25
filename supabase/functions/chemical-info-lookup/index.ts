@@ -173,6 +173,10 @@ import {
 } from "./research/research.ts";
 import { rankCandidates } from "./ranking.ts";
 import {
+  projectGrapevineUses,
+  selectLabelReferences,
+} from "./grapevine_label.ts";
+import {
   createPostgrestSuggestionStore,
   SUGGESTION_CACHE_TTL_SECONDS,
   suggestionCacheKey,
@@ -572,6 +576,17 @@ function buildStructuredResponse(
   if (!registrationNumber) unresolved.add("registration_number");
   if (!countryCode) unresolved.add("country");
 
+  // Manufacturer label FIRST, regulator label second (task §2). Both are
+  // retained: the manufacturer's rendering is the label a grower physically
+  // holds, and the regulator's is the approved document — a marketing page can
+  // never substitute for either.
+  const labelRefs = selectLabelReferences({
+    manufacturerLabelUrl: parsed?.manufacturer_label_reference ??
+      parsed?.manufacturer_label_url,
+    regulatorLabelUrl: parsed?.label_reference ?? parsed?.regulator_label_url,
+    productUrl: parsed?.productURL ?? parsed?.product_url,
+  });
+
   const registration = registrationNumber || countryCode
     ? {
       country_code: countryCode,
@@ -579,13 +594,22 @@ function buildStructuredResponse(
       registration_number: registrationNumber,
       registrant: parseString(parsed?.registrant),
       registered_product_name: parseString(parsed?.product_name),
-      label_reference: parseString(parsed?.label_reference),
+      // Legacy single field — keeps pointing at the AUTHORITATIVE document so
+      // shipped builds do not regress while clients adopt the split.
+      label_reference: labelRefs.label_reference,
+      manufacturer_label_url: labelRefs.manufacturer_label_url,
+      regulator_label_url: labelRefs.regulator_label_url,
       label_version: parseString(parsed?.label_version),
     }
     : null;
 
   const registeredUses = normaliseRegisteredUses(parsed?.registered_uses);
   if (!registeredUses.length) unresolved.add("registered_uses");
+
+  // Grapevine-first projection (task §3, §5, §6). Other crops are RETAINED,
+  // never discarded — they are real label content, just not the vineyard
+  // workflow. The reference range appears ONLY when grapevine is absent.
+  const grapevine = projectGrapevineUses(registeredUses);
 
   const sources: any[] = [
     {
@@ -642,7 +666,13 @@ function buildStructuredResponse(
       ),
     ),
     activity_group_scheme: schemeUsed,
+    // Full list, unchanged, for every existing reader.
     registered_uses: registeredUses,
+    // Grapevine-first view for the review screen (task §3, §8).
+    grapevine_uses: grapevine.grapevine_uses,
+    other_crop_uses: grapevine.other_crop_uses,
+    registered_for_grapevine: grapevine.registered_for_grapevine,
+    label_reference_rate_ranges: grapevine.label_reference_rate_ranges,
     label_rate_bases: Array.from(
       new Set(
         registeredUses.flatMap((u) => u.rates.map((r: any) => r.basis)),
