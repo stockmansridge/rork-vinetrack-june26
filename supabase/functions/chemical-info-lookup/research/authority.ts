@@ -33,7 +33,29 @@ import { classifyUrl, type ClassifiedUrl } from "./classify.ts";
 import {
   type LinkedDocument,
   selectManufacturerLabel,
+  selectManufacturerSds,
 } from "./linked_documents.ts";
+
+/**
+ * A trusted registrant product page the SERVER fetched and parsed.
+ *
+ * Structural, not an import of the transport type, so this module stays
+ * testable without a network stub — `research/page_inspector.ts`'s
+ * `InspectedPage` satisfies it by construction.
+ *
+ * This is the ONLY admissible source of the page-link relationship that
+ * manufacturer-label promotion turns on. Model-supplied `link_text` /
+ * `linked_from_url` are discovery hints: they help decide which page is worth
+ * fetching, and they never decide what a document IS.
+ */
+export interface InspectedProductPage {
+  /** The URL actually read, after redirects. */
+  finalUrl: string;
+  /** The product identity the page states about itself (h1/title). */
+  pageProductName: string;
+  /** Every resolvable anchor found on that page. */
+  links: LinkedDocument[];
+}
 
 /** Rate bases the existing structured contract accepts (index.ts RATE_BASES). */
 const CONTRACT_RATE_BASES = new Set([
@@ -376,73 +398,110 @@ export function groupResearchUseContexts(
 }
 
 /**
- * Promote a registrant PDF to manufacturer-label evidence, or nothing.
+ * Promote registrant documents from SERVER-INSPECTED product pages.
  *
  * Split out so the promotion rule is testable on its own and so
  * `projectResearch` reads as a pipeline rather than hiding a security-relevant
  * decision inside a loop.
  *
- * Returns null unless the register has already named the product: identity is
- * the register's, and without it there is nothing to check a page against.
+ * Two hard preconditions, both of which return nothing rather than a guess:
+ *
+ *   * the register must already have NAMED the product — identity is the
+ *     register's, and without it there is nothing to check a page against;
+ *   * the page must have been FETCHED AND PARSED by the server. Promotion is
+ *     reproducible from bytes or it does not happen.
  */
-function promoteManufacturerLabel(input: {
-  research: ChemicalResearchResult;
+function promoteFromInspectedPages(input: {
+  inspectedPages: InspectedProductPage[];
   countryCode: string;
   registeredProductName?: string | null;
   classified: ClassifiedUrl[];
   rejected: { url: string; reason: string }[];
-}): ClassifiedUrl | null {
+}): { label: ClassifiedUrl | null; sds: ClassifiedUrl | null } {
   const registeredName = (input.registeredProductName ?? "").trim();
-  if (!registeredName) return null;
+  if (!registeredName) return { label: null, sds: null };
 
-  const linked: LinkedDocument[] = [];
-  const pages = new Map<string, { pageUrl: string; pageProductName: string }>();
+  let label: ClassifiedUrl | null = null;
+  let sds: ClassifiedUrl | null = null;
 
-  for (
-    const d of [
-      ...input.research.documents.official_label_candidates,
-      ...input.research.documents.product_page_candidates,
-      ...input.research.documents.sds_candidates,
-    ]
-  ) {
-    const from = (d.linked_from_url ?? "").trim();
-    const text = (d.link_text ?? "").trim();
-    if (!from || !text) continue;
-    linked.push({ url: d.url, linkText: text });
-    if (!pages.has(from)) {
-      pages.set(from, {
-        pageUrl: from,
-        pageProductName: (d.linked_from_product_name ?? "").trim(),
-      });
-    }
-  }
-
-  for (const page of pages.values()) {
-    // The linking page must ITSELF classify as a trusted registrant product
-    // page. A search-results page or a reseller listing can never qualify,
-    // which is what keeps search engines a discovery route only.
-    const pageClass = classifyUrl(page.pageUrl, input.countryCode);
-    const selection = selectManufacturerLabel({
-      page,
+  for (const page of input.inspectedPages) {
+    // The inspector only fetches pages that already classify as trusted
+    // registrant product pages, and re-classifying the FINAL url here closes
+    // the redirect gap: what was read is what gets judged.
+    const pageClass = classifyUrl(page.finalUrl, input.countryCode);
+    const context = {
+      page: { pageUrl: page.finalUrl, pageProductName: page.pageProductName },
       pageIsTrustedProductPage: pageClass.isProductPageCandidate,
       registeredProductName: registeredName,
-      documents: linked.filter((l) => l.url !== page.pageUrl),
-    });
+      documents: page.links.filter((l) => l.url !== page.finalUrl),
+    };
 
-    if (selection.label) {
+    const selection = selectManufacturerLabel(context);
+    if (!label && selection.label) {
       const existing = input.classified.find((c) => c.url === selection.label!.url);
-      return {
+      label = {
         ...(existing ?? classifyUrl(selection.label.url, input.countryCode)),
         kind: "label_document",
         isOfficialLabelCandidate: true,
         reason: selection.reason,
       };
+    } else {
+      for (const r of selection.rejected) {
+        input.rejected.push({ url: r.url, reason: `${r.outcome}: ${r.reason}` });
+      }
     }
-    for (const r of selection.rejected) {
-      input.rejected.push({ url: r.url, reason: `${r.outcome}: ${r.reason}` });
+
+    // The SDS is collected under its OWN identity from the same inspection.
+    // Its URL usually carries no `sds` token either, so URL-only
+    // classification misses it for exactly the reason it missed the label.
+    const sdsSelection = selectManufacturerSds(context);
+    if (!sds && sdsSelection.sds) {
+      const existing = input.classified.find((c) => c.url === sdsSelection.sds!.url);
+      sds = {
+        ...(existing ?? classifyUrl(sdsSelection.sds.url, input.countryCode)),
+        kind: "safety_data_sheet",
+        isOfficialLabelCandidate: false,
+        reason: sdsSelection.reason,
+      };
     }
   }
-  return null;
+
+  return { label, sds };
+}
+
+/**
+ * Record model-supplied relationship metadata as what it now is: a hint.
+ *
+ * Kept for discovery and debugging — it is how the pipeline learns a page is
+ * worth fetching. Writing the refusal down matters because "the model said
+ * this was the label" is exactly the claim a future investigation will need to
+ * see was considered and declined.
+ */
+function noteUninspectedModelHints(
+  research: ChemicalResearchResult,
+  inspectedPages: InspectedProductPage[],
+  rejected: { url: string; reason: string }[],
+): void {
+  const inspected = new Set(inspectedPages.map((p) => p.finalUrl));
+  for (
+    const d of [
+      ...research.documents.official_label_candidates,
+      ...research.documents.product_page_candidates,
+      ...research.documents.sds_candidates,
+    ]
+  ) {
+    const from = (d.linked_from_url ?? "").trim();
+    const text = (d.link_text ?? "").trim();
+    if (!from || !text) continue;
+    if (inspected.has(from)) continue;
+    rejected.push({
+      url: d.url,
+      reason:
+        `model_relationship_hint_only: the model reported this as "${text}" on ` +
+        `${from}, but that page was not inspected by the server — manufacturer ` +
+        `label promotion requires evidence re-derivable from the fetched page`,
+    });
+  }
 }
 
 /**
@@ -464,6 +523,14 @@ export function projectResearch(
    * confer label status on its documents. Absent means no promotion at all.
    */
   registeredProductName?: string | null,
+  /**
+   * Trusted registrant product pages the server FETCHED and parsed this pass.
+   *
+   * Empty means no manufacturer-label promotion, full stop — even when the
+   * model volunteered a perfectly plausible relationship. Evidence that cannot
+   * be re-derived from bytes is not evidence.
+   */
+  inspectedPages: InspectedProductPage[] = [],
 ): ResearchProjection {
   const classified: ClassifiedUrl[] = [];
   const rejected: { url: string; reason: string }[] = [];
@@ -516,6 +583,7 @@ export function projectResearch(
 
   const sdsCandidates = classified.filter((c) => c.kind === "safety_data_sheet");
 
+
   // ---- Manufacturer label via a trusted product-page relationship ---------
   //
   // `classifyUrl` reads the URL alone, so a registrant label whose filename
@@ -527,13 +595,15 @@ export function projectResearch(
   // register-resolved product, the PDF must be on the same host, and the link
   // text must say label without saying SDS/brochure/TDS. Anything looser
   // promotes marketing collateral to label authority.
-  const manufacturerLabelCandidate = promoteManufacturerLabel({
-    research,
+  const promoted = promoteFromInspectedPages({
+    inspectedPages,
     countryCode,
     registeredProductName,
     classified,
     rejected,
   });
+  const manufacturerLabelCandidate = promoted.label;
+  noteUninspectedModelHints(research, inspectedPages, rejected);
 
   const active_ingredients = research.active_ingredients.map((a) => ({
     name: a.name,
@@ -575,6 +645,12 @@ export function projectResearch(
         rates,
         withholding_period_days: whpDays(use.whp),
         re_entry_period_hours: reiHours(use.rei),
+        // The SAME defect, in the second path: `reiHours` correctly refuses to
+        // invent a number for "until the spray has dried", and without a field
+        // for the wording the whole rule was dropped and rendered as "not
+        // stated". The verbatim text travels alongside the hours, never
+        // instead of them.
+        re_entry_statement: (use.rei ?? "").trim() || null,
         restrictions: use.restrictions.length ? use.restrictions.join("; ") : null,
       });
     }
@@ -605,7 +681,10 @@ export function projectResearch(
     // losing the distinction is how a marketing PDF becomes the label.
     manufacturer_label_url: manufacturerLabelCandidate?.url ?? null,
     regulator_label_url: officialLabelCandidate?.url ?? null,
-    sdsURL: sdsCandidates[0]?.url ?? null,
+    // URL-signature classification first (it is the stronger signal when it
+    // fires), then the inspected page's own SDS link — which is how an SDS
+    // whose filename says nothing still reaches the operator.
+    sdsURL: sdsCandidates[0]?.url ?? promoted.sds?.url ?? null,
     productURL: productPageCandidate?.url ?? null,
     active_ingredients,
     registered_uses,

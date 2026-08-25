@@ -460,3 +460,224 @@ Deno.test("§28 the model cannot inject a manufacturer label URL", () => {
   assertEquals(projection.extraction.manufacturer_label_url, null);
   assertEquals(projection.manufacturerLabelCandidate, null);
 });
+
+// ===========================================================================
+// §29 Manufacturer-label promotion is DETERMINISTIC — server-inspected pages
+// only, never the research model's account of what a page linked.
+// ===========================================================================
+
+const BASF_PAGE = "https://crop-solutions.basf.com.au/products/dithane-rainshield";
+const BASF_LABEL = "https://crop-solutions.basf.com.au/files/dithane-2025_digi.pdf";
+const BASF_SDS = "https://crop-solutions.basf.com.au/files/dithane-safety.pdf";
+const BASF_REGISTERED = "Dithane Rainshield Neo Tec Fungicide";
+
+/** A page the SERVER fetched and parsed, in the shape the inspector returns. */
+function inspectedBasfPage(
+  overrides: { pageProductName?: string; links?: { url: string; linkText: string }[] } = {},
+) {
+  return {
+    finalUrl: BASF_PAGE,
+    pageProductName: overrides.pageProductName ?? BASF_REGISTERED,
+    links: overrides.links ?? [
+      { url: BASF_SDS, linkText: "SDS" },
+      { url: BASF_LABEL, linkText: "Label" },
+      { url: "https://crop-solutions.basf.com.au/files/dithane-brochure.pdf", linkText: "Brochure" },
+    ],
+  };
+}
+
+Deno.test("§29 a page titled with a SHORT marketing name fails CLOSED", () => {
+  // Measured, and correct: "Dithane Rainshield" leaves NEO and TEC unexplained
+  // against the registered "Dithane Rainshield Neo Tec Fungicide", and those
+  // are meaningful product tokens — the same strict rule that stops a
+  // neighbouring formulation being treated as this product.
+  //
+  // The practical limit is worth stating plainly rather than discovering in
+  // production: a registrant whose page heading is shorter than the registered
+  // name by more than purely descriptive words gets NO manufacturer label.
+  const projection = projectResearch(
+    cloneResearch(),
+    "AU",
+    "apvma",
+    BASF_REGISTERED,
+    [inspectedBasfPage({ pageProductName: "Dithane Rainshield" })],
+  );
+  assertEquals(projection.manufacturerLabelCandidate, null);
+  assert(projection.rejected.some((r) => r.reason.startsWith("rejected_product_mismatch:")));
+});
+
+Deno.test("§29 purely descriptive extra words DO still correspond", () => {
+  // Sprayseal's real shape: the page heading says "Sprayseal", the register
+  // says "SPRAYSEAL PRUNING WOUND TREATMENT". That remainder is descriptive,
+  // so correspondence holds and the label is promoted — which is why the
+  // acceptance fixture works without any special-casing.
+  const projection = projectResearch(
+    cloneResearch(),
+    "AU",
+    "apvma",
+    "SPRAYSEAL PRUNING WOUND TREATMENT",
+    [{
+      finalUrl: "https://www.omnia.com.au/products/sprayseal",
+      pageProductName: "Sprayseal",
+      links: [{
+        url: "https://www.omnia.com.au/files/2025/07/Sprayseal%205L_Digi.pdf",
+        linkText: "Label",
+      }],
+    }],
+  );
+  assertEquals(
+    projection.extraction.manufacturer_label_url,
+    "https://www.omnia.com.au/files/2025/07/Sprayseal%205L_Digi.pdf",
+  );
+});
+
+Deno.test("§29 an inspected page promotes the label it actually links", () => {
+  const projection = projectResearch(
+    cloneResearch(),
+    "AU",
+    "apvma",
+    BASF_REGISTERED,
+    [inspectedBasfPage()],
+  );
+  assertEquals(projection.manufacturerLabelCandidate?.url, BASF_LABEL);
+  assertEquals(projection.extraction.manufacturer_label_url, BASF_LABEL);
+
+  // The REGULATOR document keeps the legacy field and its own identity —
+  // shipped clients decode `label_reference` and must not start receiving a
+  // manufacturer URL there.
+  assertEquals(projection.extraction.label_reference, "https://elabels.apvma.gov.au/59688.pdf");
+  assertEquals(projection.extraction.regulator_label_url, "https://elabels.apvma.gov.au/59688.pdf");
+});
+
+Deno.test("§29 model relationship metadata alone promotes NOTHING", () => {
+  // The model states the relationship perfectly. Without a fetched page it is
+  // still only a claim, and a claim is not evidence.
+  const research = cloneResearch() as unknown as Record<string, unknown>;
+  (research.documents as Record<string, unknown>).official_label_candidates = [{
+    url: BASF_LABEL,
+    title: "Label",
+    domain: "crop-solutions.basf.com.au",
+    reason: "linked as Label on the product page",
+    link_text: "Label",
+    linked_from_url: BASF_PAGE,
+    linked_from_product_name: "Dithane Rainshield",
+  }];
+
+  const projection = projectResearch(research as never, "AU", "apvma", BASF_REGISTERED);
+  assertEquals(projection.manufacturerLabelCandidate, null);
+  assertEquals(projection.extraction.manufacturer_label_url, null);
+
+  // And the refusal is written down, because "the model said it was the label"
+  // is exactly the claim a later investigation needs to see was declined.
+  // (This URL also collects the ordinary classification refusal, so the hint
+  // is asserted across every reason recorded for it, not just the first.)
+  assert(
+    projection.rejected.some((r) =>
+      r.url === BASF_LABEL && r.reason.startsWith("model_relationship_hint_only:")
+    ),
+  );
+});
+
+Deno.test("§29 the SAME claim becomes evidence once the page is inspected", () => {
+  // The difference between the two outcomes is one fetch — which is the whole
+  // point: promotion is reproducible from bytes.
+  const projection = projectResearch(
+    cloneResearch(),
+    "AU",
+    "apvma",
+    BASF_REGISTERED,
+    [inspectedBasfPage()],
+  );
+  assertEquals(projection.extraction.manufacturer_label_url, BASF_LABEL);
+});
+
+Deno.test("§29 an inspected page about a DIFFERENT product promotes nothing", () => {
+  const projection = projectResearch(
+    cloneResearch(),
+    "AU",
+    "apvma",
+    BASF_REGISTERED,
+    [inspectedBasfPage({ pageProductName: "Cabrio Fungicide" })],
+  );
+  assertEquals(projection.manufacturerLabelCandidate, null);
+  assert(
+    projection.rejected.some((r) => r.reason.startsWith("rejected_product_mismatch:")),
+  );
+});
+
+Deno.test("§29 without a register-resolved name nothing is promoted", () => {
+  // Identity is the register's. With no registered name there is nothing to
+  // check the page against, so inspection alone changes nothing.
+  const projection = projectResearch(cloneResearch(), "AU", "apvma", null, [inspectedBasfPage()]);
+  assertEquals(projection.manufacturerLabelCandidate, null);
+  assertEquals(projection.extraction.manufacturer_label_url, null);
+});
+
+Deno.test("§29 an inspected SDS reaches the SDS field and no label field", () => {
+  const projection = projectResearch(
+    cloneResearch(),
+    "AU",
+    "apvma",
+    BASF_REGISTERED,
+    [inspectedBasfPage({
+      links: [{ url: BASF_SDS, linkText: "Safety Data Sheet" }],
+    })],
+  );
+  assertEquals(projection.manufacturerLabelCandidate, null);
+  assertEquals(projection.extraction.manufacturer_label_url, null);
+  // The fixture's own SDS candidate classifies by URL and wins the field; the
+  // inspected SDS is a fallback for the common case where it does not.
+  assert(projection.extraction.sdsURL !== BASF_LABEL);
+});
+
+Deno.test("§29 a brochure on the inspected page never becomes the label", () => {
+  const projection = projectResearch(
+    cloneResearch(),
+    "AU",
+    "apvma",
+    BASF_REGISTERED,
+    [inspectedBasfPage({
+      links: [
+        { url: "https://crop-solutions.basf.com.au/files/dithane-brochure.pdf", linkText: "Brochure" },
+        { url: "https://crop-solutions.basf.com.au/files/dithane-tds.pdf", linkText: "TDS" },
+      ],
+    })],
+  );
+  assertEquals(projection.manufacturerLabelCandidate, null);
+  assertEquals(projection.extraction.manufacturer_label_url, null);
+});
+
+// ===========================================================================
+// §30 A conditional re-entry rule survives the RESEARCH path too
+// ===========================================================================
+
+Deno.test("§30 a numeric REI keeps its hours AND its wording", () => {
+  const projection = projectResearch(cloneResearch(), "AU", "apvma");
+  const use = (projection.extraction.registered_uses as Record<string, unknown>[])[0];
+  assertEquals(use.re_entry_period_hours, 24);
+  assertEquals(use.re_entry_statement, "24 hours");
+});
+
+Deno.test("§30 a CONDITIONAL REI keeps the wording with null hours", () => {
+  // The exact 80160 shape, arriving through research rather than the register:
+  // a binding re-entry rule that contains no number. Refusing to invent hours
+  // is right; dropping the rule entirely is what made the app say "not stated"
+  // about a label that states it plainly.
+  const research = cloneResearch();
+  research.registered_uses[0].rei = "DO NOT allow entry until the spray has dried.";
+
+  const projection = projectResearch(research, "AU", "apvma");
+  const use = (projection.extraction.registered_uses as Record<string, unknown>[])[0];
+  assertEquals(use.re_entry_period_hours, null);
+  assertEquals(use.re_entry_statement, "DO NOT allow entry until the spray has dried.");
+});
+
+Deno.test("§30 a label that says nothing about re-entry still says nothing", () => {
+  const research = cloneResearch();
+  research.registered_uses[0].rei = null;
+
+  const projection = projectResearch(research, "AU", "apvma");
+  const use = (projection.extraction.registered_uses as Record<string, unknown>[])[0];
+  assertEquals(use.re_entry_period_hours, null);
+  assertEquals(use.re_entry_statement, null, "absence is not a conditional rule");
+});

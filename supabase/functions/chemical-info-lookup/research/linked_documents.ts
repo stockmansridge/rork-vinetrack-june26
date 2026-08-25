@@ -103,8 +103,10 @@ const LABEL_LINK_PATTERNS: RegExp[] = [
  * not be promoted: which document it resolves to is unknowable from the text,
  * and guessing would put an SDS's handling text where label rates belong.
  */
+const SDS_LINK_PATTERN = /\bsds\b|\bmsds\b|safety\s*data\s*sheet/i;
+
 const EXCLUDED_LINK_PATTERNS: { pattern: RegExp; kind: string }[] = [
-  { pattern: /\bsds\b|\bmsds\b|safety\s*data\s*sheet/i, kind: "SDS" },
+  { pattern: SDS_LINK_PATTERN, kind: "SDS" },
   { pattern: /\bbrochures?\b/i, kind: "brochure" },
   { pattern: /\bflyers?\b/i, kind: "flyer" },
   { pattern: /\btds\b|technical\s*data\s*sheet/i, kind: "TDS" },
@@ -214,6 +216,56 @@ export function evaluateLinkedDocument(
       `identified as the manufacturer label by the link text "${text}" on the ` +
       `registrant's own product page for "${page.pageProductName}"`,
   };
+}
+
+/**
+ * Pick the manufacturer's SDS from the documents linked on a product page.
+ *
+ * A SEPARATE identity, deliberately. The SDS is genuinely useful to an
+ * operator and genuinely worthless as label evidence, so it gets its own
+ * field and its own selector rather than being squeezed through the label
+ * path and filtered out later.
+ *
+ * The trust requirements are identical to the label's — trusted page,
+ * corresponding product, same host, a real PDF — because an SDS attributed to
+ * the wrong product is its own hazard. The wording test is inverted: the link
+ * must say SDS, and a combined "Label & SDS" link is refused here too, for the
+ * same reason it is refused as a label. Which document it resolves to is
+ * unknowable from the text.
+ */
+export function selectManufacturerSds(input: {
+  page: ProductPageContext;
+  pageIsTrustedProductPage: boolean;
+  registeredProductName: string;
+  documents: LinkedDocument[];
+}): { sds: LinkedDocument | null; reason: string } {
+  if (!input.pageIsTrustedProductPage) {
+    return { sds: null, reason: "the linking page is not a trusted registrant product page" };
+  }
+  if (!nameCorresponds(input.registeredProductName, input.page.pageProductName)) {
+    return {
+      sds: null,
+      reason:
+        `the page is about "${input.page.pageProductName}", which does not ` +
+        `correspond to the registered product "${input.registeredProductName}"`,
+    };
+  }
+
+  for (const document of input.documents ?? []) {
+    const text = (document.linkText ?? "").trim();
+    if (!SDS_LINK_PATTERN.test(text)) continue;
+    // Ambiguous combined link: refused rather than resolved by guesswork.
+    if (LABEL_LINK_PATTERNS.some((p) => p.test(text))) continue;
+    if (!sameRegistrantHost(document.url, input.page.pageUrl)) continue;
+    if (!isPdfUrl(document.url)) continue;
+    return {
+      sds: document,
+      reason:
+        `identified as the safety data sheet by the link text "${text}" on the ` +
+        `registrant's own product page`,
+    };
+  }
+  return { sds: null, reason: "no linked document qualified as an SDS" };
 }
 
 /**

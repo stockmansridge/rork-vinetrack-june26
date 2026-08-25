@@ -22,7 +22,12 @@ import {
   whpDaysFromStatement,
 } from "./ingestion/label.ts";
 import { selectLabelReferences } from "./grapevine_label.ts";
-import { evaluateLinkedDocument } from "./research/linked_documents.ts";
+import {
+  evaluateLinkedDocument,
+  selectManufacturerLabel,
+  selectManufacturerSds,
+} from "./research/linked_documents.ts";
+import { inspectProductPage } from "./research/page_inspector.ts";
 import { projectGrapevineUses } from "./grapevine_label.ts";
 import type { WireLabelRate } from "./ingestion/contract.ts";
 
@@ -113,6 +118,64 @@ Deno.test("80160: the Omnia label is promoted from its product-page link", () =>
     document: { url: OMNIA_LABEL, linkText: "Label" },
   });
   assertEquals(r.isManufacturerLabel, true);
+});
+
+/**
+ * Omnia's Sprayseal page as the server actually meets it: four separately
+ * labelled documents, and a Label href whose filename says nothing about
+ * being a label.
+ */
+const OMNIA_PAGE_HTML = `<!doctype html><html><head>
+<title>Sprayseal | Omnia Specialities Australia</title></head><body>
+<h1>Sprayseal</h1>
+<p>Pruning wound treatment. Apply at 30 mL/100 L of water.</p>
+<ul>
+  <li><a href="/files/sprayseal-sds.pdf">SDS</a></li>
+  <li><a href="/files/2025/07/Sprayseal 5L_Digi.pdf">Label</a></li>
+  <li><a href="/files/sprayseal-brochure.pdf">Brochure</a></li>
+  <li><a href="/files/sprayseal-tds.pdf">TDS</a></li>
+</ul></body></html>`;
+
+function omniaFetch(): typeof fetch {
+  return ((_input: string | URL | Request) => {
+    const res = new Response(OMNIA_PAGE_HTML, {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+    Object.defineProperty(res, "url", { value: OMNIA_PAGE, configurable: true });
+    return Promise.resolve(res);
+  }) as unknown as typeof fetch;
+}
+
+Deno.test("80160: promotion is re-derived from the FETCHED page, not from the model", async () => {
+  // The production mechanism end to end: the server reads Omnia's page and the
+  // unchanged policy decides. Nothing here depends on the research model
+  // having remembered an anchor label correctly.
+  const page = await inspectProductPage({ fetchFn: omniaFetch() }, OMNIA_PAGE, "AU");
+  assertEquals(page.outcome, "inspected");
+  if (page.outcome !== "inspected") return;
+
+  assertEquals(page.pageProductName, "Sprayseal");
+  assertEquals(page.links.length, 4);
+
+  const context = {
+    page: { pageUrl: page.finalUrl, pageProductName: page.pageProductName },
+    pageIsTrustedProductPage: true,
+    registeredProductName: SPRAYSEAL_80160.product_name,
+    documents: page.links,
+  };
+
+  const label = selectManufacturerLabel(context);
+  assertEquals(label.label?.url, OMNIA_LABEL);
+
+  // The other three documents are on the same trusted host and are still
+  // refused — the brochure's marketing rate can never arrive as label rate.
+  assertEquals(label.rejected.length, 1);
+  assertEquals(label.rejected[0].outcome, "rejected_excluded_kind");
+
+  const sds = selectManufacturerSds(context);
+  assertEquals(sds.sds?.url, OMNIA_SDS);
+  assert(sds.sds?.url !== label.label?.url);
 });
 
 // ---------------------------------------------------------------------------

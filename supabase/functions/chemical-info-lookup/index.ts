@@ -161,10 +161,12 @@ import {
 import { runSeedApply } from "./ingestion/seed_apply.ts";
 import {
   buildResolverAttempts,
+  type InspectedProductPage,
   projectResearch,
   projectResearchToSearchResults,
   type ResearchProjection,
 } from "./research/authority.ts";
+import { inspectCandidateProductPages } from "./research/page_inspector.ts";
 import {
   readResearchConfig,
   researchLog,
@@ -1603,10 +1605,52 @@ Deno.serve(async (req: Request) => {
         console.log(researchLog(researchOutcome.telemetry));
 
         if (researchOutcome.research) {
+          // Manufacturer enrichment runs ONLY behind register-resolved
+          // identity. The register names the product; without that name there
+          // is nothing to check a manufacturer's page against, and a page
+          // about a different product must never confer label status.
+          const registeredName = discovery.outcome === "resolved"
+            ? (discovery.registration?.registered_product_name ?? null)
+            : null;
+
+          // Deterministic evidence layer: the server reads the registrant's
+          // own product page rather than trusting the model's account of what
+          // it linked. Model relationship metadata survives only as a lead
+          // that helps choose which page is worth fetching.
+          let inspectedPages: InspectedProductPage[] = [];
+          if (registeredName) {
+            const research = researchOutcome.research;
+            const leads = [
+              ...research.documents.product_page_candidates.map((d) => d.url),
+              ...[
+                ...research.documents.official_label_candidates,
+                ...research.documents.product_page_candidates,
+                ...research.documents.sds_candidates,
+              ]
+                .map((d) => (d.linked_from_url ?? "").trim())
+                .filter((u) => u.length > 0),
+            ];
+            const inspection = await inspectCandidateProductPages(
+              { fetchFn: fetch, now: () => new Date() },
+              leads,
+              countryCode,
+            );
+            inspectedPages = inspection.pages;
+            // Why a manufacturer label was or was not promoted, in the logs,
+            // without loosening a rule to find out.
+            console.log(JSON.stringify({
+              evt: "product_page_inspection",
+              registered_product_name: registeredName,
+              attempts: inspection.attempts,
+            }));
+          }
+
           projection = projectResearch(
             researchOutcome.research,
             countryCode,
             registrationSchemeForCode(jur.code),
+            registeredName,
+            inspectedPages,
           );
           // Research enters through the EXISTING extraction door, so every
           // downstream authority rule (register merge, unverified-identity
