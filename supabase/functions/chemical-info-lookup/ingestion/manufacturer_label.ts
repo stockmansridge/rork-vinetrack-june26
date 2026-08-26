@@ -52,6 +52,8 @@
 
 import type { PdfTextItem, WireLabelRate } from "./contract.ts";
 import {
+  DIRECTION_SEED_KEY,
+  isLockedProduct,
   mintDirectionId,
   mintRateIdForDirection,
   type RateIdentityProduct,
@@ -470,24 +472,35 @@ export function manufacturerUsesToRegisteredUses(
     withholdingPeriodDays?: number | null;
     reEntryPeriodHours?: number | null;
     /**
-     * The locked registered product, for identity minting. Optional: the
-     * extractor runs in tests and diagnostics where no identity is resolved,
-     * and an unresolved product still mints deterministically.
+     * The LOCKED registered product, for identity minting.
+     *
+     * Optional, and identities are minted only when it is genuinely locked
+     * (country + scheme + number). The extractor also runs in tests and
+     * diagnostics with no resolved identity, and binding an id to an
+     * unconfirmed product is worse than serving none (Gate D1.3 §2).
      */
     product?: RateIdentityProduct | null;
   } = {},
 ): Record<string, unknown>[] {
+  const product = opts.product ?? null;
+  // Product-bound identity, or none at all. An unlocked product still carries
+  // its grouping forward through a seed, so the ids can be minted later once
+  // the register confirms which product this label belongs to.
+  const locked = isLockedProduct(product);
+
   const rows: Record<string, unknown>[] = [];
   for (const use of uses) {
     // Identity is minted HERE, while the direction still holds its COMPLETE
     // target set — before the fan-out below destroys it. Deriving it after the
     // fan-out, from each row's single surviving pest, would mint three
     // identities for one printed direction (Gate D1.2).
-    const directionId = mintDirectionId(opts.product ?? null, {
-      crop: use.crop,
-      targets: use.targets,
-      condition: use.condition,
-    });
+    const directionId = locked
+      ? mintDirectionId(product, {
+        crop: use.crop,
+        targets: use.targets,
+        condition: use.condition,
+      })
+      : null;
 
     const rates = use.rates.map((r) => ({
       ...r,
@@ -496,9 +509,9 @@ export function manufacturerUsesToRegisteredUses(
       // way to show which applies.
       label: use.condition ?? r.label,
     }));
-    const rateIds = rates.map((r) =>
-      mintRateIdForDirection(opts.product ?? null, directionId, r)
-    );
+    const rateIds = directionId
+      ? rates.map((r) => mintRateIdForDirection(product, directionId, r))
+      : null;
 
     const targets = use.targets.length > 0 ? use.targets : [""];
     for (const target of targets) {
@@ -506,13 +519,22 @@ export function manufacturerUsesToRegisteredUses(
         crop: use.crop,
         target,
         // Every projected row of one printed direction carries that
-        // direction's identity.
-        direction_id: directionId,
+        // direction's identity — or, until the product locks, the seed that
+        // lets it be minted correctly later.
+        ...(directionId
+          ? { direction_id: directionId }
+          : {
+            [DIRECTION_SEED_KEY]: {
+              crop: use.crop,
+              targets: [...use.targets],
+              condition: use.condition,
+            },
+          }),
         // Each row gets its OWN rate objects carrying the SAME ids. Sharing
         // one object across rows is what let a later in-place stamp overwrite
         // the identity of every sibling row — "last write wins" on a value
         // that must not depend on processing order at all.
-        rates: rates.map((r, i) => ({ ...r, rate_id: rateIds[i] })),
+        rates: rates.map((r, i) => (rateIds ? { ...r, rate_id: rateIds[i] } : { ...r })),
         withholding_period_days: opts.withholdingPeriodDays ?? null,
         re_entry_period_hours: opts.reEntryPeriodHours ?? null,
         restrictions: use.restrictions,

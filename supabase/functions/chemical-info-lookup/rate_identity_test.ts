@@ -13,7 +13,10 @@ import {
   canonicalDirectionIdentityInput,
   canonicalTargetSet,
   DIRECTION_ID_VERSION,
+  DIRECTION_SEED_KEY,
+  isLockedProduct,
   mintDirectionId,
+  stripStructuredDirectionSeeds,
 } from "./rate_identity.ts";
 import {
   extractManufacturerLabelUses,
@@ -922,6 +925,280 @@ Deno.test("D1.2 J — a carried direction_id is honoured, never re-derived", () 
   // Idempotent however many times it runs.
   assignRateIds(rows, VICOL);
   assertEquals(rows.map(pair), before);
+});
+
+// ===========================================================================
+// Gate D1.3 — PRODUCT-BOUND IDENTITY CONSISTENCY.
+//
+// The defect: `direction_id` is product-bound, but the research path minted it
+// BEFORE the register had confirmed which product the direction belonged to,
+// passing a null product. The resulting hash was built from
+// `country=- scheme=- number=-`, written into the real `direction_id` field,
+// and then honoured verbatim once identity resolved — so one registered
+// direction carried one identity via research and a different one via the
+// manufacturer label, and `rate_id` inherited the split.
+//
+// The rule: a persistable identity is minted ONLY against a locked product.
+// Until then the printed direction's grouping travels as an internal seed.
+// ===========================================================================
+
+const OTHER_PRODUCT: RateIdentityProduct = {
+  country: "AU",
+  scheme: "apvma",
+  registration_number: "99999",
+};
+
+/** The single European Red Mites direction from §8. */
+const ERM_DIRECTION = () => [printed(["European Red Mites"], "NSW, Vic, SA", 3)];
+
+/** The VICOL Tasmania three-mite direction from §9. */
+const TAS_MITE_DIRECTION = () => [
+  printed(["Grapeleaf Blister Mites", "European Red Mites", "Two Spotted Mites"], "Tas", 2),
+];
+
+/**
+ * PATH A — manufacturer label with product identity ALREADY locked when the
+ * projection runs, so identity is minted inline.
+ */
+const viaManufacturer = (
+  dirs: ReturnType<typeof printed>[],
+  product: RateIdentityProduct = VICOL,
+): ProjectedRow[] =>
+  manufacturerUsesToRegisteredUses(dirs as never, { product }) as unknown as ProjectedRow[];
+
+/**
+ * PATH B — discovery BEFORE identity resolution: the projection runs with no
+ * locked product, so it mints nothing and carries a seed; the register locks
+ * the product only afterwards.
+ */
+const viaDiscoveryThenLock = (
+  dirs: ReturnType<typeof printed>[],
+  product: RateIdentityProduct = VICOL,
+): ProjectedRow[] => {
+  const rows = manufacturerUsesToRegisteredUses(dirs as never, {}) as Record<string, unknown>[];
+  // Pre-lock: no persistable identity exists yet.
+  for (const row of rows) {
+    assertEquals(row.direction_id, undefined);
+    for (const r of row.rates as Record<string, unknown>[]) {
+      assertEquals(r.rate_id, undefined);
+    }
+  }
+  // The register speaks. THIS is the only place a persistable id is minted.
+  assignRateIds(rows, product);
+  return rows as unknown as ProjectedRow[];
+};
+
+Deno.test("D1.3 — a product is locked only with country, scheme AND number", () => {
+  assert(isLockedProduct(VICOL));
+  assert(!isLockedProduct(null));
+  assert(!isLockedProduct({}));
+  // A research lead with a guessed number but no confirmed scheme is NOT a
+  // lock, and neither is a register outage that left the number unknown.
+  assert(!isLockedProduct({ country: "AU", registration_number: "33182" }));
+  assert(!isLockedProduct({ country: "AU", scheme: "apvma" }));
+  assert(!isLockedProduct({ country: "", scheme: "apvma", registration_number: "33182" }));
+});
+
+// ---------------------------------------------------------------------------
+// §8 — THE PRINCIPAL ACCEPTANCE TEST
+// ---------------------------------------------------------------------------
+
+Deno.test("D1.3 §8 — manufacturer and research paths agree on ONE identity", () => {
+  const a = viaManufacturer(ERM_DIRECTION());
+  const b = viaDiscoveryThenLock(ERM_DIRECTION());
+
+  assertEquals(a.length, 1);
+  assertEquals(b.length, 1);
+
+  // The same registered direction of the same registered product — ONE
+  // identity, whichever path discovered it. Before this gate these differed.
+  assertEquals(b[0].direction_id, a[0].direction_id);
+  assertEquals(b[0].rates[0].rate_id, a[0].rates[0].rate_id);
+
+  // And it is genuinely product-bound, not an accidental match on the old
+  // product-less hash.
+  assert(a[0].direction_id.startsWith(`${DIRECTION_ID_VERSION}_`));
+  assertNotEquals(
+    a[0].direction_id,
+    mintDirectionId(null, {
+      crop: "Grapes",
+      targets: ["European Red Mites"],
+      condition: "NSW, Vic, SA",
+    }),
+  );
+});
+
+// ---------------------------------------------------------------------------
+// §9 — multi-target cross-path
+// ---------------------------------------------------------------------------
+
+Deno.test("D1.3 §9 — the three-mite direction agrees across both paths", () => {
+  const a = viaManufacturer(TAS_MITE_DIRECTION());
+  const b = viaDiscoveryThenLock(TAS_MITE_DIRECTION());
+
+  assertEquals(a.length, 3);
+  assertEquals(b.length, 3);
+
+  // One direction, one rate — on each path independently.
+  assertEquals(new Set(a.map((r) => r.direction_id)).size, 1);
+  assertEquals(new Set(b.map((r) => r.direction_id)).size, 1);
+  assertEquals(new Set(a.map((r) => r.rates[0].rate_id)).size, 1);
+  assertEquals(new Set(b.map((r) => r.rates[0].rate_id)).size, 1);
+
+  // And the SAME pair across paths: the complete target set survived the
+  // pre-resolution fan-out through the seed, so the late mint saw all three
+  // pests rather than one.
+  for (const row of b) {
+    assertEquals(row.direction_id, a[0].direction_id);
+    assertEquals(row.rates[0].rate_id, a[0].rates[0].rate_id);
+  }
+});
+
+Deno.test("D1.3 §9 — a differently ordered discovery fan-out still agrees", () => {
+  const a = viaManufacturer(TAS_MITE_DIRECTION());
+  // Research may legitimately emit the pests in another order.
+  const shuffled = viaDiscoveryThenLock([
+    printed(["Two Spotted Mites", "European Red Mites", "Grapeleaf Blister Mites"], "Tas", 2),
+  ]);
+
+  assertEquals(new Set(shuffled.map((r) => r.direction_id)).size, 1);
+  assertEquals(shuffled[0].direction_id, a[0].direction_id);
+  assertEquals(shuffled[0].rates[0].rate_id, a[0].rates[0].rate_id);
+});
+
+// ---------------------------------------------------------------------------
+// §10 — product separation
+// ---------------------------------------------------------------------------
+
+Deno.test("D1.3 §10 — the same direction under two registrations differs", () => {
+  const onVicol = viaManufacturer(ERM_DIRECTION(), VICOL);
+  const onOther = viaManufacturer(ERM_DIRECTION(), OTHER_PRODUCT);
+
+  // Identical crop, targets, condition and rate — different products.
+  assertNotEquals(onOther[0].direction_id, onVicol[0].direction_id);
+  assertNotEquals(onOther[0].rates[0].rate_id, onVicol[0].rates[0].rate_id);
+
+  // The separation holds through discovery too: a direction found before
+  // resolution binds to whichever product actually locks.
+  const lockedLate = viaDiscoveryThenLock(ERM_DIRECTION(), OTHER_PRODUCT);
+  assertEquals(lockedLate[0].direction_id, onOther[0].direction_id);
+  assertNotEquals(lockedLate[0].direction_id, onVicol[0].direction_id);
+});
+
+// ---------------------------------------------------------------------------
+// §6 — never resolved
+// ---------------------------------------------------------------------------
+
+Deno.test("D1.3 §6 — an unresolved product mints no persistable identity", () => {
+  const rows = manufacturerUsesToRegisteredUses(
+    TAS_MITE_DIRECTION() as never,
+    {},
+  ) as Record<string, unknown>[];
+
+  // No fabricated registration, therefore no ids. These rows are not eligible
+  // to become operational defaults anyway.
+  for (const row of rows) {
+    assertEquals(row.direction_id, undefined);
+    for (const r of row.rates as Record<string, unknown>[]) {
+      assertEquals(r.rate_id, undefined);
+    }
+  }
+
+  // Stamping with a still-unlocked product changes nothing — and clears the
+  // internal seed so it cannot escape to a client.
+  assignRateIds(rows, { country: "AU" });
+  for (const row of rows) {
+    assertEquals(row.direction_id, undefined);
+    assertEquals(row[DIRECTION_SEED_KEY], undefined);
+  }
+
+  // The label facts are untouched throughout.
+  assertEquals((rows[0].rates as Record<string, unknown>[])[0].value, 2);
+  assertEquals(rows.length, 3);
+});
+
+Deno.test("D1.3 — the internal seed never reaches a served response", () => {
+  const rows = manufacturerUsesToRegisteredUses(
+    TAS_MITE_DIRECTION() as never,
+    {},
+  ) as Record<string, unknown>[];
+
+  // It exists pre-lock, carrying the COMPLETE target set the fan-out discards.
+  const seed = rows[0][DIRECTION_SEED_KEY] as { targets: string[] };
+  assertEquals(seed.targets.length, 3);
+
+  // Locking mints the ids and clears the seed in one pass.
+  assignRateIds(rows, VICOL);
+  for (const row of rows) {
+    assertEquals(row[DIRECTION_SEED_KEY], undefined);
+    assert(typeof row.direction_id === "string");
+  }
+
+  // And the structured-level sweep clears it on the never-resolved path.
+  const unresolvedStructured = {
+    registration: null,
+    registered_uses: manufacturerUsesToRegisteredUses(TAS_MITE_DIRECTION() as never, {}),
+    grapevine_uses: manufacturerUsesToRegisteredUses(TAS_MITE_DIRECTION() as never, {}),
+    other_crop_uses: [],
+  };
+  stripStructuredDirectionSeeds(unresolvedStructured);
+  for (const row of unresolvedStructured.registered_uses as Record<string, unknown>[]) {
+    assertEquals(row[DIRECTION_SEED_KEY], undefined);
+  }
+  for (const row of unresolvedStructured.grapevine_uses as Record<string, unknown>[]) {
+    assertEquals(row[DIRECTION_SEED_KEY], undefined);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// §11 — cache / repeat
+// ---------------------------------------------------------------------------
+
+Deno.test("D1.3 §11 — live, repeated, cached and discovered rows all agree", () => {
+  const live = viaManufacturer(ERM_DIRECTION());
+  const repeated = viaManufacturer(ERM_DIRECTION());
+
+  // A cached structured response is JSON that already carries its ids; a
+  // re-stamp on read must not move them.
+  const cached = JSON.parse(JSON.stringify(live)) as Record<string, unknown>[];
+  assignRateIds(cached, VICOL);
+
+  const pairOf = (r: ProjectedRow) => `${r.direction_id}::${r.rates[0].rate_id}`;
+  assertEquals(repeated.map(pairOf), live.map(pairOf));
+  assertEquals((cached as unknown as ProjectedRow[]).map(pairOf), live.map(pairOf));
+  assertEquals(viaDiscoveryThenLock(ERM_DIRECTION()).map(pairOf), live.map(pairOf));
+});
+
+// ---------------------------------------------------------------------------
+// §12 — the VICOL acceptance survives D1.3
+// ---------------------------------------------------------------------------
+
+Deno.test("D1.3 §12 — real VICOL still 6 rows / 4 directions / 4 rates / 2 values", () => {
+  const rows = projectVicol();
+
+  assertEquals(rows.length, 6);
+  assertEquals(new Set(rows.map((r) => r.direction_id)).size, 4);
+  assertEquals(new Set(rows.map((r) => r.rates[0].rate_id)).size, 4);
+  assertEquals([...new Set(rows.map((r) => r.rates[0].value))].sort(), [2, 3]);
+
+  // The Tas multi-mite direction: 3 rows, one pair.
+  const tasMites = rows.filter((r) =>
+    r.rates[0].label === "Tas" && r.target !== "Grapevine Scale"
+  );
+  assertEquals(tasMites.length, 3);
+  assertEquals(new Set(tasMites.map(pair)).size, 1);
+
+  // The other three directions each keep their own pair.
+  const others = rows.filter((r) => !tasMites.includes(r));
+  assertEquals(others.length, 3);
+  assertEquals(new Set(others.map(pair)).size, 3);
+
+  // And all four are reproduced by the discovery-then-lock path.
+  const viaDiscovery = viaDiscoveryThenLock(
+    extractManufacturerLabelUses(VICOL_33182_LABEL_ITEMS).uses
+      .filter((u) => /^grapes$/i.test(u.crop)) as unknown as ReturnType<typeof printed>[],
+  );
+  assertEquals(viaDiscovery.map(pair).sort(), rows.map(pair).sort());
 });
 
 // ---------------------------------------------------------------------------

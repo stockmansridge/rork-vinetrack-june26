@@ -196,7 +196,11 @@ import {
   projectGrapevineUses,
   selectLabelReferences,
 } from "./grapevine_label.ts";
-import { assignRateIds } from "./rate_identity.ts";
+import {
+  applyRateIdentities,
+  DIRECTION_SEED_KEY,
+  stripStructuredDirectionSeeds,
+} from "./rate_identity.ts";
 import {
   createPostgrestSuggestionStore,
   SUGGESTION_CACHE_TTL_SECONDS,
@@ -448,6 +452,24 @@ const RATE_BASES = new Set([
   "other",
 ]);
 
+/**
+ * Read an internal direction seed, keeping only its canonical grouping fields.
+ *
+ * Defensive by design: the seed is internal, so anything shaped unexpectedly
+ * is dropped rather than trusted — a malformed seed must degrade to "no
+ * grouping", never to a wrong one.
+ */
+function readDirectionSeed(raw: any): { crop: string | null; targets: string[]; condition: string | null } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const targets = Array.isArray(raw.targets)
+    ? raw.targets.filter((t: unknown): t is string => typeof t === "string")
+    : [];
+  const crop = parseString(raw.crop);
+  const condition = parseString(raw.condition);
+  if (!targets.length && !crop && !condition) return null;
+  return { crop, targets, condition };
+}
+
 function normaliseRegisteredUses(raw: any): any[] {
   if (!Array.isArray(raw)) return [];
   const out: any[] = [];
@@ -473,6 +495,7 @@ function normaliseRegisteredUses(raw: any): any[] {
         // here would be computed from the projected single target rather than
         // the printed direction it came from (Gate D1.2).
         const rateId = parseString(r?.rate_id);
+
         rates.push({
           label: parseString(r?.label) ?? "",
           basis,
@@ -495,11 +518,17 @@ function normaliseRegisteredUses(raw: any): any[] {
     // several fanned out from a single printed direction, and only the
     // upstream minter could still see that direction's complete target set.
     const directionId = parseString(use?.direction_id);
+    // The internal pre-lock grouping (Gate D1.3). This normaliser rebuilds
+    // every row as a fresh object, so a seed it forgot to copy would be
+    // silently lost — and the printed direction's complete target set with it,
+    // leaving the later mint to derive identity from one surviving pest.
+    const directionSeed = readDirectionSeed(use?.[DIRECTION_SEED_KEY]);
 
     out.push({
       crop: crop ?? "",
       target_raw: target ?? "",
       ...(directionId ? { direction_id: directionId } : {}),
+      ...(directionSeed ? { [DIRECTION_SEED_KEY]: directionSeed } : {}),
       rates,
       withholding_period_days: parseNumber(use?.withholding_period_days),
       re_entry_period_hours: parseNumber(use?.re_entry_period_hours),
@@ -650,20 +679,19 @@ function buildStructuredResponse(
   const registeredUses = normaliseRegisteredUses(parsed?.registered_uses);
   if (!registeredUses.length) unresolved.add("registered_uses");
 
-  // Stable registered-rate identity (Gate D1).
+  // Registered-rate identity is DELIBERATELY NOT minted here (Gate D1.3).
   //
-  // Minted HERE, before the grapevine projection, so every downstream view of
-  // a row carries the identity the row itself was given. It is derived from
-  // the rate's meaning plus the locked product, never from array position or
-  // retrieval circumstances — a client can therefore persist an operator's
-  // chosen default and recover it after the label is extracted again.
+  // `registration` at this point is built from the extraction itself — a
+  // research/AI LEAD that `discardUnverifiedAiIdentity` may strip once the
+  // register has its say. Both identities are product-bound, so minting
+  // against that lead would stamp an id for a product this record may turn out
+  // not to be, and a carried `direction_id` is honoured downstream — so the
+  // wrong value would survive the register's correction.
   //
-  // Additive only: no label value is read back, changed or reordered.
-  assignRateIds(registeredUses, {
-    country: registration?.country_code ?? null,
-    scheme: registration?.scheme ?? null,
-    registration_number: registration?.registration_number ?? null,
-  });
+  // Each row instead carries an internal direction SEED (its crop, complete
+  // target set and condition), which survives the one-target-per-row fan-out.
+  // The real ids are minted in the handler once the register locks identity,
+  // and the seed is removed there.
 
   // Grapevine-first projection (task §3, §5, §6). Other crops are RETAINED,
   // never discarded — they are real label content, just not the vineyard
@@ -2231,6 +2259,28 @@ Deno.serve(async (req: Request) => {
           discovery.outcome,
           jurEnv.resolved_country_name,
         );
+      }
+
+      // 6a) THE PRODUCT LOCK POINT — the only place a persistable identity may
+      //     be minted (Gate D1.3 §4).
+      //
+      //     Everything upstream carried its printed-direction grouping as an
+      //     internal seed precisely so this mint could happen against the
+      //     RESOLVED registration rather than against a research lead. Because
+      //     the canonical input is the direction's meaning plus the locked
+      //     product, the same registered direction now receives the same
+      //     `direction_id` and `rate_id` whichever path discovered it.
+      //
+      //     When the register never resolved, NOTHING is minted: those rows are
+      //     not eligible to become operational defaults, and fabricating a
+      //     registration merely so ids could exist is exactly what §6 forbids.
+      //     The seeds are stripped either way so an internal aid never escapes.
+      if (structured) {
+        if (resolved) {
+          applyRateIdentities(structured);
+        } else {
+          stripStructuredDirectionSeeds(structured);
+        }
       }
 
       // 6b) STAGE B — the registrant's CURRENT label supplies the practical

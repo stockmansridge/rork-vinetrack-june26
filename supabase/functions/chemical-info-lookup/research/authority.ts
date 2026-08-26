@@ -29,7 +29,7 @@ import type {
   ResearchRegisteredUse,
   ResearchRegistrationCandidate,
 } from "./schema.ts";
-import { mintDirectionId } from "../rate_identity.ts";
+import { DIRECTION_SEED_KEY } from "../rate_identity.ts";
 import { classifyUrl, type ClassifiedUrl } from "./classify.ts";
 import {
   type LinkedDocument,
@@ -666,30 +666,35 @@ export function projectResearch(
         raw_text: r.raw_text ??
           (CONTRACT_RATE_BASES.has(r.basis) ? null : `${r.basis}: ${r.label ?? ""}`.trim()),
       }));
-    // Gate D1.2 — ONE printed direction, ONE identity, minted while the
-    // direction still holds its COMPLETE target set. The loop below destroys
-    // that set by fanning the direction into one row per target, so deriving
-    // identity afterwards would mint a separate identity per pest for what is
-    // a single regulatory direction.
+    // Gate D1.2 — ONE printed direction, ONE identity. The loop below fans the
+    // direction into one row per target, destroying its complete target set,
+    // so the grouping has to be captured BEFORE that happens or the identity
+    // would later be derived from a single surviving pest.
     //
-    // Product identity is deliberately NOT bound here. At this stage the
-    // registration is still an unconfirmed LEAD that
-    // `discardUnverifiedAiIdentity` may strip, so binding to it would produce
-    // a direction identity for a product this record may turn out not to be.
-    // The RATE identity is minted downstream against the RESOLVED product,
-    // which is where the product binding belongs.
-    const directionId = mintDirectionId(null, {
+    // Gate D1.3 — but it is captured as a SEED, not minted as an identity.
+    // `direction_id` is product-bound, and at this point the registration is
+    // still an unconfirmed research LEAD that `discardUnverifiedAiIdentity`
+    // may strip. Minting here produced a product-less hash that downstream
+    // then honoured verbatim, so the SAME printed direction reaching the app
+    // through research carried a different identity than through the
+    // manufacturer label — for what is one registered direction of one
+    // product.
+    //
+    // The seed is internal only: never exposed as `direction_id`, never
+    // stored, and removed once the register locks identity and the real ids
+    // are minted against the resolved product.
+    const directionSeed = {
       crop: use.crop,
-      targets: use.targets,
+      targets: [...use.targets],
       condition: null,
-    });
+    };
 
     const targets = use.targets.length > 0 ? use.targets : [""];
     for (const target of targets) {
       registered_uses.push({
         crop: use.crop,
         target,
-        direction_id: directionId,
+        [DIRECTION_SEED_KEY]: { ...directionSeed, targets: [...directionSeed.targets] },
         // Each projected row gets its OWN rate objects. Sharing one object
         // across the fan-out is what let a later in-place stamp overwrite
         // every sibling row's identity — "last write wins" on a value that

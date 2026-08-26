@@ -163,6 +163,56 @@ export const RATE_ID_VERSION = "rate_v1";
 /** Version prefix for a printed-direction identity. */
 export const DIRECTION_ID_VERSION = "direction_v1";
 
+/**
+ * Internal carrier for a printed direction's grouping, before the product is
+ * locked (Gate D1.3).
+ *
+ * # Why a seed exists at all
+ *
+ * `direction_id` is PRODUCT-BOUND — country, scheme and registration number
+ * are part of its canonical input. Research discovers a printed direction
+ * BEFORE the register has confirmed which product it belongs to, and the
+ * fan-out that destroys the direction's full target set happens at that same
+ * early stage. So the grouping has to survive the projection without being
+ * minted, or the identity would be computed against an unverified lead and
+ * then honoured forever afterwards.
+ *
+ * This key holds crop + complete targets + condition until the register locks
+ * identity, at which point the real `direction_id` is minted from it and the
+ * seed is REMOVED. It never reaches a client, is never stored in
+ * `registered_uses`, and is never authoritative evidence.
+ *
+ * Double-underscored so it cannot be mistaken for part of the wire contract.
+ */
+export const DIRECTION_SEED_KEY = "__direction_identity_seed";
+
+/** The pre-lock grouping a seed carries. */
+export interface DirectionSeed {
+  crop?: string | null;
+  targets?: (string | null | undefined)[] | null;
+  condition?: string | null;
+}
+
+/**
+ * Whether a product identity is LOCKED — confirmed enough to bind an identity
+ * that a client may persist.
+ *
+ * Requires all three canonical product fields. A research lead carrying only a
+ * guessed number is not locked, and neither is a register outage that left the
+ * scheme unknown: in both cases the honest answer is to mint nothing, because
+ * an identity minted against the wrong product is worse than no identity.
+ */
+export function isLockedProduct(
+  product: RateIdentityProduct | null | undefined,
+): boolean {
+  if (!product) return false;
+  return Boolean(
+    normaliseIdentityText(product.country) &&
+      normaliseIdentityText(product.scheme) &&
+      normaliseIdentityText(product.registration_number),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Normalisation
 // ---------------------------------------------------------------------------
@@ -343,22 +393,47 @@ interface MutableUse {
   target?: string | null;
   direction_id?: string | null;
   rates?: unknown;
+  [DIRECTION_SEED_KEY]?: DirectionSeed | null;
+}
+
+/**
+ * Remove every internal direction seed from a set of use rows.
+ *
+ * Called on BOTH exits — after minting, and when the product never locked —
+ * so an internal grouping aid can never reach a client or be stored.
+ */
+export function stripDirectionSeeds(uses: unknown): void {
+  if (!Array.isArray(uses)) return;
+  for (const raw of uses) {
+    const use = raw as MutableUse | null;
+    if (!use || typeof use !== "object") continue;
+    delete use[DIRECTION_SEED_KEY];
+  }
 }
 
 /**
  * Stamp `direction_id` and `rate_id` onto every use and rate, in place.
  *
- * # The direction a row already belongs to is never re-decided
+ * # Nothing is minted until the product is LOCKED
  *
- * A row that ALREADY carries `direction_id` was fanned out from a printed
- * direction whose full target set is no longer visible here — only one of its
- * pests survives on this row. Re-deriving identity from that single pest is
- * precisely the defect this gate closes, so a carried `direction_id` is
- * honoured verbatim and its rates are minted against it.
+ * Both identities are product-bound, so minting against an unconfirmed
+ * research lead would produce an id for a product the record may turn out not
+ * to be — and because a carried `direction_id` is honoured downstream, that
+ * wrong value would then survive the register's correction. An unlocked
+ * product therefore mints NOTHING (Gate D1.3 §2/§6): rows that never resolved
+ * are not eligible to become operational defaults anyway.
  *
- * A row WITHOUT one is its own direction: sources that publish one target per
- * printed direction are not fan-outs, and treating such a row as a
- * single-target direction is the correct reading rather than a fallback.
+ * # Where the direction comes from, in priority order
+ *
+ *   1. A carried `direction_id` — written only by product-bound minters, so
+ *      it is already correct and is honoured verbatim.
+ *   2. An internal seed — the printed direction's COMPLETE target set,
+ *      preserved across a fan-out that discarded it.
+ *   3. The row itself — correct for sources that publish one target per
+ *      printed direction, which are not fan-outs at all.
+ *
+ * Deriving from (3) when (2) exists is the D1.1 defect; skipping (1) when the
+ * product later locks is the D1.3 defect.
  *
  * Additive and idempotent — identity is a pure function of meaning, so it is
  * safe to call on a projection already stamped upstream.
@@ -370,20 +445,36 @@ export function assignRateIds(
   product: RateIdentityProduct | null | undefined,
 ): void {
   if (!Array.isArray(uses)) return;
+
+  // Unlocked: mint nothing, and drop the internal seeds on the way out so the
+  // response carries no trace of them.
+  if (!isLockedProduct(product)) {
+    stripDirectionSeeds(uses);
+    return;
+  }
+
   for (const raw of uses) {
     const use = raw as MutableUse | null;
     if (!use || typeof use !== "object") continue;
-    if (!Array.isArray(use.rates)) continue;
+    if (!Array.isArray(use.rates)) {
+      delete use[DIRECTION_SEED_KEY];
+      continue;
+    }
 
+    const seed = use[DIRECTION_SEED_KEY];
     const directionId = use.direction_id?.trim()
       ? use.direction_id
       : mintDirectionId(product, {
-        crop: use.crop ?? null,
+        crop: seed?.crop ?? use.crop ?? null,
+        targets: seed?.targets ?? null,
+        condition: seed?.condition ?? null,
         // `target_raw` is the authoritative wording; `target` is the mapped
         // VineTrack enum and only stands in when the raw wording is absent.
+        // Consulted only when the seed carries no target set.
         target_raw: use.target_raw ?? use.target ?? null,
       });
     use.direction_id = directionId;
+    delete use[DIRECTION_SEED_KEY];
 
     for (const rateRaw of use.rates) {
       const rate = rateRaw as (RateIdentityRate & { rate_id?: string }) | null;
@@ -416,6 +507,20 @@ export function applyRateIdentities(structured: unknown): void {
   assignRateIds(s.registered_uses, product);
   assignRateIds(s.grapevine_uses, product);
   assignRateIds(s.other_crop_uses, product);
+}
+
+/**
+ * Drop internal seeds from every view of a structured response.
+ *
+ * For the path where the product NEVER locked: no identity is minted, but the
+ * internal grouping must still not escape.
+ */
+export function stripStructuredDirectionSeeds(structured: unknown): void {
+  const s = structured as Record<string, unknown> | null;
+  if (!s || typeof s !== "object") return;
+  stripDirectionSeeds(s.registered_uses);
+  stripDirectionSeeds(s.grapevine_uses);
+  stripDirectionSeeds(s.other_crop_uses);
 }
 
 // ---------------------------------------------------------------------------
