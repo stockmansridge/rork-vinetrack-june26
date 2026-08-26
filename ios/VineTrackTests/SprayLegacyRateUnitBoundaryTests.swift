@@ -45,24 +45,48 @@ struct SprayLegacyRateUnitBoundaryTests {
         let previousChemicalId = line.savedChemicalId
         let isProductIdentityChange = previousChemicalId != nil
             && previousChemicalId != chosen.id
+        let isFirstBinding = previousChemicalId == nil
+        let crossesDimension = !line.unit.isDimensionallyCompatible(with: chosen.unit)
+        let discardsManualDosage = isFirstBinding && crossesDimension
         line.savedChemicalId = chosen.id
         line.name = chosen.name
         line.unit = chosen.unit
-        if isProductIdentityChange {
+        if isProductIdentityChange || discardsManualDosage {
             line.ratePerHa = 0
         }
         if line.ratePerHa == 0, chosen.ratePerHa > 0 {
             line.ratePerHa = chosen.unit.toBase(chosen.ratePerHa)
+        }
+        if isProductIdentityChange || discardsManualDosage {
+            line.volumePerTank = 0
         }
         return line
     }
 
     /// A line already bound to `product` and carrying `baseRate` in BASE units —
     /// the state every re-bind starts from.
-    private func boundLine(to product: SavedChemical, baseRate: Double) -> SprayChemical {
+    private func boundLine(
+        to product: SavedChemical,
+        baseRate: Double,
+        baseVolume: Double = 0
+    ) -> SprayChemical {
         var line = SprayChemical(name: product.name, unit: product.unit)
         line.savedChemicalId = product.id
         line.ratePerHa = baseRate
+        line.volumePerTank = baseVolume
+        return line
+    }
+
+    /// An UNBOUND line the operator has typed into: no `savedChemicalId`, but
+    /// real figures in the always-editable Rate/Ha and Vol/Tank fields.
+    private func manualLine(
+        unit: ChemicalUnit,
+        baseRate: Double = 0,
+        baseVolume: Double = 0
+    ) -> SprayChemical {
+        var line = SprayChemical(unit: unit)
+        line.ratePerHa = baseRate
+        line.volumePerTank = baseVolume
         return line
     }
 
@@ -553,13 +577,12 @@ struct SprayLegacyRateUnitBoundaryTests {
 
     /// An UNBOUND line keeps its typed rate when a product is first selected.
     ///
-    /// `nil -> chosen` is NOT treated as an identity change: the Rate/Ha field
-    /// is editable before a product is picked, so a rate sitting there may be
-    /// the operator's own. Pinned so the distinction cannot be erased silently.
+    /// `nil -> chosen` is NOT an identity change: the Rate/Ha field is editable
+    /// before a product is picked, so a rate sitting there may be the
+    /// operator's own. D2.3 qualifies this by dimension — see §A–§E below.
     @Test("First binding a product keeps an operator's typed rate")
     func firstBindingKeepsATypedRate() {
-        var manual = SprayChemical(unit: .litres)
-        manual.ratePerHa = 1_800   // typed as 1.8 L/ha before picking a product
+        let manual = manualLine(unit: .litres, baseRate: 1_800)
         #expect(manual.savedChemicalId == nil)
 
         let product = saved(name: "Product A", ratePerHa: 2.5, unit: .litres)
@@ -567,6 +590,286 @@ struct SprayLegacyRateUnitBoundaryTests {
 
         #expect(line.savedChemicalId == product.id)
         #expect(abs(line.ratePerHa - 1_800) < 0.0001)
+    }
+
+    // MARK: - D2.3 §A–L: manual-to-bound and volume/tank integrity
+    //
+    // Two questions D2.2 left open.
+    //
+    // First: a manual dosage typed before a product was chosen is the
+    // operator's own decision and should survive being bound — but only while
+    // it still measures the same kind of thing. Litres and millilitres share a
+    // base of mL, so the magnitude is untouched and only the display changes.
+    // Volume and mass share nothing; no density exists per dosage, so a manual
+    // figure that would have to cross that line is discarded rather than
+    // reinterpreted.
+    //
+    // Second: `volumePerTank` — a product-specific base-unit amount that
+    // `bind()` never touched, so 1078 g of a powder survived a switch to a
+    // litres product and displayed as "1.078 L" of it.
+
+    /// §A — manual mL line, Litres product. Same family: base value untouched,
+    /// only the display changes.
+    @Test("Manual mL rate survives binding a Litres product unchanged")
+    func manualMillilitreRateSurvivesLitresProduct() {
+        let product = saved(name: "Liquid", ratePerHa: 2.5, unit: .litres)
+        let line = bind(product, into: manualLine(unit: .millilitres, baseRate: 500))
+
+        #expect(line.unit == .litres)
+        #expect(abs(line.ratePerHa - 500) < 0.0001)
+        #expect(abs(line.displayRate - 0.5) < 0.0001)
+        // The operator's explicit 500 outranks the product's 2.5 L/ha default.
+        #expect(abs(line.ratePerHa - 2_500) > 1)
+    }
+
+    /// §B — the same rule in the other direction: Litres line, mL product.
+    @Test("Manual Litres rate survives binding an mL product unchanged")
+    func manualLitreRateSurvivesMillilitreProduct() {
+        let product = saved(name: "Adjuvant", ratePerHa: 250, unit: .millilitres)
+        let line = bind(product, into: manualLine(unit: .litres, baseRate: 2_500))
+
+        #expect(line.unit == .millilitres)
+        #expect(abs(line.ratePerHa - 2_500) < 0.0001)
+        #expect(abs(line.displayRate - 2_500) < 0.0001)
+        #expect(abs(line.ratePerHa - 250) > 1)
+    }
+
+    /// §C — the mass family behaves identically: g line, Kg product.
+    @Test("Manual gram rate survives binding a Kg product unchanged")
+    func manualGramRateSurvivesKilogramProduct() {
+        let product = saved(name: "Powder", ratePerHa: 1.2, unit: .kilograms)
+        let line = bind(product, into: manualLine(unit: .grams, baseRate: 800))
+
+        #expect(line.unit == .kilograms)
+        #expect(abs(line.ratePerHa - 800) < 0.0001)
+        #expect(abs(line.displayRate - 0.8) < 0.0001)
+        #expect(abs(line.ratePerHa - 1_200) > 1)
+    }
+
+    /// §D — manual LIQUID rate, MASS product. The manual figure cannot cross
+    /// the dimension boundary, so it goes and the product's default takes over.
+    @Test("A manual liquid rate is discarded when binding a mass product")
+    func manualLiquidRateIsDiscardedForMassProduct() {
+        let product = saved(name: "Powder", ratePerHa: 1.2, unit: .kilograms)
+        let line = bind(product, into: manualLine(unit: .litres, baseRate: 2_500))
+
+        #expect(line.unit == .kilograms)
+        #expect(abs(line.ratePerHa - 1_200) < 0.0001)
+        #expect(abs(line.displayRate - 1.2) < 0.0001)
+        // 2500 mL must not resurface as 2500 g — nor as any scaling of itself.
+        #expect(abs(line.ratePerHa - 2_500) > 1)
+        #expect(abs(line.ratePerHa - 2.5) > 1)
+    }
+
+    /// §E — the mirror: manual SOLID rate, LIQUID product.
+    @Test("A manual solid rate is discarded when binding a liquid product")
+    func manualSolidRateIsDiscardedForLiquidProduct() {
+        let product = saved(name: "Liquid", ratePerHa: 2.5, unit: .litres)
+        let line = bind(product, into: manualLine(unit: .kilograms, baseRate: 1_200))
+
+        #expect(line.unit == .litres)
+        #expect(abs(line.ratePerHa - 2_500) < 0.0001)
+        #expect(abs(line.ratePerHa - 1_200) > 1)
+    }
+
+    /// §E(ii) — an incompatible manual rate is cleared even when the product
+    /// offers no default. Unset is the honest outcome; the old figure is not a
+    /// fallback merely because nothing replaces it.
+    @Test("An incompatible manual rate is cleared even with no product default")
+    func incompatibleManualRateIsClearedWithNoDefault() {
+        let product = saved(name: "Powder", ratePerHa: 0, unit: .kilograms)
+        let line = bind(product, into: manualLine(unit: .litres, baseRate: 2_500))
+
+        #expect(line.unit == .kilograms)
+        #expect(line.ratePerHa == 0)
+    }
+
+    /// §F — a change of PRODUCT still invalidates the rate even when the two
+    /// products share a unit. Dimensional compatibility does not rescue it: a
+    /// rate belonging to Product A is not a valid rate for Product B.
+    @Test("Same-unit product change still invalidates the previous rate")
+    func sameUnitProductChangeStillInvalidatesRate() {
+        let productA = saved(name: "Product A", ratePerHa: 2.5, unit: .litres)
+        let productB = saved(name: "Product B", ratePerHa: 1.0, unit: .litres)
+
+        let line = bind(productB, into: boundLine(to: productA, baseRate: 2_500))
+
+        #expect(line.unit == .litres)
+        #expect(abs(line.ratePerHa - 1_000) < 0.0001)
+        #expect(abs(line.ratePerHa - 2_500) > 1)
+    }
+
+    /// §G — a different product clears the tank amount. This is the 1078 g →
+    /// "1.078 L" defect, pinned.
+    @Test("Changing product clears the previous product's tank amount")
+    func changingProductClearsVolumePerTank() {
+        let solid = saved(name: "Dithane", ratePerHa: 2.2, unit: .kilograms)
+        let liquid = saved(name: "Liquid Fungicide", ratePerHa: 2.5, unit: .litres)
+
+        let before = boundLine(to: solid, baseRate: 2_200, baseVolume: 1_078)
+        #expect(abs(before.displayVolume - 1.078) < 0.0001)   // 1.078 Kg
+
+        let line = bind(liquid, into: before)
+
+        #expect(line.unit == .litres)
+        #expect(line.volumePerTank == 0)
+        #expect(line.displayVolume == 0)
+        // Not carried across and re-read as 1.078 L of the new product.
+        #expect(abs(line.volumePerTank - 1_078) > 1)
+    }
+
+    /// §G(ii) — and it is cleared on a same-unit product change too, where
+    /// nothing on screen would have hinted the amount was stale.
+    @Test("Changing product clears the tank amount even within one unit")
+    func sameUnitProductChangeClearsVolumePerTank() {
+        let productA = saved(name: "Product A", ratePerHa: 2.5, unit: .litres)
+        let productB = saved(name: "Product B", ratePerHa: 1.0, unit: .litres)
+
+        let line = bind(
+            productB,
+            into: boundLine(to: productA, baseRate: 2_500, baseVolume: 6_250)
+        )
+
+        #expect(line.volumePerTank == 0)
+    }
+
+    /// §H — re-selecting the SAME product changes nothing the operator entered.
+    @Test("Re-selecting the same product preserves rate and tank amount")
+    func sameProductReselectionPreservesBothDosageFields() {
+        let product = saved(name: "Product A", ratePerHa: 2.5, unit: .litres)
+        let line = bind(
+            product,
+            into: boundLine(to: product, baseRate: 1_800, baseVolume: 4_500)
+        )
+
+        #expect(line.savedChemicalId == product.id)
+        #expect(abs(line.ratePerHa - 1_800) < 0.0001)
+        #expect(abs(line.volumePerTank - 4_500) < 0.0001)
+        // Neither reverted to the store default nor blanked.
+        #expect(abs(line.ratePerHa - 2_500) > 1)
+    }
+
+    /// §I — a manual tank amount survives first binding within one family.
+    @Test("A manual tank amount survives first binding in the same family")
+    func manualVolumeSurvivesCompatibleFirstBinding() {
+        let product = saved(name: "Liquid", ratePerHa: 2.5, unit: .litres)
+        let line = bind(
+            product,
+            into: manualLine(unit: .millilitres, baseRate: 500, baseVolume: 750)
+        )
+
+        #expect(line.unit == .litres)
+        #expect(abs(line.volumePerTank - 750) < 0.0001)
+        #expect(abs(line.displayVolume - 0.75) < 0.0001)
+    }
+
+    /// §J — and is cleared when first binding crosses the dimension boundary.
+    /// It is NOT re-seeded: `SavedChemical` holds no per-tank default.
+    @Test("A manual tank amount is cleared when first binding crosses dimension")
+    func manualVolumeIsClearedOnIncompatibleFirstBinding() {
+        let product = saved(name: "Powder", ratePerHa: 1.2, unit: .kilograms)
+        let line = bind(
+            product,
+            into: manualLine(unit: .litres, baseRate: 2_500, baseVolume: 750)
+        )
+
+        #expect(line.unit == .kilograms)
+        #expect(line.volumePerTank == 0)
+        // The rate was seeded from the product; the tank amount has no such
+        // source and must stay unset rather than be fabricated from the rate.
+        #expect(abs(line.ratePerHa - 1_200) < 0.0001)
+    }
+
+    /// §K — the structured registered-rate path is untouched by all of this.
+    @Test("Binding does not disturb a structured registered rate or its basis")
+    func structuredRatePathIsUntouched() throws {
+        let chemical = try structuredChemical()
+        let selected = try #require(
+            SprayRegisteredUseRates.defaultSelection(for: chemical, preferring: .perHectare)
+        )
+        let seed = try #require(
+            SprayRegisteredUseRates.seedValue(
+                for: chemical, rateId: selected.id, basis: .perHectare
+            )
+        )
+
+        var before = boundLine(to: chemical, baseRate: seed)
+        before.ratePer100L = 45
+        before.rateBasis = .wholeBlockArea
+        let line = bind(chemical, into: before)
+
+        #expect(abs(line.ratePerHa - seed) < 0.0001)
+        #expect(abs(line.ratePerHa - 1_500) < 0.0001)
+        // Not re-converted, not replaced by the legacy scalar.
+        #expect(abs(line.ratePerHa - chemical.unit.toBase(seed)) > 1_000)
+        // Basis and the per-100 L field are not this gate's business.
+        #expect(line.rateBasis == .wholeBlockArea)
+        #expect(abs(line.ratePer100L - 45) < 0.0001)
+    }
+
+    /// §L — no mass↔volume conversion exists anywhere in the bind path.
+    ///
+    /// Every unit pairing, exhaustively: within a family the base magnitude is
+    /// returned untouched; across families it is discarded outright and never
+    /// appears scaled by 1000 in either direction.
+    @Test("No unit pairing ever converts between mass and volume")
+    func noMassVolumeConversionExistsInBindPath() {
+        let manualBase = 500.0
+
+        for lineUnit in ChemicalUnit.allCases {
+            for productUnit in ChemicalUnit.allCases {
+                // Default chosen so its seed (1200 base) can never be confused
+                // with the manual value or any scaling of it.
+                let product = saved(
+                    name: "P",
+                    ratePerHa: productUnit.fromBase(1_200),
+                    unit: productUnit
+                )
+                let line = bind(
+                    product,
+                    into: manualLine(unit: lineUnit, baseRate: manualBase, baseVolume: manualBase)
+                )
+
+                #expect(line.unit == productUnit)
+
+                if lineUnit.isDimensionallyCompatible(with: productUnit) {
+                    #expect(abs(line.ratePerHa - manualBase) < 0.0001)
+                    #expect(abs(line.volumePerTank - manualBase) < 0.0001)
+                } else {
+                    #expect(abs(line.ratePerHa - 1_200) < 0.0001)
+                    #expect(line.volumePerTank == 0)
+                    // Never the manual figure, nor 1000× or ÷1000 of it.
+                    #expect(abs(line.ratePerHa - manualBase) > 0.0001)
+                    #expect(abs(line.ratePerHa - manualBase * 1_000) > 0.0001)
+                    #expect(abs(line.ratePerHa - manualBase / 1_000) > 0.0001)
+                }
+            }
+        }
+    }
+
+    /// The dimension helper itself: one family in, one family out, no bridge.
+    @Test("Unit compatibility is symmetric, reflexive and never crosses families")
+    func dimensionalCompatibilityIsWellFormed() {
+        #expect(ChemicalUnit.litres.dimension == .volume)
+        #expect(ChemicalUnit.millilitres.dimension == .volume)
+        #expect(ChemicalUnit.kilograms.dimension == .mass)
+        #expect(ChemicalUnit.grams.dimension == .mass)
+
+        for a in ChemicalUnit.allCases {
+            #expect(a.isDimensionallyCompatible(with: a))
+            for b in ChemicalUnit.allCases {
+                #expect(
+                    a.isDimensionallyCompatible(with: b)
+                        == b.isDimensionallyCompatible(with: a)
+                )
+                #expect(
+                    a.isDimensionallyCompatible(with: b) == (a.baseLabel == b.baseLabel)
+                )
+            }
+        }
+
+        #expect(!ChemicalUnit.litres.isDimensionallyCompatible(with: .kilograms))
+        #expect(!ChemicalUnit.millilitres.isDimensionallyCompatible(with: .grams))
     }
 
     /// Releasing a line back to manual entry clears identity but must NOT reset

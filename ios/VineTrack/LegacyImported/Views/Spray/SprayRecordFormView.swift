@@ -212,13 +212,30 @@ struct SprayRecordFormView: View {
             // A genuine change of product: this line referred to one saved
             // chemical and now refers to a different one.
             //
-            // `nil -> chosen` is deliberately NOT counted. An unbound line's
-            // Rate/Ha field is editable, so a rate sitting on it may be one the
-            // operator typed by hand, and destroying that is a different
-            // decision from discarding a rate that demonstrably belonged to
-            // another product. See the gate report.
+            // `nil -> chosen` is NOT counted here. An unbound line's Rate/Ha
+            // and Vol/Tank fields are editable, so figures sitting on them may
+            // be the operator's own; that case is governed by dimensional
+            // compatibility immediately below instead.
             let isProductIdentityChange = previousChemicalId != nil
                 && previousChemicalId != chosen.id
+            // D2.3 — first binding of a manual line.
+            //
+            // A typed dosage may survive being bound to a product only while it
+            // still measures the same kind of thing. Litres and millilitres are
+            // one quantity written two ways and share a base of mL, so 500 base
+            // is 500 mL either way and needs no conversion — only the display
+            // changes, to 0.5 L/ha.
+            //
+            // Volume and mass are not interchangeable. 500 mL of a liquid is
+            // not 500 g of a powder, and this app holds no per-dosage density
+            // that could make it so. Rather than invent one, the manual figure
+            // is discarded and the product's own default takes over.
+            //
+            // Asked BEFORE the unit is replaced — afterwards the line's original
+            // dimension is gone and the question can no longer be answered.
+            let isFirstBinding = previousChemicalId == nil
+            let crossesDimension = !line.unit.isDimensionallyCompatible(with: chosen.unit)
+            let discardsManualDosage = isFirstBinding && crossesDimension
             line.savedChemicalId = chosen.id
             line.name = chosen.name
             // D2.1 — the line adopts the PRODUCT'S unit, and does so FIRST.
@@ -262,11 +279,31 @@ struct SprayRecordFormView: View {
             // states no default the line is left unset, which is the honest
             // answer — an operator entering a rate is a smaller failure than a
             // wrong rate they had no reason to question.
-            if isProductIdentityChange {
+            //
+            // D2.3 adds the second way a rate can be wrong for the product now
+            // on the line: a manual figure whose dimension the chosen product
+            // does not share. A compatible manual rate is left exactly as the
+            // operator typed it and is never replaced by the store default —
+            // an explicit decision outranks a default.
+            if isProductIdentityChange || discardsManualDosage {
                 line.ratePerHa = 0
             }
             if line.ratePerHa == 0, chosen.ratePerHa > 0 {
                 line.ratePerHa = chosen.unit.toBase(chosen.ratePerHa)
+            }
+            // D2.3 — the tank amount is as product-specific as the rate, and
+            // was the more dangerous of the two: `bind()` never touched it at
+            // all, so 1078 g of a powder survived a switch to a litres product
+            // and reappeared through `displayVolume` as "1.078 L" of it.
+            //
+            // Invalidated on the same two conditions, and deliberately NOT
+            // re-seeded: `SavedChemical` carries no per-tank default. `packSize`
+            // is the size of a container and `inventoryQuantity` is stock on
+            // hand — neither is a dose — and it must not be fabricated from the
+            // rate or the tank volume. An empty field asks the operator a
+            // question; a carried-over one answers it wrongly on their behalf.
+            if isProductIdentityChange || discardsManualDosage {
+                line.volumePerTank = 0
             }
         } else {
             // Releasing to manual keeps the unit already on screen: there is no

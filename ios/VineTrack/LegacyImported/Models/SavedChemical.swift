@@ -30,6 +30,36 @@ nonisolated enum ChemicalUnit: String, CaseIterable, Codable, Sendable {
         case .kilograms, .grams: return "g"
         }
     }
+
+    /// The physical dimension this unit measures.
+    ///
+    /// Litres and millilitres are the SAME quantity written two ways, as are
+    /// kilograms and grams — which is exactly why every dosage is stored in
+    /// the family's base (mL or g) and only displayed through `fromBase`.
+    /// Volume and mass are not interchangeable at all.
+    var dimension: ChemicalUnitDimension {
+        switch self {
+        case .litres, .millilitres: return .volume
+        case .kilograms, .grams: return .mass
+        }
+    }
+
+    /// Whether a stored BASE value means the same thing under both units.
+    ///
+    /// True only within one family, where the base unit is shared and the
+    /// magnitude therefore needs no conversion. Across families it is false and
+    /// stays false: turning millilitres into grams requires a density this app
+    /// does not hold per dosage, so the honest answer is to refuse rather than
+    /// to invent one.
+    func isDimensionallyCompatible(with other: ChemicalUnit) -> Bool {
+        dimension == other.dimension
+    }
+}
+
+/// Volume vs mass — the boundary no dosage may silently cross.
+nonisolated enum ChemicalUnitDimension: Sendable, Hashable {
+    case volume
+    case mass
 }
 
 nonisolated enum ChemicalRateBasis: String, Codable, Sendable {
