@@ -37,7 +37,7 @@ import {
   projectGrapevineUses,
   selectLabelReferences,
 } from "../grapevine_label.ts";
-import { applyRateIdentities } from "../rate_identity.ts";
+import { applyRateIdentities, type RateIdentityProduct } from "../rate_identity.ts";
 
 /** Everything the live path needs to prove what happened, and why. */
 export interface ManufacturerEnrichmentDiagnostics {
@@ -117,6 +117,14 @@ export async function enrichFromManufacturerLabel(input: {
   sourcePageUrl: string | null;
   /** The use rows the regulator path produced. */
   regulatorUses: Record<string, unknown>[];
+  /**
+   * The locked registered product, for identity minting (Gate D1.2).
+   *
+   * Threaded this far down because direction and rate identities must be
+   * minted while a printed direction still holds its complete target set —
+   * i.e. inside the projection below, before the one-target-per-row fan-out.
+   */
+  product?: RateIdentityProduct | null;
 }): Promise<ManufacturerEnrichmentResult> {
   const regulatorUses = input.regulatorUses ?? [];
 
@@ -216,6 +224,7 @@ export async function enrichFromManufacturerLabel(input: {
     // Never zero-filled. A label that does not state a re-entry period has not
     // stated that there isn't one.
     reEntryPeriodHours: null,
+    product: input.product ?? null,
   });
 
   const chosen = selectPracticalUses({ manufacturerUses, regulatorUses });

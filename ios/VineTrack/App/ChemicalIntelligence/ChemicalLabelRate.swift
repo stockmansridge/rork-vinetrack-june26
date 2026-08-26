@@ -311,6 +311,30 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
         ].joined(separator: "|")
     }
 
+    /// The server-minted identity of the PRINTED LABEL DIRECTION this row came
+    /// from (Gate D1.2).
+    ///
+    /// # Why several rows can share one value
+    ///
+    /// A label direction may name several pests on one printed line:
+    ///
+    /// ```text
+    ///   Grapes | Grapeleaf Blister Mites,  | Tas | 2 L / 100 L
+    ///          | European Red Mites,       |     |
+    ///          | Two Spotted Mites         |     |
+    /// ```
+    ///
+    /// That is ONE regulatory direction. This contract carries one target per
+    /// row, so the server fans it into three rows — which share this id, and
+    /// share the same `rates[].rateId`. The fan-out is a rendering
+    /// convenience; it never means the regulator granted three approvals.
+    ///
+    /// Decoded and re-encoded verbatim, never computed on device: the backend
+    /// is the canonical minter, and a client deriving its own value is exactly
+    /// how two clients come to disagree about one product. `nil` on records
+    /// saved before this existed, and on manually entered uses.
+    var directionId: String?
+
     /// The crop the use is registered for, e.g. `"Grapes"`. Kept as label text
     /// because registrations distinguish winegrapes from tablegrapes.
     var crop: String
@@ -362,8 +386,10 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
         reEntryPeriodHours: Int? = nil,
         reEntryStatement: String? = nil,
         restrictions: String? = nil,
-        provenance: [String: String]? = nil
+        provenance: [String: String]? = nil,
+        directionId: String? = nil
     ) {
+        self.directionId = directionId?.trimmedNonEmpty
         self.crop = crop.trimmingCharacters(in: .whitespacesAndNewlines)
         self.targetRaw = targetRaw.trimmingCharacters(in: .whitespacesAndNewlines)
         self.target = target ?? ChemicalRegisteredUse.mapTarget(targetRaw)
@@ -383,6 +409,7 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
         case withholdingPeriodDays = "withholding_period_days"
         case reEntryPeriodHours = "re_entry_period_hours"
         case reEntryStatement = "re_entry_statement"
+        case directionId = "direction_id"
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -406,6 +433,11 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
         // Additive and tolerant: a malformed or missing provenance map reads
         // as nil so the use itself always loads; the value is never guessed.
         provenance = try? c.decodeIfPresent([String: String].self, forKey: .provenance)
+        // Additive and tolerant: absent on every record saved before printed-
+        // direction identity existed, and such a record must keep decoding
+        // exactly as it always did.
+        directionId = ((try? c.decodeIfPresent(String.self, forKey: .directionId)) ?? nil)?
+            .trimmedNonEmpty
     }
 
     /// Trimmed, or nil when empty — whitespace is not a statement.

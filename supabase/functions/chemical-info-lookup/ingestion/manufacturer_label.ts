@@ -51,6 +51,11 @@
 // single byte is fetched, by the register.
 
 import type { PdfTextItem, WireLabelRate } from "./contract.ts";
+import {
+  mintDirectionId,
+  mintRateIdForDirection,
+  type RateIdentityProduct,
+} from "../rate_identity.ts";
 import { parseRateCell } from "./label_extract.ts";
 
 /** Bumped whenever the geometry or binding rules below change. */
@@ -461,10 +466,29 @@ export function extractManufacturerLabelUses(
  */
 export function manufacturerUsesToRegisteredUses(
   uses: ManufacturerLabelUse[],
-  opts: { withholdingPeriodDays?: number | null; reEntryPeriodHours?: number | null } = {},
+  opts: {
+    withholdingPeriodDays?: number | null;
+    reEntryPeriodHours?: number | null;
+    /**
+     * The locked registered product, for identity minting. Optional: the
+     * extractor runs in tests and diagnostics where no identity is resolved,
+     * and an unresolved product still mints deterministically.
+     */
+    product?: RateIdentityProduct | null;
+  } = {},
 ): Record<string, unknown>[] {
   const rows: Record<string, unknown>[] = [];
   for (const use of uses) {
+    // Identity is minted HERE, while the direction still holds its COMPLETE
+    // target set — before the fan-out below destroys it. Deriving it after the
+    // fan-out, from each row's single surviving pest, would mint three
+    // identities for one printed direction (Gate D1.2).
+    const directionId = mintDirectionId(opts.product ?? null, {
+      crop: use.crop,
+      targets: use.targets,
+      condition: use.condition,
+    });
+
     const rates = use.rates.map((r) => ({
       ...r,
       // The condition the label prints for this rate. Without it, 2 L/100 L
@@ -472,12 +496,23 @@ export function manufacturerUsesToRegisteredUses(
       // way to show which applies.
       label: use.condition ?? r.label,
     }));
+    const rateIds = rates.map((r) =>
+      mintRateIdForDirection(opts.product ?? null, directionId, r)
+    );
+
     const targets = use.targets.length > 0 ? use.targets : [""];
     for (const target of targets) {
       rows.push({
         crop: use.crop,
         target,
-        rates,
+        // Every projected row of one printed direction carries that
+        // direction's identity.
+        direction_id: directionId,
+        // Each row gets its OWN rate objects carrying the SAME ids. Sharing
+        // one object across rows is what let a later in-place stamp overwrite
+        // the identity of every sibling row — "last write wins" on a value
+        // that must not depend on processing order at all.
+        rates: rates.map((r, i) => ({ ...r, rate_id: rateIds[i] })),
         withholding_period_days: opts.withholdingPeriodDays ?? null,
         re_entry_period_hours: opts.reEntryPeriodHours ?? null,
         restrictions: use.restrictions,

@@ -60,11 +60,62 @@ export interface RateIdentityProduct {
   registration_number?: string | null;
 }
 
-/** The semantic registered direction (which crop, which target). */
-export interface RateIdentityUse {
+/**
+ * ONE PRINTED LABEL DIRECTION.
+ *
+ * # Why this is not "a row"
+ *
+ * A Directions for Use table prints one direction per line, and a line may
+ * name SEVERAL pests:
+ *
+ * ```text
+ *   Grapes | Grapeleaf Blister Mites,  | Tas | 2 L / 100 L
+ *          | European Red Mites,       |     |
+ *          | Two Spotted Mites         |     |
+ * ```
+ *
+ * That is ONE regulatory direction covering three pests — not three
+ * directions. The `registered_uses` contract carries one target per row, so
+ * the direction is FANNED OUT into three rows downstream. That fan-out is a
+ * projection for clients to render; it is not a statement that the regulator
+ * granted three separate approvals.
+ *
+ * Identity therefore belongs to the printed direction and is minted BEFORE the
+ * fan-out. Deriving it afterwards from a projected row's single `target_raw`
+ * mints three identities for one direction — and where the projection shares
+ * one rate object across those rows, whichever row is stamped last wins,
+ * leaving the others advertising an identity computed from a pest they do not
+ * name.
+ */
+export interface RateIdentityDirection {
   crop?: string | null;
+  /**
+   * EVERY target the printed direction names, in the label's own wording.
+   *
+   * Canonicalised order-independently: the label's reading order is a
+   * typesetting fact, not a regulatory one.
+   */
+  targets?: (string | null | undefined)[] | null;
+  /**
+   * The direction's condition/jurisdiction wording ("Tas", "NSW, Vic, SA").
+   *
+   * Part of identity: the same crop and pest under two state sets are two
+   * distinct registered directions, not one.
+   */
+  condition?: string | null;
+  /**
+   * Degenerate single-target form, for sources that publish one target per
+   * printed direction, and for already-projected historical rows.
+   *
+   * Used ONLY when `targets` is absent or empty. A source that genuinely
+   * states one pest per direction is not a fan-out, so treating its row as its
+   * own direction is correct rather than a fallback.
+   */
   target_raw?: string | null;
 }
+
+/** Prior name for the same concept, kept so call sites read naturally. */
+export type RateIdentityUse = RateIdentityDirection;
 
 /** The rate row itself, in the sql/194 wire vocabulary. */
 export interface RateIdentityRate {
@@ -108,6 +159,9 @@ export interface RateIdentityRate {
 
 /** Version prefix. Bump only if the canonical input changes shape. */
 export const RATE_ID_VERSION = "rate_v1";
+
+/** Version prefix for a printed-direction identity. */
+export const DIRECTION_ID_VERSION = "direction_v1";
 
 // ---------------------------------------------------------------------------
 // Normalisation
@@ -158,18 +212,70 @@ function orDash(value: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * The exact bytes hashed for a rate identity.
+ * The target set a direction names, canonicalised order-independently.
  *
- * Exported so tests can assert the composition directly, and so a future
- * client-side derivation can be proven identical rather than assumed to be.
+ * Normalised, de-duplicated and sorted, so identity depends on WHICH pests the
+ * direction covers and never on the order the label printed them or a parser
+ * happened to emit them.
+ */
+export function canonicalTargetSet(
+  direction: RateIdentityDirection | null | undefined,
+): string[] {
+  const raw = (direction?.targets?.length ? direction.targets : [direction?.target_raw]) ?? [];
+  const folded = raw.map((t) => normaliseIdentityText(t)).filter((t) => t.length > 0);
+  return [...new Set(folded)].sort();
+}
+
+/**
+ * The exact bytes hashed for a PRINTED DIRECTION identity.
  *
  * Fields are NAME-tagged and separated by a unit separator (U+001F) that
  * cannot survive `normaliseIdentityText`. Without both, `crop="ab"` +
- * `target="c"` and `crop="a"` + `target="bc"` would hash identically.
+ * `target="c"` and `crop="a"` + `target="bc"` would hash identically. Targets
+ * inside the set are joined by a record separator (U+001E) for the same
+ * reason.
+ */
+export function canonicalDirectionIdentityInput(
+  product: RateIdentityProduct | null | undefined,
+  direction: RateIdentityDirection | null | undefined,
+): string {
+  const targets = canonicalTargetSet(direction);
+  return [
+    `v=${DIRECTION_ID_VERSION}`,
+    `country=${normaliseIdentityToken(product?.country)}`,
+    `scheme=${normaliseIdentityToken(product?.scheme)}`,
+    `number=${normaliseIdentityToken(product?.registration_number)}`,
+    `crop=${orDash(normaliseIdentityText(direction?.crop))}`,
+    `targets=${targets.join("\u001e") || "-"}`,
+    `condition=${orDash(normaliseIdentityText(direction?.condition))}`,
+  ].join("\u001f");
+}
+
+/**
+ * Mint the stable identity for ONE PRINTED LABEL DIRECTION.
+ *
+ * Must be called while the direction still holds its complete target set —
+ * that is, before any fan-out into one-target-per-row projection rows.
+ */
+export function mintDirectionId(
+  product: RateIdentityProduct | null | undefined,
+  direction: RateIdentityDirection | null | undefined,
+): string {
+  const digest = sha256Hex(canonicalDirectionIdentityInput(product, direction));
+  return `${DIRECTION_ID_VERSION}_${digest.slice(0, 32)}`;
+}
+
+/**
+ * The exact bytes hashed for a rate identity.
+ *
+ * Scoped to the printed DIRECTION rather than to a projected row's single
+ * target. That is the whole correction: a three-pest direction states one
+ * rate, so it carries one rate identity whichever of its three projected rows
+ * a client happens to be looking at.
  */
 export function canonicalRateIdentityInput(
   product: RateIdentityProduct | null | undefined,
-  use: RateIdentityUse | null | undefined,
+  directionId: string,
   rate: RateIdentityRate | null | undefined,
 ): string {
   const basis = orDash(normaliseIdentityText(rate?.basis));
@@ -182,8 +288,8 @@ export function canonicalRateIdentityInput(
     `country=${normaliseIdentityToken(product?.country)}`,
     `scheme=${normaliseIdentityToken(product?.scheme)}`,
     `number=${normaliseIdentityToken(product?.registration_number)}`,
-    `crop=${orDash(normaliseIdentityText(use?.crop))}`,
-    `target=${orDash(normaliseIdentityText(use?.target_raw))}`,
+    // The direction, never the projected target.
+    `direction=${orDash(normaliseIdentityText(directionId))}`,
     `basis=${basis}`,
     `unit=${orDash(normaliseIdentityText(rate?.unit))}`,
     `value=${normaliseIdentityNumber(rate?.value)}`,
@@ -196,21 +302,35 @@ export function canonicalRateIdentityInput(
 }
 
 /**
- * Mint the stable identity for one registered rate.
+ * Mint a rate identity against an ALREADY-MINTED direction identity.
  *
- * Deterministic and pure: the same semantic row always yields the same string,
- * on any machine, in any order, at any time. Never a UUID — a random identity
- * would change on every extraction, which defeats the entire purpose.
+ * The form the fan-out uses: mint the direction once, mint its rates against
+ * it, then copy both onto every projected row verbatim.
  */
-export function mintRateId(
+export function mintRateIdForDirection(
   product: RateIdentityProduct | null | undefined,
-  use: RateIdentityUse | null | undefined,
+  directionId: string,
   rate: RateIdentityRate | null | undefined,
 ): string {
-  const digest = sha256Hex(canonicalRateIdentityInput(product, use, rate));
+  const digest = sha256Hex(canonicalRateIdentityInput(product, directionId, rate));
   // 128 bits of a SHA-256. Collision probability is negligible at any
   // plausible catalogue size, and the shorter string keeps the payload light.
   return `${RATE_ID_VERSION}_${digest.slice(0, 32)}`;
+}
+
+/**
+ * Mint the stable identity for one registered rate of a printed direction.
+ *
+ * Deterministic and pure: the same semantic rate always yields the same
+ * string, on any machine, in any order, at any time. Never a UUID — a random
+ * identity would change on every extraction, defeating the entire purpose.
+ */
+export function mintRateId(
+  product: RateIdentityProduct | null | undefined,
+  direction: RateIdentityDirection | null | undefined,
+  rate: RateIdentityRate | null | undefined,
+): string {
+  return mintRateIdForDirection(product, mintDirectionId(product, direction), rate);
 }
 
 // ---------------------------------------------------------------------------
@@ -221,15 +341,27 @@ interface MutableUse {
   crop?: string | null;
   target_raw?: string | null;
   target?: string | null;
+  direction_id?: string | null;
   rates?: unknown;
 }
 
 /**
- * Stamp `rate_id` onto every rate of every use, in place.
+ * Stamp `direction_id` and `rate_id` onto every use and rate, in place.
  *
- * Additive and idempotent. Running it twice changes nothing, because the
- * identity is a pure function of the row's meaning — which is also why it is
- * safe to call on a projection whose rows were already stamped upstream.
+ * # The direction a row already belongs to is never re-decided
+ *
+ * A row that ALREADY carries `direction_id` was fanned out from a printed
+ * direction whose full target set is no longer visible here — only one of its
+ * pests survives on this row. Re-deriving identity from that single pest is
+ * precisely the defect this gate closes, so a carried `direction_id` is
+ * honoured verbatim and its rates are minted against it.
+ *
+ * A row WITHOUT one is its own direction: sources that publish one target per
+ * printed direction are not fan-outs, and treating such a row as a
+ * single-target direction is the correct reading rather than a fallback.
+ *
+ * Additive and idempotent — identity is a pure function of meaning, so it is
+ * safe to call on a projection already stamped upstream.
  *
  * Nothing else about a use or a rate is read, written, reordered or removed.
  */
@@ -242,16 +374,21 @@ export function assignRateIds(
     const use = raw as MutableUse | null;
     if (!use || typeof use !== "object") continue;
     if (!Array.isArray(use.rates)) continue;
-    const identityUse: RateIdentityUse = {
-      crop: use.crop ?? null,
-      // `target_raw` is the authoritative wording; `target` is the mapped
-      // VineTrack enum and only stands in when the raw wording is absent.
-      target_raw: use.target_raw ?? use.target ?? null,
-    };
+
+    const directionId = use.direction_id?.trim()
+      ? use.direction_id
+      : mintDirectionId(product, {
+        crop: use.crop ?? null,
+        // `target_raw` is the authoritative wording; `target` is the mapped
+        // VineTrack enum and only stands in when the raw wording is absent.
+        target_raw: use.target_raw ?? use.target ?? null,
+      });
+    use.direction_id = directionId;
+
     for (const rateRaw of use.rates) {
       const rate = rateRaw as (RateIdentityRate & { rate_id?: string }) | null;
       if (!rate || typeof rate !== "object") continue;
-      rate.rate_id = mintRateId(product, identityUse, rate);
+      rate.rate_id = mintRateIdForDirection(product, directionId, rate);
     }
   }
 }

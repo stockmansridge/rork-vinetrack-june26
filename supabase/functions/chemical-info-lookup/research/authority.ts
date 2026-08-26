@@ -29,6 +29,7 @@ import type {
   ResearchRegisteredUse,
   ResearchRegistrationCandidate,
 } from "./schema.ts";
+import { mintDirectionId } from "../rate_identity.ts";
 import { classifyUrl, type ClassifiedUrl } from "./classify.ts";
 import {
   type LinkedDocument,
@@ -665,12 +666,35 @@ export function projectResearch(
         raw_text: r.raw_text ??
           (CONTRACT_RATE_BASES.has(r.basis) ? null : `${r.basis}: ${r.label ?? ""}`.trim()),
       }));
+    // Gate D1.2 — ONE printed direction, ONE identity, minted while the
+    // direction still holds its COMPLETE target set. The loop below destroys
+    // that set by fanning the direction into one row per target, so deriving
+    // identity afterwards would mint a separate identity per pest for what is
+    // a single regulatory direction.
+    //
+    // Product identity is deliberately NOT bound here. At this stage the
+    // registration is still an unconfirmed LEAD that
+    // `discardUnverifiedAiIdentity` may strip, so binding to it would produce
+    // a direction identity for a product this record may turn out not to be.
+    // The RATE identity is minted downstream against the RESOLVED product,
+    // which is where the product binding belongs.
+    const directionId = mintDirectionId(null, {
+      crop: use.crop,
+      targets: use.targets,
+      condition: null,
+    });
+
     const targets = use.targets.length > 0 ? use.targets : [""];
     for (const target of targets) {
       registered_uses.push({
         crop: use.crop,
         target,
-        rates,
+        direction_id: directionId,
+        // Each projected row gets its OWN rate objects. Sharing one object
+        // across the fan-out is what let a later in-place stamp overwrite
+        // every sibling row's identity — "last write wins" on a value that
+        // must not depend on processing order at all.
+        rates: rates.map((r) => ({ ...r })),
         withholding_period_days: whpDays(use.whp),
         re_entry_period_hours: reiHours(use.rei),
         // The SAME defect, in the second path: `reiHours` correctly refuses to

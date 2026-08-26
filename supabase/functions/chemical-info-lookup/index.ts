@@ -467,6 +467,12 @@ function normaliseRegisteredUses(raw: any): any[] {
         // captured verbatim; otherwise it says nothing and is dropped.
         const rawText = parseString(r?.raw_text);
         if (value === null && minValue === null && !rawText) continue;
+        // An identity minted upstream is CARRIED, never dropped and re-derived.
+        // This normaliser rebuilds every row as a fresh object, so anything it
+        // forgets to copy is silently lost — and a rate identity re-derived
+        // here would be computed from the projected single target rather than
+        // the printed direction it came from (Gate D1.2).
+        const rateId = parseString(r?.rate_id);
         rates.push({
           label: parseString(r?.label) ?? "",
           basis,
@@ -475,6 +481,7 @@ function normaliseRegisteredUses(raw: any): any[] {
           max_value: maxValue,
           unit: parseString(r?.unit) ?? "",
           raw_text: rawText,
+          ...(rateId ? { rate_id: rateId } : {}),
         });
       }
     }
@@ -484,10 +491,15 @@ function normaliseRegisteredUses(raw: any): any[] {
     // plainly. The wording travels BESIDE the hours, never instead of them,
     // and never becomes a fabricated number.
     const reEntryStatement = parseString(use?.re_entry_statement);
+    // Carried for the same reason as `rate_id` above: this row may be one of
+    // several fanned out from a single printed direction, and only the
+    // upstream minter could still see that direction's complete target set.
+    const directionId = parseString(use?.direction_id);
 
     out.push({
       crop: crop ?? "",
       target_raw: target ?? "",
+      ...(directionId ? { direction_id: directionId } : {}),
       rates,
       withholding_period_days: parseNumber(use?.withholding_period_days),
       re_entry_period_hours: parseNumber(use?.re_entry_period_hours),
@@ -2312,6 +2324,14 @@ Deno.serve(async (req: Request) => {
                 regulatorUses: Array.isArray(structured.registered_uses)
                   ? structured.registered_uses
                   : [],
+                // Identity must be minted inside the projection, while each
+                // printed direction still holds its complete target set and
+                // before the one-target-per-row fan-out (Gate D1.2).
+                product: {
+                  country: countryCode,
+                  scheme: resolved?.scheme ?? null,
+                  registration_number: resolved?.registration_number ?? null,
+                },
               }),
           );
           applyManufacturerEnrichment(structured, enrichment, {

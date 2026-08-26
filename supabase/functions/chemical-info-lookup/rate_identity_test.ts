@@ -9,7 +9,16 @@ import {
   type RateIdentityRate,
   sha256Hex,
 } from "./rate_identity.ts";
-import { extractManufacturerLabelUses } from "./ingestion/manufacturer_label.ts";
+import {
+  canonicalDirectionIdentityInput,
+  canonicalTargetSet,
+  DIRECTION_ID_VERSION,
+  mintDirectionId,
+} from "./rate_identity.ts";
+import {
+  extractManufacturerLabelUses,
+  manufacturerUsesToRegisteredUses,
+} from "./ingestion/manufacturer_label.ts";
 import { VICOL_33182_LABEL_ITEMS } from "./ingestion/seeds/label_fixture_33182.ts";
 
 // ===========================================================================
@@ -281,7 +290,7 @@ Deno.test("H — reissuing the label does not move an unchanged rate", () => {
   // default's snapshot, not in the rate's identity.
   const canonical = canonicalRateIdentityInput(
     VICOL,
-    { crop: "Grapevines", target_raw: "Grapevine scale" },
+    mintDirectionId(VICOL, { crop: "Grapevines", target_raw: "Grapevine scale" }),
     rate({ label: "NSW" }),
   );
   assert(!canonical.includes("label_version"));
@@ -298,15 +307,26 @@ Deno.test("H — reissuing the label does not move an unchanged rate", () => {
   );
 });
 
-Deno.test("retrieval circumstances are excluded from the canonical input", () => {
-  const canonical = canonicalRateIdentityInput(
+Deno.test("retrieval circumstances are excluded from both canonical inputs", () => {
+  const excluded = ["fetched_at", "retrieved_at", "request", "cache", "index", "url"];
+
+  const rateCanonical = canonicalRateIdentityInput(
     VICOL,
-    { crop: "Grapevines", target_raw: "Grapevine scale" },
+    mintDirectionId(VICOL, { crop: "Grapevines", target_raw: "Grapevine scale" }),
     rate({ label: "NSW" }),
   );
-  for (const excluded of ["fetched_at", "retrieved_at", "request", "cache", "index", "url"]) {
-    assert(!canonical.includes(excluded), `canonical input must not mention ${excluded}`);
+  const directionCanonical = canonicalDirectionIdentityInput(VICOL, {
+    crop: "Grapes",
+    targets: ["European Red Mites"],
+    condition: "NSW, Vic, SA",
+  });
+
+  for (const token of excluded) {
+    assert(!rateCanonical.includes(token), `rate input must not mention ${token}`);
+    assert(!directionCanonical.includes(token), `direction input must not mention ${token}`);
   }
+  // A direction identity never binds the label version either — same reason.
+  assert(!directionCanonical.includes("label_version"));
 });
 
 Deno.test("raw_text is excluded for parsed rates, and included for `other`", () => {
@@ -606,7 +626,7 @@ Deno.test("K — the LIVE extractor produces those same four directions", () => 
     uses.map((u) =>
       mintRateId(
         VICOL,
-        { crop: u.crop, target_raw: u.targets.join(", ") },
+        { crop: u.crop, targets: u.targets, condition: u.condition },
         { ...u.rates[0], label: u.condition },
       )
     );
@@ -619,4 +639,326 @@ Deno.test("K — the LIVE extractor produces those same four directions", () => 
   ), ids);
 
   assertEquals([...new Set(grapes.map((u) => u.rates[0]?.value))].sort(), [2, 3]);
+});
+
+// ===========================================================================
+// Gate D1.2 — ONE PRINTED DIRECTION = ONE IDENTITY.
+//
+// The defect: `registered_uses` carries one target per row, so a printed
+// direction naming three pests is FANNED OUT into three rows. Identity was
+// being derived after that fan-out, from each row's single surviving pest —
+// which minted three identities for one regulatory direction and, because the
+// projection shared one rate object across the three rows, let whichever row
+// was stamped last overwrite its siblings.
+//
+// The rule: identity belongs to the printed direction, minted while the
+// direction still holds its complete target set, then copied verbatim onto
+// every projected row.
+// ===========================================================================
+
+interface ProjectedRow {
+  crop: string;
+  target: string;
+  direction_id: string;
+  rates: {
+    rate_id: string;
+    value?: number | null;
+    basis?: string;
+    unit?: string;
+    label?: string;
+  }[];
+}
+
+/** One printed direction, in the extractor's own shape. */
+const printed = (targets: string[], condition: string, value: number) => ({
+  crop: "Grapes",
+  targets,
+  condition,
+  rates: [{
+    label: "",
+    basis: "per_100_litres",
+    value,
+    unit: "L",
+    raw_text: `${value} L / 100 L`,
+  }],
+  restrictions: null,
+});
+
+const project = (dirs: ReturnType<typeof printed>[]): ProjectedRow[] =>
+  manufacturerUsesToRegisteredUses(dirs as never, {
+    product: VICOL,
+  }) as unknown as ProjectedRow[];
+
+const projectVicol = (): ProjectedRow[] =>
+  project(
+    extractManufacturerLabelUses(VICOL_33182_LABEL_ITEMS).uses
+      .filter((u) => /^grapes$/i.test(u.crop)) as unknown as ReturnType<typeof printed>[],
+  );
+
+const pair = (r: ProjectedRow) => `${r.direction_id}::${r.rates[0].rate_id}`;
+
+// ---------------------------------------------------------------------------
+// A. One direction, three targets
+// ---------------------------------------------------------------------------
+
+Deno.test("D1.2 A — a three-pest direction is 3 rows but ONE identity", () => {
+  const rows = project([
+    printed(["Grapeleaf Blister Mites", "European Red Mites", "Two Spotted Mites"], "Tas", 2),
+  ]);
+
+  // The projection still serves one row per pest — that part is unchanged.
+  assertEquals(rows.length, 3);
+  assertEquals(rows.map((r) => r.target), [
+    "Grapeleaf Blister Mites",
+    "European Red Mites",
+    "Two Spotted Mites",
+  ]);
+
+  // But it is ONE regulatory direction stating ONE rate.
+  assertEquals(new Set(rows.map((r) => r.direction_id)).size, 1);
+  assertEquals(new Set(rows.map((r) => r.rates[0].rate_id)).size, 1);
+  assert(rows[0].direction_id.startsWith(`${DIRECTION_ID_VERSION}_`));
+  assert(rows[0].rates[0].rate_id.startsWith("rate_v1_"));
+});
+
+// ---------------------------------------------------------------------------
+// B / C. Order independence
+// ---------------------------------------------------------------------------
+
+Deno.test("D1.2 B — fan-out row order does not decide any identity", () => {
+  const rows = project([
+    printed(["Grapeleaf Blister Mites", "European Red Mites", "Two Spotted Mites"], "Tas", 2),
+  ]);
+  const byTarget = new Map(rows.map((r) => [r.target, pair(r)]));
+
+  // Reversing the served rows cannot change what any row carries — the ids
+  // were copied onto each row, never computed from its position.
+  const reversed = [...rows].reverse();
+  for (const row of reversed) {
+    assertEquals(pair(row), byTarget.get(row.target));
+  }
+  assertEquals(new Set(reversed.map((r) => r.direction_id)).size, 1);
+});
+
+Deno.test("D1.2 C — reordering targets[] in the source changes nothing", () => {
+  const forward = project([
+    printed(["Grapeleaf Blister Mites", "European Red Mites", "Two Spotted Mites"], "Tas", 2),
+  ]);
+  const shuffled = project([
+    printed(["Two Spotted Mites", "Grapeleaf Blister Mites", "European Red Mites"], "Tas", 2),
+  ]);
+
+  // The label's reading order is a typesetting fact, not a regulatory one.
+  assertEquals(shuffled[0].direction_id, forward[0].direction_id);
+  assertEquals(shuffled[0].rates[0].rate_id, forward[0].rates[0].rate_id);
+
+  // Duplicate wording collapses too — a pest listed twice is still one pest.
+  const duplicated = project([
+    printed(
+      ["European Red Mites", "Grapeleaf Blister Mites", "european red mites", "Two Spotted Mites"],
+      "Tas",
+      2,
+    ),
+  ]);
+  assertEquals(duplicated[0].direction_id, forward[0].direction_id);
+
+  assertEquals(canonicalTargetSet({ targets: ["B", "a", "B "] }), ["a", "b"]);
+});
+
+// ---------------------------------------------------------------------------
+// D. The target SET is load-bearing
+// ---------------------------------------------------------------------------
+
+Deno.test("D1.2 D — adding or removing a genuine target is a new direction", () => {
+  const three = project([
+    printed(["Grapeleaf Blister Mites", "European Red Mites", "Two Spotted Mites"], "Tas", 2),
+  ])[0];
+  const two = project([
+    printed(["Grapeleaf Blister Mites", "European Red Mites"], "Tas", 2),
+  ])[0];
+  const four = project([
+    printed(
+      ["Grapeleaf Blister Mites", "European Red Mites", "Two Spotted Mites", "Bryobia Mites"],
+      "Tas",
+      2,
+    ),
+  ])[0];
+
+  // A direction covering different pests is a different registered direction,
+  // even at an identical rate and jurisdiction.
+  assertNotEquals(two.direction_id, three.direction_id);
+  assertNotEquals(four.direction_id, three.direction_id);
+  assertNotEquals(two.rates[0].rate_id, three.rates[0].rate_id);
+  assertNotEquals(four.rates[0].rate_id, three.rates[0].rate_id);
+});
+
+// ---------------------------------------------------------------------------
+// E. Same number, two printed directions
+// ---------------------------------------------------------------------------
+
+Deno.test("D1.2 E — one number stated by two directions is two identities", () => {
+  const rows = project([
+    printed(["European Red Mites"], "NSW, Vic, SA", 3),
+    printed(["Grapevine Scale"], "NSW, Vic, Qld, SA, WA", 3),
+  ]);
+
+  assertEquals(rows.length, 2);
+  assertNotEquals(rows[0].direction_id, rows[1].direction_id);
+  assertNotEquals(rows[0].rates[0].rate_id, rows[1].rates[0].rate_id);
+  // Same number — that is exactly why identity cannot be the number.
+  assertEquals(rows[0].rates[0].value, rows[1].rates[0].value);
+});
+
+// ---------------------------------------------------------------------------
+// F / G / H / I. The real VICOL projection
+// ---------------------------------------------------------------------------
+
+Deno.test("D1.2 F — real VICOL: 6 rows, 4 directions, 4 rates, 2 numbers", () => {
+  const rows = projectVicol();
+
+  assertEquals(rows.length, 6);
+  assertEquals(new Set(rows.map((r) => r.direction_id)).size, 4);
+  assertEquals(new Set(rows.map((r) => r.rates[0].rate_id)).size, 4);
+  assertEquals([...new Set(rows.map((r) => r.rates[0].value))].sort(), [2, 3]);
+
+  // Direction and rate identity agree exactly: four of each, one per printed
+  // direction, never four-and-six.
+  assertEquals(new Set(rows.map(pair)).size, 4);
+});
+
+Deno.test("D1.2 G — the three Tasmania mite rows share one identity pair", () => {
+  const rows = projectVicol();
+  const tasMites = rows.filter((r) =>
+    r.rates[0].label === "Tas" && r.target !== "Grapevine Scale"
+  );
+
+  assertEquals(tasMites.length, 3);
+  assertEquals(tasMites.map((r) => r.target), [
+    "Grapeleaf Blister Mites",
+    "European Red Mites",
+    "Two Spotted Mites",
+  ]);
+  assertEquals(new Set(tasMites.map((r) => r.direction_id)).size, 1);
+  assertEquals(new Set(tasMites.map((r) => r.rates[0].rate_id)).size, 1);
+
+  // And that shared identity is NOT the Tasmania Grapevine Scale direction,
+  // which states the same 2 L/100 L in the same state.
+  const tasScale = rows.find((r) =>
+    r.target === "Grapevine Scale" && r.rates[0].label === "Tas"
+  )!;
+  assertEquals(tasScale.rates[0].value, 2);
+  assertNotEquals(tasScale.direction_id, tasMites[0].direction_id);
+  assertNotEquals(tasScale.rates[0].rate_id, tasMites[0].rates[0].rate_id);
+});
+
+Deno.test("D1.2 H — the two 3 L/100 L directions stay separate", () => {
+  const rows = projectVicol();
+  const threes = rows.filter((r) => r.rates[0].value === 3);
+
+  assertEquals(threes.length, 2);
+  assertEquals(threes.map((r) => r.target), ["European Red Mites", "Grapevine Scale"]);
+  assertEquals(threes.map((r) => r.rates[0].label), [
+    "NSW, Vic, SA",
+    "NSW, Vic, Qld, SA, WA",
+  ]);
+  assertNotEquals(threes[0].direction_id, threes[1].direction_id);
+  assertNotEquals(threes[0].rates[0].rate_id, threes[1].rates[0].rate_id);
+
+  // The future operational "3 L/100 L" option references BOTH rate ids — two,
+  // not the three-plus rows a per-target identity would have produced.
+  assertEquals(new Set(threes.map((r) => r.rates[0].rate_id)).size, 2);
+});
+
+Deno.test("D1.2 I — repeated extraction reproduces the same four of each", () => {
+  const first = projectVicol();
+  const second = projectVicol();
+
+  assertEquals(
+    second.map((r) => r.direction_id).sort(),
+    first.map((r) => r.direction_id).sort(),
+  );
+  assertEquals(
+    second.map((r) => r.rates[0].rate_id).sort(),
+    first.map((r) => r.rates[0].rate_id).sort(),
+  );
+  assertEquals(new Set(second.map((r) => r.direction_id)).size, 4);
+  assertEquals(new Set(second.map((r) => r.rates[0].rate_id)).size, 4);
+});
+
+// ---------------------------------------------------------------------------
+// J. No shared mutable rate object
+// ---------------------------------------------------------------------------
+
+Deno.test("D1.2 J — projected rows never share a rate object", () => {
+  const rows = projectVicol();
+
+  // Every rate object is a distinct instance. While they were shared, an
+  // in-place stamp on one row silently rewrote its siblings, so the identity a
+  // row advertised depended on which row happened to be processed last.
+  const instances = new Set(rows.map((r) => r.rates[0]));
+  assertEquals(instances.size, rows.length);
+
+  // Proof it is a real copy, not just a distinct wrapper: mutating one row's
+  // rate leaves every sibling untouched.
+  const tasMites = rows.filter((r) =>
+    r.rates[0].label === "Tas" && r.target !== "Grapevine Scale"
+  );
+  const shared = tasMites[0].rates[0].rate_id;
+  tasMites[0].rates[0].rate_id = "rate_v1_tampered";
+  assertEquals(tasMites[1].rates[0].rate_id, shared);
+  assertEquals(tasMites[2].rates[0].rate_id, shared);
+});
+
+Deno.test("D1.2 J — a carried direction_id is honoured, never re-derived", () => {
+  // Re-stamping a projection must not recompute identity from the single
+  // surviving target: by this point the direction's full target set is gone,
+  // so recomputation is exactly the D1.1 defect.
+  const rows = projectVicol();
+  const before = rows.map(pair);
+
+  assignRateIds(rows, VICOL);
+  assertEquals(rows.map(pair), before);
+
+  // Idempotent however many times it runs.
+  assignRateIds(rows, VICOL);
+  assertEquals(rows.map(pair), before);
+});
+
+// ---------------------------------------------------------------------------
+// K. Historical rows
+// ---------------------------------------------------------------------------
+
+Deno.test("D1.2 K — historical rows with neither id still decode", () => {
+  const historical = [{
+    crop: "Grapevines",
+    target_raw: "Grapevine scale",
+    rates: [{ label: "NSW", basis: "per_100_litres", value: 3, unit: "L" }],
+    withholding_period_days: null,
+  }] as Record<string, unknown>[];
+
+  const rateRow = (historical[0].rates as Record<string, unknown>[])[0];
+  assertEquals(historical[0].direction_id, undefined);
+  assertEquals(rateRow.rate_id, undefined);
+
+  // A single-target row is its own printed direction — the correct reading for
+  // a source that publishes one pest per direction, not a fallback.
+  assignRateIds(historical, VICOL);
+  assert(typeof historical[0].direction_id === "string");
+  assert(typeof rateRow.rate_id === "string");
+
+  // Deterministic, and equal to minting the same row directly.
+  assertEquals(
+    rateRow.rate_id,
+    mintRateId(VICOL, { crop: "Grapevines", target_raw: "Grapevine scale" }, {
+      label: "NSW",
+      basis: "per_100_litres",
+      value: 3,
+      unit: "L",
+    }),
+  );
+
+  // No backfill: nothing here rewrote the label facts.
+  assertEquals(rateRow.value, 3);
+  assertEquals(rateRow.unit, "L");
+  assertEquals(historical[0].withholding_period_days, null);
 });
