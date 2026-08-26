@@ -60,6 +60,65 @@ function uniq(values: unknown): string[] {
     .sort();
 }
 
+// ---------------------------------------------------------------------------
+// Semantic normalisation for the D4A.3 printed-direction assertions
+// ---------------------------------------------------------------------------
+//
+// The gate asks whether the SEMANTIC direction is served, not whether a string
+// matches byte for byte. Comma spacing, state order and singular/plural pest
+// wording are presentation, and pinning them would turn a cosmetic label
+// reissue into a failed production gate. What must not drift is the meaning:
+// which jurisdictions, which number, which basis, which pests.
+
+const STATE_ABBREVIATIONS = new Set([
+  "nsw",
+  "vic",
+  "qld",
+  "sa",
+  "wa",
+  "tas",
+  "nt",
+  "act",
+]);
+
+/** Long forms folded to the abbreviation the label actually prints. */
+const STATE_PHRASES: [RegExp, string][] = [
+  [/new south wales/g, "nsw"],
+  [/south australia/g, "sa"],
+  [/western australia/g, "wa"],
+  [/northern territory/g, "nt"],
+  [/australian capital territory/g, "act"],
+  [/tasmania/g, "tas"],
+  [/victoria/g, "vic"],
+  [/queensland/g, "qld"],
+];
+
+/**
+ * The set of jurisdictions a condition names, sorted so "NSW, Vic, SA" and
+ * "SA, NSW, Vic" are the same condition — because they are.
+ */
+function stateSet(text: unknown): string[] {
+  let s = String(text ?? "").toLowerCase();
+  for (const [phrase, abbr] of STATE_PHRASES) s = s.replace(phrase, abbr);
+  const tokens = s.split(/[^a-z]+/).filter((t) => STATE_ABBREVIATIONS.has(t));
+  return [...new Set(tokens)].sort();
+}
+
+/**
+ * Pest wording reduced to its meaning: case, punctuation and trailing plurals
+ * removed, so "European Red Mites" and "European red mite" agree.
+ */
+function normaliseTarget(text: unknown): string {
+  return String(text ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(" ")
+    .filter((w) => w.length > 0)
+    .map((w) => (w.length > 3 && w.endsWith("s") ? w.slice(0, -1) : w))
+    .join(" ");
+}
+
 /** Does any listed condition mention every one of these tokens? */
 function conditionMentions(option: Json, tokens: string[]): boolean {
   const haystack = [
@@ -177,6 +236,223 @@ async function main(): Promise<void> {
     rateIds.every((id) => id.startsWith("rate_v1_")),
     rateIds,
   );
+
+  // -- D4A.3 §1 the four semantic printed directions ----------------------
+  //
+  // Counting ids proves the fan-out collapsed correctly; it does not prove the
+  // right four directions were recovered. Four wrong directions would satisfy
+  // every count above. So each printed direction is identified by its MEANING
+  // — jurisdictions, number, basis, pests — and the served set must be exactly
+  // these four with nothing left over.
+  heading("The four semantic printed directions (D4A.3 §1)");
+
+  interface ServedDirection {
+    direction_id: string;
+    states: string[];
+    values: number[];
+    bases: string[];
+    targets: string[];
+    rateIds: string[];
+    rows: number;
+  }
+
+  const byDirection = new Map<string, Json[]>();
+  for (const use of grapevineUses) {
+    const id = String(use?.direction_id ?? "");
+    const bucket = byDirection.get(id);
+    if (bucket) bucket.push(use);
+    else byDirection.set(id, [use]);
+  }
+
+  const served: ServedDirection[] = [...byDirection.entries()].map(
+    ([direction_id, rows]) => {
+      const rates: Json[] = rows.flatMap((r) =>
+        Array.isArray(r?.rates) ? r.rates : []
+      );
+      return {
+        direction_id,
+        // The state condition travels as the rate's own `label` — the label
+        // prints the state column as what it calls the rate.
+        states: [
+          ...new Set(rates.flatMap((r) => stateSet(r?.label))),
+        ].sort(),
+        values: [
+          ...new Set(
+            rates
+              .map((r) => Number(r?.value))
+              .filter((v) => Number.isFinite(v)),
+          ),
+        ].sort((x, y) => x - y),
+        bases: uniq(rates.map((r) => r?.basis)),
+        targets: [
+          ...new Set(
+            rows
+              .map((r) => normaliseTarget(r?.target_raw ?? r?.target))
+              .filter((t) => t.length > 0),
+          ),
+        ].sort(),
+        rateIds: uniq(rates.map((r) => r?.rate_id)),
+        rows: rows.length,
+      };
+    },
+  );
+
+  console.log(`  served directions: ${JSON.stringify(served, null, 2)}`);
+
+  interface ExpectedDirection {
+    name: string;
+    states: string[];
+    value: number;
+    targets: string[];
+    rows: number;
+  }
+
+  // Sorted exactly as the normalisers above produce them.
+  const EXPECTED: ExpectedDirection[] = [
+    {
+      name: "A — Tas, 2 L/100 L, three mites",
+      states: ["tas"],
+      value: 2,
+      targets: [
+        "european red mite",
+        "grapeleaf blister mite",
+        "two spotted mite",
+      ],
+      rows: 3,
+    },
+    {
+      name: "B — NSW, Vic, SA, 3 L/100 L, European Red Mites",
+      states: ["nsw", "sa", "vic"],
+      value: 3,
+      targets: ["european red mite"],
+      rows: 1,
+    },
+    {
+      name: "C — NSW, Vic, Qld, SA, WA, 3 L/100 L, Grapevine Scale",
+      states: ["nsw", "qld", "sa", "vic", "wa"],
+      value: 3,
+      targets: ["grapevine scale"],
+      rows: 1,
+    },
+    {
+      name: "D — Tas, 2 L/100 L, Grapevine Scale",
+      states: ["tas"],
+      value: 2,
+      targets: ["grapevine scale"],
+      rows: 1,
+    },
+  ];
+
+  eq("grapevine direction groups", served.length, 4);
+
+  const matched = new Set<string>();
+  for (const want of EXPECTED) {
+    // A and D are both "Tas, 2 L/100 L" and are distinguished ONLY by their
+    // pests, so the whole tuple identifies the direction.
+    const hits = served.filter((s) =>
+      JSON.stringify(s.states) === JSON.stringify(want.states) &&
+      JSON.stringify(s.values) === JSON.stringify([want.value]) &&
+      JSON.stringify(s.bases) === JSON.stringify(["per_100_litres"]) &&
+      JSON.stringify(s.targets) === JSON.stringify(want.targets)
+    );
+    check(
+      `direction ${want.name} is served exactly once`,
+      hits.length === 1,
+      {
+        matches: hits.length,
+        expected: {
+          states: want.states,
+          value: want.value,
+          basis: "per_100_litres",
+          targets: want.targets,
+        },
+      },
+    );
+    const hit = hits[0];
+    if (!hit) continue;
+    matched.add(hit.direction_id);
+    eq(`${want.name} — projected target rows`, hit.rows, want.rows);
+    eq(`${want.name} — one printed rate identity`, hit.rateIds.length, 1);
+  }
+
+  eq(
+    "every served direction is one of the four expected",
+    served.filter((s) => !matched.has(s.direction_id)).map((s) => ({
+      direction_id: s.direction_id,
+      states: s.states,
+      values: s.values,
+      targets: s.targets,
+    })),
+    [],
+  );
+  eq("the four directions are distinct identities", matched.size, 4);
+
+  // -- D4A.3 §3 no verbatim-only grapevine rate --------------------------
+  heading("No verbatim-only grapevine rate (D4A.3 §3)");
+  const grapevineRates: Json[] = grapevineUses.flatMap((u) =>
+    Array.isArray(u?.rates) ? u.rates : []
+  );
+  check(
+    "every grapevine row states at least one rate",
+    grapevineUses.every((u) => (Array.isArray(u?.rates) ? u.rates : []).length > 0),
+    grapevineUses.map((u) => (Array.isArray(u?.rates) ? u.rates.length : 0)),
+  );
+  eq(
+    "no served grapevine rate has basis \"other\"",
+    grapevineRates
+      .filter((r) => String(r?.basis) === "other")
+      .map((r) => ({ basis: r?.basis, raw_text: r?.raw_text })),
+    [],
+  );
+  eq(
+    "every served grapevine rate is per_100_litres in L",
+    uniq(grapevineRates.map((r) => `${r?.basis}|${r?.unit}`)),
+    ["per_100_litres|L"],
+  );
+
+  // -- D4A.3 §5 audit trail, once per PRINTED rate ------------------------
+  //
+  // Deduplicated by rate_id on purpose: direction A fans out to three target
+  // rows that share ONE printed rate, and checking per row would report that
+  // single rate three times and quietly inflate a pass.
+  heading("Glyph-repair audit trail per unique rate_id (D4A.3 §5)");
+  const ratesById = new Map<string, Json>();
+  const occurrences = new Map<string, number>();
+  for (const rate of grapevineRates) {
+    const id = String(rate?.rate_id ?? "");
+    if (!id) continue;
+    if (!ratesById.has(id)) ratesById.set(id, rate);
+    occurrences.set(id, (occurrences.get(id) ?? 0) + 1);
+  }
+
+  eq("unique printed grapevine rates", ratesById.size, 4);
+  eq(
+    "the fan-out is 3+1+1+1 rows across those four printed rates",
+    [...occurrences.values()].sort((x, y) => x - y),
+    [1, 1, 1, 3],
+  );
+
+  for (const [id, rate] of ratesById) {
+    const rawText = String(rate?.raw_text ?? "");
+    const textLayer = rate?.text_layer_text;
+    const label = `rate ${id}`;
+    check(
+      `${label} — raw_text is the repaired human-readable reading`,
+      /\/\s*100\s*L/.test(rawText) && !/1OO/.test(rawText),
+      { raw_text: rawText },
+    );
+    check(
+      `${label} — text_layer_text preserves the original extracted 1OO`,
+      typeof textLayer === "string" && textLayer.includes("1OO"),
+      { text_layer_text: textLayer ?? null },
+    );
+    check(
+      `${label} — the two readings differ only in the repaired glyphs`,
+      typeof textLayer === "string" &&
+        textLayer === rawText.replace(/100/g, "1OO"),
+      { raw_text: rawText, text_layer_text: textLayer ?? null },
+    );
+  }
 
   // -- §4 default_rate_options -------------------------------------------
   heading("default_rate_options assertions (§4)");
@@ -325,6 +601,25 @@ async function main(): Promise<void> {
         String(f).includes("default_rate") || String(f).includes("rate_id")
       ),
     body.verification?.unresolved_fields ?? null,
+  );
+
+  // -- D4A.3 §4 grapevine rates are no longer an unresolved field ---------
+  //
+  // The live defect declared grapevine rates unresolved because nothing
+  // calculable could be read. Recovery is only real if that marker is gone —
+  // both bare and in any qualified `rates:GRAPEVINE:<target>` form.
+  const unresolvedFields: string[] =
+    (Array.isArray(body.verification?.unresolved_fields)
+      ? body.verification.unresolved_fields
+      : []).map((f: unknown) => String(f));
+  console.log(`  unresolved_fields: ${JSON.stringify(unresolvedFields)}`);
+  eq(
+    "unresolved_fields contains no rates:GRAPEVINE marker (bare or qualified)",
+    unresolvedFields.filter((f) => {
+      const norm = f.trim().toLowerCase();
+      return norm === "rates:grapevine" || norm.startsWith("rates:grapevine:");
+    }),
+    [],
   );
 
   // -- verdict -----------------------------------------------------------
