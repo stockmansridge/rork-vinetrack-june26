@@ -765,3 +765,311 @@ Deno.test("an inverted or non-finite amount produces no option", () => {
   const { options } = buildDefaultRateOptions(uses);
   assertEquals(options.per_hectare, []);
 });
+
+// ---------------------------------------------------------------------------
+// Gate D4A.1 — operational defaults are GRAPEVINE ONLY
+//
+// A default rate is what gets pre-filled on a vineyard spray record. Most
+// labels register a product on many crops; those doses are authoritative facts
+// about the drum, and they remain in `registered_uses`, but none of them may
+// ever be offered as something to apply to vines.
+//
+// The eligibility rule is not restated here: these tests assert the behaviour
+// of `isGrapevineCrop`, the same predicate `projectGrapevineUses` uses to build
+// `grapevine_uses`, so the option producer and the projection cannot drift.
+// ---------------------------------------------------------------------------
+
+/** A mixed-crop label: grapes at 2 L/100 L, citrus at 1 L/100 L. */
+function mixedCropUses(): Jsonish[] {
+  return stamped([
+    use("Grapes", "Powdery Mildew", [{
+      label: "Dilute spraying",
+      basis: "per_100_litres",
+      unit: "L",
+      value: 2,
+    }]),
+    use("Citrus", "Citrus Rust Mite", [{
+      label: "All states",
+      basis: "per_100_litres",
+      unit: "L",
+      value: 1,
+    }]),
+  ]);
+}
+
+Deno.test("D4A.1/A a mixed-crop label offers only the grapevine amount", () => {
+  const uses = mixedCropUses();
+  const { options, violations } = buildDefaultRateOptions(uses);
+
+  assertEquals(violations, []);
+  assertEquals(options.per_hectare, []);
+  assertEquals(options.per_100_litres.length, 1);
+
+  const option = options.per_100_litres[0];
+  assertEquals(option.value, 2);
+  assertEquals(option.crops, ["Grapes"]);
+  assertEquals(option.targets, ["Powdery Mildew"]);
+  assertEquals(option.conditions, ["Dilute spraying"]);
+
+  // §9: not one thread of citrus evidence reaches the option — not its id,
+  // not its target, not its condition wording.
+  const citrusRateId = uses[1].rates[0].rate_id as string;
+  assert(citrusRateId.startsWith(`${RATE_ID_VERSION}_`));
+  assert(!option.rate_ids.includes(citrusRateId));
+  assertEquals(option.rate_ids.length, 1);
+  assertEquals(option.rate_ids[0], uses[0].rates[0].rate_id);
+});
+
+Deno.test("D4A.1/A both uses remain authoritative label evidence", () => {
+  const uses = mixedCropUses();
+  const before = JSON.parse(JSON.stringify(uses));
+  buildDefaultRateOptions(uses);
+
+  // The citrus row is untouched — same crop, same amount, same identity. It
+  // is simply not a vineyard default.
+  assertEquals(uses, before);
+  assertEquals(uses.length, 2);
+  assertEquals(uses[1].crop, "Citrus");
+  assert(typeof uses[1].rates[0].rate_id === "string");
+});
+
+Deno.test("D4A.1/B an identical amount on another crop does not join the option", () => {
+  // THE regression this gate exists for. Grapes and Citrus both state
+  // 2 L/100 L, so D4A's grouping — which keys on basis + unit + amount — would
+  // happily cite both. Eligibility must run BEFORE grouping, not after.
+  const uses = stamped([
+    use("Grapes", "Powdery Mildew", [{
+      label: "",
+      basis: "per_100_litres",
+      unit: "L",
+      value: 2,
+    }]),
+    use("Citrus", "Citrus Rust Mite", [{
+      label: "",
+      basis: "per_100_litres",
+      unit: "L",
+      value: 2,
+    }]),
+  ]);
+  const grapeRate = uses[0].rates[0].rate_id as string;
+  const citrusRate = uses[1].rates[0].rate_id as string;
+  // The two rows really are distinct identities — otherwise this proves nothing.
+  assertNotEquals(grapeRate, citrusRate);
+
+  const { options } = buildDefaultRateOptions(uses);
+
+  assertEquals(options.per_100_litres.length, 1);
+  const option = options.per_100_litres[0];
+  assertEquals(option.value, 2);
+  assertEquals(option.rate_ids, [grapeRate]);
+  assertEquals(option.crops, ["Grapes"]);
+
+  // And the key is the key of a ONE-rate option, not of a two-rate one.
+  assertEquals(
+    option.option_key,
+    mintDefaultOptionKey(
+      "per_100_litres",
+      { unit: "L", value: 2, min_value: null, max_value: null },
+      [grapeRate],
+    ),
+  );
+  assertNotEquals(
+    option.option_key,
+    mintDefaultOptionKey(
+      "per_100_litres",
+      { unit: "L", value: 2, min_value: null, max_value: null },
+      [grapeRate, citrusRate].sort(),
+    ),
+  );
+});
+
+Deno.test("D4A.1/C a label with no grapevine use has no options and no degradation", () => {
+  const uses = stamped([
+    use("Citrus", "Citrus Rust Mite", [{
+      label: "",
+      basis: "per_100_litres",
+      unit: "L",
+      value: 2,
+    }]),
+    use("Apples", "Codling Moth", [{
+      label: "",
+      basis: "per_hectare",
+      unit: "L",
+      value: 1.5,
+    }]),
+  ]);
+  const before = JSON.parse(JSON.stringify(uses));
+
+  const { options, violations } = buildDefaultRateOptions(uses);
+
+  assertEquals(options.per_hectare, []);
+  assertEquals(options.per_100_litres, []);
+  // "No grapevine operational options" is a legitimate product state, not a
+  // fault. Reporting it would train operators to ignore real invariants.
+  assertEquals(violations, []);
+  assertEquals(uses, before);
+});
+
+Deno.test("D4A.1/D a missing rate_id on another crop is not a vineyard invariant", () => {
+  const uses = [
+    use("Citrus", "Citrus Rust Mite", [{
+      label: "",
+      basis: "per_100_litres",
+      unit: "L",
+      value: 2,
+    }]),
+  ];
+
+  const { options, violations } = buildDefaultRateOptions(uses);
+
+  assertEquals(options.per_100_litres, []);
+  // The row was never eligible to become a vineyard default, so its identity
+  // says nothing about THIS contract. Its label evidence still stands.
+  assertEquals(violations, []);
+  assertEquals(uses[0].rates[0].value, 2);
+});
+
+Deno.test("D4A.1/D a malformed rate_id on another crop is likewise silent", () => {
+  const uses = [
+    use("Citrus", "Citrus Rust Mite", [{
+      rate_id: "direction_v1_abcdef",
+      label: "",
+      basis: "per_100_litres",
+      unit: "L",
+      value: 2,
+    }]),
+  ];
+
+  const { violations } = buildDefaultRateOptions(uses);
+  assertEquals(violations, []);
+});
+
+Deno.test("D4A.1/E a missing rate_id on an eligible grapevine row still reports", () => {
+  const uses = [
+    use("Grapes", "Powdery Mildew", [{
+      label: "",
+      basis: "per_hectare",
+      unit: "L",
+      value: 2,
+    }]),
+    // Alongside an other-crop row with the same defect, which must stay quiet.
+    use("Citrus", "Citrus Rust Mite", [{
+      label: "",
+      basis: "per_hectare",
+      unit: "L",
+      value: 2,
+    }]),
+  ];
+
+  const { options, violations } = buildDefaultRateOptions(uses);
+
+  assertEquals(options.per_hectare, []);
+  // Exactly ONE violation — the grapevine one. Eligibility gates the report
+  // as well as the option.
+  assertEquals(violations.length, 1);
+  assertEquals(violations[0].code, "rate_id_missing");
+  assert(violations[0].detail.startsWith("Grapes"));
+});
+
+Deno.test("D4A.1/F VICOL is unchanged — 2 options, 4 unique supporting rate_ids", () => {
+  const { options, violations } = buildDefaultRateOptions(vicolUses());
+
+  assertEquals(violations, []);
+  assertEquals(options.per_hectare, []);
+  assertEquals(options.per_100_litres.length, 2);
+  assertEquals(options.per_100_litres.map((o) => o.value), [2, 3]);
+  for (const o of options.per_100_litres) assertEquals(o.rate_ids.length, 2);
+
+  const unique = new Set(options.per_100_litres.flatMap((o) => o.rate_ids));
+  assertEquals(unique.size, 4);
+  for (const o of options.per_100_litres) assertEquals(o.crops, ["Grapes"]);
+});
+
+Deno.test("D4A.1/G shuffled mixed-crop rows produce identical output", () => {
+  const uses = [
+    ...mixedCropUses(),
+    ...stamped([
+      use("Apples", "Codling Moth", [{
+        label: "",
+        basis: "per_hectare",
+        unit: "L",
+        value: 1.5,
+      }]),
+      use("Grapes", "Downy Mildew", [{
+        label: "Concentrate spraying",
+        basis: "per_hectare",
+        unit: "L",
+        value: 3,
+      }]),
+    ]),
+  ];
+
+  const straight = buildDefaultRateOptions(uses);
+  const shuffled = buildDefaultRateOptions([
+    uses[3],
+    uses[1],
+    uses[2],
+    uses[0],
+  ]);
+
+  assertEquals(shuffled.options, straight.options);
+  assertEquals(straight.options.per_100_litres.length, 1);
+  assertEquals(straight.options.per_hectare.length, 1);
+  assertEquals(straight.options.per_hectare[0].value, 3);
+  assertEquals(straight.options.per_hectare[0].crops, ["Grapes"]);
+});
+
+Deno.test("D4A.1 the classifier is the projection's own, GRAPEFRUIT included", () => {
+  // Not a second reading of what "grapes" means — a proof that the shared
+  // predicate is the one deciding. GRAPEFRUIT contains "grape" and is a
+  // citrus; a substring test here would put a citrus dose on a vine.
+  const eligible = ["Grapes", "GRAPEVINES", "Wine Grapes", "Table grapes", "Vines"];
+  const ineligible = ["Grapefruit", "Citrus", "Apples", "Pome fruit", ""];
+
+  for (const crop of eligible) {
+    const { options } = buildDefaultRateOptions(
+      stamped([
+        use(crop, "Powdery Mildew", [{
+          label: "",
+          basis: "per_hectare",
+          unit: "L",
+          value: 2,
+        }]),
+      ]),
+    );
+    assertEquals(options.per_hectare.length, 1, `${crop} should be a vineyard use`);
+  }
+
+  for (const crop of ineligible) {
+    const { options, violations } = buildDefaultRateOptions(
+      stamped([
+        use(crop, "Something", [{
+          label: "",
+          basis: "per_hectare",
+          unit: "L",
+          value: 2,
+        }]),
+      ]),
+    );
+    assertEquals(options.per_hectare.length, 0, `${crop} must not be a vineyard use`);
+    assertEquals(violations, []);
+  }
+});
+
+Deno.test("D4A.1 a response keeps other_crop_uses while offering grapevine options", () => {
+  const uses = mixedCropUses();
+  const structured: Jsonish = {
+    registered_uses: uses,
+    other_crop_uses: [JSON.parse(JSON.stringify(uses[1]))],
+  };
+  const otherBefore = JSON.parse(JSON.stringify(structured.other_crop_uses));
+
+  const violations = applyDefaultRateOptions(structured);
+
+  assertEquals(violations, []);
+  assertEquals(structured.default_rate_options.per_100_litres.length, 1);
+  assertEquals(structured.default_rate_options.per_100_litres[0].value, 2);
+  // The projection this gate must not touch is exactly as it was.
+  assertEquals(structured.other_crop_uses, otherBefore);
+  assertEquals(structured.registered_uses.length, 2);
+});

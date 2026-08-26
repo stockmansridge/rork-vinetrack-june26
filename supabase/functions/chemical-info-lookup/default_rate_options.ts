@@ -49,7 +49,26 @@
 // It never fabricates identity. A rate without a stable `rate_v1_` id cannot
 // take part in something an operator will persist and rely on years later, so
 // it produces no option and is reported instead.
+//
+// # Why only grapevine uses become options (Gate D4A.1)
+//
+// An operational default is a VINEYARD default: it is what gets pre-filled on
+// a spray record for a block of vines. Most APVMA labels register a product on
+// many crops, and a citrus or pome-fruit dose printed on the same label is a
+// real, authoritative fact about that drum — but it is not a dose anyone may
+// apply to vines. Offering it as a selectable default would put a wrong rate
+// behind a plausible name, which is the one failure mode this whole area of
+// the product exists to prevent.
+//
+// So other crops stay exactly where they are — in `registered_uses`, and in
+// the `other_crop_uses` projection, with their identities intact — and simply
+// never reach the grouping stage. Eligibility is decided by `isGrapevineCrop`,
+// the SAME predicate `projectGrapevineUses` already uses to build
+// `grapevine_uses`. There is deliberately no second reading of what "grapes"
+// means: if these two ever disagreed, a rate could be a grapevine rate in one
+// half of the response and not the other.
 
+import { isGrapevineCrop } from "./grapevine_label.ts";
 import {
   type DefaultRateBasis,
   DEFAULT_RATE_BASES,
@@ -271,6 +290,10 @@ function compareOptions(a: DefaultRateOption, b: DefaultRateOption): number {
  * fewer options rather than an exception. This runs at the response boundary
  * on rows that have already been resolved, merged, enriched and identity
  * minted, so it sees exactly what the client will see.
+ *
+ * ONLY grapevine uses are eligible. A product registered solely on other crops
+ * yields zero options, which is a legitimate product state and not a
+ * degradation — the label evidence is served in full either way.
  */
 export function buildDefaultRateOptions(uses: unknown): DefaultRateOptionResult {
   const options = emptyDefaultRateOptions();
@@ -284,8 +307,17 @@ export function buildDefaultRateOptions(uses: unknown): DefaultRateOptionResult 
     const use = rawUse as Jsonish;
     if (!Array.isArray(use.rates)) continue;
 
-    const directionId = text(use.direction_id);
     const crop = text(use.crop);
+    // Crop eligibility is decided HERE — before amount parsing, before the
+    // identity check, and before grouping. Doing it first is what keeps an
+    // other-crop row that happens to state the same number from joining a
+    // grapevine option's `rate_ids`, and what stops a malformed id on a citrus
+    // row from being reported as a vineyard default-option invariant. That row
+    // was never eligible to become a vineyard default, so nothing about it is
+    // a breach of this contract.
+    if (!isGrapevineCrop(crop)) continue;
+
+    const directionId = text(use.direction_id);
     // `target_raw` is the authoritative label wording; `target` is the mapped
     // VineTrack enum and only stands in when the raw wording is absent.
     const target = text(use.target_raw) || text(use.target);
@@ -411,7 +443,9 @@ export function buildDefaultRateOptions(uses: unknown): DefaultRateOptionResult 
  * `grapevine_uses` and `other_crop_uses` are projections of `registered_uses`
  * and are NOT read — a projection cannot add an amount the authoritative
  * array does not already state, and reading both would only risk counting one
- * direction twice.
+ * direction twice. The grapevine filter is applied to the authoritative array
+ * using the projection's own predicate, so the two agree by construction
+ * rather than by coincidence.
  *
  * Additive and idempotent. Nothing about `registered_uses` is read
  * destructively, reordered or removed.
