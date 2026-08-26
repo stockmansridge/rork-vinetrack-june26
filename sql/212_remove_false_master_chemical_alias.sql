@@ -83,13 +83,26 @@
 --   "Hortitrol Winter Oil", that is an alias claim for a human to make with
 --   evidence, through the catalogue review flow — not by reverting a cleanup.
 
-begin;
+-- ONE STATEMENT, ON PURPOSE
+--
+--   The update and its verification live in a single DO block rather than an
+--   explicit BEGIN/COMMIT pair. A DO block is one statement, so a RAISE
+--   EXCEPTION anywhere inside it rolls back the update atomically -- in the
+--   Supabase SQL editor (which already wraps submitted SQL in its own
+--   transaction, making a nested BEGIN redundant at best) and under psql
+--   (where autocommit would otherwise let the update survive a failed
+--   verification). Same guarantees, no assumptions about the client.
+--
+--   For the same reason there are no psql meta-commands anywhere in this
+--   file: \echo and friends are client-side directives, not SQL. The server
+--   sees a stray backslash and rejects the statement.
 
--- Belt and braces: this must be one row, and it must be the row we mean.
 do $$
 declare
   affected integer;
 begin
+  -- ---- Remove the alias -------------------------------------------------
+  -- Belt and braces: this must be one row, and it must be the row we mean.
   update public.master_chemicals
   set common_names = coalesce(
     (
@@ -117,13 +130,10 @@ begin
   end if;
 
   raise notice 'sql/212: removed the false alias from % row(s)', affected;
-end;
-$$;
 
--- The row must still exist, still be AU:apvma:50067, and still be intact.
--- A cleanup that removed a product would be far worse than the alias.
-do $$
-begin
+  -- ---- Verify, in the SAME statement -------------------------------------
+  -- The row must still exist, still be AU:apvma:50067, and still be intact.
+  -- A cleanup that removed a product would be far worse than the alias.
   if not exists (
     select 1
     from public.master_chemicals
@@ -146,7 +156,7 @@ begin
   ) then
     raise exception 'sql/212: the false alias is still present — aborting';
   end if;
+
+  raise notice 'sql/212: verified — APVMA 50067 intact, false alias gone';
 end;
 $$;
-
-commit;
