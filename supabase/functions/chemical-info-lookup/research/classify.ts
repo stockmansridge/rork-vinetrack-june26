@@ -44,6 +44,24 @@ export interface ClassifiedUrl {
   isOfficialLabelCandidate: boolean;
   /** True only for a registrant-owned page about this product. */
   isProductPageCandidate: boolean;
+  /**
+   * Whether this page may be FETCHED and read for evidence.
+   *
+   * Strictly weaker than `isProductPageCandidate`, and separate on purpose.
+   * `REGISTRANT_HOSTS` is a hand-maintained allowlist, so requiring membership
+   * before a page could even be READ made manufacturer-label discovery
+   * structurally impossible for every registrant nobody had added yet — the
+   * measured case being Vicchem (APVMA 33182), whose real product page and
+   * real approved label were pre-filtered out before any request was made.
+   *
+   * Reading is not trusting. An unrecognised host earns nothing by being read:
+   * its documents still have to satisfy `evaluateLinkedDocument`, which
+   * requires the FETCHED page to state a product corresponding to the
+   * register-resolved name and the PDF to sit on that same host. Search
+   * engines, resellers, viticulture references and foreign regulators are
+   * classified earlier and are never inspectable.
+   */
+  isInspectableProductPage: boolean;
   /** Why the classifier decided this — surfaced in debug output. */
   reason: string;
 }
@@ -310,9 +328,41 @@ export function classifyUrl(
   const isOfficialLabelCandidate = hostCanCarryLabel &&
     effectiveKind === "label_document";
 
-  const isProductPageCandidate = trust === "registrant" &&
-    (effectiveKind === "product_page" ||
-      (effectiveKind === "other" && !isPdf(url)));
+  // A page worth READING for evidence.
+  //
+  // # Why an unrecognised host qualifies
+  //
+  // `REGISTRANT_HOSTS` is a hand-maintained allowlist, and requiring
+  // membership made manufacturer discovery structurally impossible for every
+  // registrant nobody had added yet. The measured case is Vicchem
+  // (vicchem.com, APVMA 33182): a real registrant, a real product page, a real
+  // approved label linked from it — pre-filtered out of inspection before a
+  // request was made, because the domain was not on a list.
+  //
+  // An allowlist is the wrong instrument here. It answers "has someone
+  // vouched for this domain?" when the question is "does this page prove it is
+  // about the registered product?" — and that second question is answered
+  // deterministically, from fetched bytes, by `evaluateLinkedDocument`:
+  // the page's own stated product must correspond to the REGISTER-resolved
+  // name, and the PDF must be on the page's own host.
+  //
+  // So an unrecognised host may now be READ. It gains nothing else: it is
+  // still not `registrant` trust, so `hostCanCarryLabel` stays false and a URL
+  // that merely looks like a label on an unknown domain is still not a label
+  // candidate. Search engines, resellers, viticulture references and foreign
+  // regulators are all classified BEFORE this point and keep their own tiers,
+  // so none of them can arrive here.
+  const pageShaped = effectiveKind === "product_page" ||
+    (effectiveKind === "other" && !isPdf(url));
+
+  // What may be SERVED as the product page: unchanged, registrant-owned only.
+  // An unrecognised host has proved nothing yet, and `product_url` is an
+  // answer, not an experiment.
+  const isProductPageCandidate = trust === "registrant" && pageShaped;
+
+  // What may be READ. Strictly weaker, and deliberately a separate question.
+  const isInspectableProductPage = (trust === "registrant" || trust === "unknown") &&
+    pageShaped;
 
   const parts = [trustReason, registerPdf ? "PDF on register host" : kindReason];
   if (hint?.declaredKind && hint.declaredKind !== effectiveKind) {
@@ -326,6 +376,7 @@ export function classifyUrl(
     kind: effectiveKind,
     isOfficialLabelCandidate,
     isProductPageCandidate,
+    isInspectableProductPage,
     reason: parts.join("; "),
   };
 }

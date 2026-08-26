@@ -431,7 +431,14 @@ function promoteFromInspectedPages(input: {
     const pageClass = classifyUrl(page.finalUrl, input.countryCode);
     const context = {
       page: { pageUrl: page.finalUrl, pageProductName: page.pageProductName },
-      pageIsTrustedProductPage: pageClass.isProductPageCandidate,
+      // The page was FETCHED, so the question is no longer "is this domain on
+      // a list?" but "did this page prove what it is?". `selectManufacturerLabel`
+      // answers that deterministically: the page's own stated product must
+      // correspond to the register-resolved name, and the PDF must sit on the
+      // page's own host. Requiring allowlist membership on TOP of that proof
+      // is what kept real registrant labels — Vicchem's among them — out of
+      // the pipeline entirely.
+      pageIsTrustedProductPage: pageClass.isInspectableProductPage,
       registeredProductName: registeredName,
       documents: page.links.filter((l) => l.url !== page.finalUrl),
     };
@@ -581,6 +588,12 @@ export function projectResearch(
     classified.find((c) => c.isProductPageCandidate && c.kind === "product_page") ??
       classified.find((c) => c.isProductPageCandidate) ?? null;
 
+  // A page that EARNED it: an unrecognised host whose fetched page stated the
+  // register-resolved product and yielded the manufacturer label is the
+  // manufacturer's product page, whatever an allowlist thinks. Computed after
+  // promotion below, so it is assigned once the label is known.
+  let earnedProductPage: ClassifiedUrl | null = null;
+
   const sdsCandidates = classified.filter((c) => c.kind === "safety_data_sheet");
 
 
@@ -603,6 +616,21 @@ export function projectResearch(
     rejected,
   });
   const manufacturerLabelCandidate = promoted.label;
+  if (!productPageCandidate && manufacturerLabelCandidate) {
+    const source = inspectedPages.find((p) =>
+      manufacturerLabelCandidate.url.startsWith(new URL(p.finalUrl).origin)
+    );
+    if (source) {
+      earnedProductPage = {
+        ...classifyUrl(source.finalUrl, countryCode),
+        kind: "product_page",
+        isProductPageCandidate: true,
+        reason:
+          `identified as the registrant's product page by stating "${source.pageProductName}" ` +
+          `and linking the manufacturer label on its own host`,
+      };
+    }
+  }
   noteUninspectedModelHints(research, inspectedPages, rejected);
 
   const active_ingredients = research.active_ingredients.map((a) => ({
@@ -685,7 +713,7 @@ export function projectResearch(
     // fires), then the inspected page's own SDS link — which is how an SDS
     // whose filename says nothing still reaches the operator.
     sdsURL: sdsCandidates[0]?.url ?? promoted.sds?.url ?? null,
-    productURL: productPageCandidate?.url ?? null,
+    productURL: productPageCandidate?.url ?? earnedProductPage?.url ?? null,
     active_ingredients,
     registered_uses,
     unresolved,
@@ -696,7 +724,7 @@ export function projectResearch(
     resolverHints,
     classified,
     officialLabelCandidate,
-    productPageCandidate,
+    productPageCandidate: productPageCandidate ?? earnedProductPage,
     manufacturerLabelCandidate,
     sdsCandidates,
     rejected,

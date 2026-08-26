@@ -435,7 +435,7 @@ export async function inspectProductPage(
   }
 
   const classification = classifyUrl(requested.toString(), countryCode);
-  if (!classification.isProductPageCandidate) {
+  if (!classification.isInspectableProductPage) {
     return {
       outcome: "rejected_untrusted_page",
       pageUrl: trimmed,
@@ -597,7 +597,7 @@ export async function inspectCandidateProductPages(
     seen.add(url);
     // Pre-filter on classification so the page budget is spent on pages that
     // could actually qualify, rather than on search results and resellers.
-    if (!classifyUrl(url, countryCode).isProductPageCandidate) continue;
+    if (!classifyUrl(url, countryCode).isInspectableProductPage) continue;
     queue.push(url);
   }
 

@@ -216,6 +216,49 @@ const HARVEST_WEEKS = /DO\s+NOT\s+HARVEST\s+FOR\s+(\d+)\s*WEEKS?\b/i;
 const NOT_REQUIRED = /NOT\s+REQUIRED\s+WHEN\s+USED\s+AS\s+DIRECTED/i;
 
 /**
+ * The OTHER way a label states a withholding period.
+ *
+ * `DO NOT HARVEST FOR n DAYS` describes the interval after spraying. Many
+ * registrant labels — including the measured Vicchem VICOL WINTER OIL
+ * document — state the same rule from the harvest end instead:
+ *
+ *   "Withholding Periods: DO NOT apply later than one day before harvest."
+ *
+ * That is a one-day withholding period, stated plainly, and the grammar
+ * returned null for it. The gap was invisible because a null WHP is indexed
+ * as "not stated", which is exactly what an honest parser reports when a
+ * label says nothing — so a recognised wording and an unrecognised one
+ * produced identical output.
+ *
+ * Small integers are spelled out on labels far more often than not, so the
+ * word forms are read as well. Bounded to one..ten: beyond that labels print
+ * digits, and an open-ended word-number parser would be inventing latitude
+ * nobody measured.
+ */
+const APPLY_BEFORE_HARVEST =
+  /DO\s+NOT\s+APPLY\s+(?:LATER\s+THAN|WITHIN)\s+([A-Za-z]+|\d+)\s*(DAYS?|WEEKS?)\s+(?:BEFORE|OF|PRIOR\s+TO)\s+HARVEST/i;
+
+const WORD_NUMBERS: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+};
+
+/** A digit or a spelled-out small integer, or null when neither. */
+function countFrom(raw: string): number | null {
+  const trimmed = raw.trim().toLowerCase();
+  if (/^\d+$/.test(trimmed)) return Number.parseInt(trimmed, 10);
+  return WORD_NUMBERS[trimmed] ?? null;
+}
+
+/**
  * Harvest WHP in days from one label statement, or null when the statement
  * does not state one in a recognised form (the wording is preserved
  * verbatim elsewhere — a number is never guessed).
@@ -228,6 +271,16 @@ export function whpDaysFromStatement(
   if (days) return Number.parseInt(days[1], 10);
   const weeks = HARVEST_WEEKS.exec(statement);
   if (weeks) return Number.parseInt(weeks[1], 10) * 7;
+  // Self-descriptive: "…before harvest" names the harvest relationship in the
+  // statement itself, so it needs no withholding-section context, exactly as
+  // "DO NOT HARVEST FOR 30 DAYS" does not.
+  const before = APPLY_BEFORE_HARVEST.exec(statement);
+  if (before) {
+    const count = countFrom(before[1]);
+    if (count !== null) {
+      return /WEEK/i.test(before[2]) ? count * 7 : count;
+    }
+  }
   // "Not required" is only a WHP statement inside a withholding section —
   // the same words appear in unrelated label sections.
   if (section === "withholding" && NOT_REQUIRED.test(statement)) return 0;
