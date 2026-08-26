@@ -201,6 +201,7 @@ import {
   DIRECTION_SEED_KEY,
   stripStructuredDirectionSeeds,
 } from "./rate_identity.ts";
+import { applyDefaultRateOptions } from "./default_rate_options.ts";
 import {
   createPostgrestSuggestionStore,
   SUGGESTION_CACHE_TTL_SECONDS,
@@ -1805,6 +1806,42 @@ Deno.serve(async (req: Request) => {
               cache: "none",
             },
           ));
+        }
+        // Gate D4A — the ONE place canonical default-rate options are produced.
+        //
+        // Every structured answer leaves through here: the AI+register path,
+        // both master-catalogue short-circuits, the enrichment-cache path and
+        // the unresolved path. Deriving at this boundary rather than inside
+        // any one of them means a row cached or approved before this gate
+        // existed still gets current options, and no cache format quietly
+        // becomes a second contract of its own.
+        //
+        // Placed AFTER identity minting by construction — `applyRateIdentities`
+        // runs upstream on the resolved product, so the rows seen here carry
+        // the same `rate_id`s the client will be asked to persist.
+        //
+        // Fail-soft: options are a convenience derived from label evidence
+        // that is already in the payload, so a fault here must never cost the
+        // operator the chemical itself.
+        try {
+          const optionViolations = applyDefaultRateOptions(payload);
+          if (optionViolations.length) {
+            // A calculable label rate that reached the boundary without a
+            // stable identity means an upstream invariant slipped. Worth
+            // seeing, never worth fabricating an id over.
+            degradedStages.push("default_rate_option_identity_missing");
+            console.error(JSON.stringify({
+              evt: "default_rate_option_invariant",
+              query: productName,
+              violations: optionViolations.slice(0, 10),
+            }));
+          }
+        } catch (err) {
+          degradedStages.push("default_rate_options_failed");
+          console.error(
+            "default rate options skipped:",
+            err instanceof Error ? err.message : String(err),
+          );
         }
         return json(withDiagnostics(payload, { query: productName, ...diag }));
       };
