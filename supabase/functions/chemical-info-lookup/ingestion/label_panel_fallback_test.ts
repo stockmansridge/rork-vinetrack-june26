@@ -348,23 +348,26 @@ Deno.test("D4A.3 J — no items means no fallback", () => {
 // K. The unrepaired "1OO" measurement remains available
 // ---------------------------------------------------------------------------
 
-Deno.test("D4A.3 K — the printed 1OO cell survives beside the repaired raw_text", () => {
+Deno.test("D4A.3 K — the 1OO text-layer cell survives beside the repaired raw_text", () => {
   const rows = grapevineRows(vicolFallback().uses);
   for (const row of rows) {
     const rates = Array.isArray(row.rates) ? row.rates : [];
-    for (const rate of rates as { raw_text: string; printed_text?: string }[]) {
+    for (const rate of rates as { raw_text: string; text_layer_text?: string }[]) {
       assert(/\/ 100 L/.test(rate.raw_text), `raw_text is the repaired cell: ${rate.raw_text}`);
       assertEquals(
-        rate.printed_text,
+        rate.text_layer_text,
         rate.raw_text.replace("100", "1OO"),
-        "the document's own unrepaired glyphs stay auditable",
+        "the PDF text layer's own unrepaired extraction stays auditable",
       );
-      assert(rate.printed_text!.includes("1OO"), "the literal letter-O measurement is preserved");
+      assert(
+        rate.text_layer_text!.includes("1OO"),
+        "the literal letter-O extraction is preserved",
+      );
     }
   }
 });
 
-Deno.test("D4A.3 K — printed_text is absent when nothing needed repair", () => {
+Deno.test("D4A.3 K — text_layer_text is absent when nothing needed repair", () => {
   const items: PdfTextItem[] = [
     { page: 1, x: 10, y: 220, width: 120, str: "DIRECTIONS FOR USE" },
     { page: 1, x: 10, y: 200, width: 40, str: "Crop" },
@@ -379,7 +382,7 @@ Deno.test("D4A.3 K — printed_text is absent when nothing needed repair", () =>
   const parse = extractManufacturerLabelUses(items);
   assertEquals(parse.uses[0].rates[0].raw_text, "2 L / 100 L");
   assertFalse(
-    "printed_text" in (parse.uses[0].rates[0] as unknown as Record<string, unknown>),
+    "text_layer_text" in (parse.uses[0].rates[0] as unknown as Record<string, unknown>),
     "a cell that needed no repair gains no new field",
   );
 });
@@ -478,4 +481,119 @@ Deno.test("D4A.3 — carry-forward never overwrites a period the re-read states"
     [{ crop: "Grapes", withholding_period_days: 1 }],
   );
   assertEquals(carried[0].withholding_period_days, 3);
+});
+
+Deno.test("D4A.3 — duplicate AGREEING values carry, and order cannot matter", () => {
+  const original = [
+    { crop: "Grapes", withholding_period_days: 1, re_entry_period_hours: 12 },
+    { crop: "Grapes", withholding_period_days: 1, re_entry_period_hours: 12 },
+    { crop: "Grapes", withholding_period_days: 1, re_entry_period_hours: 12 },
+  ];
+  const rows = [{ crop: "Grapes", withholding_period_days: null, re_entry_period_hours: null }];
+
+  const carried = carryForwardStatedPeriods(rows, original);
+  assertEquals(carried[0].withholding_period_days, 1);
+  assertEquals(carried[0].re_entry_period_hours, 12);
+
+  // Reversing the originals must not change the answer — the rule is
+  // unanimity, never "whichever row came first".
+  const reversed = carryForwardStatedPeriods(rows, [...original].reverse());
+  assertEquals(reversed[0].withholding_period_days, 1);
+  assertEquals(reversed[0].re_entry_period_hours, 12);
+});
+
+Deno.test("D4A.3 — one null plus one stated value carries the stated value", () => {
+  // "Not stated here" does not contradict "stated there", so a null must never
+  // count as a competing value.
+  const rows = [{ crop: "Grapes", withholding_period_days: null, re_entry_period_hours: null }];
+
+  const nullFirst = carryForwardStatedPeriods(rows, [
+    { crop: "Grapes", withholding_period_days: null, re_entry_period_hours: null },
+    { crop: "Grapes", withholding_period_days: 1, re_entry_period_hours: 12 },
+  ]);
+  assertEquals(nullFirst[0].withholding_period_days, 1);
+  assertEquals(nullFirst[0].re_entry_period_hours, 12);
+
+  // Same answer when the stated row comes first, and when the sibling omits
+  // the field entirely rather than setting it null.
+  const statedFirst = carryForwardStatedPeriods(rows, [
+    { crop: "Grapes", withholding_period_days: 1, re_entry_period_hours: 12 },
+    { crop: "Grapes" },
+  ]);
+  assertEquals(statedFirst[0].withholding_period_days, 1);
+  assertEquals(statedFirst[0].re_entry_period_hours, 12);
+});
+
+Deno.test("D4A.3 — CONFLICTING values are never chosen between", () => {
+  const carried = carryForwardStatedPeriods(
+    [{ crop: "Grapes", withholding_period_days: null, re_entry_period_hours: null }],
+    [
+      { crop: "Grapes", withholding_period_days: 1, re_entry_period_hours: 12 },
+      { crop: "Grapes", withholding_period_days: 7, re_entry_period_hours: 24 },
+    ],
+  );
+  assertEquals(
+    carried[0].withholding_period_days,
+    null,
+    "a contested period stays a visible gap rather than a fabricated number",
+  );
+  assertEquals(carried[0].re_entry_period_hours, null);
+});
+
+Deno.test("D4A.3 — WHP and re-entry are resolved INDEPENDENTLY", () => {
+  // Withholding periods disagree while re-entry periods agree. One contested
+  // fact must not suppress an uncontested, unrelated one.
+  const whpContested = carryForwardStatedPeriods(
+    [{ crop: "Grapes", withholding_period_days: null, re_entry_period_hours: null }],
+    [
+      { crop: "Grapes", withholding_period_days: 1, re_entry_period_hours: 12 },
+      { crop: "Grapes", withholding_period_days: 7, re_entry_period_hours: 12 },
+    ],
+  );
+  assertEquals(whpContested[0].withholding_period_days, null);
+  assertEquals(whpContested[0].re_entry_period_hours, 12);
+
+  // The mirror image.
+  const reiContested = carryForwardStatedPeriods(
+    [{ crop: "Grapes", withholding_period_days: null, re_entry_period_hours: null }],
+    [
+      { crop: "Grapes", withholding_period_days: 1, re_entry_period_hours: 12 },
+      { crop: "Grapes", withholding_period_days: 1, re_entry_period_hours: 24 },
+    ],
+  );
+  assertEquals(reiContested[0].withholding_period_days, 1);
+  assertEquals(reiContested[0].re_entry_period_hours, null);
+});
+
+Deno.test("D4A.3 — another crop's disagreement cannot suppress this crop's period", () => {
+  const carried = carryForwardStatedPeriods(
+    [{ crop: "Grapes", withholding_period_days: null }],
+    [
+      { crop: "Grapes", withholding_period_days: 1 },
+      { crop: "Almonds", withholding_period_days: 7 },
+      { crop: "Almonds", withholding_period_days: 14 },
+    ],
+  );
+  assertEquals(carried[0].withholding_period_days, 1);
+});
+
+Deno.test("D4A.3 — carry-forward mutates neither input", () => {
+  const rows = [{ crop: "Grapes", withholding_period_days: null }];
+  const original = [{ crop: "Grapes", withholding_period_days: 1 }];
+  const before = JSON.stringify({ rows, original });
+  const carried = carryForwardStatedPeriods(rows, original);
+  assertEquals(carried[0].withholding_period_days, 1);
+  assertEquals(rows[0].withholding_period_days, null, "the input row is untouched");
+  assertEquals(JSON.stringify({ rows, original }), before);
+});
+
+Deno.test("D4A.3 — a non-finite period is neither carried nor counted as a rival", () => {
+  const carried = carryForwardStatedPeriods(
+    [{ crop: "Grapes", withholding_period_days: null }],
+    [
+      { crop: "Grapes", withholding_period_days: Number.NaN },
+      { crop: "Grapes", withholding_period_days: 1 },
+    ],
+  );
+  assertEquals(carried[0].withholding_period_days, 1, "NaN neither carries nor contests");
 });

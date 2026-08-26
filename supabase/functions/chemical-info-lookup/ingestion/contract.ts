@@ -197,21 +197,24 @@ export interface WireLabelRate {
   unit: string; // "mL", "L", "g", "kg" — "" for basis "other"
   raw_text: string; // verbatim label wording (always, for document rates)
   /**
-   * The rate cell EXACTLY as the document's text layer emitted it, present
-   * only when reading it required repairing glyphs (Gate D4A.3).
+   * The rate cell EXACTLY as the PDF's TEXT LAYER emitted it, present only
+   * when reading it required repairing glyphs (Gate D4A.3).
    *
-   * Some labels' embedded fonts map digits to letters: VICOL WINTER OIL
-   * (APVMA 33182) prints its rates as "2 L / 1OO L" — capital letter O, not
-   * zero. `raw_text` carries the REPAIRED cell, because that is the wording a
-   * human compares against the printed label. This field keeps the UNrepaired
-   * measurement beside it, so the repair is always auditable and a reviewer can
-   * see the parser did not invent a digit.
+   * Named for what it actually is. This is not what the label PRINTS — the
+   * printed page reads "2 L / 100 L" to any human holding it. It is what the
+   * document's embedded font encoded, and on VICOL WINTER OIL (APVMA 33182)
+   * that is "2 L / 1OO L" with a capital letter O where a zero belongs.
+   *
+   * So the pair divides as: `raw_text` is the repaired, human-readable label
+   * wording a reviewer compares against the physical label, and this field is
+   * the unrepaired extraction kept beside it so the repair is always auditable
+   * and a reviewer can confirm the parser did not invent a digit.
    *
    * Absent whenever the cell needed no repair — which is every historical row
    * and the overwhelming majority of live ones — so no existing record changes
    * shape.
    */
-  printed_text?: string;
+  text_layer_text?: string;
   /**
    * The label states SEVERAL rates on this basis, and the deterministic
    * grammar could not prove which condition governs which number.

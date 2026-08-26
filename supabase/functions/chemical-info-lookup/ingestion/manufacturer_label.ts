@@ -478,17 +478,17 @@ export function extractManufacturerLabelUses(
           if (next.state) stateParts.push(next.state);
         }
 
-        const printedRate = line.rate;
-        const rawRate = normaliseDigitGlyphs(printedRate);
+        const textLayerRate = line.rate;
+        const rawRate = normaliseDigitGlyphs(textLayerRate);
         const rates = parseRateCell(rawRate).map((r) => ({
           ...r,
-          // The verbatim cell as PRINTED, glyph repair and all, so a human
-          // adjudicating the row sees what the document actually says.
+          // The repaired, human-readable label wording — what the printed page
+          // actually reads, and what a reviewer compares it against.
           raw_text: rawRate,
-          // When a glyph WAS repaired, the unrepaired measurement travels
-          // beside it so the repair stays auditable (Gate D4A.3 §12K). Absent
-          // when nothing was repaired, so no existing row changes shape.
-          ...(printedRate !== rawRate ? { printed_text: printedRate } : {}),
+          // When a glyph WAS repaired, the unrepaired TEXT-LAYER extraction
+          // travels beside it so the repair stays auditable (Gate D4A.3 §12K).
+          // Absent when nothing was repaired, so no existing row changes shape.
+          ...(textLayerRate !== rawRate ? { text_layer_text: textLayerRate } : {}),
         }));
 
         uses.push({

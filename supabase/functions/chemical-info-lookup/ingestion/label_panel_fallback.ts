@@ -78,6 +78,49 @@ export interface PanelFallbackResult {
   reason: string;
 }
 
+/** Periods that may be carried across a re-read, each resolved independently. */
+const CARRIED_PERIOD_FIELDS = [
+  "withholding_period_days",
+  "re_entry_period_hours",
+] as const;
+
+type CarriedPeriodField = typeof CARRIED_PERIOD_FIELDS[number];
+
+/**
+ * The ONE value the original rows agree on for a crop's period, or null.
+ *
+ * # Why unanimity, and not "the first one found"
+ *
+ * Taking the first numeric value would make the result depend on array order
+ * — a property of how rows happened to be assembled, not of what the label
+ * says. On a label that scopes periods per direction, two grapevine rows can
+ * legitimately carry DIFFERENT withholding periods, and picking whichever
+ * sorted first would silently attach one direction's period to every other
+ * direction. That is fabricated provenance, which is worse than an absent
+ * period: an operator can see a blank and go read the label, but cannot see
+ * that a number belongs to a different row.
+ *
+ * So: exactly one distinct value carries; zero carries nothing; more than one
+ * carries nothing and the disagreement is left visible as a gap. Nulls and
+ * non-numerics are ignored rather than counted as a competing value — "not
+ * stated here" does not contradict "stated there".
+ */
+function unanimousPeriod(
+  original: readonly Record<string, unknown>[],
+  crop: unknown,
+  field: CarriedPeriodField,
+): number | null {
+  const norm = (value: unknown): string => String(value ?? "").trim().toLowerCase();
+  const distinct = new Set<number>();
+  for (const use of original) {
+    if (norm(use?.crop) !== norm(crop)) continue;
+    const value = use?.[field];
+    // Number.isFinite excludes NaN/Infinity, which are not periods.
+    if (typeof value === "number" && Number.isFinite(value)) distinct.add(value);
+  }
+  return distinct.size === 1 ? [...distinct][0] : null;
+}
+
 /**
  * Carry the register's stated withholding / re-entry periods onto re-read
  * rows that do not state their own.
@@ -87,34 +130,29 @@ export interface PanelFallbackResult {
  * the rows wholesale without this would silently drop a WHP the operator had
  * a moment ago — trading one missing fact for another.
  *
- * Only ever fills a null. A period the re-read genuinely states is kept, and
- * no period is invented for a crop the register never spoke about.
+ * Three guarantees:
+ *
+ *   * a period the re-read genuinely states is NEVER overwritten;
+ *   * a null is filled only from a value the original rows UNANIMOUSLY agree
+ *     on for that crop (see {@link unanimousPeriod});
+ *   * the two fields are resolved INDEPENDENTLY — an unambiguous re-entry
+ *     period still carries when the withholding periods disagree, because
+ *     they are separate facts and one being contested says nothing about the
+ *     other.
+ *
+ * Pure: neither input array nor any row object is mutated.
  */
 export function carryForwardStatedPeriods(
   rows: readonly Record<string, unknown>[],
   original: readonly Record<string, unknown>[],
 ): Record<string, unknown>[] {
-  const norm = (crop: unknown): string => String(crop ?? "").trim().toLowerCase();
-  const statedFor = (
-    crop: unknown,
-    field: "withholding_period_days" | "re_entry_period_hours",
-  ): number | null => {
-    for (const use of original) {
-      if (norm(use?.crop) !== norm(crop)) continue;
-      const value = use?.[field];
-      if (typeof value === "number") return value;
-    }
-    return null;
-  };
   return rows.map((row) => {
     const next = { ...row };
-    if (next.withholding_period_days === null || next.withholding_period_days === undefined) {
-      const whp = statedFor(next.crop, "withholding_period_days");
-      if (whp !== null) next.withholding_period_days = whp;
-    }
-    if (next.re_entry_period_hours === null || next.re_entry_period_hours === undefined) {
-      const re = statedFor(next.crop, "re_entry_period_hours");
-      if (re !== null) next.re_entry_period_hours = re;
+    for (const field of CARRIED_PERIOD_FIELDS) {
+      // Only ever fills an absent value. A stated period stands as stated.
+      if (next[field] !== null && next[field] !== undefined) continue;
+      const carried = unanimousPeriod(original, next.crop, field);
+      if (carried !== null) next[field] = carried;
     }
     return next;
   });
