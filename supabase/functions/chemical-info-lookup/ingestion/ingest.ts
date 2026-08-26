@@ -33,6 +33,10 @@ import type {
 } from "./contract.ts";
 import { identityKey } from "./contract.ts";
 import { mergeLabelEvidenceIntoUses } from "./label.ts";
+import {
+  carryForwardStatedPeriods,
+  statesCalculableGrapevineRate,
+} from "./label_panel_fallback.ts";
 import { adapterFor } from "./registry.ts";
 import {
   CANDIDATE_EVIDENCE_MAX_AGE_MS,
@@ -277,6 +281,22 @@ export function mergeDiscoveryIntoStructured(
     if (aiUses.length) merged.ai_suggested_uses = aiUses;
   } else if (aiUses.length) {
     merged.ai_suggested_uses = aiUses;
+  }
+  // Gate D4A.3 — authoritative label LAYOUT fallback, decided HERE.
+  //
+  // This is the first point at which the rows the operator would actually be
+  // served exist, so it is the only honest place to ask whether the ordinary
+  // single-column parse read this label's grapevine rates at all. The adapter
+  // prepared a candidate re-reading of the SAME authoritative document with
+  // the state-aware parser; it is used only when the ordinary parse left
+  // grapevine rates non-calculable.
+  //
+  // A working parse is never displaced, and the register's stated withholding
+  // and re-entry periods are carried across so a rate repair can never cost
+  // the operator a period the lookup already had.
+  const panelUses = Array.isArray(reg.label_panel_uses) ? reg.label_panel_uses : null;
+  if (panelUses?.length && !statesCalculableGrapevineRate(uses)) {
+    uses = carryForwardStatedPeriods(panelUses, uses) as any[];
   }
   merged.registered_uses = uses;
   merged.label_rate_bases = Array.from(

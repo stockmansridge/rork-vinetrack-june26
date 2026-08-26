@@ -123,6 +123,58 @@ export function normaliseDigitGlyphs(text: string): string {
   return text.replace(/\b\d[\dOo]*\b/g, (run) => run.replace(/[Oo]/g, "0"));
 }
 
+/**
+ * Does this document positively present a STATE-AWARE Directions-for-Use
+ * table (Gate D4A.3)?
+ *
+ * # Why the answer must come from the document, not its URL
+ *
+ * The routing decision this answers must never be made from a host name. The
+ * APVMA-hosted eLabel for 33182 is a full-width five-column table, the
+ * registrant-hosted label for the same registration is a narrow printed bottle
+ * panel, and NEITHER host predicts which geometry arrives — a regulator can
+ * publish a re-typeset table and a registrant can publish a wide one.
+ *
+ * What actually matters is a single structural property: the table prints an
+ * explicit STATE column. That column is the condition distinguishing 2 L/100 L
+ * from 3 L/100 L, and `classifyHeader` in `label_extract.ts` deliberately
+ * returns "ignored" for it — which is exactly how four printed directions
+ * collapse into one cell. So a document is eligible for the state-aware parser
+ * when, and only when, it prints the column that parser exists to read.
+ *
+ * Requires a real Directions-for-Use table: a rate anchor, a crop or target
+ * anchor, a state anchor, AND the DFU heading. A marketing panel listing a
+ * "Rate" beside a "Region" is not a DFU table and must not route here.
+ */
+export interface StateAwareDfuGeometry {
+  present: boolean;
+  /** The page the table was found on, for diagnostics. */
+  page: number | null;
+  /** Column kinds the heading row positively named, sorted by x. */
+  columns: ManufacturerColumnKind[];
+}
+
+export function detectStateAwareDfu(items: PdfTextItem[]): StateAwareDfuGeometry {
+  const byPage = new Map<number, PdfTextItem[]>();
+  for (const item of items) {
+    const list = byPage.get(item.page) ?? [];
+    list.push(item);
+    byPage.set(item.page, list);
+  }
+  for (const [page, pageItems] of [...byPage].sort((a, b) => a[0] - b[0])) {
+    const lines = groupIntoLines(pageItems);
+    const header = findHeaderLine(lines);
+    if (!header) continue;
+    if (!header.anchors.some((a) => a.kind === "state")) continue;
+    const hasDfuHeading = lines.some(
+      (l) => l.y >= header.y && DFU_HEADING.test(l.items.map((i) => i.str).join(" ")),
+    );
+    if (!hasDfuHeading) continue;
+    return { present: true, page, columns: header.anchors.map((a) => a.kind) };
+  }
+  return { present: false, page: null, columns: [] };
+}
+
 /** One visual line of the table: its baseline and the items on it. */
 interface VisualLine {
   y: number;
@@ -426,12 +478,17 @@ export function extractManufacturerLabelUses(
           if (next.state) stateParts.push(next.state);
         }
 
-        const rawRate = normaliseDigitGlyphs(line.rate);
+        const printedRate = line.rate;
+        const rawRate = normaliseDigitGlyphs(printedRate);
         const rates = parseRateCell(rawRate).map((r) => ({
           ...r,
           // The verbatim cell as PRINTED, glyph repair and all, so a human
           // adjudicating the row sees what the document actually says.
           raw_text: rawRate,
+          // When a glyph WAS repaired, the unrepaired measurement travels
+          // beside it so the repair stays auditable (Gate D4A.3 §12K). Absent
+          // when nothing was repaired, so no existing row changes shape.
+          ...(printedRate !== rawRate ? { printed_text: printedRate } : {}),
         }));
 
         uses.push({

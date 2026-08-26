@@ -111,6 +111,20 @@ export interface ResolvedRegistration {
    * register result — `label_reference` simply stays unresolved.
    */
   label_document?: LabelDocumentDiscovery | null;
+  /**
+   * Gate D4A.3 — a CANDIDATE re-reading of the same authoritative label
+   * document by the state-aware table parser, or null when the document
+   * prints no state-aware Directions-for-Use table.
+   *
+   * Present only as a candidate: whether it is actually served is decided by
+   * the register merge, which is the first place the ordinary parse's served
+   * rows exist and can be tested for calculable grapevine rates. A document
+   * whose ordinary parse worked never reaches this field's consumer.
+   *
+   * NOT a second source. These rows come from the SAME regulator-approved
+   * document as `label_evidence`; only the parser differs.
+   */
+  label_panel_uses?: Record<string, unknown>[] | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +196,22 @@ export interface WireLabelRate {
   max_value?: number; // range bases only
   unit: string; // "mL", "L", "g", "kg" — "" for basis "other"
   raw_text: string; // verbatim label wording (always, for document rates)
+  /**
+   * The rate cell EXACTLY as the document's text layer emitted it, present
+   * only when reading it required repairing glyphs (Gate D4A.3).
+   *
+   * Some labels' embedded fonts map digits to letters: VICOL WINTER OIL
+   * (APVMA 33182) prints its rates as "2 L / 1OO L" — capital letter O, not
+   * zero. `raw_text` carries the REPAIRED cell, because that is the wording a
+   * human compares against the printed label. This field keeps the UNrepaired
+   * measurement beside it, so the repair is always auditable and a reviewer can
+   * see the parser did not invent a digit.
+   *
+   * Absent whenever the cell needed no repair — which is every historical row
+   * and the overwhelming majority of live ones — so no existing record changes
+   * shape.
+   */
+  printed_text?: string;
   /**
    * The label states SEVERAL rates on this basis, and the deterministic
    * grammar could not prove which condition governs which number.

@@ -74,6 +74,7 @@ import {
   labelDocumentSource,
 } from "./label_document.ts";
 import { applyLabelDocumentExtraction } from "./label_extract.ts";
+import { applyPanelLayoutFallback } from "./label_panel_fallback.ts";
 
 export const APVMA_DATASTORE_URL =
   "https://data.gov.au/data/api/3/action/datastore_search";
@@ -507,6 +508,36 @@ async function resolveDetails(
     }
   }
 
+  // ---- Gate D4A.3 — authoritative label LAYOUT fallback (fail-soft) --------
+  // Some approved labels print a Directions-for-Use table with an explicit
+  // STATE column, which the single-column eLabels grammar ignores — collapsing
+  // several printed directions into one unreadable cell. When THIS document
+  // does, the SAME authoritative bytes are re-read with the state-aware table
+  // parser and offered as a candidate.
+  //
+  // Only a candidate: whether it is served is decided by the register merge,
+  // the first point at which the ordinary parse's served rows exist and can be
+  // tested. Nothing here changes which product this is, or where the evidence
+  // came from — it is the same regulator-approved label either way.
+  let labelPanelUses: Record<string, unknown>[] | null = null;
+  if (labelDocument?.document && labelDoc.items?.length) {
+    try {
+      const fallback = applyPanelLayoutFallback({
+        items: labelDoc.items,
+        regulatorUses: [],
+        product: { country: "AU", scheme: "apvma", registration_number: pcode },
+      });
+      if (fallback.outcome === "applied") labelPanelUses = fallback.uses;
+    } catch (err) {
+      // Contained exactly like the extraction above: a fallback that throws
+      // must never cost the operator the register result.
+      console.error(
+        "label panel fallback skipped:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   if (labelEvidence) {
     unresolved.delete("registered_uses");
     for (const gap of labelEvidence.unresolved) unresolved.add(gap);
@@ -534,6 +565,7 @@ async function resolveDetails(
     match_mode: mode,
     label_evidence: labelEvidence,
     label_document: labelDocument,
+    label_panel_uses: labelPanelUses,
   };
 }
 
