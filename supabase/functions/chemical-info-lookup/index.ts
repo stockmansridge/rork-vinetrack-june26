@@ -159,6 +159,10 @@ import {
   type PreviewStore,
   runMasterReviewPreview,
 } from "./ingestion/review_preview.ts";
+import {
+  applyManufacturerEnrichment,
+  enrichFromManufacturerLabel,
+} from "./ingestion/manufacturer_enrichment.ts";
 import { runSeedApply } from "./ingestion/seed_apply.ts";
 import {
   buildResolverAttempts,
@@ -1610,6 +1614,33 @@ Deno.serve(async (req: Request) => {
       const startedAt = Date.now();
       const deps = { fetchFn: fetch, now: () => new Date() };
 
+      /**
+       * Stage B observability: every transition between a locked registration
+       * and served grapevine rates.
+       *
+       * Observation only. Nothing reads these values back to make a decision --
+       * a diagnostic that changes the answer stops being a diagnostic. It
+       * carries no document contents and no secrets: URLs, counts, outcomes
+       * and a hash.
+       */
+      const stageB: Record<string, unknown> = {
+        exact_registration: null,
+        master_incomplete: false,
+        enrichment_query_name: null,
+        product_enrichment_ran: false,
+        manufacturer_product_candidates: [],
+        selected_manufacturer_product: null,
+        manufacturer_label_candidates: [],
+        selected_manufacturer_label: null,
+        manufacturer_label_fetch: "skipped",
+        manufacturer_label_extract: "skipped",
+        grapevine_rows_found: 0,
+        grapevine_rates_found: 0,
+        practical_source: "none",
+      };
+      /** The inspected page a manufacturer label was accepted FROM. */
+      let manufacturerSourcePage: string | null = null;
+
       // 1) Approved master catalogue (sql/199), name/alias path. A COMPLETE
       //    hit short-circuits everything: the AI is never called and the
       //    ingestion adapter is never invoked for a known approved product.
@@ -1705,6 +1736,8 @@ Deno.serve(async (req: Request) => {
           incompleteMaster = masterRow;
           const rowNumber = String(masterRow.registration_number ?? "").trim();
           if (!registrationNumber && rowNumber) registrationNumber = rowNumber;
+          stageB.master_incomplete = true;
+          stageB.exact_registration = rowNumber || registrationNumber || null;
           degradedStages.push("master_incomplete_enrichment_attempted");
           console.log(ingestionLog({
             jurisdiction: countryCode,
@@ -1770,10 +1803,35 @@ Deno.serve(async (req: Request) => {
       let researchOutcome: ResearchOutcome | null = null;
 
       const researchConfig = readResearchConfig();
+
+      // The identity enrichment must research.
+      //
+      // Once the register has resolved the product, the operator's typed words
+      // have done their job. Enrichment asks "where is THIS product's current
+      // label?", and asking it with the discovery text means hunting
+      // manufacturer assets under a name the product does not have -- no
+      // registrant hosts a page for "Hortitrol Winter Oil", so the search
+      // cannot succeed on its own terms, and any page it did return would be
+      // about something else. The typed text survives as provenance below.
+      const lockedIdentity = discovery.outcome === "resolved" && discovery.registration
+        ? {
+          registeredProductName: discovery.registration.registered_product_name,
+          registrationNumber: discovery.registration.registration_number,
+          scheme: discovery.registration.scheme,
+          registrant: discovery.registration.registrant,
+        }
+        : null;
+      if (lockedIdentity) {
+        stageB.exact_registration = lockedIdentity.registrationNumber;
+        stageB.enrichment_query_name = lockedIdentity.registeredProductName;
+      }
+
       if (researchConfig.enabled) {
         // Live web research. Never throws: a provider outage returns a null
         // result and the register path below carries the lookup alone.
         researchOutcome = await runChemicalResearch({
+          // Provenance only when an identity is locked -- the prompt builder
+          // leads with the registered name and demotes this to context.
           query: productName,
           countryCode,
           countryLabel,
@@ -1784,7 +1842,9 @@ Deno.serve(async (req: Request) => {
           registerResolved: discovery.outcome === "resolved",
           labelMissingForResolvedRegistration: discovery.outcome === "resolved" &&
             !discovery.registration?.label_document?.url,
+          lockedIdentity,
         });
+        stageB.product_enrichment_ran = true;
         console.log(researchLog(researchOutcome.telemetry));
 
         if (researchOutcome.research) {
@@ -1869,6 +1929,27 @@ Deno.serve(async (req: Request) => {
               }),
             chosen: projection.productPageCandidate?.url ?? null,
           }));
+
+          // Stage B diagnostics: what the manufacturer hunt considered.
+          stageB.manufacturer_product_candidates = inspectedPages.map((p) => p.finalUrl);
+          stageB.selected_manufacturer_product = projection.productPageCandidate?.url ?? null;
+          stageB.manufacturer_label_candidates = projection.classified
+            .filter((c) => c.isOfficialLabelCandidate && c.trust !== "official_register")
+            .map((c) => c.url);
+          stageB.selected_manufacturer_label = projection.manufacturerLabelCandidate?.url ?? null;
+          // The page a label was accepted FROM -- required for host custody on
+          // the fetch below, and never inferred from the label URL alone.
+          manufacturerSourcePage = projection.manufacturerLabelCandidate
+            ? (inspectedPages.find((p) => {
+              try {
+                return projection!.manufacturerLabelCandidate!.url.startsWith(
+                  new URL(p.finalUrl).origin,
+                );
+              } catch {
+                return false;
+              }
+            })?.finalUrl ?? null)
+            : null;
         } else if (researchOutcome.error) {
           aiError = new Error(
             `Chemical research unavailable (${researchOutcome.error.category}): ${researchOutcome.error.message}`,
@@ -1966,6 +2047,7 @@ Deno.serve(async (req: Request) => {
           );
           if (byIdentity && !masterHasCompleteVineyardData(byIdentity)) {
             incompleteMaster = incompleteMaster ?? byIdentity;
+            stageB.master_incomplete = true;
             if (!degradedStages.includes("master_incomplete_enrichment_attempted")) {
               degradedStages.push("master_incomplete_enrichment_attempted");
             }
@@ -2087,6 +2169,50 @@ Deno.serve(async (req: Request) => {
         );
       }
 
+      // 6b) STAGE B — the registrant's CURRENT label supplies the practical
+      //     vineyard data.
+      //
+      //     Deliberately AFTER the register merge. `mergeDiscoveryIntoStructured`
+      //     assigns `registered_uses` from the register's own label evidence and
+      //     only from that, so enriching earlier would have the merge quietly
+      //     discard everything the manufacturer label established -- the exact
+      //     "old APVMA extraction overwrites a newer manufacturer rate set"
+      //     failure. The register keeps the last word on identity, chemistry,
+      //     category and status; the manufacturer's label supplies the rates,
+      //     conditions, restrictions and WHP a grower actually sprays by.
+      //
+      //     Fail-soft throughout: a registrant site that is down, slow, or
+      //     serving a scanned label leaves the register result exactly as it
+      //     was.
+      if (structured && projection?.manufacturerLabelCandidate) {
+        try {
+          const enrichment = await enrichFromManufacturerLabel({
+            deps,
+            manufacturerLabelUrl: projection.manufacturerLabelCandidate.url,
+            sourcePageUrl: manufacturerSourcePage,
+            regulatorUses: Array.isArray(structured.registered_uses)
+              ? structured.registered_uses
+              : [],
+          });
+          applyManufacturerEnrichment(structured, enrichment, {
+            manufacturerLabelUrl: projection.manufacturerLabelCandidate.url,
+            manufacturerProductUrl: projection.productPageCandidate?.url ?? null,
+          });
+          Object.assign(stageB, enrichment.diagnostics);
+          if (enrichment.diagnostics.manufacturer_label_fetch === "failure") {
+            degradedStages.push("manufacturer_label_fetch_failed");
+          }
+        } catch (err) {
+          // Contained: manufacturer enrichment can never damage a register
+          // result. The lookup continues on regulator evidence alone.
+          degradedStages.push("manufacturer_enrichment_failed");
+          console.error(
+            "manufacturer enrichment skipped:",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+
       // Per-field provenance for the non-merged paths (the merge computes its
       // own). Additive; every field states which evidence tier populated it.
       if (!structured.field_provenance) {
@@ -2167,17 +2293,51 @@ Deno.serve(async (req: Request) => {
           String(outcome.row.registration_country ?? "").toUpperCase() === countryCode
         ) {
           // The identity's row is already approved (an alias the name path
-          // missed, or a review that landed mid-request): serve the approved
-          // master, create nothing.
-          return servedStructured(
-            { ...buildMasterStructuredResponse(outcome.row), jurisdiction: jurEnv },
-            {
-              selectedRegistration: registrationNumber ||
-                (outcome.row.registration_number ?? null),
-              method: "master_catalogue",
-              cache: discovery.cache === "hit" ? "hit" : "miss",
-            },
-          );
+          // missed, or a review that landed mid-request).
+          //
+          // Serving it unconditionally was the defect that made Stage B
+          // invisible in production. The lookup reaches this line ONLY after
+          // it deliberately declined to short-circuit on this very row --
+          // because the row admitted an unresolved grapevine rate -- and then
+          // spent a register call, a research call, a page fetch and a
+          // document fetch filling exactly that gap. Handing back the same
+          // incomplete row at the end discarded all of it, and the operator
+          // saw "rates:GRAPEVINE unresolved" from a lookup that had just read
+          // the rates off the manufacturer's label.
+          //
+          // So the approved row is served when it is genuinely COMPLETE (the
+          // catalogue is a cache and a complete row is the whole point of it),
+          // and the fresh result is served when the row is not. Persistence is
+          // unchanged either way: nothing here writes, and the review workflow
+          // still owns what the catalogue stores.
+          const approvedIsComplete = masterHasCompleteVineyardData(outcome.row);
+          if (approvedIsComplete) {
+            return servedStructured(
+              { ...buildMasterStructuredResponse(outcome.row), jurisdiction: jurEnv },
+              {
+                selectedRegistration: registrationNumber ||
+                  (outcome.row.registration_number ?? null),
+                method: "master_catalogue",
+                cache: discovery.cache === "hit" ? "hit" : "miss",
+              },
+            );
+          }
+          degradedStages.push("approved_master_incomplete_fresh_enrichment_served");
+          stageB.master_incomplete = true;
+          console.log(ingestionLog({
+            jurisdiction: countryCode,
+            adapter: discovery.adapter,
+            outcome: "approved_master_incomplete_superseded",
+            identity: outcome.row.registration_identity_key ?? null,
+            master: "existing_approved",
+            candidate: candidateAction,
+            unresolvedCount:
+              (outcome.row.verification_unresolved_fields ?? []).length,
+            conflictCount: 0,
+            durationMs: Date.now() - startedAt,
+            cache: discovery.cache,
+          }));
+          // Fall through: the freshly enriched `structured` is served below.
         }
         if (outcome.row && outcome.row.review_status === "candidate") {
           candidateRow = outcome.row;
@@ -2190,6 +2350,19 @@ Deno.serve(async (req: Request) => {
         structured.discovery.ai_registration_hint_discarded = aiIdentityDiscarded;
       }
       structured.jurisdiction = jurEnv;
+
+      // Stage B: the enrichment trail, as an additive envelope AND a single
+      // log line. Recording `final_registration` beside `exact_registration`
+      // makes a substitution provable from one record rather than inferred by
+      // comparing two.
+      stageB.final_registration = structured?.registration?.registration_number ?? null;
+      stageB.unresolved_after_enrichment =
+        structured.verification?.unresolved_fields ?? [];
+      structured.stage_b = { ...stageB };
+      console.log(JSON.stringify({
+        evt: "manufacturer_enrichment",
+        ...stageB,
+      }));
 
       console.log(ingestionLog({
         jurisdiction: countryCode,

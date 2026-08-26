@@ -167,6 +167,55 @@ function buildRecallLine(known: KnownCandidate[]): string {
     "Return each additional product in registration_candidates[] with its registration number and its exact registered name.";
 }
 
+/**
+ * The registration the operator SELECTED, once the register has resolved it.
+ *
+ * Present only for `product_enrichment`, and only after identity is settled.
+ */
+export interface LockedResearchIdentity {
+  registeredProductName: string;
+  registrationNumber: string;
+  scheme: string | null;
+  registrant: string | null;
+}
+
+/**
+ * The enrichment brief for an ALREADY-IDENTIFIED product.
+ *
+ * # Why enrichment cannot keep researching the typed phrase
+ *
+ * Discovery and enrichment ask different questions. Discovery asks "which
+ * product does this text mean?" and must therefore work from the operator's
+ * words, typos and all. Enrichment asks "where is THIS product's current
+ * label?" — a question about a specific registered product, which the register
+ * has already named.
+ *
+ * Running enrichment on the discovery query means researching "Hortitrol
+ * Winter Oil" to find documents for VICOL WINTER OIL INSECTICIDE. No
+ * manufacturer hosts a page under a name the product does not have, so the
+ * search cannot succeed on its own terms — and any page it did return would
+ * be a page about something else.
+ *
+ * The typed text is preserved as PROVENANCE (it is how the operator got here,
+ * and it is what an alias review would need) but it no longer steers the
+ * search.
+ */
+function lockedIdentityBrief(identity: LockedResearchIdentity, originalQuery: string): string {
+  const scheme = (identity.scheme ?? "").trim().toUpperCase();
+  const lines = [
+    `Registered product: ${identity.registeredProductName}`,
+    `Registration: ${scheme || "register"} ${identity.registrationNumber}`,
+  ];
+  if (identity.registrant) lines.push(`Registrant: ${identity.registrant}`);
+  return `\n\nThis product has ALREADY been identified by the official register. Its identity is settled and is NOT in question:\n${
+    lines.join("\n")
+  }\n\nYour task is to find the CURRENT manufacturer/registrant-owned product page and the manufacturer-hosted approved product label document for THIS EXACT registered product, and to read the registered uses from that label.\n\nDo not research any other product. Do not propose alternative registrations. If a document you find names a different registered product or a different registration number, discard it rather than reporting it.${
+    originalQuery.trim() && originalQuery.trim().toLowerCase() !== identity.registeredProductName.trim().toLowerCase()
+      ? `\n\nFor context only, the operator originally typed "${originalQuery.trim()}". That text is provenance, not a search term — it may be a misspelling, an old name or a different product entirely, and it must not steer this research.`
+      : ""
+  }`;
+}
+
 export function buildResearchPrompt(
   query: string,
   countryCode: string,
@@ -174,6 +223,7 @@ export function buildResearchPrompt(
   mode: ResearchMode,
   escalationReasons: EscalationReason[] = [],
   knownCandidates: KnownCandidate[] = [],
+  lockedIdentity: LockedResearchIdentity | null = null,
 ): { instructions: string; input: string } {
   const instructions = `${BASE_INSTRUCTIONS}\n\n${sourcePolicyFor(countryCode)}`;
 
@@ -191,8 +241,14 @@ export function buildResearchPrompt(
     }. Search differently rather than repeating the same query.`
     : "";
 
-  const input =
-    `Research this vineyard input: "${query}"\n\n${scopeLine}\n\n${modeLine}\n\nThe search text may contain a typo or be only part of the product name. If so, identify the real product and return its full canonical name in product.canonical_name, keeping the operator's original text verbatim in product.searched_name.${escalationLine}${
+  // A locked identity replaces the SUBJECT of the research entirely: the
+  // registered name leads, and the typo-tolerance instruction is dropped,
+  // because there is nothing left to disambiguate.
+  const input = lockedIdentity
+    ? `Research this registered vineyard input: "${lockedIdentity.registeredProductName}"\n\n${scopeLine}\n\n${modeLine}${
+      lockedIdentityBrief(lockedIdentity, query)
+    }${escalationLine}`
+    : `Research this vineyard input: "${query}"\n\n${scopeLine}\n\n${modeLine}\n\nThe search text may contain a typo or be only part of the product name. If so, identify the real product and return its full canonical name in product.canonical_name, keeping the operator's original text verbatim in product.searched_name.${escalationLine}${
       buildRecallLine(knownCandidates)
     }`;
 
@@ -328,9 +384,20 @@ export function researchCacheKey(
   query: string,
   mode: ResearchMode,
   model: string,
+  /**
+   * The locked registration, when one drives the prompt.
+   *
+   * IN the key, because it changes what was asked. Without it, two operators
+   * reaching the same product through different typed phrases would share a
+   * cache entry keyed on a query neither of them is researching — and worse,
+   * the pre-lock entry for the typed phrase would be served to the post-lock
+   * request that asked a completely different question.
+   */
+  registrationNumber: string | null = null,
 ): string {
   const norm = query.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
-  return `${countryCode.toUpperCase()}::${mode}::${model}::v${RESEARCH_PROMPT_VERSION}::${norm}`;
+  const subject = registrationNumber ? `reg:${registrationNumber.trim().toUpperCase()}` : norm;
+  return `${countryCode.toUpperCase()}::${mode}::${model}::v${RESEARCH_PROMPT_VERSION}::${subject}`;
 }
 
 export function clearResearchCache(): void {
@@ -355,6 +422,11 @@ export interface RunResearchOptions {
    */
   registerResolved: boolean;
   labelMissingForResolvedRegistration?: boolean;
+  /**
+   * The register-resolved identity to enrich. When present, research is about
+   * THIS product and the `query` survives only as provenance.
+   */
+  lockedIdentity?: LockedResearchIdentity | null;
   now?: () => number;
   useCache?: boolean;
   includeSearchResults?: boolean;
@@ -383,6 +455,7 @@ async function runAttempt(
     opts.mode,
     escalationReasons,
     knownCandidates,
+    opts.lockedIdentity ?? null,
   );
 
   const timeoutMs = opts.mode === "candidate_discovery"
@@ -522,7 +595,13 @@ export async function runChemicalResearch(
   const now = opts.now ?? (() => Date.now());
   const startedAt = now();
   const useCache = opts.useCache !== false;
-  const cacheKey = researchCacheKey(opts.countryCode, opts.query, opts.mode, opts.config.model);
+  const cacheKey = researchCacheKey(
+    opts.countryCode,
+    opts.query,
+    opts.mode,
+    opts.config.model,
+    opts.lockedIdentity?.registrationNumber ?? null,
+  );
 
   if (useCache) {
     const hit = researchCache.get(cacheKey);
