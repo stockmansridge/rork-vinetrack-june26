@@ -208,6 +208,20 @@ struct SprayRecordFormView: View {
         if let chosen {
             line.savedChemicalId = chosen.id
             line.name = chosen.name
+            // D2.1 — the line adopts the PRODUCT'S unit, and does so FIRST.
+            //
+            // A line defaults to Litres. Binding a Kg product left that default
+            // in place, so the entire line was then read in the wrong unit: the
+            // Rate/Ha and Vol/Tank fields below both render through
+            // `line.unit.fromBase(...)` and label themselves with `line.unit`,
+            // and `displayRate`/`displayVolume` do the same on every report and
+            // export. The stored magnitude could be exactly right while the
+            // screen said "2.2 Litres/Ha" about a product sold in kilograms.
+            //
+            // Unit identity belongs to the PRODUCT, never to whichever line the
+            // operator happened to open, so it is assigned before any rate is
+            // interpreted, converted or displayed.
+            line.unit = chosen.unit
             // D2 unit boundary. `SavedChemical.ratePerHa` is a DISPLAY-unit
             // number (2.5 for "2.5 L/ha"); `SprayChemical.ratePerHa` is BASE
             // units, as the Rate/Ha field below proves by reading it through
@@ -217,13 +231,16 @@ struct SprayRecordFormView: View {
             // as 2.5 mL/ha, so picking a saved chemical pre-filled a rate a
             // thousand times too low on every litre/kilogram product.
             //
-            // Converted with the SOURCE product's unit, because the figure is
-            // quoted in that product's unit — not in whatever unit the line
-            // happens to be carrying.
+            // Converted with the SOURCE product's unit — which, after the
+            // assignment above, is also the line's — never with whatever unit
+            // the line was carrying beforehand.
             if line.ratePerHa == 0, chosen.ratePerHa > 0 {
                 line.ratePerHa = chosen.unit.toBase(chosen.ratePerHa)
             }
         } else {
+            // Releasing to manual keeps the unit already on screen: there is no
+            // product to take one from, and resetting it would silently restate
+            // the rate the operator typed.
             line.savedChemicalId = nil
         }
         tanks[target.tankIndex].chemicals[target.chemicalIndex] = line

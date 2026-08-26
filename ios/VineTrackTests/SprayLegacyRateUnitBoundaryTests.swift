@@ -39,13 +39,20 @@ struct SprayLegacyRateUnitBoundaryTests {
     // breaks, so each replica is additionally anchored to a real model contract
     // below (`displayRate`, `seedValue`, `hasStructuredRates`).
 
-    /// `SprayRecordFormView.bind(_:at:)`.
-    private func boundLineRate(line: SprayChemical, chosen: SavedChemical) -> Double {
+    /// `SprayRecordFormView.bind(_:at:)`, product branch.
+    private func bind(_ chosen: SavedChemical, into line: SprayChemical) -> SprayChemical {
         var line = line
+        line.savedChemicalId = chosen.id
+        line.name = chosen.name
+        line.unit = chosen.unit
         if line.ratePerHa == 0, chosen.ratePerHa > 0 {
             line.ratePerHa = chosen.unit.toBase(chosen.ratePerHa)
         }
-        return line.ratePerHa
+        return line
+    }
+
+    private func boundLineRate(line: SprayChemical, chosen: SavedChemical) -> Double {
+        bind(chosen, into: line).ratePerHa
     }
 
     /// `SprayCalculatorView.guidedProductLines`.
@@ -279,5 +286,136 @@ struct SprayLegacyRateUnitBoundaryTests {
         let typed = unit.toBase(2.2)
 
         #expect(abs(seeded - typed) < 0.0001)
+    }
+
+    // MARK: - D2.1 §A–E: product unit binding integrity
+    //
+    // A spray line is created with the DEFAULT unit (Litres). Binding a product
+    // left that default in place, so the line's unit described the LINE rather
+    // than the product it now referred to. Every reader renders through
+    // `line.unit` — the Rate/Ha and Vol/Tank fields, `displayRate`,
+    // `displayVolume`, `unitLabel`, and the report and CSV writers — so a
+    // perfectly correct stored magnitude could print as "2.2 Litres/Ha" for a
+    // product sold in kilograms. Right number, wrong substance.
+
+    /// §A — the reported case: a Litres line binding a Kg product.
+    @Test("A Litres line adopts Kg when a kilogram product is bound")
+    func litresLineAdoptsKilogramProductUnit() {
+        let chosen = saved(name: "Dithane", ratePerHa: 2.2, unit: .kilograms)
+        let line = bind(chosen, into: SprayChemical(unit: .litres))
+
+        #expect(line.unit == .kilograms)
+        #expect(line.unitLabel == "Kg")
+        #expect(abs(line.ratePerHa - 2_200) < 0.0001)
+        #expect(abs(line.displayRate - 2.2) < 0.0001)
+        // The defect it replaces: the right magnitude under the wrong unit.
+        #expect(line.unit != .litres)
+    }
+
+    /// §B — the mirror: a Kg line binding a Litres product.
+    @Test("A Kg line adopts Litres when a litre product is bound")
+    func kilogramLineAdoptsLitreProductUnit() {
+        let chosen = saved(name: "Liquid Fungicide", ratePerHa: 2.5, unit: .litres)
+        let line = bind(chosen, into: SprayChemical(unit: .kilograms))
+
+        #expect(line.unit == .litres)
+        #expect(line.unitLabel == "L")
+        #expect(abs(line.ratePerHa - 2_500) < 0.0001)
+        #expect(abs(line.displayRate - 2.5) < 0.0001)
+    }
+
+    /// §C — identity units are still CARRIED, not assumed.
+    ///
+    /// mL and g need no conversion, but they do need the unit copied: a Litres
+    /// line binding a 500 mL/ha product must not keep saying Litres just
+    /// because the arithmetic happened to be a no-op.
+    @Test("Millilitre and gram products still bind their own unit")
+    func identityUnitProductsStillBindTheirUnit() {
+        let millilitres = saved(ratePerHa: 500, unit: .millilitres)
+        let mlLine = bind(millilitres, into: SprayChemical(unit: .litres))
+        #expect(mlLine.unit == .millilitres)
+        #expect(mlLine.ratePerHa == 500)
+        #expect(abs(mlLine.displayRate - 500) < 0.0001)
+
+        let grams = saved(ratePerHa: 750, unit: .grams)
+        let gLine = bind(grams, into: SprayChemical(unit: .kilograms))
+        #expect(gLine.unit == .grams)
+        #expect(gLine.ratePerHa == 750)
+        #expect(abs(gLine.displayRate - 750) < 0.0001)
+    }
+
+    /// §D — the structured path keeps its already-base rate AND gains the right
+    /// unit. Binding must not re-convert the seed or overwrite it with the
+    /// legacy scalar.
+    @Test("A structured product binds its unit without touching its base rate")
+    func structuredProductBindsUnitWithoutReconverting() throws {
+        let chemical = try structuredChemical()
+        let selected = try #require(
+            SprayRegisteredUseRates.defaultSelection(for: chemical, preferring: .perHectare)
+        )
+        let seed = try #require(
+            SprayRegisteredUseRates.seedValue(
+                for: chemical, rateId: selected.id, basis: .perHectare
+            )
+        )
+
+        // A line already carrying the structured seed, as the calculator sets it.
+        var seeded = SprayChemical(unit: .kilograms)
+        seeded.ratePerHa = seed
+        let line = bind(chemical, into: seeded)
+
+        // Unit corrected...
+        #expect(line.unit == .litres)
+        // ...rate untouched: the `ratePerHa == 0` guard means the legacy scalar
+        // never overwrites a structured seed, and nothing re-converts it.
+        #expect(abs(line.ratePerHa - seed) < 0.0001)
+        #expect(abs(line.ratePerHa - 1_500) < 0.0001)
+        #expect(abs(line.displayRate - 1.5) < 0.0001)
+        // Basis is not this gate's business and must be unchanged.
+        #expect(line.rateBasis == seeded.rateBasis)
+    }
+
+    /// §E — changing product on an existing line moves identity AND unit.
+    ///
+    /// The stale-unit case is the dangerous one: a line bound to a Kg product
+    /// and then re-pointed at a Litres product must not keep saying Kg.
+    @Test("Re-binding a line to a different product replaces identity and unit")
+    func rebindingReplacesIdentityAndUnit() {
+        let solid = saved(name: "Dithane", ratePerHa: 2.2, unit: .kilograms)
+        let liquid = saved(name: "Liquid Fungicide", ratePerHa: 2.5, unit: .litres)
+
+        let first = bind(solid, into: SprayChemical(unit: .litres))
+        #expect(first.unit == .kilograms)
+        #expect(first.savedChemicalId == solid.id)
+        #expect(first.name == "Dithane")
+
+        let second = bind(liquid, into: first)
+        #expect(second.unit == .litres)
+        #expect(second.savedChemicalId == liquid.id)
+        #expect(second.name == "Liquid Fungicide")
+        #expect(second.unit != first.unit)
+
+        // The first product's rate is NOT re-seeded over — the D2 guard still
+        // holds — so the surviving magnitude is now read in the new product's
+        // unit. That is the honest consequence of the existing guard, stated
+        // here rather than left to be discovered.
+        #expect(abs(second.ratePerHa - first.ratePerHa) < 0.0001)
+        #expect(abs(second.displayRate - 2.2) < 0.0001)
+    }
+
+    /// Releasing a line back to manual entry clears identity but must NOT reset
+    /// the unit — there is no product to take one from, and changing it would
+    /// restate the rate on screen.
+    @Test("Releasing to manual clears the product but keeps the unit")
+    func releasingToManualKeepsTheUnit() {
+        let chosen = saved(ratePerHa: 2.2, unit: .kilograms)
+        var line = bind(chosen, into: SprayChemical(unit: .litres))
+
+        // The manual branch: only the identifier is cleared.
+        line.savedChemicalId = nil
+
+        #expect(line.unit == .kilograms)
+        #expect(abs(line.displayRate - 2.2) < 0.0001)
+        #expect(line.name == "Legacy Product")
     }
 }
