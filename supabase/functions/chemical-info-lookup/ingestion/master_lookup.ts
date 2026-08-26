@@ -29,6 +29,7 @@ import {
   projectGrapevineUses,
   selectLabelReferences,
 } from "../grapevine_label.ts";
+import { inspectDefaultRateOptionIdentityReadiness } from "../default_rate_options.ts";
 
 /** PostgREST query executor over master_chemicals. Null = table unavailable. */
 export type MasterSelect = (query: string) => Promise<any[] | null>;
@@ -138,6 +139,23 @@ export async function fetchApprovedMaster(
  *
  * Incomplete does NOT mean wrong, and it never means discard. It means: keep
  * this exact registration and go and finish it.
+ *
+ * # Default-identity readiness (Gate D4A.2)
+ *
+ * A fourth condition joins the three above, for a reason the first three
+ * cannot express. The fast path serves a stored row DIRECTLY, so it is the one
+ * exit that never passes the D1 mint point — whatever identities the row was
+ * written with are the identities the operator will be asked to persist. A row
+ * approved before D1 can therefore be entirely correct about its rates and
+ * still unable to produce a single canonical default option, because its rates
+ * carry no `rate_v1_` id.
+ *
+ * Such a row is INCOMPLETE for this contract in exactly the existing sense: it
+ * is right about what it says, and silent about something the operator needs.
+ * The remedy is the one already built — keep the registration, go and finish
+ * it from the authoritative source, and let the normal lock point mint. See
+ * {@link masterHasDefaultIdentityReadiness} for why the row must never be
+ * repaired from its own projection instead.
  */
 export function masterHasCompleteVineyardData(row: any): boolean {
   const unresolved = Array.isArray(row?.verification_unresolved_fields)
@@ -153,7 +171,60 @@ export function masterHasCompleteVineyardData(row: any): boolean {
     row?.regulator_label_url || row?.label_reference || row?.manufacturer_label_url,
   );
 
-  return Boolean(row?.registration_number) && hasOfficialLabel && !grapeRatesUnresolved;
+  return Boolean(row?.registration_number) && hasOfficialLabel &&
+    !grapeRatesUnresolved && masterHasDefaultIdentityReadiness(row);
+}
+
+/**
+ * Whether this row's eligible grapevine rates can already become persistable
+ * default options (Gate D4A.2).
+ *
+ * # Why the row cannot simply be repaired on the way out
+ *
+ * The obvious fix — call the D1 minter on the served envelope — is wrong, and
+ * quietly so. Older stored `registered_uses` are POST-fan-out: one printed
+ * direction covering three mites was written as three target rows, and the
+ * seed recording that they were one direction is not in the row. Minting from
+ * what remains would create three direction identities and three rate
+ * identities where the label printed one direction and one rate, which is the
+ * precise invariant D1.2 exists to hold. The original grouping is not
+ * recoverable from the projection, and guessing at it would manufacture
+ * plausible, permanent, wrong identities.
+ *
+ * So a row that is not ready is not repaired here. It is treated as
+ * incomplete, its exact registration is kept, and the authoritative path
+ * reconstructs the label — where the direction grouping genuinely exists and
+ * the mint is sound.
+ *
+ * Eligibility is NOT defined here. It is delegated wholesale to the Gate D4A
+ * option producer, so "a rate that must carry an identity" means the same
+ * thing to this gate as it does to the thing that will actually build the
+ * option. Consequently, and without any rule being restated:
+ *
+ *   * other-crop rates are irrelevant — they can never become vineyard
+ *     defaults, so their identities cannot block a vineyard fast path;
+ *   * verbatim `other`-basis grapevine directions are irrelevant — they are
+ *     not calculable, so they were never going to produce an option;
+ *   * a product with no grapevine rates at all is ready, and serves zero
+ *     options, which is a legitimate product state and not a degradation.
+ *
+ * Both a MISSING id and a non-`rate_v1_` id (a `direction_v1_`, a UUID, free
+ * text) fail, because the producer refuses both.
+ *
+ * Read-only: the row is inspected, never stamped, never rewritten.
+ */
+export function masterHasDefaultIdentityReadiness(row: any): boolean {
+  try {
+    return inspectDefaultRateOptionIdentityReadiness(row?.registered_uses).ready;
+  } catch (err) {
+    // Readiness is a gate, not an oracle. If inspection itself fails, prefer
+    // the slower authoritative path over asserting a row is ready.
+    console.error(
+      "master default-identity readiness check failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return false;
+  }
 }
 
 /** Per-field provenance for a served master row: everything the row carries is catalogue-reviewed evidence. */

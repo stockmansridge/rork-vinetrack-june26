@@ -29,6 +29,7 @@ import {
   buildMasterStructuredResponse,
   masterHasCompleteVineyardData,
 } from "./ingestion/master_lookup.ts";
+import { assignRateIds } from "./rate_identity.ts";
 import { buildCandidatePayload } from "./ingestion/ingest.ts";
 
 // ---------------------------------------------------------------------------
@@ -410,6 +411,36 @@ Deno.test("D2: each missing piece independently blocks the fast path", () => {
 });
 
 Deno.test("D3: a COMPLETE row still short-circuits — the cache still works", () => {
+  // Gate D4A.2: "complete" now also means the row's eligible grapevine rates
+  // can produce a default the operator can PERSIST, so this fixture is
+  // stamped by the real D1 minter. The assertion is unchanged in spirit — a
+  // genuinely finished row must still end the lookup without a network call.
+  const uses = [{
+    crop: "GRAPEVINE",
+    target_raw: "GRAPEVINE SCALE",
+    rates: [{ value: 2, unit: "L", basis: "per_100_litres" }],
+  }];
+  assignRateIds(uses, {
+    country: "AU",
+    scheme: "apvma",
+    registration_number: "33182",
+  });
+
+  assertEquals(
+    masterHasCompleteVineyardData({
+      ...incomplete33182(),
+      label_reference: "https://elabels.apvma.gov.au/33182ELBL.pdf",
+      verification_unresolved_fields: [],
+      registered_uses: uses,
+    }),
+    true,
+  );
+});
+
+Deno.test("D3b: the SAME row without D1 identities no longer short-circuits", () => {
+  // The regression D4A.2 exists for. Identical row, identical rate, nothing
+  // unresolved — but nothing here could be saved as a default, so the lookup
+  // goes and reconstructs it from the authoritative source instead.
   assertEquals(
     masterHasCompleteVineyardData({
       ...incomplete33182(),
@@ -421,13 +452,16 @@ Deno.test("D3: a COMPLETE row still short-circuits — the cache still works", (
         rates: [{ value: 2, unit: "L", basis: "per_100_litres" }],
       }],
     }),
-    true,
+    false,
   );
 });
 
 Deno.test("D4: an unresolved rate for ANOTHER crop does not block the fast path", () => {
   // Vineyard completeness is about grapevines. A missing citrus rate is not a
   // reason to re-run enrichment for a vineyard.
+  //
+  // (The base fixture carries `rates: []`, so there is no eligible grapevine
+  // rate for D4A.2's identity rule to have an opinion about either.)
   assertEquals(
     masterHasCompleteVineyardData({
       ...incomplete33182(),

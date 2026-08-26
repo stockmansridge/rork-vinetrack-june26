@@ -458,3 +458,61 @@ export function applyDefaultRateOptions(structured: unknown): DefaultRateOptionV
   s.default_rate_options = options;
   return violations;
 }
+
+// ---------------------------------------------------------------------------
+// Identity readiness (Gate D4A.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a set of registered uses could produce persistable defaults TODAY.
+ *
+ * # Why this lives here and not in the caller
+ *
+ * The Master Chemical Catalogue fast path serves a stored row verbatim, so it
+ * has to decide in advance whether that row's rates can survive being turned
+ * into something an operator persists. Answering that question requires
+ * knowing what an "eligible operational rate" is — grapevine crop, an
+ * operational basis, a usable label unit, a usable amount — which is exactly
+ * what {@link buildDefaultRateOptions} already decides.
+ *
+ * Writing that test a second time inside `master_lookup.ts` would create a
+ * THIRD interpretation of a persistable default rate (after the producer and
+ * D3's validator), and the three would drift the moment any one of them
+ * learned about a new basis or unit. So this helper does not re-implement the
+ * rule: it RUNS the producer and reads its verdict. A violation is by
+ * definition a rate that was eligible in every respect except identity, which
+ * is precisely the readiness question and nothing more.
+ *
+ * That reuse is what makes the surrounding gates hold without restating them:
+ * a citrus rate, a verbatim `other` rate and an amount-less row are all
+ * ineligible upstream, so none of them can ever make a row "not ready".
+ *
+ * Pure: `uses` is read and never mutated — notably, no identity is minted for
+ * a row found wanting. A row that cannot answer is sent to be reconstructed
+ * from its authoritative source, not repaired from its own projection.
+ */
+export interface DefaultRateOptionIdentityReadiness {
+  /** No eligible grapevine rate is missing a valid `rate_v1_` identity. */
+  ready: boolean;
+  /** Eligible grapevine rates that DO carry a usable identity. */
+  identified_rate_count: number;
+  /** Why it is not ready — empty exactly when `ready` is true. */
+  violations: DefaultRateOptionViolation[];
+}
+
+export function inspectDefaultRateOptionIdentityReadiness(
+  uses: unknown,
+): DefaultRateOptionIdentityReadiness {
+  const { options, violations } = buildDefaultRateOptions(uses);
+  const identified = new Set<string>();
+  for (const basis of DEFAULT_RATE_BASES) {
+    for (const option of options[basis]) {
+      for (const id of option.rate_ids) identified.add(id);
+    }
+  }
+  return {
+    ready: violations.length === 0,
+    identified_rate_count: identified.size,
+    violations,
+  };
+}

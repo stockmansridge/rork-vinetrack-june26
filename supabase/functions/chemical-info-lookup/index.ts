@@ -1816,9 +1816,28 @@ Deno.serve(async (req: Request) => {
         // existed still gets current options, and no cache format quietly
         // becomes a second contract of its own.
         //
-        // Placed AFTER identity minting by construction — `applyRateIdentities`
-        // runs upstream on the resolved product, so the rows seen here carry
-        // the same `rate_id`s the client will be asked to persist.
+        // WHY THE ROWS SEEN HERE ALREADY CARRY IDENTITIES (Gate D4A.2)
+        //
+        // This is NOT "after identity minting by construction". There are two
+        // kinds of exit and they earn their identities differently:
+        //
+        //   * Resolved paths (register / research / AI+register): mint FIRST.
+        //     `applyRateIdentities` runs at the product lock point below and
+        //     the rows arrive here already stamped.
+        //
+        //   * Master fast paths: bypass the lock point entirely — a stored row
+        //     is served verbatim and NOTHING here mints for it. They are only
+        //     allowed to bypass it because `masterHasCompleteVineyardData`
+        //     has already proven every eligible grapevine rate on that row
+        //     carries a final persisted `rate_v1_` identity. That readiness
+        //     check is the load-bearing part: remove it and pre-D1 approved
+        //     rows short-circuit straight to this line with no identities, and
+        //     this function will NOT repair them — it cannot, because the
+        //     printed-direction grouping needed to mint correctly is not in a
+        //     stored post-fan-out projection.
+        //
+        // So a violation logged below from a master path means the readiness
+        // gate was weakened, not that minting was merely late.
         //
         // Fail-soft: options are a convenience derived from label evidence
         // that is already in the payload, so a fault here must never cost the
