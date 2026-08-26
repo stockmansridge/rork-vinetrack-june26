@@ -75,6 +75,17 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
     /// Authoritative for registration and always retained. A manufacturer
     /// document can lead in the UI but can never SUBSTITUTE for this one.
     var regulatorLabelURL: String?
+    /// The registrant's own PRODUCT INFORMATION page (`manufacturer_product_url`).
+    ///
+    /// A third, genuinely separate concept from the two labels above. The
+    /// backend has classified this URL as marketing rather than a label —
+    /// `selectLabelReferences` refuses to let it occupy either label slot —
+    /// and iOS must honour that separation: a product page is where a grower
+    /// reads about a product, never what they spray by.
+    ///
+    /// Previously undecoded, so a page the resolver had found and classified
+    /// arrived on device and was discarded.
+    var manufacturerProductURL: String?
     /// Label version/approval date, so a future re-verification can tell that
     /// the official data has moved on.
     var labelVersion: String?
@@ -88,6 +99,7 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
         labelReference: String? = nil,
         manufacturerLabelURL: String? = nil,
         regulatorLabelURL: String? = nil,
+        manufacturerProductURL: String? = nil,
         labelVersion: String? = nil
     ) {
         self.countryCode = ChemicalRegistration.normaliseCountry(countryCode)
@@ -98,6 +110,7 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
         self.labelReference = ChemicalRegistration.trimmed(labelReference)
         self.manufacturerLabelURL = ChemicalRegistration.trimmed(manufacturerLabelURL)
         self.regulatorLabelURL = ChemicalRegistration.trimmed(regulatorLabelURL)
+        self.manufacturerProductURL = ChemicalRegistration.trimmed(manufacturerProductURL)
         self.labelVersion = ChemicalRegistration.trimmed(labelVersion)
     }
 
@@ -110,6 +123,7 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
         case labelReference = "label_reference"
         case manufacturerLabelURL = "manufacturer_label_url"
         case regulatorLabelURL = "regulator_label_url"
+        case manufacturerProductURL = "manufacturer_product_url"
         case labelVersion = "label_version"
     }
 
@@ -135,6 +149,10 @@ nonisolated struct ChemicalRegistration: Codable, Sendable, Hashable {
             try c.decodeIfPresent(String.self, forKey: .manufacturerLabelURL))
         regulatorLabelURL = ChemicalRegistration.trimmed(
             try c.decodeIfPresent(String.self, forKey: .regulatorLabelURL))
+        // Additive and tolerant: absent from every server that predates the
+        // split, and from any response where research classified no page.
+        manufacturerProductURL = ChemicalRegistration.trimmed(
+            (try? c.decodeIfPresent(String.self, forKey: .manufacturerProductURL)) ?? nil)
         labelVersion = ChemicalRegistration.trimmed(
             try c.decodeIfPresent(String.self, forKey: .labelVersion))
     }

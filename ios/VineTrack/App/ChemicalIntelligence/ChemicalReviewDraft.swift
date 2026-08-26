@@ -166,12 +166,17 @@ nonisolated enum ChemicalReviewMerge {
         // call and this does not change it — the values arrive with
         // `ai_interpretation` provenance, exactly like the advisory's, so they
         // populate the editable draft without ever reading as label evidence.
-        let uses = firstNonEmptyList([
+        // Grapevine uses FIRST (task §3). The vineyard workflow leads with the
+        // crop the operator actually grows; every other crop on the label is
+        // RETAINED, immediately after, and never discarded. This is ordering
+        // only — the stored list still holds the whole label, which is what
+        // keeps "Other crops on this label" honest and re-verification exact.
+        let uses = grapevineFirst(firstNonEmptyList([
             canonical?.registeredUses ?? [],
             lookup?.aiSuggestedUses ?? [],
             advisory?.registeredUses ?? [],
             existing?.chemicalIntelligence?.registeredUses ?? []
-        ])
+        ]))
 
         // ---- Registration ---------------------------------------------------
         // A number is never invented. When the register did not confirm one the
@@ -188,12 +193,24 @@ nonisolated enum ChemicalReviewMerge {
             existingStructured: existing?.chemicalIntelligence?.registration?.labelReference,
             existingRecordURL: existing?.labelURL
         )
+        // The registrant's product page, resolved across EVERY place the
+        // server states it (task §2). Previously only the top-level
+        // `product_url` was read, so a page discovered on the registrant's own
+        // site — which lands in `registration.manufacturer_product_url` —
+        // reached the device and was thrown away.
+        let productReference = ChemicalProductReference.resolve(
+            lookup: lookup,
+            advisoryURL: advisory?.productURL,
+            existingRecordURL: existing?.productURL
+        )
+
         let registration = mergedRegistration(
             canonical: canonical?.registration,
             existing: existing?.chemicalIntelligence?.registration,
             selected: selected,
             countryCode: countryCode,
             labelReference: labelReference?.url,
+            productReference: productReference?.url,
             // ONE manufacturer value. The Review screen edits the structured
             // registrant and projects `SavedChemical.manufacturer` from it, so
             // the two must be the same string — including its casing.
@@ -240,13 +257,8 @@ nonisolated enum ChemicalReviewMerge {
         // The registrant's product page. Separate field, separate rules: it is
         // never sanitised into `labelURL`, and a blank from the resolver does
         // not erase a page the record already had.
-        let productPage = firstNonEmpty([
-            lookup?.productURL,
-            advisory?.productURL,
-            existing?.productURL
-        ])
-        if !productPage.isEmpty {
-            chemical.productURL = LabelURLValidator.sanitize(productPage)
+        if let productReference {
+            chemical.productURL = productReference.url
         }
         if let form = ChemicalFormType.stated(formDescription(lookup?.formType)) {
             chemical.productForm = form == .liquid ? "liquid" : "solid"
@@ -495,6 +507,8 @@ nonisolated enum ChemicalReviewMerge {
     /// - Parameter labelReference: the already-resolved Official Label link.
     ///   Passing `nil` keeps the historic behaviour of reading the canonical
     ///   and existing registration blocks directly.
+    /// - Parameter productReference: the already-resolved registrant product
+    ///   page. Never a label, and never allowed to become one.
     /// - Parameter registrant: the display-cased registrant the draft will
     ///   show. Passing `nil` reads the canonical and existing blocks directly.
     static func mergedRegistration(
@@ -503,6 +517,7 @@ nonisolated enum ChemicalReviewMerge {
         selected: ChemicalSearchResult?,
         countryCode: String,
         labelReference: String? = nil,
+        productReference: String? = nil,
         registrant: String? = nil
     ) -> ChemicalRegistration? {
         let country = firstNonEmpty([
@@ -532,6 +547,24 @@ nonisolated enum ChemicalReviewMerge {
             canonical?.labelVersion,
             existing?.labelVersion
         ])
+        // The THREE separate documents (task §2), each kept as its own
+        // concept. These were being dropped entirely by this merge: the
+        // decoded split URLs went into `canonical` and came out only as the
+        // single legacy `labelReference`, so "Labels & References" could show
+        // one link where the response carried three.
+        let manufacturerLabel = firstNonEmpty([
+            canonical?.manufacturerLabelURL,
+            existing?.manufacturerLabelURL
+        ])
+        let regulatorLabel = firstNonEmpty([
+            canonical?.regulatorLabelURL,
+            existing?.regulatorLabelURL
+        ])
+        let productPage = firstNonEmpty([
+            productReference,
+            canonical?.manufacturerProductURL,
+            existing?.manufacturerProductURL
+        ])
         let registrantText = firstNonEmpty([
             registrant,
             canonical?.registrant,
@@ -552,6 +585,9 @@ nonisolated enum ChemicalReviewMerge {
             registrant: registrantText.isEmpty ? nil : registrantText,
             registeredProductName: registeredName.isEmpty ? nil : registeredName,
             labelReference: reference.isEmpty ? nil : reference,
+            manufacturerLabelURL: manufacturerLabel.isEmpty ? nil : manufacturerLabel,
+            regulatorLabelURL: regulatorLabel.isEmpty ? nil : regulatorLabel,
+            manufacturerProductURL: productPage.isEmpty ? nil : productPage,
             labelVersion: version.isEmpty ? nil : version
         )
     }
@@ -561,6 +597,30 @@ nonisolated enum ChemicalReviewMerge {
     private static func firstNonEmptyList<T>(_ lists: [[T]]) -> [T] {
         for list in lists where !list.isEmpty { return list }
         return []
+    }
+
+    /// Grapevine uses first, everything else after, order preserved within
+    /// each partition.
+    ///
+    /// A stable partition rather than a sort: the register's own ordering
+    /// inside each group is information, and re-ranking it would be the client
+    /// deciding something the server owns. The product-rate CARRIER (a use
+    /// with no crop and no target) stays at the front — it is rate information
+    /// about the product, not a claim about any crop.
+    static func grapevineFirst(_ uses: [ChemicalRegisteredUse]) -> [ChemicalRegisteredUse] {
+        var carriers: [ChemicalRegisteredUse] = []
+        var grapevine: [ChemicalRegisteredUse] = []
+        var others: [ChemicalRegisteredUse] = []
+        for use in uses {
+            if ChemicalManualEntry.isProductRateCarrier(use) {
+                carriers.append(use)
+            } else if use.isViticultural {
+                grapevine.append(use)
+            } else {
+                others.append(use)
+            }
+        }
+        return carriers + grapevine + others
     }
 
     /// `"liquid"` / `"solid"` for a formulation the lookup described, else `""`.

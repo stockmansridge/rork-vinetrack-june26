@@ -174,6 +174,31 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
     /// the Official Label — a product page is marketing, a label is evidence,
     /// and this value can never populate `labelReference`.
     let productURL: String?
+    /// The grouped label URLs the server publishes for the Review screen
+    /// (`label_urls`).
+    ///
+    /// The SAME three addresses the `registration` block carries, restated in
+    /// one place so a screen asking for "the manufacturer's product page" does
+    /// not have to know the history of three column names to find it. Decoded
+    /// as a fallback tier, never as a competing source of truth — see
+    /// `ChemicalProductReference`.
+    let labelURLs: ChemicalLabelURLs?
+    /// Grapevine registered uses, projected by the server (`grapevine_uses`).
+    ///
+    /// Not a second contract: these are `registered_uses` rows the server has
+    /// already partitioned, in the order the review screen should show them
+    /// (/100 L rates first). iOS prefers this when present and falls back to
+    /// filtering `registered_uses` itself, so an un-redeployed server behaves
+    /// identically.
+    let grapevineUses: [ChemicalRegisteredUse]
+    /// Every other crop on the same label (`other_crop_uses`).
+    ///
+    /// RETAINED, never discarded — real label content that simply is not the
+    /// vineyard workflow. Kept out of the normal view and available under
+    /// "Other crops on this label".
+    let otherCropUses: [ChemicalRegisteredUse]
+    /// True when the label registers this product on grapevines at all.
+    let registeredForGrapevine: Bool?
     /// Uses the resolver researched but could NOT back with authoritative
     /// label evidence (`ai_suggested_uses` wire key).
     ///
@@ -218,6 +243,10 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         case labelExtraction = "label_extraction"
         case productURL = "product_url"
         case aiSuggestedUses = "ai_suggested_uses"
+        case labelURLs = "label_urls"
+        case grapevineUses = "grapevine_uses"
+        case otherCropUses = "other_crop_uses"
+        case registeredForGrapevine = "registered_for_grapevine"
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -254,6 +283,34 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         aiSuggestedUses = ((try? c.decodeIfPresent(
             [ChemicalRegisteredUse].self, forKey: .aiSuggestedUses
         )) ?? []) ?? []
+        // Additive grapevine-first projection. Tolerant throughout: a server
+        // that predates it sends none of these keys, and iOS derives the same
+        // partition from `registered_uses` instead. A malformed block must
+        // cost the projection, never the lookup.
+        labelURLs = (try? c.decodeIfPresent(ChemicalLabelURLs.self, forKey: .labelURLs)) ?? nil
+        grapevineUses = ((try? c.decodeIfPresent(
+            [ChemicalRegisteredUse].self, forKey: .grapevineUses
+        )) ?? []) ?? []
+        otherCropUses = ((try? c.decodeIfPresent(
+            [ChemicalRegisteredUse].self, forKey: .otherCropUses
+        )) ?? []) ?? []
+        registeredForGrapevine =
+            (try? c.decodeIfPresent(Bool.self, forKey: .registeredForGrapevine)) ?? nil
+    }
+
+    /// The grapevine uses to lead with, whichever tier supplied them.
+    ///
+    /// Server projection first; otherwise the same partition computed on
+    /// device. Identical answer either way — the server does not filter, it
+    /// only orders.
+    var resolvedGrapevineUses: [ChemicalRegisteredUse] {
+        grapevineUses.isEmpty ? registeredUses.statedUses.viticultural : grapevineUses
+    }
+
+    /// Every non-grapevine use on the same label.
+    var resolvedOtherCropUses: [ChemicalRegisteredUse] {
+        if !otherCropUses.isEmpty { return otherCropUses }
+        return registeredUses.statedUses.filter { !$0.isViticultural }
     }
 
     /// True when the resolver established no chemistry at all.

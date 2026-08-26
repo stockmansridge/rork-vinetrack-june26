@@ -100,9 +100,6 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
 
     var formType: ChemicalFormType
     var unit: ChemicalUnit
-    /// Marketing/manufacturer page. Deliberately separate from the label link:
-    /// a product page is not an approved label and must never be shown as one.
-    var productURL: String
     var modeOfAction: String
     var notes: String
 
@@ -152,6 +149,29 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
 
     var masterChemicalId: UUID?
     var masterSourceRevision: Int?
+
+    /// The operator's OPERATIONAL default rate, per basis, as an option id.
+    ///
+    /// # Two separate concepts, deliberately
+    ///
+    /// `chemistryDraft` holds the AUTHORITATIVE registered rates — every one
+    /// the label states, with its condition. This holds which ONE of them this
+    /// vineyard has decided to dose by. Choosing a default must never edit,
+    /// narrow or delete the registered list: the label does not change because
+    /// a grower picked a number off it.
+    ///
+    /// Empty means "not chosen yet", which is a real state — see
+    /// `ChemicalDefaultRatePlan`, where several applicable rates require the
+    /// operator to answer before anything is defaulted.
+    var selectedDefaultRateIds: [ChemicalDefaultRateBasis: String]
+
+    /// The vineyard's state/territory, when it is known.
+    ///
+    /// Drives step 1 of the recommendation rule. `nil` is honest and safe: it
+    /// skips straight to "is there exactly one rate at all?", which is a
+    /// weaker answer but never a wrong one, and can never recommend a rate
+    /// registered for somewhere else.
+    var jurisdiction: ChemicalRateJurisdiction?
 
     /// True when reviewing a looked-up product rather than editing something
     /// already on file.
@@ -212,6 +232,16 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         set { chemistryDraft.manufacturerLabelReference = newValue }
     }
 
+    /// The registrant's PRODUCT page — marketing, never a label.
+    ///
+    /// A computed view onto the structured draft for the same reason the two
+    /// label links are: a second stored copy is a second thing that can drift,
+    /// and the drift that matters here is a page quietly becoming a label.
+    var productURL: String {
+        get { chemistryDraft.productReference }
+        set { chemistryDraft.productReference = newValue }
+    }
+
     var productCategory: ProductCategory? {
         get { ProductCategory.parse(chemistryDraft.productCategory) }
         set { chemistryDraft.productCategory = newValue?.rawValue ?? "" }
@@ -243,14 +273,19 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// silently, on the one path where a lookup had definitely run: Match &
     /// Verify on a product already in the store. `chemical` still decides what
     /// Save does (update, not create); it no longer decides what is displayed.
+    ///   - jurisdiction: the vineyard's state/territory, when known. Used ONLY
+    ///     to recommend a default rate; it never filters, edits or hides a
+    ///     registered rate.
     static func make(
         chemical: SavedChemical?,
         prefill: SavedChemical?,
-        fallbackCountry: String
+        fallbackCountry: String,
+        jurisdiction: ChemicalRateJurisdiction? = nil
     ) -> ChemicalReviewSession {
         guard let source = prefill ?? chemical else {
             return ChemicalReviewSession(
-                chemistryDraft: ChemicalManualEntry.draft(from: nil, fallbackCountry: fallbackCountry)
+                chemistryDraft: ChemicalManualEntry.draft(from: nil, fallbackCountry: fallbackCountry),
+                jurisdiction: jurisdiction
             )
         }
 
@@ -296,7 +331,6 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
             formType: ChemicalFormType.stated(source.productForm)
                 ?? ChemicalFormType.from(unit: source.unit),
             unit: source.unit,
-            productURL: source.productURL,
             modeOfAction: source.modeOfAction,
             notes: source.notes,
             use: source.use,
@@ -322,8 +356,54 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
             existingPer100LRateId: per100L?.id,
             masterChemicalId: source.masterChemicalId,
             masterSourceRevision: source.masterSourceRevision,
+            // A default the operator already chose is RECOVERED, never
+            // re-decided. Re-running the recommendation on open would
+            // overwrite a deliberate choice every time the record was viewed.
+            selectedDefaultRateIds: recoveredDefaultSelections(
+                from: source,
+                chemistry: chemistry,
+                stored: stored
+            ),
+            jurisdiction: jurisdiction,
             baselineViolationCodes: baseline
         )
+    }
+
+    /// Recover the operator's stored default selection from the legacy rate
+    /// columns.
+    ///
+    /// The chosen default persists into `SavedChemical.rates` (see
+    /// `legacyProjection`), which is what the Spray Tool already reads. Coming
+    /// back the other way is a MATCH against the authoritative options, never a
+    /// reconstruction: a stored value that no longer corresponds to any
+    /// registered rate — because the label was re-verified and moved on —
+    /// selects nothing, and the recommendation rule applies again.
+    private static func recoveredDefaultSelections(
+        from source: SavedChemical,
+        chemistry: ChemicalManualDraft,
+        stored: ChemicalIntelligence?
+    ) -> [ChemicalDefaultRateBasis: String] {
+        let grapevine = ChemicalManualEntry
+            .proposedIntelligence(from: chemistry, existing: stored)
+            .registeredUses.statedUses.viticultural
+        guard !grapevine.isEmpty else { return [:] }
+
+        var out: [ChemicalDefaultRateBasis: String] = [:]
+        for row in source.rates {
+            let basis: ChemicalDefaultRateBasis =
+                row.basis == .perHectare ? .perHectare : .per100Litres
+            // Compared through the SAME base scale the legacy column was
+            // written in, so a rate stored from a millilitre label still
+            // matches the option it came from instead of missing it.
+            let match = ChemicalDefaultRate.options(basis, from: grapevine).first { option in
+                guard let unit = ChemicalUnit.fromLabelRateToken(option.rate.unit),
+                      let value = option.rate.proposedValue
+                else { return false }
+                return abs(unit.toBase(value) - row.value) < 0.000_001
+            }
+            if let match { out[basis] = match.id }
+        }
+        return out
     }
 
     /// Lift a legacy record's scalar rates into structured label rates.
@@ -362,7 +442,6 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         chemistryDraft: ChemicalManualDraft = ChemicalManualDraft(),
         formType: ChemicalFormType = .liquid,
         unit: ChemicalUnit = .litres,
-        productURL: String = "",
         modeOfAction: String = "",
         notes: String = "",
         use: String = "",
@@ -388,6 +467,8 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         existingPer100LRateId: UUID? = nil,
         masterChemicalId: UUID? = nil,
         masterSourceRevision: Int? = nil,
+        selectedDefaultRateIds: [ChemicalDefaultRateBasis: String] = [:],
+        jurisdiction: ChemicalRateJurisdiction? = nil,
         baselineViolationCodes: Set<ChemicalSaveViolationCode> = []
     ) {
         self.isReviewingLookup = isReviewingLookup
@@ -395,7 +476,6 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         self.chemistryDraft = chemistryDraft
         self.formType = formType
         self.unit = unit
-        self.productURL = productURL
         self.modeOfAction = modeOfAction
         self.notes = notes
         self.use = use
@@ -421,6 +501,8 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         self.existingPer100LRateId = existingPer100LRateId
         self.masterChemicalId = masterChemicalId
         self.masterSourceRevision = masterSourceRevision
+        self.selectedDefaultRateIds = selectedDefaultRateIds
+        self.jurisdiction = jurisdiction
     }
 
     // MARK: - Re-search
@@ -443,7 +525,6 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         formType = refreshed.formType
         unit = refreshed.unit
         modeOfAction = refreshed.modeOfAction.trimmedNonEmpty ?? modeOfAction
-        productURL = refreshed.productURL.trimmedNonEmpty ?? productURL
         use = refreshed.use.trimmedNonEmpty ?? use
         problem = refreshed.problem.trimmedNonEmpty ?? problem
         masterChemicalId = refreshed.masterChemicalId
@@ -516,10 +597,79 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
 
     /// Every label rate on record — product-level carriers plus each use's.
     var allLabelRates: [ChemicalLabelRate] {
-        let intel = ChemicalManualEntry.proposedIntelligence(
+        proposedIntelligence.registeredUses.flatMap(\.rates)
+    }
+
+    /// The intelligence the draft currently proposes. One computation, reused.
+    private var proposedIntelligence: ChemicalIntelligence {
+        ChemicalManualEntry.proposedIntelligence(
             from: chemistryDraft, existing: seedIntelligence
         )
-        return intel.registeredUses.flatMap(\.rates)
+    }
+
+    // MARK: - Derived: grapevine-first presentation (task §3)
+
+    /// The GRAPEVINE registered uses — what the normal review view shows.
+    ///
+    /// A vineyard operator scrolling past peach, plum, nectarine, almond and
+    /// pome fruit to reach the rate they actually need is being made to work
+    /// for the app. Every one of those uses is still on the record; they are
+    /// simply not the vineyard workflow.
+    var grapevineUses: [ChemicalRegisteredUse] {
+        proposedIntelligence.registeredUses.statedUses.viticultural
+    }
+
+    /// Every other crop on the same label. RETAINED, shown under Advanced.
+    ///
+    /// Never discarded: they are authoritative label content, they are what
+    /// makes a re-verification comparable, and a grower checking whether a drum
+    /// they already own covers something else deserves to find the answer.
+    var otherCropUses: [ChemicalRegisteredUse] {
+        proposedIntelligence.registeredUses.statedUses.filter { !$0.isViticultural }
+    }
+
+    /// True when the label registers this product on grapevines at all.
+    var isRegisteredForGrapevine: Bool { !grapevineUses.isEmpty }
+
+    // MARK: - Derived: the default-rate decision (task §5)
+
+    /// The per-basis default-rate decision, built ONLY from authoritative
+    /// grapevine rates.
+    var defaultRatePlan: ChemicalDefaultRatePlan {
+        ChemicalDefaultRate.plan(grapevineUses: grapevineUses, jurisdiction: jurisdiction)
+    }
+
+    /// The default in force for a basis: the operator's choice if they made
+    /// one, otherwise the recommendation, otherwise nothing.
+    ///
+    /// Returning `nil` is a real answer and the whole point of step 3: when
+    /// several conditional rates apply and nobody has chosen, there IS no
+    /// default, and manufacturing one would dose off a condition never checked.
+    func resolvedDefaultOption(
+        for basis: ChemicalDefaultRateBasis
+    ) -> ChemicalDefaultRateOption? {
+        let group = defaultRatePlan.group(basis)
+        if let selectedId = selectedDefaultRateIds[basis],
+           let chosen = group.options.first(where: { $0.id == selectedId }) {
+            return chosen
+        }
+        return group.recommendedOption
+    }
+
+    /// Adopt a default rate for a basis. Never touches the registered rates.
+    mutating func selectDefaultRate(
+        _ option: ChemicalDefaultRateOption,
+        for basis: ChemicalDefaultRateBasis
+    ) {
+        selectedDefaultRateIds[basis] = option.id
+    }
+
+    /// Bases the operator still has to answer before a default exists.
+    var basesAwaitingDefaultChoice: [ChemicalDefaultRateBasis] {
+        ChemicalDefaultRateBasis.allCases.filter { basis in
+            defaultRatePlan.group(basis).requiresChoice
+                && selectedDefaultRateIds[basis] == nil
+        }
     }
 
     /// The per-hectare rate as display text, or `nil` when the label states
@@ -537,6 +687,18 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     }
 
     private func rateDisplay(matching predicate: (ChemicalLabelRateBasis) -> Bool) -> String? {
+        // The operator's chosen (or recommended) grapevine default leads, so
+        // the legacy scalar the Spray Tool reads is the rate they actually
+        // decided on rather than whichever registered row happened to be
+        // parsed first.
+        let basis: ChemicalDefaultRateBasis = predicate(.perHectare) ? .perHectare : .per100Litres
+        if let option = resolvedDefaultOption(for: basis),
+           let value = ChemicalReviewSession.displayValue(option.rate, productUnit: unit),
+           let text = formatRate(value).trimmedNonEmpty {
+            return text
+        }
+        // Fallback for records with no grapevine use at all — a legacy or
+        // manually entered product still projects its rate exactly as before.
         for rate in allLabelRates where predicate(rate.basis) {
             guard let value = ChemicalReviewSession.displayValue(rate, productUnit: unit) else { continue }
             return formatRate(value).trimmedNonEmpty
@@ -592,7 +754,10 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         if let perHa, perHa > 0 {
             rates.append(ChemicalRate(
                 id: existingPerHaRateId ?? UUID(),
-                label: "Per Ha",
+                // The label's own CONDITION for the chosen default, so the
+                // stored operational rate says which registered condition it
+                // came from instead of a generic "Per Ha".
+                label: defaultRateLabel(for: .perHectare, fallback: "Per Ha"),
                 value: unit.toBase(perHa),
                 basis: .perHectare
             ))
@@ -600,7 +765,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         if let per100L, per100L > 0 {
             rates.append(ChemicalRate(
                 id: existingPer100LRateId ?? UUID(),
-                label: "Per 100L",
+                label: defaultRateLabel(for: .per100Litres, fallback: "Per 100L"),
                 value: unit.toBase(per100L),
                 basis: .per100Litres
             ))
@@ -633,6 +798,16 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         )
     }
 
+    /// The condition wording to store beside a projected default rate.
+    private func defaultRateLabel(
+        for basis: ChemicalDefaultRateBasis,
+        fallback: String
+    ) -> String {
+        guard let option = resolvedDefaultOption(for: basis) else { return fallback }
+        let condition = ChemicalDefaultRate.conditionText(for: option.rate)
+        return condition.isEmpty ? fallback : condition
+    }
+
     // MARK: - Save contract (task §11)
 
     /// The record as it stands, measured against the shared mandatory
@@ -645,9 +820,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         ChemicalSaveContract.evaluate(
             productName: name,
             productCategory: chemistryDraft.productCategory,
-            intelligence: ChemicalManualEntry.proposedIntelligence(
-                from: chemistryDraft, existing: seedIntelligence
-            ),
+            intelligence: proposedIntelligence,
             intent: .sprayReady
         )
     }

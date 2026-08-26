@@ -348,6 +348,13 @@ struct EditSavedChemicalSheet: View {
                 if !session.hasStructuredUses {
                     legacyUseSection
                 }
+                // 3b. Default rates — the operator's own decision, taken from
+                // the authoritative grapevine rates immediately above it. The
+                // Portal workflow is: rates displayed → accept or choose a
+                // default → save, so the decision sits between the two.
+                if session.isRegisteredForGrapevine {
+                    defaultRatesSection
+                }
                 // 4. Labels & References
                 labelsSection
                 // Fertiliser pack/N-P-K stays with the operational data it
@@ -765,6 +772,45 @@ struct EditSavedChemicalSheet: View {
         } footer: {
             Text("No registered use is on record for this product yet. Adding one above records the crop, target, rate, withholding period and re-entry period properly — these two boxes cannot.")
         }
+    }
+
+    /// The operator's operational default rate, per basis (task §5–§7).
+    ///
+    /// # Why this is separate from the registered rates above
+    ///
+    /// The section above records what the LABEL says — every registered rate,
+    /// with its condition, unedited. This records what THIS VINEYARD doses by.
+    /// Choosing here changes no registered rate and removes none: the label did
+    /// not change because a grower picked a number off it, and a re-verification
+    /// still has the full list to compare against.
+    private var defaultRatesSection: some View {
+        Section {
+            ChemicalDefaultRatesView(
+                plan: session.defaultRatePlan,
+                selectedIds: session.selectedDefaultRateIds,
+                onSelect: { basis, option in
+                    session.selectDefaultRate(option, for: basis)
+                }
+            )
+        } header: {
+            Text("Default Rates")
+        } footer: {
+            Text(defaultRatesFooter)
+        }
+    }
+
+    private var defaultRatesFooter: String {
+        let base = "The rate VineTrack will start a spray calculation from. "
+            + "Chosen from the registered grapevine rates above — the two bases "
+            + "are decided separately and never converted into one another."
+        guard session.jurisdiction == nil,
+              session.defaultRatePlan.requiresChoice
+        else { return base }
+        // Honest about WHY it is asking: with no vineyard state on record it
+        // cannot narrow a state-conditioned label, and it will not guess.
+        return base + " This label conditions rates by state, and VineTrack "
+            + "has no state on record for this vineyard, so it cannot narrow "
+            + "them for you."
     }
 
     /// Two DISTINCT external references (task §8).

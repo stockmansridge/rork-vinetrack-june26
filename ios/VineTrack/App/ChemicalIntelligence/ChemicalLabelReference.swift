@@ -185,6 +185,124 @@ nonisolated enum ChemicalLabelReference {
     }
 }
 
+/// The server's grouped `label_urls` block.
+///
+/// Three genuinely different documents, never one "link":
+///
+/// ```text
+/// manufacturer_label_url   the label the grower physically holds
+/// regulator_label_url      APVMA eLabels and equivalents — authoritative
+/// product_url              the registrant's marketing page — NOT a label
+/// ```
+///
+/// Decoded as a FALLBACK tier only. The `registration` block remains the
+/// primary source for all three; this exists because the server publishes the
+/// product page in two places and a response can legitimately carry it in
+/// either, which is exactly how iOS came to display nothing.
+nonisolated struct ChemicalLabelURLs: Sendable, Hashable {
+    let regulatorLabelURL: String?
+    let manufacturerLabelURL: String?
+    /// The registrant's product page. Never a label, whatever it looks like.
+    let productURL: String?
+
+    nonisolated enum CodingKeys: String, CodingKey {
+        case regulatorLabelURL = "regulator_label_url"
+        case manufacturerLabelURL = "manufacturer_label_url"
+        case productURL = "product_url"
+    }
+}
+
+extension ChemicalLabelURLs: Codable {
+    nonisolated init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        regulatorLabelURL = try? c.decodeIfPresent(String.self, forKey: .regulatorLabelURL)
+        manufacturerLabelURL = try? c.decodeIfPresent(String.self, forKey: .manufacturerLabelURL)
+        productURL = try? c.decodeIfPresent(String.self, forKey: .productURL)
+    }
+}
+
+/// Picks the registrant's PRODUCT PAGE out of everywhere the server states it.
+///
+/// # Why this is separate from `ChemicalLabelReference`
+///
+/// They resolve different things and must never be able to trade places. A
+/// label is evidence — the document an application is legally made under. A
+/// product page is marketing. `ChemicalLabelReference` exists to stop a
+/// brochure being presented as an approved label; this exists so the brochure,
+/// which is genuinely useful, still reaches the screen under its own name.
+///
+/// The server states the page in three places by design, and iOS decoded only
+/// the third — so a page found through the registrant's own site (which lands
+/// in `registration.manufacturer_product_url`) arrived on device and was
+/// dropped.
+nonisolated enum ChemicalProductReference {
+
+    /// Which tier supplied the product page.
+    nonisolated enum Origin: String, Sendable, Hashable {
+        /// `registration.manufacturer_product_url` — classified by the
+        /// registrant-site research pass.
+        case registrationProductURL
+        /// `label_urls.product_url` — the grouped review-screen block.
+        case labelURLsProductURL
+        /// The top-level `product_url` key.
+        case topLevelProductURL
+        /// The resolver's quarantined advisory reading.
+        case advisory
+        /// The page already on the saved record.
+        case existingRecord
+    }
+
+    nonisolated struct Choice: Sendable, Hashable {
+        let url: String
+        let origin: Origin
+    }
+
+    /// Resolve the product page, strongest tier first.
+    ///
+    /// Returns `nil` when no tier stated one. It never falls back to a label:
+    /// an empty product page is a correct, complete state, and filling it with
+    /// the regulator's document would put an APVMA address under a
+    /// "Manufacturer product page" heading.
+    static func resolve(
+        lookup: ChemicalStructuredLookup?,
+        advisoryURL: String?,
+        existingRecordURL: String?
+    ) -> Choice? {
+        for candidate in candidates(
+            lookup: lookup,
+            advisoryURL: advisoryURL,
+            existingRecordURL: existingRecordURL
+        ) {
+            let sanitised = LabelURLValidator.sanitize(candidate.url)
+            guard !sanitised.isEmpty else { continue }
+            return Choice(url: sanitised, origin: candidate.origin)
+        }
+        return nil
+    }
+
+    /// Every place the product page can legitimately appear, strongest first.
+    static func candidates(
+        lookup: ChemicalStructuredLookup?,
+        advisoryURL: String?,
+        existingRecordURL: String?
+    ) -> [Choice] {
+        var out: [Choice] = []
+
+        func add(_ raw: String?, _ origin: Origin) {
+            let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !trimmed.isEmpty else { return }
+            out.append(Choice(url: trimmed, origin: origin))
+        }
+
+        add(lookup?.registration?.manufacturerProductURL, .registrationProductURL)
+        add(lookup?.labelURLs?.productURL, .labelURLsProductURL)
+        add(lookup?.productURL, .topLevelProductURL)
+        add(advisoryURL, .advisory)
+        add(existingRecordURL, .existingRecord)
+        return out
+    }
+}
+
 /// Stage LD-2 document-extraction provenance (`label_extraction`).
 ///
 /// Additive on the wire and present only when a document text pass actually
