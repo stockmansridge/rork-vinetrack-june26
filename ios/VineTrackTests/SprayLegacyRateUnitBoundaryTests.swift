@@ -42,12 +42,27 @@ struct SprayLegacyRateUnitBoundaryTests {
     /// `SprayRecordFormView.bind(_:at:)`, product branch.
     private func bind(_ chosen: SavedChemical, into line: SprayChemical) -> SprayChemical {
         var line = line
+        let previousChemicalId = line.savedChemicalId
+        let isProductIdentityChange = previousChemicalId != nil
+            && previousChemicalId != chosen.id
         line.savedChemicalId = chosen.id
         line.name = chosen.name
         line.unit = chosen.unit
+        if isProductIdentityChange {
+            line.ratePerHa = 0
+        }
         if line.ratePerHa == 0, chosen.ratePerHa > 0 {
             line.ratePerHa = chosen.unit.toBase(chosen.ratePerHa)
         }
+        return line
+    }
+
+    /// A line already bound to `product` and carrying `baseRate` in BASE units —
+    /// the state every re-bind starts from.
+    private func boundLine(to product: SavedChemical, baseRate: Double) -> SprayChemical {
+        var line = SprayChemical(name: product.name, unit: product.unit)
+        line.savedChemicalId = product.id
+        line.ratePerHa = baseRate
         return line
     }
 
@@ -395,12 +410,163 @@ struct SprayLegacyRateUnitBoundaryTests {
         #expect(second.name == "Liquid Fungicide")
         #expect(second.unit != first.unit)
 
-        // The first product's rate is NOT re-seeded over — the D2 guard still
-        // holds — so the surviving magnitude is now read in the new product's
-        // unit. That is the honest consequence of the existing guard, stated
-        // here rather than left to be discovered.
-        #expect(abs(second.ratePerHa - first.ratePerHa) < 0.0001)
-        #expect(abs(second.displayRate - 2.2) < 0.0001)
+        // D2.2 — the solid product's dose does NOT survive into the liquid
+        // product; the line states the NEW product's own default instead.
+        #expect(abs(second.ratePerHa - 2_500) < 0.0001)
+        #expect(abs(second.displayRate - 2.5) < 0.0001)
+        #expect(abs(second.ratePerHa - first.ratePerHa) > 1)
+    }
+
+    // MARK: - D2.2 §A–G: product re-bind rate integrity
+    //
+    // A dosage belongs to the product it was established for. The `== 0` guard
+    // was written to protect an operator's typed rate, but on a CHANGE OF
+    // PRODUCT it protected the wrong thing: Product A's 2.5 L/ha, held as
+    // 2500 mL, survived a re-bind to a kilogram product and — once D2.1 began
+    // correcting the unit — was re-read as 2.5 kg/ha. One product's dose,
+    // presented as another's, in a unit neither of them agreed to.
+
+    /// §A — different products, different units.
+    @Test("Re-binding across units seeds the new product's rate, not the old")
+    func rebindAcrossUnitsSeedsTheNewProductsRate() {
+        let productA = saved(name: "Product A", ratePerHa: 2.5, unit: .litres)
+        let productB = saved(name: "Product B", ratePerHa: 1.2, unit: .kilograms)
+
+        let line = bind(productB, into: boundLine(to: productA, baseRate: 2_500))
+
+        #expect(line.unit == .kilograms)
+        #expect(abs(line.ratePerHa - 1_200) < 0.0001)
+        #expect(abs(line.displayRate - 1.2) < 0.0001)
+        // The defect: A's 2500 reinterpreted as 2500 g/ha of B.
+        #expect(abs(line.ratePerHa - 2_500) > 1)
+    }
+
+    /// §B — different products, SAME unit. No unit change to make the staleness
+    /// visible, so this is the case that would have gone unnoticed longest.
+    @Test("Re-binding within one unit still replaces the old product's rate")
+    func rebindWithinOneUnitStillReplacesTheRate() {
+        let productA = saved(name: "Product A", ratePerHa: 2.5, unit: .litres)
+        let productB = saved(name: "Product B", ratePerHa: 1.0, unit: .litres)
+
+        let line = bind(productB, into: boundLine(to: productA, baseRate: 2_500))
+
+        #expect(line.unit == .litres)
+        #expect(abs(line.ratePerHa - 1_000) < 0.0001)
+        #expect(abs(line.displayRate - 1.0) < 0.0001)
+        #expect(abs(line.ratePerHa - 2_500) > 1)
+    }
+
+    /// §C — the new product states no default. Unset is the honest answer:
+    /// an operator typing a rate is a smaller failure than a wrong rate they
+    /// had no reason to question.
+    @Test("A new product with no default leaves the rate unset, not inherited")
+    func newProductWithoutDefaultLeavesRateUnset() {
+        let productA = saved(name: "Product A", ratePerHa: 2.5, unit: .litres)
+        let productB = saved(name: "Product B", ratePerHa: 0, unit: .kilograms)
+
+        let line = bind(productB, into: boundLine(to: productA, baseRate: 2_500))
+
+        #expect(line.unit == .kilograms)
+        #expect(line.ratePerHa == 0)
+        #expect(line.displayRate == 0)
+    }
+
+    /// §D — the SAME product re-selected. A hand-edited rate is the operator's
+    /// decision about this exact product and must not be reverted to the
+    /// store's default merely because the picker was reopened.
+    @Test("Re-selecting the same product preserves an edited rate")
+    func reselectingTheSameProductPreservesAnEditedRate() {
+        // Store default is 2.5 L/ha; the operator has typed 1.8 L/ha.
+        let product = saved(name: "Product A", ratePerHa: 2.5, unit: .litres)
+        let line = bind(product, into: boundLine(to: product, baseRate: 1_800))
+
+        #expect(line.savedChemicalId == product.id)
+        #expect(line.unit == .litres)
+        #expect(abs(line.ratePerHa - 1_800) < 0.0001)
+        #expect(abs(line.displayRate - 1.8) < 0.0001)
+        // Explicitly NOT the store default.
+        #expect(abs(line.ratePerHa - 2_500) > 1)
+    }
+
+    /// §E — solid to liquid. A gram magnitude must not be re-read as millilitres
+    /// of a different product.
+    @Test("A solid product's base magnitude never becomes a liquid's")
+    func solidMagnitudeIsNotReinterpretedAsLiquid() {
+        let solid = saved(name: "Dithane", ratePerHa: 2.2, unit: .kilograms)
+        let liquid = saved(name: "Liquid Fungicide", ratePerHa: 2.5, unit: .litres)
+
+        let line = bind(liquid, into: boundLine(to: solid, baseRate: 2_200))
+
+        #expect(line.unit == .litres)
+        #expect(line.savedChemicalId == liquid.id)
+        #expect(abs(line.ratePerHa - 2_500) < 0.0001)
+        #expect(abs(line.displayRate - 2.5) < 0.0001)
+        // 2200 g must not resurface as 2200 mL (2.2 L/ha) of the liquid.
+        #expect(abs(line.ratePerHa - 2_200) > 1)
+    }
+
+    /// §F — a structured rate belonging to the NEWLY selected product survives
+    /// intact: it is not cleared, not replaced by the legacy scalar, and not
+    /// re-converted. Re-selecting the same product is not an identity change.
+    @Test("A structured rate for the same product survives re-selection")
+    func structuredRateForSameProductSurvivesReselection() throws {
+        let chemical = try structuredChemical()
+        let selected = try #require(
+            SprayRegisteredUseRates.defaultSelection(for: chemical, preferring: .perHectare)
+        )
+        let seed = try #require(
+            SprayRegisteredUseRates.seedValue(
+                for: chemical, rateId: selected.id, basis: .perHectare
+            )
+        )
+
+        let line = bind(chemical, into: boundLine(to: chemical, baseRate: seed))
+
+        #expect(line.unit == .litres)
+        #expect(abs(line.ratePerHa - seed) < 0.0001)
+        #expect(abs(line.ratePerHa - 1_500) < 0.0001)
+        #expect(abs(line.displayRate - 1.5) < 0.0001)
+        // Not double-converted, and not overwritten by the legacy 1.5 scalar
+        // (which would coincidentally agree here — so assert the seed path
+        // stayed base-correct rather than that the number merely matches).
+        #expect(abs(line.ratePerHa - chemical.unit.toBase(seed)) > 1_000)
+    }
+
+    /// §G — identity, unit and rate all belong to the same chemical afterwards.
+    @Test("After an identity change, id, unit and rate share one product")
+    func identityUnitAndRateMoveTogether() {
+        let productA = saved(name: "Product A", ratePerHa: 2.5, unit: .litres)
+        let productB = saved(name: "Product B", ratePerHa: 1.2, unit: .kilograms)
+
+        let line = bind(productB, into: boundLine(to: productA, baseRate: 2_500))
+
+        #expect(line.savedChemicalId == productB.id)
+        #expect(line.name == productB.name)
+        #expect(line.unit == productB.unit)
+        #expect(abs(line.ratePerHa - productB.unit.toBase(productB.ratePerHa)) < 0.0001)
+
+        // Nothing of Product A remains.
+        #expect(line.savedChemicalId != productA.id)
+        #expect(line.unit != productA.unit)
+        #expect(line.name != productA.name)
+    }
+
+    /// An UNBOUND line keeps its typed rate when a product is first selected.
+    ///
+    /// `nil -> chosen` is NOT treated as an identity change: the Rate/Ha field
+    /// is editable before a product is picked, so a rate sitting there may be
+    /// the operator's own. Pinned so the distinction cannot be erased silently.
+    @Test("First binding a product keeps an operator's typed rate")
+    func firstBindingKeepsATypedRate() {
+        var manual = SprayChemical(unit: .litres)
+        manual.ratePerHa = 1_800   // typed as 1.8 L/ha before picking a product
+        #expect(manual.savedChemicalId == nil)
+
+        let product = saved(name: "Product A", ratePerHa: 2.5, unit: .litres)
+        let line = bind(product, into: manual)
+
+        #expect(line.savedChemicalId == product.id)
+        #expect(abs(line.ratePerHa - 1_800) < 0.0001)
     }
 
     /// Releasing a line back to manual entry clears identity but must NOT reset

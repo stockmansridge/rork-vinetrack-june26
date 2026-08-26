@@ -205,7 +205,20 @@ struct SprayRecordFormView: View {
               tanks[target.tankIndex].chemicals.indices.contains(target.chemicalIndex)
         else { return }
         var line = tanks[target.tankIndex].chemicals[target.chemicalIndex]
+        // D2.2 — captured BEFORE the identity is overwritten, because whether a
+        // dosage may survive depends entirely on whether the product changed.
+        let previousChemicalId = line.savedChemicalId
         if let chosen {
+            // A genuine change of product: this line referred to one saved
+            // chemical and now refers to a different one.
+            //
+            // `nil -> chosen` is deliberately NOT counted. An unbound line's
+            // Rate/Ha field is editable, so a rate sitting on it may be one the
+            // operator typed by hand, and destroying that is a different
+            // decision from discarding a rate that demonstrably belonged to
+            // another product. See the gate report.
+            let isProductIdentityChange = previousChemicalId != nil
+                && previousChemicalId != chosen.id
             line.savedChemicalId = chosen.id
             line.name = chosen.name
             // D2.1 — the line adopts the PRODUCT'S unit, and does so FIRST.
@@ -234,6 +247,24 @@ struct SprayRecordFormView: View {
             // Converted with the SOURCE product's unit — which, after the
             // assignment above, is also the line's — never with whatever unit
             // the line was carrying beforehand.
+            //
+            // D2.2 — a dosage belongs to the product it was established for.
+            //
+            // The `== 0` guard below exists to protect an operator's typed
+            // rate, but on a change of product it protected the WRONG thing: a
+            // 2.5 L/ha rate held as 2500 mL survived a re-bind to a kilogram
+            // product and, with D2.1 now correcting the unit, was re-read as
+            // 2.5 kg/ha. Product A's dose, presented as Product B's, in a unit
+            // neither of them agreed to.
+            //
+            // So a stale dosage is invalidated FIRST, and the new product's own
+            // default is then seeded through the same guard. If the new product
+            // states no default the line is left unset, which is the honest
+            // answer — an operator entering a rate is a smaller failure than a
+            // wrong rate they had no reason to question.
+            if isProductIdentityChange {
+                line.ratePerHa = 0
+            }
             if line.ratePerHa == 0, chosen.ratePerHa > 0 {
                 line.ratePerHa = chosen.unit.toBase(chosen.ratePerHa)
             }
