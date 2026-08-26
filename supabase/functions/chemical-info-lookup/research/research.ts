@@ -24,11 +24,14 @@ import {
 } from "./schema.ts";
 import { classifyUrl, type ClassifiedUrl, preferredResearchDomains } from "./classify.ts";
 import {
+  decideCandidateDiscoveryEscalation,
   decideEscalation,
   type EscalationDecision,
   type EscalationReason,
   solTerminalDecision,
 } from "./escalation.ts";
+import { mergeCandidateResearch } from "./candidate_merge.ts";
+import { looksLikeProductCode } from "../ranking.ts";
 
 export const RESEARCH_PROMPT_VERSION = 3;
 
@@ -123,12 +126,54 @@ USE CONTEXTS — one registered_uses entry per DISTINCT context, and this is whe
 
 RESISTANCE GROUPS: suggested_scheme and suggested_group are suggestions only. They are cross-checked against an authoritative FRAC/HRAC/IRAC table. Never merge the three schemes.`;
 
+/** A product a previous pass already found, for the recall prompt. */
+export interface KnownCandidate {
+  name: string;
+  number: string | null;
+}
+
+/**
+ * Tell the fallback what is already known, and ask it to WIDEN.
+ *
+ * # Why the fallback cannot simply be re-asked the same question
+ *
+ * Re-running an identical prompt against a stronger model is a good way to
+ * buy the same answer more expensively. Terra returned SYNERTROL HORTI for
+ * "Hortitrol Winter Oil" because that IS a defensible reading of the name;
+ * Sol, asked the same open question, would very likely agree, and the whole
+ * escalation would achieve nothing.
+ *
+ * So the second pass gets a different job: here is what we have, find what
+ * ELSE could plausibly be meant. That is a genuinely different search, and it
+ * is the only kind that improves recall.
+ *
+ * What this deliberately does NOT do is name a product we hope to see. It
+ * describes the SHAPE of the answer -- approximate, misspelled, historical,
+ * abbreviated or imperfectly remembered trade names -- and never the answer
+ * itself. A prompt that hinted at the expected product would make the
+ * regression prove only that a model can be told what to say.
+ */
+function buildRecallLine(known: KnownCandidate[]): string {
+  if (!known.length) return "";
+  const listed = known
+    .map((k) => (k.number ? `${k.name} (registration ${k.number})` : k.name))
+    .join("; ");
+  return "\n\nA faster model has already searched this name and found: " +
+    listed +
+    ".\n\nYour job is DIFFERENT: find ADDITIONAL, genuinely different registered products in this country that the operator could plausibly have meant. " +
+    "Treat the search text as possibly misspelled, abbreviated, out of date, discontinued, renamed, or a trade name remembered imperfectly -- growers often ask for a product by a name close to, but not exactly, the registered one. " +
+    "Search differently from an obvious name match: consider the product TYPE the name implies and what else is registered for that purpose. " +
+    "Do not repeat or re-describe the candidate(s) above. If, after searching, you genuinely find no other plausible product, return none rather than padding the list. " +
+    "Return each additional product in registration_candidates[] with its registration number and its exact registered name.";
+}
+
 export function buildResearchPrompt(
   query: string,
   countryCode: string,
   countryLabel: string,
   mode: ResearchMode,
   escalationReasons: EscalationReason[] = [],
+  knownCandidates: KnownCandidate[] = [],
 ): { instructions: string; input: string } {
   const instructions = `${BASE_INSTRUCTIONS}\n\n${sourcePolicyFor(countryCode)}`;
 
@@ -147,9 +192,34 @@ export function buildResearchPrompt(
     : "";
 
   const input =
-    `Research this vineyard input: "${query}"\n\n${scopeLine}\n\n${modeLine}\n\nThe search text may contain a typo or be only part of the product name. If so, identify the real product and return its full canonical name in product.canonical_name, keeping the operator's original text verbatim in product.searched_name.${escalationLine}`;
+    `Research this vineyard input: "${query}"\n\n${scopeLine}\n\n${modeLine}\n\nThe search text may contain a typo or be only part of the product name. If so, identify the real product and return its full canonical name in product.canonical_name, keeping the operator's original text verbatim in product.searched_name.${escalationLine}${
+      buildRecallLine(knownCandidates)
+    }`;
 
   return { instructions, input };
+}
+
+/** The products a completed pass established, for the recall prompt. */
+function knownCandidatesFrom(
+  research: ChemicalResearchResult | null,
+): KnownCandidate[] {
+  if (!research) return [];
+  const out: KnownCandidate[] = [];
+  const seen = new Set<string>();
+  const push = (name: string | null, number: string | null) => {
+    const trimmed = (name ?? "").trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ name: trimmed, number: (number ?? "").trim() || null });
+  };
+  for (const c of research.registration_candidates) {
+    push(c.registered_product_name, c.number);
+  }
+  // The canonical product need not appear in the candidate list at all.
+  push(research.product.canonical_name, null);
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +230,9 @@ export interface ResearchAttemptTelemetry {
   model: string;
   role: "primary" | "fallback";
   ok: boolean;
+  /** Distinct registration candidates THIS attempt produced -- the number the
+   *  candidate-discovery escalation rule is decided on. */
+  candidate_count: number;
   error_category: string | null;
   retried: boolean;
   web_search_calls: number;
@@ -179,6 +252,11 @@ export interface ResearchTelemetry {
   attempts: ResearchAttemptTelemetry[];
   escalated: boolean;
   escalation_reasons: EscalationReason[];
+  /** Registration numbers in the MERGED candidate set, in served order. The
+   *  one field that proves whether recall actually improved. */
+  merged_candidate_numbers: string[];
+  /** Candidates the fallback contributed that the primary had not found. */
+  candidates_added_by_fallback: number;
   total_duration_ms: number;
 }
 
@@ -206,9 +284,13 @@ export function researchLog(t: ResearchTelemetry): string {
     `primary=${primary?.model ?? "none"}`,
     `primary_ok=${primary?.ok ?? false}`,
     `retried=${primary?.retried ?? false}`,
+    `primary_candidates=${primary?.candidate_count ?? 0}`,
     `sol=${fallback ? fallback.model : "no"}`,
+    `sol_candidates=${fallback?.candidate_count ?? 0}`,
     `escalated=${t.escalated}`,
     `reasons=${t.escalation_reasons.join("|") || "none"}`,
+    `merged_candidates=[${t.merged_candidate_numbers.join(",")}]`,
+    `added_by_sol=${t.candidates_added_by_fallback}`,
     `websearch_calls=${t.attempts.reduce((n, a) => n + a.web_search_calls, 0)}`,
     `sources=${t.attempts.reduce((n, a) => n + a.sources_consulted, 0)}`,
     `in_tok=${t.attempts.reduce((n, a) => n + (a.input_tokens ?? 0), 0)}`,
@@ -292,6 +374,7 @@ async function runAttempt(
   role: "primary" | "fallback",
   effort: ReasoningEffort,
   escalationReasons: EscalationReason[],
+  knownCandidates: KnownCandidate[] = [],
 ): Promise<AttemptResult> {
   const { instructions, input } = buildResearchPrompt(
     opts.query,
@@ -299,6 +382,7 @@ async function runAttempt(
     opts.countryLabel,
     opts.mode,
     escalationReasons,
+    knownCandidates,
   );
 
   const timeoutMs = opts.mode === "candidate_discovery"
@@ -325,6 +409,7 @@ async function runAttempt(
     model,
     role,
     ok: false,
+    candidate_count: 0,
     error_category: null,
     retried: false,
     web_search_calls: 0,
@@ -409,12 +494,18 @@ async function runAttempt(
   for (const d of research.documents.product_page_candidates) urls.add(d.url);
   const classified = [...urls].map((u) => classifyUrl(u, opts.countryCode));
 
+  const distinctCandidates = new Set(
+    research.registration_candidates
+      .map((c) => (c.number ?? "").trim().toUpperCase())
+      .filter((n) => n.length > 0),
+  ).size;
+
   return {
     research,
     classified,
     raw,
     error: null,
-    telemetry: { ...telemetry, ok: true },
+    telemetry: { ...telemetry, ok: true, candidate_count: distinctCandidates },
   };
 }
 
@@ -452,6 +543,8 @@ export async function runChemicalResearch(
     attempts: [],
     escalated: false,
     escalation_reasons: [],
+    merged_candidate_numbers: [],
+    candidates_added_by_fallback: 0,
     total_duration_ms: 0,
   };
 
@@ -462,35 +555,84 @@ export async function runChemicalResearch(
   const primary = await runAttempt(opts, opts.config.model, "primary", primaryEffort, []);
   telemetry.attempts.push(primary.telemetry);
 
-  const escalation = decideEscalation({
-    research: primary.research,
-    registerResolved: opts.registerResolved,
-    labelMissingForResolvedRegistration: opts.labelMissingForResolvedRegistration === true,
-    classified: primary.classified,
-  });
+  // Two modes ask two different questions, so they get two different rules:
+  //
+  //   enrichment  "is this product's record complete?"   -> decideEscalation
+  //   discovery   "has the operator got a CHOICE yet?"   -> the recall rule
+  //
+  // Discovery used to be barred from escalating outright. That protected
+  // latency and destroyed recall: one Terra candidate ended discovery, and no
+  // amount of downstream ranking can order an alternative it was never given.
+  const isDiscovery = opts.mode === "candidate_discovery";
+  const escalation = isDiscovery
+    ? decideCandidateDiscoveryEscalation({
+      research: primary.research,
+      registerResolved: opts.registerResolved,
+      isProductCodeQuery: looksLikeProductCode(opts.query),
+    })
+    : decideEscalation({
+      research: primary.research,
+      registerResolved: opts.registerResolved,
+      labelMissingForResolvedRegistration: opts.labelMissingForResolvedRegistration === true,
+      classified: primary.classified,
+    });
 
   let winner = primary;
   let finalEscalation: EscalationDecision = escalation;
 
-  // Candidate discovery never escalates: the operator is mid-search and a
-  // second frontier-model call is the wrong trade at that moment.
-  const mayEscalate = escalation.escalate && opts.mode === "product_enrichment";
-
-  if (mayEscalate) {
+  if (escalation.escalate) {
     telemetry.escalated = true;
     telemetry.escalation_reasons = escalation.reasons;
+
+    // Discovery tells the fallback what is already known and asks it to WIDEN.
+    // Enrichment asks the same open question of a stronger model.
+    const known = isDiscovery ? knownCandidatesFrom(primary.research) : [];
+
     const fallback = await runAttempt(
       opts,
       opts.config.fallbackModel,
       "fallback",
       "high",
       escalation.reasons,
+      known,
     );
     telemetry.attempts.push(fallback.telemetry);
-    // Sol is terminal. Its result is evaluated for nothing except whether it
-    // is better than Terra's — there is no second escalation from here.
-    if (fallback.research) winner = fallback;
+
+    if (isDiscovery && primary.research) {
+      // MERGE, never replace. Terra's candidate is a real candidate, and Sol
+      // was asked what ELSE exists -- so discarding Terra's answer could make
+      // recall worse than before escalation existed, which would be a strange
+      // result for a change whose whole purpose is recall.
+      const mergedResult = mergeCandidateResearch(
+        primary.research,
+        fallback.research,
+        opts.countryCode,
+      );
+      telemetry.merged_candidate_numbers = mergedResult.mergedNumbers;
+      telemetry.candidates_added_by_fallback = mergedResult.addedCount;
+      winner = {
+        ...primary,
+        research: mergedResult.research,
+        // Both passes' evidence trails survive the merge.
+        classified: [...primary.classified, ...fallback.classified],
+        raw: fallback.raw ?? primary.raw,
+      };
+    } else if (fallback.research) {
+      // Sol is terminal. Its result is evaluated for nothing except whether it
+      // is better than Terra's — there is no second escalation from here.
+      winner = fallback;
+    }
+
     finalEscalation = solTerminalDecision(escalation.reasons);
+  }
+
+  // Recorded on EVERY discovery pass, escalated or not, so the diagnostics
+  // line answers "what did the operator actually get?" without the reader
+  // having to know whether escalation happened.
+  if (isDiscovery && !telemetry.merged_candidate_numbers.length && winner.research) {
+    telemetry.merged_candidate_numbers = winner.research.registration_candidates
+      .map((c) => (c.number ?? "").trim())
+      .filter((n) => n.length > 0);
   }
 
   telemetry.total_duration_ms = now() - startedAt;

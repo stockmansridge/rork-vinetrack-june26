@@ -42,6 +42,35 @@ import { normaliseProductNameLoose } from "./ingestion/matching.ts";
  */
 export const MAX_RESEARCH_SUGGESTIONS = 5;
 
+/**
+ * The candidate-discovery algorithm generation.
+ *
+ * # Why the cache key carries a version
+ *
+ * This cache stores the OUTPUT of a discovery algorithm, keyed only by what
+ * was asked (country + normalised query). That silently assumes the algorithm
+ * never changes -- and when it does, every stored row becomes a fossil of the
+ * previous implementation that the new one is forced to serve.
+ *
+ * Production showed exactly that. `AU::hortitrol winter oil` held a single
+ * Terra-only candidate (APVMA 50067) written by the pre-escalation algorithm.
+ * A deploy that fixed discovery would have been masked for the full hour of
+ * the TTL: the improved code would run, find more candidates, and then be
+ * skipped in favour of the cached answer that demonstrated the bug. The fix
+ * would have looked like it had failed.
+ *
+ * Bumping this constant retires every previous entry at once, with no
+ * migration and no manual DELETE against production -- old rows simply stop
+ * being addressable and expire on their own TTL.
+ *
+ * BUMP THIS whenever candidate discovery's behaviour changes: the escalation
+ * rule, the merge policy, the recall prompt, or the shortlist cap.
+ *
+ *   v1  Terra-only discovery (no escalation from candidate_discovery).
+ *   v2  Bounded Terra -> Sol recall escalation, merged candidate sets.
+ */
+export const CANDIDATE_DISCOVERY_CACHE_VERSION = "candidate-discovery-v2";
+
 /** Wire `source` value for a suggestion the register confirmed. */
 export const VALIDATED_SUGGESTION_SOURCE = "research_validated";
 
@@ -208,11 +237,14 @@ export async function validateResearchSuggestions(
  *
  * The country is part of the key, never merged away: AU and NZ registers are
  * different law, and a shared entry across them would be a jurisdiction leak.
+ *
+ * The VERSION segment is what stops a previous algorithm's answer outliving
+ * it. See `CANDIDATE_DISCOVERY_CACHE_VERSION`.
  */
 export function suggestionCacheKey(countryCode: string, query: string): string {
   const code = text(countryCode).toUpperCase();
   const normalised = normaliseProductNameLoose(text(query));
-  return `${code}::${normalised}`;
+  return `${code}::${CANDIDATE_DISCOVERY_CACHE_VERSION}::${normalised}`;
 }
 
 /**

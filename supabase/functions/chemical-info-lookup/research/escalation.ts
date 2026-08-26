@@ -20,7 +20,11 @@ export type EscalationReason =
   | "registered_name_ambiguous"
   | "concentration_conflict"
   | "label_missing_for_known_registration"
-  | "research_returned_nothing";
+  | "research_returned_nothing"
+  /** Candidate discovery found at most ONE product for an approximate name.
+   *  Not a claim that the one found is wrong — a claim that one is too few
+   *  to present as a choice. */
+  | "insufficient_candidate_recall";
 
 export interface EscalationInput {
   /** Terra's parsed research, or null when Terra produced nothing usable. */
@@ -153,6 +157,93 @@ export function decideEscalation(input: EscalationInput): EscalationDecision {
     reasons: deduped,
     terminal: false,
     summary: `Terra unresolved: ${deduped.join(", ")}`,
+  };
+}
+
+/**
+ * How many distinct registered products candidate discovery must surface
+ * before the operator has a genuine choice rather than a fait accompli.
+ *
+ * Two. Not because two is a magic number, but because ONE is definitionally
+ * not a choice, and a search whose whole purpose is "which of these did you
+ * mean?" cannot answer with a single row it found first.
+ */
+export const MIN_DISCOVERY_CANDIDATES = 2;
+
+export interface CandidateDiscoveryEscalationInput {
+  /** Terra's parsed research, or null when Terra produced nothing usable. */
+  research: ChemicalResearchResult | null;
+  /** True once the official register CONFIRMED an identity for this lookup. */
+  registerResolved: boolean;
+  /** True when the query is a bare registration number. */
+  isProductCodeQuery: boolean;
+}
+
+/**
+ * Decide whether CANDIDATE DISCOVERY justifies one Sol attempt (Stage A §1).
+ *
+ * # The defect this exists to fix
+ *
+ * Discovery was categorically barred from escalating — "the operator is
+ * mid-search and a second frontier-model call is the wrong trade at that
+ * moment". That reasoning is sound about LATENCY and wrong about RECALL, and
+ * it silently made discovery Terra-only forever.
+ *
+ * Production proved the cost. For "Hortitrol Winter Oil" Terra returned one
+ * plausible product (APVMA 50067), the APVMA adapter confirmed that
+ * registration genuinely exists, and discovery stopped there. But:
+ *
+ *   "50067 is a real registered product"     <- what validation proved
+ *   "50067 is the only product they meant"   <- what the system concluded
+ *
+ * Those are different claims. The server's ranking is perfectly capable of
+ * presenting a choice between several products — it simply never received a
+ * second candidate to rank, because discovery had already stopped. No amount
+ * of downstream ranking can recover a candidate that was never discovered.
+ *
+ * # The rule
+ *
+ * Escalate when discovery has fewer than two distinct registered candidates
+ * for an approximate name. Deliberately narrow:
+ *
+ *   * a bare registration NUMBER never escalates — the register either holds
+ *     it or it does not, and a second model pass cannot improve on that;
+ *   * a register-RESOLVED lookup never escalates — the authoritative source
+ *     already answered, so more AI is pure cost;
+ *   * two or more candidates never escalate — the operator already has a
+ *     choice, which is the entire objective.
+ *
+ * So Sol is bought for exactly one situation: the approximate-name search
+ * that came back with too little to choose from.
+ */
+export function decideCandidateDiscoveryEscalation(
+  input: CandidateDiscoveryEscalationInput,
+): EscalationDecision {
+  // A bare number is an exact identity assertion, not an approximate name.
+  if (input.isProductCodeQuery) return NO_ESCALATION;
+
+  // The register already answered. Nothing a model finds can outrank it.
+  if (input.registerResolved) return NO_ESCALATION;
+
+  if (!input.research) {
+    return {
+      escalate: true,
+      reasons: ["research_returned_nothing"],
+      terminal: false,
+      summary: "Terra returned no usable candidate research",
+    };
+  }
+
+  const distinct = distinctRegistrationNumbers(input.research).length;
+  if (distinct >= MIN_DISCOVERY_CANDIDATES) return NO_ESCALATION;
+
+  return {
+    escalate: true,
+    reasons: ["insufficient_candidate_recall"],
+    terminal: false,
+    summary:
+      `Candidate discovery found ${distinct} distinct registration(s); ` +
+      `${MIN_DISCOVERY_CANDIDATES} needed before an operator has a choice`,
   };
 }
 

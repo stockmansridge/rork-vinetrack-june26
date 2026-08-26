@@ -89,7 +89,20 @@ Deno.test("§39.3 Sol cannot escalate again — the second attempt is terminal",
   assertEquals(solTerminalDecision(["registration_unresolved"]).escalate, false);
 });
 
-Deno.test("§24 candidate discovery never escalates to Sol", async () => {
+// REPLACES "§24 candidate discovery never escalates to Sol".
+//
+// That rule protected latency mid-search, and it did — while silently capping
+// RECALL at whatever the fast model happened to find first. Production showed
+// the cost: for "Hortitrol winter oil" Terra returned one candidate, the
+// register confirmed that registration genuinely exists, and discovery
+// stopped there. "This registration is real" was treated as "this is the
+// product they meant", and no alternative could ever be offered because none
+// was ever discovered.
+//
+// Discovery may now escalate, but only into that specific hole. These two
+// tests pin BOTH halves of the trade: it buys Sol when there is nothing to
+// choose from, and it stays cheap in every other case.
+Deno.test("Stage A: discovery escalates when Terra found nothing to choose from", async () => {
   const thin = cloneResearch();
   thin.registration_candidates = [];
 
@@ -105,7 +118,24 @@ Deno.test("§24 candidate discovery never escalates to Sol", async () => {
     registerResolved: false,
   });
 
-  assertEquals(calls.length, 1, "mid-search is the wrong moment to buy the frontier model");
+  assertEquals(calls.length, 2, "zero candidates is not a search result");
+  assertEquals(outcome.telemetry.escalated, true);
+});
+
+Deno.test("Stage A: discovery does NOT escalate once the register has answered", async () => {
+  const thin = cloneResearch();
+  thin.registration_candidates = [];
+
+  const { fn, calls } = fakeFetch([jsonResponse(responsesEnvelope(thin))]);
+
+  const outcome = await runChemicalResearch({
+    ...enrichment,
+    mode: "candidate_discovery",
+    fetchFn: fn,
+    registerResolved: true,
+  });
+
+  assertEquals(calls.length, 1, "the authoritative source already answered");
   assertEquals(outcome.telemetry.escalated, false);
 });
 

@@ -112,37 +112,55 @@ Deno.test("§3 reasoning effort is explicit and modest by default", () => {
 });
 
 Deno.test("§24 candidate discovery runs at low effort, enrichment at medium", async () => {
-  const { fn, calls } = fakeFetch([
+  // ONE STUB PER RUN, deliberately.
+  //
+  // These two runs used to share a stub and assert on calls[0] and calls[1],
+  // which silently assumed each run makes exactly one call. Candidate
+  // discovery can now make two (Stage A recall escalation), so the shared
+  // array shifted and this test began reading the discovery FALLBACK's effort
+  // where it meant to read enrichment's. The assertion was right; the indexing
+  // was fragile. Each run now gets its own stub, so calls[0] means "the first
+  // call THIS run made" no matter how many either run makes.
+  const config = readResearchConfig(() => undefined);
+
+  const discovery = fakeFetch([
     jsonResponse(responsesEnvelope(DITHANE_RESEARCH_PAYLOAD)),
     jsonResponse(responsesEnvelope(DITHANE_RESEARCH_PAYLOAD)),
   ]);
-  const config = readResearchConfig(() => undefined);
-
   await runChemicalResearch({
     query: "dithane rainshield",
     countryCode: "AU",
     countryLabel: "Australia",
     mode: "candidate_discovery",
     apiKey: "sk-test",
-    fetchFn: fn,
+    fetchFn: discovery.fn,
     config,
     registerResolved: false,
     useCache: false,
   });
-  assertEquals((calls[0].body.reasoning as { effort: string }).effort, "low");
+  assertEquals(
+    (discovery.calls[0].body.reasoning as { effort: string }).effort,
+    "low",
+  );
 
+  const enrichment = fakeFetch([
+    jsonResponse(responsesEnvelope(DITHANE_RESEARCH_PAYLOAD)),
+  ]);
   await runChemicalResearch({
     query: "dithane rainshield",
     countryCode: "AU",
     countryLabel: "Australia",
     mode: "product_enrichment",
     apiKey: "sk-test",
-    fetchFn: fn,
+    fetchFn: enrichment.fn,
     config,
     registerResolved: true,
     useCache: false,
   });
-  assertEquals((calls[1].body.reasoning as { effort: string }).effort, "medium");
+  assertEquals(
+    (enrichment.calls[0].body.reasoning as { effort: string }).effort,
+    "medium",
+  );
 });
 
 Deno.test("§38.7 a legacy OPENAI_MODEL=gpt-4o cannot route research to gpt-4o", () => {
@@ -295,37 +313,43 @@ Deno.test("a 401 is permanent and a 503 is transient", async () => {
 });
 
 Deno.test("§11/§12 the prompt states the country's source priority", async () => {
-  const { fn, calls } = fakeFetch([
+  // One stub per country, for the same reason as the effort test above: a
+  // shared array cannot be indexed positionally once a run may make two calls.
+  const config = readResearchConfig(() => undefined);
+
+  const au = fakeFetch([
     jsonResponse(responsesEnvelope(cloneResearch())),
     jsonResponse(responsesEnvelope(cloneResearch())),
   ]);
-  const config = readResearchConfig(() => undefined);
-
   await runChemicalResearch({
     query: "dithane",
     countryCode: "AU",
     countryLabel: "Australia",
     mode: "candidate_discovery",
     apiKey: "sk-test",
-    fetchFn: fn,
+    fetchFn: au.fn,
     config,
     registerResolved: false,
     useCache: false,
   });
-  assertStringIncludes(String(calls[0].body.instructions), "apvma.gov.au");
+  assertStringIncludes(String(au.calls[0].body.instructions), "apvma.gov.au");
 
+  const nz = fakeFetch([
+    jsonResponse(responsesEnvelope(cloneResearch())),
+    jsonResponse(responsesEnvelope(cloneResearch())),
+  ]);
   await runChemicalResearch({
     query: "captan",
     countryCode: "NZ",
     countryLabel: "New Zealand",
     mode: "candidate_discovery",
     apiKey: "sk-test",
-    fetchFn: fn,
+    fetchFn: nz.fn,
     config,
     registerResolved: false,
     useCache: false,
   });
-  const nzInstructions = String(calls[1].body.instructions);
+  const nzInstructions = String(nz.calls[0].body.instructions);
   assertStringIncludes(nzInstructions, "mpi.govt.nz");
   assertStringIncludes(nzInstructions, "NEVER evidence for New Zealand");
 });
