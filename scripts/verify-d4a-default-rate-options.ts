@@ -616,8 +616,8 @@ async function main(): Promise<void> {
   eq(
     "unresolved_fields contains no rates:GRAPEVINE marker (bare or qualified)",
     unresolvedFields.filter((f) => {
-      const norm = f.trim().toLowerCase();
-      return norm === "rates:grapevine" || norm.startsWith("rates:grapevine:");
+      const norm2 = f.trim().toLowerCase();
+      return norm2 === "rates:grapevine" || norm2.startsWith("rates:grapevine:");
     }),
     [],
   );

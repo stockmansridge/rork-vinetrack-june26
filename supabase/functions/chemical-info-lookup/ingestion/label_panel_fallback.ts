@@ -159,7 +159,7 @@ export function carryForwardStatedPeriods(
 }
 
 /** Does this rate state something an operator could actually spray by? */
-function rateIsCalculable(rate: unknown): boolean {
+export function rateIsCalculable(rate: unknown): boolean {
   const r = rate as Partial<WireLabelRate> | null;
   if (!r || typeof r !== "object") return false;
   if (!r.basis || r.basis === "other") return false;

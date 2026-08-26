@@ -32,9 +32,14 @@ import type {
   WireDataSource,
 } from "./contract.ts";
 import { identityKey } from "./contract.ts";
-import { mergeLabelEvidenceIntoUses } from "./label.ts";
+import {
+  cropsCorrespond,
+  mergeLabelEvidenceIntoUses,
+  targetsCorrespond,
+} from "./label.ts";
 import {
   carryForwardStatedPeriods,
+  rateIsCalculable,
   statesCalculableGrapevineRate,
 } from "./label_panel_fallback.ts";
 import { adapterFor } from "./registry.ts";
@@ -295,8 +300,15 @@ export function mergeDiscoveryIntoStructured(
   // and re-entry periods are carried across so a rate repair can never cost
   // the operator a period the lookup already had.
   const panelUses = Array.isArray(reg.label_panel_uses) ? reg.label_panel_uses : null;
+  // Internal only (Gate D4A.3.1). Records that the FINAL served rate rows came
+  // from the state-aware re-read of the authoritative label document, which is
+  // what makes their provenance manufacturer_label rather than the AI's. No
+  // new response field: the merge already knows, and the wire already carries
+  // enough evidence.
+  let panelFallbackApplied = false;
   if (panelUses?.length && !statesCalculableGrapevineRate(uses)) {
     uses = carryForwardStatedPeriods(panelUses, uses) as any[];
+    panelFallbackApplied = true;
   }
   merged.registered_uses = uses;
   merged.label_rate_bases = Array.from(
@@ -358,6 +370,18 @@ export function mergeDiscoveryIntoStructured(
     }
   }
 
+  // Gate D4A.3.1 — per-crop rate gaps are reconciled against the FINAL rows.
+  //
+  // Every entry above was computed at an EARLIER stage than the rows now being
+  // served. `rates:<crop>` is added by the label-evidence pass because the
+  // register publishes no machine-readable rate table; if a later stage (the
+  // document parse, or the state-aware re-read) then read that crop's rates
+  // from the approved label, the gap describes a state that no longer exists.
+  // Verification must describe the evidence actually served.
+  for (const entry of Array.from(unresolved)) {
+    if (!reconcileFinalRateGaps([entry], uses).length) unresolved.delete(entry);
+  }
+
   // §9 — final unresolved_fields carries machine-stable field/context gaps.
   //
   // Research narrative arrives as prose ("A current regulator-hosted PubCRIS
@@ -396,6 +420,7 @@ export function mergeDiscoveryIntoStructured(
     merged,
     reg,
     Boolean(evidence && evidence.claims.length),
+    panelFallbackApplied,
   );
   // Contract invariant: entries the register/label just resolved must not
   // survive from the AI extraction's unresolved list (see prune JSDoc).
@@ -608,6 +633,18 @@ export function buildFieldProvenance(
   structured: any,
   reg: ResolvedRegistration | null,
   labelUsesResolved: boolean,
+  /**
+   * The FINAL served rate rows came from a deterministic re-read of the
+   * authoritative label document (Gate D4A.3.1's state-aware panel fallback).
+   *
+   * Those rows are produced by the extractor rather than the claim merge, so
+   * they carry no per-use `provenance` key for the arbiter below to read — and
+   * without this they were reported as `ai_interpretation`, which is simply
+   * untrue: no model was involved in reading them. Defaults false, so every
+   * other serving path is byte-identical and an AI rate can never be promoted
+   * by this flag.
+   */
+  authoritativeLabelRates = false,
 ): Record<string, FieldProvenance> {
   const regBlock = structured?.registration ?? null;
   const actives: any[] = Array.isArray(structured?.active_ingredients)
@@ -665,8 +702,11 @@ export function buildFieldProvenance(
     label_rates: uses.some((u) => Array.isArray(u?.rates) && u.rates.length)
       // Stage LD-2: document-bound rates read manufacturer_label — the
       // per-use provenance recorded by the merge is the arbiter, so AI rates
-      // riding on other claims never inflate the field-level tier.
-      ? (uses.some((u) => u?.provenance?.rates === "manufacturer_label")
+      // riding on other claims never inflate the field-level tier. Gate
+      // D4A.3.1 adds the one path that has no per-use provenance to read:
+      // rows re-extracted from the approved document itself.
+      ? (authoritativeLabelRates ||
+          uses.some((u) => u?.provenance?.rates === "manufacturer_label")
         ? "manufacturer_label"
         : "ai_interpretation")
       : "unresolved",
@@ -722,6 +762,90 @@ const UNRESOLVED_ENTRY_PROVENANCE_KEY: Record<string, string> = {
   label_rates: "label_rates",
   restrictions: "restrictions",
 };
+
+/**
+ * One per-context rate gap: `rates:<crop>`, or `rates:<crop>:<target>`.
+ *
+ * Returns null for anything that is not a rate gap (including a malformed one
+ * with an empty crop or an empty qualifier) so an unrecognised entry is left
+ * exactly as it was found.
+ */
+function parseRateGap(entry: string): { crop: string; target: string | null } | null {
+  const match = /^rates:(.+)$/i.exec(String(entry).trim());
+  if (!match) return null;
+  const rest = match[1];
+  const split = rest.indexOf(":");
+  if (split < 0) {
+    const crop = rest.trim();
+    return crop ? { crop, target: null } : null;
+  }
+  const crop = rest.slice(0, split).trim();
+  const target = rest.slice(split + 1).trim();
+  return crop && target ? { crop, target } : null;
+}
+
+/** Does this served row state a rate an operator could actually spray by? */
+function rowStatesCalculableRate(use: any): boolean {
+  const rates = Array.isArray(use?.rates) ? use.rates : [];
+  return rates.some(rateIsCalculable);
+}
+
+/**
+ * Drop per-crop rate gaps the FINAL served rows have provably resolved
+ * (Gate D4A.3.1).
+ *
+ * # Why this exists
+ *
+ * Every gap entry is computed at an earlier stage than the rows finally
+ * served. `rates:<crop>` is added by the label-evidence pass, correctly: the
+ * register publishes no machine-readable rate table. But a later stage may
+ * then read that crop's rates from the approved label document — and on APVMA
+ * 33182 the state-aware re-read does exactly that. The response then said
+ * grapevine rates were unresolved while serving four calculable grapevine
+ * rates in the same body.
+ *
+ * # The rule (general, and deliberately conservative)
+ *
+ * A gap is removed ONLY when the final evidence positively proves it is
+ * resolved. Not proven means kept — an over-eager erasure hides a real gap
+ * from the operator, which is far worse than a stale one showing.
+ *
+ *   * `rates:<crop>` needs matching final rows to EXIST, and EVERY matching
+ *     row must state at least one calculable rate. One rated row beside an
+ *     unrated one is not a resolved crop.
+ *   * `rates:<crop>:<target>` is judged only against rows matching that crop
+ *     AND that target, so clearing one target's gap never clears its
+ *     siblings'.
+ *   * `basis: "other"` (verbatim-only) does not count as calculable, and
+ *     neither does an empty `rates` array.
+ *   * No matching final row at all → nothing was proven → the gap stays.
+ *
+ * Crop and target correspondence reuse the existing label helpers, so
+ * "GRAPEVINE" ↔ "Grapes" reconciles for any crop by the same rule — there is
+ * no grapevine special case here.
+ *
+ * Pure: returns the entries to KEEP and mutates nothing.
+ */
+export function reconcileFinalRateGaps(
+  entries: readonly string[],
+  finalUses: readonly any[],
+): string[] {
+  const uses = Array.isArray(finalUses) ? finalUses : [];
+  return entries.filter((entry) => {
+    const gap = parseRateGap(entry);
+    if (!gap) return true;
+
+    const matching = uses.filter((use) => {
+      if (!cropsCorrespond(String(use?.crop ?? ""), gap.crop)) return false;
+      if (gap.target === null) return true;
+      const target = String(use?.target_raw ?? use?.target ?? "");
+      return targetsCorrespond(target, gap.target);
+    });
+
+    if (!matching.length) return true;
+    return !matching.every(rowStatesCalculableRate);
+  });
+}
 
 /**
  * Contract invariant (general, never product-specific):
