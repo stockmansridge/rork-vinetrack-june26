@@ -314,6 +314,36 @@ nonisolated enum ChemicalWithholdingDisplay {
     /// The exact label phrase that authorises the friendly wording.
     nonisolated static let notRequiredPhrase = "not required when used as directed"
 
+    /// Wording shown when the label's withholding period was never captured.
+    ///
+    /// # Why this is not blank, and never zero
+    ///
+    /// Three things were being drawn identically: a label stating "0 days", a
+    /// label VineTrack has not read yet, and a label that states a period
+    /// VineTrack failed to parse. The first is a fact an operator can act on.
+    /// The other two are the app's own ignorance -- and rendering ignorance as
+    /// a number is how an operator comes to believe a product with an
+    /// unresolved WHP can be sprayed the day before picking.
+    ///
+    /// Nil no longer hides the row. It shows this, so "we do not know" is
+    /// something the operator SEES and can go and check.
+    nonisolated static let notStated = "Not stated"
+
+    /// Human wording for a use's withholding period, including the explicit
+    /// "not stated" case. Never invents a number, and never lets a missing
+    /// value read as zero.
+    nonisolated static func display(
+        days: Int?,
+        restrictions: String?,
+        hasManufacturerLabelSource: Bool
+    ) -> String {
+        text(
+            days: days,
+            restrictions: restrictions,
+            hasManufacturerLabelSource: hasManufacturerLabelSource
+        ) ?? notStated
+    }
+
     /// Human wording for a use's withholding period, or `nil` when none is
     /// stated (an unresolved withholding period is never invented).
     nonisolated static func text(
@@ -368,28 +398,36 @@ struct ChemicalRegisteredUsesView: View {
                         Text("• \(use.targetRaw.isEmpty ? "Target not stated" : use.targetRaw)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        if let whp = ChemicalWithholdingDisplay.text(
+                        // WHP and re-entry are ALWAYS drawn, including when
+                        // the label said nothing. A hidden row reads as "no
+                        // restriction"; "Not stated" reads as "go and check",
+                        // which is the only honest instruction when VineTrack
+                        // has not established the period.
+                        let whp = ChemicalWithholdingDisplay.display(
                             days: use.withholdingPeriodDays,
                             restrictions: use.restrictions,
                             hasManufacturerLabelSource: hasManufacturerLabelSource
-                        ) {
-                            HStack(spacing: 6) {
-                                Text("Withholding period: \(whp)")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                                if let badge = plan.badge(for: .withholdingPeriod) {
-                                    ChemicalProvenanceTagView(badge: badge)
-                                }
+                        )
+                        let isWhpStated = use.withholdingPeriodDays != nil
+                        HStack(spacing: 6) {
+                            Text("Withholding period: \(whp)")
+                                .font(.caption2)
+                                .foregroundStyle(isWhpStated ? .tertiary : .secondary)
+                            if isWhpStated, let badge = plan.badge(for: .withholdingPeriod) {
+                                ChemicalProvenanceTagView(badge: badge)
                             }
                         }
-                        if let reEntry = use.reEntryPeriodHours {
-                            HStack(spacing: 6) {
-                                Text("Re-entry: \(reEntry) hours")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                                if let badge = plan.badge(for: .reEntry) {
-                                    ChemicalProvenanceTagView(badge: badge)
-                                }
+                        // Three genuinely different answers: a period, a
+                        // CONDITION stated verbatim ("until the spray has
+                        // dried" is a complete rule with no number in it), and
+                        // silence.
+                        let reEntry = use.reEntryDisplay
+                        HStack(spacing: 6) {
+                            Text("Re-entry: \(reEntry.summary)")
+                                .font(.caption2)
+                                .foregroundStyle(reEntry.isStated ? .tertiary : .secondary)
+                            if reEntry.isStated, let badge = plan.badge(for: .reEntry) {
+                                ChemicalProvenanceTagView(badge: badge)
                             }
                         }
                         if let restrictions = use.restrictions, !restrictions.isEmpty {

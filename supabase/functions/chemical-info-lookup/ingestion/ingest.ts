@@ -795,6 +795,35 @@ function aliasSet(...names: Array<string | null | undefined>): string[] {
 /**
  * Map a (possibly register-merged) structured result onto the sql/199
  * candidate columns. `review_status` is structurally pinned to "candidate".
+ *
+ * # `requestedName` is PROVENANCE, never an alias
+ *
+ * It used to join `common_names`, which made the alias list self-fulfilling:
+ * whatever an operator typed became a permanent search key for whichever
+ * product the lookup happened to land on. One operator typing
+ * "Hortitrol winter oil" and being served SYNERTROL HORTI (APVMA 50067) wrote
+ * that phrase into 50067's aliases, and from then on the exact-alias resolver
+ * matched it FIRST for every user in the country -- turning one uncertain
+ * lookup into a permanent, confident, wrong answer that also suppressed
+ * further discovery.
+ *
+ * An alias is a claim that two names denote the same registered product. Only
+ * an authoritative source can establish that. A search box records what
+ * somebody typed, which is a different fact entirely.
+ *
+ * The parameter is retained because the phrase IS worth keeping as search
+ * provenance -- it travels in the lookup diagnostics (`query`) and in the
+ * research envelope (`product.searched_name`), both of which are read-only
+ * records of what was asked. It is deliberately NOT written to
+ * `master_chemicals`: there is no column for it, and inventing one would
+ * re-create the same contamination one indirection further away.
+ *
+ * `establishedAliases` is the narrow, explicit door that remains open. A name
+ * an INDEPENDENT validated source attaches to this exact registration -- the
+ * AWRI spray guide entry that an administrator seeds against a register-
+ * confirmed number -- is a genuine alias claim, made by a source, about a
+ * known product. Callers must pass those deliberately; nothing reaches this
+ * list by default, and a search box has no way to put anything in it.
  */
 export function buildCandidatePayload(
   structured: any,
@@ -802,6 +831,7 @@ export function buildCandidatePayload(
   discovery: ResolvedRegistration | null,
   retrievedAtIso: string,
   tableVersion: number,
+  establishedAliases: string[] = [],
 ): CandidateRowPayload | null {
   const regBlock = structured?.registration ?? {};
   const country = String(regBlock?.country_code ?? "").trim().toUpperCase();
@@ -819,7 +849,11 @@ export function buildCandidatePayload(
     registration_number: number,
     registrant: regBlock?.registrant ?? null,
     registered_product_name: productName,
-    common_names: aliasSet(productName, requestedName, regBlock?.registered_product_name),
+    common_names: aliasSet(
+      productName,
+      regBlock?.registered_product_name,
+      ...establishedAliases,
+    ),
     product_category: structured?.product_category || null,
     form_type: structured?.form_type ?? null,
     active_ingredients: structured?.active_ingredients ?? [],

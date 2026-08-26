@@ -356,6 +356,108 @@ export function candidateClass(row: any, countryCode = ""): CandidateClass {
     : "unverified_suggestion";
 }
 
+/**
+ * Whether the operator typed a REGISTRATION NUMBER rather than a name.
+ *
+ * A bare registration number is an exact identity assertion: the register
+ * either holds it or it does not, and no amount of web research can make that
+ * answer better. It is the one query shape that may end at the deterministic
+ * tiers even when the ranking cannot license auto-selection — a number that
+ * returns nothing is a number that is not registered, not a hint to go
+ * searching for something else with a similar name.
+ *
+ * Deliberately narrow: 3-8 digits and nothing else. "33182" qualifies;
+ * "APVMA 33182" does not, because the words around a number are exactly where
+ * a product name hides.
+ */
+export function looksLikeProductCode(query: string): boolean {
+  return /^\d{3,8}$/.test((query ?? "").trim());
+}
+
+/** Why discovery did or did not continue. Diagnostics-grade English. */
+export type DiscoveryReason =
+  /** The client explicitly asked for a broader search. */
+  | "client_requested_broaden"
+  /** Web research is switched off for this deployment. */
+  | "research_disabled"
+  /** Too short to research usefully. */
+  | "query_too_short"
+  /** A bare registration number: the register is the whole answer. */
+  | "registration_number_query"
+  /** One proven exact identity, no rival. The only clean stop. */
+  | "exact_identity_resolved"
+  /** The candidate set is not safe to auto-select. Keep looking. */
+  | "identity_not_settled";
+
+export interface DiscoveryDecision {
+  /** Whether fallback/broader candidate discovery must run. */
+  research: boolean;
+  reason: DiscoveryReason;
+  /** The ranking verdict the decision was taken on. */
+  summary: RankingSummary;
+}
+
+/**
+ * Decide whether search must keep LOOKING (task Phase 2).
+ *
+ * # The question this replaces
+ *
+ * The gate used to ask "did the deterministic tiers return any row at all?".
+ * That treats the EXISTENCE of a candidate as certainty about which product
+ * the operator meant, and those are different questions. One contaminated
+ * alias produced exactly one master row for "Hortitrol winter oil" -- a
+ * product whose registered name shares no word with the query -- and the row
+ * count reported the search as answered. Discovery stopped, and the only
+ * product the operator could be shown was the wrong one.
+ *
+ * The question asked now is: is this candidate set SAFE TO AUTO-SELECT? Only
+ * `search_state: "exact"` says yes, and by construction only a register- or
+ * catalogue-backed row can produce it. Everything weaker keeps discovering,
+ * because a human is going to have to choose and deserves the real field to
+ * choose from.
+ *
+ * Two deliberate exits remain:
+ *
+ *   * `broaden` -- the client asked, so the answer is always yes;
+ *   * a bare registration NUMBER -- an exact identity assertion the register
+ *     either holds or does not. Research cannot improve on that answer, and a
+ *     number that returns nothing means "not registered", not "go and find
+ *     something with a similar name".
+ *
+ * Ranked over the DETERMINISTIC rows only. Handing research rows to this
+ * would let a model suggestion talk the server out of looking for a better
+ * one.
+ */
+export function discoveryDecision(input: {
+  authoritative: any[];
+  query: string;
+  countryCode: string;
+  broaden: boolean;
+  researchEnabled: boolean;
+  minQueryLength?: number;
+}): DiscoveryDecision {
+  const query = (input.query ?? "").trim();
+  const summary = rankCandidates(input.authoritative ?? [], query, input.countryCode)
+    .summary;
+
+  if (!input.researchEnabled) {
+    return { research: false, reason: "research_disabled", summary };
+  }
+  if (input.broaden) {
+    return { research: true, reason: "client_requested_broaden", summary };
+  }
+  if (query.length < (input.minQueryLength ?? 3)) {
+    return { research: false, reason: "query_too_short", summary };
+  }
+  if (looksLikeProductCode(query)) {
+    return { research: false, reason: "registration_number_query", summary };
+  }
+  if (summary.auto_select_allowed) {
+    return { research: false, reason: "exact_identity_resolved", summary };
+  }
+  return { research: true, reason: "identity_not_settled", summary };
+}
+
 export interface RankedRow {
   /** Position in the list the upstream tiers produced, before ranking.
    *  Kept for debugging: it is the only way to see that ranking CHANGED

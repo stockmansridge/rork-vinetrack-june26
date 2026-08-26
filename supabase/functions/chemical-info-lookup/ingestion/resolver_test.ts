@@ -691,14 +691,31 @@ Deno.test("R10: Sprayseal regression — 'Spray Seal' for an AU vineyard serves 
   assertEquals(merged.field_provenance.registered_uses, "manufacturer_label");
   assert(merged.verification.unresolved_fields.includes("rates:GRAPEVINE"));
 
-  // The catalogue candidate this enqueues is register-provenance, candidate-only,
-  // with the requested spelling captured as a search alias.
+  // The catalogue candidate this enqueues is register-provenance and
+  // candidate-only. The requested SPELLING is deliberately NOT an alias.
+  //
+  // This assertion was inverted on purpose. 'Spray Seal' is a harmless typo
+  // for SPRAYSEAL, so writing it to common_names looked free -- but the rule
+  // cannot be 'write the phrase when it resembles the product', because
+  // nothing at this point knows whether it does. The same line wrote
+  // 'hortitrol winter oil' onto APVMA 50067, whose registered name shares not
+  // one word with it, and made that the permanent first answer for every
+  // operator in the country. Typography variants are handled where they
+  // belong: masterNameVariants matches 'Spray Seal' to SPRAYSEAL at QUERY
+  // time, deterministically, without writing anything down.
   const payload = buildCandidatePayload(merged, "Spray Seal", reg, "2026-08-20T00:00:00Z", 1);
   assert(payload);
   assertEquals(payload.review_status, "candidate");
   assertEquals(payload.source_kind, "official_register");
   assertEquals(payload.registration_number, "80160");
-  assert(payload.common_names.includes("spray seal"));
+  assert(
+    !payload.common_names.includes("spray seal"),
+    "a typed search phrase must never become a product alias",
+  );
+  assert(
+    payload.common_names.includes(payload.registered_product_name.toLowerCase()),
+    "the REGISTERED name is still an alias, because the register said it",
+  );
 });
 
 // ===========================================================================

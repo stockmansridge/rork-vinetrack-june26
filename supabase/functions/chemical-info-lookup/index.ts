@@ -148,6 +148,7 @@ import {
 import {
   buildMasterStructuredResponse,
   fetchApprovedMaster,
+  masterHasCompleteVineyardData,
   searchMaster,
 } from "./ingestion/master_lookup.ts";
 import {
@@ -173,7 +174,12 @@ import {
   runChemicalResearch,
   type ResearchOutcome,
 } from "./research/research.ts";
-import { rankCandidates } from "./ranking.ts";
+import { discoveryDecision, rankCandidates } from "./ranking.ts";
+import {
+  readSelectedRegistration,
+  registrationViolation,
+  unresolvedForSelection,
+} from "./identity_lock.ts";
 import {
   projectGrapevineUses,
   selectLabelReferences,
@@ -669,6 +675,19 @@ function buildStructuredResponse(
     form_type: parseString(parsed?.form_type),
     product_url: productUrl,
     registration,
+    // The label URLs a client can OPEN, grouped (task Phase 12).
+    //
+    // The registration block keeps its own fields for the clients already
+    // decoding them. This is the form the Review Chemical screen reads, so a
+    // screen asking for "the official label" does not have to know the
+    // history of three column names to find one. The REGULATOR document is
+    // authoritative and leads; nothing here is ever synthesised from a
+    // registration number pattern.
+    label_urls: {
+      regulator_label_url: labelRefs.regulator_label_url,
+      manufacturer_label_url: labelRefs.manufacturer_label_url,
+      product_url: labelRefs.manufacturer_product_url ?? productUrl,
+    },
     active_ingredients: actives,
     // Bare codes for the queryable column: ["3", "11"] — never ["3 + 11"].
     activity_groups: Array.from(
@@ -1256,13 +1275,30 @@ Deno.serve(async (req: Request) => {
             query,
             { fetchFn: fetch, now: () => new Date() },
           );
-          const masterNames = new Set(
-            masterHits.map((m: any) => String(m.name).toLowerCase()),
+          // # Dedupe by IDENTITY, never by fuzzy name
+          //
+          // The old filter dropped a register row whose NAME matched a master
+          // row's name. Two different registrations can share one verbatim
+          // registered name -- pack sizes, re-registrations, two companies
+          // holding similar names -- so a name collision silently deleted a
+          // DIFFERENT registered product from the operator's choices, and the
+          // one it kept was whichever the catalogue happened to hold.
+          //
+          // Country + scheme + number is the only thing that means "the same
+          // registered product". Rows with no identity on either side are
+          // kept: an un-deduplicated duplicate is a cosmetic flaw, a
+          // suppressed registration is a wrong answer.
+          const identityOf = (row: any): string | null => {
+            const country = String(row?.registration_country ?? "").trim().toUpperCase();
+            const scheme = String(row?.registration_scheme ?? "").trim().toLowerCase();
+            const number = String(row?.registration_number ?? "").trim().toUpperCase();
+            return country && scheme && number ? `${country}:${scheme}:${number}` : null;
+          };
+          const masterIdentities = new Set(
+            masterHits.map(identityOf).filter((k): k is string => k !== null),
           );
+          const scheme = registrationSchemeForCode(jur.code);
           registerCandidates = candidates
-            .filter((c) =>
-              !masterNames.has(c.registered_product_name.toLowerCase())
-            )
             .map((c) => ({
               name: c.registered_product_name,
               activeIngredient: c.actives_summary,
@@ -1271,8 +1307,23 @@ Deno.serve(async (req: Request) => {
               primaryUse: "",
               modeOfAction: c.activity_groups.join(" + "),
               source: "official_register",
+              // EXACT identity, complete. A candidate that cannot say WHICH
+              // registration it is cannot be selected without re-running
+              // name matching, which is the defect this repair exists to end.
+              registration_country: countryCode,
+              registration_scheme: scheme,
               registration_number: c.registration_number,
-            }));
+              registrant: c.registrant ?? null,
+              product_category: c.product_category ?? null,
+              // The register listing carries no use table, so grapevine
+              // relevance is genuinely UNKNOWN here -- which is not the same
+              // as false, and is sent as null so a picker can say so.
+              has_grapevine_use: null,
+            }))
+            .filter((c) => {
+              const key = identityOf(c);
+              return key === null || !masterIdentities.has(key);
+            });
         } catch (err) {
           // Fail-soft, and now VISIBLE. A register hiccup on one platform and
           // not another is a leading explanation for a parity split, and it
@@ -1380,9 +1431,47 @@ Deno.serve(async (req: Request) => {
       // immediately.
       const researchConfig = readResearchConfig();
       const wantsBroaderResults = body?.broaden === true;
-      const shouldResearch = researchConfig.enabled &&
-        query.length >= 3 &&
-        (wantsBroaderResults || authoritative.length === 0);
+
+      // # The gate is now the RANKING verdict, not a row count
+      //
+      // The old gate treated the mere EXISTENCE of one deterministic row as
+      // certainty about which product the operator meant. Those are different
+      // questions, and Hortitrol winter oil is the case that proves it: a
+      // contaminated alias put ONE master row (50067) in front of a query
+      // whose words appear nowhere in that product's registered name. The row
+      // count said answered; the ranking said no_official_match. The count
+      // won, discovery stopped, and the only product the operator could be
+      // shown was the wrong one.
+      //
+      // So the question asked here is the one that matters: is this candidate
+      // set SAFE TO AUTO-SELECT? Only search_state exact says yes, and only a
+      // register- or catalogue-backed row can produce it. Anything weaker --
+      // incidental, fuzzy, partial, or plural -- keeps discovering, because
+      // the operator is going to have to choose and deserves the real field
+      // to choose from.
+      //
+      // Ranked HERE over the deterministic rows alone. servedSearch ranks
+      // again over whatever is finally served (research included); this pass
+      // answers the narrower question -- is what we already hold sufficient
+      // -- and must not see research rows, or a model suggestion could talk
+      // the server out of looking for a better one.
+      const discovery = discoveryDecision({
+        authoritative,
+        query,
+        countryCode,
+        broaden: wantsBroaderResults,
+        researchEnabled: researchConfig.enabled,
+      });
+      const shouldResearch = discovery.research;
+      console.log(JSON.stringify({
+        evt: "search_discovery_gate",
+        query_length: query.length,
+        authoritative_rows: authoritative.length,
+        search_state: discovery.summary.search_state,
+        auto_select_allowed: discovery.summary.auto_select_allowed,
+        research: discovery.research,
+        reason: discovery.reason,
+      }));
 
       if (!shouldResearch && authoritative.length) {
         return servedSearch(authoritative, deterministicMethod());
@@ -1521,12 +1610,82 @@ Deno.serve(async (req: Request) => {
       const startedAt = Date.now();
       const deps = { fetchFn: fetch, now: () => new Date() };
 
-      // 1) Approved master catalogue (sql/199), name/alias path. A hit
-      //    short-circuits EVERYTHING: the AI is never called and the
+      // 1) Approved master catalogue (sql/199), name/alias path. A COMPLETE
+      //    hit short-circuits everything: the AI is never called and the
       //    ingestion adapter is never invoked for a known approved product.
-      const registrationNumber = typeof body?.registrationNumber === "string"
+      //
+      //    An INCOMPLETE hit no longer stops the lookup. See
+      //    `masterHasCompleteVineyardData` for why an approved row can still
+      //    be missing the one number a vineyard opened the app to find.
+      let registrationNumber = typeof body?.registrationNumber === "string"
         ? body.registrationNumber.trim()
         : "";
+
+      /**
+       * An approved catalogue row that was found but is NOT complete enough
+       * to answer with.
+       *
+       * Held for two reasons: its registration pins the enrichment that
+       * follows, and if every enrichment path then fails it is still served
+       * rather than lost. Incomplete data beats no data -- what it must not
+       * do is prevent better data from being fetched.
+       */
+      let incompleteMaster: any = null;
+
+      /**
+       * The registration the OPERATOR selected, once and for all.
+       *
+       * Null when the caller sent no number — an unselected, name-only lookup
+       * is unchanged and unlocked, because no human decision exists to hold.
+       */
+      const selectedRegistration = readSelectedRegistration(body, countryCode);
+
+      /**
+       * The ONE way the structured action may answer.
+       *
+       * Every exit passes through the identity lock. Written as a single gate
+       * rather than a check at each of the five return sites for the same
+       * reason `servedSearch` exists: a path that forgot the check would be
+       * indistinguishable from a path that passed it, and the failure it lets
+       * through is a silent product substitution.
+       */
+      const servedStructured = (
+        payload: any,
+        diag: {
+          selectedRegistration: string | null;
+          method: LookupMethod;
+          cache: LookupCacheState;
+        },
+      ) => {
+        const violation = registrationViolation(selectedRegistration, payload);
+        if (violation && selectedRegistration) {
+          // Refuse, name the registration, and say so loudly in the logs.
+          // This branch firing in production means some stage resolved on the
+          // typed phrase after a selection had been made — a defect worth
+          // finding, not worth absorbing.
+          console.error(JSON.stringify({
+            evt: "identity_lock_violation",
+            selected: selectedRegistration.number,
+            detail: violation,
+            method: diag.method,
+          }));
+          degradedStages.push("selected_registration_not_served");
+          return json(withDiagnostics(
+            {
+              ...unresolvedForSelection(selectedRegistration, violation),
+              jurisdiction: jurEnv,
+            },
+            {
+              query: productName,
+              selectedRegistration: selectedRegistration.number,
+              method: "unresolved",
+              cache: "none",
+            },
+          ));
+        }
+        return json(withDiagnostics(payload, { query: productName, ...diag }));
+      };
+
       try {
         const masterRow = await fetchApprovedMaster(
           masterSelect,
@@ -1535,7 +1694,32 @@ Deno.serve(async (req: Request) => {
           registrationNumber,
           registrationSchemeForCode(jur.code),
         );
-        if (masterRow) {
+        if (masterRow && !masterHasCompleteVineyardData(masterRow)) {
+          // Keep the IDENTITY, drop the short-circuit.
+          //
+          // This is the difference between a cache and a barrier. The row
+          // knows which registration it is; that fact is now pinned for every
+          // stage below, so enrichment runs against the EXACT registration
+          // rather than re-deriving identity from the operator's typed words.
+          // No fuzzy discovery restarts here -- that is the whole point.
+          incompleteMaster = masterRow;
+          const rowNumber = String(masterRow.registration_number ?? "").trim();
+          if (!registrationNumber && rowNumber) registrationNumber = rowNumber;
+          degradedStages.push("master_incomplete_enrichment_attempted");
+          console.log(ingestionLog({
+            jurisdiction: countryCode,
+            adapter: null,
+            outcome: "approved_master_incomplete",
+            identity: masterRow.registration_identity_key ?? null,
+            master: "existing_approved",
+            candidate: "none",
+            unresolvedCount:
+              (masterRow.verification_unresolved_fields ?? []).length,
+            conflictCount: 0,
+            durationMs: Date.now() - startedAt,
+            cache: "none",
+          }));
+        } else if (masterRow) {
           console.log(ingestionLog({
             jurisdiction: countryCode,
             adapter: null,
@@ -1548,16 +1732,15 @@ Deno.serve(async (req: Request) => {
             durationMs: Date.now() - startedAt,
             cache: "none",
           }));
-          return json(withDiagnostics(
+          return servedStructured(
             { ...buildMasterStructuredResponse(masterRow), jurisdiction: jurEnv },
             {
-              query: productName,
               selectedRegistration: registrationNumber ||
                 (masterRow.registration_number ?? null),
               method: "master_catalogue",
               cache: "hit",
             },
-          ));
+          );
         }
       } catch (err) {
         degradedStages.push("master_name_lookup_failed");
@@ -1767,6 +1950,11 @@ Deno.serve(async (req: Request) => {
       // 4) A discovery-resolved identity may already be an APPROVED master
       //    the name path missed (unlisted alias). Serve it — an approved
       //    product never re-enters ingestion.
+      //
+      //    Same completeness rule as the name path: an approved row that
+      //    admits an unresolved GRAPEVINE rate does not get to end a lookup
+      //    that has, by this point, already resolved the register identity
+      //    and is holding fresh label evidence.
       if (resolved) {
         try {
           const byIdentity = await fetchApprovedMaster(
@@ -1776,7 +1964,25 @@ Deno.serve(async (req: Request) => {
             resolved.registration_number,
             resolved.scheme,
           );
-          if (byIdentity) {
+          if (byIdentity && !masterHasCompleteVineyardData(byIdentity)) {
+            incompleteMaster = incompleteMaster ?? byIdentity;
+            if (!degradedStages.includes("master_incomplete_enrichment_attempted")) {
+              degradedStages.push("master_incomplete_enrichment_attempted");
+            }
+            console.log(ingestionLog({
+              jurisdiction: countryCode,
+              adapter: discovery.adapter,
+              outcome: "approved_master_incomplete",
+              identity: resolved.registration_identity_key,
+              master: "existing_approved",
+              candidate: "none",
+              unresolvedCount:
+                (byIdentity.verification_unresolved_fields ?? []).length,
+              conflictCount: 0,
+              durationMs: Date.now() - startedAt,
+              cache: discovery.cache,
+            }));
+          } else if (byIdentity) {
             console.log(ingestionLog({
               jurisdiction: countryCode,
               adapter: discovery.adapter,
@@ -1789,16 +1995,15 @@ Deno.serve(async (req: Request) => {
               durationMs: Date.now() - startedAt,
               cache: discovery.cache,
             }));
-            return json(withDiagnostics(
+            return servedStructured(
               { ...buildMasterStructuredResponse(byIdentity), jurisdiction: jurEnv },
               {
-                query: productName,
                 selectedRegistration: registrationNumber ||
                   (byIdentity.registration_number ?? null),
                 method: "master_catalogue",
                 cache: discovery.cache === "hit" ? "hit" : "miss",
               },
-            ));
+            );
           }
         } catch (err) {
           degradedStages.push("master_identity_lookup_failed");
@@ -1809,9 +2014,42 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      // 5) Neither the AI nor the register produced anything → the lookup
-      //    fails exactly as it always has.
+      // 5) Neither the AI nor the register produced anything.
+      //
+      //    If a catalogue row was set aside as incomplete in (1) or (4), it is
+      //    served NOW. Declining to short-circuit on an incomplete row is a
+      //    decision to look for better data -- never a decision to discard the
+      //    data we had. An enrichment attempt that fails must leave the
+      //    operator exactly where they would have been, not worse off.
       if (!structured && !resolved) {
+        if (incompleteMaster) {
+          degradedStages.push("master_enrichment_unavailable");
+          console.log(ingestionLog({
+            jurisdiction: countryCode,
+            adapter: discovery.adapter,
+            outcome: "approved_master_incomplete_served",
+            identity: incompleteMaster.registration_identity_key ?? null,
+            master: "existing_approved",
+            candidate: "none",
+            unresolvedCount:
+              (incompleteMaster.verification_unresolved_fields ?? []).length,
+            conflictCount: 0,
+            durationMs: Date.now() - startedAt,
+            cache: "hit",
+          }));
+          return servedStructured(
+            {
+              ...buildMasterStructuredResponse(incompleteMaster),
+              jurisdiction: jurEnv,
+            },
+            {
+              selectedRegistration: registrationNumber ||
+                (incompleteMaster.registration_number ?? null),
+              method: "master_catalogue",
+              cache: "hit",
+            },
+          );
+        }
         throw aiError instanceof Error
           ? aiError
           : new Error(String(aiError ?? "lookup failed"));
@@ -1931,16 +2169,15 @@ Deno.serve(async (req: Request) => {
           // The identity's row is already approved (an alias the name path
           // missed, or a review that landed mid-request): serve the approved
           // master, create nothing.
-          return json(withDiagnostics(
+          return servedStructured(
             { ...buildMasterStructuredResponse(outcome.row), jurisdiction: jurEnv },
             {
-              query: productName,
               selectedRegistration: registrationNumber ||
                 (outcome.row.registration_number ?? null),
               method: "master_catalogue",
               cache: discovery.cache === "hit" ? "hit" : "miss",
             },
-          ));
+          );
         }
         if (outcome.row && outcome.row.review_status === "candidate") {
           candidateRow = outcome.row;
@@ -1983,8 +2220,7 @@ Deno.serve(async (req: Request) => {
         ? "ai_legacy"
         : "unresolved";
 
-      return json(withDiagnostics(structured, {
-        query: productName,
+      return servedStructured(structured, {
         selectedRegistration: servedRegistration,
         method: structuredMethod,
         cache: discovery.cache === "hit"
@@ -1992,7 +2228,7 @@ Deno.serve(async (req: Request) => {
           : discovery.cache === "none"
           ? "none"
           : "miss",
-      }));
+      });
     }
 
     if (action === "info") {

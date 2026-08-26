@@ -110,6 +110,52 @@ export async function fetchApprovedMaster(
   return null;
 }
 
+/**
+ * Whether a catalogue row is complete enough to answer a vineyard spray
+ * question WITHOUT going back to the label (task Phase 10).
+ *
+ * # Why an approved row is not automatically a finished row
+ *
+ * The Master Chemical Store is a CACHE and a catalogue, not an oracle. A row
+ * earns `approved` when a human confirmed that what it holds is correct --
+ * which is a statement about accuracy, not about completeness. APVMA 33182 is
+ * the measured case: approved, correct, carrying real grapevine targets, and
+ * carrying `rates: []` with `rates:GRAPEVINE` sitting in its own unresolved
+ * list. It is right about everything it says and silent about the one number
+ * an operator opens the app to find.
+ *
+ * The fast path used to serve that row and stop. The catalogue's own honest
+ * admission of incompleteness became the reason the gap was never filled --
+ * the cache defended itself against the very lookup that would have repaired
+ * it.
+ *
+ * So the row must state its own sufficiency, from evidence it already carries:
+ *
+ *   * a registration number, or there is no identity to enrich;
+ *   * an official label reference, or nothing established the rates;
+ *   * no unresolved GRAPEVINE rate entry, because that IS the row saying the
+ *     vineyard-critical field is missing.
+ *
+ * Incomplete does NOT mean wrong, and it never means discard. It means: keep
+ * this exact registration and go and finish it.
+ */
+export function masterHasCompleteVineyardData(row: any): boolean {
+  const unresolved = Array.isArray(row?.verification_unresolved_fields)
+    ? row.verification_unresolved_fields.map((x: unknown) => String(x).toUpperCase())
+    : [];
+
+  // Matches "RATES:GRAPEVINE" and any qualified form the extractor emits
+  // (e.g. "RATES:GRAPEVINE:POWDERY MILDEW"). A rate gap for ONE grapevine
+  // target is still a rate gap.
+  const grapeRatesUnresolved = unresolved.some((x: string) => x.startsWith("RATES:GRAPEVINE"));
+
+  const hasOfficialLabel = Boolean(
+    row?.regulator_label_url || row?.label_reference || row?.manufacturer_label_url,
+  );
+
+  return Boolean(row?.registration_number) && hasOfficialLabel && !grapeRatesUnresolved;
+}
+
 /** Per-field provenance for a served master row: everything the row carries is catalogue-reviewed evidence. */
 function masterFieldProvenance(row: any): Record<string, FieldProvenance> {
   const has = (v: unknown): boolean => v !== null && v !== undefined && v !== "";
@@ -151,10 +197,17 @@ export function buildMasterStructuredResponse(row: any): any {
   // shape, so the change would have looked correct in tests and done nothing
   // in production.
   const grapevine = projectGrapevineUses(registeredUses);
+  // Production rows predate the four-way source split and carry only
+  // `label_reference`. Reading the new column FIRST and falling back keeps
+  // one code path serving both shapes -- no backfill, no schema redesign, and
+  // no row that silently reports having no label because it was written
+  // before the column existed.
+  const regulatorLabelUrl = row.regulator_label_url ?? row.label_reference ?? null;
   const labelRefs = selectLabelReferences({
     manufacturerLabelUrl: row.manufacturer_label_url,
-    regulatorLabelUrl: row.regulator_label_url ?? row.label_reference,
+    regulatorLabelUrl,
     productUrl: row.product_url,
+    sdsUrl: row.sds_url,
   });
 
   const served = {
@@ -171,6 +224,17 @@ export function buildMasterStructuredResponse(row: any): any {
       manufacturer_label_url: labelRefs.manufacturer_label_url,
       regulator_label_url: labelRefs.regulator_label_url,
       label_version: row.label_version ?? null,
+    },
+    // The label URLs a client can OPEN, in one predictable block.
+    //
+    // The registration block keeps its own fields for the clients already
+    // decoding them; this is the grouped form the Review Chemical screen
+    // reads, so a screen wanting "the official label" does not have to know
+    // the history of three column names to find it.
+    label_urls: {
+      regulator_label_url: labelRefs.regulator_label_url ?? regulatorLabelUrl,
+      manufacturer_label_url: labelRefs.manufacturer_label_url,
+      product_url: labelRefs.manufacturer_product_url ?? row.product_url ?? null,
     },
     active_ingredients: Array.isArray(row.active_ingredients) ? row.active_ingredients : [],
     activity_groups: Array.isArray(row.activity_groups) ? row.activity_groups : [],
@@ -244,6 +308,23 @@ export async function searchMaster(
       const firstUse = uses[0] ?? null;
       return {
         name: String(row.registered_product_name ?? ""),
+        // EXACT registration identity travels with every candidate.
+        //
+        // A search row used to carry a name and a `master_chemical_id` and
+        // nothing else, so selecting it handed the structured lookup a NAME
+        // to re-resolve -- re-running fuzzy identity matching on a decision
+        // the operator had already made, and giving it a fresh chance to land
+        // somewhere else. Identity is decided once, here, and travels intact.
+        registration_country: String(row.registration_country ?? "").toUpperCase() || null,
+        registration_scheme: row.registration_scheme ?? null,
+        registration_number: row.registration_number ?? null,
+        product_category: row.product_category ?? null,
+        // Vineyard relevance, so the picker can say which candidate is even
+        // about grapevines. Derived from the row's OWN registered uses.
+        has_grapevine_use: uses.some((u: any) => {
+          const crop = String(u?.crop ?? "").toLowerCase();
+          return crop.includes("grape") || crop.includes("vine");
+        }),
         activeIngredient: actives
           .map((a: any) => {
             const conc = a?.concentration != null

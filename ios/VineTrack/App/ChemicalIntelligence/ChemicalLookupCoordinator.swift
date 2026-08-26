@@ -59,6 +59,16 @@ final class ChemicalLookupCoordinator {
 
     var query: String = ""
     private(set) var rows: [ChemicalSearchRow] = []
+    /// The server's verdict on the last search. Nil before any search, and on
+    /// servers that predate the ranking block.
+    private(set) var ranking: ChemicalSearchRankingSummary?
+    /// True when identity is NOT settled and the operator must choose.
+    ///
+    /// iOS has always shown a list rather than auto-applying a row, so this
+    /// does not gate the picker's existence -- it gates what the picker SAYS.
+    /// An operator being asked to choose deserves to know they are choosing,
+    /// rather than assuming the top row is the answer.
+    private(set) var requiresOperatorChoice: Bool = false
     private(set) var isSearching: Bool = false
     private(set) var isResolving: Bool = false
     private(set) var searchError: String?
@@ -136,18 +146,38 @@ final class ChemicalLookupCoordinator {
         isSearching = true
         searchError = nil
         unresolvedRow = nil
+        ranking = nil
+        requiresOperatorChoice = false
         defer { isSearching = false }
         do {
-            let results = try await ChemicalInfoService()
-                .searchChemicals(query: trimmed, country: country)
+            let response = try await ChemicalInfoService()
+                .searchResponse(query: trimmed, country: country)
             try Task.checkCancellation()
+            ranking = response.ranking
+
+            // The SERVER decides whether identity is settled. The app reads
+            // that decision; it does not re-derive one from the row count,
+            // which cannot tell certainty apart from starvation.
+            switch ChemicalSelectionPolicy.decide(
+                results: response.results,
+                ranking: response.ranking
+            ) {
+            case .autoSelect:
+                requiresOperatorChoice = false
+            case .requiresChoice, .empty:
+                requiresOperatorChoice = true
+            }
+
             rows = ChemicalSearchRanking.ordered(
-                results: results,
+                results: response.results,
                 savedChemicals: savedChemicals,
                 vineyardCountry: country,
                 query: trimmed
             )
-            ChemicalLookupTrace.log("search_finished", "rows=\(rows.count)")
+            ChemicalLookupTrace.log(
+                "search_finished",
+                "rows=\(rows.count) state=\(response.ranking?.searchState ?? "-")"
+            )
             if rows.isEmpty {
                 searchError = "No products found. Try a different spelling, or enter the product manually."
             }
@@ -158,6 +188,8 @@ final class ChemicalLookupCoordinator {
             // The typed query is deliberately left intact so a failed lookup
             // never costs the operator their input.
             rows = []
+            ranking = nil
+            requiresOperatorChoice = false
             searchError = (error as? LocalizedError)?.errorDescription
                 ?? "Lookup is unavailable. Check your connection and try again."
             ChemicalLookupTrace.log("search_failed")

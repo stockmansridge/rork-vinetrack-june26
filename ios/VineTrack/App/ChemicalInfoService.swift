@@ -327,6 +327,22 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
     /// server-side resolver verifies that exact identity against the
     /// register before anything binds.
     let registrationNumber: String?
+    /// The register SCHEME this row's number belongs to ("apvma"). Part of the
+    /// exact identity: a number alone is only unique inside its own scheme.
+    let registrationScheme: String?
+    /// The registrant / manufacturer of record, when the server states one.
+    /// Shown in the picker because two similarly-named products from two
+    /// different companies is precisely when a human needs to choose.
+    let registrant: String?
+    /// Registered product category ("Insecticide", "Adjuvant"). Display only.
+    let productCategory: String?
+    /// Whether the server KNOWS this product has grapevine uses.
+    ///
+    /// Three states, and the third is the point: `true` (uses found), `false`
+    /// (checked, none found), `nil` (not checked). A register discovery
+    /// listing carries no use table, so it genuinely does not know -- and
+    /// "unknown" must never be drawn as "no".
+    let hasGrapevineUse: Bool?
     /// "master" | "official_register" | nil (AI suggestion / older server).
     let source: String?
     /// The country this row's registration belongs to, when the server states
@@ -402,6 +418,10 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
         case primaryUse
         case modeOfAction
         case registrationNumber = "registration_number"
+        case registrationScheme = "registration_scheme"
+        case registrant
+        case productCategory = "product_category"
+        case hasGrapevineUse = "has_grapevine_use"
         case source
         case countryCode = "country_code"
         case reviewStatus = "review_status"
@@ -420,6 +440,10 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
         primaryUse: String = "",
         modeOfAction: String = "",
         registrationNumber: String? = nil,
+        registrationScheme: String? = nil,
+        registrant: String? = nil,
+        productCategory: String? = nil,
+        hasGrapevineUse: Bool? = nil,
         source: String? = nil,
         countryCode: String? = nil,
         reviewStatus: String? = nil,
@@ -436,6 +460,10 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
         self.primaryUse = primaryUse
         self.modeOfAction = modeOfAction
         self.registrationNumber = registrationNumber
+        self.registrationScheme = registrationScheme
+        self.registrant = registrant
+        self.productCategory = productCategory
+        self.hasGrapevineUse = hasGrapevineUse
         self.source = source
         self.countryCode = countryCode
         self.reviewStatus = reviewStatus
@@ -444,6 +472,15 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
         self.rankScore = rankScore
         self.rankReason = rankReason
         self.registerOrder = registerOrder
+    }
+
+    /// Wire keys that are ALIASES for a property already in `CodingKeys`.
+    ///
+    /// Kept separate on purpose: adding a second case for the same stored
+    /// property to `CodingKeys` would break Encodable synthesis, and adding a
+    /// case with no property at all breaks it silently.
+    nonisolated enum AlternateCodingKeys: String, CodingKey {
+        case registrationCountry = "registration_country"
     }
 
     /// Tolerant decoding: a row missing any optional field still decodes.
@@ -461,8 +498,20 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
         primaryUse = text(.primaryUse)
         modeOfAction = text(.modeOfAction)
         registrationNumber = try? c.decodeIfPresent(String.self, forKey: .registrationNumber)
+        registrationScheme = (try? c.decodeIfPresent(String.self, forKey: .registrationScheme)) ?? nil
+        registrant = (try? c.decodeIfPresent(String.self, forKey: .registrant)) ?? nil
+        productCategory = (try? c.decodeIfPresent(String.self, forKey: .productCategory)) ?? nil
+        hasGrapevineUse = (try? c.decodeIfPresent(Bool.self, forKey: .hasGrapevineUse)) ?? nil
         source = try? c.decodeIfPresent(String.self, forKey: .source)
-        countryCode = try? c.decodeIfPresent(String.self, forKey: .countryCode)
+        // The row's own `registration_country` leads; `country_code` is the
+        // older key for the same fact. Read through a separate container so
+        // the alternate spelling never joins `CodingKeys` -- a coding key with
+        // no stored property behind it silently breaks Encodable synthesis.
+        // Absence reads as "the requested country": search is country-scoped
+        // at the request, so a row that states nothing belongs to it.
+        let alt = try? decoder.container(keyedBy: AlternateCodingKeys.self)
+        countryCode = ((try? alt?.decodeIfPresent(String.self, forKey: .registrationCountry)) ?? nil)
+            ?? ((try? c.decodeIfPresent(String.self, forKey: .countryCode)) ?? nil)
         reviewStatus = try? c.decodeIfPresent(String.self, forKey: .reviewStatus)
         rankTier = (try? c.decodeIfPresent(String.self, forKey: .rankTier)) ?? nil
         rankRelevance = (try? c.decodeIfPresent(String.self, forKey: .rankRelevance)) ?? nil
@@ -472,8 +521,85 @@ nonisolated struct ChemicalSearchResult: Identifiable, Codable, Sendable, Hashab
     }
 }
 
+/// The server's verdict on what the search FOUND.
+///
+/// # Why the app is not allowed to work this out for itself
+///
+/// `results.count == 1` is not evidence of anything. One row can be one exact
+/// registered product, or it can be one incidental word match that happens to
+/// be the only thing a contaminated alias let through -- which is exactly how
+/// "Hortitrol winter oil" produced a single confident-looking row for a
+/// product sharing not one word with it.
+///
+/// Only the server knows whether that row came from the register, how its name
+/// scored against the query, and whether anything else was credible enough to
+/// rival it. So the server decides, in one flag, and the app obeys it. Named
+/// `...Summary` because `ChemicalSearchRanking` is already the (now
+/// server-deferring) on-device ordering shim.
+nonisolated struct ChemicalSearchRankingSummary: Codable, Sendable, Hashable {
+    /// "exact" | "ambiguous" | "no_official_match".
+    let searchState: String
+    /// The ONE flag a client needs. True only for a proven exact identity.
+    let autoSelectAllowed: Bool
+    /// The registration a client may bind without asking, or nil.
+    let exactRegistrationNumber: String?
+    /// How many rows may stand as primary candidates.
+    let strongCandidateCount: Int?
+    /// Of those, how many are register- or catalogue-backed.
+    let strongOfficialCandidateCount: Int?
+
+    nonisolated enum CodingKeys: String, CodingKey {
+        case searchState = "search_state"
+        case autoSelectAllowed = "auto_select_allowed"
+        case exactRegistrationNumber = "exact_registration_number"
+        case strongCandidateCount = "strong_candidate_count"
+        case strongOfficialCandidateCount = "strong_official_candidate_count"
+    }
+
+    init(
+        searchState: String,
+        autoSelectAllowed: Bool,
+        exactRegistrationNumber: String? = nil,
+        strongCandidateCount: Int? = nil,
+        strongOfficialCandidateCount: Int? = nil
+    ) {
+        self.searchState = searchState
+        self.autoSelectAllowed = autoSelectAllowed
+        self.exactRegistrationNumber = exactRegistrationNumber
+        self.strongCandidateCount = strongCandidateCount
+        self.strongOfficialCandidateCount = strongOfficialCandidateCount
+    }
+
+    /// Tolerant decoding, and it FAILS CLOSED.
+    ///
+    /// A malformed or partial ranking block decodes to
+    /// `auto_select_allowed: false`. The safe default is asking a human; a
+    /// decode slip must never become licence to bind a product silently.
+    nonisolated init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        searchState = ((try? c.decodeIfPresent(String.self, forKey: .searchState)) ?? nil)
+            ?? "no_official_match"
+        autoSelectAllowed =
+            ((try? c.decodeIfPresent(Bool.self, forKey: .autoSelectAllowed)) ?? nil) ?? false
+        exactRegistrationNumber =
+            (try? c.decodeIfPresent(String.self, forKey: .exactRegistrationNumber)) ?? nil
+        strongCandidateCount =
+            (try? c.decodeIfPresent(Int.self, forKey: .strongCandidateCount)) ?? nil
+        strongOfficialCandidateCount =
+            (try? c.decodeIfPresent(Int.self, forKey: .strongOfficialCandidateCount)) ?? nil
+    }
+}
+
 nonisolated struct ChemicalSearchResponse: Codable, Sendable {
     let results: [ChemicalSearchResult]
+    /// Absent on servers that predate the ranking block. Absence is treated
+    /// exactly like `auto_select_allowed: false` by `ChemicalSelectionPolicy`.
+    let ranking: ChemicalSearchRankingSummary?
+
+    init(results: [ChemicalSearchResult], ranking: ChemicalSearchRankingSummary? = nil) {
+        self.results = results
+        self.ranking = ranking
+    }
 }
 
 /// What the structured resolver is asked about, once the operator has chosen.
@@ -497,6 +623,19 @@ nonisolated struct ChemicalStructuredLookupRequest: Sendable, Hashable {
     /// before anything binds, so passing it can sharpen an identity but can
     /// never assert one.
     let registrationNumber: String?
+    /// The register scheme the number belongs to ("apvma"), when the candidate
+    /// stated one. Sent so the server locks on the COMPLETE identity rather
+    /// than a bare number that is only unique within its own scheme.
+    let registrationScheme: String?
+
+    /// Whether this request carries an identity the server must not change.
+    ///
+    /// A selected registration is a human decision. From here the server may
+    /// enrich it, or fail and say so -- it may not answer with a different
+    /// product. `productName` survives only as provenance and error wording.
+    var hasSelectedIdentity: Bool {
+        !(registrationNumber ?? "").isEmpty
+    }
 
     /// Build the request for a selected search result.
     ///
@@ -512,6 +651,10 @@ nonisolated struct ChemicalStructuredLookupRequest: Sendable, Hashable {
         // Absent stays absent. Inventing a number would make the resolver
         // verify a registration nobody ever claimed.
         registrationNumber = (number?.isEmpty ?? true) ? nil : number
+        let scheme = selected.registrationScheme?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        registrationScheme = (scheme?.isEmpty ?? true) ? nil : scheme
     }
 }
 
@@ -590,7 +733,14 @@ nonisolated struct ChemicalInfoService: Sendable {
         (vineyardCountry ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    func searchChemicals(query: String, country: String = "") async throws -> [ChemicalSearchResult] {
+    /// Search, returning the WHOLE server answer.
+    ///
+    /// The rows alone were never sufficient: they carry no statement about
+    /// whether the identity is settled, so every caller was left to infer that
+    /// from the row count. This returns the server's own verdict alongside
+    /// them, which is the only thing entitled to decide whether a human must
+    /// choose.
+    func searchResponse(query: String, country: String = "") async throws -> ChemicalSearchResponse {
         var payload: [String: Any] = [
             "action": "search",
             "query": query,
@@ -604,11 +754,17 @@ nonisolated struct ChemicalInfoService: Sendable {
         )
         Self.recordDiagnostics(from: data)
         do {
-            let decoded = try JSONDecoder().decode(ChemicalSearchResponse.self, from: data)
-            return decoded.results
+            return try JSONDecoder().decode(ChemicalSearchResponse.self, from: data)
         } catch {
             throw ChemicalLookupError.parseFailed
         }
+    }
+
+    /// Rows only. Retained for callers that genuinely do not make a selection
+    /// decision; anything that DOES must use `searchResponse` and read the
+    /// ranking.
+    func searchChemicals(query: String, country: String = "") async throws -> [ChemicalSearchResult] {
+        try await searchResponse(query: query, country: country).results
     }
 
     /// Decode and record the server's diagnostics envelope (task §14).
@@ -646,14 +802,16 @@ nonisolated struct ChemicalInfoService: Sendable {
         try await lookupStructured(
             productName: request.productName,
             country: request.country,
-            registrationNumber: request.registrationNumber
+            registrationNumber: request.registrationNumber,
+            registrationScheme: request.registrationScheme
         )
     }
 
     func lookupStructured(
         productName: String,
         country: String = "",
-        registrationNumber: String? = nil
+        registrationNumber: String? = nil,
+        registrationScheme: String? = nil
     ) async throws -> ChemicalStructuredLookup {
         var payload: [String: Any] = [
             "action": "structured",
@@ -666,6 +824,11 @@ nonisolated struct ChemicalInfoService: Sendable {
         // register before anything binds.
         if let registrationNumber, !registrationNumber.isEmpty {
             payload["registrationNumber"] = registrationNumber
+            // The scheme completes the identity the server locks on. Sent only
+            // alongside a number: a scheme with nothing to qualify is noise.
+            if let registrationScheme, !registrationScheme.isEmpty {
+                payload["registrationScheme"] = registrationScheme
+            }
         }
         let data = try await postEdge(
             path: "chemical-info-lookup",

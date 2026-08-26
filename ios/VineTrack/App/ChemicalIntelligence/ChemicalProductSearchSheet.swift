@@ -77,6 +77,7 @@ struct ChemicalProductSearchSheet: View {
                         .listRowBackground(Color.clear)
                 }
                 if let searchError = coordinator.searchError { errorSection(searchError) }
+                choiceNotice
                 if coordinator.isResolving {
                     Section {
                         HStack { ProgressView(); Text("Loading product details…") }
@@ -181,6 +182,30 @@ struct ChemicalProductSearchSheet: View {
         }
     }
 
+    /// Says out loud that the identity is NOT settled and the operator is the
+    /// one deciding.
+    ///
+    /// Without this the top row of a list reads as "the answer" -- which is
+    /// how an ambiguous query became a silent product decision. The server
+    /// states whether it could establish an exact identity; when it could not,
+    /// the screen says so in the operator's own terms rather than letting
+    /// position imply confidence.
+    @ViewBuilder
+    private var choiceNotice: some View {
+        if coordinator.requiresOperatorChoice, !coordinator.rows.isEmpty {
+            Section {
+                Label(
+                    "More than one registered product could match. Choose the one on your label.",
+                    systemImage: "questionmark.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } footer: {
+                Text("Check the registration number on the drum against the number shown on each option.")
+            }
+        }
+    }
+
     /// One section per tier, so the ordering is visible rather than implied.
     @ViewBuilder
     private var resultSections: some View {
@@ -221,10 +246,20 @@ struct ChemicalProductSearchSheet: View {
         }
     }
 
+    /// One candidate, with the facts a viticulturist decides on.
+    ///
+    /// Registered name, registration number, registrant, active ingredient,
+    /// category and vineyard relevance -- every one of which is printed on the
+    /// drum in the operator's hand, so the choice can be made by comparison
+    /// rather than by trust. Deliberately no confidence score: a model's
+    /// self-assessment cannot be checked against a physical label, and putting
+    /// it first invites deference on exactly the decision that has already
+    /// gone wrong once.
     private func resultRow(_ row: ChemicalSearchRow) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let summary = ChemicalCandidateSummary(result: row.result, country: countryCode)
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text(row.result.name)
+                Text(summary.name)
                     .font(.body.weight(.medium))
                     .foregroundStyle(.primary)
                 if row.isDuplicate {
@@ -237,16 +272,41 @@ struct ChemicalProductSearchSheet: View {
                         .clipShape(Capsule())
                 }
             }
-            if !row.result.brand.isEmpty {
-                Text(row.result.brand)
+            if !summary.registrationLabel.isEmpty {
+                Text(summary.registrationLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Registration \(summary.registrationLabel)")
+            }
+            if !summary.registrant.isEmpty {
+                Text(summary.registrant)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if !row.result.activeIngredient.isEmpty {
-                Text(row.result.activeIngredient)
+            if !summary.activeIngredient.isEmpty {
+                Text(summary.activeIngredient)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                    .lineLimit(1)
+                    .lineLimit(2)
+            }
+            HStack(spacing: 8) {
+                if !summary.category.isEmpty {
+                    Text(summary.category)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                // Absent when the server does not KNOW -- a register listing
+                // carries no use table, and "unknown" drawn as "none" would
+                // libel a product with plenty of grapevine uses.
+                if let note = summary.grapevineNote {
+                    Text(note)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(
+                            row.result.hasGrapevineUse == true
+                                ? VineyardTheme.leafGreen
+                                : .secondary
+                        )
+                }
             }
         }
     }

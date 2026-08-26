@@ -212,7 +212,20 @@ export async function runSeedApply(
     ];
 
     // ---- 4) Candidate payload (review_status pinned "candidate") ----------
-    const payload = buildCandidatePayload(structured, requestedName, reg, nowIso, tableVersion);
+    // The AWRI product name IS an established alias, and this is the one call
+    // site entitled to say so: the name comes from the AWRI spray guide (a
+    // validated viticulture reference, recorded above as evidence), it is
+    // attached to a register-CONFIRMED registration number, and the whole
+    // seed path is system-admin gated. That is a source making an alias claim
+    // about a known product -- not a search box recording a guess.
+    const payload = buildCandidatePayload(
+      structured,
+      requestedName,
+      reg,
+      nowIso,
+      tableVersion,
+      [requestedName],
+    );
     if (!payload) {
       return fail(key, "candidate payload incomplete — refused", false);
     }
