@@ -488,10 +488,32 @@ struct SprayRecordFormView: View {
         }
     }
 
-    /// Non-tractor vineyard machines plus tractor-backed machines, used to
-    /// offer a stable pick for the "Tractor" field.
+    /// The genuine Vineyard Machines — ATV, side-by-side, harvester, utility
+    /// vehicle, other — offered under the Power unit picker.
+    ///
+    /// # Why the mirrors are filtered out
+    ///
+    /// A tractor added under Equipment → Tractors creates a `tractors` row AND
+    /// an internal `vineyard_machines` row linked back to it through
+    /// `legacyTractorId`. That mirror is plumbing: it exists so machine-aware
+    /// features can address a tractor, and it is not a second asset.
+    ///
+    /// Reading `currentVineyardMachines` unfiltered listed every mirror beside
+    /// the real tractors, so one tractor appeared TWICE in the same menu — once
+    /// under "Vineyard Machines" and once under "Tractors". Worse, the two
+    /// entries did different things: the mirror stored `machineId`, the real
+    /// entry stored `tractorId`, so which identity a spray record carried
+    /// depended on which of two identical-looking rows the operator happened to
+    /// tap. Every other equipment screen already filters these out
+    /// (`VineyardMachineManagementView`, `AddEditWorkTaskMachineLineView`,
+    /// `AddEditMaintenanceLogView`, `EquipmentManagementView`); this picker was
+    /// the one place they leaked.
+    ///
+    /// Tractors are still fully selectable — through the Tractors section
+    /// below, which is the entry that carries the correct identity.
     private var machineOptions: [VineyardMachine] {
-        store.currentVineyardMachines
+        SprayEquipmentOptions
+            .machines(for: .powerUnit, from: store.currentVineyardMachines)
             .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
     }
 
@@ -546,8 +568,13 @@ struct SprayRecordFormView: View {
                                     ForEach(machineOptions) { m in
                                         Button(m.displayName) {
                                             tractor = m.displayName
-                                            machineId = m.id
-                                            tractorId = nil
+                                            // ONE identity, set through the
+                                            // shared rule so the two ids can
+                                            // never both be populated.
+                                            let selection = SprayPowerUnitSelection
+                                                .vineyardMachine(m.id)
+                                            machineId = selection.machineId
+                                            tractorId = selection.tractorId
                                         }
                                     }
                                 }
@@ -557,8 +584,9 @@ struct SprayRecordFormView: View {
                                     ForEach(tractorOptions) { t in
                                         Button(t.displayName) {
                                             tractor = t.displayName
-                                            tractorId = t.id
-                                            machineId = nil
+                                            let selection = SprayPowerUnitSelection.tractor(t.id)
+                                            tractorId = selection.tractorId
+                                            machineId = selection.machineId
                                         }
                                     }
                                 }
@@ -569,7 +597,7 @@ struct SprayRecordFormView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    TextField("Tractor", text: $tractor)
+                    TextField("Tractor or machine", text: $tractor)
                         .multilineTextAlignment(.trailing)
                         .onChange(of: tractor) { _, newValue in
                             if let id = machineId,
@@ -582,7 +610,21 @@ struct SprayRecordFormView: View {
                             }
                         }
                 }
-            } label: { Label("Tractor", systemImage: "steeringwheel") }
+            // POWER UNIT, not "Tractor" (task §4).
+            //
+            // A completed spray record legitimately supports either a tractor
+            // or a vineyard machine — `spray_records` has both `tractor_id` and
+            // `machine_id`, and a block sprayed off an ATV is a real record
+            // this app must be able to keep. But a field offering ATVs while
+            // calling itself "Tractor" teaches the operator that the two words
+            // mean the same thing, which is precisely the confusion that let
+            // the Portal write a vineyard machine id into `spray_jobs.tractor_id`.
+            //
+            // So the label states what the field actually accepts, and the
+            // menu keeps the two kinds in separate, named sections. "Tractor"
+            // is reserved for controls that accept a `public.tractors` row and
+            // nothing else — see the Program Step editor.
+            } label: { Label("Power unit", systemImage: "steeringwheel") }
             LabeledContent {
                 TextField("Gear", text: $tractorGear).multilineTextAlignment(.trailing)
             } label: { Label("Tractor Gear", systemImage: "gearshape") }

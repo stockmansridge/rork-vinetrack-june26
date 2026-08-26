@@ -480,6 +480,19 @@ struct SprayProgramStepEditView: View {
 
     /// Operational picker for a Program Step: selected vineyard only. With no
     /// vineyard selected the correct answer is "nothing", not "everything".
+    ///
+    /// # Genuine tractors ONLY — and why this list must never widen
+    ///
+    /// A Program Step is a `spray_jobs` row, and `spray_jobs.tractor_id` is a
+    /// foreign key into `public.tractors`. That table has no `machine_id`
+    /// column. Merging vineyard machines into this picker — exactly what the
+    /// Portal wizard did — would either violate the constraint or, worse,
+    /// succeed against a coincidentally valid id and silently record the wrong
+    /// asset against a planned job.
+    ///
+    /// `spray_records` legitimately carries both identities and its picker is
+    /// labelled "Power unit" accordingly. This one is labelled "Tractor" and
+    /// means it. Machine support here needs a deliberate schema change first.
     private var availableTractors: [Tractor] {
         store.currentTractors
     }
