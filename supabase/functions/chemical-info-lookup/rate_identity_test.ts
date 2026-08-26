@@ -9,6 +9,8 @@ import {
   type RateIdentityRate,
   sha256Hex,
 } from "./rate_identity.ts";
+import { extractManufacturerLabelUses } from "./ingestion/manufacturer_label.ts";
+import { VICOL_33182_LABEL_ITEMS } from "./ingestion/seeds/label_fixture_33182.ts";
 
 // ===========================================================================
 // Gate D1 — stable registered rate identity.
@@ -446,26 +448,46 @@ Deno.test("an unresolved product still mints deterministically", () => {
 // K. VICOL 33182 — the acceptance case
 // ---------------------------------------------------------------------------
 
-Deno.test("K — VICOL 33182 keeps four registered identities behind two numbers", () => {
-  const uses = [
-    {
-      crop: "Grapevines",
-      target_raw: "Grapevine scale",
-      rates: [
-        rate({ value: 2, label: "Tasmania" }),
-        rate({ value: 3, label: "NSW/Vic/Qld/SA/WA" }),
-      ],
-    },
-    {
-      crop: "Grapevines",
-      target_raw: "European red mite",
-      rates: [
-        rate({ value: 2, label: "Tasmania" }),
-        rate({ value: 3, label: "NSW/Vic/Qld/SA/WA" }),
-      ],
-    },
-  ];
+// The FOUR grape directions the VICOL WINTER OIL manufacturer label actually
+// prints, transcribed from the label's Crop/Pest/State/Rate table.
+//
+// # The fixture defect this replaces
+//
+// The first version of this test gave the European Red Mites 3 L row the
+// GRAPEVINE SCALE state set ("NSW/Vic/Qld/SA/WA"). The label does not say
+// that: European Red Mites at 3 L/100 L is registered in NSW, Vic and SA only
+// — not Qld, not WA. A fixture asserting otherwise would have signed off an
+// identity built from a jurisdiction the label never granted, which is exactly
+// the class of error this gate exists to make impossible.
+//
+// It also flattened the Tasmania 2 L direction to a single mite. That row
+// covers THREE pests, and dropping two of them narrows a registered direction
+// the grower is entitled to rely on.
+const VICOL_GRAPE_DIRECTIONS = () => [
+  {
+    crop: "Grapes",
+    target_raw: "Grapeleaf Blister Mites, European Red Mites, Two Spotted Mites",
+    rates: [rate({ value: 2, label: "Tas" })],
+  },
+  {
+    crop: "Grapes",
+    target_raw: "European Red Mites",
+    rates: [rate({ value: 3, label: "NSW, Vic, SA" })],
+  },
+  {
+    crop: "Grapes",
+    target_raw: "Grapevine Scale",
+    rates: [rate({ value: 3, label: "NSW, Vic, Qld, SA, WA" })],
+  },
+  {
+    crop: "Grapes",
+    target_raw: "Grapevine Scale",
+    rates: [rate({ value: 2, label: "Tas" })],
+  },
+];
 
+Deno.test("K — VICOL 33182 keeps four registered identities behind two numbers", () => {
+  const uses = VICOL_GRAPE_DIRECTIONS();
   assignRateIds(uses, VICOL);
 
   const all = uses.flatMap((u) => u.rates as (RateIdentityRate & { rate_id: string })[]);
@@ -475,27 +497,126 @@ Deno.test("K — VICOL 33182 keeps four registered identities behind two numbers
   assertEquals(new Set(all.map((r) => r.rate_id)).size, 4);
 
   // TWO operational numbers. This is the grouping a later default-rate
-  // selection performs — and precisely why that selection must be able to
-  // reference a LIST of rate ids rather than a single one: choosing
-  // "3 L/100 L" for NSW adopts two registered directions at once.
+  // selection performs — and precisely why that selection must reference a
+  // LIST of rate ids rather than a single one: choosing "3 L/100 L" adopts two
+  // registered directions at once.
   const byValue = new Map<number, string[]>();
   for (const r of all) {
     byValue.set(r.value as number, [...(byValue.get(r.value as number) ?? []), r.rate_id]);
   }
   assertEquals([...byValue.keys()].sort(), [2, 3]);
-  assertEquals(byValue.get(2)!.length, 2);
+
+  // 3 L/100 L is backed by European Red Mites (NSW, Vic, SA) and Grapevine
+  // Scale (NSW, Vic, Qld, SA, WA) — two pests under two DIFFERENT state sets
+  // that merely share a number.
   assertEquals(byValue.get(3)!.length, 2);
-  // The two rows sharing a number are genuinely distinct identities.
   assertNotEquals(byValue.get(3)![0], byValue.get(3)![1]);
 
+  // 2 L/100 L is backed by the three-mite row and Grapevine Scale, both Tas —
+  // same state, different pests.
+  assertEquals(byValue.get(2)!.length, 2);
+  assertNotEquals(byValue.get(2)![0], byValue.get(2)![1]);
+
   // Re-extracting the whole label reproduces the same four identities.
-  const second = JSON.parse(JSON.stringify(uses)).map((u: Record<string, unknown>) => {
-    for (const r of u.rates as Record<string, unknown>[]) delete r.rate_id;
-    return u;
-  });
+  const second = VICOL_GRAPE_DIRECTIONS();
   assignRateIds(second, VICOL);
   assertEquals(
-    second.flatMap((u: { rates: { rate_id: string }[] }) => u.rates.map((r) => r.rate_id)).sort(),
+    second.flatMap((u) => (u.rates as { rate_id: string }[]).map((r) => r.rate_id)).sort(),
     all.map((r) => r.rate_id).sort(),
   );
+});
+
+Deno.test("K — the corrected European Red Mites state set is what gets hashed", () => {
+  // A regression guard on the correction itself. If the wrong state set ever
+  // creeps back the identity moves, proving the jurisdiction is genuinely
+  // load-bearing and that the two 3 L rows are not interchangeable.
+  const correct = mintRateId(
+    VICOL,
+    { crop: "Grapes", target_raw: "European Red Mites" },
+    rate({ value: 3, label: "NSW, Vic, SA" }),
+  );
+  const wrong = mintRateId(
+    VICOL,
+    { crop: "Grapes", target_raw: "European Red Mites" },
+    rate({ value: 3, label: "NSW, Vic, Qld, SA, WA" }),
+  );
+  assertNotEquals(correct, wrong);
+
+  const scale = mintRateId(
+    VICOL,
+    { crop: "Grapes", target_raw: "Grapevine Scale" },
+    rate({ value: 3, label: "NSW, Vic, Qld, SA, WA" }),
+  );
+  assertNotEquals(correct, scale);
+});
+
+Deno.test("K — the LIVE extractor produces those same four directions", () => {
+  // Not a synthetic fixture: this runs the real Stage B manufacturer-label
+  // extractor over the real VICOL 33182 PDF text layer, so the acceptance
+  // evidence cannot drift from what the pipeline actually serves.
+  const parse = extractManufacturerLabelUses(VICOL_33182_LABEL_ITEMS);
+  assert(parse.found, "DIRECTIONS FOR USE table was not located");
+
+  const grapes = parse.uses.filter((u) => /^grapes$/i.test(u.crop));
+  assertEquals(grapes.length, 4);
+
+  assertEquals(
+    grapes.map((u) => ({
+      targets: u.targets,
+      condition: u.condition,
+      value: u.rates[0]?.value,
+      unit: u.rates[0]?.unit,
+      basis: u.rates[0]?.basis,
+    })),
+    [
+      {
+        targets: ["Grapeleaf Blister Mites", "European Red Mites", "Two Spotted Mites"],
+        condition: "Tas",
+        value: 2,
+        unit: "L",
+        basis: "per_100_litres",
+      },
+      {
+        targets: ["European Red Mites"],
+        condition: "NSW, Vic, SA",
+        value: 3,
+        unit: "L",
+        basis: "per_100_litres",
+      },
+      {
+        targets: ["Grapevine Scale"],
+        condition: "NSW, Vic, Qld, SA, WA",
+        value: 3,
+        unit: "L",
+        basis: "per_100_litres",
+      },
+      {
+        targets: ["Grapevine Scale"],
+        condition: "Tas",
+        value: 2,
+        unit: "L",
+        basis: "per_100_litres",
+      },
+    ],
+  );
+
+  // Minting over the extractor's OWN output yields four distinct identities,
+  // stable across a second independent extraction.
+  const idsFor = (uses: typeof grapes) =>
+    uses.map((u) =>
+      mintRateId(
+        VICOL,
+        { crop: u.crop, target_raw: u.targets.join(", ") },
+        { ...u.rates[0], label: u.condition },
+      )
+    );
+
+  const ids = idsFor(grapes);
+  assertEquals(new Set(ids).size, 4);
+  assertEquals(idsFor(
+    extractManufacturerLabelUses(VICOL_33182_LABEL_ITEMS).uses
+      .filter((u) => /^grapes$/i.test(u.crop)),
+  ), ids);
+
+  assertEquals([...new Set(grapes.map((u) => u.rates[0]?.value))].sort(), [2, 3]);
 });
