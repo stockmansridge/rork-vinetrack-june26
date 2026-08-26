@@ -440,9 +440,28 @@ struct SprayCalculatorView: View {
             // pre-Chemical-Intelligence records, and is a PER-HECTARE number:
             // it is never valid for a per-100 L line, and never consulted once
             // the record carries structured rates.
+            //
+            // D2 unit boundary. `SavedChemical.ratePerHa` is stored in the
+            // product's OWN DISPLAY unit — it is rendered straight beside
+            // `unit.rawValue` in Chemicals Management and Spray Presets, with no
+            // `fromBase` in between. Everything downstream of `rate` here is in
+            // BASE units (mL/g): `seedValue` is documented as base, and the
+            // label descriptor below re-derives its shown figure with
+            // `chemical.unit.fromBase(rate)`.
+            //
+            // Handing the display scalar over unconverted therefore dosed a
+            // 2 L/ha legacy product as 2 mL/ha — a 1000x under-dose on every
+            // litre- and kilogram-quoted pre-intelligence record, and silently,
+            // because 2 is a perfectly plausible number to read on the screen.
+            // Millilitre and gram products were unaffected, which is exactly why
+            // this survived: `toBase` is the identity for them.
+            //
+            // Structured rates are NOT converted here — they are already base,
+            // and converting them would be the same defect in the other
+            // direction.
             let legacyScalarRate: Double? = SprayRegisteredUseRates.hasStructuredRates(chemical)
                 ? nil
-                : (line.basis == .perHectare ? chemical.ratePerHa : nil)
+                : (line.basis == .perHectare ? chemical.unit.toBase(chemical.ratePerHa) : nil)
             let rate = line.overrideRate ?? seededRate ?? legacyScalarRate ?? 0
             let chosenAreaBasis = productAreaBasis[line.id]
             let basis: SprayProductRateBasis = {

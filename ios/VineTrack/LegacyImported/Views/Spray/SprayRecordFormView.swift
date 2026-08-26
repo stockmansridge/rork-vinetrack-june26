@@ -208,8 +208,20 @@ struct SprayRecordFormView: View {
         if let chosen {
             line.savedChemicalId = chosen.id
             line.name = chosen.name
+            // D2 unit boundary. `SavedChemical.ratePerHa` is a DISPLAY-unit
+            // number (2.5 for "2.5 L/ha"); `SprayChemical.ratePerHa` is BASE
+            // units, as the Rate/Ha field below proves by reading it through
+            // `unit.fromBase` and writing it back through `unit.toBase`.
+            //
+            // Copying one into the other unconverted seeded a 2.5 L/ha product
+            // as 2.5 mL/ha, so picking a saved chemical pre-filled a rate a
+            // thousand times too low on every litre/kilogram product.
+            //
+            // Converted with the SOURCE product's unit, because the figure is
+            // quoted in that product's unit — not in whatever unit the line
+            // happens to be carrying.
             if line.ratePerHa == 0, chosen.ratePerHa > 0 {
-                line.ratePerHa = chosen.ratePerHa
+                line.ratePerHa = chosen.unit.toBase(chosen.ratePerHa)
             }
         } else {
             line.savedChemicalId = nil
