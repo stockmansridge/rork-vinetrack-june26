@@ -196,6 +196,7 @@ import {
   projectGrapevineUses,
   selectLabelReferences,
 } from "./grapevine_label.ts";
+import { assignRateIds } from "./rate_identity.ts";
 import {
   createPostgrestSuggestionStore,
   SUGGESTION_CACHE_TTL_SECONDS,
@@ -636,6 +637,21 @@ function buildStructuredResponse(
 
   const registeredUses = normaliseRegisteredUses(parsed?.registered_uses);
   if (!registeredUses.length) unresolved.add("registered_uses");
+
+  // Stable registered-rate identity (Gate D1).
+  //
+  // Minted HERE, before the grapevine projection, so every downstream view of
+  // a row carries the identity the row itself was given. It is derived from
+  // the rate's meaning plus the locked product, never from array position or
+  // retrieval circumstances — a client can therefore persist an operator's
+  // chosen default and recover it after the label is extracted again.
+  //
+  // Additive only: no label value is read back, changed or reordered.
+  assignRateIds(registeredUses, {
+    country: registration?.country_code ?? null,
+    scheme: registration?.scheme ?? null,
+    registration_number: registration?.registration_number ?? null,
+  });
 
   // Grapevine-first projection (task §3, §5, §6). Other crops are RETAINED,
   // never discarded — they are real label content, just not the vineyard

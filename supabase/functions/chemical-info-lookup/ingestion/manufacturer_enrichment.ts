@@ -37,6 +37,7 @@ import {
   projectGrapevineUses,
   selectLabelReferences,
 } from "../grapevine_label.ts";
+import { applyRateIdentities } from "../rate_identity.ts";
 
 /** Everything the live path needs to prove what happened, and why. */
 export interface ManufacturerEnrichmentDiagnostics {
@@ -296,11 +297,20 @@ export function applyManufacturerEnrichment(
   // Practical rows only change when a source actually supplied some.
   if (result.source === "manufacturer_label" && result.uses.length > 0) {
     structured.registered_uses = result.uses;
+    // Enrichment REPLACES the register's rows wholesale, so the identities
+    // minted during `buildStructuredResponse` went with the rows they were
+    // stamped on. Re-minting here is what stops a manufacturer-sourced rate
+    // reaching a client with no id at all. Deterministic, so a row that
+    // survived unchanged keeps the identity it already had.
+    applyRateIdentities(structured);
     const grapevine = projectGrapevineUses(result.uses);
     structured.grapevine_uses = grapevine.grapevine_uses;
     structured.other_crop_uses = grapevine.other_crop_uses;
     structured.registered_for_grapevine = grapevine.registered_for_grapevine;
     structured.label_reference_rate_ranges = grapevine.label_reference_rate_ranges;
+    // The projection may copy rate objects rather than share them; stamping
+    // again is idempotent and guarantees every served view carries the id.
+    applyRateIdentities(structured);
     structured.label_rate_bases = Array.from(
       new Set(
         result.uses.flatMap((u) =>

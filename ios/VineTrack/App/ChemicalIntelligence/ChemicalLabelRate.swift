@@ -110,6 +110,26 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
         String(format: "%.6g", value)
     }
 
+    /// The server-minted stable identity for this registered rate (Gate D1).
+    ///
+    /// # Why iOS carries a value it does not compute
+    ///
+    /// The identity is minted by the shared backend contract from the rate's
+    /// meaning — locked product, crop, target, basis, unit, values, condition
+    /// — so iOS and the Portal receive the SAME id for the same registered
+    /// rate. Deriving it independently on each client is exactly how two
+    /// clients come to disagree about one product, so this is decoded and
+    /// re-encoded verbatim and never recomputed here.
+    ///
+    /// It must survive the round-trip: `registered_uses` is decoded on read
+    /// and written back on every save, so without this field iOS would strip
+    /// the id from every chemical an operator edited.
+    ///
+    /// `nil` on every rate stored before this existed, and on manually entered
+    /// rates that no register minted. Identity metadata only — it confers no
+    /// authority and changes no label value.
+    var rateId: String?
+
     /// What the label calls this rate, e.g. `"Low disease pressure"`.
     ///
     /// This is the CONDITION under which the rate applies — `"Dilute
@@ -145,8 +165,10 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
         maxValue: Double? = nil,
         unit: String = "",
         rawText: String? = nil,
-        conditionIsAmbiguous: Bool = false
+        conditionIsAmbiguous: Bool = false,
+        rateId: String? = nil
     ) {
+        self.rateId = rateId?.trimmedNonEmpty
         self.label = label.trimmingCharacters(in: .whitespacesAndNewlines)
         self.basis = basis
         self.value = value
@@ -164,6 +186,7 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
         case maxValue = "max_value"
         case rawText = "raw_text"
         case conditionIsAmbiguous = "condition_ambiguous"
+        case rateId = "rate_id"
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -176,6 +199,9 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
         maxValue = try c.decodeIfPresent(Double.self, forKey: .maxValue)
         unit = try c.decodeIfPresent(String.self, forKey: .unit) ?? ""
         rawText = try c.decodeIfPresent(String.self, forKey: .rawText)
+        // Additive and tolerant: a historical rate carries none, and a record
+        // without one must keep decoding exactly as it always did.
+        rateId = ((try? c.decodeIfPresent(String.self, forKey: .rateId)) ?? nil)?.trimmedNonEmpty
         // Additive and tolerant: absence means "the association is sound",
         // which is the correct reading for every record written before the
         // multi-rate contract existed.

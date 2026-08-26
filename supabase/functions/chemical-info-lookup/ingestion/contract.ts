@@ -157,6 +157,19 @@ export interface LabelDocumentDiscovery {
  * never invented for wordings the bounded grammar cannot parse.
  */
 export interface WireLabelRate {
+  /**
+   * Stable, deterministic identity for this registered rate (Gate D1).
+   *
+   * Minted by `rate_identity.ts` from the rate's MEANING — locked product,
+   * crop, target, basis, unit, values and condition — so the same semantic row
+   * always carries the same id across re-extraction, cache hits, array
+   * reordering and label reissues. Never a UUID.
+   *
+   * Identity metadata ONLY. It confers no authority and changes no label
+   * value. Optional because historical records were stored before it existed
+   * and must keep decoding untouched.
+   */
+  rate_id?: string;
   label: string; // what the label calls the rate ("Dilute spraying"), or ""
   basis:
     | "per_100_litres"
