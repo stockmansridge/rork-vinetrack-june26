@@ -68,8 +68,10 @@ export const MAX_RESEARCH_SUGGESTIONS = 5;
  *
  *   v1  Terra-only discovery (no escalation from candidate_discovery).
  *   v2  Bounded Terra -> Sol recall escalation, merged candidate sets.
+ *   v3  Single capable discovery pass for approximate names (no serial
+ *       Terra -> Sol), 24-hour TTL.
  */
-export const CANDIDATE_DISCOVERY_CACHE_VERSION = "candidate-discovery-v2";
+export const CANDIDATE_DISCOVERY_CACHE_VERSION = "candidate-discovery-v3";
 
 /** Wire `source` value for a suggestion the register confirmed. */
 export const VALIDATED_SUGGESTION_SOURCE = "research_validated";
@@ -267,8 +269,29 @@ export interface SharedSuggestionStore {
   ): Promise<void>;
 }
 
-/** How long a shared suggestion set stays stable. */
-export const SUGGESTION_CACHE_TTL_SECONDS = 60 * 60;
+/**
+ * How long a shared suggestion set stays stable.
+ *
+ * # Why an hour was the wrong order of magnitude
+ *
+ * The one-hour TTL was chosen when this cache existed only to stop two
+ * clients racing two model passes and reaching two different products. For
+ * that job an hour is plenty.
+ *
+ * But the rows it stores are REGISTER-VALIDATED identities: every registration
+ * number in them was read back from the APVMA register before it was written.
+ * Registered product identities do not change hourly -- they change when a
+ * registration is granted, renewed or cancelled, on a timescale of months.
+ * Expiring them every hour meant the next operator to type an approximate name
+ * paid the full discovery cost again to be told what the register had already
+ * confirmed.
+ *
+ * 24 hours keeps the cache honest about a genuinely slow-moving fact while
+ * bounding how long a cancelled registration could linger. The version segment
+ * in the key remains the real invalidation lever: an algorithm change retires
+ * every entry immediately, without waiting for any TTL.
+ */
+export const SUGGESTION_CACHE_TTL_SECONDS = 24 * 60 * 60;
 
 /**
  * PostgREST-backed shared store.

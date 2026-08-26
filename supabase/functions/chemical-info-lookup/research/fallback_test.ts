@@ -99,10 +99,18 @@ Deno.test("§39.3 Sol cannot escalate again — the second attempt is terminal",
 // product they meant", and no alternative could ever be offered because none
 // was ever discovered.
 //
-// Discovery may now escalate, but only into that specific hole. These two
-// tests pin BOTH halves of the trade: it buys Sol when there is nothing to
-// choose from, and it stays cheap in every other case.
-Deno.test("Stage A: discovery escalates when Terra found nothing to choose from", async () => {
+// Stage C changed WHEN that capability is bought, not whether it is.
+//
+// Stage A discovered the need for the capable model by spending a whole Terra
+// pass and then escalating, which cost two serial frontier requests before a
+// single row could be drawn. The escalation CONDITION turned out to be almost
+// entirely predictable from the query itself, so it is now decided up front:
+// an approximate name the register could not answer goes straight to the
+// capable model, once.
+//
+// These two tests pin both halves of the trade: the capable model for a fuzzy
+// name, and the cheap model whenever the answer is already known.
+Deno.test("Stage C: a fuzzy discovery query runs ONE capable pass, never two", async () => {
   const thin = cloneResearch();
   thin.registration_candidates = [];
 
@@ -118,11 +126,16 @@ Deno.test("Stage A: discovery escalates when Terra found nothing to choose from"
     registerResolved: false,
   });
 
-  assertEquals(calls.length, 2, "zero candidates is not a search result");
-  assertEquals(outcome.telemetry.escalated, true);
+  // Even a pass that finds NOTHING does not buy a second frontier request:
+  // the strongest model has already answered, so there is nowhere to escalate
+  // to and a retry would only repeat the same question at the same cost.
+  assertEquals(calls.length, 1, "one model request, whatever it returns");
+  assertEquals(calls[0].body.model, "gpt-5.6-sol");
+  assertEquals(outcome.telemetry.discovery_pass, "single_capable_pass");
+  assertEquals(outcome.telemetry.escalated, false);
 });
 
-Deno.test("Stage A: discovery does NOT escalate once the register has answered", async () => {
+Deno.test("Stage C: discovery stays CHEAP once the register has answered", async () => {
   const thin = cloneResearch();
   thin.registration_candidates = [];
 
@@ -136,7 +149,28 @@ Deno.test("Stage A: discovery does NOT escalate once the register has answered",
   });
 
   assertEquals(calls.length, 1, "the authoritative source already answered");
+  assertEquals(calls[0].body.model, "gpt-5.6-terra", "the CHEAP model");
+  assertEquals(outcome.telemetry.discovery_pass, "fast_pass");
   assertEquals(outcome.telemetry.escalated, false);
+});
+
+Deno.test("Stage C: a bare registration number stays on the cheap model", async () => {
+  const thin = cloneResearch();
+  thin.registration_candidates = [];
+
+  const { fn, calls } = fakeFetch([jsonResponse(responsesEnvelope(thin))]);
+
+  const outcome = await runChemicalResearch({
+    ...enrichment,
+    query: "33182",
+    mode: "candidate_discovery",
+    fetchFn: fn,
+    registerResolved: false,
+  });
+
+  assertEquals(calls.length, 1);
+  assertEquals(calls[0].body.model, "gpt-5.6-terra");
+  assertEquals(outcome.telemetry.discovery_pass, "fast_pass");
 });
 
 Deno.test("§8 a register-resolved lookup does not spend Sol on a vague research result", async () => {

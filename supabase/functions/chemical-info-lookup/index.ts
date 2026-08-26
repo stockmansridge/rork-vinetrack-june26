@@ -163,6 +163,14 @@ import {
   applyManufacturerEnrichment,
   enrichFromManufacturerLabel,
 } from "./ingestion/manufacturer_enrichment.ts";
+import {
+  cachedEnrichmentIsUsable,
+  createPostgrestEnrichmentCache,
+  ENRICHMENT_CACHE_TTL_SECONDS,
+  ENRICHMENT_CACHE_VERSION,
+  enrichmentCacheKey,
+} from "./ingestion/enrichment_cache.ts";
+import { LookupTimer, structuredOnlyStagesEntered } from "./timings.ts";
 import { runSeedApply } from "./ingestion/seed_apply.ts";
 import {
   buildResolverAttempts,
@@ -1204,6 +1212,17 @@ Deno.serve(async (req: Request) => {
   // timeout or a research outage becomes visible to a parity investigation.
   const degradedStages: string[] = [];
 
+  /**
+   * Per-stage stopwatch (Stage C §H).
+   *
+   * A total duration cannot distinguish a slow register from a slow model from
+   * a slow registrant website, so every latency investigation used to begin by
+   * guessing which stage to instrument next. It also cannot answer the
+   * question Stage C exists to settle: whether a SEARCH entered a stage only a
+   * structured lookup should reach.
+   */
+  const timer = new LookupTimer();
+
   /** Assemble + emit the envelope, and attach it to the response body. */
   const withDiagnostics = <T extends Record<string, unknown>>(
     payload: T,
@@ -1229,8 +1248,25 @@ Deno.serve(async (req: Request) => {
       startedAt: requestStartedAt,
       degraded: degradedStages,
     });
-    console.log(diagnosticsLog(diagnostics));
-    return { ...payload, diagnostics };
+    const timings = timer.snapshot();
+    // The boundary guarantee, as DATA rather than something a reader has to
+    // re-derive from the call graph. Empty is the contract for a search.
+    const trespass = action === "search" ? structuredOnlyStagesEntered(timer) : [];
+    if (trespass.length) {
+      degradedStages.push("search_entered_enrichment_stage");
+      console.error(JSON.stringify({
+        evt: "search_stage_boundary_violation",
+        stages: trespass,
+      }));
+    }
+    const envelope = {
+      ...diagnostics,
+      timings: timings.stages,
+      duration_ms: timings.total_ms,
+      structured_only_stages_entered: trespass,
+    };
+    console.log(diagnosticsLog(envelope as typeof diagnostics));
+    return { ...payload, diagnostics: envelope };
   };
 
   // Lookup jurisdiction — resolved ONCE, from the request's country value
@@ -2184,16 +2220,84 @@ Deno.serve(async (req: Request) => {
       //     Fail-soft throughout: a registrant site that is down, slow, or
       //     serving a scanned label leaves the register result exactly as it
       //     was.
-      if (structured && projection?.manufacturerLabelCandidate) {
+      //
+      //     Stage C: the whole block is fronted by a cross-isolate cache keyed
+      //     on the EXACT registration. Enrichment is the most expensive thing
+      //     this function does -- a research call, a page fetch, a PDF
+      //     download and a text extraction -- and until now its result lived
+      //     only in the current response, so every operator opening the same
+      //     registered chemical paid the full cost again.
+      const enrichmentCache = createPostgrestEnrichmentCache(
+        Deno.env.get("SUPABASE_URL") ?? "",
+        MASTER_SERVICE_KEY,
+        fetch,
+      );
+      const enrichmentKey = resolved
+        ? enrichmentCacheKey(countryCode, resolved.scheme, resolved.registration_number)
+        : null;
+
+      let servedFromEnrichmentCache = false;
+      if (structured && enrichmentCache && enrichmentKey) {
+        const cached = await enrichmentCache.read(enrichmentKey);
+        if (cachedEnrichmentIsUsable(cached) && cached) {
+          // A cached reading of a public document is exactly equivalent to
+          // having just fetched it -- it confers no authority of its own, and
+          // it never touches identity, which the register has already fixed.
+          applyManufacturerEnrichment(
+            structured,
+            {
+              uses: cached.registered_uses,
+              source: "manufacturer_label",
+              fetchedUrl: cached.manufacturer_label_url,
+              withholdingPeriodDays: cached.withholding_period_days,
+              diagnostics: {
+                manufacturer_label_fetch: "skipped",
+                manufacturer_label_fetch_outcome: "skipped",
+                manufacturer_label_fetch_reason: "served from the enrichment cache",
+                manufacturer_label_extract: "skipped",
+                manufacturer_label_bytes: null,
+                manufacturer_label_sha256: cached.source_fingerprint,
+                label_rows_found: cached.registered_uses.length,
+                grapevine_rows_found: 0,
+                grapevine_rates_found: 0,
+                withholding_period_days: cached.withholding_period_days,
+                practical_source: "manufacturer_label",
+                practical_source_reason: "cached manufacturer label reading",
+              },
+            },
+            {
+              manufacturerLabelUrl: cached.manufacturer_label_url,
+              manufacturerProductUrl: cached.manufacturer_product_url,
+            },
+          );
+          servedFromEnrichmentCache = true;
+          stageB.enrichment_cache = "hit";
+          stageB.manufacturer_label_fetch = "skipped";
+          stageB.practical_source = "manufacturer_label";
+          stageB.selected_manufacturer_label = cached.manufacturer_label_url;
+          stageB.selected_manufacturer_product = cached.manufacturer_product_url;
+        } else {
+          stageB.enrichment_cache = "miss";
+        }
+      }
+
+      if (
+        structured && !servedFromEnrichmentCache &&
+        projection?.manufacturerLabelCandidate
+      ) {
         try {
-          const enrichment = await enrichFromManufacturerLabel({
-            deps,
-            manufacturerLabelUrl: projection.manufacturerLabelCandidate.url,
-            sourcePageUrl: manufacturerSourcePage,
-            regulatorUses: Array.isArray(structured.registered_uses)
-              ? structured.registered_uses
-              : [],
-          });
+          const enrichment = await timer.time(
+            "pdf_download",
+            () =>
+              enrichFromManufacturerLabel({
+                deps,
+                manufacturerLabelUrl: projection!.manufacturerLabelCandidate!.url,
+                sourcePageUrl: manufacturerSourcePage,
+                regulatorUses: Array.isArray(structured.registered_uses)
+                  ? structured.registered_uses
+                  : [],
+              }),
+          );
           applyManufacturerEnrichment(structured, enrichment, {
             manufacturerLabelUrl: projection.manufacturerLabelCandidate.url,
             manufacturerProductUrl: projection.productPageCandidate?.url ?? null,
@@ -2201,6 +2305,39 @@ Deno.serve(async (req: Request) => {
           Object.assign(stageB, enrichment.diagnostics);
           if (enrichment.diagnostics.manufacturer_label_fetch === "failure") {
             degradedStages.push("manufacturer_label_fetch_failed");
+          }
+
+          // Cache ONLY a reading that actually carries rates. Caching a miss
+          // would make "we found nothing" sticky for a week, which is the
+          // opposite of what a lookup with no rates should do.
+          if (
+            enrichmentCache && enrichmentKey && resolved &&
+            enrichment.source === "manufacturer_label" &&
+            cachedEnrichmentIsUsable({
+              registered_uses: enrichment.uses,
+            } as never)
+          ) {
+            await enrichmentCache.write(
+              enrichmentKey,
+              {
+                countryCode,
+                scheme: resolved.scheme,
+                registrationNumber: resolved.registration_number,
+              },
+              {
+                manufacturer_product_url: structured.label_urls?.product_url ?? null,
+                manufacturer_label_url: structured.label_urls?.manufacturer_label_url ?? null,
+                regulator_label_url: structured.label_urls?.regulator_label_url ?? null,
+                registered_uses: enrichment.uses,
+                withholding_period_days: enrichment.withholdingPeriodDays,
+                re_entry_period_hours: null,
+                practical_source: enrichment.source,
+                source_fingerprint: enrichment.diagnostics.manufacturer_label_sha256,
+                parser_version: ENRICHMENT_CACHE_VERSION,
+                refreshed_at: new Date().toISOString(),
+              },
+              ENRICHMENT_CACHE_TTL_SECONDS,
+            );
           }
         } catch (err) {
           // Contained: manufacturer enrichment can never damage a register

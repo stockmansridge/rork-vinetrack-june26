@@ -255,6 +255,94 @@ export function buildResearchPrompt(
   return { instructions, input };
 }
 
+// ---------------------------------------------------------------------------
+// Discovery strategy (Stage C)
+// ---------------------------------------------------------------------------
+
+/** How a candidate-discovery pass was planned. */
+export type DiscoveryPassKind =
+  /** A cheap pass: the query is exact enough that the fast model suffices. */
+  | "fast_pass"
+  /** ONE capable pass: an approximate name, answered in a single request. */
+  | "single_capable_pass";
+
+export interface DiscoveryPlan {
+  kind: DiscoveryPassKind;
+  model: string;
+  effort: ReasoningEffort;
+  reason: string;
+}
+
+/**
+ * Choose the discovery strategy BEFORE any model runs.
+ *
+ * # Why the sequential Terra -> Sol escalation had to go for fuzzy search
+ *
+ * Stage A made discovery escalate when Terra returned too few candidates, and
+ * that fixed a real recall defect: one candidate is not a choice. But the
+ * mechanism was DISCOVERY-TIME escalation, which means the operator pays for
+ * Terra's full pass, waits for it to finish, and only then starts waiting for
+ * Sol. For an approximate name -- the exact case where Terra is least likely
+ * to be sufficient -- that is two serial frontier requests before a single row
+ * can be drawn, and it is how a product search became a multi-minute
+ * operation that ended in a gateway timeout.
+ *
+ * The insight is that the escalation condition was almost entirely PREDICTABLE
+ * from the query itself. A bare registration number never needs Sol. A query
+ * the register already answered never needs Sol. Everything else -- an
+ * approximate, misspelled or partial product name with no register answer --
+ * is precisely the shape that escalated in Stage A anyway. So the decision is
+ * made UP FRONT and paid for ONCE, instead of being discovered by spending a
+ * whole Terra pass first.
+ *
+ * Recall is unchanged: the capable model still runs for the queries that need
+ * it, and it now runs sooner. What disappears is the serial Terra pass whose
+ * only remaining purpose was to prove that Sol was needed.
+ */
+export function planCandidateDiscovery(input: {
+  query: string;
+  registerResolved: boolean;
+  config: ResearchConfig;
+}): DiscoveryPlan {
+  if (looksLikeProductCode(input.query)) {
+    return {
+      kind: "fast_pass",
+      model: input.config.model,
+      effort: "low",
+      reason:
+        "a bare registration number is a register question; research only has " +
+        "to describe what the register already identified",
+    };
+  }
+  if (input.registerResolved) {
+    return {
+      kind: "fast_pass",
+      model: input.config.model,
+      effort: "low",
+      reason:
+        "the official register already resolved this query, so discovery is " +
+        "supplementing a known answer rather than searching for one",
+    };
+  }
+  return {
+    kind: "single_capable_pass",
+    model: input.config.fallbackModel,
+    effort: "low",
+    reason:
+      "an approximate name the register could not answer: the capable model " +
+      "runs ONCE, immediately, instead of after a Terra pass whose only " +
+      "purpose would be to prove it was needed",
+  };
+}
+
+/** Discovery that already ran the most capable model has nowhere to escalate. */
+const NO_DISCOVERY_ESCALATION: EscalationDecision = {
+  escalate: false,
+  reasons: [],
+  terminal: true,
+  summary: "single capable discovery pass — no stronger model to escalate to",
+};
+
 /** The products a completed pass established, for the recall prompt. */
 function knownCandidatesFrom(
   research: ChemicalResearchResult | null,
@@ -313,6 +401,8 @@ export interface ResearchTelemetry {
   merged_candidate_numbers: string[];
   /** Candidates the fallback contributed that the primary had not found. */
   candidates_added_by_fallback: number;
+  /** Which discovery strategy ran. Null for enrichment. */
+  discovery_pass: DiscoveryPassKind | null;
   total_duration_ms: number;
 }
 
@@ -347,6 +437,7 @@ export function researchLog(t: ResearchTelemetry): string {
     `reasons=${t.escalation_reasons.join("|") || "none"}`,
     `merged_candidates=[${t.merged_candidate_numbers.join(",")}]`,
     `added_by_sol=${t.candidates_added_by_fallback}`,
+    `discovery_pass=${t.discovery_pass ?? "n/a"}`,
     `websearch_calls=${t.attempts.reduce((n, a) => n + a.web_search_calls, 0)}`,
     `sources=${t.attempts.reduce((n, a) => n + a.sources_consulted, 0)}`,
     `in_tok=${t.attempts.reduce((n, a) => n + (a.input_tokens ?? 0), 0)}`,
@@ -624,14 +715,26 @@ export async function runChemicalResearch(
     escalation_reasons: [],
     merged_candidate_numbers: [],
     candidates_added_by_fallback: 0,
+    discovery_pass: null,
     total_duration_ms: 0,
   };
 
   // Discovery is latency-sensitive, so it runs at low effort; enrichment is
   // the deep pass and gets medium. Neither uses high/xhigh/max by default.
-  const primaryEffort: ReasoningEffort = opts.mode === "candidate_discovery" ? "low" : "medium";
+  const discoveryPlan = opts.mode === "candidate_discovery"
+    ? planCandidateDiscovery({
+      query: opts.query,
+      registerResolved: opts.registerResolved,
+      config: opts.config,
+    })
+    : null;
+  telemetry.discovery_pass = discoveryPlan?.kind ?? null;
 
-  const primary = await runAttempt(opts, opts.config.model, "primary", primaryEffort, []);
+  const primaryModel = discoveryPlan?.model ?? opts.config.model;
+  const primaryEffort: ReasoningEffort = discoveryPlan?.effort ??
+    (opts.mode === "candidate_discovery" ? "low" : "medium");
+
+  const primary = await runAttempt(opts, primaryModel, "primary", primaryEffort, []);
   telemetry.attempts.push(primary.telemetry);
 
   // Two modes ask two different questions, so they get two different rules:
@@ -642,13 +745,19 @@ export async function runChemicalResearch(
   // Discovery used to be barred from escalating outright. That protected
   // latency and destroyed recall: one Terra candidate ended discovery, and no
   // amount of downstream ranking can order an alternative it was never given.
+  //
+  // Stage C: a pass that ALREADY ran the most capable model has nowhere to
+  // escalate to. Running the recall rule there could only ever produce a
+  // second serial call to the model that just answered.
   const isDiscovery = opts.mode === "candidate_discovery";
   const escalation = isDiscovery
-    ? decideCandidateDiscoveryEscalation({
-      research: primary.research,
-      registerResolved: opts.registerResolved,
-      isProductCodeQuery: looksLikeProductCode(opts.query),
-    })
+    ? (discoveryPlan?.kind === "single_capable_pass"
+      ? NO_DISCOVERY_ESCALATION
+      : decideCandidateDiscoveryEscalation({
+        research: primary.research,
+        registerResolved: opts.registerResolved,
+        isProductCodeQuery: looksLikeProductCode(opts.query),
+      }))
     : decideEscalation({
       research: primary.research,
       registerResolved: opts.registerResolved,

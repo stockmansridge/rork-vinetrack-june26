@@ -153,29 +153,29 @@ function fakeRegister(): {
 // §6 — THE regression: one Terra candidate must not end discovery
 // ===========================================================================
 
-Deno.test("A1: one Terra candidate escalates, and Sol is called exactly once", async () => {
+Deno.test("A1: an approximate name buys ONE capable pass, not two serial ones", async () => {
+  // Stage C. The recall guarantee is unchanged -- an approximate name still
+  // gets the capable model -- but it is bought UP FRONT instead of being
+  // discovered by spending a whole Terra pass first. Two serial frontier
+  // requests before the first row could be drawn is what turned a product
+  // search into a multi-minute operation that ended in a gateway timeout.
   const { fn, calls } = fakeFetch([
-    jsonResponse(responsesEnvelope(terraOnly())),
     jsonResponse(responsesEnvelope(solWithAlternative())),
   ]);
 
   const outcome = await runChemicalResearch({ ...discovery, fetchFn: fn });
 
-  // 1. It escalated, and for the RECALL reason specifically.
-  assertEquals(outcome.telemetry.escalated, true);
-  assertEquals(outcome.telemetry.escalation_reasons, ["insufficient_candidate_recall"]);
+  assertEquals(calls.length, 1, "exactly one model request for a fuzzy search");
+  assertEquals(calls[0].body.model, "gpt-5.6-sol", "and it is the capable model");
+  assertEquals(outcome.telemetry.discovery_pass, "single_capable_pass");
 
-  // 2. Exactly one Sol attempt. Escalation is bounded, never a loop.
-  assertEquals(calls.length, 2, "Terra once, Sol once, and no more");
-  assertEquals(calls[0].body.model, "gpt-5.6-terra");
-  assertEquals(calls[1].body.model, "gpt-5.6-sol");
-  assertEquals(outcome.escalation?.terminal, true, "Sol cannot escalate again");
+  // Nothing left to escalate TO: the strongest model already answered.
+  assertEquals(outcome.telemetry.escalated, false);
+  assertEquals(outcome.escalation?.terminal, true);
 });
 
-Deno.test("A2: the merged set carries BOTH products, each exactly once", async () => {
+Deno.test("A2: the discovered set carries BOTH products, each exactly once", async () => {
   const { fn } = fakeFetch([
-    jsonResponse(responsesEnvelope(terraOnly())),
-    // Sol repeats Terra's product as well as finding a new one.
     jsonResponse(responsesEnvelope(solWithAlternative())),
   ]);
 
@@ -183,36 +183,35 @@ Deno.test("A2: the merged set carries BOTH products, each exactly once", async (
   const numbers = outcome.research?.registration_candidates
     .map((c) => c.number) ?? [];
 
-  // 3. Both present. 5. The duplicate 50067 collapsed on exact identity.
+  // Both present, neither doubled.
   assertEquals(numbers.sort(), [VICOL.number, SYNERTROL.number].sort());
   assertEquals(
     numbers.filter((n) => n === SYNERTROL.number).length,
     1,
-    "Sol repeating Terra's product must not double it",
+    "a repeated product must not double",
   );
-  assertEquals(outcome.telemetry.candidates_added_by_fallback, 1);
   assertEquals(outcome.telemetry.merged_candidate_numbers.length, 2);
 });
 
-Deno.test("A3: Terra's candidate SURVIVES the merge — Sol adds, never replaces", async () => {
-  // Sol finds only the alternative and never mentions Terra's product. If the
-  // orchestrator replaced instead of merging, recall would go from one product
-  // to one product and the escalation would have achieved nothing.
+Deno.test("A3: the capable pass reaches a product no obvious name match would", async () => {
+  // The recall property that actually matters, stated without reference to
+  // which model ran: a query whose words appear in NEITHER registered name
+  // still reaches the registered product the operator meant. Nothing teaches
+  // the algorithm that answer -- the stub returns it, and what is asserted is
+  // that the pipeline carries it through intact.
   const { fn } = fakeFetch([
-    jsonResponse(responsesEnvelope(terraOnly())),
     jsonResponse(responsesEnvelope(discoveryPayload(VICOL.name, [VICOL]))),
   ]);
 
   const outcome = await runChemicalResearch({ ...discovery, fetchFn: fn });
   const numbers = outcome.research?.registration_candidates.map((c) => c.number) ?? [];
 
-  assert(numbers.includes(SYNERTROL.number), "Terra's finding is not discarded");
-  assert(numbers.includes(VICOL.number), "Sol's finding is added");
+  assert(numbers.includes(VICOL.number));
+  assertEquals(outcome.telemetry.merged_candidate_numbers, [VICOL.number]);
 });
 
 Deno.test("A4: validation still runs, and the answer stays a USER choice", async () => {
   const { fn } = fakeFetch([
-    jsonResponse(responsesEnvelope(terraOnly())),
     jsonResponse(responsesEnvelope(solWithAlternative())),
   ]);
 
@@ -253,24 +252,20 @@ Deno.test("A4: validation still runs, and the answer stays a USER choice", async
   assertEquals(ranked.results.length, 2, "the operator sees both options");
 });
 
-Deno.test("A5: the recall prompt asks for MORE without naming a wanted product", async () => {
+Deno.test("A5: the discovery prompt never names the wanted product", async () => {
+  // What keeps every recall assertion honest: the pipeline is never handed the
+  // answer it is meant to find. It searches on the operator's words alone.
   const { fn, calls } = fakeFetch([
-    jsonResponse(responsesEnvelope(terraOnly())),
     jsonResponse(responsesEnvelope(solWithAlternative())),
   ]);
 
   await runChemicalResearch({ ...discovery, fetchFn: fn });
-  const solInput = String(calls[1].body.input);
+  const input = String(calls[0].body.input);
 
-  // Sol is told what is already known, and asked to widen.
-  assert(solInput.includes(SYNERTROL.name), "Sol is told what Terra found");
-  assert(solInput.includes(SYNERTROL.number), "including its registration");
-  assert(solInput.includes("ADDITIONAL"), "and asked for more");
-
-  // But never told the answer. This is what keeps the test honest: it proves
-  // the algorithm can DISCOVER alternatives, not that it was handed one.
-  assert(!solInput.includes(VICOL.name), "the expected product is never named");
-  assert(!solInput.includes(VICOL.number), "nor its registration number");
+  assert(input.includes(QUERY), "the operator's own words are the search");
+  assert(!input.includes(VICOL.name), "the expected product is never named");
+  assert(!input.includes(VICOL.number), "nor its registration number");
+  assert(!input.includes(SYNERTROL.number), "nor any other answer");
 });
 
 // ===========================================================================
@@ -351,24 +346,20 @@ Deno.test("B3: the escalation rule is exactly 'fewer than two, approximate name'
   assertEquals(MIN_DISCOVERY_CANDIDATES, 2);
 });
 
-Deno.test("B4: a failed Sol call leaves Terra's candidate intact", async () => {
-  // Escalation is an ENRICHMENT of discovery. If Sol errors, the operator must
-  // end up exactly where they would have been, never worse off.
-  const { fn, calls } = fakeFetch([
-    jsonResponse(responsesEnvelope(terraOnly())),
+Deno.test("B4: a failed discovery pass degrades, and never throws", async () => {
+  // Discovery is ONE STAGE of search, not search itself. A provider outage
+  // must return "no research" so the register candidates already in hand are
+  // still served -- an exception escaping here reached the outer handler as a
+  // 502 and destroyed the part of the answer that was already correct.
+  const { fn } = fakeFetch([
     jsonResponse({ error: { message: "upstream exploded" } }, 500),
     jsonResponse({ error: { message: "upstream exploded" } }, 500),
   ]);
 
   const outcome = await runChemicalResearch({ ...discovery, fetchFn: fn });
 
-  assert(calls.length >= 2);
-  assertEquals(outcome.telemetry.escalated, true);
-  assertEquals(
-    outcome.research?.registration_candidates.map((c) => c.number),
-    [SYNERTROL.number],
-    "Terra's finding survives Sol failing",
-  );
+  assertEquals(outcome.research, null);
+  assert(outcome.error, "the failure is reported, not swallowed silently");
 });
 
 // ===========================================================================
@@ -429,7 +420,14 @@ Deno.test("D1: the live v1 production key is NOT readable by the new algorithm",
     "a deploy must not be masked by the cached result that demonstrates the bug",
   );
   assert(nowKey.includes(CANDIDATE_DISCOVERY_CACHE_VERSION));
-  assertEquals(nowKey, "AU::candidate-discovery-v2::hortitrol winter oil");
+  assertEquals(
+    nowKey,
+    `AU::${CANDIDATE_DISCOVERY_CACHE_VERSION}::hortitrol winter oil`,
+  );
+  // EVERY superseded generation stays unreadable, not just the first.
+  for (const old of ["candidate-discovery-v1", "candidate-discovery-v2"]) {
+    assert(!nowKey.includes(old), `${old} must not be addressable`);
+  }
 });
 
 Deno.test("D2: the versioned key still normalises and still scopes by country", () => {
@@ -446,9 +444,8 @@ Deno.test("D2: the versioned key still normalises and still scopes by country", 
 // §5 — diagnostics must be able to prove what happened
 // ===========================================================================
 
-Deno.test("E1: the telemetry line proves the whole escalation decision", async () => {
+Deno.test("E1: the telemetry line proves which discovery strategy ran", async () => {
   const { fn } = fakeFetch([
-    jsonResponse(responsesEnvelope(terraOnly())),
     jsonResponse(responsesEnvelope(solWithAlternative())),
   ]);
 
@@ -456,21 +453,17 @@ Deno.test("E1: the telemetry line proves the whole escalation decision", async (
   const line = researchLog(outcome.telemetry);
 
   assert(line.includes("mode=candidate_discovery"));
-  assert(line.includes("primary=gpt-5.6-terra"));
-  assert(line.includes("primary_candidates=1"), "why it escalated");
-  assert(line.includes("escalated=true"));
-  assert(line.includes("reasons=insufficient_candidate_recall"));
-  assert(line.includes("sol=gpt-5.6-sol"));
-  assert(line.includes("sol_candidates=2"));
+  assert(line.includes("discovery_pass=single_capable_pass"));
+  assert(line.includes("primary=gpt-5.6-sol"), "the capable model ran first");
+  assert(line.includes("primary_candidates=2"));
+  assert(line.includes("escalated=false"), "no serial second frontier call");
+  assert(line.includes("sol=no"), "there is no separate fallback attempt");
   assert(line.includes(`merged_candidates=[${SYNERTROL.number},${VICOL.number}]`));
-  assert(line.includes("added_by_sol=1"));
 
-  // Per-attempt counts are individually inspectable.
-  const [primary, fallback] = outcome.telemetry.attempts;
-  assertEquals(primary.candidate_count, 1);
+  assertEquals(outcome.telemetry.attempts.length, 1, "ONE model request");
+  const [primary] = outcome.telemetry.attempts;
+  assertEquals(primary.candidate_count, 2);
   assertEquals(primary.role, "primary");
-  assertEquals(fallback.candidate_count, 2);
-  assertEquals(fallback.role, "fallback");
 });
 
 Deno.test("E2: a NON-escalated discovery still reports what the operator got", async () => {
