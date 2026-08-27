@@ -31,7 +31,7 @@
 
 import { assert, assertEquals } from "jsr:@std/assert@1";
 
-import { classifyUrl } from "./classify.ts";
+import { classifyUrl, isForeignRegulatorHost } from "./classify.ts";
 import {
   inspectCandidateProductPages,
   inspectProductPage,
@@ -389,33 +389,182 @@ Deno.test("§8 a foreign regulator host earns no authority, and hosts no label",
   assertEquals(pdf.isInspectableProductPage, false);
 });
 
-Deno.test(
-  "§8 KNOWN GAP: a foreign regulator page is READABLE, and this fix raises its priority",
-  () => {
-    // Documented, not asserted as desirable.
-    //
-    // `trustFor` maps a foreign regulator to `unknown`, and
-    // `isInspectableProductPage` admits `unknown` when the URL is page-shaped.
-    // So such a page was ALREADY fetchable before this change, as `other`.
-    // What changed is its position in the queue: `/product_detail` is now
-    // RECOGNISED, so it sorts into priority 1 rather than priority 2.
-    //
-    // This test exists so the behaviour is visible in the suite rather than
-    // discovered later. Narrowing it is a change to the trust model and is
-    // deliberately NOT made here — it is reported for a separate decision.
-    const before = classifyUrl("https://acvm.mpi.govt.nz/some/other/page", "AU");
-    assertEquals(before.kind, "other");
-    assertEquals(before.isInspectableProductPage, true, "pre-existing: already readable");
+// ---------------------------------------------------------------------------
+// §9 — the jurisdiction boundary: a foreign regulator is never inspectable
+//
+// The tests in §1–§8 exposed this. `trustFor` maps a foreign regulator to
+// `unknown` (correct: it has no AUTHORITY here), and unknown hosts are
+// deliberately readable so an unlisted registrant like Vicchem can be
+// discovered (also correct). Composed, those two rules let another country's
+// government register into the unknown-host manufacturer-label earning path.
+//
+// The fix refuses it on IDENTITY, not on URL shape, and not by inventing a new
+// trust tier. The `unknown` tier and the whole public `SourceTrustTier` enum
+// are unchanged.
+// ---------------------------------------------------------------------------
 
-    const now = classifyUrl("https://acvm.mpi.govt.nz/product_detail?pn=1", "AU");
-    assertEquals(now.kind, "product_page");
-    assertEquals(now.isInspectableProductPage, true);
-    // The containment that still holds: it can never be SERVED as the
-    // manufacturer product page, and never carries label authority.
-    assertEquals(now.isProductPageCandidate, false);
-    assertEquals(now.isOfficialLabelCandidate, false);
-  },
-);
+/** Every host in the registry, by the country that owns it. */
+const AU_REGULATOR_HOSTS = [
+  "apvma.gov.au",
+  "elabels.apvma.gov.au",
+  "portal.apvma.gov.au",
+  "data.gov.au",
+  "legislation.gov.au",
+  "agriculture.gov.au",
+];
+const NZ_REGULATOR_HOSTS = [
+  "acvm.mpi.govt.nz",
+  "eatsafe.nzfsa.govt.nz",
+  "mpi.govt.nz",
+  "epa.govt.nz",
+  "legislation.govt.nz",
+  "nzfsa.govt.nz",
+];
+
+Deno.test("§9A AU lookup: every NZ regulator host is non-inspectable, whatever the path", () => {
+  for (const host of NZ_REGULATOR_HOSTS) {
+    assertEquals(isForeignRegulatorHost(host, "AU"), true, host);
+    for (
+      const path of [
+        "/product_detail?pn=19200",
+        "/product-details/winter-oil",
+        "/products/winter-oil",
+        "/product/winter-oil",
+        "/some/other/page",
+        "/portfolio/oils",
+      ]
+    ) {
+      const c = classifyUrl(`https://${host}${path}`, "AU");
+      assertEquals(c.isInspectableProductPage, false, `${host}${path}`);
+      assertEquals(c.isProductPageCandidate, false, `${host}${path}`);
+      assertEquals(c.isOfficialLabelCandidate, false, `${host}${path}`);
+    }
+  }
+});
+
+Deno.test("§9B NZ lookup: every AU regulator host is non-inspectable, whatever the path", () => {
+  for (const host of AU_REGULATOR_HOSTS) {
+    assertEquals(isForeignRegulatorHost(host, "NZ"), true, host);
+    for (const path of ["/product_detail?pn=1", "/product-details/x", "/products/x", "/page"]) {
+      const c = classifyUrl(`https://${host}${path}`, "NZ");
+      assertEquals(c.isInspectableProductPage, false, `${host}${path}`);
+      assertEquals(c.isProductPageCandidate, false, `${host}${path}`);
+      assertEquals(c.isOfficialLabelCandidate, false, `${host}${path}`);
+    }
+  }
+});
+
+Deno.test("§9C the underscore recognition does NOT reopen the boundary", () => {
+  // The URL is still RECOGNISED as page-shaped — the classifier does not lie
+  // about what the path looks like. It is refused on host identity instead,
+  // which is why no future path pattern can reopen this.
+  const c = classifyUrl("https://acvm.mpi.govt.nz/product_detail?pn=19200", "AU");
+  assertEquals(c.kind, "product_page");
+  assertEquals(c.trust, "unknown");
+  assertEquals(c.isInspectableProductPage, false);
+  assert(
+    c.reason.includes("NZ regulator host carries no authority for AU"),
+    `reason should name the jurisdiction: ${c.reason}`,
+  );
+});
+
+Deno.test("§9D a foreign regulator consumes ZERO fetch attempts", async () => {
+  const foreign = "https://acvm.mpi.govt.nz/product_detail?pn=19200";
+  const { fetchFn, calls } = fetchByUrl({ [VICOL_PAGE]: VICOL_HTML });
+  const { pages } = await inspectCandidateProductPages(
+    { fetchFn },
+    [foreign, VICOL_PAGE],
+    "AU",
+  );
+  // Filtered before the queue, so it never reached a bucket and never spent
+  // an attempt. VICOL is still read.
+  assertEquals(calls, [VICOL_PAGE]);
+  assertEquals(pages.length, 1);
+  assertEquals(pages[0].pageProductName, "VICOL WINTER OIL Insecticide");
+});
+
+Deno.test("§9E two foreign leads cannot starve one legitimate registrant", async () => {
+  // This is the exact shape of the defect: against a 2-attempt cap, two
+  // recognised-but-foreign leads ahead of the real page would have consumed
+  // the whole budget.
+  const { fetchFn, calls } = fetchByUrl({ [VICOL_PAGE]: VICOL_HTML });
+  const { pages } = await inspectCandidateProductPages(
+    { fetchFn },
+    [
+      "https://acvm.mpi.govt.nz/product_detail?pn=1",
+      "https://epa.govt.nz/product_detail?pn=2",
+      VICOL_PAGE,
+    ],
+    "AU",
+  );
+  assertEquals(calls, [VICOL_PAGE]);
+  assertEquals(calls.length, 1);
+  assert(calls.length < MAX_PAGE_FETCH_ATTEMPTS, "the cap was not even reached");
+  assertEquals(pages.length, 1);
+});
+
+Deno.test("§9F an unlisted REGISTRANT is untouched by the boundary", () => {
+  // Vicchem is merely unrecognised, not a foreign regulator. The generic
+  // unknown-host earning mechanism must survive this fix intact.
+  assertEquals(isForeignRegulatorHost("vicchem.com", "AU"), false);
+  const c = classifyUrl(VICOL_PAGE, "AU");
+  assertEquals(c.trust, "unknown");
+  assertEquals(c.kind, "product_page");
+  assertEquals(c.isInspectableProductPage, true);
+  // Unchanged: reading is not trusting.
+  assertEquals(c.isProductPageCandidate, false);
+  assertEquals(c.isOfficialLabelCandidate, false);
+});
+
+Deno.test("§9G/§9H resellers and search engines stay non-inspectable", () => {
+  for (const url of ["https://www.elders.com.au/product_detail?pn=1", "https://nutrien.com.au/products/x"]) {
+    const c = classifyUrl(url, "AU");
+    assertEquals(c.trust, "reseller");
+    assertEquals(c.isInspectableProductPage, false, url);
+  }
+  for (const url of ["https://www.google.com/search?q=x", "https://duckduckgo.com/products/x"]) {
+    const c = classifyUrl(url, "AU");
+    assertEquals(c.trust, "search_engine");
+    assertEquals(c.isInspectableProductPage, false, url);
+  }
+});
+
+Deno.test("§9I the CURRENT country's register and regulator are unchanged", () => {
+  // The boundary must not cost the local register anything.
+  const elabel = classifyUrl(APVMA_ELABEL, "AU");
+  assertEquals(isForeignRegulatorHost("elabels.apvma.gov.au", "AU"), false);
+  assertEquals(elabel.trust, "official_register");
+  assertEquals(elabel.kind, "label_document");
+  assertEquals(elabel.isOfficialLabelCandidate, true, "AU eLabel still a label candidate");
+
+  const auRegulator = classifyUrl("https://agriculture.gov.au/docs/label-x.pdf", "AU");
+  assertEquals(auRegulator.trust, "regulator");
+  assertEquals(auRegulator.isOfficialLabelCandidate, true);
+
+  // And symmetrically for NZ.
+  const nzRegister = classifyUrl("https://acvm.mpi.govt.nz/label/123.pdf", "NZ");
+  assertEquals(isForeignRegulatorHost("acvm.mpi.govt.nz", "NZ"), false);
+  assertEquals(nzRegister.trust, "official_register");
+  assertEquals(nzRegister.isOfficialLabelCandidate, true);
+});
+
+Deno.test("§9 the boundary is symmetric and registry-driven, not hardcoded", () => {
+  // Neither direction is special-cased, and an unknown country code leaves
+  // both regulators foreign rather than accidentally trusting one.
+  assertEquals(isForeignRegulatorHost("apvma.gov.au", "AU"), false);
+  assertEquals(isForeignRegulatorHost("apvma.gov.au", "NZ"), true);
+  assertEquals(isForeignRegulatorHost("acvm.mpi.govt.nz", "NZ"), false);
+  assertEquals(isForeignRegulatorHost("acvm.mpi.govt.nz", "AU"), true);
+  assertEquals(isForeignRegulatorHost("apvma.gov.au", "US"), true);
+  assertEquals(isForeignRegulatorHost("acvm.mpi.govt.nz", "US"), true);
+  // Case and `www.` are normalised the same way the classifier does it.
+  assertEquals(isForeignRegulatorHost("apvma.gov.au", "nz"), true);
+  assertEquals(classifyUrl("https://WWW.APVMA.GOV.AU/product_detail?pn=1", "NZ").isInspectableProductPage, false);
+  // A sub-host of a foreign regulator is still foreign.
+  assertEquals(isForeignRegulatorHost("data.acvm.mpi.govt.nz", "AU"), true);
+  // A host that merely CONTAINS a regulator name is not one.
+  assertEquals(isForeignRegulatorHost("apvma.gov.au.example.com", "NZ"), false);
+});
 
 Deno.test("§8 a reseller serving product_detail is still a reseller", () => {
   // Recognition applies to every host equally; trust does not.

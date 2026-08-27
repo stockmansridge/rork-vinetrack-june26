@@ -139,6 +139,60 @@ function hostMatches(host: string, candidates: string[]): boolean {
   return candidates.some((c) => host === c || host.endsWith(`.${c}`));
 }
 
+/**
+ * The country whose register/regulator owns this host, when that country is
+ * NOT the one being looked up. `null` otherwise.
+ *
+ * # Why this is its own question
+ *
+ * `trustFor` already mapped a foreign regulator to `unknown`, which is the
+ * right TIER — ACVM carries no authority for an AU lookup. But `unknown` is a
+ * tier shared with every unrecognised host, and unrecognised hosts are
+ * deliberately readable so that a real registrant nobody has allowlisted yet
+ * (Vicchem) can still be inspected. Collapsing those two very different
+ * populations into one tier meant a foreign regulator inherited the
+ * unknown-host reading privilege.
+ *
+ * The distinction is not "how much do we trust it" but "is it the same kind of
+ * thing at all". An unrecognised host MIGHT be the registrant. A foreign
+ * regulator definitely is not — it is a government register for a different
+ * jurisdiction, so it can never be the manufacturer's own product page, no
+ * matter what its URL looks like. That is a question about identity, so it is
+ * asked separately from trust and answered from the same country registry that
+ * defines the jurisdiction boundary.
+ *
+ * Deterministic and total: registry membership only, no heuristics, no TLD
+ * guessing. A host that is THIS country's own register or regulator is never
+ * foreign, checked first so local authority is untouched.
+ */
+function foreignRegulatorCountry(host: string, countryCode: string): string | null {
+  if (!host) return null;
+  const code = countryCode.trim().toUpperCase();
+
+  const local = REGULATOR_HOSTS[code];
+  if (local && (hostMatches(host, local.register) || hostMatches(host, local.regulator))) {
+    return null;
+  }
+
+  for (const [otherCode, hosts] of Object.entries(REGULATOR_HOSTS)) {
+    if (otherCode === code) continue;
+    if (hostMatches(host, hosts.register) || hostMatches(host, hosts.regulator)) {
+      return otherCode;
+    }
+  }
+  return null;
+}
+
+/**
+ * Whether `host` is another country's register or regulator for this lookup.
+ *
+ * Exported so the boundary can be asserted directly, rather than only through
+ * its downstream effects.
+ */
+export function isForeignRegulatorHost(host: string, countryCode: string): boolean {
+  return foreignRegulatorCountry(host, countryCode) !== null;
+}
+
 /** Registrant domains for the manufacturers VineTrack actually meets. */
 const REGISTRANT_HOSTS = [
   "basf.com",
@@ -277,14 +331,17 @@ function trustFor(host: string, countryCode: string): { trust: SourceTrustTier; 
 
   // A FOREIGN regulator is explicitly not an authority here. Country is a
   // hard identity boundary (task §12): APVMA can never speak for NZ.
-  for (const [otherCode, hosts] of Object.entries(REGULATOR_HOSTS)) {
-    if (otherCode === code) continue;
-    if (hostMatches(host, hosts.register) || hostMatches(host, hosts.regulator)) {
-      return {
-        trust: "unknown",
-        reason: `${otherCode} regulator host carries no authority for ${code || "this country"}`,
-      };
-    }
+  //
+  // The TIER stays `unknown` — unchanged, and deliberately so: no new public
+  // trust tier is introduced for this. What the tier cannot express is that
+  // this particular `unknown` must not be READ either, and that is enforced
+  // separately in `classifyUrl` via `foreignRegulatorCountry`.
+  const foreignCode = foreignRegulatorCountry(host, code);
+  if (foreignCode) {
+    return {
+      trust: "unknown",
+      reason: `${foreignCode} regulator host carries no authority for ${code || "this country"}`,
+    };
   }
 
   if (hostMatches(host, SEARCH_ENGINE_HOSTS)) {
@@ -341,9 +398,34 @@ export function classifyUrl(
   const registerPdf = trust === "official_register" && isPdf(url) && kind !== "safety_data_sheet";
   const effectiveKind: DocumentKind = registerPdf ? "label_document" : kind;
 
+  // # The jurisdiction boundary
+  //
+  // A foreign regulator is `unknown` because it has no AUTHORITY here, and
+  // unknown hosts are readable so unlisted registrants can be discovered. Those
+  // two individually correct rules composed into a wrong one: another country's
+  // register became eligible for the unknown-host manufacturer-label earning
+  // path.
+  //
+  // It is refused on IDENTITY, not on URL shape. `/product_detail` on
+  // acvm.mpi.govt.nz is a register entry for a different jurisdiction that
+  // happens to be spelled like a product route; no path pattern can turn a
+  // foreign government register into the manufacturer's own product page. So
+  // the guard is computed from the HOST, once, ahead of every shape test, and
+  // holds however the path is written.
+  //
+  // This NARROWS what may be fetched and promoted. It grants nothing, and it
+  // leaves this country's own register and regulator untouched — they are
+  // matched before the foreign check runs.
+  const isForeignRegulator = foreignRegulatorCountry(domain, countryCode) !== null;
+
   const hostCanCarryLabel = trust === "official_register" || trust === "regulator" ||
     trust === "registrant";
-  const isOfficialLabelCandidate = hostCanCarryLabel &&
+  // `hostCanCarryLabel` is already false for a foreign regulator (its tier is
+  // `unknown`). The condition is restated at the boundary anyway, so the
+  // jurisdiction rule does not silently depend on the tier mapping staying
+  // the way it is today.
+  const isOfficialLabelCandidate = !isForeignRegulator &&
+    hostCanCarryLabel &&
     effectiveKind === "label_document";
 
   // A page worth READING for evidence.
@@ -367,19 +449,21 @@ export function classifyUrl(
   // So an unrecognised host may now be READ. It gains nothing else: it is
   // still not `registrant` trust, so `hostCanCarryLabel` stays false and a URL
   // that merely looks like a label on an unknown domain is still not a label
-  // candidate. Search engines, resellers, viticulture references and foreign
-  // regulators are all classified BEFORE this point and keep their own tiers,
-  // so none of them can arrive here.
+  // candidate. Search engines, resellers and viticulture references are all
+  // classified BEFORE this point and keep their own tiers, so none of them can
+  // arrive here. Foreign regulators DO share the `unknown` tier, and are
+  // excluded by the jurisdiction guard below rather than by their tier.
   const pageShaped = effectiveKind === "product_page" ||
     (effectiveKind === "other" && !isPdf(url));
 
   // What may be SERVED as the product page: unchanged, registrant-owned only.
   // An unrecognised host has proved nothing yet, and `product_url` is an
   // answer, not an experiment.
-  const isProductPageCandidate = trust === "registrant" && pageShaped;
+  const isProductPageCandidate = !isForeignRegulator && trust === "registrant" && pageShaped;
 
   // What may be READ. Strictly weaker, and deliberately a separate question.
-  const isInspectableProductPage = (trust === "registrant" || trust === "unknown") &&
+  const isInspectableProductPage = !isForeignRegulator &&
+    (trust === "registrant" || trust === "unknown") &&
     pageShaped;
 
   const parts = [trustReason, registerPdf ? "PDF on register host" : kindReason];
