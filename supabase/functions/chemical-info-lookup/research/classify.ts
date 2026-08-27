@@ -234,11 +234,29 @@ function looksLikeCategoryPage(url: string): boolean {
   }
 }
 
+/**
+ * Whether the URL PATH is shaped like a product page.
+ *
+ * `product[-_]details?` rather than `product-details?` because a word separator
+ * is typography, not meaning: `/product_detail` and `/product-detail` are the
+ * same route shape written by two CMSs. The measured case is APVMA 33182,
+ * whose registrant serves `/product_detail?pn=...`; under the hyphen-only
+ * pattern that page fell through to `other` and was inspectable only by
+ * accident of the `other && !isPdf` fallback below.
+ *
+ * Deliberately confined to the product-detail token. Rewriting the neighbouring
+ * tokens the same way would widen what counts as page-shaped for no measured
+ * reason, and every widening here widens what may be FETCHED.
+ *
+ * Path SHAPE only. This says nothing about trust: an unrecognised host matching
+ * this pattern is still `unknown`, and `isProductPageCandidate` still requires
+ * `registrant` trust.
+ */
 function looksLikeProductPage(url: string): boolean {
   try {
     const path = new URL(url).pathname.toLowerCase();
     if (path === "/" || path === "") return false;
-    return /\/(products?|product-details?|crop-protection|solutions?|brands?|portfolio|our-products)(\/|$)/
+    return /\/(products?|product[-_]details?|crop-protection|solutions?|brands?|portfolio|our-products)(\/|$)/
       .test(path);
   } catch {
     return false;

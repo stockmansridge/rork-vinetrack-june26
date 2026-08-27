@@ -1725,6 +1725,19 @@ Deno.serve(async (req: Request) => {
         selected_manufacturer_product: null,
         manufacturer_label_candidates: [],
         selected_manufacturer_label: null,
+        // Which candidates actually SPENT the two-attempt fetch budget.
+        //
+        // `manufacturer_product_candidates` lists only pages that were read
+        // successfully, so a lead that was starved out of the budget — or
+        // fetched and refused — left no trace on the wire at all, and the only
+        // record was a platform console line. That made "was the page even
+        // requested?" unanswerable from a response, which is precisely the
+        // question the last investigation could not close.
+        //
+        // Diagnostic only, and only values `inspectCandidateProductPages`
+        // already produced: url, outcome, reason, linkCount. No document
+        // contents, no HTML, no secrets. Nothing reads it back.
+        product_page_inspection_attempts: [],
         manufacturer_label_fetch: "skipped",
         manufacturer_label_extract: "skipped",
         grapevine_rows_found: 0,
@@ -2027,6 +2040,14 @@ Deno.serve(async (req: Request) => {
               countryCode,
             );
             inspectedPages = inspection.pages;
+            // The same attempt trail the log line carries, now also on the
+            // wire so a live response can prove which branch ran.
+            stageB.product_page_inspection_attempts = inspection.attempts.map((a) => ({
+              url: a.url,
+              outcome: a.outcome,
+              reason: a.reason,
+              link_count: a.linkCount,
+            }));
             // Why a manufacturer label was or was not promoted, in the logs,
             // without loosening a rule to find out.
             console.log(JSON.stringify({

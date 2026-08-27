@@ -590,16 +590,45 @@ export async function inspectCandidateProductPages(
   const attempts: PageInspectionAttempt[] = [];
 
   const seen = new Set<string>();
-  const queue: string[] = [];
+  // Two buckets, filled in discovery order, drained strongest first.
+  //
+  // # Why ordering matters more than it looks
+  //
+  // `isInspectableProductPage` admits an unrecognised host that is merely
+  // page-shaped (`other` with a non-PDF path) — which is very nearly every
+  // ordinary web page. Against a two-ATTEMPT budget, two such leads sitting
+  // ahead of a recognised product page consume the entire budget, and the
+  // strongest candidate is never requested at all. The measured symptom: a
+  // registrant's real product page and real approved label were reachable,
+  // eligible, and never fetched.
+  //
+  // The fix is ordering, not more requests — the cap is unchanged. A URL the
+  // classifier positively RECOGNISED as `product_page` is a better use of a
+  // scarce fetch than one that merely failed to look like anything else.
+  //
+  // This grants NOTHING. Priority decides what is READ, never what is
+  // believed: every fetched page still faces the same evidence gates — the
+  // page's own stated product must correspond to the register-resolved name,
+  // the PDF must sit on the page's own host, and the link wording must say
+  // label without saying SDS/brochure/TDS. Reordering a queue cannot promote
+  // a document the policy would refuse, and cannot make an untrusted host
+  // trusted.
+  const recognised: string[] = [];
+  const pageShaped: string[] = [];
   for (const raw of candidateUrls) {
     const url = (raw ?? "").trim();
     if (!url || seen.has(url)) continue;
     seen.add(url);
     // Pre-filter on classification so the page budget is spent on pages that
     // could actually qualify, rather than on search results and resellers.
-    if (!classifyUrl(url, countryCode).isInspectableProductPage) continue;
-    queue.push(url);
+    const classification = classifyUrl(url, countryCode);
+    if (!classification.isInspectableProductPage) continue;
+    // Stable WITHIN each class: `push` preserves discovery order, and the
+    // concatenation preserves it across classes. The same leads always
+    // produce the same queue.
+    (classification.kind === "product_page" ? recognised : pageShaped).push(url);
   }
+  const queue: string[] = [...recognised, ...pageShaped];
 
   // ATTEMPTS, not successes: a page that 404s or serves the wrong content type
   // still cost a request, and the cap exists to bound requests.
