@@ -17,9 +17,23 @@
 // half, and a change that fixes it will fail the pinned half and must be
 // updated deliberately rather than silently.
 
-import { assert, assertEquals, assertNotEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import {
+  assert,
+  assertEquals,
+  assertFalse,
+  assertNotEquals,
+} from "https://deno.land/std@0.224.0/assert/mod.ts";
 
 import { mintDirectionId } from "../rate_identity.ts";
+import {
+  type ManufacturerLabelUse,
+  manufacturerUsesToRegisteredUses,
+} from "./manufacturer_label.ts";
+import {
+  ordinaryHasDirectionIdentityLoss,
+  selectDirectionSource,
+} from "./label_panel_fallback.ts";
+import { THIOVIT_53904_ACTUAL_REGISTERED_USE_ROWS } from "./seeds/thiovit_53904_evidence.ts";
 import {
   THIOVIT_53904_ACTUAL_GRAPE_PROJECTION,
   THIOVIT_53904_EXPECTED_GRAPE_DIRECTIONS,
@@ -189,79 +203,142 @@ Deno.test("§B12 with crop context preserved, the two PM directions mint DIFFERE
 });
 
 // ---------------------------------------------------------------------------
-// KNOWN DEFECTS — current behaviour, pinned so Phase 3 cannot pass by accident
+// REPAIRED BEHAVIOUR — converted from the Phase 2B defect pins (Gate D4A.3.2)
+//
+// §B13–§B17 previously asserted the COLLAPSED output as current behaviour, so
+// that a fix could not land silently. Phase 3B implemented the repair, so each
+// has been converted — deliberately, not deleted — into the positive assertion
+// it was protecting. `THIOVIT_53904_ACTUAL_GRAPE_PROJECTION` is retained as
+// the historical record of the defect and is now used as the ANTI-PATTERN each
+// test asserts we no longer produce, which is what makes these permanent
+// recurrence protection rather than one-off acceptance checks.
 // ---------------------------------------------------------------------------
 
-Deno.test("§B13 DEFECT: the projection collapses both contexts into one GRAPE use", () => {
-  // EXPECTED: two Powdery Mildew uses, one per crop context.
-  // ACTUAL:   one `GRAPE` / `Powdery Mildew` use carrying BOTH rates.
-  // LAYER:    label extraction / registered-use projection.
-  const pmUse = THIOVIT_53904_ACTUAL_GRAPE_PROJECTION.uses.find(
-    (u) => u.target_raw === "Powdery Mildew",
-  );
-  assert(pmUse);
-  assertEquals(THIOVIT_53904_ACTUAL_GRAPE_PROJECTION.crop, "GRAPE");
-  assertEquals(pmUse.rates.length, 2, "both printed rates land on ONE use");
+/** The two authoritative PM directions in the parser's own vocabulary. */
+function repairedDirections(): ManufacturerLabelUse[] {
+  return expectedPowderyMildew().map((d) => ({
+    crop: d.crop_context,
+    targets: [...d.targets],
+    condition: d.state_applicability,
+    rates: [{
+      label: "",
+      basis: "range_per_100_litres" as const,
+      min_value: d.min_value,
+      max_value: d.max_value,
+      unit: d.unit,
+      raw_text: `${d.min_value}-${d.max_value} ${d.unit}/100 L`,
+    }],
+    restrictions: d.critical_comments,
+  }));
+}
+
+const repairedRows = (): Record<string, unknown>[] =>
+  manufacturerUsesToRegisteredUses(repairedDirections(), { product: PRODUCT });
+
+Deno.test("§B13 REPAIRED: the two crop contexts stay distinct instead of collapsing", () => {
+  const rows = repairedRows();
+  const contexts = new Set(rows.map((r) => String(r.crop)));
+  assertEquals(contexts.size, 2);
+  assert(contexts.has("Grapes table grapes, fruit destined for drying"));
+  assert(contexts.has("Grapes Vines wine grapes only"));
+
+  // The anti-pattern: never again ONE "GRAPE" use carrying BOTH printed rates.
+  assertFalse(contexts.has(THIOVIT_53904_ACTUAL_GRAPE_PROJECTION.crop));
+  for (const row of rows) assertEquals((row.rates as unknown[]).length, 1);
 });
 
-Deno.test("§B14 DEFECT: collapsed, the two directions mint the SAME identity", () => {
-  // This is why the collapse is not merely cosmetic: once crop context and
-  // state applicability are gone, the two registered directions are no longer
-  // distinguishable by identity at all.
-  const collapsed = { crop: "GRAPE", targets: ["Powdery Mildew"], condition: null };
-  const a = mintDirectionId(PRODUCT, collapsed);
-  const b = mintDirectionId(PRODUCT, collapsed);
-  assertEquals(a, b);
+Deno.test("§B14 REPAIRED: the two directions mint DIFFERENT identities", () => {
+  const ids = new Set(repairedRows().map((r) => String(r.direction_id)));
+  assertEquals(ids.size, 2, "two printed directions are two identities");
 
-  // And it differs from BOTH authoritative identities.
-  const authoritative = expectedPowderyMildew().map((d) =>
-    mintDirectionId(PRODUCT, {
-      crop: d.crop_context,
-      targets: d.targets,
-      condition: d.state_applicability,
-    })
+  // The collapsed identity is what the defect produced, and it matched NEITHER
+  // authoritative direction. It must never be minted again.
+  const collapsed = mintDirectionId(PRODUCT, {
+    crop: "GRAPE",
+    targets: ["Powdery Mildew"],
+    condition: null,
+  });
+  for (const id of ids) assertNotEquals(id, collapsed);
+
+  // Each equals the identity minted from the authoritative direction itself.
+  const authoritative = new Set(
+    expectedPowderyMildew().map((d) =>
+      mintDirectionId(PRODUCT, {
+        crop: d.crop_context,
+        targets: d.targets,
+        condition: d.state_applicability,
+      })
+    ),
   );
-  for (const id of authoritative) assertNotEquals(a, id);
+  assertEquals(ids, authoritative);
 });
 
-Deno.test("§B15 DEFECT: both rates are flagged condition_ambiguous", () => {
-  // EXPECTED: each rate's condition is its crop context + state set, which the
-  //           label states plainly, so nothing is ambiguous.
-  // ACTUAL:   both flagged ambiguous because the binding was lost upstream.
-  const pmUse = THIOVIT_53904_ACTUAL_GRAPE_PROJECTION.uses.find(
-    (u) => u.target_raw === "Powdery Mildew",
-  )!;
-  for (const r of pmUse.rates) {
-    assertEquals((r as { condition_ambiguous?: boolean }).condition_ambiguous, true);
+Deno.test("§B15 REPAIRED: condition_ambiguous is ABSENT once the association is proven", () => {
+  // The flag was never a statement about the numbers; it recorded that the
+  // binding was unproven. With each rate bound to its own printed direction
+  // there is nothing left to be ambiguous about, so the flag must not appear.
+  for (const row of repairedRows()) {
+    for (const r of row.rates as { condition_ambiguous?: boolean }[]) {
+      assertFalse(r.condition_ambiguous === true);
+    }
+  }
+
+  // And the collapsed rows production used to serve still declare the loss,
+  // which is exactly the signal the routing gate now acts on.
+  assert(ordinaryHasDirectionIdentityLoss(THIOVIT_53904_ACTUAL_REGISTERED_USE_ROWS));
+});
+
+Deno.test("§B16 REPAIRED: critical comments stay scoped to their own direction", () => {
+  const rows = repairedRows();
+  const table = rows.filter((r) => /table grapes/i.test(String(r.crop)));
+  const wine = rows.filter((r) => /wine grapes only/i.test(String(r.crop)));
+  assert(table.length > 0 && wine.length > 0);
+
+  for (const row of table) {
+    assert(/every 2 to 3 weeks/i.test(String(row.restrictions)));
+    assertFalse(/14 to 21 days/i.test(String(row.restrictions)));
+  }
+  for (const row of wine) {
+    assert(/every 14 to 21 days/i.test(String(row.restrictions)));
+    assertFalse(/every 2 to 3 weeks/i.test(String(row.restrictions)));
   }
 });
 
-Deno.test("§B16 DEFECT: critical comments are concatenated across both contexts", () => {
-  const pmUse = THIOVIT_53904_ACTUAL_GRAPE_PROJECTION.uses.find(
-    (u) => u.target_raw === "Powdery Mildew",
-  )!;
-  assertEquals(
-    (pmUse as { restrictions_are_concatenated_from_both_contexts?: boolean })
-      .restrictions_are_concatenated_from_both_contexts,
-    true,
-  );
-});
-
-Deno.test("§B17 DEFECT: state applicability is dropped entirely", () => {
-  // EXPECTED: every grape direction states "NSW, Vic, Tas, SA, WA only", and
-  //           the same table prints Qld-only and NSW/WA-only rows elsewhere.
-  // ACTUAL:   nothing in the projection carries a state at all.
+Deno.test("§B17 REPAIRED: state applicability survives on the direction row", () => {
   for (const d of THIOVIT_53904_EXPECTED_GRAPE_DIRECTIONS) {
     assertEquals(d.state_applicability, "NSW, Vic, Tas, SA, WA only");
   }
-  assertEquals(THIOVIT_53904_ACTUAL_GRAPE_PROJECTION.state_applicability_present, false);
 
-  // The wire rate shape has no field to put it in — the projection is not
-  // discarding data it could have carried.
-  const wireRateKeys = Object.keys(
-    THIOVIT_53904_ACTUAL_GRAPE_PROJECTION.uses[0].rates[0],
-  );
-  assert(!wireRateKeys.includes("state_applicability"));
+  // Phase 2B flagged the contract-level gap: the wire rate shape had NO field
+  // for a state, so the projection was not discarding data it could carry.
+  // Phase 3B added the field at the DIRECTION level, where the fact belongs.
+  for (const row of repairedRows()) {
+    assertEquals(row.condition, "NSW, Vic, Tas, SA, WA only");
+    // ...and it remains in rate.label too, so shipping clients keep working
+    // until they migrate to the direction-level field.
+    for (const r of row.rates as { label?: string }[]) {
+      assertEquals(r.label, "NSW, Vic, Tas, SA, WA only");
+    }
+  }
+
+  // The historical projection carried no state anywhere — retained as the
+  // anti-pattern this test exists to prevent recurring.
+  assertEquals(THIOVIT_53904_ACTUAL_GRAPE_PROJECTION.state_applicability_present, false);
+});
+
+Deno.test("§B17b REPAIRED: the routing gate actually selects the repaired reading", () => {
+  // End-to-end over the real decision function, from the exact collapsed rows
+  // production serves today to the repaired candidate.
+  const decision = selectDirectionSource({
+    ordinaryUses: THIOVIT_53904_ACTUAL_REGISTERED_USE_ROWS,
+    panelUses: repairedRows(),
+    product: PRODUCT,
+  });
+  assertEquals(decision.replace, true);
+  assertEquals(decision.outcome, "identity_repair");
+  assertEquals(decision.comparison?.ordinaryDirectionCount, 1);
+  assertEquals(decision.comparison?.panelDirectionCount, 2);
+  assertEquals(decision.comparison?.lostRateSignatures, []);
 });
 
 // ---------------------------------------------------------------------------

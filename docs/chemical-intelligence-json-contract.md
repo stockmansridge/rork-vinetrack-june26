@@ -123,6 +123,25 @@ A specific disagreement between two sources about one field. Surfaced verbatim; 
 | `withholding_period_days` | integer | omit when unstated | |
 | `re_entry_period_hours` | integer | omit when unstated | |
 | `restrictions` | string | omit when none | Verbatim label restriction text. |
+| `condition` | string | **pending — not yet released; see 4.5.1** | Direction-level condition / state applicability, e.g. `"NSW, Vic, Tas, SA, WA only"`. |
+
+#### 4.5.1 Pending additive key: `condition`
+
+**Status: implemented in the backend projection, NOT yet released under this contract.** Readers must not depend on it, and writers other than the lookup must not emit it, until the coordinated change below lands.
+
+**What it is.** The label wording that distinguishes one registered direction from another sharing the same crop and target — in Australian practice almost always state applicability. A condition governs a *direction* (its crop, targets, rates, restrictions and periods together), which is why it sits here and not on `LabelRate`: duplicating it per rate would give one fact two homes that can disagree.
+
+**Why it exists.** APVMA 53904 (THIOVIT JET) prints two grapevine Powdery Mildew directions — table/drying grapes at 100–200 g/100 L and wine grapes at 200–600 g/100 L, both `NSW, Vic, Tas, SA, WA only`. With no direction-level condition the two collapse into one use carrying two unexplained rates, and no client can honestly show which applies.
+
+**Compatibility.** Additive and optional in every direction:
+
+- historical rows omit it, and a direction whose label states no condition still omits it, so no stored row changes shape;
+- iOS ignores unknown keys (`Codable` with explicit `CodingKeys` + `decodeIfPresent`) and Android ignores them (`ignoreUnknownKeys = true`), so old clients decode new payloads unchanged;
+- new clients decode old rows with `condition` absent/nil;
+- **`LabelRate.label` keeps carrying the same condition wording** for state-aware rows (4.6). Shipping iOS and Android builds read it from there today, so both are written during the transition and clients migrate at their own pace. `label` is *not* deprecated by this change;
+- `registered_uses` is `jsonb`, so the key needs **no** column, type change or migration.
+
+**Change-control gate (section 11).** Releasing this key requires, *in one coordinated change*: updating both app models, keeping decoding tolerant, bumping `intelligence_schema_version`, and revising this document. Only the last is done here — **the version has deliberately NOT been bumped and no app model has been touched.** Those steps, and the release decision, are pending approval.
 
 ### 4.6 LabelRate (`registered_uses[].rates[]`)
 

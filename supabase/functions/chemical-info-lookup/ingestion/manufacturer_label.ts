@@ -433,18 +433,54 @@ export function extractManufacturerLabelUses(
       }
     }
 
-    for (const block of blocks) {
-      const restrictions = block.lines
+    const joinComments = (lines: LineCells[]): string =>
+      lines
         .map((l) => l.comments)
         .filter((c) => c.length > 0)
         .join(" ")
         .replace(/\s+/g, " ")
-        .trim() || null;
+        .trim();
+
+    for (const block of blocks) {
+      // The whole block's comments, which is the scope most labels write at.
+      const blockRestrictions = joinComments(block.lines) || null;
 
       // Index the rate-bearing lines; everything binds relative to them.
       const rateLineIndexes = block.lines
         .map((l, i) => (l.rate ? i : -1))
         .filter((i) => i >= 0);
+
+      // ---- Comment scope: block-level, unless the label PROVES otherwise ---
+      //
+      // Critical comments are collected per block because that is the scope
+      // the label usually writes them at, and one comment governing four
+      // directions is completely ordinary. But a block CAN hold materially
+      // separate directions with separate comment scopes, and concatenating
+      // those onto every direction is exactly the defect that made one
+      // grapevine row read as another direction's restriction.
+      //
+      // So the scope is decided from POSITIVE typographic evidence rather
+      // than assumed. Each rate line opens a span running to the next rate
+      // line, mirroring the binding rule targets and conditions already use.
+      // When TWO OR MORE spans carry comment text of their own, the label is
+      // demonstrably writing comments per direction and each direction takes
+      // its own span. When only one span (or none) does, the association is
+      // unproven — a single comment might govern the block or just its first
+      // direction — and the existing block-level behaviour stands unchanged.
+      //
+      // Never guessed: a comment is only ever narrowed when the document
+      // itself distinguishes the scopes, and the ambiguous case fails to the
+      // conservative reading rather than to a clean-looking one.
+      const spanComments = rateLineIndexes.map((start, n) => {
+        const end = n + 1 < rateLineIndexes.length ? rateLineIndexes[n + 1] : block.lines.length;
+        return joinComments(block.lines.slice(start, end));
+      });
+      // Comment lines above the first rate line belong to no single direction.
+      const prefixComments = rateLineIndexes.length > 0
+        ? joinComments(block.lines.slice(0, rateLineIndexes[0]))
+        : "";
+      const spansWithComments = spanComments.filter((c) => c.length > 0).length;
+      const commentsAreDirectionScoped = rateLineIndexes.length > 1 && spansWithComments > 1;
 
       let lastTargets: string[] = [];
       for (let n = 0; n < rateLineIndexes.length; n++) {
@@ -491,6 +527,14 @@ export function extractManufacturerLabelUses(
           ...(textLayerRate !== rawRate ? { text_layer_text: textLayerRate } : {}),
         }));
 
+        const restrictions = commentsAreDirectionScoped
+          ? ([prefixComments, spanComments[n]]
+            .filter((c) => c.length > 0)
+            .join(" ")
+            .replace(/\s+/g, " ")
+            .trim() || null)
+          : blockRestrictions;
+
         uses.push({
           crop: block.crop,
           targets,
@@ -512,11 +556,21 @@ export function extractManufacturerLabelUses(
 /**
  * Map extracted label uses into the EXISTING registered-use contract rows.
  *
- * Deliberately no new rate model (task Phase 10): the state condition travels
- * in `WireLabelRate.label`, which is already defined as "what the label calls
- * the rate". A parallel `condition` field would have meant every client,
- * every projection and every stored row learning a second shape for a fact
- * the contract could already express.
+ * The state condition travels in TWO places, deliberately:
+ *
+ *   * `registered_use.condition` — the direction-level field, which is where
+ *     the fact actually belongs. A condition governs a DIRECTION (its crop,
+ *     targets, rates, restrictions and periods together), not an individual
+ *     rate, so duplicating it onto every rate would teach clients a second
+ *     shape for one fact and let the copies disagree.
+ *   * `WireLabelRate.label` — kept populated exactly as before, because
+ *     shipping iOS and Android builds read the condition from there today.
+ *     Removing it the moment the direction-level field appeared would break
+ *     every client that has not migrated yet, so both are written during the
+ *     transition and clients move at their own pace.
+ *
+ * Both are additive and optional: historical rows omit `condition` entirely
+ * and old clients ignore an unknown key.
  *
  * One row PER TARGET, matching the multi-target rule the research projection
  * already follows: the contract carries one target per row, so a direction
@@ -575,6 +629,9 @@ export function manufacturerUsesToRegisteredUses(
       rows.push({
         crop: use.crop,
         target,
+        // Direction-level condition. Omitted entirely when the label states
+        // none, so a row without a condition keeps its historical shape.
+        ...(use.condition ? { condition: use.condition } : {}),
         // Every projected row of one printed direction carries that
         // direction's identity — or, until the product locks, the seed that
         // lets it be minted correctly later.

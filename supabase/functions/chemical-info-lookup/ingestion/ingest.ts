@@ -40,6 +40,7 @@ import {
 import {
   carryForwardStatedPeriods,
   rateIsCalculable,
+  selectDirectionSource,
   statesCalculableGrapevineRate,
 } from "./label_panel_fallback.ts";
 import { adapterFor } from "./registry.ts";
@@ -287,18 +288,26 @@ export function mergeDiscoveryIntoStructured(
   } else if (aiUses.length) {
     merged.ai_suggested_uses = aiUses;
   }
-  // Gate D4A.3 — authoritative label LAYOUT fallback, decided HERE.
+  // Gate D4A.3 / D4A.3.2 — authoritative label LAYOUT fallback, decided HERE.
   //
   // This is the first point at which the rows the operator would actually be
   // served exist, so it is the only honest place to ask whether the ordinary
-  // single-column parse read this label's grapevine rates at all. The adapter
-  // prepared a candidate re-reading of the SAME authoritative document with
-  // the state-aware parser; it is used only when the ordinary parse left
-  // grapevine rates non-calculable.
+  // single-column parse read this label's grapevine directions at all. The
+  // adapter prepared a candidate re-reading of the SAME authoritative document
+  // with the state-aware parser.
   //
-  // A working parse is never displaced, and the register's stated withholding
-  // and re-entry periods are carried across so a rate repair can never cost
-  // the operator a period the lookup already had.
+  // D4A.3 asked one question: are the grapevine rates calculable? THIOVIT JET
+  // (APVMA 53904) proved that insufficient — its two Powdery Mildew ranges are
+  // numerically perfect and bound to the wrong thing, both flagged
+  // `condition_ambiguous` by the parser that lost them. So the decision now
+  // also asks whether the rates are correctly BOUND, and the candidate must
+  // prove itself strictly better before it may displace a calculable result:
+  // see `selectDirectionSource`.
+  //
+  // A working, correctly-bound parse is never displaced, a merely different
+  // reading never wins, and the register's stated withholding and re-entry
+  // periods are carried across so a repair can never cost the operator a
+  // period the lookup already had.
   const panelUses = Array.isArray(reg.label_panel_uses) ? reg.label_panel_uses : null;
   // Internal only (Gate D4A.3.1). Records that the FINAL served rate rows came
   // from the state-aware re-read of the authoritative label document, which is
@@ -306,7 +315,18 @@ export function mergeDiscoveryIntoStructured(
   // new response field: the merge already knows, and the wire already carries
   // enough evidence.
   let panelFallbackApplied = false;
-  if (panelUses?.length && !statesCalculableGrapevineRate(uses)) {
+  const directionSource = selectDirectionSource({
+    ordinaryUses: uses,
+    panelUses,
+    // The LOCKED registered product — the same identity the projection mints
+    // against, so both readings' directions are counted on equal terms.
+    product: {
+      country: reg.country_code,
+      scheme: reg.scheme,
+      registration_number: reg.registration_number,
+    },
+  });
+  if (directionSource.replace && panelUses) {
     uses = carryForwardStatedPeriods(panelUses, uses) as any[];
     panelFallbackApplied = true;
   }
