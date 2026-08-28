@@ -58,21 +58,39 @@ nonisolated struct ChemicalInfoResponse: Codable, Sendable {
     let formType: String?
     let modeOfAction: String?
 
-    var isLiquid: Bool {
-        guard let form = formType?.lowercased() else { return true }
-        return !form.contains("solid")
-            && !form.contains("granul")
-            && !form.contains("powder")
-            && !form.contains("wettable")
-            && !form.contains("dry")
-            && !form.contains("wdg")
-            && !form.contains("wg")
-            && !form.contains("wp")
-            && !form.contains("df")
+    /// Whether the product is liquid, or `nil` when nothing stated a form.
+    ///
+    /// `nil` is a real answer and must stay distinguishable from `false`.
+    /// This previously returned `true` for an unstated form, which turned
+    /// "we don't know" into "Liquid" and, through `defaultUnit`, into litres
+    /// — inventing a physical fact from the absence of evidence. A solid like
+    /// THIOVIT JET (APVMA 53904, microgranule, 800 g/kg) would be shown to a
+    /// grower as a liquid measured in L if its form ever failed to arrive.
+    var isLiquid: Bool? {
+        guard let form = formType?.lowercased(), !form.isEmpty else { return nil }
+        let solidWords = [
+            "solid", "granul", "powder", "wettable", "dry", "wdg", "wg", "wp", "df",
+            "pellet", "prill", "dust", "tablet", "microgranule",
+        ]
+        if solidWords.contains(where: { form.contains($0) }) { return false }
+        let liquidWords = [
+            "liquid", "emulsifiable", "emulsion", "suspension", "soluble concentrate",
+            "flowable", "\u{200b}sc", "solution",
+        ]
+        if liquidWords.contains(where: { form.contains($0) }) { return true }
+        // A form we don't recognise is not evidence of either state.
+        return nil
     }
 
-    var defaultUnit: ChemicalUnit {
-        isLiquid ? .litres : .kilograms
+    /// The inventory/container unit implied by the product's FORM, or `nil`.
+    ///
+    /// Never derived from an application-rate unit: a rate of `500 g/100 L`
+    /// describes how much product goes into a tank, not what the product is
+    /// or how it is packed. Form, inventory unit, active-concentration unit,
+    /// rate unit and rate basis are five separate facts.
+    var defaultUnit: ChemicalUnit? {
+        guard let isLiquid else { return nil }
+        return isLiquid ? .litres : .kilograms
     }
 }
 

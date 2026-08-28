@@ -310,13 +310,15 @@ Deno.test("§B17 REPAIRED: state applicability survives on the direction row", (
   }
 
   // Phase 2B flagged the contract-level gap: the wire rate shape had NO field
-  // for a state, so the projection was not discarding data it could carry.
-  // Phase 3B added the field at the DIRECTION level, where the fact belongs.
+  // for a state. Contract v1 carries the wording on `rates[].label`, which is
+  // what shipping iOS and Android builds read. A direction-level `condition`
+  // key is a future v2 change and is deliberately NOT emitted, so the repair
+  // must survive entirely through `label`.
   for (const row of repairedRows()) {
-    assertEquals(row.condition, "NSW, Vic, Tas, SA, WA only");
-    // ...and it remains in rate.label too, so shipping clients keep working
-    // until they migrate to the direction-level field.
-    for (const r of row.rates as { label?: string }[]) {
+    assertFalse("condition" in row);
+    const rates = row.rates as { label?: string }[];
+    assert(rates.length > 0);
+    for (const r of rates) {
       assertEquals(r.label, "NSW, Vic, Tas, SA, WA only");
     }
   }
@@ -376,4 +378,40 @@ Deno.test("§B21 label evidence is not blocked by the status ambiguity", () => {
   // above stand regardless of how the renewal question resolves.
   assertEquals(THIOVIT_53904_EXPECTED_GRAPE_DIRECTIONS.length, 4);
   assertEquals(THIOVIT_53904_REGISTRATION_STATUS.semantic_status, "UNRESOLVED_CURRENT_STATUS");
+});
+
+// ---------------------------------------------------------------------------
+// §B22 — the authoritative chemistry a customer must see, pinned together
+// ---------------------------------------------------------------------------
+
+Deno.test("§B22 identity, registrant, actives, concentration and FRAC group are preserved", () => {
+  // These five travel together on the customer path (search -> select -> save
+  // -> Chemical Store -> Spray Tool). Pinned in one place so a change that
+  // silently drops any of them fails here rather than in front of a grower.
+  assertEquals(THIOVIT_53904_IDENTITY.registration_identity_key, "AU:apvma:53904");
+  assertEquals(THIOVIT_53904_IDENTITY.registration_number, "53904");
+  assertEquals(THIOVIT_53904_IDENTITY.registration_scheme, "apvma");
+  assertEquals(THIOVIT_53904_IDENTITY.registration_country, "AU");
+  assertEquals(
+    THIOVIT_53904_IDENTITY.registered_product_name,
+    "THIOVIT JET MICROGRANULE FUNGICIDE/MITICIDE",
+  );
+  assert(/SYNGENTA/i.test(THIOVIT_53904_IDENTITY.registrant));
+
+  // Active + concentration, with the unit kept distinct from the rate unit.
+  assertEquals(THIOVIT_53904_MASTER_RECORD_EVIDENCE.active_ingredient, "Sulfur As Elemental Sulfur");
+  assertEquals(THIOVIT_53904_MASTER_RECORD_EVIDENCE.concentration_text, "800 g/kg");
+  assertEquals(THIOVIT_53904_PRODUCT_MEASUREMENT.active_ingredient, "Sulfur As Elemental Sulfur");
+  assertEquals(THIOVIT_53904_PRODUCT_MEASUREMENT.active_concentration, 800);
+  assertEquals(THIOVIT_53904_PRODUCT_MEASUREMENT.active_concentration_unit, "g/kg");
+
+  // FRAC M2 (multi-site sulfur). The label's own printed "GROUP Y FUNGICIDE"
+  // is the superseded historical wording and must not displace the current
+  // register-backed classification.
+  assertEquals(THIOVIT_53904_MASTER_RECORD_EVIDENCE.activity_groups, ["M2"]);
+
+  // Category stays honestly null (§B7) rather than being invented to make the
+  // record look complete, and form stays register-resolved (§B4).
+  assertEquals(THIOVIT_53904_MASTER_RECORD_EVIDENCE.product_category, null);
+  assertEquals(THIOVIT_53904_MASTER_RECORD_EVIDENCE.form_type, "solid");
 });

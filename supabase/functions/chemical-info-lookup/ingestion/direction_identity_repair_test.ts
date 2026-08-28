@@ -348,29 +348,33 @@ Deno.test("§G2 the repaired result never merges the two ranges into 100-600", (
 });
 
 // ---------------------------------------------------------------------------
-// §H–§I — the additive direction-level condition
+// §H–§I — the condition reaches clients on contract v1 ONLY
 // ---------------------------------------------------------------------------
 
-Deno.test("§H the candidate's condition survives as registered_use.condition", () => {
+Deno.test("§H the candidate's condition survives on rate.label (contract v1)", () => {
+  // `label` is the single normative home of the state wording in v1, and the
+  // key shipping iOS and Android builds already read.
   for (const row of project(thiovitPanelUses())) {
-    assertEquals(row.condition, STATES);
-  }
-});
-
-Deno.test("§I the condition ALSO remains in rate.label for shipping clients", () => {
-  // Backward compatibility during the transition: iOS and Android read the
-  // condition from the rate label today, so both are written and neither
-  // client breaks on the day the direction-level field appears.
-  for (const row of project(thiovitPanelUses())) {
-    for (const r of row.rates as { label?: string }[]) {
+    const rates = row.rates as { label?: string }[];
+    assert(rates.length > 0);
+    for (const r of rates) {
       assertEquals(r.label, STATES);
     }
   }
 });
 
-Deno.test("§H2 condition is OMITTED entirely when the label states none", () => {
-  // Additive and optional: a row without a condition keeps its historical
-  // shape, so no stored record changes and no old client sees a new key.
+Deno.test("§I NO unversioned direction-level `condition` key reaches the wire", () => {
+  // The direction-level field is a FUTURE v2 change (contract section 11:
+  // both app models + schema-version bump + doc, in one coordinated change).
+  // Emitting it under v1 would put a key on the wire that no client is
+  // allowed to trust, so the projection must not carry it — even though the
+  // condition is known and used internally for identity and scoping.
+  for (const row of project(thiovitPanelUses())) {
+    assertFalse("condition" in row);
+  }
+});
+
+Deno.test("§H2 a direction with no condition still carries its historical shape", () => {
   const rows = project([{
     crop: "GRAPEVINE",
     targets: ["Powdery Mildew"],
@@ -379,6 +383,14 @@ Deno.test("§H2 condition is OMITTED entirely when the label states none", () =>
     restrictions: null,
   }]);
   assertFalse("condition" in rows[0]);
+});
+
+Deno.test("§I2 the condition still does its INTERNAL work despite not being emitted", () => {
+  // Withholding the key from the wire must not weaken the repair: identity is
+  // still minted from the condition, so the two PM directions stay distinct.
+  const rows = project(thiovitPanelUses());
+  const ids = new Set(rows.map((r) => String(r.direction_id)));
+  assertEquals(ids.size, 2);
 });
 
 // ---------------------------------------------------------------------------

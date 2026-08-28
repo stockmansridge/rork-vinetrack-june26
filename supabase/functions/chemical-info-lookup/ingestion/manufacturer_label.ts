@@ -556,21 +556,21 @@ export function extractManufacturerLabelUses(
 /**
  * Map extracted label uses into the EXISTING registered-use contract rows.
  *
- * The state condition travels in TWO places, deliberately:
+ * The state condition is INTERNAL to ingestion and reaches the wire through
+ * exactly ONE contract-v1 key: `WireLabelRate.label`.
  *
- *   * `registered_use.condition` — the direction-level field, which is where
- *     the fact actually belongs. A condition governs a DIRECTION (its crop,
- *     targets, rates, restrictions and periods together), not an individual
- *     rate, so duplicating it onto every rate would teach clients a second
- *     shape for one fact and let the copies disagree.
- *   * `WireLabelRate.label` — kept populated exactly as before, because
- *     shipping iOS and Android builds read the condition from there today.
- *     Removing it the moment the direction-level field appeared would break
- *     every client that has not migrated yet, so both are written during the
- *     transition and clients move at their own pace.
+ * The condition is a property of a DIRECTION (its crop, targets, rates,
+ * restrictions and periods together), so a direction-level `condition` field
+ * is where it eventually belongs — but that field is NOT part of contract
+ * v1 and is deliberately NOT emitted here. Releasing it requires the
+ * coordinated v2 change in section 11 of the JSON contract (both app models,
+ * a schema-version bump, the doc). Emitting it early would put an
+ * unversioned key on the wire that no client is allowed to trust.
  *
- * Both are additive and optional: historical rows omit `condition` entirely
- * and old clients ignore an unknown key.
+ * The condition still does its real work internally: it mints direction
+ * identity, binds parser rows, distinguishes states, scopes comments and
+ * drives direction comparison. Clients see it via `label`, which shipping
+ * iOS and Android builds already read.
  *
  * One row PER TARGET, matching the multi-target rule the research projection
  * already follows: the contract carries one target per row, so a direction
@@ -615,9 +615,10 @@ export function manufacturerUsesToRegisteredUses(
 
     const rates = use.rates.map((r) => ({
       ...r,
-      // The condition the label prints for this rate. Without it, 2 L/100 L
-      // and 3 L/100 L are two unexplained numbers and a client has no honest
-      // way to show which applies.
+      // The condition the label prints for this rate, on the ONE contract-v1
+      // key clients already read. Without it, 2 L/100 L and 3 L/100 L are two
+      // unexplained numbers and a client has no honest way to show which
+      // applies.
       label: use.condition ?? r.label,
     }));
     const rateIds = directionId
@@ -629,9 +630,8 @@ export function manufacturerUsesToRegisteredUses(
       rows.push({
         crop: use.crop,
         target,
-        // Direction-level condition. Omitted entirely when the label states
-        // none, so a row without a condition keeps its historical shape.
-        ...(use.condition ? { condition: use.condition } : {}),
+        // NO direction-level `condition` key: it is not part of contract v1.
+        // The condition reaches clients through `rates[].label` above.
         // Every projected row of one printed direction carries that
         // direction's identity — or, until the product locks, the seed that
         // lets it be minted correctly later.
