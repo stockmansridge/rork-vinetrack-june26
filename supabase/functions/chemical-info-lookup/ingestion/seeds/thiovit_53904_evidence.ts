@@ -111,9 +111,29 @@ export const THIOVIT_53904_HISTORICAL_LABEL_EVIDENCE = {
  * shape exists so a future change cannot quietly derive one from the other.
  */
 export const THIOVIT_53904_PRODUCT_MEASUREMENT = {
-  /** Manufacturer-primary + current master row. NOT derived from rate units. */
+  /**
+   * CANONICAL BACKEND PROVENANCE: `official_register`.
+   *
+   * Corrected in Phase 3A. The earlier `manufacturer_primary` attribution was
+   * wrong about the BACKEND: the APVMA adapter deterministically maps the
+   * register's own `fdesc` field (`mapFormType`, apvma.ts:150), and the live
+   * PubCRIS row for 53904 publishes `fdesc = "MICROGRANULE"`, which that
+   * mapper resolves to "solid" with no AI and no manufacturer input involved.
+   *
+   * The manufacturer label independently prints "MICROGRANULE" too, so the
+   * two agree — but agreement is CORROBORATION, not the primary source.
+   * Freezing the manufacturer as primary would have recorded false provenance
+   * and implied the register was silent when it is not.
+   *
+   * NOT derived from rate units, under either provenance.
+   */
   physical_form: "solid",
-  physical_form_provenance: "manufacturer_primary",
+  physical_form_provenance: "official_register",
+  /** The register field the canonical form is mapped from. */
+  physical_form_register_field: "fdesc",
+  physical_form_register_value: "MICROGRANULE",
+  /** Independent agreement, not the primary source. */
+  physical_form_corroboration: "manufacturer_label prints MICROGRANULE",
   /** Source wording preserved separately from the canonical form. */
   formulation_text: "microgranule / water-dispersible granule",
   active_ingredient: "Sulfur As Elemental Sulfur",
@@ -277,11 +297,113 @@ export const THIOVIT_53904_ACTUAL_GRAPE_PROJECTION = {
 } as const;
 
 /**
- * APVMA PubCRIS publishes explicit formulation/category fields that this
- * repository does not appear to consume. Recorded as a Phase 3 audit input.
+ * The LIVE PubCRIS product row for pcode 53904, recorded verbatim.
+ *
+ * Retrieved during the Phase 3A audit directly from the APVMA-published
+ * dataset on data.gov.au (resource `b4bb5394-b60b-4602-8bde-2e206ffc498f`,
+ * the same resource id the adapter itself queries), HTTP 200, one record.
+ *
+ * This is the raw material for the whole form/category audit, so it is frozen
+ * verbatim rather than summarised — including the fields the adapter does not
+ * currently read.
+ */
+export const THIOVIT_53904_PUBCRIS_PRODUCT_ROW = {
+  retrieved_at: "2026-08-28",
+  pcode: "53904",
+  prodtype: "A",
+  psched: "0",
+  regdate: "1/07/2025 0:00",
+  fdesc: "MICROGRANULE",
+  typedesc: "A - Agricultural",
+  hlevel1: "MIXED FUNCTION PESTICIDE",
+  fpname: "THIOVIT JET MICROGRANULE FUNGICIDE/MITICIDE",
+  sname: "SYNGENTA AUSTRALIA PTY LTD",
+  regcode: "R",
+  expdate: "30/06/2026 0:00",
+  scode1: "SYNG1",
+} as const;
+
+/**
+ * CORRECTED in Phase 3A. The Phase 2B claim that PubCRIS formulation/category
+ * fields are "not consumed" was WRONG and is withdrawn.
+ *
+ * `fdesc` and `hlevel1` are both already consumed deterministically by the
+ * APVMA adapter. The real category defect is narrower and quite different: the
+ * field IS read, and its value is simply outside the mapper's vocabulary.
  */
 export const THIOVIT_53904_PUBCRIS_FIELD_AUDIT = {
-  candidate_raw_fields: ["fdesc", "prodtype", "typedesc"],
-  expected_role: "deterministic regulatory input, preferred BEFORE AI interpretation",
-  status: "not_consumed_pending_phase3_confirmation",
+  fdesc: {
+    raw_value: "MICROGRANULE",
+    consumed_by: "apvma.ts mapFormType()",
+    result: "solid",
+    status: "already_consumed",
+  },
+  hlevel1: {
+    raw_value: "MIXED FUNCTION PESTICIDE",
+    consumed_by: "apvma.ts mapCategory()",
+    result: null,
+    status: "already_consumed_but_unmapped_vocabulary",
+    note:
+      "mapCategory recognises FUNGICIDE/HERBICIDE/INSECTICIDE/MITICIDE/" +
+      "ACARICIDE/GROWTH REGULATOR/ADJUVANT/SURFACTANT. The register's own " +
+      "combined classification 'MIXED FUNCTION PESTICIDE' contains none of " +
+      "them, so the mapper correctly declines rather than guessing.",
+  },
+  prodtype: {
+    raw_value: "A",
+    exists_in_dataset: true,
+    consumed_by: null,
+    provides_category: false,
+    note:
+      "The agricultural/veterinary axis, not a pesticide FUNCTION. Its " +
+      "expansion is typedesc. Useless as a category source.",
+  },
+  typedesc: {
+    raw_value: "A - Agricultural",
+    exists_in_dataset: true,
+    consumed_by: null,
+    provides_category: false,
+    note:
+      "The human-readable expansion of prodtype. Distinguishes agricultural " +
+      "from veterinary products; says nothing about fungicide vs miticide. " +
+      "Auditing these two fields answers the Phase 2B question NEGATIVELY: " +
+      "they are NOT a better deterministic category source.",
+  },
 } as const;
+
+/**
+ * The ACTUAL projected rows in served wire shape, for gate execution.
+ *
+ * Deliberately the shape `statesCalculableGrapevineRate()` and the ingest
+ * merge actually receive, so the routing gate can be executed against them
+ * rather than reasoned about.
+ */
+export const THIOVIT_53904_ACTUAL_REGISTERED_USE_ROWS: Record<string, unknown>[] = [
+  {
+    crop: "GRAPE",
+    target: "Powdery Mildew",
+    rates: [
+      {
+        label: "",
+        basis: "range_per_100_litres",
+        min_value: 100,
+        max_value: 200,
+        unit: "g",
+        raw_text: "100-200 g/100 L",
+        condition_ambiguous: true,
+      },
+      {
+        label: "",
+        basis: "range_per_100_litres",
+        min_value: 200,
+        max_value: 600,
+        unit: "g",
+        raw_text: "200-600 g/100 L",
+        condition_ambiguous: true,
+      },
+    ],
+    withholding_period_days: 0,
+    re_entry_period_hours: null,
+    restrictions: null,
+  },
+];

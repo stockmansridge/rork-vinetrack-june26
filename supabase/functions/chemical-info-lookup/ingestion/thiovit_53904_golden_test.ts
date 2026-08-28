@@ -74,11 +74,19 @@ Deno.test("§B3 identity is stable and independent of legal status", () => {
 // Physical form, formulation and units are FIVE separate facts
 // ---------------------------------------------------------------------------
 
-Deno.test("§B4 physical form is solid, from manufacturer-primary evidence", () => {
+Deno.test("§B4 physical form is solid, from the OFFICIAL REGISTER", () => {
+  // CORRECTED in Phase 3A. This previously recorded manufacturer-primary
+  // provenance, which was wrong: the APVMA adapter maps the register's own
+  // `fdesc` field (mapFormType), and the live PubCRIS row for 53904 publishes
+  // fdesc = "MICROGRANULE". `thiovit_53904_phase3a_audit_test.ts` §3A-2 proves
+  // it by executing the real adapter with no label document, no manufacturer
+  // page and no AI reachable at all.
   assertEquals(THIOVIT_53904_PRODUCT_MEASUREMENT.physical_form, "solid");
-  assertEquals(THIOVIT_53904_PRODUCT_MEASUREMENT.physical_form_provenance, "manufacturer_primary");
-  // The live master row already holds it — so a downstream "Liquid" is a loss,
-  // not an absence of knowledge.
+  assertEquals(THIOVIT_53904_PRODUCT_MEASUREMENT.physical_form_provenance, "official_register");
+  // The manufacturer label agrees, but agreement is corroboration.
+  assert(/manufacturer_label/.test(THIOVIT_53904_PRODUCT_MEASUREMENT.physical_form_corroboration));
+  // The live master row already holds it — so a downstream "Liquid" is a loss
+  // occurring BELOW an authoritative register value, not an absence of one.
   assertEquals(THIOVIT_53904_MASTER_RECORD_EVIDENCE.form_type, "solid");
 });
 
@@ -103,6 +111,11 @@ Deno.test("§B6 formulation wording is preserved beside the canonical form", () 
 Deno.test("§B7 DEFECT: product category is unresolved and is NOT invented", () => {
   // EXPECTED: a deterministic category from PubCRIS.
   // ACTUAL:   null. Recorded as null rather than guessed.
+  //
+  // Phase 3A CORRECTED the cause: `hlevel1` IS consumed by mapCategory(). The
+  // register's own value is "MIXED FUNCTION PESTICIDE", which matches none of
+  // the mapper's category words, so it correctly declines. A vocabulary gap
+  // over a combined classification — not an unconsumed field. See §3A-5/§3A-7.
   assertEquals(THIOVIT_53904_MASTER_RECORD_EVIDENCE.product_category, null);
 });
 
