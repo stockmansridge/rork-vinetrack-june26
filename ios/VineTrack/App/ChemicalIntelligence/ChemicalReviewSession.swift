@@ -165,6 +165,24 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// operator to answer before anything is defaulted.
     var selectedDefaultRateIds: [ChemicalDefaultRateBasis: String]
 
+    /// The EXACT dose this vineyard uses, per basis, when the registered rate
+    /// it was chosen from is a band.
+    ///
+    /// # Why this is stored apart from the label
+    ///
+    /// A label printing `100–200 g/100 L` authorises every dose between those
+    /// ends; a vineyard still has to pour one number. That number is an
+    /// OPERATIONAL decision and it is held here, never written back into
+    /// `chemistryDraft`. Narrowing the registered range to the grower's own
+    /// figure would destroy label evidence — the next operator, the
+    /// re-verification comparison and the audit trail would all be told the
+    /// label says `150` when it says `100–200`.
+    ///
+    /// Only ever set to a value the selected option actually authorises (see
+    /// `setDefaultRateValue`), so it cannot carry a dose off the label.
+    /// Absent means "start from the bottom of the band", which is the safe end.
+    var defaultRateValues: [ChemicalDefaultRateBasis: Double]
+
     /// The vineyard's state/territory, when it is known.
     ///
     /// Drives step 1 of the recommendation rule. `nil` is honest and safe: it
@@ -310,6 +328,8 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         // Only a record already on file earns a baseline: a lookup being
         // reviewed for the first time is a NEW chemical and must satisfy the
         // contract in full, however complete the lookup happened to be.
+        let recovered = recoveredDefaults(from: source, chemistry: chemistry, stored: stored)
+
         let baseline: Set<ChemicalSaveViolationCode> = chemical == nil
             ? []
             : Set(
@@ -359,11 +379,8 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
             // A default the operator already chose is RECOVERED, never
             // re-decided. Re-running the recommendation on open would
             // overwrite a deliberate choice every time the record was viewed.
-            selectedDefaultRateIds: recoveredDefaultSelections(
-                from: source,
-                chemistry: chemistry,
-                stored: stored
-            ),
+            selectedDefaultRateIds: recovered.ids,
+            defaultRateValues: recovered.values,
             jurisdiction: jurisdiction,
             baselineViolationCodes: baseline
         )
@@ -378,32 +395,54 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// reconstruction: a stored value that no longer corresponds to any
     /// registered rate — because the label was re-verified and moved on —
     /// selects nothing, and the recommendation rule applies again.
-    private static func recoveredDefaultSelections(
+    private static func recoveredDefaults(
         from source: SavedChemical,
         chemistry: ChemicalManualDraft,
         stored: ChemicalIntelligence?
-    ) -> [ChemicalDefaultRateBasis: String] {
+    ) -> (ids: [ChemicalDefaultRateBasis: String], values: [ChemicalDefaultRateBasis: Double]) {
         let grapevine = ChemicalManualEntry
             .proposedIntelligence(from: chemistry, existing: stored)
             .registeredUses.statedUses.viticultural
-        guard !grapevine.isEmpty else { return [:] }
+        guard !grapevine.isEmpty else { return ([:], [:]) }
 
-        var out: [ChemicalDefaultRateBasis: String] = [:]
+        var ids: [ChemicalDefaultRateBasis: String] = [:]
+        var values: [ChemicalDefaultRateBasis: Double] = [:]
         for row in source.rates {
             let basis: ChemicalDefaultRateBasis =
                 row.basis == .perHectare ? .perHectare : .per100Litres
+            let options = ChemicalDefaultRate.options(basis, from: grapevine)
+
             // Compared through the SAME base scale the legacy column was
             // written in, so a rate stored from a millilitre label still
             // matches the option it came from instead of missing it.
-            let match = ChemicalDefaultRate.options(basis, from: grapevine).first { option in
+            let exact = options.first { option in
                 guard let unit = ChemicalUnit.fromLabelRateToken(option.rate.unit),
                       let value = option.rate.proposedValue
                 else { return false }
                 return abs(unit.toBase(value) - row.value) < 0.000_001
             }
-            if let match { out[basis] = match.id }
+            if let exact {
+                ids[basis] = exact.id
+                continue
+            }
+
+            // A stored dose the operator picked from INSIDE a label band does
+            // not equal any option's starting value, so the plain comparison
+            // above misses it. Recovering it is a match against the band the
+            // label authorises, never a reconstruction: a value no registered
+            // rate covers any more selects nothing and the rule runs again.
+            let banded = options.first { option in
+                guard option.isLabelRange,
+                      let unit = ChemicalUnit.fromLabelRateToken(option.rate.unit)
+                else { return false }
+                return option.authorises(unit.fromBase(row.value))
+            }
+            if let banded, let unit = ChemicalUnit.fromLabelRateToken(banded.rate.unit) {
+                ids[basis] = banded.id
+                values[basis] = unit.fromBase(row.value)
+            }
         }
-        return out
+        return (ids, values)
     }
 
     /// Lift a legacy record's scalar rates into structured label rates.
@@ -468,6 +507,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         masterChemicalId: UUID? = nil,
         masterSourceRevision: Int? = nil,
         selectedDefaultRateIds: [ChemicalDefaultRateBasis: String] = [:],
+        defaultRateValues: [ChemicalDefaultRateBasis: Double] = [:],
         jurisdiction: ChemicalRateJurisdiction? = nil,
         baselineViolationCodes: Set<ChemicalSaveViolationCode> = []
     ) {
@@ -502,6 +542,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         self.masterChemicalId = masterChemicalId
         self.masterSourceRevision = masterSourceRevision
         self.selectedDefaultRateIds = selectedDefaultRateIds
+        self.defaultRateValues = defaultRateValues
         self.jurisdiction = jurisdiction
     }
 
@@ -513,6 +554,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// flow. Operational data the operator owns — price, pack, stock, notes —
     /// is untouched: re-identifying a product says nothing about what it cost.
     mutating func apply(reviewed: SavedChemical, fallbackCountry: String) {
+        let previousIdentity = productIdentityKey
         let refreshed = ChemicalReviewSession.make(
             chemical: nil,
             prefill: reviewed,
@@ -529,6 +571,54 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         problem = refreshed.problem.trimmedNonEmpty ?? problem
         masterChemicalId = refreshed.masterChemicalId
         masterSourceRevision = refreshed.masterSourceRevision
+
+        // A dose decision belongs to the product it was taken for.
+        //
+        // Option ids are content-addressed on basis, unit and value, so two
+        // DIFFERENT products that both register `3 L/100 L` share an id. Left
+        // alone, changing product would silently re-adopt the previous
+        // product's default under the new label's conditions. Changing the
+        // product therefore retires the decision and the recommendation rule
+        // runs again from the new label.
+        if productIdentityKey != previousIdentity {
+            selectedDefaultRateIds = [:]
+            defaultRateValues = [:]
+        } else {
+            // Same product, re-verified. A choice survives only while the new
+            // label still states the rate it was made from, and an exact dose
+            // survives only while that rate still authorises it.
+            retainOnlyAuthorisedDefaults()
+        }
+    }
+
+    /// What makes this session "the same product" across a re-search.
+    ///
+    /// Registration identity first, because that is what a register actually
+    /// establishes; product name only carries the comparison for records that
+    /// have no identifier yet.
+    var productIdentityKey: String {
+        [
+            ChemicalRegistration.normaliseCountry(chemistryDraft.countryCode),
+            chemistryDraft.registrationNumber
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .uppercased(),
+            chemistryDraft.productName
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased(),
+        ].joined(separator: "|")
+    }
+
+    /// Drop any default selection or exact dose the current label no longer
+    /// supports. Never edits the label itself.
+    private mutating func retainOnlyAuthorisedDefaults() {
+        let plan = defaultRatePlan
+        selectedDefaultRateIds = selectedDefaultRateIds.filter { basis, id in
+            plan.group(basis).options.contains { $0.id == id }
+        }
+        defaultRateValues = defaultRateValues.filter { basis, value in
+            guard let option = resolvedDefaultOption(for: basis) else { return false }
+            return option.authorises(value)
+        }
     }
 
     // MARK: - Derived: chemistry
@@ -592,6 +682,29 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     }
 
     var registrationNotConfirmed: Bool { !hasRegistrationNumber }
+
+    /// Whether a missing registration identifier is worth raising YET.
+    ///
+    /// # Why this is gated rather than always shown
+    ///
+    /// The identifier is something VineTrack FILLS IN from a lookup — the
+    /// operator is never asked for it, because the only place they can read one
+    /// is the drum, under a national name the generic wording never uses.
+    /// Raising "a verified product needs its registration number" on a form
+    /// where no registered product has been selected reports a gap the operator
+    /// has had no opportunity to close, on a screen that has not yet offered
+    /// them the means to close it. It reads as a fault in what they just typed.
+    ///
+    /// So the notice waits until the record is actually making a registration
+    /// claim: a candidate has been reviewed, an identifier is already present,
+    /// or the record carries structured chemistry that a register should back.
+    /// A blank manual entry stays silent until it has something to be silent
+    /// about.
+    var showsRegistrationIssues: Bool {
+        if hasRegistrationNumber { return true }
+        if isReviewingLookup { return true }
+        return hasAuthoredChemistry
+    }
 
     // MARK: - Derived: rates
 
@@ -662,6 +775,50 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         for basis: ChemicalDefaultRateBasis
     ) {
         selectedDefaultRateIds[basis] = option.id
+        // Switching to a different registered rate retires any exact dose
+        // taken from the previous one: `150` chosen inside `100–200` is not a
+        // dose the option beside it authorises.
+        defaultRateValues[basis] = nil
+    }
+
+    /// The exact dose in force for a basis, in the RATE's own unit.
+    ///
+    /// The operator's figure when they named one, otherwise the bottom of the
+    /// band — never the top, and never a number outside it.
+    func resolvedDefaultValue(for basis: ChemicalDefaultRateBasis) -> Double? {
+        guard let option = resolvedDefaultOption(for: basis) else { return nil }
+        if let chosen = defaultRateValues[basis], option.authorises(chosen) {
+            return chosen
+        }
+        return option.startingValue
+    }
+
+    /// Set this vineyard's exact dose inside the registered band.
+    ///
+    /// Returns `false` — and changes nothing — when the value is not one the
+    /// selected registered rate authorises. The label is the authority on what
+    /// may be applied; this only records which authorised number gets poured.
+    /// The registered rates are NEVER edited here: `chemistryDraft` is not
+    /// touched, so `100–200 g/100 L` stays `100–200 g/100 L` on the record
+    /// however this vineyard chooses to dose it.
+    @discardableResult
+    mutating func setDefaultRateValue(
+        _ value: Double,
+        for basis: ChemicalDefaultRateBasis
+    ) -> Bool {
+        guard let option = resolvedDefaultOption(for: basis) else { return false }
+        guard option.authorises(value) else { return false }
+        // An option in force only by RECOMMENDATION becomes an explicit choice
+        // the moment a dose is named against it, so the two cannot disagree
+        // later about which registered rate the number came from.
+        selectedDefaultRateIds[basis] = option.id
+        defaultRateValues[basis] = value
+        return true
+    }
+
+    /// Clear this vineyard's exact dose, returning to the bottom of the band.
+    mutating func clearDefaultRateValue(for basis: ChemicalDefaultRateBasis) {
+        defaultRateValues[basis] = nil
     }
 
     /// Bases the operator still has to answer before a default exists.
@@ -693,7 +850,11 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         // parsed first.
         let basis: ChemicalDefaultRateBasis = predicate(.perHectare) ? .perHectare : .per100Litres
         if let option = resolvedDefaultOption(for: basis),
-           let value = ChemicalReviewSession.displayValue(option.rate, productUnit: unit),
+           let value = ChemicalReviewSession.displayValue(
+               option.rate,
+               productUnit: unit,
+               overrideValue: resolvedDefaultValue(for: basis)
+           ),
            let text = formatRate(value).trimmedNonEmpty {
             return text
         }
@@ -711,9 +872,13 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// Returns `nil` rather than guessing when the two are different states of
     /// matter: litres and kilograms share a base scale here, so a blind
     /// conversion would silently restate `2.5 L/ha` as `2.5 kg/ha`.
+    /// - Parameter overrideValue: the vineyard's own dose, in the RATE's unit.
+    ///   Supplied only after `setDefaultRateValue` proved the label authorises
+    ///   it, so this can never smuggle an off-label number into the projection.
     static func displayValue(
         _ rate: ChemicalLabelRate,
-        productUnit: ChemicalUnit
+        productUnit: ChemicalUnit,
+        overrideValue: Double? = nil
     ) -> Double? {
         guard let rateUnit = ChemicalUnit.fromLabelRateToken(rate.unit) else { return nil }
         guard ChemicalFormType.from(unit: rateUnit) == ChemicalFormType.from(unit: productUnit) else {
@@ -721,7 +886,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         }
         // A range projects at its LOWER bound: handing a calculation the top of
         // the band would over-apply by default.
-        guard let value = rate.value ?? rate.minValue else { return nil }
+        guard let value = overrideValue ?? rate.value ?? rate.minValue else { return nil }
         return productUnit.fromBase(rateUnit.toBase(value))
     }
 

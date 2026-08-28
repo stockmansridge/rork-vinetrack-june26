@@ -21,7 +21,14 @@ struct ChemicalDefaultRatesView: View {
     /// The option in force per basis — the operator's choice, or the
     /// recommendation when they have not made one.
     let selectedIds: [ChemicalDefaultRateBasis: String]
+    /// This vineyard's exact dose per basis, in the rate's own unit, where one
+    /// has been named inside a label band.
+    var values: [ChemicalDefaultRateBasis: Double] = [:]
     let onSelect: (ChemicalDefaultRateBasis, ChemicalDefaultRateOption) -> Void
+    /// Records an exact dose. Returns false when the label does not authorise
+    /// it, which is what drives the out-of-range message.
+    var onSetValue: ((ChemicalDefaultRateBasis, Double) -> Bool)?
+    var onClearValue: ((ChemicalDefaultRateBasis) -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -67,6 +74,21 @@ struct ChemicalDefaultRatesView: View {
 
                 ForEach(group.options) { option in
                     optionRow(option, in: group)
+                    // The exact-dose field belongs to the option in force and
+                    // only when the label states a band — a single registered
+                    // number is not a choice, and offering a box beside it
+                    // would invite an off-label figure.
+                    if option.isLabelRange,
+                       isInForce(option, in: group),
+                       onSetValue != nil {
+                        ChemicalExactDoseField(
+                            option: option,
+                            value: values[group.basis],
+                            onCommit: { onSetValue?(group.basis, $0) ?? false },
+                            onClear: { onClearValue?(group.basis) }
+                        )
+                        .padding(.leading, 28)
+                    }
                 }
             }
         }
@@ -87,14 +109,23 @@ struct ChemicalDefaultRatesView: View {
             + "Choose the one this vineyard uses."
     }
 
+    /// The option a basis is currently dosing by: the explicit choice, or the
+    /// recommendation while none has been made.
+    private func isInForce(
+        _ option: ChemicalDefaultRateOption,
+        in group: ChemicalDefaultRateGroup
+    ) -> Bool {
+        if let selected = selectedIds[group.basis] { return selected == option.id }
+        return group.recommendedOptionId == option.id
+    }
+
     @ViewBuilder
     private func optionRow(
         _ option: ChemicalDefaultRateOption,
         in group: ChemicalDefaultRateGroup
     ) -> some View {
-        let isSelected = selectedIds[group.basis] == option.id
         let isRecommended = group.recommendedOptionId == option.id
-        let isInForce = isSelected || (selectedIds[group.basis] == nil && isRecommended)
+        let isInForce = isInForce(option, in: group)
         let isOutsideJurisdiction = plan.jurisdiction != nil
             && !option.applies(in: plan.jurisdiction)
 
@@ -169,5 +200,133 @@ struct ChemicalDefaultRatesView: View {
         parts.append(contentsOf: option.conditions.map(\.summary))
         if isInForce { parts.append("Selected default") }
         return parts.joined(separator: ", ")
+    }
+}
+
+/// The vineyard's own dose, taken from INSIDE a registered band.
+///
+/// # Why a band still needs a number
+///
+/// `100–200 g/100 L` is what the label authorises. It is not what anybody
+/// pours. Until this existed the projection silently used the bottom of the
+/// band, so a vineyard dosing 150 either lived with a spray calculation built
+/// on 100, or "fixed" it by editing the registered rate — destroying the label
+/// evidence for everyone who read the record afterwards.
+///
+/// So the decision is recorded here, beside the band and separate from it. The
+/// registered rate is never edited: it still reads `100–200 g/100 L` on the
+/// record, in the re-verification comparison and in every export.
+struct ChemicalExactDoseField: View {
+    let option: ChemicalDefaultRateOption
+    /// The dose already recorded, in the rate's own unit.
+    let value: Double?
+    /// Returns false when the label does not authorise the value.
+    let onCommit: (Double) -> Bool
+    let onClear: () -> Void
+
+    @State private var text: String = ""
+    @State private var isRejected: Bool = false
+    @FocusState private var isFocused: Bool
+
+    private var bounds: (min: Double, max: Double)? { option.authorisedBounds }
+
+    private var unit: String { option.rate.unit }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text("This vineyard uses")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField(placeholder, text: $text)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .focused($isFocused)
+                    .frame(maxWidth: 90)
+                    .font(.subheadline.weight(.semibold))
+                    .onSubmit(commit)
+                Text(unit)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if isFocused {
+                    Button("Set", action: commit)
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.borderless)
+                }
+            }
+
+            if isRejected, let bounds {
+                // The refusal names the band, because "invalid" tells an
+                // operator nothing about what they may actually apply.
+                Label(
+                    "The label registers \(numberText(bounds.min))\u{2013}\(numberText(bounds.max)) \(unit). Enter a rate within it.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            } else if value != nil {
+                HStack(spacing: 8) {
+                    Text("The registered rate stays \(option.displayRate).")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Button("Reset", action: reset)
+                        .font(.caption2)
+                        .buttonStyle(.borderless)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            } else if let bounds {
+                Text("Any rate from \(numberText(bounds.min)) to \(numberText(bounds.max)) \(unit) is registered. Leave it blank to use \(numberText(bounds.min)).")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 2)
+        .onAppear { syncFromValue() }
+        .onChange(of: value) { _, _ in syncFromValue() }
+    }
+
+    private var placeholder: String {
+        bounds.map { numberText($0.min) } ?? ""
+    }
+
+    private func syncFromValue() {
+        guard !isFocused else { return }
+        text = value.map(numberText) ?? ""
+        isRejected = false
+    }
+
+    private func commit() {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else {
+            reset()
+            return
+        }
+        // Comma decimal separators are what a phone keyboard offers in much of
+        // the world, and rejecting them would read as an out-of-range error.
+        guard let parsed = Double(trimmed.replacingOccurrences(of: ",", with: ".")) else {
+            isRejected = true
+            return
+        }
+        if onCommit(parsed) {
+            isRejected = false
+            isFocused = false
+        } else {
+            isRejected = true
+        }
+    }
+
+    private func reset() {
+        onClear()
+        text = ""
+        isRejected = false
+        isFocused = false
+    }
+
+    private func numberText(_ value: Double) -> String {
+        value.truncatingRemainder(dividingBy: 1) == 0
+            ? String(format: "%.0f", value)
+            : String(format: "%g", value)
     }
 }

@@ -456,16 +456,41 @@ struct EditSavedChemicalSheet: View {
             Button {
                 activeSheet = .search
             } label: {
-                Label(
-                    session.name.trimmingCharacters(in: .whitespaces).isEmpty
-                        ? "Search for this product"
-                        : "Search the register again",
-                    systemImage: "magnifyingglass"
-                )
+                Label(lookupActionTitle, systemImage: lookupActionSymbol)
             }
         } footer: {
-            Text("Looks the product up again and refills the product details below. Everything found stays editable, and nothing is saved until you press Save.")
+            Text(lookupActionFooter)
         }
+    }
+
+    /// What the lookup action IS, in the operator's situation.
+    ///
+    /// Reviewing a lookup, the question on the operator's mind is "is this even
+    /// the right product?" — and until now their only way out of a wrong
+    /// candidate was Cancel, which reads as "abandon everything I have done".
+    /// So the action says plainly that it changes the product.
+    private var lookupActionTitle: String {
+        if session.isReviewingLookup { return "Change Product" }
+        return session.name.trimmingCharacters(in: .whitespaces).isEmpty
+            ? "Search for this product"
+            : "Search the register again"
+    }
+
+    private var lookupActionSymbol: String {
+        session.isReviewingLookup ? "arrow.triangle.2.circlepath" : "magnifyingglass"
+    }
+
+    private var lookupActionFooter: String {
+        if session.isReviewingLookup {
+            // Says exactly what survives the swap. "Nothing is saved until you
+            // press Save" is the sentence that makes the action safe to try.
+            return "Not the product on your drum? This returns to the register "
+                + "search so you can pick a different one. Your price, pack size, "
+                + "stock and notes are kept; the label details are replaced, and "
+                + "any default rate chosen for the old product is cleared. "
+                + "Nothing is saved until you press Save."
+        }
+        return "Looks the product up again and refills the product details below. Everything found stays editable, and nothing is saved until you press Save."
     }
 
     private var productSection: some View {
@@ -492,7 +517,13 @@ struct EditSavedChemicalSheet: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "registration"))
+            // Held back until the record actually claims a registration — see
+            // `showsRegistrationIssues`. An operator who has not yet chosen a
+            // registered product is not being told they forgot a number nobody
+            // asked them for.
+            if session.showsRegistrationIssues {
+                ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "registration"))
+            }
 
             Picker("Category", selection: $session.productCategory) {
                 Text("Uncategorised").tag(ProductCategory?.none)
@@ -788,8 +819,17 @@ struct EditSavedChemicalSheet: View {
             ChemicalDefaultRatesView(
                 plan: session.defaultRatePlan,
                 selectedIds: session.selectedDefaultRateIds,
+                values: session.defaultRateValues,
                 onSelect: { basis, option in
                     session.selectDefaultRate(option, for: basis)
+                },
+                onSetValue: { basis, value in
+                    // Refused when the label does not authorise it. The
+                    // registered range itself is never edited by this.
+                    session.setDefaultRateValue(value, for: basis)
+                },
+                onClearValue: { basis in
+                    session.clearDefaultRateValue(for: basis)
                 }
             )
         } header: {

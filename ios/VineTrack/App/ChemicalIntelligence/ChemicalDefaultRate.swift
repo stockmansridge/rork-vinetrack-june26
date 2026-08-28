@@ -123,6 +123,37 @@ nonisolated struct ChemicalDefaultRateOption: Sendable, Hashable, Identifiable {
         rate.minValue != nil && rate.maxValue != nil
     }
 
+    /// The inclusive bounds this option authorises, in the rate's own unit.
+    ///
+    /// A single-value rate authorises exactly one number, so its bounds are
+    /// that number twice. A label range authorises everything between its
+    /// printed ends. `nil` when the rate states no usable number at all.
+    nonisolated var authorisedBounds: (min: Double, max: Double)? {
+        if let minValue = rate.minValue, let maxValue = rate.maxValue {
+            return minValue <= maxValue ? (minValue, maxValue) : (maxValue, minValue)
+        }
+        if let value = rate.value { return (value, value) }
+        return nil
+    }
+
+    /// Whether `value` is a dose this registered rate actually authorises.
+    ///
+    /// Inclusive of both ends: a label printing `100–200 g/100 L` registers
+    /// 100 and 200 as much as it registers 150. The comparison carries a small
+    /// tolerance so a number the operator typed back in — and that made a
+    /// round trip through text — still matches its own bound.
+    nonisolated func authorises(_ value: Double) -> Bool {
+        guard let bounds = authorisedBounds else { return false }
+        let tolerance = 0.000_001
+        return value >= bounds.min - tolerance && value <= bounds.max + tolerance
+    }
+
+    /// The dose this option starts from when the operator has named none.
+    ///
+    /// A range starts at its LOWER bound: defaulting to the top of a band
+    /// would over-apply every product whose operator never opened the row.
+    nonisolated var startingValue: Double? { rate.value ?? rate.minValue }
+
     /// Every jurisdiction any of this option's conditions names.
     nonisolated var jurisdictions: [ChemicalRateJurisdiction] {
         var seen = Set<ChemicalRateJurisdiction>()
