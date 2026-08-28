@@ -1,0 +1,287 @@
+// Deterministic EVIDENCE fixture for THIOVIT JET (APVMA 53904).
+//
+// # Why this fixture is shaped as evidence, not as PDF text items
+//
+// `label_fixture_33182_apvma.ts` captures a `PdfTextItem[]` text layer because
+// the 33182 eLabel PDF was retrievable and its GLYPHS were the defect under
+// test. That is not the situation here.
+//
+// The authoritative 53904 label document HAS been fetched — by VineTrack, in
+// production, on 2026-08-26 (see `THIOVIT_53904_LABEL_DOCUMENT_EVIDENCE`) —
+// but the PDF bytes are not reachable from the test sandbox: `syngenta.com.au`
+// answers 403 behind a bot-protection interstitial and `elabels.apvma.gov.au`
+// PDF paths answer http=000 (the SAME failure the already-captured 33182
+// eLabel URL now shows, so it is an environment block, not an absent
+// document). Re-extracting a text layer here would therefore mean inventing
+// one, and an invented text layer is not evidence.
+//
+// So this fixture freezes what IS authoritatively established: the identity,
+// the document's own hash and size, the product measurement facts, and the
+// EXPECTED direction structure — the last of these being the whole point,
+// because the current implementation collapses it.
+//
+// # The defect this fixture exists to make un-"fixable"-by-accident
+//
+// The live master row projects the two printed grape Powdery Mildew
+// directions into ONE `GRAPE` use carrying BOTH rates, both flagged
+// `condition_ambiguous`, with the critical comments of both printed contexts
+// concatenated into a single restrictions string. The label prints them as two
+// materially different registered uses:
+//
+//   table grapes / fruit destined for drying   100-200 g/100 L
+//   wine grapes only                           200-600 g/100 L
+//
+// Freezing the EXPECTED structure here means a later change cannot satisfy
+// this suite by preserving the collapsed output.
+//
+// NOTHING in this file asserts that the implementation currently behaves this
+// way. `THIOVIT_53904_EXPECTED_GRAPE_DIRECTIONS` is the label's truth;
+// `THIOVIT_53904_ACTUAL_GRAPE_PROJECTION` is what production emits today. The
+// accompanying test pins the difference as a known defect.
+
+/** Registered identity. Stable; independent of current legal status. */
+export const THIOVIT_53904_IDENTITY = {
+  registration_identity_key: "AU:apvma:53904",
+  registration_number: "53904",
+  registration_scheme: "apvma",
+  registration_country: "AU",
+  registered_product_name: "THIOVIT JET MICROGRANULE FUNGICIDE/MITICIDE",
+  registrant: "SYNGENTA AUSTRALIA PTY LTD",
+} as const;
+
+/**
+ * The live VineTrack `master_chemicals` row, queried independently.
+ *
+ * Recorded verbatim. `product_category: null` is preserved as null — a
+ * category is NOT invented to make the fixture look complete.
+ */
+export const THIOVIT_53904_MASTER_RECORD_EVIDENCE = {
+  retrieved_at: "2026-08-26T02:46:51Z",
+  form_type: "solid",
+  product_category: null,
+  activity_groups: ["M2"],
+  active_ingredient: "Sulfur As Elemental Sulfur",
+  concentration_text: "800 g/kg",
+  label_version: "APVMA label approval 135412, approval date 17/06/2022",
+  label_reference: "APVMA eLabels product 53904",
+  verification_status: "partially_verified",
+} as const;
+
+/**
+ * Provenance of the AUTHORITATIVE label document, as captured in production.
+ *
+ * This is what makes the label evidence deterministic despite the sandbox
+ * being unable to re-fetch it: the document is identified by content hash.
+ */
+export const THIOVIT_53904_LABEL_DOCUMENT_EVIDENCE = {
+  source: "APVMA eLabels",
+  fetched_at: "2026-08-26T02:45:55Z",
+  byte_size: 289840,
+  sha256: "91baafb160706a46497ef517968f707153d7b8cea1b37c9fcce3f240381c7ce0",
+} as const;
+
+/**
+ * CORROBORATING ONLY — a historical third-party mirror of the 53904 label,
+ * retrieved and text-extracted during the Phase 2B audit.
+ *
+ * Filename implies a 2006 revision. It is NEVER the current label and must
+ * never be presented as such; it is recorded because the direction STRUCTURE
+ * frozen below was read verbatim from it and corroborated against the current
+ * master row's rates.
+ */
+export const THIOVIT_53904_HISTORICAL_LABEL_EVIDENCE = {
+  source_url: "https://www.herbiguide.com.au/Labels/SULP800_53904-0406.PDF",
+  retrieved_at: "2026-08-28",
+  byte_size: 47859,
+  sha256: "12708ff37dd4b8bf0d3016be84c9d24f335d2e8a19532ebcb386392e0e6feaaa",
+  pages: 4,
+  printed_activity_group: "GROUP Y FUNGICIDE",
+  approval_lines: [
+    "APVMA Approval No: 53904/25/0603 Pack size: 25 kg",
+    "APVMA Approval No: 53904/15/0406 Pack size: 15 kg",
+  ],
+  authority: "corroborating_only",
+} as const;
+
+/**
+ * The five measurement concepts, held APART on purpose.
+ *
+ * A 500 g/100 L rate is not evidence of a liquid product. `rate_unit` and
+ * `physical_form` are different questions with different sources, and this
+ * shape exists so a future change cannot quietly derive one from the other.
+ */
+export const THIOVIT_53904_PRODUCT_MEASUREMENT = {
+  /** Manufacturer-primary + current master row. NOT derived from rate units. */
+  physical_form: "solid",
+  physical_form_provenance: "manufacturer_primary",
+  /** Source wording preserved separately from the canonical form. */
+  formulation_text: "microgranule / water-dispersible granule",
+  active_ingredient: "Sulfur As Elemental Sulfur",
+  active_concentration: 800,
+  active_concentration_unit: "g/kg",
+  /** Container/inventory unit, from the label's own pack-size statements. */
+  inventory_unit: "kg",
+  /** Application-rate unit as PRINTED in the directions table. */
+  rate_unit: "g",
+  /** Application-rate basis as PRINTED. */
+  rate_basis: "per_100_litres",
+} as const;
+
+/**
+ * Registration legal status — raw official facts kept SEPARATE from any
+ * semantic conclusion.
+ *
+ * The expiry has passed as of the audit date, but "expired" is NOT derived
+ * from a clock, and the published "R" is not overwritten either. Label content
+ * and legal status are independent evidence dimensions, so this ambiguity does
+ * NOT block the label fixture.
+ */
+export const THIOVIT_53904_REGISTRATION_STATUS = {
+  registration_code_raw: "R",
+  registration_expiry_raw: "30/06/2026",
+  semantic_status: "UNRESOLVED_CURRENT_STATUS",
+  resolution_requires: "fresh PubCRIS renewal-status source",
+} as const;
+
+/**
+ * Withholding period.
+ *
+ * The LEGAL truth is the wording. `days: 0` is the existing conservative
+ * projection of "not required", and the wording must survive alongside it —
+ * reducing the legal meaning to the bare number loses the "when used as
+ * directed" condition.
+ */
+export const THIOVIT_53904_WHP = {
+  statement: "WITHHOLDING PERIODS: NOT REQUIRED WHEN USED AS DIRECTED",
+  display_wording: "Not required when used as directed",
+  projected_days: 0,
+} as const;
+
+/**
+ * Re-entry interval.
+ *
+ * The label text carries no re-entry statement at all (zero occurrences of
+ * "RE-ENTRY"/"REENTRY" in the extracted historical text), and the current
+ * master row lists `re_entry_period_hours` among its unresolved fields. AWRI
+ * publishes re-entry CODE "a" for this product, but no authoritative
+ * code->hours mapping exists in this repository, so the code is recorded and
+ * NOT resolved.
+ *
+ * Unresolved is the answer. It is not 0, not "no REI", not "safe immediately".
+ */
+export const THIOVIT_53904_REI = {
+  hours: null,
+  statement: null,
+  awri_re_entry_code: "a",
+  resolution: "unresolved_not_stated",
+} as const;
+
+/** One printed label direction, with every identity dimension it states. */
+export interface ExpectedLabelDirection {
+  /** The crop/use CONTEXT cell, verbatim. Part of identity. */
+  crop_context: string;
+  /** Every target the one printed direction names. */
+  targets: string[];
+  /**
+   * The State column, verbatim.
+   *
+   * The wire contract has NO field for this today — that absence is the
+   * defect. It is held here because a direction's jurisdiction is part of what
+   * the regulator approved.
+   */
+  state_applicability: string;
+  basis: "range_per_100_litres" | "per_100_litres";
+  min_value?: number;
+  max_value?: number;
+  value?: number;
+  unit: "g";
+  /** Critical Comments for THIS direction only — never the union of two. */
+  critical_comments: string;
+}
+
+/**
+ * The AUTHORITATIVE grape direction structure.
+ *
+ * Four directions across TWO distinct crop contexts. Read verbatim from the
+ * historical label's Directions for Use table and corroborated by the current
+ * master row's rate values (500, 100-200, 200-600 g/100 L).
+ *
+ * The two Powdery Mildew entries are NOT duplicates: different crop context,
+ * different rate range, different spray interval, different conditions.
+ */
+export const THIOVIT_53904_EXPECTED_GRAPE_DIRECTIONS: ExpectedLabelDirection[] = [
+  {
+    crop_context: "Grapes table grapes, fruit destined for drying",
+    targets: ["Vine Mite", "Grapeleaf Blister Mite"],
+    state_applicability: "NSW, Vic, Tas, SA, WA only",
+    basis: "per_100_litres",
+    value: 500,
+    unit: "g",
+    critical_comments: "Apply before sprouting. Ensure thorough coverage.",
+  },
+  {
+    crop_context: "Grapes table grapes, fruit destined for drying",
+    targets: ["Powdery Mildew (Oidium spp)", "Mites"],
+    state_applicability: "NSW, Vic, Tas, SA, WA only",
+    basis: "range_per_100_litres",
+    min_value: 100,
+    max_value: 200,
+    unit: "g",
+    critical_comments:
+      "Apply immediately after budburst, then every 2 to 3 weeks or as required. Ensure thorough coverage.",
+  },
+  {
+    crop_context: "Grapes Vines wine grapes only",
+    targets: ["Vine Mite", "Grapeleaf Blister Mite"],
+    state_applicability: "NSW, Vic, Tas, SA, WA only",
+    basis: "per_100_litres",
+    value: 500,
+    unit: "g",
+    critical_comments: "Apply before sprouting. Ensure thorough coverage.",
+  },
+  {
+    crop_context: "Grapes Vines wine grapes only",
+    targets: ["Powdery Mildew (Oidium spp)", "Mites"],
+    state_applicability: "NSW, Vic, Tas, SA, WA only",
+    basis: "range_per_100_litres",
+    min_value: 200,
+    max_value: 600,
+    unit: "g",
+    critical_comments:
+      "Use rates to the upper end of the rate range when disease pressure is high and/or a higher degree of control is required. Apply immediately after bud burst, then every 14 to 21 days or as required.",
+  },
+];
+
+/**
+ * What production ACTUALLY projects today, from the live master row.
+ *
+ * Recorded so the divergence is testable. This is the DEFECT, not the target.
+ */
+export const THIOVIT_53904_ACTUAL_GRAPE_PROJECTION = {
+  crop: "GRAPE",
+  uses: [
+    { target_raw: "Grapeleaf Blister Mite", rates: [{ basis: "per_100_litres", value: 500, unit: "g" }] },
+    { target_raw: "Vine Mite", rates: [{ basis: "per_100_litres", value: 500, unit: "g" }] },
+    {
+      target_raw: "Powdery Mildew",
+      rates: [
+        { basis: "range_per_100_litres", min_value: 100, max_value: 200, unit: "g", condition_ambiguous: true },
+        { basis: "range_per_100_litres", min_value: 200, max_value: 600, unit: "g", condition_ambiguous: true },
+      ],
+      /** Comments from BOTH printed contexts, concatenated. */
+      restrictions_are_concatenated_from_both_contexts: true,
+    },
+  ],
+  /** No state applicability survives anywhere in the projection. */
+  state_applicability_present: false,
+} as const;
+
+/**
+ * APVMA PubCRIS publishes explicit formulation/category fields that this
+ * repository does not appear to consume. Recorded as a Phase 3 audit input.
+ */
+export const THIOVIT_53904_PUBCRIS_FIELD_AUDIT = {
+  candidate_raw_fields: ["fdesc", "prodtype", "typedesc"],
+  expected_role: "deterministic regulatory input, preferred BEFORE AI interpretation",
+  status: "not_consumed_pending_phase3_confirmation",
+} as const;
