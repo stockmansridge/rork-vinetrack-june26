@@ -370,7 +370,11 @@ class SavedChemicalParityTest {
         // The P3 WHP rule still reads the same on a reopened record.
         assertEquals(
             "Not required when used as directed",
-            ChemicalWithholdingDisplay.text(use, hasManufacturerLabelSource = true),
+            ChemicalWithholdingDisplay.text(
+                days = use.withholdingPeriodDays,
+                restrictions = use.restrictions,
+                hasManufacturerLabelSource = true,
+            ),
         )
     }
 
@@ -383,7 +387,10 @@ class SavedChemicalParityTest {
         val reopened = roundTrip(decodeRow(custodiaForteRow))
         val intel = requireNotNull(reopened.storedIntelligence)
 
-        assertEquals(listOf("11", "3"), intel.activityGroupCodes)
+        // Read-back is CANONICAL order (numeric ascending), never payload order:
+        // both platforms sort so identical mixes never persist as two different-
+        // looking histories, whichever order the label listed the actives.
+        assertEquals(listOf("3", "11"), intel.activityGroupCodes)
         assertEquals("91636", intel.registration?.registrationNumber)
 
         val use = intel.registeredUses.single()
@@ -420,7 +427,11 @@ class SavedChemicalParityTest {
         // 28 days is a stated count; the phrase rule can never zero it.
         assertEquals(
             "28 days",
-            ChemicalWithholdingDisplay.text(use, hasManufacturerLabelSource = true),
+            ChemicalWithholdingDisplay.text(
+                days = use.withholdingPeriodDays,
+                restrictions = use.restrictions,
+                hasManufacturerLabelSource = true,
+            ),
         )
     }
 
@@ -448,10 +459,12 @@ class SavedChemicalParityTest {
         assertEquals(rate.rawText, rate.displayRate)
 
         // WHP was never stated — it must stay unstated, not become "0 days".
-        assertNull(intel.registeredUses.single().withholdingPeriodDays)
+        val use = intel.registeredUses.single()
+        assertNull(use.withholdingPeriodDays)
         assertNull(
             ChemicalWithholdingDisplay.text(
-                intel.registeredUses.single(),
+                days = use.withholdingPeriodDays,
+                restrictions = use.restrictions,
                 hasManufacturerLabelSource = true,
             ),
         )

@@ -342,7 +342,10 @@ struct SavedChemicalParityTests {
         let reopened = try roundTrip(try decodeRow(custodiaForteRow))
         let intel = try #require(reopened.chemicalIntelligence)
 
-        #expect(intel.activityGroupCodes == ["11", "3"])
+        // Read-back is CANONICAL order (numeric ascending), never payload order:
+        // both platforms sort so identical mixes never persist as two different-
+        // looking histories, whichever order the label listed the actives.
+        #expect(intel.activityGroupCodes == ["3", "11"])
         #expect(intel.registration?.registrationNumber == "91636")
 
         let use = try #require(intel.registeredUses.first)
