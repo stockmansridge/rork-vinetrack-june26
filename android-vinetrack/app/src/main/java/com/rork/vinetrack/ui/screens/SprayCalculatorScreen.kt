@@ -559,6 +559,22 @@ fun SprayCalculatorScreen(
                 it.name.isNotBlank() && it.name.equals(r.equipmentType ?: "", ignoreCase = true)
             }?.id
             ?: sprayEquipmentId
+        // Program Step intent (parity with the iOS `applyPrefillIfNeeded`):
+        // seed the target selection from the step's structured targets and the
+        // E-L stage from its canonical growth_stage_code. Only ever fills
+        // empty state — a prefill must never overwrite operator choices, and
+        // the spray-head target is deliberately NOT prefilled.
+        val prefillTargets = r.targets.orEmpty().mapNotNull(SprayTarget::from)
+        if (prefillTargets.isNotEmpty() && sprayTargets.isEmpty()) {
+            val selected = prefillTargets.toSet()
+            sprayTargets.addAll(SprayTarget.presentationOrder.filter(selected::contains))
+        }
+        r.templateGrowthStageCode?.let { code ->
+            if (sharedStageCode == null && GrowthStage.byCode(code) != null) {
+                growthModeSame = true
+                sharedStageCode = code
+            }
+        }
         if (prefillPaddockIds.isNotEmpty()) {
             // Plan/job prefill: only the blocks the plan genuinely proposed.
             val ids = prefillPaddockIds.filter { pid -> state.paddocks.any { it.id == pid } }

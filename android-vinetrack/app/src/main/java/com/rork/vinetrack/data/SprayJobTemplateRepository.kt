@@ -4,6 +4,8 @@ import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.SprayChemical
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.SprayTank
+import com.rork.vinetrack.data.spray.SprayProductRateBasis
+import com.rork.vinetrack.data.spray.SprayTargetVocabulary
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
@@ -60,6 +62,17 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         @SerialName("concentration_factor") val concentrationFactor: Double? = null,
         @SerialName("operation_type") val operationType: String? = null,
         val target: String? = null,
+        /**
+         * Structured target identifiers (sql/193) — authoritative for WHICH
+         * targets whenever present; the legacy [target] wording then only
+         * supplies verbatim labels. Absent on rows written before the
+         * contract.
+         */
+        val targets: List<String>? = null,
+        /** Portal-chosen spray equipment, carried through by identity. */
+        @SerialName("equipment_id") val equipmentId: String? = null,
+        /** Portal-chosen tractor, carried through by identity. */
+        @SerialName("tractor_id") val tractorId: String? = null,
         val notes: String? = null,
         /** Canonical E-L stage for the template (sql/034), e.g. "EL12". */
         @SerialName("growth_stage_code") val growthStageCode: String? = null,
@@ -100,22 +113,37 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
             rowApplications = emptyList(),
             chemicals = chemicals,
         )
-        val combinedNotes = buildString {
-            target?.takeIf { it.isNotBlank() }?.let { append("Target: $it") }
-            notes?.takeIf { it.isNotBlank() }?.let {
-                if (isNotEmpty()) append('\n')
-                append(it)
-            }
-        }.ifBlank { null }
+        // The step's target selection. `targets` is authoritative when the
+        // row has it; otherwise the legacy wording is split into tags so
+        // "Eutypa Dieback, Botryosphaeria Dieback" loads as two targets
+        // rather than as one unparsed sentence or as nothing. The old
+        // "Target: ..." notes prefix is gone — a target VineTrack has no
+        // typed case for is now carried as a real identifier rather than
+        // smuggled into the notes, and duplicating it there would show the
+        // operator the same words twice. Mirrors iOS `toSprayRecord()`.
+        val tags = SprayTargetVocabulary.tags(
+            identifiers = targets.orEmpty(),
+            wording = target,
+        )
+        val targetIdentifiers = SprayTargetVocabulary.identifiers(tags)
         return SprayRecord(
             id = id,
             vineyardId = vineyardId,
             date = plannedDate ?: createdAt,
             sprayReference = name.trim().ifBlank { null },
-            notes = combinedNotes,
+            notes = notes?.takeIf { it.isNotBlank() },
+            // Portal-chosen identities the previous adapter dropped. Passing
+            // them through lets a Program Step prefill the equipment and
+            // tractor by ID rather than by matching a display name.
+            tractorId = tractorId,
+            sprayEquipmentId = equipmentId,
             isTemplate = true,
             operationType = operationType?.takeIf { it.isNotBlank() },
             tanks = listOf(tank),
+            // Flat sql/193 column: built-in raws plus custom slugs, in the
+            // vocabulary's stable order. Null when the step names none —
+            // which reads as "not recorded", never as "explicitly none".
+            targets = targetIdentifiers.takeIf { it.isNotEmpty() },
             createdAt = createdAt,
             templateGrowthStageCode = growthStageCode?.trim()?.takeIf { it.isNotEmpty() },
         )
@@ -138,16 +166,7 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         val name = str("name", "product_name", "productName", "product", "chemical_name", "chemicalName")
             ?: return null
         val rate = num("rate", "rate_per_ha", "ratePerHa", "rate_value", "amount") ?: 0.0
-        val unitRaw = (str("unit", "rate_unit", "rateUnit") ?: "").lowercase()
-        val per100L = unitRaw.contains("100")
-        // Map free-text units onto the strict ChemicalUnit raw values shared
-        // with iOS ("Litres", "mL", "Kg", "g"); order matters (kg before g).
-        val unit = when {
-            unitRaw.contains("ml") -> "mL"
-            unitRaw.contains("kg") -> "Kg"
-            unitRaw.startsWith("g") || unitRaw.contains("g/") -> "g"
-            else -> "Litres"
-        }
+        val (unit, per100L) = parseLineUnit(str("unit", "rate_unit", "rateUnit"))
         // SprayChemical rates are stored in base units (mL or g).
         val baseRate = when (unit) {
             "Litres", "Kg" -> rate * 1000
@@ -161,12 +180,41 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
             ratePer100L = if (per100L) baseRate else 0.0,
             costPerUnit = 0.0,
             unit = unit,
+            // The basis the portal's own unit string states. Previously left
+            // null, so a `mL/100L` program line reloaded as a legacy
+            // whole-block rate. A line with no rate at all stays null — an
+            // honest "not stated". Mirrors iOS `BackendSprayJobTemplate`.
+            rateBasis = if (baseRate > 0) {
+                (if (per100L) SprayProductRateBasis.PER_100_LITRES else SprayProductRateBasis.WHOLE_BLOCK_AREA).raw
+            } else {
+                null
+            },
             savedChemicalId = str("chemical_id", "chemicalId", "saved_chemical_id", "savedChemicalId"),
         )
     }
 
     private fun requireConfig() {
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
+    }
+
+    companion object {
+        /**
+         * Parse a free-text chemical-line unit ("L/ha", "mL/100L", "kg/ha",
+         * "g") into the strict ChemicalUnit raw shared with iOS ("Litres",
+         * "mL", "Kg", "g") plus a per-100L basis flag. Mirrors the iOS
+         * `BackendSprayJobTemplate.parseLineUnit` exactly.
+         */
+        fun parseLineUnit(raw: String?): Pair<String, Boolean> {
+            val lowered = raw.orEmpty().lowercase()
+            val per100 = lowered.contains("100")
+            val unit = when {
+                lowered.contains("ml") -> "mL"
+                lowered.contains("kg") -> "Kg"
+                lowered.startsWith("g") || lowered.contains("g/") -> "g"
+                else -> "Litres"
+            }
+            return unit to per100
+        }
     }
 
     private fun HttpRequestBuilder.authHeaders(token: String) {

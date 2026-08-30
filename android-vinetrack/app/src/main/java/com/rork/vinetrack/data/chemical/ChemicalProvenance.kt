@@ -184,6 +184,13 @@ object ChemicalWithholdingDisplay {
     const val NOT_REQUIRED_PHRASE: String = "not required when used as directed"
 
     /**
+     * Wording when a value is genuinely unresolved. Rows are still DRAWN with
+     * it: a hidden row reads as "no restriction"; "Not stated" reads as "go
+     * and check". Mirrors the iOS `ChemicalWithholdingDisplay.notStated`.
+     */
+    const val NOT_STATED: String = "Not stated"
+
+    /**
      * Human wording for a use's withholding period, or null when none is
      * stated (an unresolved withholding period is never invented).
      */
@@ -197,6 +204,33 @@ object ChemicalWithholdingDisplay {
         }
         return "$days days"
     }
+
+    /** [text], with an unresolved value reading as [NOT_STATED]. */
+    fun display(days: Int?, restrictions: String?, hasManufacturerLabelSource: Boolean): String =
+        text(days, restrictions, hasManufacturerLabelSource) ?: NOT_STATED
+
+    /**
+     * Re-entry wording when the label stated no rule of any kind. Mirrors
+     * the iOS `ChemicalReEntryDisplay.notStated` summary exactly.
+     */
+    const val RE_ENTRY_NOT_STATED: String = "Not stated on label"
+
+    /**
+     * Human wording for a use's re-entry line. Re-entry has three real
+     * answers: a countable period, the label's own verbatim condition (e.g.
+     * "until the spray has dried"), or silence — and silence reads as
+     * [RE_ENTRY_NOT_STATED], never as "no restriction". Nothing is ever
+     * inferred or defaulted. Mirrors the iOS `ChemicalReEntryDisplay.summary`.
+     */
+    fun reEntrySummary(hours: Int?, statement: String?): String {
+        if (hours != null) return if (hours == 1) "1 hour" else "$hours hours"
+        statement?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        return RE_ENTRY_NOT_STATED
+    }
+
+    /** Whether the label stated a re-entry rule of any kind. */
+    fun reEntryIsStated(hours: Int?, statement: String?): Boolean =
+        hours != null || !statement?.trim().isNullOrEmpty()
 }
 
 /**

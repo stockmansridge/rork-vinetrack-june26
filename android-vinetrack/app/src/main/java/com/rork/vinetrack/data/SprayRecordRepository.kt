@@ -273,7 +273,7 @@ class SprayRecordRepository(private val session: SessionStore) {
                 diluteLitresPer100m = geometry?.diluteLitresPer100m,
                 appliedLitresPer100m = geometry?.appliedLitresPer100m,
                 concentrationFactor = geometry?.concentrationFactor,
-                targets = geometry?.targets?.map { it.raw },
+                targets = geometry?.targetIdentifiers,
                 sprayHeadTarget = geometry?.sprayHeadTarget?.raw,
                 // Templates keep block IDENTITY (reusable intent) and lose the
                 // per-block geometry outputs — `geometryToPersist()` has already
@@ -344,7 +344,7 @@ class SprayRecordRepository(private val session: SessionStore) {
                 diluteLitresPer100m = geometry?.diluteLitresPer100m,
                 appliedLitresPer100m = geometry?.appliedLitresPer100m,
                 concentrationFactor = geometry?.concentrationFactor,
-                targets = geometry?.targets?.map { it.raw },
+                targets = geometry?.targetIdentifiers,
                 sprayHeadTarget = geometry?.sprayHeadTarget?.raw,
                 applicationBlocks = geometry?.blocks,
                 clientUpdatedAt = clientUpdatedAt ?: nowIso(),

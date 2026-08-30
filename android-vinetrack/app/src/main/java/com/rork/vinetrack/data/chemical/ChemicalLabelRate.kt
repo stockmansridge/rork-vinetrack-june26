@@ -138,6 +138,14 @@ data class ChemicalRegisteredUse(
     val rates: List<ChemicalLabelRate> = emptyList(),
     @SerialName("withholding_period_days") val withholdingPeriodDays: Int? = null,
     @SerialName("re_entry_period_hours") val reEntryPeriodHours: Int? = null,
+    /**
+     * The label's verbatim re-entry condition when it states one without a
+     * countable period (e.g. "Do not enter until the spray has dried"). The
+     * resolver refuses to invent hours from such wording, so
+     * [reEntryPeriodHours] stays null and the statement is carried VERBATIM
+     * instead. Mirrors iOS `ChemicalRegisteredUse.reEntryStatement`.
+     */
+    @SerialName("re_entry_statement") val reEntryStatement: String? = null,
     val restrictions: String? = null,
     /**
      * Per-fact evidence tiers recorded by the server's label merge, keyed by

@@ -24,13 +24,21 @@ struct SprayCalculatorUXPassTests {
     /// sentence they drift, and the screen that drifts into silence is where an
     /// operator backs out and cancels a request that was about to succeed.
     @Test func lookupNoticeStatesDurationAndAsksTheOperatorToStay() {
-        let text = ChemicalLookupDurationNotice.primaryText
-        #expect(text.contains("a few minutes"))
-        #expect(text.contains("Keep this screen open"))
-        // Not framed as a fault: nothing has gone wrong.
-        #expect(!text.lowercased().contains("error"))
-        #expect(!text.lowercased().contains("failed"))
-        #expect(!text.lowercased().contains("problem"))
+        let idle = ChemicalLookupDurationNotice.primaryText
+        #expect(idle.contains("can take a little time"))
+        #expect(idle.contains("registration and label information"))
+        // The ACTIVE state asks the operator to stay while the request runs.
+        let searching = ChemicalLookupDurationNotice.searchingText
+        #expect(searching.lowercased().contains("keep this screen open"))
+        #expect(searching != idle)
+        // Not framed as a fault — and never fake progress (no percentages,
+        // no invented completion times), in either state.
+        for text in [idle, searching] {
+            #expect(!text.lowercased().contains("error"))
+            #expect(!text.lowercased().contains("failed"))
+            #expect(!text.lowercased().contains("problem"))
+            #expect(!text.contains("%"))
+        }
     }
 
     @Test func repeatHintIsSeparateSoItCanBeOmitted() {

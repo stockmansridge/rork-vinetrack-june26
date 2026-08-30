@@ -255,9 +255,9 @@ private enum class SprayFilter(val label: String) {
     // Order defines the chip order: Templates sits immediately after All
     // because Templates hold the vineyard's master spray program.
     ALL("All"),
-    TEMPLATES("Templates"),
+    TEMPLATES("Program"),
     IN_PROGRESS("In Progress"),
-    NOT_STARTED("Not Started"),
+    NOT_STARTED("Upcoming"),
     COMPLETED("Completed"),
 }
 
@@ -439,7 +439,7 @@ private fun SprayListView(
                                 onClick = { addMenu = false; onAdd() },
                             )
                             DropdownMenuItem(
-                                text = { Text("New template") },
+                                text = { Text("Add Program Step") },
                                 leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
                                 onClick = { addMenu = false; onAddTemplate() },
                             )
@@ -516,7 +516,7 @@ private fun SprayListView(
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("CSV Template") },
+                                text = { Text("Download Import CSV") },
                                 leadingIcon = { Icon(Icons.Filled.Description, contentDescription = null) },
                                 onClick = {
                                     sortMenu = false
@@ -648,7 +648,7 @@ private fun SprayListView(
                             }
                         } else {
                             if (filter == SprayFilter.ALL && templates.isNotEmpty()) {
-                                item { SectionHeader("Templates", onLight = true) }
+                                item { SectionHeader("Program", onLight = true) }
                                 items(templates, key = { "tmpl-${it.id}" }) { record ->
                                     SprayRow(
                                         record = record,
@@ -756,7 +756,7 @@ private fun SprayImportPreviewSheet(
                 ImportStatRow("Spray records", recordCount.toString())
                 if (templateCount > 0) {
                     DividerSP(vine.cardBorder)
-                    ImportStatRow("Templates", templateCount.toString())
+                    ImportStatRow("Program Steps", templateCount.toString())
                 }
                 DividerSP(vine.cardBorder)
                 ImportStatRow("Warnings", result.warnings.size.toString())
@@ -998,8 +998,8 @@ private fun SprayDetailView(
                             contentAlignment = Alignment.Center,
                         ) { Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = VineColors.Purple, modifier = Modifier.size(20.dp)) }
                         Column(Modifier.weight(1f)) {
-                            Text("Reusable template", fontWeight = FontWeight.SemiBold, color = vine.textPrimary, fontSize = 15.sp)
-                            Text("Start a new spray record from this template.", fontSize = 12.sp, color = vine.textSecondary)
+                            Text("Program Step", fontWeight = FontWeight.SemiBold, color = vine.textPrimary, fontSize = 15.sp)
+                            Text("Plan a spray from this Program Step.", fontSize = 12.sp, color = vine.textSecondary)
                         }
                     }
                     Spacer(Modifier.height(10.dp))
@@ -1009,7 +1009,7 @@ private fun SprayDetailView(
                         colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                     ) {
                         Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Text("  Use template for new record")
+                        Text("  Plan Spray")
                     }
                 }
             }
@@ -1564,7 +1564,7 @@ private fun SpraySheet(
                 isEdit && isTemplate -> "Edit template"
                 isEdit -> "Edit spray"
                 fromTemplate -> "New record from template"
-                isTemplate -> "New template"
+                isTemplate -> "Add Program Step"
                 else -> "Log a spray"
             }
             Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)

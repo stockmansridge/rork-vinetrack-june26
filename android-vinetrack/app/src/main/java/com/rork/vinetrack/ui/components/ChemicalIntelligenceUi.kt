@@ -556,26 +556,39 @@ fun ChemicalRegisteredUsesView(
                             color = vine.textPrimary,
                         )
                     }
-                    ChemicalWithholdingDisplay.text(
-                        days = use.withholdingPeriodDays,
-                        restrictions = use.restrictions,
-                        hasManufacturerLabelSource = hasManufacturerLabelSource,
-                    )?.let { whp ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text("Withholding period: $whp", fontSize = 11.sp, color = vine.textSecondary)
+                    // WHP/REI rows are ALWAYS drawn, even when the label said
+                    // nothing: a hidden row reads as "no restriction", while
+                    // "Not stated" reads as "go and check". Mirrors iOS.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        val whp = ChemicalWithholdingDisplay.display(
+                            days = use.withholdingPeriodDays,
+                            restrictions = use.restrictions,
+                            hasManufacturerLabelSource = hasManufacturerLabelSource,
+                        )
+                        Text("Withholding period: $whp", fontSize = 11.sp, color = vine.textSecondary)
+                        // Provenance capsules render only beside STATED values.
+                        if (use.withholdingPeriodDays != null) {
                             plan.badgeFor(ChemicalUseProvenanceFact.WITHHOLDING_PERIOD)
                                 ?.let { ChemicalProvenanceTag(it) }
                         }
                     }
-                    use.reEntryPeriodHours?.let {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        val reEntry = ChemicalWithholdingDisplay.reEntrySummary(
+                            hours = use.reEntryPeriodHours,
+                            statement = use.reEntryStatement,
+                        )
+                        Text("Re-entry: $reEntry", fontSize = 11.sp, color = vine.textSecondary)
+                        if (ChemicalWithholdingDisplay.reEntryIsStated(
+                                hours = use.reEntryPeriodHours,
+                                statement = use.reEntryStatement,
+                            )
                         ) {
-                            Text("Re-entry: $it hours", fontSize = 11.sp, color = vine.textSecondary)
                             plan.badgeFor(ChemicalUseProvenanceFact.RE_ENTRY)
                                 ?.let { ChemicalProvenanceTag(it) }
                         }

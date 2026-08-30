@@ -142,11 +142,11 @@ fun SprayTripSetupScreen(
 
             SprayTripSetupCard(
                 icon = { tint -> Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp)) },
-                title = "Start from Template",
+                title = "Plan from Program",
                 subtitle = if (templates.isEmpty()) {
-                    "No templates available — create one in the Spray Program"
+                    "No Program Steps yet — add one in the Spray Program"
                 } else {
-                    "Use a saved spray template to pre-fill a new job (${templates.size} available)"
+                    "Start from a Program Step (${templates.size} available)"
                 },
                 tint = VineColors.Purple,
                 enabled = templates.isNotEmpty(),
@@ -155,7 +155,7 @@ fun SprayTripSetupScreen(
             Spacer(Modifier.height(12.dp))
             SprayTripSetupCard(
                 icon = { tint -> Icon(Icons.Filled.Calculate, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp)) },
-                title = "Custom Spray Job",
+                title = "One-off Spray",
                 subtitle = "Open the spray calculator and configure a new job from scratch",
                 tint = VineColors.LeafGreen,
                 enabled = true,
@@ -362,9 +362,9 @@ private fun SprayProgramPickerSheet(
     val completed = remember(linked, state.trips) { linked.filter { sprayRecordStatus(it, state.trips) == SprayStatus.COMPLETED } }
 
     val sections: List<Triple<String, androidx.compose.ui.graphics.vector.ImageVector, List<SprayRecord>>> = listOf(
-        Triple("Templates", Icons.Filled.ContentCopy, templates),
+        Triple("Program", Icons.Filled.ContentCopy, templates),
         Triple("In Progress", Icons.Filled.PlayCircle, inProgress),
-        Triple("Not Started", Icons.Filled.Schedule, notStarted),
+        Triple("Upcoming", Icons.Filled.Schedule, notStarted),
         Triple("Completed", Icons.Filled.CheckCircle, completed),
     ).filter { it.third.isNotEmpty() }
 

@@ -72,9 +72,15 @@ struct ChemicalProductSearchSheet: View {
             List {
                 searchSection
                 Section {
-                    ChemicalLookupDurationNotice(showsRepeatHint: true)
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
+                    // A2: switches to the active "keep this screen open"
+                    // wording (with a live spinner) while a search or a
+                    // product-detail resolve is running.
+                    ChemicalLookupDurationNotice(
+                        isSearching: coordinator.hasInFlightWork,
+                        showsRepeatHint: true
+                    )
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
                 }
                 if let searchError = coordinator.searchError { errorSection(searchError) }
                 choiceNotice

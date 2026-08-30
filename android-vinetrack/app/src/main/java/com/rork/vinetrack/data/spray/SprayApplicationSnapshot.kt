@@ -99,6 +99,15 @@ data class SprayApplicationSnapshot(
     val targets: List<SprayTarget>? = null,
 
     /**
+     * Targets the vineyard named that VineTrack has no typed case for, as
+     * stable slug identifiers (e.g. `eutypa_dieback`). sql/193 puts no value
+     * CHECK on the column precisely so the vocabulary can grow without a
+     * migration. Null means never recorded. Mirrors the iOS
+     * `SprayApplicationSnapshot.customTargets`.
+     */
+    val customTargets: List<String>? = null,
+
+    /**
      * Where the spray head was aimed. Foliar applications only — a banded or
      * spreader pass legitimately carries null.
      */
@@ -141,6 +150,18 @@ data class SprayApplicationSnapshot(
         get() = blocks?.isNotEmpty() == true
 
     /**
+     * The combined `targets` column projection: built-in raws first, then the
+     * custom identifiers — or null when targets were never recorded, so a
+     * historical record keeps its silence. Mirrors the iOS
+     * `SprayApplicationSnapshot.targetIdentifiers`.
+     */
+    val targetIdentifiers: List<String>?
+        get() {
+            if (targets == null && customTargets == null) return null
+            return targets.orEmpty().map { it.raw } + customTargets.orEmpty()
+        }
+
+    /**
      * True when no field carries a value — the shape a pre-sql/191 record reads
      * back as. Callers persist null rather than a row of NULLs so "never
      * recorded" stays distinguishable from "recorded as zero".
@@ -154,7 +175,7 @@ data class SprayApplicationSnapshot(
             carrierVolumeBasis == null && totalCarrierLitres == null &&
             carrierLitresPerHectare == null && diluteLitresPer100m == null &&
             appliedLitresPer100m == null && concentrationFactor == null &&
-            targets == null && sprayHeadTarget == null &&
+            targets == null && customTargets == null && sprayHeadTarget == null &&
             blocks == null
 
     /**
@@ -162,7 +183,7 @@ data class SprayApplicationSnapshot(
      * UI can distinguish "unknown (historical)" from "none selected".
      */
     val hasRecordedTargets: Boolean
-        get() = targets?.isNotEmpty() == true
+        get() = targets?.isNotEmpty() == true || customTargets?.isNotEmpty() == true
 
     /**
      * True when this snapshot records a banded application whose treated area is
@@ -249,6 +270,7 @@ data class SprayApplicationSnapshot(
             // geometry-dependent output, so a template keeps them: "my powdery
             // mildew bunch-line spray" is exactly what a template is for.
             targets = targets,
+            customTargets = customTargets,
             sprayHeadTarget = sprayHeadTarget,
             // Block IDENTITY is reusable intent — "my powdery spray on the home
             // blocks" is exactly what a template is for — but the per-block AREAS
@@ -278,9 +300,14 @@ data class SprayApplicationSnapshot(
             plan: SprayApplicationPlan,
             targets: List<SprayTarget>? = null,
             sprayHeadTarget: SprayHeadTarget? = null,
+            customTargets: List<String>? = null,
         ): SprayApplicationSnapshot =
             SprayApplicationSnapshot(
                 targets = targets?.let(::normalisedTargets),
+                customTargets = customTargets
+                    ?.map { it.trim() }
+                    ?.filter { it.isNotEmpty() }
+                    ?.distinct(),
                 sprayHeadTarget = sprayHeadTarget,
                 grossAreaHa = nonNegative(plan.treatedArea.grossAreaHectares),
                 treatedAreaHa = nonNegative(plan.treatedArea.treatedAreaHectares),
@@ -339,12 +366,16 @@ data class SprayApplicationSnapshot(
         ): SprayApplicationSnapshot? {
             val snapshot = SprayApplicationSnapshot(
                 // sql/193 deliberately puts NO value CHECK on `targets` so the
-                // vocabulary can expand without a migration. The cost is that this
-                // client can meet an identifier a newer build wrote: drop what we
-                // don't recognise rather than failing the whole spray record. An
-                // array that is present but entirely unrecognised stays empty
-                // (recorded) — not null (never recorded).
+                // vocabulary can expand without a migration. Identifiers this
+                // build has no typed case for are CUSTOM targets, not noise:
+                // they are carried verbatim rather than dropped, so a
+                // vineyard's own target (or a newer build's) survives the
+                // round trip. An array that is present but entirely custom
+                // still reads as recorded — never as null (never recorded).
                 targets = targets?.let { raw -> normalisedTargets(raw.mapNotNull(SprayTarget::from)) },
+                customTargets = targets
+                    ?.map { it.trim() }
+                    ?.filter { it.isNotEmpty() && SprayTarget.from(it) == null },
                 sprayHeadTarget = SprayHeadTarget.from(sprayHeadTarget),
                 grossAreaHa = grossAreaHa,
                 treatedAreaHa = treatedAreaHa,

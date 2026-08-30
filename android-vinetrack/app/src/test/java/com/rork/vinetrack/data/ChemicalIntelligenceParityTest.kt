@@ -356,7 +356,11 @@ class ChemicalIntelligenceParityTest {
         assertEquals(listOf("3", "11"), input.intelligence?.activityGroupCodes)
         assertEquals("Example Fungicide", input.name)
         // ...and every unrelated field the grower maintains is carried through.
-        assertEquals("mL", input.unit)
+        // The display unit is NOT one of them: the label quotes its rates in
+        // "L", so the unit follows the label's own liquid family (values are
+        // stored in base units, so nothing is re-scaled). Mirrors the iOS
+        // `ChemicalReviewDraft.productUnit` merge.
+        assertEquals("Litres", input.unit)
         assertEquals(750.0, input.ratePerHa, 0.0001)
         assertEquals(5.0, input.packSize)
         assertEquals(240.0, input.pricePerPack)
@@ -381,7 +385,10 @@ class ChemicalIntelligenceParityTest {
         val input = ChemicalStoreMatching.inputFor(null, "Example Fungicide", group11Intel())
 
         assertEquals("Example Fungicide", input.name)
-        assertEquals("Litres", input.unit)
+        // A4 contract: nothing established a form or a rate unit — group11Intel
+        // has no registered uses — so the unit stays UNSET for the operator.
+        // An unknown product must never be defaulted to Litres/Liquid.
+        assertEquals("", input.unit)
         assertEquals(0.0, input.ratePerHa, 0.0001)
         assertNull(input.packSize)
         assertEquals(listOf("11"), input.intelligence?.activityGroupCodes)

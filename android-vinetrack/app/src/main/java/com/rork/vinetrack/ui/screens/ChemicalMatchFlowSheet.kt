@@ -13,10 +13,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Adjust
 import androidx.compose.material.icons.filled.Help
+import androidx.compose.material.icons.filled.PanTool
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Warning
@@ -28,6 +31,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -41,15 +45,27 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.ChemicalInfoService
 import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRate
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateGroup
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateOption
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateSelection
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
+import com.rork.vinetrack.data.chemical.ChemicalLookupAdvisory
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalStoreMatching
+import com.rork.vinetrack.data.chemical.formatChemicalNumber
+import com.rork.vinetrack.data.chemical.viticultural
 import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
@@ -128,6 +144,18 @@ internal fun ChemicalMatchFlowSheet(
     }
     /** Set when matching a legacy record onto a materially different product. */
     var identityWarning by remember { mutableStateOf<String?>(null) }
+    /** Verbatim `form_type` from the structured lookup. Null until resolved. */
+    var lookupFormType by remember { mutableStateOf<String?>(null) }
+    /**
+     * The vineyard default-rate decision for the resolved product (A7). Built
+     * fresh from each lookup's grapevine uses; a selection never edits the
+     * registered label rates themselves.
+     */
+    var defaultSelection by remember { mutableStateOf<ChemicalDefaultRateSelection?>(null) }
+    /** Operator-typed exact-dose text per basis (label bands only). */
+    var doseTexts by remember { mutableStateOf<Map<ChemicalDefaultRateBasis, String>>(emptyMap()) }
+    /** Rejection message per basis when a typed dose is outside the band. */
+    var doseErrors by remember { mutableStateOf<Map<ChemicalDefaultRateBasis, String>>(emptyMap()) }
 
     /**
      * Country comes from the vineyard profile. The operator already told
@@ -145,7 +173,9 @@ internal fun ChemicalMatchFlowSheet(
 
     fun runSearch() {
         val trimmed = query.trim()
-        if (trimmed.isEmpty() || searching) return
+        // One request at a time: a duplicate tap must never fire a second
+        // search, and no country means no jurisdiction (fail closed).
+        if (!ChemicalLookupAdvisory.canStartSearch(query, searching, countryCode)) return
         searching = true
         searchError = null
         scope.launch {
@@ -170,6 +200,10 @@ internal fun ChemicalMatchFlowSheet(
     fun loadStructured(result: ChemicalInfoService.ChemicalSearchResult) {
         loadingStructured = true
         structuredError = null
+        lookupFormType = null
+        defaultSelection = null
+        doseTexts = emptyMap()
+        doseErrors = emptyMap()
         scope.launch {
             try {
                 // A register candidate carries its registration number;
@@ -196,7 +230,18 @@ internal fun ChemicalMatchFlowSheet(
                 // Master-served lookups carry the catalogue reference the
                 // saved record retains (sql/199). AI-sourced lookups carry none.
                 masterMatch = if (lookup.isMasterMatch) lookup.master else null
-                intelligence = lookup.intelligence()
+                val intel = lookup.intelligence()
+                intelligence = intel
+                lookupFormType = lookup.formType
+                // Vineyard state is not recorded on Android profiles, so the
+                // jurisdiction step is skipped — a weaker answer, never a
+                // wrong one. The only-registered-rate rule still recommends.
+                defaultSelection = ChemicalDefaultRateSelection(
+                    plan = ChemicalDefaultRate.plan(
+                        grapevineUses = intel.registeredUses.viticultural(),
+                        jurisdiction = null,
+                    ),
+                )
             } catch (e: Exception) {
                 // No silent downgrade to the old AI shape: treating an
                 // unstructured answer as if it were verified evidence is the
@@ -209,6 +254,27 @@ internal fun ChemicalMatchFlowSheet(
                 loadingStructured = false
             }
         }
+    }
+
+    /**
+     * Intentionally leave the selected product and search again (A3) — the
+     * equivalent of the iOS "Change Product". Returns to the register search
+     * with the typed query and results intact, clearing everything derived
+     * from the abandoned selection, including any default rate chosen for the
+     * old product. Nothing is saved until the operator confirms a product.
+     */
+    fun changeProduct() {
+        selected = null
+        intelligence = null
+        masterMatch = null
+        structuredError = null
+        identityWarning = null
+        lookupFormType = null
+        defaultSelection = null
+        doseTexts = emptyMap()
+        doseErrors = emptyMap()
+        duplicateOf = null
+        step = MatchStep.SEARCH
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
@@ -259,7 +325,7 @@ internal fun ChemicalMatchFlowSheet(
                         // No vineyard country -> no jurisdiction -> fail closed.
                         // The hint above says what to set; searching a guessed
                         // national register would verify the wrong label.
-                        enabled = query.trim().isNotEmpty() && !searching && countryCode.isNotBlank(),
+                        enabled = ChemicalLookupAdvisory.canStartSearch(query, searching, countryCode),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         if (searching) {
@@ -274,6 +340,12 @@ internal fun ChemicalMatchFlowSheet(
                             Text("Search")
                         }
                     }
+
+                    // A2: searches legitimately take time while VineTrack
+                    // checks current registration and label information — say
+                    // so up front, and switch to the active wording while a
+                    // request is running.
+                    ChemicalLookupAdvisoryNotice(isSearching = searching)
 
                     searchError?.let { message ->
                         WarningLine(message)
@@ -331,6 +403,11 @@ internal fun ChemicalMatchFlowSheet(
 
                 MatchStep.MATCH -> {
                     if (loadingStructured) {
+                        // A1: while the lookup is in flight, the only honest
+                        // content is "we are checking". Unresolved-identity
+                        // warnings and empty authoritative fields must not
+                        // render until an answer actually arrives — and a slow
+                        // lookup is never treated as a failed one.
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -345,47 +422,48 @@ internal fun ChemicalMatchFlowSheet(
                                 color = vine.textSecondary,
                             )
                         }
-                    }
-
-                    ChemicalIdentityView(
-                        productName = intelligence?.registration?.registeredProductName
-                            ?: selected?.name ?: query,
-                        registration = intelligence?.registration,
-                        productCategory = intelligence?.productCategory.orEmpty(),
-                    )
-
-                    HorizontalDivider()
-                    SectionLabel("Identity status")
-                    // Identity strength is decided by whether a register and a
-                    // number are actually present — never by how confident the
-                    // lookup felt.
-                    val registration = intelligence?.registration
-                    when {
-                        registration?.isAuthoritativeIdentity == true -> StatusLine(
-                            "Exact registered identity found",
-                            VineColors.Success,
-                            Icons.Filled.Verified,
+                        ChemicalLookupAdvisoryNotice(isSearching = true)
+                    } else if (intelligence != null) {
+                        ChemicalIdentityView(
+                            productName = intelligence?.registration?.registeredProductName
+                                ?: selected?.name ?: query,
+                            registration = intelligence?.registration,
+                            productCategory = intelligence?.productCategory.orEmpty(),
                         )
-                        registration != null -> {
-                            StatusLine("Likely match", VineColors.Info, Icons.Filled.Adjust)
-                            Text(
-                                "A registration number could not be confirmed for this product.",
-                                fontSize = 12.sp,
-                                color = vine.textSecondary,
+
+                        HorizontalDivider()
+                        SectionLabel("Identity status")
+                        // Identity strength is decided by whether a register and a
+                        // number are actually present — never by how confident the
+                        // lookup felt.
+                        val registration = intelligence?.registration
+                        when {
+                            registration?.isAuthoritativeIdentity == true -> StatusLine(
+                                "Exact registered identity found",
+                                VineColors.Success,
+                                Icons.Filled.Verified,
                             )
-                        }
-                        else -> {
-                            StatusLine(
-                                "Product identity incomplete",
-                                VineColors.Warning,
-                                Icons.Filled.Help,
-                            )
-                            Text(
-                                "No national registration was found. This product can be saved, " +
-                                    "but it cannot become Verified.",
-                                fontSize = 12.sp,
-                                color = vine.textSecondary,
-                            )
+                            registration != null -> {
+                                StatusLine("Likely match", VineColors.Info, Icons.Filled.Adjust)
+                                Text(
+                                    "A registration number could not be confirmed for this product.",
+                                    fontSize = 12.sp,
+                                    color = vine.textSecondary,
+                                )
+                            }
+                            else -> {
+                                StatusLine(
+                                    "Product identity incomplete",
+                                    VineColors.Warning,
+                                    Icons.Filled.Help,
+                                )
+                                Text(
+                                    "No national registration was found. This product can be saved, " +
+                                        "but it cannot become Verified.",
+                                    fontSize = 12.sp,
+                                    color = vine.textSecondary,
+                                )
+                            }
                         }
                     }
 
@@ -403,12 +481,15 @@ internal fun ChemicalMatchFlowSheet(
 
                     HorizontalDivider()
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { step = MatchStep.SEARCH }) {
-                            Text("Back to search")
+                        // The registered identity is never editable in place:
+                        // leaving it is an intentional act that returns to the
+                        // register search.
+                        OutlinedButton(onClick = { changeProduct() }) {
+                            Text("Change Product")
                         }
                         Button(
                             onClick = { step = MatchStep.VERIFY },
-                            enabled = intelligence != null,
+                            enabled = intelligence != null && !loadingStructured,
                         ) { Text("Continue") }
                     }
                 }
@@ -487,6 +568,9 @@ internal fun ChemicalMatchFlowSheet(
                         HorizontalDivider()
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(onClick = { step = MatchStep.MATCH }) { Text("Back") }
+                            OutlinedButton(onClick = { changeProduct() }) {
+                                Text("Change Product")
+                            }
                             Button(onClick = {
                                 // Duplicate prevention keys off registration
                                 // identity, never name similarity: two products can
@@ -556,6 +640,63 @@ internal fun ChemicalMatchFlowSheet(
                             ChemicalVerificationBadge(resolved)
                         }
 
+                        // A7: the vineyard's operational default, chosen from
+                        // the registered grapevine rates. The authoritative
+                        // label rates on the record are never altered by it.
+                        defaultSelection?.let { selection ->
+                            if (intel.registeredUses.viticultural().isNotEmpty()) {
+                                HorizontalDivider()
+                                DefaultRatesSection(
+                                    selection = selection,
+                                    doseTexts = doseTexts,
+                                    doseErrors = doseErrors,
+                                    onSelect = { option, basis ->
+                                        defaultSelection = selection.selecting(option, basis)
+                                        doseTexts = doseTexts - basis
+                                        doseErrors = doseErrors - basis
+                                    },
+                                    onDoseTextChange = { basis, text ->
+                                        doseTexts = doseTexts + (basis to text)
+                                    },
+                                    onSetDose = { basis ->
+                                        val raw = doseTexts[basis].orEmpty().trim()
+                                            .replace(',', '.')
+                                        val option = selection.resolvedOption(basis)
+                                        if (raw.isEmpty()) {
+                                            defaultSelection = selection.clearingValue(basis)
+                                            doseErrors = doseErrors - basis
+                                        } else {
+                                            val updated = raw.toDoubleOrNull()
+                                                ?.let { selection.settingValue(it, basis) }
+                                            if (updated != null) {
+                                                defaultSelection = updated
+                                                doseErrors = doseErrors - basis
+                                            } else {
+                                                val bounds = option?.authorisedBounds
+                                                doseErrors = doseErrors + (
+                                                    basis to if (bounds != null) {
+                                                        "The label registers " +
+                                                            formatChemicalNumber(bounds.first) +
+                                                            "–" +
+                                                            formatChemicalNumber(bounds.second) +
+                                                            " ${option.rate.unit}. Enter a rate " +
+                                                            "within it."
+                                                    } else {
+                                                        "Enter a rate the label registers."
+                                                    }
+                                                    )
+                                            }
+                                        }
+                                    },
+                                    onResetDose = { basis ->
+                                        defaultSelection = selection.clearingValue(basis)
+                                        doseTexts = doseTexts - basis
+                                        doseErrors = doseErrors - basis
+                                    },
+                                )
+                            }
+                        }
+
                         identityWarning?.let { WarningLine(it) }
 
                         duplicateOf?.let { dup ->
@@ -589,6 +730,8 @@ internal fun ChemicalMatchFlowSheet(
                                             dup.id,
                                             ChemicalStoreMatching.inputFor(
                                                 dup, productName, intel, masterMatch,
+                                                formTypeRaw = lookupFormType,
+                                                defaults = defaultSelection,
                                             ),
                                         ) { ok ->
                                             saving = false
@@ -609,6 +752,8 @@ internal fun ChemicalMatchFlowSheet(
                                     saving = true
                                     val input = ChemicalStoreMatching.inputFor(
                                         existing, productName, intel, masterMatch,
+                                        formTypeRaw = lookupFormType,
+                                        defaults = defaultSelection,
                                     )
                                     if (existing == null) {
                                         vm.createSavedChemical(input) { ok ->
@@ -633,7 +778,10 @@ internal fun ChemicalMatchFlowSheet(
                                 )
                             }
                         }
-                        TextButton(onClick = { step = MatchStep.VERIFY }) { Text("Back") }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { step = MatchStep.VERIFY }) { Text("Back") }
+                            TextButton(onClick = { changeProduct() }) { Text("Change Product") }
+                        }
                         Text(
                             "The structured record is saved in full. The older Active Ingredient " +
                                 "and Chemical Group fields are kept in step with it for " +
@@ -727,6 +875,255 @@ private fun SearchResultRow(
                 color = vine.textSecondary,
                 maxLines = 1,
             )
+        }
+    }
+}
+
+/**
+ * A2: the bold VineTrack-green advisory that a chemical search can take time.
+ *
+ * Deliberately NOT a warning — nothing has gone wrong, so no amber or red.
+ * The clock (idle) or spinner (active) carries the meaning alongside the
+ * text, so colour is never the only signal, and the wording change is
+ * announced to accessibility services via a polite live region. No fake
+ * percentages, no invented completion times, and a slow lookup is never
+ * auto-failed into manual entry.
+ */
+@Composable
+internal fun ChemicalLookupAdvisoryNotice(isSearching: Boolean) {
+    val vine = LocalVineColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(VineColors.BrandTrack.copy(alpha = 0.12f))
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (isSearching) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = VineColors.BrandTrack,
+                )
+            } else {
+                Icon(
+                    Icons.Filled.Schedule,
+                    contentDescription = null,
+                    tint = VineColors.BrandTrack,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            Text(
+                ChemicalLookupAdvisory.text(isSearching),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = VineColors.BrandTrack,
+            )
+        }
+        if (!isSearching) {
+            Text(
+                ChemicalLookupAdvisory.REPEAT_HINT_TEXT,
+                fontSize = 11.sp,
+                color = vine.textSecondary,
+            )
+        }
+    }
+}
+
+/**
+ * A7: the per-basis vineyard default-rate chooser shown on the Confirm step.
+ *
+ * Mirrors the iOS "Default Rates" editor section: the registered label rates
+ * are the authority and are never edited here — this only records which
+ * registered option the vineyard doses by, and (for a label band) the exact
+ * authorised figure.
+ */
+@Composable
+private fun DefaultRatesSection(
+    selection: ChemicalDefaultRateSelection,
+    doseTexts: Map<ChemicalDefaultRateBasis, String>,
+    doseErrors: Map<ChemicalDefaultRateBasis, String>,
+    onSelect: (ChemicalDefaultRateOption, ChemicalDefaultRateBasis) -> Unit,
+    onDoseTextChange: (ChemicalDefaultRateBasis, String) -> Unit,
+    onSetDose: (ChemicalDefaultRateBasis) -> Unit,
+    onResetDose: (ChemicalDefaultRateBasis) -> Unit,
+) {
+    val vine = LocalVineColors.current
+    SectionLabel("Default rates")
+    selection.plan.groups.forEach { group ->
+        DefaultRateGroupCard(
+            group = group,
+            selection = selection,
+            doseText = doseTexts[group.basis].orEmpty(),
+            doseError = doseErrors[group.basis],
+            onSelect = { onSelect(it, group.basis) },
+            onDoseTextChange = { onDoseTextChange(group.basis, it) },
+            onSetDose = { onSetDose(group.basis) },
+            onResetDose = { onResetDose(group.basis) },
+        )
+    }
+    Text(
+        "The rate VineTrack will start a spray calculation from. Chosen from the " +
+            "registered grapevine rates above — the two bases are decided separately " +
+            "and never converted into one another.",
+        fontSize = 11.sp,
+        color = vine.textSecondary,
+    )
+}
+
+@Composable
+private fun DefaultRateGroupCard(
+    group: ChemicalDefaultRateGroup,
+    selection: ChemicalDefaultRateSelection,
+    doseText: String,
+    doseError: String?,
+    onSelect: (ChemicalDefaultRateOption) -> Unit,
+    onDoseTextChange: (String) -> Unit,
+    onSetDose: () -> Unit,
+    onResetDose: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            group.basis.label.uppercase(),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = vine.textSecondary,
+        )
+        if (group.isEmpty) {
+            // The label states nothing on this basis — say that, and never
+            // invent one by converting from the other basis.
+            Text(group.emptyStatement, fontSize = 12.sp, color = vine.textSecondary)
+        } else {
+            val inForce = selection.resolvedOption(group.basis)
+            if (group.requiresChoice && selection.selectedIds[group.basis] == null) {
+                Row(
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.PanTool,
+                        contentDescription = null,
+                        tint = VineColors.Warning,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Text(
+                        "The label registers more than one " +
+                            group.basis.label.lowercase() +
+                            (selection.plan.jurisdiction?.let { " rate for ${it.displayName}" }
+                                ?: " rate") +
+                            ". Choose the one this vineyard uses.",
+                        fontSize = 12.sp,
+                        color = VineColors.Warning,
+                    )
+                }
+            }
+            group.options.forEach { option ->
+                val isInForce = inForce?.id == option.id
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onSelect(option) },
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    RadioButton(selected = isInForce, onClick = { onSelect(option) })
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                option.displayRate,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = vine.textPrimary,
+                            )
+                            if (option.isLabelRange) {
+                                ChemicalPill("label range", VineColors.Olive)
+                            }
+                            if (option.id == group.recommendedOptionId) {
+                                group.recommendation.badge?.let {
+                                    ChemicalPill(it, VineColors.Success)
+                                }
+                            }
+                            selection.plan.jurisdiction?.let { j ->
+                                if (!option.appliesIn(j)) {
+                                    ChemicalPill(
+                                        "Not registered for ${j.displayName}",
+                                        VineColors.Warning,
+                                    )
+                                }
+                            }
+                        }
+                        // Every condition keeps its own line — a condition
+                        // detached from its number is not a condition.
+                        option.conditions.forEach { condition ->
+                            Text(
+                                condition.summary,
+                                fontSize = 10.sp,
+                                color = vine.textSecondary,
+                            )
+                        }
+                    }
+                }
+            }
+            // Exact-dose entry: only for a label BAND actually in force. The
+            // registered range itself is never narrowed — the record keeps
+            // the label's own bounds however this vineyard doses inside them.
+            if (inForce != null && inForce.isLabelRange) {
+                val bounds = inForce.authorisedBounds
+                val chosen = selection.values[group.basis]
+                if (chosen == null && bounds != null) {
+                    Text(
+                        "Any rate from ${formatChemicalNumber(bounds.first)} to " +
+                            "${formatChemicalNumber(bounds.second)} ${inForce.rate.unit} is " +
+                            "registered. Leave it blank to use " +
+                            "${formatChemicalNumber(bounds.first)}.",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedTextField(
+                        value = doseText,
+                        onValueChange = onDoseTextChange,
+                        label = { Text("This vineyard uses") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(inForce.rate.unit, fontSize = 12.sp, color = vine.textSecondary)
+                    TextButton(onClick = onSetDose) { Text("Set") }
+                }
+                doseError?.let { WarningLine(it) }
+                if (chosen != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            "The registered rate stays ${inForce.displayRate}.",
+                            fontSize = 11.sp,
+                            color = vine.textSecondary,
+                        )
+                        TextButton(onClick = onResetDose) { Text("Reset") }
+                    }
+                }
+            }
         }
     }
 }

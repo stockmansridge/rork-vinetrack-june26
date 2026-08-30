@@ -15,8 +15,11 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -220,7 +223,18 @@ class ChemicalInfoService {
                 put("query", query)
                 if (country.isNotBlank()) put("country", country)
             }
-            val data = postEdge(payload)
+            // A slow search is normal (the advisory says so); a HUNG one is
+            // not. The bound matches the iOS `searchTimeout`, and hitting it
+            // surfaces the ordinary retry/manual options — never an automatic
+            // downgrade to manual entry.
+            val data = try {
+                withTimeout(SEARCH_TIMEOUT_MS) { postEdge(payload) }
+            } catch (e: TimeoutCancellationException) {
+                throw LookupException(
+                    "The register search is taking longer than expected. Try again — " +
+                        "repeat lookups are usually faster.",
+                )
+            }
             try {
                 SupabaseClient.json.decodeFromString<ChemicalSearchResponse>(data).results
             } catch (e: Exception) {
@@ -283,7 +297,20 @@ class ChemicalInfoService {
                     put("registrationNumber", registrationNumber)
                 }
             }
-            val data = postEdge(payload)
+            // First-time structured lookups legitimately take minutes (label
+            // PDF + Directions For Use extraction). The generous bound mirrors
+            // the iOS `structuredLookupTimeout` raised after the Dithane
+            // timeout audit — a slow lookup is never treated as failed before
+            // this, and timing out offers Try Again rather than silently
+            // degrading to manual.
+            val data = try {
+                withTimeout(STRUCTURED_TIMEOUT_MS) { postEdge(payload) }
+            } catch (e: TimeoutCancellationException) {
+                throw LookupException(
+                    "Loading this product's registered details timed out. Try again — " +
+                        "repeat lookups are usually faster.",
+                )
+            }
             try {
                 SupabaseClient.json.decodeFromString<ChemicalStructuredLookup>(data)
             } catch (e: Exception) {
@@ -308,6 +335,11 @@ class ChemicalInfoService {
                 contentType(ContentType.Application.Json)
                 setBody(payload)
             }
+        } catch (e: CancellationException) {
+            // Includes the withTimeout bound above — cancellation must
+            // propagate for the caller to translate, never be swallowed into
+            // a generic failure message.
+            throw e
         } catch (e: Exception) {
             throw LookupException("AI lookup failed: ${e.message ?: "network error"}")
         }
@@ -325,6 +357,16 @@ class ChemicalInfoService {
     }
 
     companion object {
+        /** Search action bound, matching the iOS `ChemicalInfoService.searchTimeout`. */
+        const val SEARCH_TIMEOUT_MS: Long = 30_000L
+
+        /**
+         * Structured lookup bound, matching the iOS
+         * `ChemicalInfoService.structuredLookupTimeout` (raised after the
+         * Dithane timeout audit — first-time label extraction is minutes).
+         */
+        const val STRUCTURED_TIMEOUT_MS: Long = 180_000L
+
         /**
          * Resolves the jurisdiction country for chemical lookups.
          *

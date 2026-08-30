@@ -1,8 +1,12 @@
 package com.rork.vinetrack.data
 
+import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
 import com.rork.vinetrack.data.chemical.ChemicalWithholdingDisplay
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -114,5 +118,60 @@ class ChemicalWithholdingDisplayTest {
                 hasManufacturerLabelSource = true,
             ),
         )
+    }
+
+    // ---- A6: rows are always drawn — unresolved reads as Not stated ----
+
+    @Test
+    fun unresolvedWhpDisplaysAsNotStated() {
+        // The row is still drawn: a hidden row reads as "no restriction",
+        // while "Not stated" reads as "go and check".
+        assertEquals(
+            "Not stated",
+            ChemicalWithholdingDisplay.display(
+                days = null,
+                restrictions = null,
+                hasManufacturerLabelSource = false,
+            ),
+        )
+    }
+
+    @Test
+    fun reEntryHasThreeAnswers() {
+        // A countable period...
+        assertEquals("24 hours", ChemicalWithholdingDisplay.reEntrySummary(24, null))
+        assertEquals("1 hour", ChemicalWithholdingDisplay.reEntrySummary(1, null))
+        // ...the label's own verbatim condition (never converted to hours)...
+        assertEquals(
+            "Do not enter until the spray has dried",
+            ChemicalWithholdingDisplay.reEntrySummary(null, "Do not enter until the spray has dried"),
+        )
+        // ...or silence, which reads as unresolved — never as "no restriction".
+        assertEquals("Not stated on label", ChemicalWithholdingDisplay.reEntrySummary(null, null))
+        assertEquals("Not stated on label", ChemicalWithholdingDisplay.reEntrySummary(null, "   "))
+    }
+
+    @Test
+    fun reEntryStatedGatesTheProvenanceBadge() {
+        // Provenance capsules render only beside STATED values.
+        assertTrue(ChemicalWithholdingDisplay.reEntryIsStated(24, null))
+        assertTrue(ChemicalWithholdingDisplay.reEntryIsStated(null, "until dry"))
+        assertFalse(ChemicalWithholdingDisplay.reEntryIsStated(null, null))
+        assertFalse(ChemicalWithholdingDisplay.reEntryIsStated(null, " "))
+    }
+
+    @Test
+    fun reEntryStatementDecodesFromTheSharedWire() {
+        // iOS writes `re_entry_statement` when a label states a binding
+        // re-entry rule without a countable period; Android must read the
+        // SAME row identically (P4 cross-platform parity).
+        val json = Json { ignoreUnknownKeys = true }
+        val use = json.decodeFromString(
+            ChemicalRegisteredUse.serializer(),
+            """{"crop":"Grapes","target_raw":"Powdery mildew",""" +
+                """"re_entry_statement":"Do not enter until the spray has dried"}""",
+        )
+        assertEquals("Do not enter until the spray has dried", use.reEntryStatement)
+        assertNull(use.reEntryPeriodHours)
     }
 }
