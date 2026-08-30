@@ -228,9 +228,16 @@ data class ChemicalRegisteredUse(
      */
     val directionGroupKey: String get() = directionId ?: "$crop|$targetRaw"
 
-    /** Whether this use concerns grapevines. */
+    /**
+     * Whether this use concerns grapevines.
+     *
+     * Delegates to the canonical whole-token predicate, which is the same rule
+     * the server uses to build `grapevine_uses`. The previous substring test
+     * (`contains("grape")`) classified GRAPEFRUIT — a citrus — as a grapevine,
+     * which would offer a citrus rate as a vineyard default.
+     */
     val isViticultural: Boolean
-        get() = crop.lowercase().let { it.contains("grape") || it.contains("vine") }
+        get() = ChemicalGrapevineCrop.matches(crop)
 
     /** The target, mapping from the label wording when none was stored. */
     val resolvedTarget: SprayTarget? get() = target ?: mapTarget(targetRaw)

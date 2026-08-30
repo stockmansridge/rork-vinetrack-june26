@@ -237,6 +237,22 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
     /// available” via Re-verify; master updates never rewrite this record.
     var masterSourceRevision: Int?
 
+    // MARK: Confirmed operational default (sql/214)
+
+    /// The operator's CONFIRMED operational rate choice.
+    ///
+    /// Records WHICH authoritative rate from `chemicalIntelligence.registeredUses`
+    /// this vineyard doses by — never a new rate, and never an edit to the
+    /// registered label rates. `nil` means no choice has been recorded, which is
+    /// a real answer and never means “this label has no rates”: that question is
+    /// answered by `registeredUses` and only by it.
+    ///
+    /// Nothing is backfilled into this from `ratePerHa` or `rates`, because those
+    /// legacy operator numbers have no link back to a registered direction, so a
+    /// default derived from them would carry a provenance the data cannot
+    /// support.
+    var defaultRates: StoredChemicalDefaultRates?
+
     init(
         id: UUID = UUID(),
         vineyardId: UUID = UUID(),
@@ -273,7 +289,8 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         isActive: Bool = true,
         chemicalIntelligence: ChemicalIntelligence? = nil,
         masterChemicalId: UUID? = nil,
-        masterSourceRevision: Int? = nil
+        masterSourceRevision: Int? = nil,
+        defaultRates: StoredChemicalDefaultRates? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -311,6 +328,7 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         self.chemicalIntelligence = chemicalIntelligence
         self.masterChemicalId = masterChemicalId
         self.masterSourceRevision = masterSourceRevision
+        self.defaultRates = defaultRates
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -323,6 +341,7 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         case applicationNotes, isActive
         case chemicalIntelligence
         case masterChemicalId, masterSourceRevision
+        case defaultRates
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -373,6 +392,13 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         // saved before the catalogue existed simply have none.
         masterChemicalId = try? container.decodeIfPresent(UUID.self, forKey: .masterChemicalId)
         masterSourceRevision = try? container.decodeIfPresent(Int.self, forKey: .masterSourceRevision)
+        // Confirmed operational default (sql/214): additive and tolerant. A
+        // record saved before the column existed simply has none, and a
+        // malformed value degrades to nil rather than taking the chemical
+        // down — the label evidence in `chemicalIntelligence` is untouched
+        // either way, so nothing a calculation needs is ever lost here.
+        defaultRates = try? container.decodeIfPresent(
+            StoredChemicalDefaultRates.self, forKey: .defaultRates)
     }
 }
 

@@ -55,6 +55,9 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
     let verifiedAt: Date?
     let registeredUses: [ChemicalRegisteredUse]?
     let labelRateBases: [String]?
+    /// The operator's confirmed operational rate choice (sql/214). Nullable so a
+    /// backend without the migration — and every row saved before it — decodes.
+    let defaultRates: StoredChemicalDefaultRates?
     let activityGroupTableVersion: Int?
     let intelligenceSchemaVersion: Int?
     // Master Chemical Catalogue link (sql/199). Nullable throughout so a
@@ -117,6 +120,7 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         case verifiedAt = "verified_at"
         case registeredUses = "registered_uses"
         case labelRateBases = "label_rate_bases"
+        case defaultRates = "default_rates"
         case activityGroupTableVersion = "activity_group_table_version"
         case intelligenceSchemaVersion = "intelligence_schema_version"
         case masterChemicalId = "master_chemical_id"
@@ -190,6 +194,10 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         self.verifiedAt = try? c.decodeIfPresent(Date.self, forKey: .verifiedAt)
         self.registeredUses = try? c.decodeIfPresent([ChemicalRegisteredUse].self, forKey: .registeredUses)
         self.labelRateBases = try? c.decodeIfPresent([String].self, forKey: .labelRateBases)
+        // Confirmed operational default (sql/214) — tolerant for the same
+        // reason as every column above: a backend without the migration, or a
+        // malformed value, must degrade to nil rather than empty the store.
+        self.defaultRates = try? c.decodeIfPresent(StoredChemicalDefaultRates.self, forKey: .defaultRates)
         self.activityGroupTableVersion = try? c.decodeIfPresent(Int.self, forKey: .activityGroupTableVersion)
         self.intelligenceSchemaVersion = try? c.decodeIfPresent(Int.self, forKey: .intelligenceSchemaVersion)
         // Master catalogue link columns were added in sql/199 — tolerant for
@@ -255,6 +263,12 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
     let verifiedAt: Date?
     let registeredUses: [ChemicalRegisteredUse]?
     let labelRateBases: [String]?
+    /// The operator's confirmed operational rate choice (sql/214).
+    ///
+    /// Optional and OMITTED from the payload when nil, so an ordinary edit that
+    /// carries no rate decision can never erase a confirmation the operator
+    /// already made on this or another device.
+    let defaultRates: StoredChemicalDefaultRates?
     let activityGroupTableVersion: Int?
     let intelligenceSchemaVersion: Int
     // Master Chemical Catalogue link (sql/199). Optionals are OMITTED from the
@@ -316,6 +330,7 @@ nonisolated struct BackendSavedChemicalUpsert: Encodable, Sendable {
         case verifiedAt = "verified_at"
         case registeredUses = "registered_uses"
         case labelRateBases = "label_rate_bases"
+        case defaultRates = "default_rates"
         case activityGroupTableVersion = "activity_group_table_version"
         case intelligenceSchemaVersion = "intelligence_schema_version"
         case masterChemicalId = "master_chemical_id"
@@ -390,6 +405,12 @@ extension BackendSavedChemical {
             verifiedAt: intel?.verification.verifiedAt,
             registeredUses: intel?.registeredUses,
             labelRateBases: intel?.labelRateBases.map(\.rawValue),
+            // The operator's own confirmed choice, carried through untouched.
+            // It is NOT derived from `intel`: the label evidence says what may
+            // be applied, this says what this vineyard actually pours, and
+            // re-deriving it on write would let a label refresh silently
+            // re-decide a number a human confirmed.
+            defaultRates: c.defaultRates,
             activityGroupTableVersion: intel?.activityGroupTableVersion,
             intelligenceSchemaVersion: intel?.schemaVersion ?? 0,
             masterChemicalId: c.masterChemicalId,
@@ -479,7 +500,8 @@ extension BackendSavedChemical {
             isActive: isActive ?? true,
             chemicalIntelligence: decodedIntelligence(),
             masterChemicalId: masterChemicalId,
-            masterSourceRevision: masterSourceRevision
+            masterSourceRevision: masterSourceRevision,
+            defaultRates: defaultRates
         )
     }
 }

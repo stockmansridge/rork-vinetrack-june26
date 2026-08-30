@@ -407,9 +407,49 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
 
         var ids: [ChemicalDefaultRateBasis: String] = [:]
         var values: [ChemicalDefaultRateBasis: Double] = [:]
+
+        // The CONFIRMED default (sql/214) is the authority when one exists.
+        //
+        // It records which registered rate a human actually chose, so it is
+        // read before the legacy `rates` projection below — those are only
+        // numbers, and matching a number back to a direction is inference. A
+        // stored option whose supporting direction no longer exists on the
+        // current label recovers NOTHING, which is the correct outcome: the
+        // operator is asked to confirm again rather than silently dosed off a
+        // rate the label has withdrawn.
+        if let confirmed = source.defaultRates {
+            for basis in ChemicalDefaultRateBasis.allCases {
+                guard let slot = confirmed.slot(basis) else { continue }
+                let options = ChemicalDefaultRate.options(basis, from: grapevine)
+                let match = options.first { option in
+                    let rateIDs = ChemicalDefaultRate.rateIDs(for: option, from: grapevine)
+                    guard !rateIDs.isEmpty else { return false }
+                    return ChemicalDefaultRateIdentity.mintOptionKey(
+                        basis: basis.rawValue,
+                        unit: option.rate.unit,
+                        value: option.rate.value,
+                        minValue: option.rate.minValue,
+                        maxValue: option.rate.maxValue,
+                        rateIDs: rateIDs
+                    ) == slot.optionKey
+                }
+                guard let match else { continue }
+                ids[basis] = match.id
+                // The operator's exact dose inside a band, kept only while the
+                // band still authorises it.
+                if let value = slot.value, match.isLabelRange, match.authorises(value) {
+                    values[basis] = value
+                }
+            }
+        }
+
         for row in source.rates {
             let basis: ChemicalDefaultRateBasis =
                 row.basis == .perHectare ? .perHectare : .per100Litres
+            // A confirmed choice already recovered for this basis is never
+            // second-guessed by the legacy projection: a human's decision
+            // outranks a number matched back to a direction by inference.
+            if ids[basis] != nil { continue }
             let options = ChemicalDefaultRate.options(basis, from: grapevine)
 
             // Compared through the SAME base scale the legacy column was
@@ -819,6 +859,41 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// Clear this vineyard's exact dose, returning to the bottom of the band.
     mutating func clearDefaultRateValue(for basis: ChemicalDefaultRateBasis) {
         defaultRateValues[basis] = nil
+    }
+
+    /// The CONFIRMED operational default, in the shape `saved_chemicals.default_rates`
+    /// stores (sql/214).
+    ///
+    /// Returns `nil` when nothing has been confirmed on either basis, so the
+    /// column is omitted from the write and a default recorded elsewhere
+    /// survives untouched. Clearing a default is a separate, deliberate act —
+    /// never a side effect of saving an unrelated edit.
+    ///
+    /// Only EXPLICIT choices are persisted. `resolvedDefaultOption` deliberately
+    /// falls back to the recommendation so the UI can show one, but a
+    /// recommendation nobody confirmed is not a decision and must never reach
+    /// the database — that is the difference between suggesting a rate and
+    /// claiming the operator chose it.
+    var storedDefaultRates: StoredChemicalDefaultRates? {
+        let uses = grapevineUses
+        guard !uses.isEmpty else { return nil }
+        let labelVersion = intelligenceToPersist?.registration?.labelVersion
+
+        var stored = StoredChemicalDefaultRates()
+        for basis in ChemicalDefaultRateBasis.allCases {
+            guard let selectedId = selectedDefaultRateIds[basis] else { continue }
+            let group = defaultRatePlan.group(basis)
+            guard let option = group.options.first(where: { $0.id == selectedId }) else { continue }
+            let slot = StoredChemicalDefaultRate.confirmed(
+                option: option,
+                basis: basis,
+                grapevineUses: uses,
+                confirmedValue: defaultRateValues[basis],
+                labelVersion: labelVersion
+            )
+            stored = stored.withSlot(basis, slot)
+        }
+        return stored.isEmpty ? nil : stored
     }
 
     /// Bases the operator still has to answer before a default exists.

@@ -1278,6 +1278,14 @@ struct EditSavedChemicalSheet: View {
             if let outcome {
                 existing.chemicalIntelligence = outcome.intelligence
             }
+            // The confirmed operational default (sql/214). Written only when
+            // this edit actually carries a confirmed choice; otherwise the
+            // stored default is left exactly as it was, so saving an unrelated
+            // change can never erase a decision the operator made earlier or on
+            // another device.
+            if let confirmed = session.storedDefaultRates {
+                existing.defaultRates = confirmed
+            }
             store.updateSavedChemical(existing)
             return store.savedChemicals.first { $0.id == existing.id } ?? existing
         } else {
@@ -1324,7 +1332,12 @@ struct EditSavedChemicalSheet: View {
                 // Only ever populated from an approved master match; nil for
                 // every other origin, which is valid forever.
                 masterChemicalId: session.masterChemicalId,
-                masterSourceRevision: session.masterSourceRevision
+                masterSourceRevision: session.masterSourceRevision,
+                // The confirmed operational default (sql/214). Nil when the
+                // operator confirmed nothing — a new chemical with no confirmed
+                // rate simply records none, which is honest and leaves the
+                // label evidence in `registered_uses` untouched.
+                defaultRates: session.storedDefaultRates
             )
             store.addSavedChemical(new)
             // The store stamps the vineyard onto its own copy, so read the

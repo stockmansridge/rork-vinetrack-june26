@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.chemical.ChemicalDataSource
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
 import com.rork.vinetrack.data.chemical.ChemicalVerificationConflict
+import com.rork.vinetrack.data.chemical.StoredChemicalDefaultRates
 import com.rork.vinetrack.data.model.ChemicalPurchase
 import com.rork.vinetrack.data.model.ChemicalRate
 import com.rork.vinetrack.data.model.SavedChemical
@@ -96,6 +97,15 @@ class SavedChemicalRepository(private val session: SessionStore) {
          */
         val masterChemicalId: String? = null,
         val masterSourceRevision: Int? = null,
+        /**
+         * The operator's CONFIRMED operational rate choice (sql/214).
+         *
+         * Null means "leave the stored default untouched" — `explicitNulls =
+         * false` omits the column — so an ordinary edit that carries no rate
+         * decision can never erase a confirmation the operator already made.
+         * Only a path that actually captured a confirmation sets this.
+         */
+        val defaultRates: StoredChemicalDefaultRates? = null,
     )
 
     /**
@@ -126,9 +136,16 @@ class SavedChemicalRepository(private val session: SessionStore) {
         val labelReference = intel?.registration?.let {
             it.labelReference ?: it.regulatorLabelUrl
         }
-        // Persisted separately (sql/215) so opening and saving a chemical stops
-        // discarding a manufacturer label the resolver had already validated.
-        val manufacturerLabelUrl = intel?.registration?.manufacturerLabelUrl
+        // The registrant's PRODUCT INFORMATION page lands in the long-standing
+        // `product_url` column. It is marketing material: never a label, never a
+        // rate source, and never shown as either.
+        //
+        // There is deliberately NO manufacturer_label_url / manufacturer_product_url
+        // here. Those are sql/215 columns and sql/215 is NOT applied. Sending an
+        // unknown column makes PostgREST reject the whole write, so including
+        // them broke saving precisely when the resolver had found a manufacturer
+        // document — the good-data case. The wire type may still carry them
+        // (decoding stays tolerant); the DATABASE write must not.
         val manufacturerProductUrl = intel?.registration?.manufacturerProductUrl
         val labelVersion = intel?.registration?.labelVersion
         val verificationStatus = intel?.resolvedVerificationStatus?.raw
@@ -186,8 +203,6 @@ class SavedChemicalRepository(private val session: SessionStore) {
         val registrant: String? = null,
         @SerialName("registered_product_name") val registeredProductName: String? = null,
         @SerialName("label_reference") val labelReference: String? = null,
-        @SerialName("manufacturer_label_url") val manufacturerLabelUrl: String? = null,
-        @SerialName("manufacturer_product_url") val manufacturerProductUrl: String? = null,
         @SerialName("label_version") val labelVersion: String? = null,
         @SerialName("verification_status") val verificationStatus: String? = null,
         @SerialName("verification_sources") val verificationSources: List<ChemicalDataSource>? = null,
@@ -198,6 +213,8 @@ class SavedChemicalRepository(private val session: SessionStore) {
         @SerialName("verified_at") val verifiedAt: String? = null,
         @SerialName("registered_uses") val registeredUses: List<ChemicalRegisteredUse>? = null,
         @SerialName("label_rate_bases") val labelRateBases: List<String>? = null,
+        // --- Confirmed operational default (sql/214) ---
+        @SerialName("default_rates") val defaultRates: StoredChemicalDefaultRates? = null,
         @SerialName("activity_group_table_version") val activityGroupTableVersion: Int? = null,
         @SerialName("intelligence_schema_version") val intelligenceSchemaVersion: Int? = null,
         // --- Master Chemical Catalogue (sql/199) ---
@@ -246,8 +263,6 @@ class SavedChemicalRepository(private val session: SessionStore) {
         val registrant: String? = null,
         @SerialName("registered_product_name") val registeredProductName: String? = null,
         @SerialName("label_reference") val labelReference: String? = null,
-        @SerialName("manufacturer_label_url") val manufacturerLabelUrl: String? = null,
-        @SerialName("manufacturer_product_url") val manufacturerProductUrl: String? = null,
         @SerialName("label_version") val labelVersion: String? = null,
         @SerialName("verification_status") val verificationStatus: String? = null,
         @SerialName("verification_sources") val verificationSources: List<ChemicalDataSource>? = null,
@@ -258,6 +273,8 @@ class SavedChemicalRepository(private val session: SessionStore) {
         @SerialName("verified_at") val verifiedAt: String? = null,
         @SerialName("registered_uses") val registeredUses: List<ChemicalRegisteredUse>? = null,
         @SerialName("label_rate_bases") val labelRateBases: List<String>? = null,
+        // --- Confirmed operational default (sql/214) ---
+        @SerialName("default_rates") val defaultRates: StoredChemicalDefaultRates? = null,
         @SerialName("activity_group_table_version") val activityGroupTableVersion: Int? = null,
         @SerialName("intelligence_schema_version") val intelligenceSchemaVersion: Int? = null,
         // --- Master Chemical Catalogue (sql/199) ---
@@ -331,8 +348,6 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 registrant = intel.registrant,
                 registeredProductName = intel.registeredProductName,
                 labelReference = intel.labelReference,
-                manufacturerLabelUrl = intel.manufacturerLabelUrl,
-                manufacturerProductUrl = intel.manufacturerProductUrl,
                 labelVersion = intel.labelVersion,
                 verificationStatus = intel.verificationStatus,
                 verificationSources = intel.verificationSources,
@@ -341,6 +356,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 verifiedAt = intel.verifiedAt,
                 registeredUses = intel.registeredUses,
                 labelRateBases = intel.labelRateBases,
+                defaultRates = input.defaultRates,
                 activityGroupTableVersion = intel.activityGroupTableVersion,
                 intelligenceSchemaVersion = intel.intelligenceSchemaVersion,
                 masterChemicalId = input.masterChemicalId,
@@ -399,8 +415,6 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 registrant = intel.registrant,
                 registeredProductName = intel.registeredProductName,
                 labelReference = intel.labelReference,
-                manufacturerLabelUrl = intel.manufacturerLabelUrl,
-                manufacturerProductUrl = intel.manufacturerProductUrl,
                 labelVersion = intel.labelVersion,
                 verificationStatus = intel.verificationStatus,
                 verificationSources = intel.verificationSources,
@@ -409,6 +423,7 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 verifiedAt = intel.verifiedAt,
                 registeredUses = intel.registeredUses,
                 labelRateBases = intel.labelRateBases,
+                defaultRates = input.defaultRates,
                 activityGroupTableVersion = intel.activityGroupTableVersion,
                 intelligenceSchemaVersion = intel.intelligenceSchemaVersion,
                 masterChemicalId = input.masterChemicalId,

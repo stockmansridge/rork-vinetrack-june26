@@ -142,6 +142,18 @@ object ChemicalStoreMatching {
             intelligence = intel,
             masterChemicalId = master?.masterChemicalId?.takeIf { it.isNotBlank() },
             masterSourceRevision = master?.takeIf { it.masterChemicalId.isNotBlank() }?.masterRevision,
+            // The CONFIRMED operational default (sql/214), recorded separately
+            // from the projected legacy rates above. Null when the operator
+            // confirmed nothing — `explicitNulls = false` then omits the column,
+            // so a default recorded on another device survives untouched.
+            //
+            // Built from the GRAPEVINE partition only: passing the whole label
+            // would let a pome-fruit direction supply a `rate_id` for a
+            // vineyard default.
+            defaultRates = defaults?.storedDefaultRates(
+                grapevineUses = intel.registeredUses.viticultural(),
+                labelVersion = intel.registration?.labelVersion,
+            ),
         )
     }
 

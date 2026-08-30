@@ -463,9 +463,13 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
     }
 
     /// Whether this use concerns grapevines.
+    ///
+    /// Delegates to the canonical whole-token predicate, which is the same rule
+    /// the server uses to build `grapevine_uses`. The previous substring test
+    /// (`contains("grape")`) classified GRAPEFRUIT — a citrus — as a grapevine,
+    /// which would offer a citrus rate as a vineyard default.
     nonisolated var isViticultural: Bool {
-        let c = crop.lowercased()
-        return c.contains("grape") || c.contains("vine")
+        ChemicalGrapevineCrop.matches(crop)
     }
 
     // MARK: - Rate bases (task §4)

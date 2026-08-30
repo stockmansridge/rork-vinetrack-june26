@@ -8,6 +8,7 @@ import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalRegistrationScheme
 import com.rork.vinetrack.data.chemical.ChemicalResistanceProfile
+import com.rork.vinetrack.data.chemical.StoredChemicalDefaultRates
 import com.rork.vinetrack.data.chemical.ChemicalVerification
 import com.rork.vinetrack.data.chemical.ChemicalVerificationConflict
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
@@ -1930,6 +1931,17 @@ data class SavedChemical(
     @SerialName("verified_at") val verifiedAt: String? = null,
     @SerialName("registered_uses") val registeredUses: List<ChemicalRegisteredUse>? = null,
     @SerialName("label_rate_bases") val labelRateBases: List<String>? = null,
+    /**
+     * The operator's CONFIRMED operational rate choice (sql/214).
+     *
+     * Records which authoritative rate from [registeredUses] this vineyard
+     * doses by — never a new rate. Null means no choice has been recorded,
+     * which is a real answer and never means "this label has no rates": that
+     * question is answered by [registeredUses] and only by it. Nothing is
+     * backfilled into this from [ratePerHa] or [rates], because those legacy
+     * numbers have no link back to a registered direction.
+     */
+    @SerialName("default_rates") val defaultRates: StoredChemicalDefaultRates? = null,
     @SerialName("activity_group_table_version") val activityGroupTableVersion: Int? = null,
     @SerialName("intelligence_schema_version") val intelligenceSchemaVersion: Int? = null,
     // ---- Master Chemical Catalogue (sql/199) ----
