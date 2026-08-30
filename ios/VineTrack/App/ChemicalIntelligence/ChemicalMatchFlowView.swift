@@ -67,11 +67,15 @@ struct ChemicalMatchFlowView: View {
         // ONE sheet presenter for both destinations, driven by coordinator
         // state so a rebuild of this view cannot tear the editor down.
         .sheet(item: editorTarget) { target in
-            // THE Chemical Store editor. `chemical:` stays the record being
-            // matched (nil when adding) so Save still takes the right
-            // create/update path; `prefill:` is what to show.
+            // THE Chemical Store editor. `chemical:` is the record Save must
+            // UPDATE — normally the one being matched (nil when adding), and
+            // the operator's own existing product when they answered the
+            // pre-research same-name decision with "review the one I have".
+            // Getting this wrong would write a second copy of a product the
+            // store already holds, which is the exact outcome that decision
+            // exists to prevent. `prefill:` is what to show.
             EditSavedChemicalSheet(
-                chemical: existing,
+                chemical: target.updating ?? existing,
                 prefill: target.draft
             ) { saved in
                 onSaved?(saved)
@@ -90,14 +94,25 @@ struct ChemicalMatchFlowView: View {
     /// form. Modelled as one value so the two cannot both be presented.
     private struct EditorTarget: Identifiable {
         let draft: SavedChemical?
+        /// The stored record Save must update in place, when there is one.
+        let updating: SavedChemical?
         var id: String { draft?.id.uuidString ?? "manual" }
     }
 
     private var editorTarget: Binding<EditorTarget?> {
         Binding(
             get: {
-                if let draft = coordinator.reviewDraft { return EditorTarget(draft: draft) }
-                if coordinator.showManualEntry { return EditorTarget(draft: nil) }
+                // Checked FIRST: an operator who said "I already have this"
+                // must land on their own record, not on a researched draft.
+                if let owned = coordinator.existingToReview {
+                    return EditorTarget(draft: owned, updating: owned)
+                }
+                if let draft = coordinator.reviewDraft {
+                    return EditorTarget(draft: draft, updating: nil)
+                }
+                if coordinator.showManualEntry {
+                    return EditorTarget(draft: nil, updating: nil)
+                }
                 return nil
             },
             set: { newValue in

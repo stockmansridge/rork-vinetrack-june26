@@ -67,6 +67,7 @@ import com.rork.vinetrack.data.chemical.ChemicalSaveContract
 import com.rork.vinetrack.data.chemical.ChemicalSaveViolation
 import com.rork.vinetrack.data.chemical.ChemicalSaveViolationCode
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
+import com.rork.vinetrack.data.chemical.ChemicalVineyardScope
 import com.rork.vinetrack.data.chemical.legacyGroupProjection
 import com.rork.vinetrack.data.chemical.viticultural
 import com.rork.vinetrack.ui.components.ChemicalJurisdictionChip
@@ -363,6 +364,9 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             prefillQuery = "",
             onDismiss = { matchingNew = false },
             onEnterManually = { matchingNew = false; creating = true },
+            // "I already have this one" opens THAT record rather than
+            // researching a second copy of it. No lookup has run at this point.
+            onReviewExisting = { chem -> matchingNew = false; editing = chem },
         )
     }
     matching?.let { chem ->
@@ -375,6 +379,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             prefillQuery = chem.displayName,
             onDismiss = { matching = null },
             onEnterManually = { matching = null; editing = chem },
+            onReviewExisting = { found -> matching = null; editing = found },
         )
     }
     reverifying?.let { chem ->
@@ -929,7 +934,11 @@ internal fun ChemicalFormSheet(
             // hand-edited group cannot leave a stale `verified` status behind.
             // Null on an unrelated edit, and `explicitNulls = false` then OMITS
             // the structured columns rather than blanking them.
-            intelligence = editOutcome?.intelligence,
+            //
+            // Vineyard-scoped on the way out, exactly like the research path:
+            // whichever route a use arrived by, the stored operational set is
+            // grapevine directions plus product-level rates and nothing else.
+            intelligence = editOutcome?.intelligence?.let { ChemicalVineyardScope.scoped(it) },
         )
         val cb: (Boolean) -> Unit = { ok -> saving = false; if (ok) onDismiss() }
         if (isEdit) vm.updateSavedChemical(existing!!.id, input, cb) else vm.createSavedChemical(input, cb)
@@ -1646,6 +1655,9 @@ internal fun ChemicalFormSheet(
             // "I could not find it" returns to exactly where they were: this
             // form, with everything they had already typed still in it.
             onEnterManually = { showRegisterSearch = false },
+            // Already-owned record: close this form rather than editing two
+            // records at once. Nothing was looked up and nothing was written.
+            onReviewExisting = { showRegisterSearch = false; onDismiss() },
         )
     }
 }

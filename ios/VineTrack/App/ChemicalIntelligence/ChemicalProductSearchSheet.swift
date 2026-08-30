@@ -71,6 +71,12 @@ struct ChemicalProductSearchSheet: View {
         NavigationStack {
             List {
                 searchSection
+                // Item 5: the same-name decision REPLACES the results while it
+                // is open, because nothing has been looked up yet and showing
+                // a stale result list beside it would imply otherwise.
+                if coordinator.isAwaitingDuplicateDecision {
+                    duplicateDecisionSections
+                } else {
                 Section {
                     // A2: switches to the active "keep this screen open"
                     // wording (with a live spinner) while a search or a
@@ -96,6 +102,7 @@ struct ChemicalProductSearchSheet: View {
                     } footer: {
                         Text("Manually entered products stay Unverified until they are matched to a registered product.")
                     }
+                }
                 }
             }
             .navigationTitle(existing == nil ? "Add Chemical" : "Match & Verify")
@@ -133,6 +140,9 @@ struct ChemicalProductSearchSheet: View {
                 TextField("Product name", text: $coordinator.query)
                     .autocorrectionDisabled()
                     .onSubmit { startSearch() }
+                    .onChange(of: coordinator.query) { _, _ in
+                        coordinator.queryChanged()
+                    }
             }
             Button {
                 startSearch()
@@ -319,8 +329,74 @@ struct ChemicalProductSearchSheet: View {
 
     // MARK: - Actions
 
+    /// The ONLY search entry point.
+    ///
+    /// Routes through the coordinator's pre-research duplicate gate, so a
+    /// same-name record in the operator's own store stops the flow before any
+    /// request is issued (item 5).
     private func startSearch() {
-        coordinator.startSearch(country: countryCode, savedChemicals: store.savedChemicals)
+        coordinator.startSearchUnlessDuplicate(
+            country: countryCode,
+            savedChemicals: store.savedChemicals,
+            existing: existing
+        )
+    }
+
+    /// Item 5: the same-name decision, shown BEFORE any chemical research runs.
+    ///
+    /// Three answers, and two of them cost nothing at all — no lookup, no
+    /// write. The Portal asks the same question in the same place for the same
+    /// reason: a grower who already owns a product almost always means "open
+    /// that one", and discovering it after a 60-second resolve is a worse
+    /// answer arriving later.
+    @ViewBuilder
+    private var duplicateDecisionSections: some View {
+        // Read into a plain array first. `coordinator` is `@Bindable`, so
+        // passing its property straight to `ForEach` resolves the Binding
+        // overload and the rows come back as `Binding<SavedChemical>`.
+        let matches: [SavedChemical] = coordinator.sameNameMatches
+        Section {
+            ForEach(matches, id: \.id) { chemical in
+                Button {
+                    coordinator.reviewExisting(chemical)
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(chemical.name)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.primary)
+                        let subtitle = [chemical.activeIngredient, chemical.manufacturer]
+                            .filter { !$0.isEmpty }
+                            .joined(separator: " · ")
+                        if !subtitle.isEmpty {
+                            Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text("Review or re-verify the chemical I already have")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(VineyardTheme.info)
+                    }
+                }
+            }
+        } header: {
+            Text("Already in your Chemical Store")
+        } footer: {
+            Text("Nothing has been looked up yet. Choose what to do before VineTrack searches the register.")
+        }
+
+        Section {
+            Button("This is a different product — search the register") {
+                coordinator.createSeparate(
+                    country: countryCode,
+                    savedChemicals: store.savedChemicals
+                )
+            }
+            Button("Back", role: .cancel) {
+                // Zero research calls, zero writes. The typed query is kept so
+                // backing out costs no input either.
+                coordinator.cancelDuplicateDecision()
+            }
+        } footer: {
+            Text("Choose the register search only if your shed genuinely holds two different registered products with similar names.")
+        }
     }
 
     private func startSelect(_ row: ChemicalSearchRow) {

@@ -104,7 +104,9 @@ nonisolated enum ChemicalReverifyFlow {
         with refreshed: ChemicalIntelligence
     ) -> SavedChemical {
         var result = chemical
-        result.chemicalIntelligence = refreshed
+        // Scoped like every other write: a re-check must not reintroduce the
+        // other-crop directions the record was deliberately saved without.
+        result.chemicalIntelligence = ChemicalVineyardScope.scoped(refreshed)
         return result
     }
 }

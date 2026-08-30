@@ -299,7 +299,9 @@ nonisolated enum ChemicalReverification {
         with outcome: ChemicalEditOutcome
     ) -> SavedChemical {
         var result = chemical
-        result.chemicalIntelligence = outcome.intelligence
+        // Scoped on the way in, exactly like the review path: applying a
+        // re-verification must not widen the record back out to other crops.
+        result.chemicalIntelligence = ChemicalVineyardScope.scoped(outcome.intelligence)
         if let registrant = outcome.intelligence.registration?.registrant, !registrant.isEmpty {
             result.manufacturer = registrant
         }

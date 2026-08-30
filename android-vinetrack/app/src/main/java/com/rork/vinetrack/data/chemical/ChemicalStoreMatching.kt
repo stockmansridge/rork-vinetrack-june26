@@ -52,6 +52,111 @@ object ChemicalStoreMatching {
         }
     }
 
+    // ---- Pre-research duplicate decision (item 5) ----
+
+    /**
+     * Normalised form of a product name for SAME-PRODUCT comparison.
+     *
+     * Case, punctuation and run-together spacing are noise a grower should
+     * never be punished for: `"Kocide Blue Xtra"`, `"KOCIDE BLUE XTRA"` and
+     * `"Kocide-Blue Xtra"` are one product typed three ways. Pack-size and
+     * volume suffixes are deliberately NOT stripped, because `"Product 5 L"`
+     * and `"Product 20 L"` may be genuinely different registrations.
+     */
+    fun normalisedName(raw: String): String =
+        raw.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
+
+    /**
+     * Whether two product names are the same or materially matching.
+     *
+     * Exact match after normalisation, or one name being a whole-token prefix
+     * of the other — which is how `"Kocide Blue"` finds the stored
+     * `"Kocide Blue Xtra"`. Deliberately NOT a fuzzy/edit-distance test: this
+     * decision only ever OFFERS a choice, and a false positive that pushes an
+     * operator toward the wrong existing record is worse than asking twice.
+     */
+    fun namesMateriallyMatch(a: String, b: String): Boolean {
+        val left = normalisedName(a)
+        val right = normalisedName(b)
+        if (left.isEmpty() || right.isEmpty()) return false
+        if (left == right) return true
+        val leftTokens = left.split(' ')
+        val rightTokens = right.split(' ')
+        val shorter = if (leftTokens.size <= rightTokens.size) leftTokens else rightTokens
+        val longer = if (leftTokens.size <= rightTokens.size) rightTokens else leftTokens
+        // A single token is too weak to claim a match on its own: "Blue" must
+        // not adopt "Blue Shield".
+        if (shorter.size < 2) return false
+        return longer.take(shorter.size) == shorter
+    }
+
+    /**
+     * Existing chemicals whose name is the same or materially matching.
+     *
+     * Consulted BEFORE any remote lookup runs. The old order — research first,
+     * detect the duplicate on the confirm screen — spent the expensive call
+     * and the operator's wait before telling them they already owned the
+     * product, and left a half-finished record on screen if they backed out.
+     *
+     * Ordered so an exact name match leads, because that is the record the
+     * operator is most likely to have meant.
+     */
+    fun findByProductName(
+        chemicals: List<SavedChemical>,
+        query: String,
+        excludingId: String? = null,
+    ): List<SavedChemical> {
+        val normalisedQuery = normalisedName(query)
+        if (normalisedQuery.isEmpty()) return emptyList()
+        return chemicals
+            .filter { it.id != excludingId && namesMateriallyMatch(it.displayName, query) }
+            .sortedByDescending { normalisedName(it.displayName) == normalisedQuery }
+    }
+
+    /**
+     * The decision the operator is offered before research begins.
+     *
+     * Modelled as data rather than as sheet state so the "declining costs
+     * nothing" rule is testable: [Decision.Cancelled] and
+     * [Decision.ReviewExisting] both mean NO research call and NO write.
+     */
+    sealed interface Decision {
+        /** Nothing matched; go straight to the register search. */
+        data object Proceed : Decision
+
+        /** Open the record the operator already owns. Never researches. */
+        data class ReviewExisting(val chemical: SavedChemical) : Decision
+
+        /** Deliberately create/search for a separate product. */
+        data object CreateSeparate : Decision
+
+        /** Backed out. Must cost exactly nothing. */
+        data object Cancelled : Decision
+    }
+
+    /**
+     * Whether this decision permits a remote chemical lookup to start.
+     *
+     * The acceptance rule in one place: only [Decision.Proceed] and
+     * [Decision.CreateSeparate] may reach the network. Reviewing an existing
+     * record reads what is already stored, and cancelling does nothing at all.
+     */
+    fun permitsResearch(decision: Decision): Boolean = when (decision) {
+        Decision.Proceed, Decision.CreateSeparate -> true
+        is Decision.ReviewExisting, Decision.Cancelled -> false
+    }
+
+    /**
+     * Whether this decision permits any write to the Chemical Store.
+     *
+     * Separate from [permitsResearch] on purpose: "no network" and "no write"
+     * are two distinct promises, and the acceptance test checks both.
+     */
+    fun permitsWrite(decision: Decision): Boolean = when (decision) {
+        Decision.Proceed, Decision.CreateSeparate -> true
+        is Decision.ReviewExisting, Decision.Cancelled -> false
+    }
+
     /**
      * Build the write payload for a confirmed product.
      *
@@ -74,7 +179,13 @@ object ChemicalStoreMatching {
     fun inputFor(
         existing: SavedChemical?,
         productName: String,
-        intel: ChemicalIntelligence,
+        /**
+         * The researched payload as the resolver returned it, WHOLE. It is
+         * narrowed to the vineyard by [ChemicalVineyardScope] inside this
+         * function so no caller can forget to, and so a review screen can
+         * still show the full label while the store keeps only the vines.
+         */
+        researched: ChemicalIntelligence,
         master: ChemicalInfoService.ChemicalMasterMatch? = null,
         /**
          * The lookup's verbatim `form_type` (e.g. "Suspension concentrate").
@@ -93,6 +204,12 @@ object ChemicalStoreMatching {
          */
         defaults: ChemicalDefaultRateSelection? = null,
     ): SavedChemicalRepository.ChemicalInput {
+        // Vineyard scoping happens HERE, at the write boundary, before any
+        // projection reads the uses. Macadamia, cereal and citrus directions on
+        // the same label are real content but they are not this vineyard's
+        // operational data, and a rate a spray calculation can reach must never
+        // belong to a crop the operator does not grow.
+        val intel = ChemicalVineyardScope.scoped(researched)
         val groupProjection = intel.legacyChemicalGroup
         val activeProjection = intel.legacyActiveIngredient
         val form = formDescription(formTypeRaw)

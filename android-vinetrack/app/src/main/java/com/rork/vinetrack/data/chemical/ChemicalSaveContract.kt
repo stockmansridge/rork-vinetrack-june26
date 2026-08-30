@@ -75,6 +75,18 @@ enum class ChemicalSaveViolationCode(val raw: String) {
     RESISTANCE_STATE_MISSING("resistance_state_missing"),
     REGISTRATION_IDENTITY_MISSING("registration_identity_missing"),
     OFFICIAL_LABEL_MISSING("official_label_missing"),
+
+    /**
+     * The label registers several grapevine rates on a basis and the operator
+     * has not said which one this vineyard doses by.
+     *
+     * Client-side only, and deliberately so: the server contract governs the
+     * RECORD, while choosing between two equally registered rates is a
+     * vineyard operating decision that only the person adding the product can
+     * make. It is raised only where a default-rate decision is actually being
+     * taken (the review step), never when merely editing a stored record.
+     */
+    DEFAULT_RATE_UNCONFIRMED("default_rate_unconfirmed"),
 }
 
 /** One unmet requirement, phrased as the next action. */
@@ -114,6 +126,12 @@ data class ChemicalSaveEvaluation(
      * calculation must ask the operator which one applies.
      */
     val requiresRateConditionChoice: Boolean,
+    /**
+     * Bases where the label registers several grapevine rates and the operator
+     * has not yet chosen. Empty on every path that takes no default-rate
+     * decision.
+     */
+    val basesAwaitingConfirmation: List<ChemicalDefaultRateBasis> = emptyList(),
 ) {
     val isSatisfied: Boolean get() = violations.isEmpty()
 
@@ -212,6 +230,12 @@ object ChemicalSaveContract {
         intelligence: ChemicalIntelligence,
         intent: ChemicalSaveIntent = ChemicalSaveIntent.SPRAY_READY,
         resistanceState: ChemicalResistanceState? = null,
+        /**
+         * The operator's in-flight default-rate decision, when a flow is
+         * actually taking one. Null on the plain edit path, which must not
+         * start demanding a choice the editor never offered.
+         */
+        defaults: ChemicalDefaultRateSelection? = null,
     ): ChemicalSaveEvaluation {
         val violations = mutableListOf<ChemicalSaveViolation>()
 
@@ -282,6 +306,22 @@ object ChemicalSaveContract {
 
         violations.addAll(rateViolations(viticulturalRates))
 
+        // Item 4: with more than one registered grapevine rate on a basis,
+        // silence is not consent. The recommendation stays on screen and stays
+        // pickable; it simply cannot count as the operator's answer.
+        if (defaults != null) {
+            for (basis in defaults.basesAwaitingConfirmation) {
+                violations.add(
+                    ChemicalSaveViolation(
+                        code = ChemicalSaveViolationCode.DEFAULT_RATE_UNCONFIRMED,
+                        message = "Choose which registered ${basis.label.lowercase()} rate " +
+                            "this vineyard uses.",
+                        field = "default_rate_${basis.raw}",
+                    ),
+                )
+            }
+        }
+
         // The shared contract also refuses a BLANK resistance state, because the
         // Planner cannot tell a blank from "no concern". That violation is
         // structurally unreachable here and deliberately so: on Android, as on
@@ -328,6 +368,7 @@ object ChemicalSaveContract {
             hasUsableViticulturalRate = usable.isNotEmpty(),
             requiresRateConditionChoice = usable.isNotEmpty() &&
                 usable.all { it.conditionAmbiguous == true },
+            basesAwaitingConfirmation = defaults?.basesAwaitingConfirmation.orEmpty(),
         )
     }
 

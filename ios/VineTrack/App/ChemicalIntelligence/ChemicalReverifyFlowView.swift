@@ -332,14 +332,28 @@ struct ChemicalReverifyFlowView: View {
                 Button {
                     accept(outcome)
                 } label: {
-                    Text("Update Chemical")
+                    Text("Apply verified changes")
                         .frame(maxWidth: .infinity)
                         .fontWeight(.semibold)
                 }
                 .disabled(isWriting)
-                Button("Cancel", role: .cancel) { dismiss() }
+                // The second decision is a DECISION, not an escape hatch.
+                //
+                // This used to be `Cancel`, which asks the operator to read
+                // "abandon this screen" as "deliberately keep my own values".
+                // Those are different sentences, and a compliance choice
+                // should never be expressed by the button people press when
+                // they want out. Android already words it this way; the
+                // Portal does too.
+                //
+                // Behaviourally identical to the old Cancel — it writes
+                // NOTHING. Keeping what you have is all-or-nothing: no
+                // incoming value is partially applied, because a record half
+                // from the old research and half from the new is a chemistry
+                // nobody verified.
+                Button("Keep what I have", role: .cancel) { dismiss() }
             } footer: {
-                Text("Updating changes this Chemical Store record only. Completed spray records keep the chemical information that was captured at the time they were applied.")
+                Text("Applying changes updates this Chemical Store record only. Keeping what you have writes nothing at all — no part of the update is applied. Completed spray records keep the chemical information that was captured at the time they were applied.")
             }
         }
     }

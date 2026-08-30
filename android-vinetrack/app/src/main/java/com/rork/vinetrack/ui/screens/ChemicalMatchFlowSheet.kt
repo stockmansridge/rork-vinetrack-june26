@@ -18,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Adjust
 import androidx.compose.material.icons.filled.Help
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
@@ -63,7 +64,9 @@ import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
 import com.rork.vinetrack.data.chemical.ChemicalLookupAdvisory
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
+import com.rork.vinetrack.data.chemical.ChemicalSaveContract
 import com.rork.vinetrack.data.chemical.ChemicalStoreMatching
+import com.rork.vinetrack.data.chemical.ChemicalVineyardScope
 import com.rork.vinetrack.data.chemical.formatChemicalNumber
 import com.rork.vinetrack.data.chemical.viticultural
 import com.rork.vinetrack.data.model.SavedChemical
@@ -85,17 +88,33 @@ import com.rork.vinetrack.ui.theme.VineColors
 import kotlinx.coroutines.launch
 
 /**
- * The operator-facing Search → Match → Verify → Confirm workflow — the Android
- * mirror of the iOS `ChemicalMatchFlowView`.
+ * The operator-facing **Search → Review → Save** workflow — the Android mirror
+ * of the iOS `ChemicalMatchFlowView`.
  *
- * The whole point of this flow is that identifying a product and trusting a
- * product are separate acts. The wizard collects EVIDENCE; it never sets the
- * trust level itself. Every screen submits what it found to
- * [ChemicalIntelligence.resolvedVerificationStatus], and that computed value is
- * what gets displayed and saved — which is why there is no "mark as verified"
- * button anywhere in this file.
+ * # Why this is two screens and not four
+ *
+ * This flow used to run Search → Matched Product → Verify Chemical → Confirm.
+ * For the ordinary case that was four screens to answer one question — "is this
+ * the product on my drum?" — and the middle two were read-only, so an operator
+ * who could see the answer was wrong had nowhere to fix it. iOS collapsed to
+ * Search → Review → Save; the Portal reads the same way; Android was the
+ * outlier, and a grower moving between a phone and the office met two different
+ * registration processes for one product.
+ *
+ * Nothing was thrown away to get here. Every section the old VERIFY and CONFIRM
+ * steps rendered is still rendered — identity, chemistry, activity groups,
+ * grapevine uses and rates, compliance, documents, verification evidence and
+ * the default-rate decision — they are simply one scrollable Review instead of
+ * three gated pages. The parsers, resolver and write payload are untouched.
+ *
+ * # It collects evidence; it never sets trust
+ *
+ * Identifying a product and trusting a product are separate acts. Everything
+ * here submits what it found to [ChemicalIntelligence.resolvedVerificationStatus],
+ * and that computed value is what is displayed and saved — which is why there
+ * is no "mark as verified" button anywhere in this file.
  */
-private enum class MatchStep { SEARCH, MATCH, VERIFY, CONFIRM }
+private enum class MatchStep { SEARCH, REVIEW }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -114,6 +133,14 @@ internal fun ChemicalMatchFlowSheet(
     prefillQuery: String,
     onDismiss: () -> Unit,
     onEnterManually: () -> Unit,
+    /**
+     * "I already have this one" from the pre-research duplicate decision.
+     *
+     * Hands the record the operator already owns back to the host so it can be
+     * opened for review/re-verification. Null-safe default closes the flow,
+     * which is still correct — it simply cannot open the record itself.
+     */
+    onReviewExisting: (SavedChemical) -> Unit = {},
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
@@ -135,6 +162,23 @@ internal fun ChemicalMatchFlowSheet(
     var saving by remember { mutableStateOf(false) }
     /** Set when the confirmed registration identity already exists in the store. */
     var duplicateOf by remember { mutableStateOf<SavedChemical?>(null) }
+
+    // ---- Pre-research duplicate decision (item 5) ----
+    /**
+     * Same-name records found in the operator's OWN store, shown before any
+     * network call. Non-empty means the decision is on screen and no research
+     * has run.
+     */
+    var samePrompt by remember { mutableStateOf<List<SavedChemical>>(emptyList()) }
+    /**
+     * Set once the operator has deliberately said "this is a different
+     * product", so the decision is asked once per session rather than on
+     * every re-search of the same name.
+     */
+    var duplicateDecision by remember {
+        mutableStateOf<ChemicalStoreMatching.Decision?>(null)
+    }
+
     /**
      * Master catalogue reference when the structured lookup was served from an
      * APPROVED master row (sql/199). Null on AI-sourced lookups.
@@ -197,6 +241,35 @@ internal fun ChemicalMatchFlowSheet(
         }
     }
 
+    /**
+     * The ONLY route to a remote search (item 5).
+     *
+     * The operator's own Chemical Store is consulted FIRST, offline, and a
+     * same-name record stops the flow before a single request is issued. The
+     * old order — research, then notice the duplicate on the confirm screen —
+     * spent the expensive call and the operator's wait before telling them
+     * they already owned the product, and left a half-built record on screen
+     * if they backed out of it.
+     *
+     * Declining costs exactly nothing: no lookup, no write.
+     */
+    fun attemptSearch() {
+        if (!ChemicalLookupAdvisory.canStartSearch(query, searching, countryCode)) return
+        if (duplicateDecision == null) {
+            val matches = ChemicalStoreMatching.findByProductName(
+                chemicals = state.savedChemicals,
+                query = query,
+                // A legacy record being re-matched is not a duplicate of itself.
+                excludingId = existing?.id,
+            )
+            if (matches.isNotEmpty()) {
+                samePrompt = matches
+                return
+            }
+        }
+        runSearch()
+    }
+
     fun loadStructured(result: ChemicalInfoService.ChemicalSearchResult) {
         loadingStructured = true
         structuredError = null
@@ -233,6 +306,14 @@ internal fun ChemicalMatchFlowSheet(
                 val intel = lookup.intelligence()
                 intelligence = intel
                 lookupFormType = lookup.formType
+                // Duplicate prevention on registration IDENTITY still runs —
+                // it is a different question from the name check above, and it
+                // is the only one that can prove two records are one product.
+                duplicateOf = ChemicalStoreMatching.findByRegistrationIdentity(
+                    chemicals = state.savedChemicals,
+                    registration = intel.registration,
+                    excludingId = existing?.id,
+                )
                 // Vineyard state is not recorded on Android profiles, so the
                 // jurisdiction step is skipped — a weaker answer, never a
                 // wrong one. The only-registered-rate rule still recommends.
@@ -287,23 +368,52 @@ internal fun ChemicalMatchFlowSheet(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(
-                when (step) {
-                    MatchStep.SEARCH -> if (existing == null) "Add Chemical" else "Match & Verify"
-                    MatchStep.MATCH -> "Matched Product"
-                    MatchStep.VERIFY -> "Verify Chemical"
-                    MatchStep.CONFIRM -> "Confirm"
+                when {
+                    samePrompt.isNotEmpty() -> "Already in your Chemical Store"
+                    step == MatchStep.SEARCH ->
+                        if (existing == null) "Add Chemical" else "Match & Verify"
+                    else -> "Review Chemical"
                 },
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = vine.textPrimary,
             )
 
-            when (step) {
+            if (samePrompt.isNotEmpty()) {
+                // The decision, BEFORE any research. Nothing on this screen
+                // issues a request or writes a record.
+                SameNameDecision(
+                    matches = samePrompt,
+                    query = query,
+                    onReviewExisting = { chemical ->
+                        samePrompt = emptyList()
+                        duplicateDecision = ChemicalStoreMatching.Decision.ReviewExisting(chemical)
+                        onReviewExisting(chemical)
+                    },
+                    onCreateSeparate = {
+                        samePrompt = emptyList()
+                        duplicateDecision = ChemicalStoreMatching.Decision.CreateSeparate
+                        runSearch()
+                    },
+                    onCancel = {
+                        // Zero research calls, zero writes. The typed query is
+                        // deliberately kept so backing out costs no input either.
+                        samePrompt = emptyList()
+                        duplicateDecision = null
+                    },
+                )
+            } else when (step) {
                 MatchStep.SEARCH -> {
                     SectionLabel("Search for product")
                     OutlinedTextField(
                         value = query,
-                        onValueChange = { query = it },
+                        onValueChange = {
+                            query = it
+                            // A retyped name is a new question: the previous
+                            // "different product" answer must not carry over
+                            // and suppress the check for the new name.
+                            duplicateDecision = null
+                        },
                         label = { Text("Product name") },
                         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                         singleLine = true,
@@ -321,7 +431,7 @@ internal fun ChemicalMatchFlowSheet(
                         color = vine.textSecondary,
                     )
                     Button(
-                        onClick = { runSearch() },
+                        onClick = { attemptSearch() },
                         // No vineyard country -> no jurisdiction -> fail closed.
                         // The hint above says what to set; searching a guessed
                         // national register would verify the wrong label.
@@ -350,7 +460,7 @@ internal fun ChemicalMatchFlowSheet(
                     searchError?.let { message ->
                         WarningLine(message)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { runSearch() }) { Text("Try Again") }
+                            OutlinedButton(onClick = { attemptSearch() }) { Text("Try Again") }
                             OutlinedButton(onClick = onEnterManually) { Text("Enter Manually") }
                         }
                     }
@@ -375,7 +485,7 @@ internal fun ChemicalMatchFlowSheet(
                                         null
                                     }
                                 }
-                                step = MatchStep.MATCH
+                                step = MatchStep.REVIEW
                                 loadStructured(result)
                             }
                         }
@@ -401,7 +511,7 @@ internal fun ChemicalMatchFlowSheet(
                     )
                 }
 
-                MatchStep.MATCH -> {
+                MatchStep.REVIEW -> {
                     if (loadingStructured) {
                         // A1: while the lookup is in flight, the only honest
                         // content is "we are checking". Unresolved-identity
@@ -423,20 +533,43 @@ internal fun ChemicalMatchFlowSheet(
                             )
                         }
                         ChemicalLookupAdvisoryNotice(isSearching = true)
-                    } else if (intelligence != null) {
-                        ChemicalIdentityView(
-                            productName = intelligence?.registration?.registeredProductName
-                                ?: selected?.name ?: query,
-                            registration = intelligence?.registration,
-                            productCategory = intelligence?.productCategory.orEmpty(),
-                        )
+                    }
 
-                        HorizontalDivider()
-                        SectionLabel("Identity status")
+                    structuredError?.let { message ->
+                        WarningLine(message)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = {
+                                selected?.let { loadStructured(it) }
+                            }) { Text("Try Again") }
+                            OutlinedButton(onClick = onEnterManually) { Text("Enter Manually") }
+                        }
+                    }
+
+                    val intel = intelligence
+                    if (intel != null && !loadingStructured) {
+                        val resolved = intel.resolvedVerificationStatus
+                        val productName = intel.registration?.registeredProductName
+                            ?: selected?.name ?: query
+                        // What the STORE will hold: grapevine directions plus
+                        // product-level rates. The review shows exactly this,
+                        // so nothing is displayed that will not be saved and
+                        // nothing is saved that was not displayed.
+                        val operational = ChemicalVineyardScope.operationalUses(intel.registeredUses)
+                        val exclusion = ChemicalVineyardScope.exclusionNotice(intel.registeredUses)
+
+                        ChemicalConflictCard(intel.verification.conflicts)
+
+                        // ---- Identity ----
+                        SectionLabel("Identity")
+                        ChemicalIdentityView(
+                            productName = productName,
+                            registration = intel.registration,
+                            productCategory = intel.productCategory,
+                        )
                         // Identity strength is decided by whether a register and a
                         // number are actually present — never by how confident the
                         // lookup felt.
-                        val registration = intelligence?.registration
+                        val registration = intel.registration
                         when {
                             registration?.isAuthoritativeIdentity == true -> StatusLine(
                                 "Exact registered identity found",
@@ -465,50 +598,26 @@ internal fun ChemicalMatchFlowSheet(
                                 )
                             }
                         }
-                    }
-
-                    identityWarning?.let { WarningLine(it) }
-
-                    structuredError?.let { message ->
-                        WarningLine(message)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = {
-                                selected?.let { loadStructured(it) }
-                            }) { Text("Try Again") }
-                            OutlinedButton(onClick = onEnterManually) { Text("Enter Manually") }
+                        ChemicalStoreMatching.formDescription(lookupFormType)
+                            .takeIf { it.isNotEmpty() }
+                            ?.let {
+                                ChemicalLabelledLine("Formulation", lookupFormType.orEmpty())
+                            }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                "Verification",
+                                fontSize = 12.sp,
+                                color = vine.textSecondary,
+                                modifier = Modifier.width(96.dp),
+                            )
+                            ChemicalVerificationBadge(resolved)
                         }
-                    }
+                        identityWarning?.let { WarningLine(it) }
 
-                    HorizontalDivider()
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // The registered identity is never editable in place:
-                        // leaving it is an intentional act that returns to the
-                        // register search.
-                        OutlinedButton(onClick = { changeProduct() }) {
-                            Text("Change Product")
-                        }
-                        Button(
-                            onClick = { step = MatchStep.VERIFY },
-                            enabled = intelligence != null && !loadingStructured,
-                        ) { Text("Continue") }
-                    }
-                }
-
-                MatchStep.VERIFY -> {
-                    val intel = intelligence
-                    if (intel != null) {
-                        val resolved = intel.resolvedVerificationStatus
-
-                        ChemicalConflictCard(intel.verification.conflicts)
-
-                        SectionLabel("Product identity")
-                        ChemicalIdentityView(
-                            productName = intel.registration?.registeredProductName
-                                ?: selected?.name ?: query,
-                            registration = intel.registration,
-                            productCategory = intel.productCategory,
-                        )
-
+                        // ---- Chemistry ----
                         HorizontalDivider()
                         SectionLabel("Active ingredients")
                         if (intel.activeIngredients.isEmpty()) {
@@ -529,9 +638,7 @@ internal fun ChemicalMatchFlowSheet(
                                 color = vine.textSecondary,
                             )
                         }
-
                         if (intel.activityGroups.isNotEmpty()) {
-                            HorizontalDivider()
                             SectionLabel("Activity groups")
                             ChemicalGroupSummaryLine(intel.activityGroups)
                             Text(
@@ -541,108 +648,44 @@ internal fun ChemicalMatchFlowSheet(
                             )
                         }
 
-                        HorizontalDivider()
-                        SectionLabel("Verification")
-                        ChemicalVerificationEvidenceView(intel.verification, resolved)
-                        Text(resolved.detail, fontSize = 11.sp, color = vine.textSecondary)
-
-                        if (intel.registeredUses.any { it.rates.isNotEmpty() }) {
+                        // ---- Grapevine use, rates and compliance ----
+                        if (operational.any { it.rates.isNotEmpty() }) {
                             HorizontalDivider()
-                            ChemicalLabelRatesView(intel.registeredUses)
+                            ChemicalLabelRatesView(operational)
                         }
 
                         HorizontalDivider()
-                        SectionLabel("Registered uses")
+                        SectionLabel("Registered grapevine uses")
                         // The label-source flag only ever changes the WORDING of
                         // a label-parsed zero-day withholding period ("not
                         // required when used as directed"); it never invents or
                         // alters a value. Derived from the payload's own cited
                         // sources.
                         ChemicalRegisteredUsesView(
-                            intel.registeredUses,
+                            operational,
                             hasManufacturerLabelSource = intel.verification.sources.any {
                                 it.kind == ChemicalDataSourceKind.MANUFACTURER_LABEL
                             },
                         )
-
-                        HorizontalDivider()
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { step = MatchStep.MATCH }) { Text("Back") }
-                            OutlinedButton(onClick = { changeProduct() }) {
-                                Text("Change Product")
-                            }
-                            Button(onClick = {
-                                // Duplicate prevention keys off registration
-                                // identity, never name similarity: two products can
-                                // share a name and be different registrations, and
-                                // the same registration is the same product however
-                                // it was typed.
-                                duplicateOf = ChemicalStoreMatching.findByRegistrationIdentity(
-                                    chemicals = state.savedChemicals,
-                                    registration = intel.registration,
-                                    excludingId = existing?.id,
+                        // Item 2: say plainly which crops this label carries that
+                        // VineTrack is not saving, rather than presenting a
+                        // filtered document as if it were the whole one.
+                        exclusion?.let {
+                            Row(
+                                verticalAlignment = Alignment.Top,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Icon(
+                                    Icons.Filled.Inventory2,
+                                    contentDescription = null,
+                                    tint = vine.textSecondary,
+                                    modifier = Modifier.size(14.dp),
                                 )
-                                step = MatchStep.CONFIRM
-                            }) { Text("Continue") }
-                        }
-                    }
-                }
-
-                MatchStep.CONFIRM -> {
-                    val intel = intelligence
-                    if (intel != null) {
-                        val resolved = intel.resolvedVerificationStatus
-                        val productName = intel.registration?.registeredProductName
-                            ?: selected?.name ?: query
-
-                        SectionLabel("Summary")
-                        ChemicalLabelledLine("Product", productName)
-                        ChemicalLabelledLine(
-                            "Country",
-                            intel.registration?.countryCode?.takeIf { it.isNotBlank() }
-                                ?: countryCode,
-                        )
-                        ChemicalLabelledLine(
-                            "Registration",
-                            intel.registration?.displayIdentifier ?: "Not confirmed",
-                        )
-                        masterMatch?.let { master ->
-                            ChemicalLabelledLine(
-                                "Source",
-                                "Master catalogue · rev ${master.masterRevision}",
-                            )
-                        }
-                        ChemicalLabelledLine(
-                            "Actives",
-                            intel.activeIngredients.takeIf { it.isNotEmpty() }
-                                ?.let { intel.legacyActiveIngredient } ?: "None identified",
-                        )
-                        ChemicalLabelledLine(
-                            "Activity groups",
-                            intel.activityGroups.takeIf { it.isNotEmpty() }
-                                ?.let { intel.legacyChemicalGroup } ?: "Unknown",
-                        )
-                        ChemicalLabelledLine(
-                            "Registered uses",
-                            intel.registeredUses.size.takeIf { it > 0 }?.toString()
-                                ?: "Not confirmed",
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text(
-                                "Verification",
-                                fontSize = 12.sp,
-                                color = vine.textSecondary,
-                                modifier = Modifier.width(96.dp),
-                            )
-                            ChemicalVerificationBadge(resolved)
+                                Text(it, fontSize = 11.sp, color = vine.textSecondary)
+                            }
                         }
 
-                        // A7: the vineyard's operational default, chosen from
-                        // the registered grapevine rates. The authoritative
-                        // label rates on the record are never altered by it.
+                        // ---- Default rate decision (item 4) ----
                         defaultSelection?.let { selection ->
                             if (intel.registeredUses.viticultural().isNotEmpty()) {
                                 HorizontalDivider()
@@ -697,10 +740,45 @@ internal fun ChemicalMatchFlowSheet(
                             }
                         }
 
-                        identityWarning?.let { WarningLine(it) }
+                        // ---- Documents and evidence ----
+                        HorizontalDivider()
+                        SectionLabel("Documents and evidence")
+                        ChemicalLabelledLine(
+                            "Official label",
+                            intel.registration?.labelReference?.takeIf { it.isNotBlank() }
+                                ?: "Not supplied",
+                        )
+                        ChemicalLabelledLine(
+                            "Product page",
+                            intel.registration?.manufacturerProductUrl?.takeIf { it.isNotBlank() }
+                                ?: "Not supplied",
+                        )
+                        masterMatch?.let { master ->
+                            ChemicalLabelledLine(
+                                "Source",
+                                "Master catalogue · rev ${master.masterRevision}",
+                            )
+                        }
+                        ChemicalVerificationEvidenceView(intel.verification, resolved)
+                        Text(resolved.detail, fontSize = 11.sp, color = vine.textSecondary)
+
+                        // ---- Save ----
+                        HorizontalDivider()
+                        // The contract decides, evaluated against exactly what
+                        // will be written (vineyard-scoped) and including the
+                        // operator's default-rate decision.
+                        val gate = ChemicalSaveContract.evaluate(
+                            productName = productName,
+                            productCategory = intel.productCategory,
+                            intelligence = ChemicalVineyardScope.scoped(intel),
+                            defaults = defaultSelection,
+                        )
+                        val baseline = remember(existing?.id, countryCode) {
+                            ChemicalSaveContract.baselineViolationCodes(existing, countryCode)
+                        }
+                        val blocking = ChemicalSaveContract.blockingViolations(gate, baseline)
 
                         duplicateOf?.let { dup ->
-                            HorizontalDivider()
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -724,7 +802,7 @@ internal fun ChemicalMatchFlowSheet(
                                 )
                                 Button(
                                     onClick = {
-                                        if (saving) return@Button
+                                        if (saving || blocking.isNotEmpty()) return@Button
                                         saving = true
                                         vm.updateSavedChemical(
                                             dup.id,
@@ -738,17 +816,36 @@ internal fun ChemicalMatchFlowSheet(
                                             if (ok) onDismiss()
                                         }
                                     },
-                                    enabled = !saving,
+                                    enabled = !saving && blocking.isEmpty(),
                                     modifier = Modifier.fillMaxWidth(),
                                 ) { Text("Update existing record") }
                             }
                         }
 
-                        HorizontalDivider()
+                        if (blocking.isNotEmpty()) {
+                            SaveBlockedNotice(blocking.map { it.message })
+                        }
+
                         if (duplicateOf == null) {
                             Button(
                                 onClick = {
                                     if (saving) return@Button
+                                    // The contract is re-checked here, not
+                                    // inherited from the button: a save path
+                                    // that trusts its own button writes
+                                    // whatever a future caller forgets to gate.
+                                    if (ChemicalSaveContract.blockingViolations(
+                                            ChemicalSaveContract.evaluate(
+                                                productName = productName,
+                                                productCategory = intel.productCategory,
+                                                intelligence = ChemicalVineyardScope.scoped(intel),
+                                                defaults = defaultSelection,
+                                            ),
+                                            baseline,
+                                        ).isNotEmpty()
+                                    ) {
+                                        return@Button
+                                    }
                                     saving = true
                                     val input = ChemicalStoreMatching.inputFor(
                                         existing, productName, intel, masterMatch,
@@ -769,7 +866,7 @@ internal fun ChemicalMatchFlowSheet(
                                         }
                                     }
                                 },
-                                enabled = !saving,
+                                enabled = !saving && blocking.isEmpty(),
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Text(
@@ -778,9 +875,13 @@ internal fun ChemicalMatchFlowSheet(
                                 )
                             }
                         }
+
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = { step = MatchStep.VERIFY }) { Text("Back") }
+                            // The registered identity is never editable in place:
+                            // leaving it is an intentional act that returns to the
+                            // register search.
                             TextButton(onClick = { changeProduct() }) { Text("Change Product") }
+                            TextButton(onClick = onEnterManually) { Text("Enter Manually") }
                         }
                         Text(
                             "The structured record is saved in full. The older Active Ingredient " +
@@ -799,7 +900,121 @@ internal fun ChemicalMatchFlowSheet(
     }
 
     LaunchedEffect(Unit) {
-        if (prefillQuery.trim().isNotEmpty() && results.isEmpty()) runSearch()
+        // A prefilled name is a re-match of a record the operator already owns,
+        // so the same-name check would always fire on itself — `existing` is
+        // excluded from it, and the search runs as before.
+        if (prefillQuery.trim().isNotEmpty() && results.isEmpty()) attemptSearch()
+    }
+}
+
+/**
+ * Item 5: the same-name decision, shown BEFORE any chemical research runs.
+ *
+ * Three answers, and two of them cost nothing at all — no lookup, no write.
+ * The Portal asks the same question in the same place for the same reason: a
+ * grower who already owns a product almost always means "open that one", and
+ * discovering it after a 60-second resolve is a worse answer arriving later.
+ */
+@Composable
+private fun SameNameDecision(
+    matches: List<SavedChemical>,
+    query: String,
+    onReviewExisting: (SavedChemical) -> Unit,
+    onCreateSeparate: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Text(
+        if (matches.size == 1) {
+            "You already have a chemical matching “${query.trim()}”."
+        } else {
+            "You already have ${matches.size} chemicals matching “${query.trim()}”."
+        },
+        fontSize = 13.sp,
+        color = vine.textPrimary,
+    )
+    Text(
+        "Nothing has been looked up yet. Choose what to do before VineTrack " +
+            "searches the register.",
+        fontSize = 11.sp,
+        color = vine.textSecondary,
+    )
+
+    matches.forEach { chemical ->
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(VineColors.Info.copy(alpha = 0.08f))
+                .clickable { onReviewExisting(chemical) }
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                chemical.displayName,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textPrimary,
+            )
+            val subtitle = listOfNotNull(
+                chemical.activeIngredient?.takeIf { it.isNotBlank() },
+                chemical.manufacturer?.takeIf { it.isNotBlank() },
+            ).joinToString(" · ")
+            if (subtitle.isNotEmpty()) {
+                Text(subtitle, fontSize = 11.sp, color = vine.textSecondary)
+            }
+            Text(
+                "Review or re-verify the chemical I already have",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = VineColors.Info,
+            )
+        }
+    }
+
+    HorizontalDivider()
+    OutlinedButton(
+        onClick = onCreateSeparate,
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text("This is a different product — search the register") }
+    Text(
+        "Choose this only if your shed genuinely holds two different registered " +
+            "products with similar names.",
+        fontSize = 11.sp,
+        color = vine.textSecondary,
+    )
+    TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
+        Text("Back")
+    }
+}
+
+/**
+ * The remaining requirements, in the contract's own words.
+ *
+ * Shown instead of a disabled button with no explanation: an operator who
+ * cannot save deserves to know precisely which registered fact is missing.
+ */
+@Composable
+private fun SaveBlockedNotice(messages: List<String>) {
+    val vine = LocalVineColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(VineColors.Warning.copy(alpha = 0.10f))
+            .padding(12.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            "Before this can be saved",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            color = VineColors.Warning,
+        )
+        messages.forEach { message ->
+            Text("• $message", fontSize = 12.sp, color = vine.textSecondary)
+        }
     }
 }
 
@@ -937,7 +1152,7 @@ internal fun ChemicalLookupAdvisoryNotice(isSearching: Boolean) {
 }
 
 /**
- * A7: the per-basis vineyard default-rate chooser shown on the Confirm step.
+ * A7: the per-basis vineyard default-rate chooser shown on the Review step.
  *
  * Mirrors the iOS "Default Rates" editor section: the registered label rates
  * are the authority and are never edited here — this only records which
@@ -1003,7 +1218,12 @@ private fun DefaultRateGroupCard(
             Text(group.emptyStatement, fontSize = 12.sp, color = vine.textSecondary)
         } else {
             val inForce = selection.resolvedOption(group.basis)
-            if (group.requiresChoice && selection.selectedIds[group.basis] == null) {
+            // Item 4: more than one registered rate means the operator has to
+            // choose. A recommendation stays visible and stays pickable, but
+            // it cannot count as their answer.
+            if (selection.requiresExplicitConfirmation(group.basis) &&
+                !selection.isExplicitlyConfirmed(group.basis)
+            ) {
                 Row(
                     verticalAlignment = Alignment.Top,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1027,6 +1247,7 @@ private fun DefaultRateGroupCard(
             }
             group.options.forEach { option ->
                 val isInForce = inForce?.id == option.id
+                val isChosen = selection.selectedIds[group.basis] == option.id
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1053,9 +1274,14 @@ private fun DefaultRateGroupCard(
                             if (option.isLabelRange) {
                                 ChemicalPill("label range", VineColors.Olive)
                             }
-                            if (option.id == group.recommendedOptionId) {
+                            if (isChosen) {
+                                // The operator's OWN decision is badged
+                                // differently from a suggestion, so "chosen"
+                                // and "suggested" can never read the same.
+                                ChemicalPill("Your default", VineColors.Success)
+                            } else if (option.id == group.recommendedOptionId) {
                                 group.recommendation.badge?.let {
-                                    ChemicalPill(it, VineColors.Success)
+                                    ChemicalPill(it, VineColors.Info)
                                 }
                             }
                             selection.plan.jurisdiction?.let { j ->

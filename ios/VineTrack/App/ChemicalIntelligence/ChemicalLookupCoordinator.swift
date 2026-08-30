@@ -88,6 +88,25 @@ final class ChemicalLookupCoordinator {
     /// The operator asked for the blank manual form instead.
     var showManualEntry: Bool = false
 
+    /// A record the operator already owns, opened INSTEAD of researching.
+    ///
+    /// Set by the pre-research same-name decision (item 5). Deliberately
+    /// distinct from `reviewDraft`: that is an unsaved draft to create, this
+    /// is an existing row to edit in place, so Save must take the update path
+    /// rather than writing a second copy of a product already in the store.
+    var existingToReview: SavedChemical?
+
+    /// Same-name records found in the operator's OWN store, offline.
+    ///
+    /// Non-empty means the decision is on screen and NOTHING has been looked
+    /// up: this list is produced by reading `savedChemicals`, never by asking
+    /// the server.
+    var sameNameMatches: [SavedChemical] = []
+
+    /// Set once the operator has deliberately answered the same-name
+    /// question, so it is asked once per typed name rather than on every tap.
+    var duplicateDecision: ChemicalStoreMatching.Decision?
+
     private var hasSeededQuery: Bool = false
     private var searchTask: Task<Void, Never>?
     private var resolveTask: Task<Void, Never>?
@@ -99,7 +118,12 @@ final class ChemicalLookupCoordinator {
     var hasInFlightWork: Bool { isSearching || isResolving }
 
     /// True when a review session is open and owns the screen.
-    var isReviewing: Bool { reviewDraft != nil || showManualEntry }
+    var isReviewing: Bool {
+        reviewDraft != nil || showManualEntry || existingToReview != nil
+    }
+
+    /// True while the pre-research same-name decision is awaiting an answer.
+    var isAwaitingDuplicateDecision: Bool { !sameNameMatches.isEmpty }
 
     // MARK: - Lifecycle
 
@@ -127,6 +151,69 @@ final class ChemicalLookupCoordinator {
         ChemicalLookupTrace.log("review_finished")
         reviewDraft = nil
         showManualEntry = false
+        existingToReview = nil
+    }
+
+    // MARK: - Pre-research duplicate decision (item 5)
+
+    /// The ONLY route to a remote search.
+    ///
+    /// The operator's own Chemical Store is consulted FIRST, offline, and a
+    /// same-name record stops the flow before a single request is issued.
+    /// Returns `false` when the decision is now on screen and no lookup ran.
+    ///
+    /// Declining costs exactly nothing: no lookup, no write.
+    @discardableResult
+    func startSearchUnlessDuplicate(
+        country: String,
+        savedChemicals: [SavedChemical],
+        existing: SavedChemical?
+    ) -> Bool {
+        if duplicateDecision == nil {
+            let matches = ChemicalStoreMatching.findByProductName(
+                in: savedChemicals,
+                query: query,
+                // A legacy record being re-matched is not a duplicate of itself.
+                excludingId: existing?.id
+            )
+            if !matches.isEmpty {
+                ChemicalLookupTrace.log("duplicate_decision_shown", "matches=\(matches.count)")
+                sameNameMatches = matches
+                return false
+            }
+        }
+        startSearch(country: country, savedChemicals: savedChemicals)
+        return true
+    }
+
+    /// "Review / re-verify the one I already have." Researches nothing.
+    func reviewExisting(_ chemical: SavedChemical) {
+        ChemicalLookupTrace.log("duplicate_decision", "review_existing")
+        duplicateDecision = .reviewExisting(chemical.id)
+        sameNameMatches = []
+        existingToReview = chemical
+    }
+
+    /// "This is a different product." Only now may the register be searched.
+    func createSeparate(country: String, savedChemicals: [SavedChemical]) {
+        ChemicalLookupTrace.log("duplicate_decision", "create_separate")
+        duplicateDecision = .createSeparate
+        sameNameMatches = []
+        startSearch(country: country, savedChemicals: savedChemicals)
+    }
+
+    /// Backed out. Zero research calls, zero writes; the typed query survives.
+    func cancelDuplicateDecision() {
+        ChemicalLookupTrace.log("duplicate_decision", "cancelled")
+        duplicateDecision = nil
+        sameNameMatches = []
+    }
+
+    /// A retyped name is a new question, so a previous "different product"
+    /// answer must not carry over and suppress the check for the new name.
+    func queryChanged() {
+        duplicateDecision = nil
+        sameNameMatches = []
     }
 
     // MARK: - Search

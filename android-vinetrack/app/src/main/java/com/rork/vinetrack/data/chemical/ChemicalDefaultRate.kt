@@ -541,6 +541,53 @@ data class ChemicalDefaultRateSelection(
         get() = ChemicalDefaultRateBasis.entries.filter { basis ->
             plan.group(basis).requiresChoice && selectedIds[basis] == null
         }
+
+    // ---- Explicit confirmation (item 4) ----
+
+    /**
+     * Whether this basis needs a DELIBERATE choice before the record is saved.
+     *
+     * True whenever the label registers more than one distinct grapevine rate
+     * on the basis. A recommendation is a suggestion, not a decision: with two
+     * or more numbers on the label, treating the recommended one as the
+     * operator's answer means a vineyard doses off a rate nobody ever read.
+     *
+     * A single registered rate does NOT require a tap — item 4 permits it to be
+     * selected automatically — but it must still be visible before save, which
+     * is the review screen's job rather than this predicate's.
+     */
+    fun requiresExplicitConfirmation(basis: ChemicalDefaultRateBasis): Boolean =
+        plan.group(basis).options.size > 1
+
+    /** Whether the operator has actually chosen for this basis themselves. */
+    fun isExplicitlyConfirmed(basis: ChemicalDefaultRateBasis): Boolean =
+        selectedIds[basis] != null
+
+    /**
+     * Bases that register several rates and have no operator decision yet.
+     *
+     * Empty means every multi-rate basis has been answered. A basis the label
+     * states nothing on is never listed — there is nothing to confirm, and
+     * demanding a choice between no options would be unanswerable.
+     */
+    val basesAwaitingConfirmation: List<ChemicalDefaultRateBasis>
+        get() = ChemicalDefaultRateBasis.entries.filter { basis ->
+            requiresExplicitConfirmation(basis) && !isExplicitlyConfirmed(basis)
+        }
+
+    /**
+     * True when every basis that needs a deliberate choice has had one.
+     *
+     * Deliberately true for a product the label registers NO grapevine rate
+     * on: that record is incomplete for other reasons the save contract
+     * already states, and inventing a default-rate objection on top would tell
+     * the operator to choose something that does not exist.
+     */
+    val isConfirmed: Boolean get() = basesAwaitingConfirmation.isEmpty()
+
+    /** The rate in force per basis, for a review screen to show before save. */
+    val resolvedSummary: List<Pair<ChemicalDefaultRateBasis, ChemicalDefaultRateOption?>>
+        get() = ChemicalDefaultRateBasis.entries.map { it to resolvedOption(it) }
 }
 
 /**

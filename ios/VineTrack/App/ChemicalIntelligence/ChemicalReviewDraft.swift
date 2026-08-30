@@ -248,7 +248,13 @@ nonisolated enum ChemicalReviewMerge {
                 ?? AuthoritativeActivityGroups.tableVersion,
             schemaVersion: canonical?.schemaVersion ?? ChemicalIntelligence.currentSchemaVersion
         )
-        chemical.chemicalIntelligence = intelligence.isEmpty ? existing?.chemicalIntelligence : intelligence
+        // Vineyard scoping happens HERE, at the write boundary. Macadamia,
+        // cereal and citrus directions on the same label are real content but
+        // they are not this vineyard's operational data, and a rate a spray
+        // calculation can reach must never belong to a crop nobody grows.
+        chemical.chemicalIntelligence = intelligence.isEmpty
+            ? existing?.chemicalIntelligence
+            : ChemicalVineyardScope.scoped(intelligence)
 
         // ---- Presentation fields the store already has -----------------------
         if let reference = registration?.labelReference, !reference.isEmpty {
