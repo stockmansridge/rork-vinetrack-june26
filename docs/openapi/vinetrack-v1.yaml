@@ -2054,11 +2054,26 @@ components:
           description: Server-authoritative placement resolution.
           properties:
             scope: { type: [string, "null"] }
+            is_assigned:
+              type: [boolean, "null"]
+              description: >-
+                Canonical server answer for whether the pin has a usable
+                location. Use this for assigned/unassigned filters and counts —
+                never re-derive it from block/row fields. A point pin with
+                coordinates and no block is assigned; a block pin with no row
+                is assigned.
             assignment_basis:
               type: [string, "null"]
               enum: [point_coordinates, snapped_point, row_segments, block, legacy_block, unassigned, null]
             row_summary: { type: [string, "null"] }
-            warning: { type: [string, "null"], enum: [location_metadata_incomplete, unassigned_location, null] }
+            warning:
+              type: [string, "null"]
+              enum: [location_metadata_incomplete, unassigned_location, null]
+              description: >-
+                Show a strong "Unassigned location" state ONLY for
+                unassigned_location. location_metadata_incomplete means a safe
+                assignment was found despite incomplete structured metadata —
+                informational only, and still assigned.
         due_date: { type: [string, "null"], format: date }
         work_task_id: { type: [string, "null"], format: uuid }
         resolved_at: { type: [string, "null"], format: date-time }

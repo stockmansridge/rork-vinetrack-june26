@@ -2703,6 +2703,7 @@ interface PinPlacementRow {
   pin_id: string;
   location_scope: string | null;
   location_assignment_basis: string | null;
+  is_location_assigned: boolean | null;
   paddock_id: string | null;
   paddock_name: string | null;
   row_summary: string | null;
@@ -2716,8 +2717,8 @@ async function loadPinPlacements(
 ): Promise<Map<string, PinPlacementRow>> {
   if (pinIds.length === 0) return new Map();
   const { data, error } = await db.from("pin_placements")
-    .select("pin_id, location_scope, location_assignment_basis, paddock_id, paddock_name, " +
-      "row_summary, segments, location_warning_code")
+    .select("pin_id, location_scope, location_assignment_basis, is_location_assigned, " +
+      "paddock_id, paddock_name, row_summary, segments, location_warning_code")
     .in("pin_id", pinIds);
   if (error) {
     console.error("[vinetrack-api] pin placement lookup failed:", error.message);
@@ -2777,6 +2778,10 @@ function mapPin(
     },
     location: {
       scope: placement?.location_scope ?? null,
+      // Canonical server answer (sql/171). Exposed so consumers filter and
+      // count on this directly instead of re-deriving assignment from
+      // assignment_basis or, worse, from block + row fields on the base row.
+      is_assigned: placement?.is_location_assigned ?? null,
       assignment_basis: placement?.location_assignment_basis ?? null,
       row_summary: placement?.row_summary ?? null,
       warning: placement?.location_warning_code ?? null,

@@ -945,6 +945,7 @@ Newest first.
   },
   "location": {
     "scope": "point",
+    "is_assigned": true,
     "assignment_basis": "snapped_point",
     "row_summary": null,
     "warning": null
