@@ -1859,12 +1859,16 @@ fun SprayCalculatorScreen(
     }
 
     if (showAddChemicalToList) {
-        // Full Settings chemical form — all fields plus Search with AI, matching iOS.
+        // Full Settings chemical form — all fields plus the register search,
+        // matching iOS. `state` is passed so this entry point offers the SAME
+        // register/matching workflow the Chemical Store offers; without it the
+        // research action would silently be missing here.
         ChemicalFormSheet(
             vm = vm,
             existing = null,
             canViewFinancials = canEditCost,
             onDismiss = { showAddChemicalToList = false },
+            state = state,
         )
     }
 }

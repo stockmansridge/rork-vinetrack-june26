@@ -159,6 +159,16 @@ object ChemicalManualEntry {
                 // display name is never promoted into it.
                 registeredProductName = existing?.registration?.registeredProductName,
                 labelReference = existing?.registration?.labelReference,
+                // All THREE source documents are carried through, not just the
+                // legacy one. They are established by the register lookup and
+                // the manual editor collects none of them, so rebuilding the
+                // registration from a draft used to null the manufacturer
+                // label, the regulator label and the product page — a manual
+                // edit to an unrelated field silently erased documents the
+                // research had found and the record genuinely held.
+                manufacturerLabelUrl = existing?.registration?.manufacturerLabelUrl,
+                regulatorLabelUrl = existing?.registration?.regulatorLabelUrl,
+                manufacturerProductUrl = existing?.registration?.manufacturerProductUrl,
                 labelVersion = existing?.registration?.labelVersion,
             )
         }

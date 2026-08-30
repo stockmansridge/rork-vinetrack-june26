@@ -25,7 +25,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Science
@@ -40,7 +39,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MenuAnchorType
@@ -65,6 +63,9 @@ import com.rork.vinetrack.data.chemical.ChemicalJurisdictionSuitability
 import com.rork.vinetrack.data.chemical.ChemicalManualEntry
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalReverification
+import com.rork.vinetrack.data.chemical.ChemicalSaveContract
+import com.rork.vinetrack.data.chemical.ChemicalSaveViolation
+import com.rork.vinetrack.data.chemical.ChemicalSaveViolationCode
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
 import com.rork.vinetrack.data.chemical.legacyGroupProjection
 import com.rork.vinetrack.data.chemical.viticultural
@@ -75,7 +76,6 @@ import com.rork.vinetrack.ui.components.ChemicalVerificationBadge
 import com.rork.vinetrack.ui.components.chemicalVerificationTint
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -656,7 +656,7 @@ private fun formatRate(value: Double): String = when {
 }
 
 /**
- * Full add/edit chemical form (all fields + Search with AI). Shared with the
+ * Full add/edit chemical form (all fields + register search). Shared with the
  * spray calculator's "Add New Chemical to List" button so both entry points
  * use the identical Settings form — matching iOS behaviour.
  */
@@ -692,8 +692,22 @@ internal fun ChemicalFormSheet(
     var problem by remember { mutableStateOf(existing?.problem ?: "") }
     var manufacturer by remember { mutableStateOf(existing?.manufacturer ?: "") }
     var modeOfAction by remember { mutableStateOf(existing?.modeOfAction ?: "") }
-    var labelUrl by remember { mutableStateOf(existing?.labelUrl ?: "") }
-    var productUrl by remember { mutableStateOf(existing?.productUrl ?: "") }
+    // Both legacy scalars fall back to the structured registration that research
+    // established. Records saved before those URLs were projected into the
+    // legacy columns genuinely HOLD the documents; without the fallback the
+    // field would read empty and be written back empty.
+    var labelUrl by remember {
+        mutableStateOf(
+            existing?.labelUrl?.takeIf { it.isNotBlank() }
+                ?: existing?.storedIntelligence?.registration?.labelReference.orEmpty(),
+        )
+    }
+    var productUrl by remember {
+        mutableStateOf(
+            existing?.productUrl?.takeIf { it.isNotBlank() }
+                ?: existing?.storedIntelligence?.registration?.manufacturerProductUrl.orEmpty(),
+        )
+    }
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var ratePerHa by remember { mutableStateOf(existing?.ratePerHaDisplay?.let { formatRate(it) } ?: "") }
     var ratePer100L by remember { mutableStateOf(existing?.ratePer100LDisplay?.let { formatRate(it) } ?: "") }
@@ -718,7 +732,9 @@ internal fun ChemicalFormSheet(
     var unitMenu by remember { mutableStateOf(false) }
     var containerUnitMenu by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
-    var showAI by remember { mutableStateOf(false) }
+    // The ONE research entry point this form offers: the same register search
+    // and matching flow Add Chemical uses. There is no second lookup here.
+    var showRegisterSearch by remember { mutableStateOf(false) }
     var showChemistryEditor by remember { mutableStateOf(false) }
     // An approved label can register dozens of crops. A vineyard operator should
     // not scroll past peaches, tobacco and turf to reach grapevines, so the rest
@@ -742,35 +758,37 @@ internal fun ChemicalFormSheet(
         mutableStateOf(ChemicalManualEntry.draft(existing, manualCountry))
     }
 
+    /**
+     * The save-contract violations the record ALREADY had when this form opened.
+     *
+     * # Why a baseline exists rather than a flat rule
+     *
+     * The mandatory contract must stop a NEW chemical entering the store
+     * unusable. Applied flatly it would also strand every legacy record: a
+     * pre-Chemical-Intelligence product has no structured grapevine use and no
+     * structured rate, so an operator opening one to fix a typo or update a
+     * price would find Save permanently disabled — and would lose the edit. A
+     * record that cannot be saved cannot be repaired, which makes the data
+     * worse rather than better.
+     *
+     * So the rule is "never make it worse": a violation blocks Save only if the
+     * record did not already have it. A legacy chemical stays editable and can
+     * be brought up to contract a field at a time; a compliant chemical can
+     * never be edited INTO non-compliance; and a brand-new chemical has an
+     * empty baseline, so the full contract applies. Identical to the iOS
+     * `ChemicalReviewSession.baselineViolationCodes`, measured the same way at
+     * the same moment.
+     */
+    val baselineViolationCodes: Set<ChemicalSaveViolationCode> = remember(existing?.id) {
+        ChemicalSaveContract.baselineViolationCodes(existing, manualCountry)
+    }
+
     // Keep unit/container-unit valid when the form type flips.
     fun applyFormType(newForm: String) {
         formType = newForm
         val units = unitsForForm(newForm)
         if (unit !in units) unit = units.first()
         if (containerUnit !in units) containerUnit = units.first()
-    }
-
-    /**
-     * Prefill empty descriptive fields from an AI search pick — clearly
-     * unverified reference only.
-     *
-     * P3C: the legacy AI `info` deep-fetch is gone from this form. It used to
-     * write the AI's `ratesPerHectare`/`ratesPer100L` into the working rate
-     * fields and its `labelURL` into the official label field — authoritative
-     * fields no unverified source may populate. This matches iOS, which never
-     * calls the legacy info path: working rates, label documents and
-     * registered uses arrive through Match & Verify / Re-verify with cited
-     * evidence, or the operator types them. Everything filled here is
-     * descriptive free-text that is recorded — and displayed — as unverified.
-     */
-    fun applyAIResult(result: ChemicalInfoService.ChemicalSearchResult) {
-        if (result.name.isNotBlank()) name = result.name
-        if (result.brand.isNotBlank()) manufacturer = result.brand
-        if (activeIngredient.isBlank()) activeIngredient = result.activeIngredient
-        if (chemicalGroup.isBlank()) chemicalGroup = result.chemicalGroup
-        if (modeOfAction.isBlank()) modeOfAction = result.modeOfAction
-        if (use.isBlank()) use = result.primaryUse
-        if (problem.isBlank()) problem = result.primaryUse
     }
 
     /**
@@ -806,6 +824,19 @@ internal fun ChemicalFormSheet(
         if (saving) return
         val trimmedName = name.trim()
         if (trimmedName.isEmpty()) return
+        // The CONTRACT decides, not the button. The button is disabled for the
+        // same reason, but a save path that trusts its own button is a save
+        // path that writes whatever a future caller forgets to gate — which is
+        // exactly how this form came to accept a name and nothing else.
+        val gate = ChemicalSaveContract.evaluate(
+            productName = trimmedName,
+            productCategory = category,
+            intelligence = ChemicalManualEntry.proposedIntelligence(
+                chemistryDraft,
+                existing?.storedIntelligence,
+            ),
+        )
+        if (gate.violations.any { it.code !in baselineViolationCodes }) return
         saving = true
         val perHaDisplay = ratePerHa.toDoubleSafe() ?: 0.0
         val per100LDisplay = ratePer100L.toDoubleSafe() ?: 0.0
@@ -942,20 +973,43 @@ internal fun ChemicalFormSheet(
                 color = vine.textPrimary,
             )
 
-            // Search with AI (advisory; must be checked against the label).
-            OutlinedButton(
-                onClick = { showAI = true },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = ChemTint, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.size(8.dp))
-                Text("Search with AI")
+            // Re-run the product lookup from inside the editor.
+            //
+            // This is NOT a second pipeline. It opens the SAME register search
+            // that Add Chemical opens, resolves through the same resolver and
+            // maps through the same matching code. What stood here before was
+            // "Search with AI": a second, differently named research action
+            // that could only ever fill descriptive free text, and that iOS
+            // has never had. Two research entry points behaving differently is
+            // how an operator ends up believing a product was researched when
+            // only its blurb was.
+            if (state != null) {
+                OutlinedButton(
+                    onClick = { showRegisterSearch = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(
+                        Icons.Filled.Search,
+                        contentDescription = null,
+                        tint = ChemTint,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    // Same two titles iOS uses, chosen the same way.
+                    Text(
+                        if (name.trim().isEmpty()) "Search for this product"
+                        else "Search the register again",
+                    )
+                }
+                Text(
+                    "Looks this product up on the official register and reviews what " +
+                        "it finds before anything is written. Confirming a match there " +
+                        "saves the product and closes this form, so finish any edits " +
+                        "here first.",
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                )
             }
-            Text(
-                "AI suggestions must be checked against the current product label, permit, SDS, and local regulations before use.",
-                fontSize = 11.sp,
-                color = vine.textSecondary,
-            )
 
             SectionLabel("Product")
             OutlinedTextField(
@@ -1300,6 +1354,25 @@ internal fun ChemicalFormSheet(
                     existing?.storedIntelligence,
                 )
             }
+
+            // The mandatory save contract, re-measured as the operator types.
+            //
+            // Same rules, same messages and same order as the iOS editor and
+            // the edge function's `save_contract.ts`, because a record one
+            // client refuses must not be a record another client writes.
+            val saveEvaluation = remember(name, category, displayIntelligence) {
+                ChemicalSaveContract.evaluate(
+                    productName = name,
+                    productCategory = category,
+                    intelligence = displayIntelligence,
+                )
+            }
+            // What THIS edit would add, versus what the record arrived with.
+            val blockingViolations =
+                ChemicalSaveContract.blockingViolations(saveEvaluation, baselineViolationCodes)
+            val carriedOverViolations =
+                ChemicalSaveContract.carriedOverViolations(saveEvaluation, baselineViolationCodes)
+
             val displayUses = displayIntelligence.registeredUses
             if (displayUses.isNotEmpty()) {
                 val grapevineUses = displayUses.viticultural()
@@ -1401,6 +1474,42 @@ internal fun ChemicalFormSheet(
                 onValueChange = { productUrl = it },
                 onOpen = { resolveUrl(productUrl)?.let { runCatching { uriHandler.openUri(it) } } },
             )
+            // The MANUFACTURER-hosted label, when research established one that
+            // is a genuinely different document from the two fields above.
+            //
+            // All three link concepts have always persisted on Android inside
+            // the structured registration; only this one had no read surface,
+            // so a label the resolver found and validated arrived on device and
+            // was never shown. It is read-only on purpose: which document is
+            // the manufacturer's label is something the register lookup
+            // establishes, and a typed URL is not evidence of that.
+            val manufacturerLabelUrl = displayIntelligence.registration
+                ?.manufacturerLabelUrl
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                // Never render the same document twice under two names.
+                ?.takeIf { it != labelUrl.trim() && it != productUrl.trim() }
+            manufacturerLabelUrl?.let { url ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Manufacturer label", fontSize = 12.sp, color = vine.textSecondary)
+                        Text(url, fontSize = 12.sp, color = vine.textPrimary, maxLines = 2)
+                    }
+                    resolveUrl(url)?.let { opened ->
+                        IconButton(onClick = { runCatching { uriHandler.openUri(opened) } }) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.OpenInNew,
+                                contentDescription = "Open manufacturer label",
+                                tint = ChemTint,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    }
+                }
+            }
             Text(
                 "Use the label URL only for the official product label. Product pages are for manufacturer info and are never shown as the label.",
                 fontSize = 11.sp,
@@ -1488,9 +1597,28 @@ internal fun ChemicalFormSheet(
             )
 
             Spacer(Modifier.height(4.dp))
+            // What is still missing, said as the next action rather than as an
+            // error. Save stays disabled until these are cleared, so the button
+            // and the contract can never disagree about what "ready" means.
+            if (blockingViolations.isNotEmpty()) {
+                ChemicalSaveIssueNotice(
+                    title = "Before this can be saved",
+                    violations = blockingViolations,
+                    tint = VineColors.Warning,
+                )
+            }
+            // Faults the record ARRIVED with. Guidance, never a block: a legacy
+            // product that cannot be saved cannot be repaired.
+            if (carriedOverViolations.isNotEmpty()) {
+                ChemicalSaveIssueNotice(
+                    title = "Still to complete on this product",
+                    violations = carriedOverViolations,
+                    tint = ChemTint,
+                )
+            }
             Button(
                 onClick = { save() },
-                enabled = !saving && name.trim().isNotEmpty(),
+                enabled = !saving && name.trim().isNotEmpty() && blockingViolations.isEmpty(),
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
             ) {
@@ -1500,16 +1628,54 @@ internal fun ChemicalFormSheet(
         }
     }
 
-    if (showAI) {
-        ChemicalAILookupSheet(
+    if (showRegisterSearch && state != null) {
+        // The one authoritative matching workflow, opened with whatever the
+        // operator has typed as its starting query.
+        //
+        // Closing this form when the flow closes is deliberate, and is the
+        // same rule Re-verify already follows here: the flow writes the record
+        // itself, while this form still holds the field values captured when
+        // it opened. Leaving it open would let a Save afterwards put the
+        // pre-match values straight back over the match just accepted.
+        ChemicalMatchFlowSheet(
             vm = vm,
-            initialQuery = name,
-            onDismiss = { showAI = false },
-            onSelect = { result ->
-                showAI = false
-                applyAIResult(result)
-            },
+            state = state,
+            existing = existing,
+            prefillQuery = name,
+            onDismiss = { showRegisterSearch = false; onDismiss() },
+            // "I could not find it" returns to exactly where they were: this
+            // form, with everything they had already typed still in it.
+            onEnterManually = { showRegisterSearch = false },
         )
+    }
+}
+
+/**
+ * Unmet save-contract requirements, phrased as the next action.
+ *
+ * Deliberately renders whatever the contract returned rather than composing its
+ * own wording: the operator must read the same sentence on Android that they
+ * read on iPhone, because the two are describing the same rule.
+ */
+@Composable
+private fun ChemicalSaveIssueNotice(
+    title: String,
+    violations: List<ChemicalSaveViolation>,
+    tint: Color,
+) {
+    val vine = LocalVineColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(tint.copy(alpha = 0.12f))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+        violations.forEach {
+            Text("\u2022 ${it.message}", fontSize = 12.sp, color = vine.textSecondary)
+        }
     }
 }
 
@@ -1611,110 +1777,6 @@ private fun resolveUrl(raw: String): String? {
     }
     val host = withScheme.substringAfter("://").substringBefore("/")
     return if (host.contains(".")) withScheme else null
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ChemicalAILookupSheet(
-    vm: AppViewModel,
-    initialQuery: String,
-    onDismiss: () -> Unit,
-    onSelect: (ChemicalInfoService.ChemicalSearchResult) -> Unit,
-) {
-    val vine = LocalVineColors.current
-    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
-    var query by remember { mutableStateOf(initialQuery) }
-    var results by remember { mutableStateOf<List<ChemicalInfoService.ChemicalSearchResult>>(emptyList()) }
-    var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-
-    fun runSearch() {
-        val trimmed = query.trim()
-        if (trimmed.isEmpty() || loading) return
-        error = null
-        loading = true
-        vm.searchChemicals(trimmed) { res ->
-            loading = false
-            res.onSuccess {
-                results = it
-                if (it.isEmpty()) error = "No products found."
-            }
-            res.onFailure { error = it.message; results = emptyList() }
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        if (initialQuery.trim().isNotEmpty() && results.isEmpty()) runSearch()
-    }
-
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("Search with AI", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                label = { Text("Product or active ingredient") },
-                singleLine = true,
-                trailingIcon = {
-                    IconButton(onClick = { runSearch() }, enabled = !loading && query.trim().isNotEmpty()) {
-                        Icon(Icons.Filled.Search, contentDescription = "Search")
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text(
-                "AI suggestions must be checked against the current label, permit, SDS, and local regulations before use.",
-                fontSize = 11.sp,
-                color = vine.textSecondary,
-            )
-            if (loading) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Text("Searching...", color = vine.textSecondary)
-                }
-            }
-            error?.let { Text(it, fontSize = 13.sp, color = VineColors.Destructive) }
-            results.forEachIndexed { index, item ->
-                if (index > 0) HorizontalDivider()
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onSelect(item) }
-                        .padding(vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
-                ) {
-                    if (item.brand.isNotBlank()) {
-                        Text(item.brand, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = vine.textPrimary)
-                    }
-                    Text(
-                        item.name,
-                        fontSize = 14.sp,
-                        color = if (item.brand.isBlank()) vine.textPrimary else vine.textSecondary,
-                    )
-                    if (item.activeIngredient.isNotBlank()) {
-                        Text("Active: ${item.activeIngredient}", fontSize = 12.sp, color = vine.textSecondary)
-                    }
-                    val chips = buildList {
-                        item.chemicalGroup.takeIf { it.isNotBlank() }?.let { add(it) }
-                        item.modeOfAction.takeIf { it.isNotBlank() }?.let { add("MOA $it") }
-                    }
-                    if (chips.isNotEmpty()) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { chips.forEach { ChemChip(it) } }
-                    }
-                    if (item.primaryUse.isNotBlank()) {
-                        Text(item.primaryUse, fontSize = 12.sp, color = vine.textSecondary)
-                    }
-                }
-            }
-        }
-    }
 }
 
 /** Compact currency label (e.g. "$50", "$42.50") for chemical costs. */

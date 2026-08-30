@@ -123,7 +123,14 @@ object ChemicalStoreMatching {
             modeOfAction = existing?.modeOfAction,
             labelUrl = intel.registration?.labelReference?.takeIf { it.isNotBlank() }
                 ?: existing?.labelUrl,
-            productUrl = existing?.productUrl,
+            // The manufacturer's PRODUCT page, projected into the legacy column
+            // exactly as iOS projects `session.productURL`. The resolver
+            // classifies this URL as marketing rather than a label, which is
+            // why it stays out of `labelUrl` — but Android was discarding it
+            // altogether, so a page the research found and classified never
+            // reached the field that displays it.
+            productUrl = intel.registration?.manufacturerProductUrl?.takeIf { it.isNotBlank() }
+                ?: existing?.productUrl,
             purchase = existing?.purchase,
             productCategory = intel.productCategory.ifBlank { existing?.productCategory.orEmpty() },
             productForm = productForm,
