@@ -1223,8 +1223,6 @@ struct EditSavedChemicalSheet: View {
         let productForm = session.formType == .liquid ? "liquid" : "solid"
         let packUnit = session.formType == .liquid ? "L" : "kg"
 
-        let outcome = session.editOutcome
-
         if var existing = chemical {
             existing.name = session.name
             existing.unit = session.unit
@@ -1271,12 +1269,36 @@ struct EditSavedChemicalSheet: View {
                 existing.masterChemicalId = masterId
                 existing.masterSourceRevision = session.masterSourceRevision
             }
-            // Re-resolved intelligence when resistance-critical chemistry
-            // changed, so a hand-edited group cannot leave a stale `verified`
-            // status or an authoritative citation for the OLD value behind.
-            // Left untouched on an unrelated edit.
-            if let outcome {
-                existing.chemicalIntelligence = outcome.intelligence
+            // The structured chemistry this edit should persist.
+            //
+            // `intelligenceToPersist` — NOT `editOutcome` — for the same reason
+            // the create path below uses it. `editOutcome` is deliberately nil
+            // when the draft round-trips unchanged, because there is nothing NEW
+            // to reconcile. On a plain edit that is exactly right: the record
+            // already holds this chemistry, so writing it again would be a
+            // no-op.
+            //
+            // On MATCH & VERIFY it was a silent data loss. There the session is
+            // seeded from the reviewed lookup (`prefill`), so "unchanged" means
+            // "the operator accepted the lookup as found" — the single most
+            // likely outcome of a review. `outcome` was nil, this line never
+            // ran, and the record kept the OLD intelligence it was matched to:
+            // registration number, actives, registered uses, WHP, re-entry,
+            // restrictions and sources all discarded at the moment of saving
+            // them.
+            //
+            // Worse, the legacy scalars a few lines above are projected from
+            // `intelligenceToPersist`, so the row ended up internally
+            // inconsistent — `active_ingredient` naming the newly found
+            // chemistry while the structured columns still described the old
+            // product.
+            //
+            // Falling back to the seed keeps the unrelated-edit case identical
+            // (it rewrites the same value it read) while making the reviewed
+            // lookup actually persist. Android's match flow always writes its
+            // resolved intelligence; this is what brings iOS level with it.
+            if let persisted = session.intelligenceToPersist {
+                existing.chemicalIntelligence = persisted
             }
             // The confirmed operational default (sql/214). Written only when
             // this edit actually carries a confirmed choice; otherwise the

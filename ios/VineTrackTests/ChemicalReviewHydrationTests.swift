@@ -538,4 +538,61 @@ struct ChemicalReviewHydrationTests {
         // Nothing established a category, so nothing claims one.
         #expect(draft.productCategory.isEmpty)
     }
+
+    // MARK: - Match & Verify must PERSIST the lookup, not merely display it
+
+    @Test("Accepting a Match & Verify result unchanged still persists the lookup")
+    func matchAndVerifyPersistsTheResolvedDraft() throws {
+        // The companion defect to `matchAndVerifyShowsTheResolvedDraft`.
+        //
+        // That test proved the reviewed lookup DISPLAYS. This one proves it
+        // SAVES, and it did not. The editor's update path wrote
+        // `editOutcome?.intelligence`, and `editOutcome` is deliberately nil
+        // when the draft round-trips unchanged, because on an ordinary edit
+        // there is genuinely nothing new to reconcile.
+        //
+        // On Match & Verify the session is seeded from the REVIEWED LOOKUP, so
+        // "unchanged" means "the operator read it and accepted it" - the
+        // expected outcome of a review, not an edge case. The structured
+        // columns were left holding the old record's chemistry while the legacy
+        // scalars beside them were projected from the new one.
+        let legacy = SavedChemical(
+            vineyardId: Self.vineyardId,
+            name: "Dithane",
+            unit: .litres,
+            activeIngredient: "Mancozeb",
+            productForm: "liquid"
+        )
+        let session = try hydratedSession(existing: legacy)
+
+        // The operator changes NOTHING. This is the load-bearing precondition:
+        // it is precisely why the old code wrote no intelligence at all.
+        #expect(
+            session.editOutcome == nil,
+            "an accepted-as-found review has nothing new to reconcile"
+        )
+
+        // What Save must persist regardless.
+        let persisted = try #require(
+            session.intelligenceToPersist,
+            "the reviewed lookup must survive a save that changed nothing"
+        )
+        #expect(persisted.registration?.registrationNumber == "59688")
+        #expect(persisted.registration?.scheme == .apvma)
+        #expect(persisted.activeIngredients.count == 1)
+        #expect(persisted.activeIngredients.first?.name == "Mancozeb")
+        #expect(persisted.activeIngredients.first?.concentration == 750)
+        #expect(persisted.registeredUses.count == 3)
+
+        // The record being matched held none of this, so writing nothing would
+        // have been indistinguishable from the lookup never having run.
+        #expect(legacy.chemicalIntelligence == nil)
+
+        // The legacy scalars project from the SAME source, which is what keeps
+        // the saved row internally consistent once both are written from
+        // `intelligenceToPersist`.
+        let projection = session.legacyProjection()
+        #expect(projection.activeIngredient == persisted.legacyActiveIngredient)
+        #expect(projection.chemicalGroup == persisted.legacyChemicalGroup)
+    }
 }

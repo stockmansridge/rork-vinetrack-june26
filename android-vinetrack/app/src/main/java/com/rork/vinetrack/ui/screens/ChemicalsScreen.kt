@@ -58,6 +58,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import com.rork.vinetrack.data.chemical.ChemicalActivityGroup
 import com.rork.vinetrack.data.chemical.ChemicalActivityGroupScheme
+import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
 import com.rork.vinetrack.data.chemical.ChemicalEditOutcome
 import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
 import com.rork.vinetrack.data.chemical.ChemicalJurisdictionSuitability
@@ -66,8 +67,10 @@ import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalReverification
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
 import com.rork.vinetrack.data.chemical.legacyGroupProjection
+import com.rork.vinetrack.data.chemical.viticultural
 import com.rork.vinetrack.ui.components.ChemicalJurisdictionChip
 import com.rork.vinetrack.ui.components.ChemicalJurisdictionMismatchBanner
+import com.rork.vinetrack.ui.components.ChemicalRegisteredUsesView
 import com.rork.vinetrack.ui.components.ChemicalVerificationBadge
 import com.rork.vinetrack.ui.components.chemicalVerificationTint
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
@@ -717,6 +720,12 @@ internal fun ChemicalFormSheet(
     var saving by remember { mutableStateOf(false) }
     var showAI by remember { mutableStateOf(false) }
     var showChemistryEditor by remember { mutableStateOf(false) }
+    // An approved label can register dozens of crops. A vineyard operator should
+    // not scroll past peaches, tobacco and turf to reach grapevines, so the rest
+    // stay collapsed until asked for. Presentation only — every use is on the
+    // record and every use is saved. Mirrors the iOS editor's
+    // "Other crops on this label" disclosure.
+    var showOtherCropUses by remember { mutableStateOf(false) }
     // The country a manual entry defaults to, from the vineyard profile. Applied
     // only when the record does not already name one, so an imported product's
     // own country is never overwritten on open.
@@ -1263,6 +1272,80 @@ internal fun ChemicalFormSheet(
                 fontSize = 11.sp,
                 color = vine.textSecondary,
             )
+
+            // ---- Registered uses & safety ----
+            //
+            // The crop, the target, the label's rate, the withholding period,
+            // the re-entry rule and the label's restrictions — the facts an
+            // operator opens a chemical to check before they spray it.
+            //
+            // This section was MISSING. Android researched all of it, saved all
+            // of it and round-tripped all of it correctly, then showed the
+            // operator "6 rates · 4 uses" and nothing else. The withholding
+            // period was two taps deep inside "Edit chemistry & identity", a
+            // button that reads like an authoring tool rather than the place
+            // your harvest interval lives — and the re-entry rule and the
+            // restriction text had no read surface on this screen at all. iOS
+            // has shown these inline the whole time, so the same saved record
+            // answered a compliance question on one phone and not the other.
+            //
+            // Rendered from the live draft rather than the stored row so it
+            // stays truthful while the chemistry sheet is being edited, and
+            // through the SAME component the match and re-verify flows use —
+            // which is what keeps "Not stated" phrased identically everywhere
+            // instead of becoming a second opinion about a missing value.
+            val displayIntelligence = remember(chemistryDraft, existing?.id) {
+                ChemicalManualEntry.proposedIntelligence(
+                    chemistryDraft,
+                    existing?.storedIntelligence,
+                )
+            }
+            val displayUses = displayIntelligence.registeredUses
+            if (displayUses.isNotEmpty()) {
+                val grapevineUses = displayUses.viticultural()
+                val otherUses = displayUses.filterNot { it.isViticultural }
+                // The label-source flag only ever changes the WORDING of a
+                // label-parsed zero-day withholding period ("not required when
+                // used as directed"). It never invents or alters a value, and
+                // it fails closed to a plain day count.
+                val hasLabelSource = displayIntelligence.verification.sources.any {
+                    it.kind == ChemicalDataSourceKind.MANUFACTURER_LABEL
+                }
+
+                SectionLabel("Grapevine uses & safety")
+                ChemicalRegisteredUsesView(
+                    grapevineUses,
+                    hasManufacturerLabelSource = hasLabelSource,
+                )
+                if (otherUses.isNotEmpty()) {
+                    TextButton(
+                        onClick = { showOtherCropUses = !showOtherCropUses },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (showOtherCropUses) {
+                                "Hide other crops on this label"
+                            } else {
+                                "Other crops on this label (${otherUses.size})"
+                            },
+                        )
+                    }
+                    if (showOtherCropUses) {
+                        ChemicalRegisteredUsesView(
+                            otherUses,
+                            hasManufacturerLabelSource = hasLabelSource,
+                        )
+                    }
+                }
+                Text(
+                    "Withholding and re-entry periods are shown exactly as the label " +
+                        "states them. A period VineTrack could not establish reads " +
+                        "“Not stated” — it is never treated as zero. Edit these under " +
+                        "“Edit chemistry & identity” above.",
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                )
+            }
 
             SectionLabel("Details")
             // States the trust consequence of a resistance-critical correction
