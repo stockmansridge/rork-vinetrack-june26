@@ -289,6 +289,23 @@ const BARE_QUANTITY_RE = new RegExp(
   "i",
 );
 
+/**
+ * A cell holding a quantity with NO unit of its own ("560 – 700").
+ * Only ever readable when the column HEADING states the unit — see `unitHint`.
+ */
+const BARE_QUANTITY_NO_UNIT_RE = new RegExp(
+  `^${NUM}(?:\\s*${RANGE_SEP}\\s*${NUM})?\\s*\\*?$`,
+);
+
+/** A rate column heading that names its own unit, e.g. "RATE" over "g/ha". */
+const RATE_HEADING_UNIT_RE = /\b(mL|ml|mg|kg|g|L|l)\s*\/\s*(?:ha\b|hectare\b|100\s*L\b)/i;
+
+/** The unit a rate column's heading states, when it states one. */
+function headingUnit(text: string): string | null {
+  const m = RATE_HEADING_UNIT_RE.exec(text.replace(/\s+/g, " "));
+  return m ? canonicalUnit(m[1]) : null;
+}
+
 /** A cell that states no rate at all: the table's "this column is empty" mark. */
 const EMPTY_RATE_CELL_RE = /^(?:[-–—]|nil|n\/a|none)$/i;
 
@@ -354,6 +371,7 @@ export function rateCellCrossesColumns(rawCell: string): boolean {
 export function parseRateCell(
   rawCell: string,
   basisHint: RateBasisHint = null,
+  unitHint: string | null = null,
 ): WireLabelRate[] {
   const cell = rawCell.replace(/\s+/g, " ").trim();
   if (!cell) return [];
@@ -406,6 +424,36 @@ export function parseRateCell(
             basis: basisHint,
             value: Number.parseFloat(bare[1]),
             unit,
+            raw_text: cell,
+          },
+      ];
+    }
+
+    // A cell that is NOTHING but a number, in a column whose heading carries
+    // the unit — measured on CHATEAU 80647, whose grapevine band prints
+    // "560 – 700" under a heading stacked as "RATE" over "g/ha". The unit is
+    // stated by the label, in the very column that governs this cell, so it is
+    // READ, not inferred. Without it this rate fell through to basis "other"
+    // and no operational rate ever reached the app.
+    const bareNoUnit = BARE_QUANTITY_NO_UNIT_RE.exec(cell);
+    if (bareNoUnit && basisHint && unitHint) {
+      return [
+        bareNoUnit[2] !== undefined
+          ? {
+            label: "",
+            basis: basisHint === "per_hectare"
+              ? "range_per_hectare"
+              : "range_per_100_litres",
+            min_value: Number.parseFloat(bareNoUnit[1]),
+            max_value: Number.parseFloat(bareNoUnit[2]),
+            unit: unitHint,
+            raw_text: cell,
+          }
+          : {
+            label: "",
+            basis: basisHint,
+            value: Number.parseFloat(bareNoUnit[1]),
+            unit: unitHint,
             raw_text: cell,
           },
       ];
@@ -502,6 +550,8 @@ export interface DfuRow {
   /** The WHP column's cell, verbatim — captured, never merged into a rate. */
   whp_text: string;
   comments_text: string;
+  /** The unit the rate COLUMN's heading states, when it states one. */
+  rate_unit_hint: string | null;
 }
 
 const DFU_HEADING = /DIRECTIONS\s+FOR\s+USE/i;
@@ -526,6 +576,11 @@ type ColumnKind =
 const HEADER_START: ReadonlyArray<RegExp> = [
   /^(CROP|CROPS|SITUATION)$/i,
   /^(DISEASE|DISEASES|PEST|PESTS|DISEASE\/PEST|DISEASES\/PESTS|WEED|WEEDS|INSECT|INSECTS)$/i,
+  // Measured on CHATEAU 80647: the target column heads itself "WEEDS
+  // CONTROLLED". `classifyHeader` already reads that as a target by prefix;
+  // without this the heading is not even seeded, so the table has no target
+  // column and `finaliseHeader` rejects the whole header.
+  /^(DISEASE|DISEASES|PEST|PESTS|WEED|WEEDS|INSECT|INSECTS)\s+CONTROLLED$/i,
   /^RATE\b/i,
   /^WHP\b/i,
   /^(CRITICAL\s+COMMENTS|CRITICAL\s+USE\s+COMMENTS|COMMENTS):?$/i,
@@ -538,7 +593,7 @@ const HEADER_START: ReadonlyArray<RegExp> = [
  * not the table's first row — nothing else is ever absorbed into a heading.
  */
 const HEADER_FRAGMENT =
-  /^(?:PER|PER\s+100\s*L|PER\s+HECTARE|100\s*L|100|L|HECTARE|HA|Harvest\s*\(H\)|Grazing\s*\(G\)|\(H\)|\(G\)|\(WHP\)|COMMENTS:?|USE\s+COMMENTS)$/i;
+  /^(?:PER|PER\s+100\s*L|PER\s+HECTARE|100\s*L|100|L|HECTARE|HA|Harvest\s*\(H\)|Grazing\s*\(G\)|\(H\)|\(G\)|\(WHP\)|COMMENTS:?|USE\s+COMMENTS|(?:G|KG|ML|L)\s*\/\s*(?:HA|HECTARE)|(?:G|KG|ML|L)\s*\/\s*100\s*L)$/i;
 
 /** Classify one FULLY ASSEMBLED heading. */
 function classifyHeader(raw: string): ColumnKind {
@@ -563,6 +618,8 @@ function classifyHeader(raw: string): ColumnKind {
 interface HeaderColumn {
   kind: ColumnKind;
   anchorX: number;
+  /** The fully assembled heading text, kept so a column can state its unit. */
+  text: string;
 }
 
 interface HeaderAnchor {
@@ -614,18 +671,37 @@ function synthesiseCommentsAnchor(
   return { anchorX: first.x, parts: ["CRITICAL COMMENTS"] };
 }
 
+/** Whether `text` is a heading word that may START its own column. */
+function isHeadingWord(text: string): boolean {
+  return HEADER_START.some((re) => re.test(text));
+}
+
 /**
- * Whether `line` is the continuation of a heading already seeded from the
- * line above: it must contribute at least one fragment, and everything else
- * on it must belong to the comments column (whose cell text starts level
- * with the heading and simply keeps going).
+ * Whether `line` continues the heading block seeded from the line above.
+ *
+ * A heading block may span SEVERAL baselines, because a table head is often
+ * typeset with each column's heading vertically centred in its own cell.
+ * Measured on CHATEAU 80647 page 8, the four column headings land on three
+ * different baselines and interleave:
+ *
+ *   y=726.1   CROP(78)                 RATE(293)
+ *   y=721.0        WEEDS CONTROLLED(153)      CRITICAL COMMENTS(388)
+ *   y=715.8   SITUATION(67)            g/ha(296)
+ *
+ * So a continuation line may do two things: attach a FRAGMENT to a heading
+ * already seeded ("g/ha" completing "RATE"), or introduce a heading this
+ * block has not seen yet ("WEEDS CONTROLLED"). Both are contributions.
+ *
+ * Everything else on the line must belong to the comments column, exactly as
+ * before. A line carrying any other text is the table's first body row and
+ * ends the heading block — that is what stops a row being eaten as a header.
  */
 function isHeaderContinuation(
   line: TextLine,
   anchors: HeaderAnchor[],
   commentsX: number | null,
 ): boolean {
-  let fragments = 0;
+  let contributions = 0;
   for (const item of line.items) {
     const text = item.str.trim();
     if (!text) continue;
@@ -636,22 +712,36 @@ function isHeaderContinuation(
         anchors[0],
       );
       if (Math.abs(nearest.anchorX - item.x) <= HEADER_FRAGMENT_TOLERANCE) {
-        fragments++;
+        contributions++;
         continue;
       }
       return false;
     }
+    if (isHeadingWord(text)) {
+      contributions++;
+      continue;
+    }
     if (commentsX !== null && item.x >= commentsX - 4) continue;
     return false;
   }
-  return fragments > 0;
+  return contributions > 0;
 }
 
-/** Attach one continuation line's fragments to their headings. */
+/**
+ * Attach one continuation line to the heading block.
+ *
+ * A contribution sitting within tolerance of a known anchor JOINS it, so
+ * "CROP" over "SITUATION" stays one column rather than becoming two, and
+ * "g/ha" under "RATE" makes the basis-bearing heading "RATE g/ha". A heading
+ * further away than that opens a new column at its own measured left edge.
+ */
 function absorbHeaderContinuation(line: TextLine, anchors: HeaderAnchor[]): void {
   for (const item of line.items) {
     const text = item.str.trim();
-    if (!text || !HEADER_FRAGMENT.test(text)) continue;
+    if (!text) continue;
+    const fragment = HEADER_FRAGMENT.test(text);
+    const heading = !fragment && isHeadingWord(text);
+    if (!fragment && !heading) continue;
     const nearest = anchors.reduce(
       (best, a) =>
         Math.abs(a.anchorX - item.x) < Math.abs(best.anchorX - item.x) ? a : best,
@@ -659,8 +749,12 @@ function absorbHeaderContinuation(line: TextLine, anchors: HeaderAnchor[]): void
     );
     if (Math.abs(nearest.anchorX - item.x) <= HEADER_FRAGMENT_TOLERANCE) {
       nearest.parts.push(text);
+      continue;
     }
+    // A fragment that belongs to no heading is never invented into a column.
+    if (heading) anchors.push({ anchorX: item.x, parts: [text] });
   }
+  anchors.sort((a, b) => a.anchorX - b.anchorX);
 }
 
 /**
@@ -672,6 +766,7 @@ function finaliseHeader(anchors: HeaderAnchor[]): HeaderColumn[] | null {
   const columns = anchors.map((a) => ({
     kind: classifyHeader(a.parts.join(" ")),
     anchorX: a.anchorX,
+    text: a.parts.join(" "),
   }));
   const hasTarget = columns.some((c) => c.kind === "target");
   const hasRate = columns.some(
@@ -695,6 +790,8 @@ interface ColumnGeometry {
   learned: number[] | null;
   /** The basis this table's rate column states in its own heading. */
   rateBasis: RateBasisHint;
+  /** The unit this table's rate column states in its own heading. */
+  rateUnit: string | null;
 }
 
 function assignCells(
@@ -754,6 +851,7 @@ interface RowAccumulator {
   commentLines: PlacedCell[];
   titleCrop: string | null;
   rateBasis: RateBasisHint;
+  rateUnit: string | null;
   lastTriggerY: number;
   page: number;
 }
@@ -848,6 +946,7 @@ function finishRow(acc: RowAccumulator | null, rows: DfuRow[]): void {
       rate_ha_text: rateHa,
       whp_text: whp,
       comments_text: comments,
+      rate_unit_hint: acc.rateUnit,
     });
     return;
   }
@@ -875,6 +974,7 @@ function finishRow(acc: RowAccumulator | null, rows: DfuRow[]): void {
       rate_ha_text: joinCells(perBand[i].rateHa),
       whp_text: joinCells(perBand[i].whp),
       comments_text: comments,
+      rate_unit_hint: acc.rateUnit,
     });
   });
 }
@@ -893,6 +993,10 @@ export function parseDirectionsForUse(items: PdfTextItem[]): DfuParse {
   const lines = assembleTextLines(items);
   const rows: DfuRow[] = [];
   let inSection = false;
+  // Whether a directions section was seen ANYWHERE. Distinct from `inSection`,
+  // which a footer closes: a label may open and close the section more than
+  // once, and "we happened to end outside one" is not "there was none".
+  let sawSection = false;
   let geometry: ColumnGeometry | null = null;
   let titleCrop: string | null = null;
   let acc: RowAccumulator | null = null;
@@ -902,13 +1006,25 @@ export function parseDirectionsForUse(items: PdfTextItem[]): DfuParse {
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
     if (!inSection) {
-      if (DFU_HEADING.test(line.text)) inSection = true;
+      if (DFU_HEADING.test(line.text)) {
+        inSection = true;
+        sawSection = true;
+      }
       continue;
     }
     if (DFU_FOOTER.test(line.text)) {
+      // The footer CLOSES the current directions section; it does not end the
+      // document. Measured on CHATEAU 80647, page 1 carries the summary line
+      // "Other Limitations: NOT TO BE USED FOR ANY PURPOSE ..." while the real
+      // directions tables are on pages 8 and 9. Abandoning the scan here read
+      // that page-1 sentence as the end of the label and returned NO rows at
+      // all, so a fully parseable grapevine rate was never seen.
       finishRow(acc, rows);
       acc = null;
-      break;
+      geometry = null;
+      titleCrop = null;
+      inSection = false;
+      continue;
     }
     const title = TABLE_TITLE.exec(line.text);
     if (title) {
@@ -950,6 +1066,14 @@ export function parseDirectionsForUse(items: PdfTextItem[]): DfuParse {
             : header.some((c) => c.kind === "rate_ha")
             ? "per_hectare"
             : null,
+          rateUnit: headingUnit(
+            header
+              .filter((c) =>
+                c.kind === "rate" || c.kind === "rate_ha" || c.kind === "rate_100l"
+              )
+              .map((c) => c.text)
+              .join(" "),
+          ),
         };
         index = consumed;
         continue;
@@ -983,6 +1107,7 @@ export function parseDirectionsForUse(items: PdfTextItem[]): DfuParse {
           commentLines: [],
           titleCrop,
           rateBasis: geometry.rateBasis,
+          rateUnit: geometry.rateUnit,
           lastTriggerY: line.y,
           page: line.page,
         };
@@ -1006,7 +1131,7 @@ export function parseDirectionsForUse(items: PdfTextItem[]): DfuParse {
     place(acc.commentLines, "comments");
   }
   finishRow(acc, rows);
-  return { found: inSection, rows };
+  return { found: sawSection, rows };
 }
 
 // ---------------------------------------------------------------------------
@@ -1140,8 +1265,8 @@ function toUnbound(row: DfuRow, reason: UnboundDfuRow["reason"]): UnboundDfuRow 
  */
 function rowRates(row: DfuRow): WireLabelRate[] {
   return [
-    ...parseRateCell(row.rate_text, row.rate_basis),
-    ...parseRateCell(row.rate_ha_text, "per_hectare"),
+    ...parseRateCell(row.rate_text, row.rate_basis, row.rate_unit_hint),
+    ...parseRateCell(row.rate_ha_text, "per_hectare", row.rate_unit_hint),
   ];
 }
 
