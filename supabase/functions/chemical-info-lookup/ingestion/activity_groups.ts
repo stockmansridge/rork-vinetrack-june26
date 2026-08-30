@@ -23,8 +23,44 @@
 // vary by country — which is why this table has no country dimension while
 // product identity emphatically does.
 
-/** Bump whenever the table changes. Stamped onto every verification. */
-export const ACTIVITY_GROUP_TABLE_VERSION = 1;
+// ---------------------------------------------------------------------------
+// Herbicide classification is CURRENT-NUMERIC (v2)
+// ---------------------------------------------------------------------------
+//
+// Australia replaced the alphabetical herbicide mode-of-action codes with the
+// globally aligned NUMERIC system (CropLife Australia / HRAC). Labels began
+// carrying numbers in 2022 and the transition completed in 2024, so the code a
+// grower reads on a current Australian herbicide label is "Group 14", not
+// "Group E" and not "Group G".
+//
+// This table held the OLD global HRAC letters, which produced a false conflict
+// on every herbicide: the label and the lookup both said the same thing in two
+// different alphabets, and the app reported them as sources that disagreed.
+//
+// Two alphabets is exactly why equivalence must be decided per ACTIVE rather
+// than per letter. The old Australian letters and the old global HRAC letters
+// are DIFFERENT systems that reuse the same characters for different
+// chemistries — "E" was PPO inhibitors globally but carbamates in Australia,
+// "G" was glyphosate globally but PPO inhibitors in Australia. A letter alone
+// is therefore not decodable; a letter plus the active it was printed for
+// always is. `HERBICIDE_LEGACY_CODES` records, per active, every code that
+// active was legitimately published under, and `groupsAreEquivalent` treats
+// those as the same classification rather than a disagreement.
+//
+// Fungicides (FRAC) and insecticides (IRAC) are unchanged — those schemes were
+// already numeric/alphanumeric and were never realigned — so they carry no
+// legacy mapping and none is invented for them.
+
+/**
+ * Bump whenever the table changes. Stamped onto every verification.
+ *
+ * v2 — herbicides migrated from legacy alphabetical codes to the current
+ * Australian/global numeric mode-of-action groups, with per-active legacy
+ * equivalence. Completed spray snapshots are NOT rewritten: they keep the
+ * classification that was current when they were recorded. Saved chemicals
+ * pick the current group up through the normal Re-verify path.
+ */
+export const ACTIVITY_GROUP_TABLE_VERSION = 2;
 
 export type ActivityGroupScheme = "frac" | "hrac" | "irac" | "not_applicable";
 
@@ -39,11 +75,38 @@ const frac = (code: string, name: string): ActivityGroup => ({
   code,
   common_name: name,
 });
-const hrac = (code: string, name: string): ActivityGroup => ({
-  scheme: "hrac",
-  code,
-  common_name: name,
-});
+/**
+ * Every legacy code a herbicide active was published under, keyed by the
+ * normalised active name.
+ *
+ * Populated by `hrac()` as the table is declared, so a classification and its
+ * legacy equivalents can never drift apart. Equivalence data only: it is never
+ * served, never displayed, and never overrides the current group.
+ */
+const HERBICIDE_LEGACY_CODES: Record<string, string[]> = {};
+
+/**
+ * Declare a herbicide's CURRENT numeric group.
+ *
+ * @param code    the current Australian/global numeric MoA group
+ * @param name    the mode of action, in the current wording
+ * @param legacy  codes this active was previously published under — the old
+ *                GLOBAL HRAC letter and the old AUSTRALIAN letter, which are
+ *                frequently different characters for the same chemistry
+ * @param key     the table key being declared, so legacy codes register
+ *                against the same normalised name the lookup uses
+ */
+const hrac = (
+  code: string,
+  name: string,
+  legacy: string[] = [],
+  key?: string,
+): ActivityGroup => {
+  if (key && legacy.length) {
+    HERBICIDE_LEGACY_CODES[normaliseActiveName(key)] = legacy;
+  }
+  return { scheme: "hrac", code, common_name: name };
+};
 const irac = (code: string, name: string): ActivityGroup => ({
   scheme: "irac",
   code,
@@ -127,35 +190,41 @@ export const ACTIVITY_GROUP_TABLE: Record<string, ActivityGroup> = {
   "chlorothalonil": frac("M5", "Multi-site / Chloronitrile"),
   "dithianon": frac("M9", "Multi-site / Quinone"),
 
-  // ---- Herbicides (HRAC) ----
-  "glyphosate": hrac("G", "EPSP synthase inhibitor"),
-  "glufosinate": hrac("H", "Glutamine synthetase inhibitor"),
-  "glufosinate ammonium": hrac("H", "Glutamine synthetase inhibitor"),
-  "paraquat": hrac("D", "PSI electron diverter"),
-  "diquat": hrac("D", "PSI electron diverter"),
-  "simazine": hrac("C1", "PSII inhibitor"),
-  "diuron": hrac("C2", "PSII inhibitor"),
-  "amitrole": hrac("F3", "Carotenoid biosynthesis inhibitor"),
-  "oxyfluorfen": hrac("E", "PPO inhibitor"),
-  "carfentrazone": hrac("E", "PPO inhibitor"),
-  "flumioxazin": hrac("E", "PPO inhibitor"),
-  "haloxyfop": hrac("A", "ACCase inhibitor"),
-  "clethodim": hrac("A", "ACCase inhibitor"),
-  "fluazifop": hrac("A", "ACCase inhibitor"),
-  "sethoxydim": hrac("A", "ACCase inhibitor"),
-  "propyzamide": hrac("K1", "Microtubule assembly inhibitor"),
-  "pendimethalin": hrac("K1", "Microtubule assembly inhibitor"),
-  "trifluralin": hrac("K1", "Microtubule assembly inhibitor"),
-  "isoxaben": hrac("L", "Cellulose synthesis inhibitor"),
-  "indaziflam": hrac("L", "Cellulose synthesis inhibitor"),
-  "metsulfuron methyl": hrac("B", "ALS inhibitor"),
-  "chlorsulfuron": hrac("B", "ALS inhibitor"),
-  "imazapyr": hrac("B", "ALS inhibitor"),
-  "2,4 d": hrac("O", "Synthetic auxin"),
-  "mcpa": hrac("O", "Synthetic auxin"),
-  "triclopyr": hrac("O", "Synthetic auxin"),
-  "clopyralid": hrac("O", "Synthetic auxin"),
-  "pelargonic acid": hrac("Z", "Unknown / non-selective contact"),
+  // ---- Herbicides (current Australian/global numeric MoA groups) ----
+  // legacy = [old GLOBAL HRAC letter, old AUSTRALIAN letter] where they differ.
+  "glyphosate": hrac("9", "EPSP synthase inhibitor", ["G", "M"], "glyphosate"),
+  "glufosinate": hrac("10", "Glutamine synthetase inhibitor", ["H", "N"], "glufosinate"),
+  "glufosinate ammonium": hrac(
+    "10",
+    "Glutamine synthetase inhibitor",
+    ["H", "N"],
+    "glufosinate ammonium",
+  ),
+  "paraquat": hrac("22", "PSI electron diverter", ["D", "L"], "paraquat"),
+  "diquat": hrac("22", "PSI electron diverter", ["D", "L"], "diquat"),
+  "simazine": hrac("5", "PSII inhibitor (serine 264 binder)", ["C1", "C"], "simazine"),
+  "diuron": hrac("5", "PSII inhibitor (serine 264 binder)", ["C2", "C"], "diuron"),
+  "amitrole": hrac("34", "Lycopene cyclase inhibitor", ["F3", "Q"], "amitrole"),
+  "oxyfluorfen": hrac("14", "PPO inhibitor", ["E", "G"], "oxyfluorfen"),
+  "carfentrazone": hrac("14", "PPO inhibitor", ["E", "G"], "carfentrazone"),
+  "flumioxazin": hrac("14", "PPO inhibitor", ["E", "G"], "flumioxazin"),
+  "haloxyfop": hrac("1", "ACCase inhibitor", ["A"], "haloxyfop"),
+  "clethodim": hrac("1", "ACCase inhibitor", ["A"], "clethodim"),
+  "fluazifop": hrac("1", "ACCase inhibitor", ["A"], "fluazifop"),
+  "sethoxydim": hrac("1", "ACCase inhibitor", ["A"], "sethoxydim"),
+  "propyzamide": hrac("3", "Microtubule assembly inhibitor", ["K1", "D"], "propyzamide"),
+  "pendimethalin": hrac("3", "Microtubule assembly inhibitor", ["K1", "D"], "pendimethalin"),
+  "trifluralin": hrac("3", "Microtubule assembly inhibitor", ["K1", "D"], "trifluralin"),
+  "isoxaben": hrac("29", "Cellulose synthesis inhibitor", ["L", "O"], "isoxaben"),
+  "indaziflam": hrac("29", "Cellulose synthesis inhibitor", ["L", "O"], "indaziflam"),
+  "metsulfuron methyl": hrac("2", "ALS inhibitor", ["B"], "metsulfuron methyl"),
+  "chlorsulfuron": hrac("2", "ALS inhibitor", ["B"], "chlorsulfuron"),
+  "imazapyr": hrac("2", "ALS inhibitor", ["B"], "imazapyr"),
+  "2,4 d": hrac("4", "Auxin mimic", ["O", "I"], "2,4 d"),
+  "mcpa": hrac("4", "Auxin mimic", ["O", "I"], "mcpa"),
+  "triclopyr": hrac("4", "Auxin mimic", ["O", "I"], "triclopyr"),
+  "clopyralid": hrac("4", "Auxin mimic", ["O", "I"], "clopyralid"),
+  "pelargonic acid": hrac("0", "Unknown / non-selective contact", ["Z"], "pelargonic acid"),
 
   // ---- Insecticides & miticides (IRAC) ----
   "chlorpyrifos": irac("1B", "Organophosphate"),
@@ -231,6 +300,62 @@ export function authoritativeGroup(activeName: string): ActivityGroup | null {
   return candidates.length ? ACTIVITY_GROUP_TABLE[candidates[0]] : null;
 }
 
+/**
+ * Every code this active was legitimately published under BEFORE the current
+ * classification, normalised. Empty for actives with no legacy alphabet
+ * (fungicides and insecticides) and for actives the table does not know.
+ */
+export function legacyGroupCodes(activeName: string): string[] {
+  const key = normaliseActiveName(activeName);
+  if (!key) return [];
+  const direct = HERBICIDE_LEGACY_CODES[key];
+  if (direct) return direct.map(normaliseCode);
+  // Same longest-contained-active rule the classification lookup uses, so a
+  // salt or ester form inherits its parent's legacy codes too.
+  const candidates = Object.keys(HERBICIDE_LEGACY_CODES)
+    .filter((k) => k.length >= 5 && key.includes(k))
+    .sort((a, b) => b.length - a.length);
+  return candidates.length ? HERBICIDE_LEGACY_CODES[candidates[0]].map(normaliseCode) : [];
+}
+
+/**
+ * Whether two classifications of the SAME active mean the same thing.
+ *
+ * This is the canonical-identity comparison the whole v2 migration turns on.
+ * A label printed before the numeric realignment says "Group E" (or "Group
+ * G", in the old Australian alphabet) for exactly the chemistry a current
+ * label calls "Group 14". Those are one classification expressed in two
+ * vocabularies, and reporting them to a grower as sources that disagree is a
+ * false alarm about a resistance group — the one place in the app where a
+ * false alarm costs the most trust.
+ *
+ * Equivalence is decided PER ACTIVE, never per letter, because the two legacy
+ * alphabets reuse characters for unrelated chemistries. A genuine
+ * disagreement — a source calling flumioxazin a Group 2 — still conflicts,
+ * which is the entire point of keeping the check.
+ */
+export function groupsAreEquivalent(
+  activeName: string,
+  a: ActivityGroup | null | undefined,
+  b: ActivityGroup | null | undefined,
+): boolean {
+  if (!a || !b) return false;
+  if (a.scheme !== b.scheme) return false;
+  const codeA = normaliseCode(a.code);
+  const codeB = normaliseCode(b.code);
+  if (!codeA || !codeB) return false;
+  if (codeA === codeB) return true;
+  if (a.scheme !== "hrac") return false;
+  // One side current, the other a code this active was published under before.
+  const legacy = legacyGroupCodes(activeName);
+  if (!legacy.length) return false;
+  const current = normaliseCode(authoritativeGroup(activeName)?.code ?? "");
+  if (!current) return false;
+  const isCurrentOrLegacy = (code: string): boolean =>
+    code === current || legacy.includes(code);
+  return isCurrentOrLegacy(codeA) && isCurrentOrLegacy(codeB);
+}
+
 export interface GroupConflict {
   field: string;
   active_ingredient_name: string;
@@ -286,7 +411,10 @@ export function reconcileGroup(
   if (!extracted || !extracted.code) {
     return { group: authoritative, source: "authoritative_classification", conflict: null };
   }
-  if (extracted.scheme === authoritative.scheme && extracted.code === authoritative.code) {
+  // Canonical identity, not string identity: a legacy code for this active is
+  // the SAME classification, so it agrees rather than conflicts. The current
+  // group is what gets served either way — growers see today's number.
+  if (groupsAreEquivalent(activeName, extracted, authoritative)) {
     return { group: authoritative, source: "authoritative_classification", conflict: null };
   }
   return {

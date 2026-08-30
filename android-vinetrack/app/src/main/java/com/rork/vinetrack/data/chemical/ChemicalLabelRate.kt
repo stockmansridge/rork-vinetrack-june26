@@ -89,8 +89,41 @@ data class ChemicalLabelRate(
     val unit: String = "",
     /** Verbatim label text when [basis] is OTHER, so an unusual basis survives. */
     @SerialName("raw_text") val rawText: String? = null,
+    /**
+     * Stable, deterministic identity for this registered rate, minted by the
+     * SERVER from the rate's meaning (locked product, crop, target, basis,
+     * unit, values, condition).
+     *
+     * Backend-minted metadata. Android decodes it, preserves it and re-encodes
+     * it unchanged; it must NEVER be invented, derived or repaired on device,
+     * because an id computed against a product the record may turn out not to
+     * be would then survive the register's correction.
+     *
+     * Null on records stored before the server minted identities, which must
+     * keep decoding untouched. Mirrors iOS `ChemicalLabelRate.rateId`.
+     */
+    @SerialName("rate_id") val rateId: String? = null,
+    /**
+     * The label states SEVERAL rates on this basis and the server's
+     * deterministic grammar could not prove which condition governs which
+     * number.
+     *
+     * It never means the numbers are wrong — they are read verbatim from the
+     * label. It means the ASSOCIATION between rate and condition is unproven,
+     * so a client must make the operator choose rather than silently applying
+     * the first one. Mirrors iOS `ChemicalLabelRate.conditionAmbiguous`.
+     */
+    @SerialName("condition_ambiguous") val conditionAmbiguous: Boolean? = null,
 ) {
-    val id: String get() = "${basis.raw}|$label|${minValue ?: value ?: 0.0}"
+    /**
+     * Local list identity.
+     *
+     * Prefers the server-minted [rateId] so the same semantic rate keeps one
+     * identity across re-extraction and array reordering, and falls back to the
+     * legacy composed key for records minted before ids existed.
+     */
+    val id: String
+        get() = rateId ?: "${basis.raw}|$label|${minValue ?: value ?: 0.0}"
 
     /** `"1.5 L/ha"` or `"1.0–2.0 L/ha"`. */
     val displayRate: String
@@ -136,7 +169,34 @@ data class ChemicalRegisteredUse(
      */
     val target: SprayTarget? = null,
     val rates: List<ChemicalLabelRate> = emptyList(),
+    /**
+     * The PRINTED LABEL DIRECTION this use came from, minted by the server.
+     *
+     * One printed direction routinely covers a crop, a rate and many targets;
+     * the register publishes that as one row per target. This id is what lets a
+     * client group those rows back into the single legal direction the label
+     * actually prints, instead of showing the operator the same instruction
+     * twenty-five times.
+     *
+     * Backend-minted metadata: decoded, preserved and re-encoded unchanged,
+     * never invented on device. Null on records stored before the server minted
+     * it. Mirrors iOS `ChemicalRegisteredUse.directionId`.
+     */
+    @SerialName("direction_id") val directionId: String? = null,
     @SerialName("withholding_period_days") val withholdingPeriodDays: Int? = null,
+    /**
+     * The label's VERBATIM withholding wording, whenever the label states one
+     * ("14 weeks").
+     *
+     * A withholding period is a legal instruction and labels state it in the
+     * units they mean it in; [withholdingPeriodDays] beside it is only the
+     * projection scheduling needs. Showing the wording and calculating with the
+     * number means neither has to be reconstructed from the other.
+     *
+     * Null means the label stated NO withholding period — a different answer
+     * from zero, and it must never be rendered as one.
+     */
+    @SerialName("withholding_statement") val withholdingStatement: String? = null,
     @SerialName("re_entry_period_hours") val reEntryPeriodHours: Int? = null,
     /**
      * The label's verbatim re-entry condition when it states one without a
@@ -160,6 +220,13 @@ data class ChemicalRegisteredUse(
     val provenance: Map<String, String>? = null,
 ) {
     val id: String get() = "$crop|$targetRaw"
+
+    /**
+     * How to group this use with the others printed under the SAME label
+     * direction. Falls back to the crop when the server minted no id, which
+     * groups nothing that was not already together.
+     */
+    val directionGroupKey: String get() = directionId ?: "$crop|$targetRaw"
 
     /** Whether this use concerns grapevines. */
     val isViticultural: Boolean

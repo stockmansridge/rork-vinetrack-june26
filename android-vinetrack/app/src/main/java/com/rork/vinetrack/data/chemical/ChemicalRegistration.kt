@@ -67,10 +67,63 @@ data class ChemicalRegistration(
     val registrant: String? = null,
     /** The exact registered product name, which can differ from what was typed. */
     @SerialName("registered_product_name") val registeredProductName: String? = null,
+    /**
+     * URL or document identifier of the label the information came from.
+     *
+     * The LEGACY single field. The server keeps it pointing at the
+     * authoritative document, so builds that predate the split below still show
+     * the approved label rather than nothing.
+     */
     @SerialName("label_reference") val labelReference: String? = null,
+    /**
+     * The registrant/manufacturer-hosted label document.
+     *
+     * The PRIMARY "Open label" link for growers: it is the label they
+     * physically hold, and usually the more readable rendering. Never a
+     * marketing page — the server classifies those separately and a
+     * regulator-hosted URL offered here is reclassified rather than duplicated.
+     *
+     * Previously undecoded on Android, so a label the resolver had found and
+     * validated arrived on device and was silently discarded — and discarded
+     * again on every save. Mirrors iOS `ChemicalRegistration.manufacturerLabelURL`.
+     */
+    @SerialName("manufacturer_label_url") val manufacturerLabelUrl: String? = null,
+    /**
+     * The regulator's approved label (APVMA eLabels and equivalents).
+     *
+     * Authoritative for registration and always retained. A manufacturer
+     * document can lead in the UI but can never SUBSTITUTE for this one — the
+     * three link concepts stay separate forever.
+     * Mirrors iOS `ChemicalRegistration.regulatorLabelURL`.
+     */
+    @SerialName("regulator_label_url") val regulatorLabelUrl: String? = null,
+    /**
+     * The registrant's own PRODUCT INFORMATION page.
+     *
+     * A third, genuinely separate concept from the two labels above. The
+     * backend has classified this URL as MARKETING rather than a label, and
+     * Android must honour that separation: a product page is where a grower
+     * reads about a product, never what they spray by.
+     * Mirrors iOS `ChemicalRegistration.manufacturerProductURL`.
+     */
+    @SerialName("manufacturer_product_url") val manufacturerProductUrl: String? = null,
     /** Label version/approval date, so re-verification can see official data move on. */
     @SerialName("label_version") val labelVersion: String? = null,
 ) {
+    /**
+     * The label to lead with, and the one to keep beside it.
+     *
+     * Manufacturer first: it is the practical label. The regulator document is
+     * never dropped — it is what makes the record defensible. Falls back to
+     * [labelReference] so a server that has not been redeployed still renders a
+     * label rather than an empty section. Identical resolution on iOS.
+     */
+    val primaryLabelUrl: String?
+        get() = manufacturerLabelUrl ?: regulatorLabelUrl ?: labelReference
+
+    /** The authoritative document, when it is not already the primary one. */
+    val secondaryLabelUrl: String?
+        get() = if (manufacturerLabelUrl == null) null else regulatorLabelUrl ?: labelReference
     /**
      * Whether this identity is strong enough to underwrite a Verified claim:
      * a register, a number, and a country.
@@ -109,6 +162,9 @@ data class ChemicalRegistration(
             registrant: String? = null,
             registeredProductName: String? = null,
             labelReference: String? = null,
+            manufacturerLabelUrl: String? = null,
+            regulatorLabelUrl: String? = null,
+            manufacturerProductUrl: String? = null,
             labelVersion: String? = null,
         ): ChemicalRegistration = ChemicalRegistration(
             countryCode = normaliseCountry(countryCode),
@@ -117,6 +173,9 @@ data class ChemicalRegistration(
             registrant = registrant?.trim()?.takeIf { it.isNotEmpty() },
             registeredProductName = registeredProductName?.trim()?.takeIf { it.isNotEmpty() },
             labelReference = labelReference?.trim()?.takeIf { it.isNotEmpty() },
+            manufacturerLabelUrl = manufacturerLabelUrl?.trim()?.takeIf { it.isNotEmpty() },
+            regulatorLabelUrl = regulatorLabelUrl?.trim()?.takeIf { it.isNotEmpty() },
+            manufacturerProductUrl = manufacturerProductUrl?.trim()?.takeIf { it.isNotEmpty() },
             labelVersion = labelVersion?.trim()?.takeIf { it.isNotEmpty() },
         )
 

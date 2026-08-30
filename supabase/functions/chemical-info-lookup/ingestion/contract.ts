@@ -323,6 +323,22 @@ export interface LabelUseClaim {
   target_synonyms?: string[];
   target?: string; // VineTrack target enum, only when it maps cleanly
   withholding_period_days?: number; // only when a label statement states it (0 = "not required")
+  /**
+   * The label's VERBATIM withholding wording, whenever the label states one.
+   *
+   * # Why the number alone was not enough
+   *
+   * A withholding period is a legal instruction, and labels state it in the
+   * units they mean it in. "14 weeks" carries the registrant's own wording;
+   * the day-count projection beside it exists so spray scheduling can do
+   * arithmetic, not because 98 is what the label says.
+   *
+   * Keeping both means a client can show the operator the label's words and
+   * still compute a harvest-safe date, and neither has to be reconstructed
+   * from the other. Absent means the label stated no withholding period —
+   * which is a different answer from zero and must never be rendered as one.
+   */
+  withholding_statement?: string;
   re_entry_period_hours?: number; // only when a label statement states it
   /**
    * The label's VERBATIM re-entry wording, whenever the label speaks about

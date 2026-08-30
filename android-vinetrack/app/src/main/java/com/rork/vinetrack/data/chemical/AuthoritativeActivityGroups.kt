@@ -25,8 +25,17 @@ package com.rork.vinetrack.data.chemical
  */
 object AuthoritativeActivityGroups {
 
-    /** Bump whenever the table changes. Persisted with each verification. */
-    const val TABLE_VERSION: Int = 1
+    /**
+     * Bump whenever the table changes. Persisted with each verification.
+     *
+     * v2 — herbicides migrated from the legacy alphabetical codes to the
+     * CURRENT Australian/global numeric mode-of-action groups, with per-active
+     * legacy equivalence (see [legacyCodesForActive]). Completed spray
+     * snapshots are never rewritten: they keep the classification that was
+     * current when they were recorded. Saved chemicals pick the current group
+     * up through the normal Re-verify path.
+     */
+    const val TABLE_VERSION: Int = 2
 
     /** The source citation recorded when this table supplies a group. */
     fun source(retrievedAt: String? = null): ChemicalDataSource = ChemicalDataSource(
@@ -94,7 +103,11 @@ object AuthoritativeActivityGroups {
                 conflict = null,
             )
         }
-        if (extracted.scheme == authoritative.scheme && extracted.code == authoritative.code) {
+        // Canonical identity, not string identity: a legacy code for this
+        // active is the SAME classification, so it agrees rather than
+        // conflicts. The CURRENT group is served either way — growers see
+        // today's number, never the code a historical source happened to use.
+        if (groupsAreEquivalent(activeName, extracted, authoritative)) {
             return Reconciliation(
                 group = authoritative,
                 source = ChemicalDataSourceKind.AUTHORITATIVE_CLASSIFICATION,
@@ -123,6 +136,132 @@ object AuthoritativeActivityGroups {
 
     private fun hrac(code: String, name: String) =
         ChemicalActivityGroup.of(ChemicalActivityGroupScheme.HRAC, code, name)
+
+    /**
+     * Every code a herbicide active was legitimately published under BEFORE
+     * the current numeric classification.
+     *
+     * ## Why equivalence is per ACTIVE and never per letter
+     *
+     * Australia replaced the alphabetical herbicide mode-of-action codes with
+     * the globally aligned NUMERIC system; labels carried numbers from 2022 and
+     * the transition completed in 2024. A current label says "Group 14" where
+     * an older one said "Group E" (old global HRAC) or "Group G" (old
+     * Australian) — one classification, three vocabularies.
+     *
+     * The two legacy alphabets reuse the same characters for different
+     * chemistries: "E" was PPO inhibitors globally but carbamates in Australia,
+     * "G" was glyphosate globally but PPO inhibitors in Australia. A letter on
+     * its own is therefore not decodable; a letter plus the active it was
+     * printed for always is.
+     *
+     * Mirrored byte-for-byte in the edge function and on iOS.
+     */
+    private val LEGACY_HRAC_CODES: Map<String, List<String>> = mapOf(
+        "glyphosate" to listOf("G", "M"),
+        "glufosinate" to listOf("H", "N"),
+        "glufosinate ammonium" to listOf("H", "N"),
+        "paraquat" to listOf("D", "L"),
+        "diquat" to listOf("D", "L"),
+        "simazine" to listOf("C1", "C"),
+        "diuron" to listOf("C2", "C"),
+        "amitrole" to listOf("F3", "Q"),
+        "oxyfluorfen" to listOf("E", "G"),
+        "carfentrazone" to listOf("E", "G"),
+        "flumioxazin" to listOf("E", "G"),
+        "haloxyfop" to listOf("A"),
+        "clethodim" to listOf("A"),
+        "fluazifop" to listOf("A"),
+        "sethoxydim" to listOf("A"),
+        "propyzamide" to listOf("K1", "D"),
+        "pendimethalin" to listOf("K1", "D"),
+        "trifluralin" to listOf("K1", "D"),
+        "isoxaben" to listOf("L", "O"),
+        "indaziflam" to listOf("L", "O"),
+        "metsulfuron methyl" to listOf("B"),
+        "chlorsulfuron" to listOf("B"),
+        "imazapyr" to listOf("B"),
+        "2,4 d" to listOf("O", "I"),
+        "mcpa" to listOf("O", "I"),
+        "triclopyr" to listOf("O", "I"),
+        "clopyralid" to listOf("O", "I"),
+        "pelargonic acid" to listOf("Z"),
+    )
+
+    /**
+     * Every herbicide active this table classifies, by its table key.
+     *
+     * Exposed so the shared contract tests can assert the RULE across the whole
+     * herbicide table rather than spot-checking one product — a classification
+     * that is only right for the active someone remembered to test is not a
+     * classification anyone should trust.
+     */
+    val HERBICIDE_ACTIVE_NAMES: List<String>
+        get() = table.entries
+            .filter { it.value.scheme == ChemicalActivityGroupScheme.HRAC }
+            .map { it.key }
+
+    /**
+     * Strip the decoration humans, labels and extractions put around a code so
+     * `"Group 14"`, `"group14"` and `"14 (PPO inhibitor)"` all reduce to `14`.
+     */
+    fun normaliseCode(raw: String): String {
+        var value = raw.trim().uppercase()
+        for (prefix in listOf("GROUP ", "GROUP", "FRAC ", "HRAC ", "IRAC ", "MOA ", "CODE ")) {
+            if (value.startsWith(prefix)) value = value.removePrefix(prefix).trim()
+        }
+        val paren = value.indexOf('(')
+        if (paren >= 0) value = value.substring(0, paren).trim()
+        return value.replace(" ", "")
+    }
+
+    /**
+     * Legacy codes recorded for this active, normalised. Empty for actives with
+     * no legacy alphabet (fungicides, insecticides) and for unknown actives.
+     */
+    fun legacyCodesForActive(name: String): List<String> {
+        val key = normalise(name)
+        if (key.isEmpty()) return emptyList()
+        LEGACY_HRAC_CODES[key]?.let { return it.map(::normaliseCode) }
+        // The same longest-contained-active rule [groupForActive] uses, so a
+        // salt or ester form inherits its parent's legacy codes too.
+        val best = LEGACY_HRAC_CODES.keys
+            .filter { it.length >= 5 && key.contains(it) }
+            .maxByOrNull { it.length }
+            ?: return emptyList()
+        return LEGACY_HRAC_CODES[best]?.map(::normaliseCode).orEmpty()
+    }
+
+    /**
+     * Whether two classifications of the SAME active mean the same thing.
+     *
+     * This is the canonical-identity comparison the v2 migration turns on. A
+     * label printed before the numeric realignment says "Group E" for exactly
+     * the chemistry a current label calls "Group 14". Reporting those to a
+     * grower as sources that disagree is a false alarm about a resistance group
+     * — the one place in the app where a false alarm costs most trust.
+     *
+     * A genuine disagreement — a source calling flumioxazin a Group 2 — still
+     * conflicts, which is the entire point of keeping the check.
+     */
+    fun groupsAreEquivalent(
+        activeName: String,
+        a: ChemicalActivityGroup?,
+        b: ChemicalActivityGroup?,
+    ): Boolean {
+        if (a == null || b == null || a.scheme != b.scheme) return false
+        val codeA = normaliseCode(a.code)
+        val codeB = normaliseCode(b.code)
+        if (codeA.isEmpty() || codeB.isEmpty()) return false
+        if (codeA == codeB) return true
+        if (a.scheme != ChemicalActivityGroupScheme.HRAC) return false
+        val legacy = legacyCodesForActive(activeName)
+        if (legacy.isEmpty()) return false
+        val current = normaliseCode(groupForActive(activeName)?.code.orEmpty())
+        if (current.isEmpty()) return false
+        fun isCurrentOrLegacy(code: String) = code == current || legacy.contains(code)
+        return isCurrentOrLegacy(codeA) && isCurrentOrLegacy(codeB)
+    }
 
     private fun irac(code: String, name: String) =
         ChemicalActivityGroup.of(ChemicalActivityGroupScheme.IRAC, code, name)
@@ -205,35 +344,36 @@ object AuthoritativeActivityGroups {
         "chlorothalonil" to frac("M5", "Multi-site / Chloronitrile"),
         "dithianon" to frac("M9", "Multi-site / Quinone"),
 
-        // ---- Herbicides (HRAC) ----
-        "glyphosate" to hrac("G", "EPSP synthase inhibitor"),
-        "glufosinate" to hrac("H", "Glutamine synthetase inhibitor"),
-        "glufosinate ammonium" to hrac("H", "Glutamine synthetase inhibitor"),
-        "paraquat" to hrac("D", "PSI electron diverter"),
-        "diquat" to hrac("D", "PSI electron diverter"),
-        "simazine" to hrac("C1", "PSII inhibitor"),
-        "diuron" to hrac("C2", "PSII inhibitor"),
-        "amitrole" to hrac("F3", "Carotenoid biosynthesis inhibitor"),
-        "oxyfluorfen" to hrac("E", "PPO inhibitor"),
-        "carfentrazone" to hrac("E", "PPO inhibitor"),
-        "flumioxazin" to hrac("E", "PPO inhibitor"),
-        "haloxyfop" to hrac("A", "ACCase inhibitor"),
-        "clethodim" to hrac("A", "ACCase inhibitor"),
-        "fluazifop" to hrac("A", "ACCase inhibitor"),
-        "sethoxydim" to hrac("A", "ACCase inhibitor"),
-        "propyzamide" to hrac("K1", "Microtubule assembly inhibitor"),
-        "pendimethalin" to hrac("K1", "Microtubule assembly inhibitor"),
-        "trifluralin" to hrac("K1", "Microtubule assembly inhibitor"),
-        "isoxaben" to hrac("L", "Cellulose synthesis inhibitor"),
-        "indaziflam" to hrac("L", "Cellulose synthesis inhibitor"),
-        "metsulfuron methyl" to hrac("B", "ALS inhibitor"),
-        "chlorsulfuron" to hrac("B", "ALS inhibitor"),
-        "imazapyr" to hrac("B", "ALS inhibitor"),
-        "2,4 d" to hrac("O", "Synthetic auxin"),
-        "mcpa" to hrac("O", "Synthetic auxin"),
-        "triclopyr" to hrac("O", "Synthetic auxin"),
-        "clopyralid" to hrac("O", "Synthetic auxin"),
-        "pelargonic acid" to hrac("Z", "Unknown / non-selective contact"),
+        // ---- Herbicides (current Australian/global numeric MoA groups) ----
+        // Legacy equivalents live in LEGACY_HRAC_CODES, keyed by the same name.
+        "glyphosate" to hrac("9", "EPSP synthase inhibitor"),
+        "glufosinate" to hrac("10", "Glutamine synthetase inhibitor"),
+        "glufosinate ammonium" to hrac("10", "Glutamine synthetase inhibitor"),
+        "paraquat" to hrac("22", "PSI electron diverter"),
+        "diquat" to hrac("22", "PSI electron diverter"),
+        "simazine" to hrac("5", "PSII inhibitor (serine 264 binder)"),
+        "diuron" to hrac("5", "PSII inhibitor (serine 264 binder)"),
+        "amitrole" to hrac("34", "Lycopene cyclase inhibitor"),
+        "oxyfluorfen" to hrac("14", "PPO inhibitor"),
+        "carfentrazone" to hrac("14", "PPO inhibitor"),
+        "flumioxazin" to hrac("14", "PPO inhibitor"),
+        "haloxyfop" to hrac("1", "ACCase inhibitor"),
+        "clethodim" to hrac("1", "ACCase inhibitor"),
+        "fluazifop" to hrac("1", "ACCase inhibitor"),
+        "sethoxydim" to hrac("1", "ACCase inhibitor"),
+        "propyzamide" to hrac("3", "Microtubule assembly inhibitor"),
+        "pendimethalin" to hrac("3", "Microtubule assembly inhibitor"),
+        "trifluralin" to hrac("3", "Microtubule assembly inhibitor"),
+        "isoxaben" to hrac("29", "Cellulose synthesis inhibitor"),
+        "indaziflam" to hrac("29", "Cellulose synthesis inhibitor"),
+        "metsulfuron methyl" to hrac("2", "ALS inhibitor"),
+        "chlorsulfuron" to hrac("2", "ALS inhibitor"),
+        "imazapyr" to hrac("2", "ALS inhibitor"),
+        "2,4 d" to hrac("4", "Auxin mimic"),
+        "mcpa" to hrac("4", "Auxin mimic"),
+        "triclopyr" to hrac("4", "Auxin mimic"),
+        "clopyralid" to hrac("4", "Auxin mimic"),
+        "pelargonic acid" to hrac("0", "Unknown / non-selective contact"),
 
         // ---- Insecticides & miticides (IRAC) ----
         "chlorpyrifos" to irac("1B", "Organophosphate"),

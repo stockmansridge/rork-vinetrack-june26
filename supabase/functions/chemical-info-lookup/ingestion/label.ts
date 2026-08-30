@@ -284,7 +284,89 @@ export function whpDaysFromStatement(
   // "Not required" is only a WHP statement inside a withholding section —
   // the same words appear in unrelated label sections.
   if (section === "withholding" && NOT_REQUIRED.test(statement)) return 0;
+  // Inside the WITHHOLDING PERIODS block a bare period is a withholding
+  // period: the section heading has already said so. Outside it, a bare "14
+  // weeks" could be anything on the page and is never read as one.
+  if (section === "withholding") {
+    if (GRAZING_ONLY.test(statement) && !HARVEST_MARKER.test(statement)) return null;
+    if (BARE_NOT_REQUIRED.test(statement.trim())) return 0;
+    const period = BARE_PERIOD.exec(statement.trim());
+    if (period) {
+      const multiplier = PERIOD_DAYS[period[2].toLowerCase()];
+      if (multiplier) return Math.round(Number.parseFloat(period[1]) * multiplier);
+    }
+  }
   return null;
+}
+
+/**
+ * A withholding CELL or statement that is nothing but the period itself.
+ *
+ * # Why this is separate from the sentence grammar above
+ *
+ * The sentence patterns all require the label to SAY what the number means
+ * ("DO NOT HARVEST FOR 14 WEEKS"), which is what makes them safe to read
+ * anywhere on the page. But the two places a label most often states a
+ * withholding period print no sentence at all:
+ *
+ *   * the WHP COLUMN of the Directions-for-Use table, whose cells read "14
+ *     weeks", "28 days", "Nil";
+ *   * the WITHHOLDING PERIODS block, which lists "Wine grapes, table grapes,
+ *     pome fruit, stone fruit: 14 weeks".
+ *
+ * In both cases the surrounding structure — a column headed WHP, or the
+ * withholding section — already establishes the meaning, so the number needs
+ * no sentence to be unambiguous. Requiring one is why a plainly printed
+ * 14-week harvest withholding period reached the app as "not stated".
+ *
+ * Bounded on purpose: the whole cell must be the period. A cell carrying
+ * prose is not reduced to whichever number appears in it first.
+ */
+const BARE_PERIOD =
+  /^(\d+(?:\.\d+)?)\s*(day|days|week|weeks|month|months)\s*(?:\((?:H|Harvest)\))?\.?$/i;
+
+/** A withholding cell stating that no period applies. */
+const BARE_NOT_REQUIRED =
+  /^(?:nil|none|not\s+required|no\s+withholding(?:\s+period)?)(?:\s+when\s+used\s+as\s+directed)?\.?$/i;
+
+/** A GRAZING marker. Never the harvest withholding period. */
+const GRAZING_ONLY = /\((?:G|Grazing)\)/i;
+const HARVEST_MARKER = /\((?:H|Harvest)\)/i;
+
+const PERIOD_DAYS: Record<string, number> = {
+  day: 1,
+  days: 1,
+  week: 7,
+  weeks: 7,
+  month: 30,
+  months: 30,
+};
+
+/**
+ * Harvest withholding period in days from a WHP COLUMN cell, or null.
+ *
+ * The column heading is the context, so a bare period is readable here. A
+ * cell marked for GRAZING only is not a harvest period and returns null —
+ * serving a grazing interval as the harvest withholding period would be
+ * exactly the sort of column-crossing error §10 exists to prevent.
+ *
+ * Never converts, never rounds, never infers: weeks become days by the
+ * arithmetic the period itself states, and anything the grammar does not
+ * recognise stays unresolved.
+ */
+export function whpDaysFromCell(rawCell: string): number | null {
+  const cell = String(rawCell ?? "").replace(/\s+/g, " ").trim();
+  if (!cell) return null;
+  if (GRAZING_ONLY.test(cell) && !HARVEST_MARKER.test(cell)) return null;
+  if (BARE_NOT_REQUIRED.test(cell)) return 0;
+  const period = BARE_PERIOD.exec(cell);
+  if (period) {
+    const multiplier = PERIOD_DAYS[period[2].toLowerCase()];
+    if (multiplier) return Math.round(Number.parseFloat(period[1]) * multiplier);
+  }
+  // A cell that prints a full sentence still reads through the sentence
+  // grammar, in withholding context — the column IS withholding context.
+  return whpDaysFromStatement(cell, "withholding");
 }
 
 const RE_ENTRY_CONTEXT = /RE-?ENTER|RE-?ENTRY|DO\s+NOT\s+ALLOW\s+ENTRY/i;

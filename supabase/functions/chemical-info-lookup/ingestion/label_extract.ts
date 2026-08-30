@@ -51,6 +51,7 @@ import {
   reentryHoursFromStatement,
   targetsAreEquivalent,
   targetsCorrespond,
+  whpDaysFromCell,
   whpDaysFromStatement,
 } from "./label.ts";
 import { deriveLabelTargetWordings } from "./label_target_wording.ts";
@@ -793,6 +794,33 @@ function bandIndexFor(bands: PlacedCell[][], y: number): number {
   return bands.length - 1;
 }
 
+// ---------------------------------------------------------------------------
+// Why a blank rate cell is NEVER filled in from a neighbouring row
+// ---------------------------------------------------------------------------
+//
+// It is tempting to treat an empty rate cell as a MERGED cell and inherit the
+// rate printed above it. Many labels really are laid out that way: one crop,
+// one rate, and a long list of weeds sharing it.
+//
+// A PDF text layer cannot support that inference. It reports where glyphs were
+// drawn, not where table cells begin and end, so a rate spanning five rows and
+// a rate belonging to one row with four blank rows beneath it are BYTE FOR
+// BYTE the same input: one cell at one vertical position, nothing elsewhere.
+//
+// Dithane 59688 is the measured proof. Its TREE AND VINE table prints
+// "150 to 200 g" against the Phomopsis row alone, and leaves the Blackspot and
+// Downy mildew rate cells genuinely EMPTY — the label registers those uses
+// with no rate in that column. Any inheritance rule strong enough to spread
+// CHATEAU's shared rate across its weeds also spreads Phomopsis's rate onto
+// two uses the label never gave a rate to, and publishes it as authoritative
+// manufacturer_label evidence.
+//
+// So the rule stands: a rate is served where the label printed one, and a gap
+// stays a gap. A missing rate is reported honestly and can be filled by a
+// human against the label; an invented one is indistinguishable from evidence.
+// Recovering genuinely merged cells needs the document's RULING LINES (or a
+// layout pass that reads them), not a guess about vertical proximity.
+
 function finishRow(acc: RowAccumulator | null, rows: DfuRow[]): void {
   if (!acc) return;
   const crop = joinCells(acc.cropLines) || (acc.titleCrop ?? "");
@@ -825,9 +853,10 @@ function finishRow(acc: RowAccumulator | null, rows: DfuRow[]): void {
   }
 
   // Several sub-rows share this crop cell. Rates and WHP go to the sub-row
-  // whose printed band contains them; the critical comments describe the crop
-  // block as a whole and stay with every sub-row (they are carried verbatim,
-  // never parsed, so sharing them states nothing the label does not).
+  // whose printed band contains them — never to a neighbouring band, for the
+  // reason set out above the band helpers; the critical comments describe the
+  // crop block as a whole and stay with every sub-row (they are carried
+  // verbatim, never parsed, so sharing them states nothing the label does not).
   const perBand = bands.map(() => ({
     rate: [] as PlacedCell[],
     rateHa: [] as PlacedCell[],
@@ -1065,6 +1094,27 @@ export interface DfuBinding {
   ratesByClaim: Map<number, WireLabelRate[]>;
   /** Verbatim critical comments per claim index (bound rows only). */
   commentsByClaim: Map<number, string[]>;
+  /**
+   * The complete target set of the PRINTED DIRECTION each claim bound to.
+   *
+   * Populated for every claim a row bound, so the claims that came from one
+   * printed direction can be recognised as one direction downstream. Where a
+   * claim bound rows from more than one printed direction the entry is
+   * omitted — an ambiguous grouping is worse than none, and the row's own
+   * targets remain a correct (if narrower) identity input.
+   */
+  /**
+   * The withholding period the table's own WHP COLUMN printed for each claim.
+   *
+   * The column was already parsed and captured — it had to be, to keep a
+   * withholding period from being swallowed into a rate cell — but nothing
+   * ever read it, so a table that plainly printed "14 weeks" beside a
+   * grapevine direction still served "withholding period: not stated".
+   *
+   * Carries the verbatim cell text beside the day count: the wording is what
+   * the label says, the number is only a projection for scheduling.
+   */
+  whpByClaim: Map<number, { days: number; text: string }>;
   unbound: UnboundDfuRow[];
 }
 
@@ -1116,6 +1166,8 @@ export function bindDfuRows(rows: DfuRow[], claims: LabelUseClaim[]): DfuBinding
     rowIndex: number;
     rates: WireLabelRate[];
     comments: string;
+    /** The row's own WHP cell, verbatim. */
+    whpText: string;
   }
   const contributions = new Map<number, Contribution[]>();
   const unbound: UnboundDfuRow[] = [];
@@ -1152,7 +1204,12 @@ export function bindDfuRows(rows: DfuRow[], claims: LabelUseClaim[]): DfuBinding
     const rates = rowRates(row);
     for (const claimIndex of matched) {
       const list = contributions.get(claimIndex) ?? [];
-      list.push({ rowIndex, rates, comments: row.comments_text });
+      list.push({
+        rowIndex,
+        rates,
+        comments: row.comments_text,
+        whpText: row.whp_text,
+      });
       contributions.set(claimIndex, list);
     }
   });
@@ -1175,6 +1232,7 @@ export function bindDfuRows(rows: DfuRow[], claims: LabelUseClaim[]): DfuBinding
   // `condition_ambiguous` — never discarded, never guessed.
   const ratesByClaim = new Map<number, WireLabelRate[]>();
   const commentsByClaim = new Map<number, string[]>();
+  const whpByClaim = new Map<number, { days: number; text: string }>();
   for (const [claimIndex, list] of contributions) {
     const rates: WireLabelRate[] = [];
     const comments: string[] = [];
@@ -1210,11 +1268,25 @@ export function bindDfuRows(rows: DfuRow[], claims: LabelUseClaim[]): DfuBinding
     }
     if (rates.length) ratesByClaim.set(claimIndex, flagAmbiguousConditions(rates));
     if (comments.length) commentsByClaim.set(claimIndex, comments);
+
+    // The table's WHP column, read only where every row backing this claim
+    // agrees. Two printed rows stating DIFFERENT withholding periods for one
+    // claim is a table this parser has no right to adjudicate, so it serves
+    // nothing and the gap stays honestly reported.
+    const readings = list
+      .map((c) => ({ text: c.whpText, days: whpDaysFromCell(c.whpText) }))
+      .filter((r): r is { text: string; days: number } => r.days !== null);
+    if (readings.length) {
+      const distinct = new Set(readings.map((r) => r.days));
+      if (distinct.size === 1) {
+        whpByClaim.set(claimIndex, { days: readings[0].days, text: readings[0].text });
+      }
+    }
   }
   for (const rowIndex of Array.from(conflictedRows).sort((a, b) => a - b)) {
     unbound.push(toUnbound(rows[rowIndex], "conflicting_rates"));
   }
-  return { ratesByClaim, commentsByClaim, unbound };
+  return { ratesByClaim, commentsByClaim, whpByClaim, unbound };
 }
 
 // ---------------------------------------------------------------------------
@@ -1315,8 +1387,20 @@ export function applyLabelDocumentExtraction(
       if (!next.statements.includes(comment)) next.statements.push(comment);
     }
 
-    const docWhp = cropWhp(claim.crop);
+    // The table's OWN withholding column for this claim, which is the most
+    // specific statement a label can make: it is printed on the very row the
+    // direction lives on. Consulted only where the crop-scoped statements did
+    // not already answer, so a WITHHOLDING PERIODS block always outranks it.
+    const tableWhp = binding.whpByClaim.get(index);
+    const docWhp = cropWhp(claim.crop) ??
+      (tableWhp ? { days: tableWhp.days, statement: tableWhp.text } : null);
     if (docWhp) {
+      // Preserve the label's own words alongside the day-count projection.
+      // "14 weeks" is what the registrant wrote; 98 is only what scheduling
+      // needs. A client shows the wording and calculates with the number.
+      if (next.withholding_statement === undefined) {
+        next.withholding_statement = docWhp.statement;
+      }
       if (next.withholding_period_days === undefined) {
         next.withholding_period_days = docWhp.days;
         if (!next.statements.includes(docWhp.statement)) {

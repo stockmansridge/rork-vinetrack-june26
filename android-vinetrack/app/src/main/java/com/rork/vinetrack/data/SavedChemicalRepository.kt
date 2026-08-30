@@ -120,7 +120,16 @@ class SavedChemicalRepository(private val session: SessionStore) {
         val registrationNumber = intel?.registration?.registrationNumber
         val registrant = intel?.registration?.registrant
         val registeredProductName = intel?.registration?.registeredProductName
-        val labelReference = intel?.registration?.labelReference
+        // The REGULATOR's approved label. `regulatorLabelUrl` is the same fact
+        // under the wire's newer name, so either may supply it — but a
+        // MANUFACTURER document can never land here.
+        val labelReference = intel?.registration?.let {
+            it.labelReference ?: it.regulatorLabelUrl
+        }
+        // Persisted separately (sql/215) so opening and saving a chemical stops
+        // discarding a manufacturer label the resolver had already validated.
+        val manufacturerLabelUrl = intel?.registration?.manufacturerLabelUrl
+        val manufacturerProductUrl = intel?.registration?.manufacturerProductUrl
         val labelVersion = intel?.registration?.labelVersion
         val verificationStatus = intel?.resolvedVerificationStatus?.raw
         val verificationSources = intel?.verification?.sources
@@ -177,6 +186,8 @@ class SavedChemicalRepository(private val session: SessionStore) {
         val registrant: String? = null,
         @SerialName("registered_product_name") val registeredProductName: String? = null,
         @SerialName("label_reference") val labelReference: String? = null,
+        @SerialName("manufacturer_label_url") val manufacturerLabelUrl: String? = null,
+        @SerialName("manufacturer_product_url") val manufacturerProductUrl: String? = null,
         @SerialName("label_version") val labelVersion: String? = null,
         @SerialName("verification_status") val verificationStatus: String? = null,
         @SerialName("verification_sources") val verificationSources: List<ChemicalDataSource>? = null,
@@ -235,6 +246,8 @@ class SavedChemicalRepository(private val session: SessionStore) {
         val registrant: String? = null,
         @SerialName("registered_product_name") val registeredProductName: String? = null,
         @SerialName("label_reference") val labelReference: String? = null,
+        @SerialName("manufacturer_label_url") val manufacturerLabelUrl: String? = null,
+        @SerialName("manufacturer_product_url") val manufacturerProductUrl: String? = null,
         @SerialName("label_version") val labelVersion: String? = null,
         @SerialName("verification_status") val verificationStatus: String? = null,
         @SerialName("verification_sources") val verificationSources: List<ChemicalDataSource>? = null,
@@ -318,6 +331,8 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 registrant = intel.registrant,
                 registeredProductName = intel.registeredProductName,
                 labelReference = intel.labelReference,
+                manufacturerLabelUrl = intel.manufacturerLabelUrl,
+                manufacturerProductUrl = intel.manufacturerProductUrl,
                 labelVersion = intel.labelVersion,
                 verificationStatus = intel.verificationStatus,
                 verificationSources = intel.verificationSources,
@@ -384,6 +399,8 @@ class SavedChemicalRepository(private val session: SessionStore) {
                 registrant = intel.registrant,
                 registeredProductName = intel.registeredProductName,
                 labelReference = intel.labelReference,
+                manufacturerLabelUrl = intel.manufacturerLabelUrl,
+                manufacturerProductUrl = intel.manufacturerProductUrl,
                 labelVersion = intel.labelVersion,
                 verificationStatus = intel.verificationStatus,
                 verificationSources = intel.verificationSources,

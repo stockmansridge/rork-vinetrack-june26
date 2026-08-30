@@ -1905,7 +1905,22 @@ data class SavedChemical(
     @SerialName("registration_number") val registrationNumber: String? = null,
     val registrant: String? = null,
     @SerialName("registered_product_name") val registeredProductName: String? = null,
+    /** The REGULATOR's approved label (APVMA eLabels and equivalents). */
     @SerialName("label_reference") val labelReference: String? = null,
+    /**
+     * The registrant/manufacturer-hosted LABEL document (sql/215).
+     *
+     * A separate durable column, never the regulator's field wearing a
+     * different name. Absent from rows written before sql/215 and from servers
+     * that predate it, which is why it is nullable with a default — decoding
+     * stays tolerant and no existing record changes shape.
+     */
+    @SerialName("manufacturer_label_url") val manufacturerLabelUrl: String? = null,
+    /**
+     * The registrant's PRODUCT INFORMATION page (sql/215). Marketing material:
+     * never a label, never a rate source, and never shown as either.
+     */
+    @SerialName("manufacturer_product_url") val manufacturerProductUrl: String? = null,
     @SerialName("label_version") val labelVersion: String? = null,
     @SerialName("verification_status") val verificationStatusRaw: String? = null,
     @SerialName("verification_sources") val verificationSources: List<ChemicalDataSource>? = null,
@@ -1979,6 +1994,13 @@ data class SavedChemical(
                         registrant = registrant,
                         registeredProductName = registeredProductName,
                         labelReference = labelReference,
+                        // The three link concepts are reconstructed SEPARATELY,
+                        // so a saved chemical reopens with the same documents
+                        // the lookup found rather than losing the
+                        // manufacturer's label on the first save.
+                        manufacturerLabelUrl = manufacturerLabelUrl,
+                        regulatorLabelUrl = labelReference,
+                        manufacturerProductUrl = manufacturerProductUrl,
                         labelVersion = labelVersion,
                     )
                 } else {
