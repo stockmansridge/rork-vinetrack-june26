@@ -5,12 +5,17 @@ import com.rork.vinetrack.data.model.SprayChemical
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.SprayTank
 import com.rork.vinetrack.data.spray.SprayProductRateBasis
+import com.rork.vinetrack.data.spray.SprayProgramStepNotPermitted
 import com.rork.vinetrack.data.spray.SprayTargetVocabulary
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
+import io.ktor.client.request.patch
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -39,7 +44,16 @@ import java.util.UUID
  * Rows are mapped into read-only in-memory [SprayRecord] templates (the
  * embedded `chemical_lines` JSON becomes a single tank's chemical list) so
  * the existing template UI and "new record from template" prefill flow work
- * without a second code path. Android never writes to `spray_jobs`.
+ * without a second code path.
+ *
+ * A Program Step is a SHARED vineyard resource: the portal, iOS and Android
+ * edit the SAME `spray_jobs` row. [updateTemplate] therefore updates in place
+ * (PATCH + `id` filter) and never inserts a parallel copy. Authorisation is
+ * the database's, not the client's — `spray_jobs_update_managers` (sql/032)
+ * restricts UPDATE to owner/manager, and a denied write returns zero rows
+ * rather than an error. There is deliberately no offline mutation queue for
+ * `spray_jobs` — a write either reaches the shared row or fails loudly,
+ * mirroring iOS.
  */
 class SprayJobTemplateRepository(private val session: SessionStore) {
 
@@ -80,6 +94,41 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         @SerialName("deleted_at") val deletedAt: String? = null,
     )
 
+    /**
+     * One portal Program Step row, as the server currently holds it, with the
+     * `chemical_lines` array kept RAW so the editor can round-trip every key
+     * it does not model (`chemical_snapshot` above all) verbatim.
+     */
+    data class PortalProgramStepRow(
+        val id: String,
+        val vineyardId: String,
+        val name: String,
+        val growthStageCode: String?,
+        val operationType: String?,
+        val target: String?,
+        val targets: List<String>?,
+        val notes: String?,
+        val equipmentId: String?,
+        val tractorId: String?,
+        val chemicalLines: JsonArray?,
+    )
+
+    /** A `public.tractors` row, decoded tolerantly for the tractor picker. */
+    @Serializable
+    data class SprayTractor(
+        val id: String,
+        @SerialName("vineyard_id") val vineyardId: String? = null,
+        val name: String? = null,
+        val make: String? = null,
+        val model: String? = null,
+    ) {
+        val displayName: String
+            get() = name?.takeIf { it.isNotBlank() }
+                ?: listOfNotNull(make?.takeIf { it.isNotBlank() }, model?.takeIf { it.isNotBlank() })
+                    .joinToString(" ")
+                    .ifBlank { "Tractor" }
+    }
+
     suspend fun listTemplates(vineyardId: String): List<SprayRecord> =
         withContext(Dispatchers.IO) {
             requireConfig()
@@ -95,6 +144,107 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
                 else -> throw BackendError.Server(response.status.value, response.bodyAsText())
             }
         }
+
+    /**
+     * Fetch ONE Program Step row fresh from the server, raw lines included,
+     * so an edit starts from what the row actually holds now rather than a
+     * mapped cache. Same filter contract as [listTemplates]; null when the
+     * row is gone (deleted, or never visible to this user).
+     */
+    suspend fun fetchTemplateRow(id: String, vineyardId: String): PortalProgramStepRow? =
+        withContext(Dispatchers.IO) {
+            requireConfig()
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val response = SupabaseClient.http.get(
+                SupabaseClient.restUrl(templateFilterPath(id, vineyardId)),
+            ) { authHeaders(token) }
+            when {
+                response.status.isSuccess() ->
+                    response.body<List<SprayJobRow>>().firstOrNull()?.toPortalRow()
+                response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+                else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            }
+        }
+
+    /**
+     * Update one existing Program Step row IN PLACE and return it as the
+     * server now holds it. The filter chain is the safety contract, mirroring
+     * iOS `SupabaseSprayJobTemplateRepository.updateTemplate`:
+     *
+     *  * `id` — the SAME Program Step, never a new row
+     *  * `vineyard_id` — a cross-vineyard write is impossible even if an id leaks
+     *  * `is_template = true` — this path can never touch an operational job
+     *  * `deleted_at IS NULL` — an archived step is not silently resurrected
+     *
+     * `is_template` is filtered on but never written, so the row cannot
+     * change what kind of thing it is.
+     *
+     * @throws SprayProgramStepNotPermitted when the statement affects no
+     * rows. Under RLS that is indistinguishable from "row not found", and
+     * both mean the same thing: this save did not land. Reporting success
+     * would be the one unacceptable outcome.
+     */
+    suspend fun updateTemplate(
+        id: String,
+        vineyardId: String,
+        payload: JsonObject,
+    ): SprayRecord =
+        withContext(Dispatchers.IO) {
+            requireConfig()
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val response = SupabaseClient.http.patch(
+                SupabaseClient.restUrl(templateFilterPath(id, vineyardId)),
+            ) {
+                authHeaders(token)
+                headers { append("Prefer", "return=representation") }
+                contentType(ContentType.Application.Json)
+                setBody(payload)
+            }
+            when {
+                response.status.isSuccess() -> {
+                    val row = response.body<List<SprayJobRow>>().firstOrNull()
+                        ?: throw SprayProgramStepNotPermitted()
+                    row.toSprayRecord()
+                }
+                response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+                else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            }
+        }
+
+    /**
+     * The vineyard's tractors (`public.tractors`), for the Program Step
+     * tractor picker. `spray_jobs.tractor_id` is a foreign key into this
+     * table — vineyard machines must never be offered here, exactly as on
+     * iOS.
+     */
+    suspend fun listTractors(vineyardId: String): List<SprayTractor> =
+        withContext(Dispatchers.IO) {
+            requireConfig()
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val response = SupabaseClient.http.get(
+                SupabaseClient.restUrl("tractors?vineyard_id=eq.$vineyardId"),
+            ) { authHeaders(token) }
+            when {
+                response.status.isSuccess() ->
+                    response.body<List<SprayTractor>>().sortedBy { it.displayName.lowercase() }
+                response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+                else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            }
+        }
+
+    private fun SprayJobRow.toPortalRow(): PortalProgramStepRow = PortalProgramStepRow(
+        id = id,
+        vineyardId = vineyardId,
+        name = name,
+        growthStageCode = growthStageCode?.trim()?.takeIf { it.isNotEmpty() },
+        operationType = operationType?.takeIf { it.isNotBlank() },
+        target = target?.takeIf { it.isNotBlank() },
+        targets = targets,
+        notes = notes?.takeIf { it.isNotBlank() },
+        equipmentId = equipmentId,
+        tractorId = tractorId,
+        chemicalLines = chemicalLines,
+    )
 
     /** Deterministic ids so re-fetches don't churn Compose list identity. */
     private fun stableUuid(seed: String): String =
@@ -198,6 +348,34 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
     }
 
     companion object {
+        /**
+         * The PostgREST filter path shared by [fetchTemplateRow] and
+         * [updateTemplate] — factored so the safety contract (id + vineyard +
+         * `is_template=true` + `deleted_at IS NULL`) is one testable string.
+         */
+        fun templateFilterPath(id: String, vineyardId: String): String =
+            "spray_jobs?id=eq.$id&vineyard_id=eq.$vineyardId&is_template=eq.true&deleted_at=is.null"
+
+        /**
+         * Compose the `chemical_lines` unit string the portal and the Excel
+         * import already write — the exact INVERSE of [parseLineUnit], which
+         * is the only thing that reads it back. The per-100 L basis lives in
+         * this string and nowhere else, so a per-100 L line must round-trip
+         * through it verbatim: writing `mL/ha` for a `mL/100L` line would
+         * silently restate the rate. Mirrors iOS
+         * `BackendSprayJobTemplate.composeLineUnit`.
+         */
+        fun composeLineUnit(unitRaw: String, per100Litres: Boolean): String {
+            val measure = when (unitRaw) {
+                "Litres" -> "L"
+                "mL" -> "mL"
+                "Kg" -> "kg"
+                "g" -> "g"
+                else -> "L"
+            }
+            return "$measure/" + if (per100Litres) "100L" else "ha"
+        }
+
         /**
          * Parse a free-text chemical-line unit ("L/ha", "mL/100L", "kg/ha",
          * "g") into the strict ChemicalUnit raw shared with iOS ("Litres",

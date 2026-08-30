@@ -89,6 +89,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -140,6 +142,12 @@ import com.rork.vinetrack.data.model.sprayRecordStatus
 import com.rork.vinetrack.data.model.sprayOperationTypes
 import com.rork.vinetrack.data.model.windDirectionOptions
 import com.rork.vinetrack.data.spray.SprayApplicationBlockSnapshot
+import com.rork.vinetrack.data.spray.SprayProgramLanding
+import com.rork.vinetrack.data.spray.SprayProgramSort
+import com.rork.vinetrack.data.spray.SprayProgramStepPermissions
+import com.rork.vinetrack.data.spray.SprayProgramTerminology
+import com.rork.vinetrack.data.spray.SprayTargetLibrary
+import com.rork.vinetrack.data.spray.SprayTargetVocabulary
 import com.rork.vinetrack.data.spray.SprayBlockAttributionDisplay
 import com.rork.vinetrack.data.spray.SprayManualBlockAttribution
 import com.rork.vinetrack.data.spray.blockIds
@@ -187,6 +195,8 @@ fun SpraysScreen(
         }
     }
     var editing by remember { mutableStateOf<SprayRecord?>(null) }
+    // A Program Step being edited in the configuration editor (record, isPortal).
+    var editingProgramStep by remember { mutableStateOf<Pair<SprayRecord, Boolean>?>(null) }
     // A template selected to seed a brand-new operational record (job -> record).
     var prefillFromTemplate by remember { mutableStateOf<SprayRecord?>(null) }
 
@@ -222,6 +232,7 @@ fun SpraysScreen(
                 onAdd = { creating = true },
                 onAddTemplate = { creatingTemplate = true },
                 onOpenCalculator = { calculatorPrefillId = null; calculating = true },
+                onPlanFromProgram = { step -> calculatorPrefillId = step.id; calculating = true },
             )
         } else {
             SprayDetailView(
@@ -230,6 +241,7 @@ fun SpraysScreen(
                 recordId = record.id,
                 onBack = { selectedId = null },
                 onEdit = { editing = it },
+                onEditProgramStep = { rec, isPortal -> editingProgramStep = rec to isPortal },
                 onUseTemplate = { prefillFromTemplate = it; selectedId = null },
                 onJobStarted = onOpenTrip,
             )
@@ -248,95 +260,35 @@ fun SpraysScreen(
     editing?.let { rec ->
         SpraySheet(vm = vm, state = state, existing = rec, asTemplate = rec.isTemplate, onDismiss = { editing = null }, onSaved = { editing = null })
     }
+    editingProgramStep?.let { (rec, isPortal) ->
+        SprayProgramStepEditSheet(
+            vm = vm,
+            state = state,
+            record = rec,
+            isPortal = isPortal,
+            onDismiss = { editingProgramStep = null },
+            onSaved = { editingProgramStep = null },
+        )
+    }
 }
 
-/** Status/segment filters for the spray list, mirroring the iOS SprayStatusFilter order. */
+/**
+ * Status filters for the SPRAYS tab, in the iOS order (Upcoming · In Progress
+ * · Completed · All). The Program is not a status — it is the other TAB: a
+ * reusable Program Step has no date, tank count or completion state, and
+ * mixing it behind one status filter made every step look like a record.
+ */
 private enum class SprayFilter(val label: String) {
-    // Order defines the chip order: Templates sits immediately after All
-    // because Templates hold the vineyard's master spray program.
-    ALL("All"),
-    TEMPLATES("Program"),
+    NOT_STARTED(SprayProgramTerminology.UPCOMING),
     IN_PROGRESS("In Progress"),
-    NOT_STARTED("Upcoming"),
     COMPLETED("Completed"),
+    ALL("All"),
 }
 
-/** Sort options for the spray list, mirroring the iOS SprayProgramSortOption. */
-private enum class SpraySort(val label: String) {
-    EL_ASC("E-L stage (low → high)"),
-    EL_DESC("E-L stage (high → low)"),
-    DATE_NEWEST("Newest"),
-    DATE_OLDEST("Oldest"),
-    NAME_AZ("Name (A–Z)"),
-    NAME_ZA("Name (Z–A)"),
-}
-
-/**
- * Finds an E-L (Eichhorn–Lorenz) stage mention in free text — "EL12",
- * "EL 12", "E-L 12", "el-7" — so sorting can use the numeric stage value.
- * The leading look-behind stops words like "Model 3" or "Diesel 5" matching.
- */
-private val EL_STAGE_TEXT_REGEX = Regex("""(?i)(?<![a-z0-9])e-?l[\s.\-]*([0-9]{1,3})""")
-
-/**
- * The numeric E-L stage for a spray record. Portal templates carry the
- * canonical `growth_stage_code` (sql/034); every other record falls back to an
- * "EL n" mention in its reference or notes. Null when no stage is known.
- */
-private fun elStageNumber(record: SprayRecord): Int? {
-    record.templateGrowthStageCode?.let { code ->
-        code.filter { it.isDigit() }.take(3).toIntOrNull()?.takeIf { it > 0 }?.let { return it }
-    }
-    val text = "${record.displayLabel} ${record.notes ?: ""}"
-    return EL_STAGE_TEXT_REGEX.find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()?.takeIf { it > 0 }
-}
-
-/**
- * Applies the selected sort. E-L sorts numerically by actual stage value (EL 7
- * < EL 12 < EL 31, never alphabetical); records with no known stage always
- * sink to the bottom in either direction, newest-first among themselves.
- */
-private fun applySpraySort(records: List<SprayRecord>, sort: SpraySort): List<SprayRecord> = when (sort) {
-    SpraySort.DATE_NEWEST -> records.sortedByDescending { it.dateEpochMs ?: 0L }
-    SpraySort.DATE_OLDEST -> records.sortedBy { it.dateEpochMs ?: 0L }
-    SpraySort.NAME_AZ -> records.sortedBy { it.displayLabel.lowercase() }
-    SpraySort.NAME_ZA -> records.sortedByDescending { it.displayLabel.lowercase() }
-    SpraySort.EL_ASC, SpraySort.EL_DESC -> {
-        val ascending = sort == SpraySort.EL_ASC
-        records
-            .map { it to elStageNumber(it) }
-            .sortedWith(
-                Comparator { a, b ->
-                    val ea = a.second
-                    val eb = b.second
-                    when {
-                        ea != null && eb != null && ea != eb -> if (ascending) ea - eb else eb - ea
-                        ea != null && eb == null -> -1
-                        ea == null && eb != null -> 1
-                        else -> (b.first.dateEpochMs ?: 0L).compareTo(a.first.dateEpochMs ?: 0L)
-                    }
-                },
-            )
-            .map { it.first }
-    }
-}
-
-/**
- * Case-insensitive client-side match for an operational spray record, mirroring iOS
- * `SprayProgramView.operationalRecords` search: reference, paddock, chemicals, notes, equipment.
- */
-private fun sprayRecordMatches(record: SprayRecord, trips: List<com.rork.vinetrack.data.model.Trip>, query: String): Boolean {
-    val paddock = resolveSprayTrip(record, trips)?.paddockName ?: ""
-    val chemicals = record.chemicalNames.joinToString(" ")
-    val combined = "${record.displayLabel} $paddock $chemicals ${record.notes ?: ""} ${record.equipmentType ?: ""}"
-    return combined.contains(query, ignoreCase = true)
-}
-
-/** Search match for templates, mirroring iOS `templateRecords`: reference, chemicals, notes only. */
-private fun sprayTemplateMatches(record: SprayRecord, query: String): Boolean {
-    val chemicals = record.chemicalNames.joinToString(" ")
-    val combined = "${record.displayLabel} $chemicals ${record.notes ?: ""}"
-    return combined.contains(query, ignoreCase = true)
+/** The two halves of the Spray Program — mirrors the iOS `SprayProgramTab`. */
+private enum class SprayProgramTabChoice(val label: String) {
+    PROGRAM(SprayProgramTerminology.PROGRAM),
+    SPRAYS("Sprays"),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -349,16 +301,24 @@ private fun SprayListView(
     onAdd: () -> Unit,
     onAddTemplate: () -> Unit,
     onOpenCalculator: () -> Unit,
+    onPlanFromProgram: (SprayRecord) -> Unit,
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
+    // The two halves of the Spray Program. Opens on Program — the vineyard's
+    // master program is the primary landing view, exactly as on iOS.
+    var tab by rememberSaveable { mutableStateOf(SprayProgramTabChoice.PROGRAM) }
     var filter by remember { mutableStateOf(SprayFilter.ALL) }
     var addMenu by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf("") }
     // Survives leaving/re-entering the tab and rotation while working in the
-    // Spray Program (iOS persists the same choice via AppStorage).
-    var sort by rememberSaveable { mutableStateOf(SpraySort.DATE_NEWEST) }
+    // Spray Program (iOS persists the same choices via AppStorage).
+    var sort by rememberSaveable { mutableStateOf(SprayProgramSort.DATE_NEWEST) }
+    // Program defaults to phenological order — a reusable Program Step is not
+    // dated, so "Newest" would sort it by a field that means nothing on it.
+    var programSort by rememberSaveable { mutableStateOf(SprayProgramSort.EL_ASC) }
     var sortMenu by remember { mutableStateOf(false) }
+    var showProgramPicker by remember { mutableStateOf(false) }
     // CSV import: pick a document, parse it, then confirm in a preview sheet.
     var importResult by remember { mutableStateOf<SprayProgramCsvImporter.ImportResult?>(null) }
     var importErrorMsg by remember { mutableStateOf<String?>(null) }
@@ -386,23 +346,27 @@ private fun SprayListView(
     val hasSearch = query.isNotEmpty()
 
     val all = remember(state.sprayRecords) { state.sprayRecords }
-    // Templates merge two sources: legacy templates stored in spray_records and
-    // read-only portal templates from spray_jobs (Lovable-created), deduped by id.
-    val templates = remember(state.sprayRecords, state.sprayJobTemplates, query, sort) {
-        val local = state.sprayRecords.asSequence().filter { it.isTemplate }
-        val localIds = local.map { it.id }.toSet()
-        val portal = state.sprayJobTemplates.asSequence().filter { it.id !in localIds }
-        val merged = (local + portal)
-            .filter { query.isEmpty() || sprayTemplateMatches(it, query) }
-            .toList()
-        applySpraySort(merged, sort)
+    // Program Steps merge two sources: local steps stored in spray_records and
+    // shared portal steps from spray_jobs, deduped by id (local wins).
+    val allTemplates = remember(state.sprayRecords, state.sprayJobTemplates) {
+        SprayProgramLanding.mergedProgramSteps(state.sprayRecords, state.sprayJobTemplates)
+    }
+    val targetLabels = remember(state.sprayTargetLibrary, state.selectedVineyardId) {
+        SprayTargetLibrary.labels(state.sprayTargetLibrary, state.selectedVineyardId)
+    }
+    val templates = remember(allTemplates, query, programSort, targetLabels) {
+        SprayProgramLanding.sort(
+            allTemplates.filter { query.isEmpty() || SprayProgramLanding.programStepMatches(it, query, targetLabels) },
+            programSort,
+        )
     }
     val operational = remember(state.sprayRecords, query, sort, state.trips) {
-        val base = state.sprayRecords.asSequence()
-            .filter { !it.isTemplate }
-            .filter { query.isEmpty() || sprayRecordMatches(it, state.trips, query) }
-            .toList()
-        applySpraySort(base, sort)
+        SprayProgramLanding.sort(
+            state.sprayRecords
+                .filter { !it.isTemplate }
+                .filter { query.isEmpty() || SprayProgramLanding.sprayMatches(it, state.trips, query) },
+            sort,
+        )
     }
     val filtered = remember(operational, filter, state.trips) {
         when (filter) {
@@ -410,7 +374,6 @@ private fun SprayListView(
             SprayFilter.IN_PROGRESS -> operational.filter { sprayRecordStatus(it, state.trips) == SprayStatus.IN_PROGRESS }
             SprayFilter.NOT_STARTED -> operational.filter { sprayRecordStatus(it, state.trips) == SprayStatus.NOT_STARTED }
             SprayFilter.COMPLETED -> operational.filter { sprayRecordStatus(it, state.trips) == SprayStatus.COMPLETED }
-            SprayFilter.TEMPLATES -> emptyList()
         }
     }
 
@@ -428,20 +391,29 @@ private fun SprayListView(
                             Icon(Icons.Filled.Add, contentDescription = "New spray")
                         }
                         androidx.compose.material3.DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
+                            // Planning from the program is the primary workflow;
+                            // manual record entry is last — the iOS + menu order.
                             DropdownMenuItem(
-                                text = { Text("Spray calculator") },
+                                text = { Text(SprayProgramTerminology.PLAN_FROM_PROGRAM) },
+                                leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
+                                enabled = allTemplates.isNotEmpty(),
+                                onClick = { addMenu = false; showProgramPicker = true },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(SprayProgramTerminology.ONE_OFF_SPRAY) },
                                 leadingIcon = { Icon(Icons.Filled.Calculate, contentDescription = null) },
                                 onClick = { addMenu = false; onOpenCalculator() },
                             )
+                            HorizontalDivider()
                             DropdownMenuItem(
-                                text = { Text("Log a spray record") },
-                                leadingIcon = { Icon(Icons.Filled.WaterDrop, contentDescription = null) },
-                                onClick = { addMenu = false; onAdd() },
+                                text = { Text(SprayProgramTerminology.ADD_PROGRAM_STEP) },
+                                leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                                onClick = { addMenu = false; onAddTemplate() },
                             )
                             DropdownMenuItem(
-                                text = { Text("Add Program Step") },
-                                leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
-                                onClick = { addMenu = false; onAddTemplate() },
+                                text = { Text(SprayProgramTerminology.LOG_SPRAY_RECORD) },
+                                leadingIcon = { Icon(Icons.Filled.WaterDrop, contentDescription = null) },
+                                onClick = { addMenu = false; onAdd() },
                             )
                         }
                     }
@@ -450,23 +422,39 @@ private fun SprayListView(
                             Icon(Icons.Filled.FilterList, contentDescription = "Sort", tint = vine.textSecondary)
                         }
                         androidx.compose.material3.DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                            SpraySort.entries.forEach { option ->
+                            // Date sorting lives on the Sprays tab and only there —
+                            // the Program tab deliberately has no date option.
+                            val sortOptions = if (tab == SprayProgramTabChoice.PROGRAM) {
+                                listOf(
+                                    SprayProgramSort.EL_ASC,
+                                    SprayProgramSort.EL_DESC,
+                                    SprayProgramSort.NAME_AZ,
+                                    SprayProgramSort.NAME_ZA,
+                                )
+                            } else {
+                                SprayProgramSort.entries.toList()
+                            }
+                            val activeSort = if (tab == SprayProgramTabChoice.PROGRAM) programSort else sort
+                            sortOptions.forEach { option ->
                                 DropdownMenuItem(
                                     text = { Text(option.label) },
                                     leadingIcon = {
                                         Icon(
                                             when (option) {
-                                                SpraySort.EL_ASC, SpraySort.EL_DESC -> Icons.Filled.SwapVert
-                                                SpraySort.NAME_AZ, SpraySort.NAME_ZA -> Icons.Filled.SortByAlpha
+                                                SprayProgramSort.EL_ASC, SprayProgramSort.EL_DESC -> Icons.Filled.SwapVert
+                                                SprayProgramSort.NAME_AZ, SprayProgramSort.NAME_ZA -> Icons.Filled.SortByAlpha
                                                 else -> Icons.Filled.CalendarToday
                                             },
                                             contentDescription = null,
                                         )
                                     },
                                     trailingIcon = {
-                                        if (option == sort) Icon(Icons.Filled.Check, contentDescription = null, tint = VineColors.Primary)
+                                        if (option == activeSort) Icon(Icons.Filled.Check, contentDescription = null, tint = VineColors.Primary)
                                     },
-                                    onClick = { sort = option; sortMenu = false },
+                                    onClick = {
+                                        if (tab == SprayProgramTabChoice.PROGRAM) programSort = option else sort = option
+                                        sortMenu = false
+                                    },
                                 )
                             }
                             HorizontalDivider()
@@ -542,12 +530,23 @@ private fun SprayListView(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            // Program | Sprays — the reusable program and the sprays actually
+            // applied are different kinds of thing (iOS SprayProgramTab).
+            TabRow(selectedTabIndex = tab.ordinal, containerColor = vine.appBackground) {
+                SprayProgramTabChoice.entries.forEach { choice ->
+                    Tab(
+                        selected = tab == choice,
+                        onClick = { tab = choice },
+                        text = { Text(choice.label) },
+                    )
+                }
+            }
             // Search bar
             OutlinedTextField(
                 value = search,
                 onValueChange = { search = it },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("Search spray records") },
+                placeholder = { Text(if (tab == SprayProgramTabChoice.PROGRAM) "Search program" else "Search sprays") },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = {
                     if (hasSearch) {
@@ -560,73 +559,74 @@ private fun SprayListView(
                 shape = RoundedCornerShape(12.dp),
             )
 
-            // Status filter chips
-            androidx.compose.foundation.lazy.LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(SprayFilter.entries.toList()) { f ->
-                    val active = f == filter
-                    Text(
-                        f.label,
-                        fontSize = 13.sp,
-                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                        color = if (active) Color.White else vine.textSecondary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(if (active) VineColors.Primary else vine.cardBackground)
-                            .clickable { filter = f }
-                            .padding(horizontal = 14.dp, vertical = 7.dp),
-                    )
+            // Status filter chips — Sprays tab only. A Program Step has no
+            // status, so the chips would be meaningless on the Program tab.
+            if (tab == SprayProgramTabChoice.SPRAYS) {
+                androidx.compose.foundation.lazy.LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(SprayFilter.entries.toList()) { f ->
+                        val active = f == filter
+                        Text(
+                            f.label,
+                            fontSize = 13.sp,
+                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (active) Color.White else vine.textSecondary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(if (active) VineColors.Primary else vine.cardBackground)
+                                .clickable { filter = f }
+                                .padding(horizontal = 14.dp, vertical = 7.dp),
+                        )
+                    }
                 }
             }
 
             when {
-                state.isLoadingVineyardData && all.isEmpty() -> {
+                state.isLoadingVineyardData && all.isEmpty() && allTemplates.isEmpty() -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = VineColors.Primary)
                     }
                 }
 
-                all.isEmpty() -> {
+                tab == SprayProgramTabChoice.PROGRAM && templates.isEmpty() -> {
                     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                        EmptyState(
-                            icon = Icons.Filled.WaterDrop,
-                            title = "No Spray Records",
-                            message = "Tap + to create a spray record.",
-                            actionLabel = "Log a spray",
-                            onAction = onAdd,
-                        )
+                        if (hasSearch) {
+                            EmptyState(
+                                icon = Icons.Filled.Search,
+                                title = "No results",
+                                message = "No program steps match \u201C$query\u201D.",
+                            )
+                        } else {
+                            EmptyState(
+                                icon = Icons.Filled.ContentCopy,
+                                title = "No Program Steps",
+                                message = "Build your vineyard spray program by adding reusable spray steps, or create them in the Admin Portal.",
+                                actionLabel = SprayProgramTerminology.ADD_PROGRAM_STEP,
+                                onAction = onAddTemplate,
+                            )
+                        }
                     }
                 }
 
-                filter == SprayFilter.TEMPLATES && templates.isEmpty() -> {
+                tab == SprayProgramTabChoice.SPRAYS && filtered.isEmpty() -> {
                     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                        EmptyState(
-                            icon = Icons.Filled.ContentCopy,
-                            title = "No Templates",
-                            message = "Create templates in the admin portal or mark a spray record as a template to reuse it for future spray jobs.",
-                        )
-                    }
-                }
-
-                hasSearch && filtered.isEmpty() && templates.isEmpty() -> {
-                    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                        EmptyState(
-                            icon = Icons.Filled.Search,
-                            title = "No results",
-                            message = "No spray records match \u201C$query\u201D.",
-                        )
-                    }
-                }
-
-                filter != SprayFilter.TEMPLATES && filtered.isEmpty() && templates.isEmpty() -> {
-                    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                        EmptyState(
-                            icon = Icons.Filled.WaterDrop,
-                            title = "No Spray Records",
-                            message = "Tap + to create a spray record.",
-                        )
+                        if (hasSearch) {
+                            EmptyState(
+                                icon = Icons.Filled.Search,
+                                title = "No results",
+                                message = "No spray records match \u201C$query\u201D.",
+                            )
+                        } else {
+                            EmptyState(
+                                icon = Icons.Filled.WaterDrop,
+                                title = "No Sprays",
+                                message = "Plan a spray from your Program or create a one-off spray.",
+                                actionLabel = SprayProgramTerminology.PLAN_SPRAY,
+                                onAction = { if (allTemplates.isEmpty()) onOpenCalculator() else showProgramPicker = true },
+                            )
+                        }
                     }
                 }
 
@@ -636,7 +636,7 @@ private fun SprayListView(
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        if (filter == SprayFilter.TEMPLATES) {
+                        if (tab == SprayProgramTabChoice.PROGRAM) {
                             items(templates, key = { it.id }) { record ->
                                 SprayRow(
                                     record = record,
@@ -644,21 +644,10 @@ private fun SprayListView(
                                     syncBadge = state.spraySyncState(record.id),
                                     isPortalTemplate = state.sprayRecords.none { it.id == record.id },
                                     onClick = { onSelect(record) },
+                                    targetLabels = targetLabels,
                                 )
                             }
                         } else {
-                            if (filter == SprayFilter.ALL && templates.isNotEmpty()) {
-                                item { SectionHeader("Program", onLight = true) }
-                                items(templates, key = { "tmpl-${it.id}" }) { record ->
-                                    SprayRow(
-                                        record = record,
-                                        trips = state.trips,
-                                        syncBadge = state.spraySyncState(record.id),
-                                        isPortalTemplate = state.sprayRecords.none { it.id == record.id },
-                                        onClick = { onSelect(record) },
-                                    )
-                                }
-                            }
                             items(filtered, key = { it.id }) { record ->
                                 SprayRow(
                                     record = record,
@@ -705,6 +694,71 @@ private fun SprayListView(
             text = { Text(msg) },
             confirmButton = { TextButton(onClick = { importErrorMsg = null }) { Text("OK") } },
         )
+    }
+
+    // `+ → Plan from Program`: pick a Program Step, always E-L ascending — the
+    // order a spray program is read in. Selecting a row runs the SAME
+    // Program → Calculator prefill route the Program tab uses.
+    if (showProgramPicker) {
+        val pickerSteps = SprayProgramLanding.sort(allTemplates, SprayProgramSort.EL_ASC)
+        ModalBottomSheet(
+            onDismissRequest = { showProgramPicker = false },
+            sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    SprayProgramTerminology.PLAN_FROM_PROGRAM,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = vine.textPrimary,
+                )
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.heightIn(max = 440.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(pickerSteps, key = { it.id }) { step ->
+                        val stageLabel = SprayProgramLanding.elStageLabel(step)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(vine.cardBackground)
+                                .clickable { showProgramPicker = false; onPlanFromProgram(step) }
+                                .padding(12.dp),
+                        ) {
+                            Text(
+                                stageLabel ?: "—",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (stageLabel == null) vine.textSecondary else VineColors.LeafGreen,
+                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    step.displayLabel,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = vine.textPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                val subtitle = SprayTargetVocabulary.displayString(
+                                    SprayTargetVocabulary.tags(step.targets.orEmpty(), null, targetLabels),
+                                ) ?: step.chemicalNames.firstOrNull { it.isNotBlank() }
+                                subtitle?.let {
+                                    Text(it, fontSize = 12.sp, color = vine.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -853,6 +907,7 @@ private fun SprayRow(
     syncBadge: TripSyncBadge,
     isPortalTemplate: Boolean,
     onClick: () -> Unit,
+    targetLabels: Map<String, String> = emptyMap(),
 ) {
     val vine = LocalVineColors.current
     val status = if (record.isTemplate) null else sprayRecordStatus(record, trips)
@@ -886,10 +941,28 @@ private fun SprayRow(
                         Text(name, fontSize = 12.sp, color = VineColors.Olive, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
+                if (record.isTemplate) {
+                    // Program-row identity: the E-L stage badge and the step's
+                    // target line — what the operator recognises a step by.
+                    val stageLabel = SprayProgramLanding.elStageLabel(record)
+                    val targetLine = SprayTargetVocabulary.displayString(
+                        SprayTargetVocabulary.tags(record.targets.orEmpty(), null, targetLabels),
+                    )
+                    if (stageLabel != null || targetLine != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            stageLabel?.let {
+                                Text(it, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = VineColors.LeafGreen, maxLines = 1)
+                            }
+                            targetLine?.let {
+                                Text(it, fontSize = 12.sp, color = VineColors.Olive, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
                 if (isPortalTemplate) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Icon(Icons.Filled.Lock, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(11.dp))
-                        Text("Admin portal template", fontSize = 11.sp, color = vine.textSecondary, maxLines = 1)
+                        Icon(Icons.Filled.Sync, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(11.dp))
+                        Text(SprayProgramTerminology.SYNCED_WITH_ADMIN_PORTAL, fontSize = 11.sp, color = vine.textSecondary, maxLines = 1)
                     }
                 }
                 val chems = record.chemicalNames.filter { it.isNotBlank() }
@@ -930,12 +1003,15 @@ private fun SprayDetailView(
     recordId: String,
     onBack: () -> Unit,
     onEdit: (SprayRecord) -> Unit,
+    onEditProgramStep: (SprayRecord, Boolean) -> Unit,
     onUseTemplate: (SprayRecord) -> Unit,
     onJobStarted: ((String) -> Unit)? = null,
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
-    // Portal templates (spray_jobs) are read-only on mobile: no edit, no delete.
+    // A portal Program Step is the SHARED `spray_jobs` row: the portal, iOS
+    // and Android edit the same row, gated by `spray_jobs_update_managers`
+    // (owner/manager). Deletion of the shared row stays out of scope.
     val isPortalTemplate = state.sprayRecords.none { it.id == recordId } &&
         state.sprayJobTemplates.any { it.id == recordId }
     val record = state.sprayRecords.firstOrNull { it.id == recordId }
@@ -978,7 +1054,20 @@ private fun SprayDetailView(
                 },
                 actions = {
                     IconButton(onClick = { exportPdf() }) { Icon(Icons.Filled.PictureAsPdf, contentDescription = "Export as PDF") }
-                    if (!isPortalTemplate) {
+                    if (record.isTemplate) {
+                        // The Program is a shared vineyard resource: an authorised
+                        // user edits the SAME Program Step from either interface.
+                        val canEditStep = SprayProgramStepPermissions.canEdit(
+                            isPortalManaged = isPortalTemplate,
+                            canManageSprayProgram = state.canManageSprayProgram,
+                            canEditRecords = true,
+                        )
+                        if (canEditStep) {
+                            IconButton(onClick = { onEditProgramStep(record, isPortalTemplate) }) {
+                                Icon(Icons.Filled.Edit, contentDescription = SprayProgramTerminology.EDIT_PROGRAM_STEP)
+                            }
+                        }
+                    } else {
                         IconButton(onClick = { onEdit(record) }) { Icon(Icons.Filled.Edit, contentDescription = "Edit record") }
                     }
                 },
@@ -998,8 +1087,14 @@ private fun SprayDetailView(
                             contentAlignment = Alignment.Center,
                         ) { Icon(Icons.Filled.ContentCopy, contentDescription = null, tint = VineColors.Purple, modifier = Modifier.size(20.dp)) }
                         Column(Modifier.weight(1f)) {
-                            Text("Program Step", fontWeight = FontWeight.SemiBold, color = vine.textPrimary, fontSize = 15.sp)
+                            Text(SprayProgramTerminology.PROGRAM_STEP, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, fontSize = 15.sp)
                             Text("Plan a spray from this Program Step.", fontSize = 12.sp, color = vine.textSecondary)
+                            if (isPortalTemplate) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Icon(Icons.Filled.Sync, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(11.dp))
+                                    Text(SprayProgramTerminology.SYNCED_WITH_ADMIN_PORTAL, fontSize = 11.sp, color = vine.textSecondary)
+                                }
+                            }
                         }
                     }
                     Spacer(Modifier.height(10.dp))
@@ -1320,18 +1415,14 @@ private fun SprayDetailView(
                 }
             }
 
-            if (isPortalTemplate) {
-                Text(
-                    "This template is managed in the admin portal.",
-                    fontSize = 12.sp,
-                    color = vine.textSecondary,
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                )
-            } else {
+            if (!isPortalTemplate) {
+                // Delete stays exactly where it was: local records and local
+                // Program Steps only. Mobile deletion of the shared portal row
+                // needs its own decisions about downstream references, and this
+                // change does not make them.
                 TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Filled.Delete, contentDescription = null, tint = VineColors.Destructive)
-                    Text(if (record.isTemplate) "  Delete template" else "  Delete spray record", color = VineColors.Destructive)
+                    Text(if (record.isTemplate) "  Delete Program Step" else "  Delete spray record", color = VineColors.Destructive)
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -1341,8 +1432,16 @@ private fun SprayDetailView(
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete Spray Record") },
-            text = { Text("Are you sure you want to delete this spray record? This action cannot be undone.") },
+            title = { Text(if (record.isTemplate) "Delete Program Step" else "Delete Spray Record") },
+            text = {
+                Text(
+                    if (record.isTemplate) {
+                        "This removes the step from your spray program. Sprays already recorded from it are not affected."
+                    } else {
+                        "Are you sure you want to delete this spray record? This action cannot be undone."
+                    },
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false

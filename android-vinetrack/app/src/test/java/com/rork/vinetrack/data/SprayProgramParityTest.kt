@@ -222,5 +222,8 @@ class SprayProgramParityTest {
         assertEquals("One-off Spray", SprayProgramTerminology.ONE_OFF_SPRAY)
         assertEquals("Upcoming", SprayProgramTerminology.UPCOMING)
         assertEquals("Download Import CSV", SprayProgramTerminology.DOWNLOAD_IMPORT_CSV)
+        assertEquals("Log Spray Record", SprayProgramTerminology.LOG_SPRAY_RECORD)
+        assertEquals("Edit Program Step", SprayProgramTerminology.EDIT_PROGRAM_STEP)
+        assertEquals("Synced with Admin Portal", SprayProgramTerminology.SYNCED_WITH_ADMIN_PORTAL)
     }
 }

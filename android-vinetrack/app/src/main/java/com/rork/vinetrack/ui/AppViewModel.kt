@@ -133,6 +133,14 @@ import com.rork.vinetrack.data.SprayJobCreateSync
 import com.rork.vinetrack.data.SprayJobPlanRepository
 import com.rork.vinetrack.data.PlanSprayJob
 import com.rork.vinetrack.data.SprayJobTemplateRepository
+import com.rork.vinetrack.data.VineyardSprayTargetRepository
+import com.rork.vinetrack.data.spray.SprayProgramStepNotPermitted
+import com.rork.vinetrack.data.spray.SprayProgramStepWriteMessages
+import com.rork.vinetrack.data.spray.SprayTargetTag
+import com.rork.vinetrack.data.spray.SprayTargetVocabulary
+import com.rork.vinetrack.data.spray.VineyardSprayTarget
+import com.rork.vinetrack.data.spray.VineyardSprayTargetCreateParams
+import kotlinx.serialization.json.JsonObject
 import com.rork.vinetrack.data.resistance.ResistancePlan
 import com.rork.vinetrack.data.resistance.ResistancePlannedPosition
 import com.rork.vinetrack.data.SprayRecordRepository
@@ -461,6 +469,12 @@ data class AppUiState(
      * "new record from template" prefill flow.
      */
     val sprayJobTemplates: List<SprayRecord> = emptyList(),
+    /**
+     * The vineyard's reusable spray-target vocabulary (sql/204), shared with
+     * iOS and the portal. Advisory only — the identifier already lives on
+     * each spray, so losing this list costs readability, never meaning.
+     */
+    val sprayTargetLibrary: List<VineyardSprayTarget> = emptyList(),
     val sprayEquipment: List<SprayEquipment> = emptyList(),
     val savedChemicals: List<SavedChemical> = emptyList(),
     /** Shared Saved Inputs library (seed/fertiliser/etc.) backing seeding-trip costing. */
@@ -774,6 +788,14 @@ data class AppUiState(
     val currentRole: String? get() = members.firstOrNull { it.userId == currentUserId }?.role?.lowercase()
     /** Only owners and managers may edit launcher buttons (matches iOS + RLS). */
     val canEditLauncherButtons: Boolean get() = currentRole == "owner" || currentRole == "manager"
+
+    /**
+     * Owner/manager — the client-side mirror of the `spray_jobs_update_managers`
+     * UPDATE policy (sql/032), so the UI does not offer an edit the database
+     * will reject. RLS remains the enforcement point; this can only be the
+     * more restrictive half of the pair.
+     */
+    val canManageSprayProgram: Boolean get() = currentRole == "owner" || currentRole == "manager"
     val openPins: Int get() = pins.count { !it.isCompleted }
     val totalHectares: Double get() = paddocks.sumOf { it.areaHectares }
     val activeTrips: Int get() = trips.count { it.isActive }
@@ -816,6 +838,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val pieceRateRowRepo = WorkTaskPieceRateRowRepository(session)
     private val sprayRepo = SprayRecordRepository(session)
     private val sprayJobTemplateRepo = SprayJobTemplateRepository(session)
+    private val vineyardSprayTargetRepo = VineyardSprayTargetRepository(session)
     /** Plan-linked spray jobs (sql/201, Stage 5B) — distinct from templates. */
     private val sprayJobPlanRepo = SprayJobPlanRepository(session)
     private val savedChemicalRepo = SavedChemicalRepository(session)
@@ -9366,6 +9389,194 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // MARK: - Spray Program Steps (shared `spray_jobs` rows) + target vocabulary
+
+    /**
+     * Pull one portal Program Step fresh from the server — raw
+     * `chemical_lines` included — so an edit starts from what the shared row
+     * actually holds now. Null when offline or the row is gone; the editor
+     * then falls back to the mapped cache for VIEWING and keeps the save
+     * blocked until connected (there is no offline queue for `spray_jobs`).
+     */
+    fun fetchPortalProgramStep(
+        id: String,
+        onResult: (SprayJobTemplateRepository.PortalProgramStepRow?) -> Unit,
+    ) {
+        val vineyardId = _ui.value.selectedVineyardId ?: return onResult(null)
+        viewModelScope.launch {
+            val row = try {
+                sprayJobTemplateRepo.fetchTemplateRow(id, vineyardId)
+            } catch (e: Exception) {
+                null
+            }
+            onResult(row)
+        }
+    }
+
+    /**
+     * Update one existing portal Program Step IN PLACE (`spray_jobs`),
+     * mirroring iOS `SprayJobTemplateService.updateProgramStep`: the server
+     * write happens FIRST and the local list is patched only from what the
+     * server confirms — optimistically patching would leave a rejected save
+     * looking successful. Deliberately NO offline queue: with no connection
+     * the save is refused with the pinned message rather than staged against
+     * a row the portal may change first.
+     *
+     * @param onResult null on success, otherwise the operator-facing error.
+     */
+    fun updateProgramStep(id: String, payload: JsonObject, onResult: (String?) -> Unit) {
+        val vineyardId = _ui.value.selectedVineyardId
+            ?: return onResult(SprayProgramStepWriteMessages.NO_VINEYARD)
+        if (!_ui.value.isOnline) return onResult(SprayProgramStepWriteMessages.OFFLINE)
+        viewModelScope.launch {
+            try {
+                val saved = sprayJobTemplateRepo.updateTemplate(id, vineyardId, payload)
+                // A replacement, never an append: an id already in the list IS
+                // this Program Step, and a second entry would be the duplicate
+                // this design exists to prevent.
+                _ui.update { st ->
+                    st.copy(sprayJobTemplates = st.sprayJobTemplates.map { if (it.id == saved.id) saved else it })
+                }
+                domainCache.saveSprayTemplates(session.userId, vineyardId, _ui.value.sprayJobTemplates)
+                onResult(null)
+            } catch (e: SprayProgramStepNotPermitted) {
+                onResult(e.message ?: SprayProgramStepWriteMessages.NOT_PERMITTED)
+            } catch (e: BackendError.Unauthorized) {
+                signOut()
+                onResult(SprayProgramStepWriteMessages.NOT_PERMITTED)
+            } catch (e: BackendError.Server) {
+                onResult("Couldn't save the Program Step. Please try again.")
+            } catch (e: Exception) {
+                onResult(SprayProgramStepWriteMessages.OFFLINE)
+            }
+        }
+    }
+
+    /** The vineyard's tractors (`public.tractors`) for the Program Step tractor picker. */
+    fun fetchSprayTractors(onResult: (List<SprayJobTemplateRepository.SprayTractor>) -> Unit) {
+        val vineyardId = _ui.value.selectedVineyardId ?: return onResult(emptyList())
+        viewModelScope.launch {
+            val tractors = try {
+                sprayJobTemplateRepo.listTractors(vineyardId)
+            } catch (e: Exception) {
+                emptyList()
+            }
+            onResult(tractors)
+        }
+    }
+
+    /**
+     * Replay any queued sql/204 target creates, then pull the vineyard's
+     * shared target vocabulary. A failed pull keeps the cached list — an
+     * operator offline in a block must still see the targets they use.
+     */
+    fun refreshSprayTargetLibrary() {
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        viewModelScope.launch {
+            replaySprayTargetOutbox()
+            try {
+                val remote = vineyardSprayTargetRepo.listTargets(vineyardId)
+                val pendingIds = domainCache.loadSprayTargetOutbox(session.userId).map { it.id }.toSet()
+                _ui.update { st ->
+                    val kept = st.sprayTargetLibrary.filter { it.vineyardId != vineyardId || it.id in pendingIds }
+                    st.copy(sprayTargetLibrary = kept + remote.filter { it.id !in pendingIds })
+                }
+                domainCache.saveSprayTargets(
+                    session.userId,
+                    vineyardId,
+                    _ui.value.sprayTargetLibrary.filter { it.vineyardId == vineyardId },
+                )
+            } catch (_: Exception) {
+                // Keep the cached/in-memory list — never blank the chooser.
+            }
+        }
+    }
+
+    private suspend fun replaySprayTargetOutbox() {
+        val queue = domainCache.loadSprayTargetOutbox(session.userId)
+        if (queue.isEmpty()) return
+        val remaining = queue.toMutableList()
+        for (params in queue) {
+            try {
+                val record = vineyardSprayTargetRepo.createTarget(params)
+                remaining.removeAll { it.id == params.id }
+                upsertSprayTarget(record)
+            } catch (e: BackendError.Unauthorized) {
+                break // Session problem — leave the queue for a signed-in retry.
+            } catch (e: BackendError.Server) {
+                // Permanent rejection (validation/permission): drop the entry.
+                // The tag still lives on the step's own targets array.
+                remaining.removeAll { it.id == params.id }
+            } catch (e: Exception) {
+                break // Offline/transient: stop rather than hammer the queue.
+            }
+        }
+        domainCache.saveSprayTargetOutbox(session.userId, remaining)
+    }
+
+    private fun upsertSprayTarget(record: VineyardSprayTarget) {
+        _ui.update { st ->
+            val without = st.sprayTargetLibrary.filterNot {
+                it.id == record.id || (it.vineyardId == record.vineyardId && it.identifier == record.identifier)
+            }
+            st.copy(sprayTargetLibrary = without + record)
+        }
+    }
+
+    /**
+     * Add a custom target to this vineyard's shared library and hand back the
+     * tag. De-duplication is by IDENTIFIER (a case-insensitive slug), wording
+     * that names a built-in resolves to the built-in and is NOT written to
+     * the library, and a server failure never loses the tag: it is queued for
+     * replay and returned — the Program Step it was added to stores the
+     * identifier regardless. The library is a convenience, never load-bearing.
+     */
+    fun addCustomSprayTarget(wording: String, onResult: (SprayTargetTag?) -> Unit) {
+        val tag = SprayTargetVocabulary.tagFromWording(wording) ?: return onResult(null)
+        if (!tag.isCustom) return onResult(tag)
+        val vineyardId = _ui.value.selectedVineyardId ?: return onResult(tag)
+        val existing = _ui.value.sprayTargetLibrary.firstOrNull {
+            it.vineyardId == vineyardId && it.isActive && it.identifier == tag.identifier
+        }
+        if (existing != null) return onResult(existing.tag)
+        val params = VineyardSprayTargetCreateParams(
+            id = UUID.randomUUID().toString(),
+            vineyardId = vineyardId,
+            identifier = tag.identifier,
+            label = tag.label,
+        )
+        viewModelScope.launch {
+            try {
+                val record = vineyardSprayTargetRepo.createTarget(params)
+                upsertSprayTarget(record)
+                domainCache.saveSprayTargets(
+                    session.userId,
+                    vineyardId,
+                    _ui.value.sprayTargetLibrary.filter { it.vineyardId == vineyardId },
+                )
+                onResult(record.tag)
+            } catch (e: BackendError.Unauthorized) {
+                onResult(tag) // The step keeps its target; the library add is refused.
+            } catch (e: BackendError.Server) {
+                onResult(tag) // Permanent rejection — never queued, never lost from the step.
+            } catch (e: Exception) {
+                // Offline/transient: offer it immediately and queue the replay.
+                upsertSprayTarget(
+                    VineyardSprayTarget(
+                        id = params.id,
+                        vineyardId = vineyardId,
+                        identifier = params.identifier,
+                        label = params.label,
+                    ),
+                )
+                val queue = domainCache.loadSprayTargetOutbox(session.userId)
+                    .filterNot { it.vineyardId == vineyardId && it.identifier == params.identifier }
+                domainCache.saveSprayTargetOutbox(session.userId, queue + params)
+                onResult(tag)
+            }
+        }
+    }
+
     /**
      * Soft-delete a spray record (Android Stage I-3 — offline/retryable) for
      * already-synced records, with a local-only cancellation path for records
@@ -12753,6 +12964,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 domainCache.loadSprayTemplates(userId, vineyardId) ?: emptyList()
             }
         }
+        // The vineyard's reusable spray-target vocabulary (sql/204); soft-fail
+        // to the existing list, then the cache, so the target chooser keeps
+        // offering the vineyard's own words offline.
+        var sprayTargetsFromServer = false
+        val sprayTargetLibrary = try {
+            vineyardSprayTargetRepo.listTargets(vineyardId).also { sprayTargetsFromServer = true }
+        } catch (e: Exception) {
+            _ui.value.sprayTargetLibrary.ifEmpty {
+                domainCache.loadSprayTargets(userId, vineyardId) ?: emptyList()
+            }
+        }
         // Spray equipment is an optional reference list backing the spray form
         // picker; soft-fail to the existing list (or empty).
         val sprayEquipment = try {
@@ -12957,6 +13179,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (fuelFromServer) domainCache.saveFuel(userId, vineyardId, fuelLogs)
         if (sprayFromServer) domainCache.saveSpray(userId, vineyardId, sprayRecords)
         if (sprayTemplatesFromServer) domainCache.saveSprayTemplates(userId, vineyardId, sprayJobTemplates)
+        if (sprayTargetsFromServer) domainCache.saveSprayTargets(userId, vineyardId, sprayTargetLibrary)
         if (workTasksFromServer) domainCache.saveWorkTasks(userId, vineyardId, workTasks)
         if (pickingFromServer) domainCache.savePicking(userId, vineyardId, pickingRecords)
         // Pending-write restart hydration (Stage O-1): overlay any unresolved
@@ -13034,6 +13257,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 vineyardTripFunctions = vineyardTripFunctions,
                 sprayRecords = overlaidSpray,
                 sprayJobTemplates = sprayJobTemplates,
+                sprayTargetLibrary = sprayTargetLibrary,
                 sprayEquipment = sprayEquipment,
                 savedChemicals = savedChemicals,
                 savedInputs = savedInputs,

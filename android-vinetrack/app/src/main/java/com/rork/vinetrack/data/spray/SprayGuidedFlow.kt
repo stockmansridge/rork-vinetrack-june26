@@ -146,6 +146,15 @@ data class SprayGuidedInputs(
     /** Canonical geometry inputs for the selected blocks. */
     val blocks: List<SprayBlockInput> = emptyList(),
     val targets: Set<SprayTarget> = emptySet(),
+    /**
+     * Targets this vineyard named that the calculator has no typed case for,
+     * as stable identifiers (sql/193). They ride from a Program Step's
+     * prefill into the saved record's snapshot so the spray still states what
+     * it is for — nothing coerces them onto a built-in target, because
+     * recording a Phomopsis spray as "Botrytis" would be a false compliance
+     * claim. Mirrors iOS `customSprayTargets`.
+     */
+    val customTargets: List<String> = emptyList(),
     val sprayHeadTarget: SprayHeadTarget? = null,
     /** Total treated band width per row, metres. Banded applications only. */
     val bandWidthTotalMetres: Double? = null,
@@ -406,6 +415,7 @@ data class SprayGuidedFlow(
                 plan = plan,
                 targets = orderedTargets,
                 sprayHeadTarget = effectiveSprayHeadTarget,
+                customTargets = inputs.customTargets.takeIf { it.isNotEmpty() },
             )
             return if (snapshot.isEmpty) null else snapshot
         }

@@ -297,6 +297,11 @@ fun SprayCalculatorScreen(
 
     // Guided flow — Step 3 Target, Step 6 Carrier. Mirrors iOS `SprayCalculatorView`.
     val sprayTargets = remember { mutableStateListOf<SprayTarget>() }
+    // Targets the vineyard named that the calculator has no typed case for
+    // (custom slugs from a Program Step's prefill). Carried through to the
+    // saved record's snapshot so the spray still states what it is for —
+    // never coerced onto a built-in target. Mirrors iOS `customSprayTargets`.
+    val customSprayTargets = remember { mutableStateListOf<String>() }
     var sprayHeadTarget by remember { mutableStateOf<SprayHeadTarget?>(null) }
     var bandWidthText by remember { mutableStateOf("") }
     var carrierBasisChoice by remember { mutableStateOf(SprayCarrierBasis.LITRES_PER_HECTARE) }
@@ -412,6 +417,7 @@ fun SprayCalculatorScreen(
                 ?: SprayOperationType.FOLIAR_SPRAY,
             blocks = selectedPaddocks.map { SprayBlockInput.from(it) },
             targets = sprayTargets.toSet(),
+            customTargets = customSprayTargets.toList(),
             sprayHeadTarget = sprayHeadTarget,
             bandWidthTotalMetres = bandWidthText.toDoubleOrNull(),
             isGrowthStageAssigned = if (growthModeSame) {
@@ -568,6 +574,15 @@ fun SprayCalculatorScreen(
         if (prefillTargets.isNotEmpty() && sprayTargets.isEmpty()) {
             val selected = prefillTargets.toSet()
             sprayTargets.addAll(SprayTarget.presentationOrder.filter(selected::contains))
+        }
+        // Custom targets (identifiers with no typed case) ride along so the
+        // spray this step plans still states what it is for — from the flat
+        // targets column first, then the snapshot's own custom list.
+        val prefillCustomTargets = r.targets.orEmpty()
+            .filter { id -> SprayTarget.entries.none { it.raw == id } }
+            .ifEmpty { r.applicationGeometry?.customTargets.orEmpty() }
+        if (prefillCustomTargets.isNotEmpty() && customSprayTargets.isEmpty()) {
+            customSprayTargets.addAll(prefillCustomTargets)
         }
         r.templateGrowthStageCode?.let { code ->
             if (sharedStageCode == null && GrowthStage.byCode(code) != null) {

@@ -542,3 +542,30 @@ data class ChemicalDefaultRateSelection(
             plan.group(basis).requiresChoice && selectedIds[basis] == null
         }
 }
+
+/**
+ * Pinned operator-facing copy for the Default Rates section — word-for-word
+ * the iOS `SprayPresetsView` footer, so a parity test can prove both
+ * platforms say the same thing.
+ */
+object ChemicalDefaultRateCopy {
+    const val FOOTER_BASE: String =
+        "The rate VineTrack will start a spray calculation from. Chosen from the " +
+            "registered grapevine rates above — the two bases are decided separately " +
+            "and never converted into one another."
+
+    /**
+     * Appended when the label conditions rates by state and no vineyard
+     * state/territory exists anywhere in the current backend contract.
+     * Honest about WHY it is asking: with no state on record VineTrack
+     * cannot narrow a state-conditioned label, and it will not guess — the
+     * exact behaviour of iOS, which also has no state to read.
+     */
+    const val NO_STATE_FOOTNOTE: String =
+        " This label conditions rates by state, and VineTrack has no state on " +
+            "record for this vineyard, so it cannot narrow them for you."
+
+    /** The section footer for a plan: the base line, plus the no-state honesty when it applies. */
+    fun footer(plan: ChemicalDefaultRatePlan): String =
+        if (plan.jurisdiction == null && plan.requiresChoice) FOOTER_BASE + NO_STATE_FOOTNOTE else FOOTER_BASE
+}

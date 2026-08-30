@@ -20,6 +20,8 @@ import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
 import com.rork.vinetrack.data.model.YieldEstimationSession
+import com.rork.vinetrack.data.spray.VineyardSprayTarget
+import com.rork.vinetrack.data.spray.VineyardSprayTargetCreateParams
 
 /**
  * Sole access point for the local read-cache of launch-critical vineyard data
@@ -221,6 +223,29 @@ class DomainCacheRepository(context: Context) {
     fun loadSprayTemplates(userId: String?, vineyardId: String): List<SprayRecord>? {
         if (!ownerMatches(userId) || store.sprayTemplatesSyncedAt(vineyardId) == null) return null
         return store.loadSprayTemplates(vineyardId)
+    }
+
+    // MARK: - Vineyard spray-target library (sql/204) + offline add queue
+
+    /** Save the shared target vocabulary from a successful online fetch. */
+    fun saveSprayTargets(userId: String?, vineyardId: String, entries: List<VineyardSprayTarget>) {
+        ensureOwner(userId)
+        store.saveSprayTargets(vineyardId, entries, System.currentTimeMillis())
+    }
+
+    /** Cached target vocabulary for the vineyard, or null if absent / owned by someone else. */
+    fun loadSprayTargets(userId: String?, vineyardId: String): List<VineyardSprayTarget>? {
+        if (!ownerMatches(userId) || store.sprayTargetsSyncedAt(vineyardId) == null) return null
+        return store.loadSprayTargets(vineyardId)
+    }
+
+    /** Queued sql/204 target creates awaiting replay. Owner-gated like every cache read. */
+    fun loadSprayTargetOutbox(userId: String?): List<VineyardSprayTargetCreateParams> =
+        if (ownerMatches(userId)) store.loadSprayTargetOutbox() else emptyList()
+
+    fun saveSprayTargetOutbox(userId: String?, queue: List<VineyardSprayTargetCreateParams>) {
+        ensureOwner(userId)
+        store.saveSprayTargetOutbox(queue)
     }
 
     // MARK: - Work-task headers by vineyard (Stage P-3 — vineyard-scoped header cache)

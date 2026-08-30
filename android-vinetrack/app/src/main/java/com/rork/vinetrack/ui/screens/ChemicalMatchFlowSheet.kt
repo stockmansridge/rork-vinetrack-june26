@@ -968,10 +968,11 @@ private fun DefaultRatesSection(
             onResetDose = { onResetDose(group.basis) },
         )
     }
+    // Pinned copy shared with iOS — including the honest no-state footnote
+    // when the label conditions rates by state and no vineyard state exists
+    // anywhere in the current backend contract (it never guesses one).
     Text(
-        "The rate VineTrack will start a spray calculation from. Chosen from the " +
-            "registered grapevine rates above — the two bases are decided separately " +
-            "and never converted into one another.",
+        com.rork.vinetrack.data.chemical.ChemicalDefaultRateCopy.footer(selection.plan),
         fontSize = 11.sp,
         color = vine.textSecondary,
     )

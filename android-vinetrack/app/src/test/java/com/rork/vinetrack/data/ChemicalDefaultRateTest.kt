@@ -2,6 +2,7 @@ package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRate
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateCopy
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateRecommendation
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateSelection
 import com.rork.vinetrack.data.chemical.ChemicalLabelRate
@@ -311,5 +312,47 @@ class ChemicalDefaultRateTest {
         assertEquals(ChemicalRateJurisdiction.TAS, ChemicalRateJurisdiction.parse("Tasmania"))
         assertEquals(ChemicalRateJurisdiction.NSW, ChemicalRateJurisdiction.parse("nsw"))
         assertEquals(ChemicalRateJurisdiction.NSW, ChemicalRateJurisdiction.parse("New South Wales"))
+    }
+
+    // ---- Default Rates footer copy (jurisdiction honesty) ----
+
+    @Test
+    fun `footer wording is pinned to the iOS SprayPresetsView copy`() {
+        assertEquals(
+            "The rate VineTrack will start a spray calculation from. Chosen from the " +
+                "registered grapevine rates above — the two bases are decided separately " +
+                "and never converted into one another.",
+            ChemicalDefaultRateCopy.FOOTER_BASE,
+        )
+        assertEquals(
+            " This label conditions rates by state, and VineTrack has no state on " +
+                "record for this vineyard, so it cannot narrow them for you.",
+            ChemicalDefaultRateCopy.NO_STATE_FOOTNOTE,
+        )
+    }
+
+    @Test
+    fun `the no-state footnote appears only for a state-conditioned choice with no jurisdiction`() {
+        // Two distinct rates -> the operator must choose; with no state on
+        // record the footer says WHY VineTrack cannot narrow them — and it
+        // never guesses one.
+        val choicePlan = ChemicalDefaultRate.plan(
+            listOf(use("Powdery mildew", single(2.0, label = "NSW only"), single(3.0, label = "WA only"))),
+        )
+        assertTrue(choicePlan.requiresChoice)
+        assertEquals(
+            ChemicalDefaultRateCopy.FOOTER_BASE + ChemicalDefaultRateCopy.NO_STATE_FOOTNOTE,
+            ChemicalDefaultRateCopy.footer(choicePlan),
+        )
+        // A known jurisdiction narrows the label, so there is nothing to explain.
+        val statePlan = ChemicalDefaultRate.plan(
+            listOf(use("Powdery mildew", single(2.0, label = "NSW only"), single(3.0, label = "WA only"))),
+            jurisdiction = ChemicalRateJurisdiction.NSW,
+        )
+        assertEquals(ChemicalDefaultRateCopy.FOOTER_BASE, ChemicalDefaultRateCopy.footer(statePlan))
+        // No choice to make -> the base line only.
+        val singlePlan = ChemicalDefaultRate.plan(listOf(use(rates = arrayOf(single(2.0)))))
+        assertFalse(singlePlan.requiresChoice)
+        assertEquals(ChemicalDefaultRateCopy.FOOTER_BASE, ChemicalDefaultRateCopy.footer(singlePlan))
     }
 }

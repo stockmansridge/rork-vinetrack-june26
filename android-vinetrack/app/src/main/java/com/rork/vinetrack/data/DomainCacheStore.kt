@@ -21,6 +21,8 @@ import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
 import com.rork.vinetrack.data.model.YieldEstimationSession
+import com.rork.vinetrack.data.spray.VineyardSprayTarget
+import com.rork.vinetrack.data.spray.VineyardSprayTargetCreateParams
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
@@ -57,6 +59,8 @@ class DomainCacheStore(context: Context) {
     private val growthSerializer = ListSerializer(GrowthStageRecord.serializer())
     private val fuelSerializer = ListSerializer(TractorFuelLog.serializer())
     private val spraySerializer = ListSerializer(SprayRecord.serializer())
+    private val sprayTargetSerializer = ListSerializer(VineyardSprayTarget.serializer())
+    private val sprayTargetOutboxSerializer = ListSerializer(VineyardSprayTargetCreateParams.serializer())
     private val workTaskSerializer = ListSerializer(WorkTask.serializer())
     private val labourLineSerializer = ListSerializer(WorkTaskLabourLine.serializer())
     private val machineLineSerializer = ListSerializer(WorkTaskMachineLine.serializer())
@@ -228,6 +232,32 @@ class DomainCacheStore(context: Context) {
     }
 
     fun sprayTemplatesSyncedAt(vineyardId: String): Long? = readTimestamp(keySprayTemplatesAt(vineyardId))
+
+    // MARK: - Vineyard spray-target library (sql/204) + offline add queue
+
+    fun loadSprayTargets(vineyardId: String): List<VineyardSprayTarget> =
+        decode(prefs.getString(keySprayTargets(vineyardId), null), sprayTargetSerializer)
+
+    fun saveSprayTargets(vineyardId: String, entries: List<VineyardSprayTarget>, syncedAt: Long) {
+        prefs.edit {
+            putString(keySprayTargets(vineyardId), json.encodeToString(sprayTargetSerializer, entries))
+            putLong(keySprayTargetsAt(vineyardId), syncedAt)
+        }
+    }
+
+    fun sprayTargetsSyncedAt(vineyardId: String): Long? = readTimestamp(keySprayTargetsAt(vineyardId))
+
+    /** Queued sql/204 target creates awaiting replay (device-wide; each entry carries its vineyard). */
+    fun loadSprayTargetOutbox(): List<VineyardSprayTargetCreateParams> =
+        decode(prefs.getString(keySprayTargetOutbox, null), sprayTargetOutboxSerializer)
+
+    fun saveSprayTargetOutbox(queue: List<VineyardSprayTargetCreateParams>) {
+        prefs.edit { putString(keySprayTargetOutbox, json.encodeToString(sprayTargetOutboxSerializer, queue)) }
+    }
+
+    private fun keySprayTargets(vineyardId: String) = "spray_targets_$vineyardId"
+    private fun keySprayTargetsAt(vineyardId: String) = "spray_targets_at_$vineyardId"
+    private val keySprayTargetOutbox = "spray_target_outbox"
 
     // MARK: - Work-task headers by vineyard (Stage P-3 — vineyard-scoped header cache)
 

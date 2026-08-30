@@ -783,4 +783,24 @@ class SprayGuidedFlowTest {
     }
 
     // endregion
+
+    // region Custom targets
+
+    @Test
+    fun `custom targets ride the inputs into the persisted snapshot`() {
+        val flow = SprayGuidedFlow(
+            completeInputs().copy(customTargets = listOf("phomopsis", "eutypa_dieback")),
+        )
+        val snapshot = flow.snapshot
+        assertNotNull(snapshot)
+        assertEquals(listOf("phomopsis", "eutypa_dieback"), snapshot!!.customTargets)
+        // The flat sql/193 projection carries built-ins + customs together, so
+        // the spray this Program Step planned still states what it is for.
+        assertEquals(
+            listOf(SprayTarget.POWDERY_MILDEW.raw, "phomopsis", "eutypa_dieback"),
+            snapshot.targetIdentifiers,
+        )
+    }
+
+    // endregion
 }
