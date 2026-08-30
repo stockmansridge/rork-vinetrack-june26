@@ -22,7 +22,11 @@ import {
   parseDirectionsForUse,
   parseRateCell,
 } from "./label_extract.ts";
-import { parseLabelStatements, whpDaysFromStatement } from "./label.ts";
+import {
+  parseLabelStatements,
+  statementCanStateHarvestWhp,
+  whpDaysFromStatement,
+} from "./label.ts";
 import type {
   LabelDocumentDiscovery,
   LabelEvidence,
@@ -181,53 +185,127 @@ Deno.test("80647 §3b: the rate reaches the registered grapevine uses through th
 // §4 — safety: no other crop's withholding period may reach grapevines
 // ---------------------------------------------------------------------------
 
-Deno.test("80647 §4: macadamia's 9-week withholding period NEVER becomes the grapevine withholding period", () => {
+Deno.test("80647 §4: the grapevine harvest withholding period is 98 days, with the label's verbatim wording", () => {
   const claims = [claim("Grapevines", "Annual ryegrass")];
   const merged = applyLabelDocumentExtraction(evidence(claims), CHATEAU_80647_ITEMS, DOC);
   const grape = merged.claims[0];
 
-  // This label prints TWO withholding periods: 14 weeks (98 days) for the
-  // grape/pome/stone/citrus/olive/avocado/berry group, and 9 weeks (63 days)
-  // for macadamia nuts. Reading the wrong one is the exact shape of the
-  // Dithane defect, where a banana's "NOT REQUIRED" became the grapevine WHP.
-  const whp = grape.withholding_period_days ?? null;
-  assertEquals(whp, null, "no withholding period is asserted for grapevines");
+  // The label scopes this with a crop-list heading that WRAPS across two lines,
+  // above a "HARVEST:" sub-label. Reading "HARVEST" as the crop is what made a
+  // plainly printed 14-week period reach the app as "not stated".
+  assertEquals(grape.withholding_period_days, 98, "14 weeks is 98 days");
 
-  // Stated as the safety property it really is, so a future change that starts
-  // reading a WHP cannot quietly read the WRONG one:
-  assert(whp !== 63, "macadamia's 63 days must never be served as the grapevine WHP");
+  // The number is only the scheduling projection. The legal instruction is the
+  // wording, so the wording is preserved whole — scope, sub-label and sentence.
+  assertEquals(
+    grape.withholding_statement,
+    "WINE AND TABLE GRAPES, POME FRUIT, STONE FRUIT, CITRUS FRUIT, NUT TREE CROPS " +
+      "(EXCEPT MACADAMIA NUTS), OLIVES, AVOCADOS AND BERRIES: HARVEST: " +
+      "DO NOT HARVEST FOR 14 WEEKS AFTER APPLICATION",
+  );
 
-  // The gap stays declared, which is what makes the absence visible to the
-  // customer rather than silently reading as "no withholding period".
   assert(
-    merged.unresolved.includes("withholding_period:Grapevines"),
-    "the withholding gap is reported, not hidden",
+    !merged.unresolved.includes("withholding_period:Grapevines"),
+    "the withholding gap is closed",
   );
 });
 
-Deno.test("80647 §4b: both withholding wordings are present in the document and parse to 98 and 63 days", () => {
-  // The evidence exists in the document and the day arithmetic is right; what
-  // is NOT yet established is the crop scope that binds 14 weeks to grapevines
-  // (the label scopes it with a two-line crop-list heading above a "HARVEST:"
-  // sub-label). This test pins the arithmetic so a future scope fix has a
-  // fixed target: 14 weeks is 98 days, and 9 weeks is 63.
-  const lines = CHATEAU_80647_ITEMS
-    .filter((i) => i.page === 2)
-    .sort((a, b) => b.y - a.y || a.x - b.x);
-  const text = lines.map((i) => i.str).join("");
+Deno.test("80647 §4b: macadamia's 63 days stays on macadamia and NEVER reaches grapevines", () => {
+  // The label prints TWO harvest withholding periods. Serving the wrong one is
+  // the exact shape of the Dithane defect, where a banana's "NOT REQUIRED"
+  // became the grapevine WHP of zero days.
+  const read = (crop: string) =>
+    applyLabelDocumentExtraction(
+      evidence([claim(crop, "Annual ryegrass")]),
+      CHATEAU_80647_ITEMS,
+      DOC,
+    ).claims[0];
 
-  assert(/DO NOT HARVEST FOR 14 WEEKS AFTER APPLICATION/i.test(text));
-  assert(/DO NOT HARVEST FOR 9 WEEKS AFTER APPLICATION/i.test(text));
+  const grape = read("Grapevines");
+  const macadamia = read("Macadamia nuts");
 
-  const statements = parseLabelStatements(
-    CHATEAU_80647_ITEMS.filter((i) => i.page === 2).map((i) => i.str).join("\n"),
+  assertEquals(grape.withholding_period_days, 98);
+  assertEquals(macadamia.withholding_period_days, 63);
+
+  // Macadamia is named INSIDE the grape scope, as an exclusion: "NUT TREE CROPS
+  // (EXCEPT MACADAMIA NUTS)". Tokenised naively that heading CONTAINS the word
+  // MACADAMIA, so a scope reader that ignores exclusions hands macadamia the
+  // 98-day grape period. It must not.
+  assert(
+    !/EXCEPT MACADAMIA/i.test(macadamia.withholding_statement ?? ""),
+    "macadamia does not inherit the grape scope it is excluded from",
   );
-  const days = statements
-    .map((s) => whpDaysFromStatement(s.statement, s.section))
-    .filter((d): d is number => d !== null);
+  assert(
+    /MACADAMIA NUTS: HARVEST:/i.test(macadamia.withholding_statement ?? ""),
+    "macadamia reads its own heading",
+  );
 
-  assert(days.includes(98), "14 weeks reads as 98 days");
-  assert(days.includes(63), "9 weeks reads as 63 days");
+  // Crops this label does not name get nothing — not the nearest number, not a
+  // product-wide default.
+  for (const absent of ["Almonds", "Bananas"]) {
+    assertEquals(
+      read(absent).withholding_period_days ?? null,
+      null,
+      `${absent} is not named by this label and must receive no period`,
+    );
+  }
+});
+
+Deno.test("80647 §4c: a HARVEST sub-label is never a crop, and an unscoped one fails closed", () => {
+  const statements = parseLabelStatements(
+    [
+      "Withholding Periods: WINE AND TABLE GRAPES, POME FRUIT, STONE FRUIT, CITRUS FRUIT, NUT TREE",
+      "CROPS (EXCEPT MACADAMIA NUTS), OLIVES, AVOCADOS AND BERRIES:",
+      "HARVEST: DO NOT HARVEST FOR 14 WEEKS AFTER APPLICATION",
+      "MACADAMIA NUTS:",
+      "HARVEST: DO NOT HARVEST FOR 9 WEEKS AFTER APPLICATION",
+    ].join("\n"),
+  );
+
+  assert(
+    !statements.some((s) => s.crop !== null && /^HARVEST$/i.test(s.crop)),
+    "HARVEST is a sub-label, never a crop",
+  );
+
+  const scoped = statements.find((s) =>
+    s.sub_label === "HARVEST" && /14 WEEKS/.test(s.statement)
+  );
+  assert(scoped, "the 14-week statement is scoped");
+  assert(scoped.crop?.startsWith("WINE AND TABLE GRAPES"));
+  assertEquals(whpDaysFromStatement(scoped.statement, scoped.section), 98);
+
+  // A sub-label with NO resolvable scope must not become product-wide: an
+  // unreadable scope is a parser gap, and answering "applies to everything"
+  // turns that gap into a wrong period on every crop.
+  const orphan = parseLabelStatements("HARVEST: DO NOT HARVEST FOR 21 DAYS")
+    .find((s) => s.sub_label === "HARVEST");
+  assert(orphan, "the orphan statement is still recorded verbatim");
+  assertEquals(orphan.crop, null);
+  assertEquals(orphan.scope_unresolved, true);
+  assertEquals(orphan.statement, "DO NOT HARVEST FOR 21 DAYS");
+});
+
+Deno.test("80647 §4d: a GRAZING interval is never served as the harvest withholding period", () => {
+  // This label states 4-week and 8-week GRAZING intervals in the same block as
+  // the harvest periods. They govern stock food, not harvest.
+  const grape = applyLabelDocumentExtraction(
+    evidence([claim("Grapevines", "Annual ryegrass")]),
+    CHATEAU_80647_ITEMS,
+    DOC,
+  ).claims[0];
+  assertEquals(grape.withholding_period_days, 98);
+  assert(
+    !/GRAZE/i.test(grape.withholding_statement ?? ""),
+    "the harvest period is not read from a grazing statement",
+  );
+
+  // Directly: a grazing sub-label cannot state a harvest period even when its
+  // sentence contains a readable interval.
+  const grazing = parseLabelStatements(
+    ["WINE AND TABLE GRAPES:", "GRAZING: DO NOT HARVEST FOR 3 WEEKS AFTER APPLICATION"].join("\n"),
+  ).find((s) => s.sub_label === "GRAZING");
+  assert(grazing, "the grazing statement is recorded");
+  assertEquals(statementCanStateHarvestWhp(grazing), false);
 });
 
 // ---------------------------------------------------------------------------

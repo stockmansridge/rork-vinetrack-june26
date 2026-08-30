@@ -136,10 +136,39 @@ export function assembleProductComments(
 // ---------------------------------------------------------------------------
 
 export interface LabelStatement {
-  /** Crop prefix when the line is "CROP: statement", else null. */
+  /**
+   * The crop wording this statement applies to, or null when it is genuinely
+   * product-wide. This is the crop PREFIX when the line reads
+   * "CROP: statement", and the enclosing crop-scope HEADING when the line
+   * reads "HARVEST: statement" underneath one.
+   */
   crop: string | null;
   statement: string;
   section: "withholding" | "reentry" | "other";
+  /**
+   * The sub-label the statement sits under ("HARVEST", "GRAZING"). A
+   * sub-label is NOT a crop; it says which activity the period governs.
+   */
+  sub_label?: string;
+  /**
+   * True when the statement sits under a sub-label but NO crop scope could be
+   * resolved for it. Such a statement is scoped to something the parser could
+   * not identify, so it must never be read as product-wide — that would hand
+   * an unrelated crop's period to every crop, which is the exact failure this
+   * field exists to prevent.
+   */
+  scope_unresolved?: boolean;
+  /**
+   * True when this line is a HEADING — a section title, a crop-scope heading
+   * or a sub-label — rather than an instruction.
+   *
+   * A heading names a topic; it never states a rule. Without this distinction
+   * the bare line "Precautions: RE-ENTRY" reads as a re-entry statement and
+   * wins the search for one, so the operator is shown the word "RE-ENTRY" as
+   * the product's re-entry rule while the actual instruction two lines below
+   * is never reached.
+   */
+  is_heading?: boolean;
 }
 
 const CROP_LINE = /^([A-Z][A-Z0-9 ()/&,.'-]{0,60}?):\s*(\S.*)$/;
@@ -157,24 +186,187 @@ const CROP_LINE = /^([A-Z][A-Z0-9 ()/&,.'-]{0,60}?):\s*(\S.*)$/;
 const TITLE_CASE_CROP_LINE = /^([A-Za-z][A-Za-z0-9 ()/&,.'-]{0,60}?):\s*(\S.*)$/;
 
 /**
+ * A withholding block's sub-label: the ACTIVITY a period governs, printed
+ * above or before the statement itself. `HARVEST:` is the harvest withholding
+ * period; `GRAZING:` is a stock-food interval and is never a harvest period.
+ *
+ * These read exactly like a crop prefix ("HARVEST: DO NOT HARVEST FOR 14
+ * WEEKS"), and treating one as a crop is how the measured CHATEAU 80647 label
+ * produced a withholding period belonging to the crop "HARVEST" — a crop that
+ * corresponds to nothing, so grapevines were served "not stated" while the
+ * label plainly printed 14 weeks for them.
+ */
+const HARVEST_SUB_LABEL = /^(HARVEST|HARVESTING)$/i;
+const NON_HARVEST_SUB_LABEL =
+  /^(GRAZING|GRAZING\s*\/?\s*CUTTING|CUTTING|STOCK\s+FOOD|FODDER|EXPORT\s+SLAUGHTER\s+INTERVAL|ESI|EXPORT\s+INTERVAL|ANIMAL\s+PRODUCE|MILK|MEAT|SLAUGHTER|EGGS|POULTRY|WOOL|HONEY)$/i;
+
+/** "harvest", "other", or null when the wording is not a sub-label at all. */
+function subLabelKind(raw: string): "harvest" | "other" | null {
+  const value = raw.trim();
+  if (HARVEST_SUB_LABEL.test(value)) return "harvest";
+  if (NON_HARVEST_SUB_LABEL.test(value)) return "other";
+  return null;
+}
+
+/** Known label section titles, and the section each one opens. */
+const SECTION_TITLES: Array<[RegExp, LabelStatement["section"]]> = [
+  [/^WITHHOLDING\s+PERIODS?$/i, "withholding"],
+  [/^RE-?ENTRY(\s+PERIODS?)?$/i, "reentry"],
+  [/^SAFETY\s+DIRECTIONS$/i, "reentry"],
+  [
+    /^(TRADE\s+ADVICE|GENERAL\s+INSTRUCTIONS?|DIRECTIONS\s+FOR\s+USE|FIRST\s+AID(\s+INSTRUCTIONS?)?|STORAGE\s+AND\s+DISPOSAL|PRECAUTIONS?|RESISTANCE\s+WARNINGS?|SPRAY\s+DRIFT\s+RESTRAINTS?|NOTIFICATION|MIXING|APPLICATION|COMPATIBILITY|CRITICAL\s+COMMENTS?|PROTECTION\s+OF\s+.{3,60})$/i,
+    "other",
+  ],
+];
+
+function sectionForTitle(title: string): LabelStatement["section"] | null {
+  const value = title.trim();
+  for (const [pattern, section] of SECTION_TITLES) {
+    if (pattern.test(value)) return section;
+  }
+  return null;
+}
+
+/**
+ * A crop-scope heading: an upper-case crop list terminated by a colon with
+ * NOTHING after it, e.g. "MACADAMIA NUTS:". The statements that follow belong
+ * to the crops it names.
+ */
+const SCOPE_HEADING = /^([A-Z0-9][A-Z0-9 ()/&,.'’-]*?)\s*:$/;
+
+/**
+ * An upper-case fragment with no terminating colon — the first line of a
+ * heading that WRAPS. CHATEAU prints its grape scope across two lines, and a
+ * heading that is only half-read scopes nothing.
+ */
+const CAPS_FRAGMENT = /^[A-Z0-9][A-Z0-9 ()/&,.'’-]*$/;
+
+/** How many continuation lines a wrapped scope heading may span. */
+const SCOPE_HEADING_MAX_CONTINUATION = 2;
+
+/**
+ * Read a crop-scope heading starting at `first`, following wrapped
+ * continuation lines. Returns the joined heading and the last line index it
+ * consumed, or null when these lines are not a heading.
+ */
+function readScopeHeading(
+  first: string,
+  lines: string[],
+  index: number,
+): { heading: string; lastIndex: number } | null {
+  const direct = SCOPE_HEADING.exec(first);
+  if (direct) return { heading: direct[1].trim(), lastIndex: index };
+  if (!CAPS_FRAGMENT.test(first)) return null;
+  const parts = [first];
+  for (let step = 1; step <= SCOPE_HEADING_MAX_CONTINUATION; step++) {
+    const next = lines[index + step];
+    if (next === undefined) return null;
+    const terminated = SCOPE_HEADING.exec(next);
+    if (terminated) {
+      parts.push(terminated[1].trim());
+      return { heading: parts.join(" ").trim(), lastIndex: index + step };
+    }
+    if (!CAPS_FRAGMENT.test(next)) return null;
+    parts.push(next);
+  }
+  return null;
+}
+
+/**
  * Split reassembled label comments into statements. Section headers (all-caps
  * lines without a crop prefix) scope what a crop line may assert: WHP numbers
  * are only read inside a withholding section or from self-descriptive
  * harvest statements.
+ *
+ * Crop scope is tracked as its own state because labels state it structurally
+ * rather than on every line: a crop-list heading opens a block, and the
+ * statements underneath name only the ACTIVITY ("HARVEST:"). Reading those
+ * lines without their heading loses the crop entirely.
  */
 export function parseLabelStatements(text: string): LabelStatement[] {
   const out: LabelStatement[] = [];
   let section: LabelStatement["section"] = "other";
-  for (const rawLine of text.split("\n")) {
-    const line = rawLine.trim();
-    if (!line) continue;
+  /** The crop list currently in force, from the most recent scope heading. */
+  let scope: string | null = null;
+  /** A sub-label printed on its own line, governing the lines beneath it. */
+  let pendingSubLabel: string | null = null;
+
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  for (let index = 0; index < lines.length; index++) {
+    const rawLine = lines[index];
+    let line = rawLine;
+
+    // A section title may share its line with the content it introduces
+    // ("Withholding Periods: WINE AND TABLE GRAPES, …"). Splitting it off
+    // first is what lets the crop list behind it be seen as a scope heading.
+    const lead = /^([A-Za-z][A-Za-z '\/-]{2,40}?)\s*:\s*(.*)$/.exec(line);
+    if (lead) {
+      const leadSection = sectionForTitle(lead[1]);
+      if (leadSection !== null) {
+        section = leadSection;
+        scope = null;
+        pendingSubLabel = null;
+        line = lead[2].trim();
+        if (!line) {
+          out.push({ crop: null, statement: rawLine, section, is_heading: true });
+          continue;
+        }
+      }
+    }
+
+    // A standalone section title on its own line.
+    const bareTitle = sectionForTitle(line.replace(/:$/, ""));
+    if (bareTitle !== null) {
+      section = bareTitle;
+      scope = null;
+      pendingSubLabel = null;
+      out.push({ crop: null, statement: rawLine, section, is_heading: true });
+      continue;
+    }
+
+    // A sub-label on its own line ("GRAZING:") governs what follows but is
+    // NOT a crop and must never replace the crop scope.
+    const bareSub = SCOPE_HEADING.exec(line);
+    if (bareSub && subLabelKind(bareSub[1]) !== null) {
+      pendingSubLabel = bareSub[1].trim();
+      out.push({ crop: scope, statement: rawLine, section, is_heading: true });
+      continue;
+    }
+
+    // A crop-scope heading, possibly wrapped across continuation lines.
+    const heading = readScopeHeading(line, lines, index);
+    if (heading && cropTokens(stripScopeExclusions(heading.heading)).size > 0) {
+      scope = heading.heading;
+      pendingSubLabel = null;
+      index = heading.lastIndex;
+      out.push({ crop: null, statement: heading.heading, section, is_heading: true });
+      continue;
+    }
+
     const cropMatch = CROP_LINE.exec(line);
     if (cropMatch) {
-      out.push({
-        crop: cropMatch[1].trim(),
-        statement: cropMatch[2].trim(),
-        section,
-      });
+      const prefix = cropMatch[1].trim();
+      const statement = cropMatch[2].trim();
+      const kind = subLabelKind(prefix);
+      if (kind !== null) {
+        // "HARVEST: DO NOT HARVEST FOR 14 WEEKS" — the crop is the enclosing
+        // scope, never the word HARVEST. With no scope the statement is
+        // scoped to something unidentified and is marked so that no reader
+        // can promote it to product-wide.
+        out.push({
+          crop: scope,
+          statement,
+          section,
+          sub_label: prefix,
+          ...(scope === null ? { scope_unresolved: true } : {}),
+        });
+        continue;
+      }
+      out.push({ crop: prefix, statement, section });
       continue;
     }
     // A Title Case crop prefix, proven to BE one by the statement after the
@@ -200,15 +392,107 @@ export function parseLabelStatements(text: string): LabelStatement[] {
     }
     if (/WITHHOLDING/i.test(line)) {
       section = "withholding";
+      scope = null;
+      pendingSubLabel = null;
     } else if (/RE-?ENTRY|SAFETY DIRECTIONS/i.test(line)) {
       section = "reentry";
+      scope = null;
+      pendingSubLabel = null;
     } else if (line === line.toUpperCase() && /[A-Z]{4,}/.test(line)) {
       section = "other";
+      scope = null;
+      pendingSubLabel = null;
     }
     // Mixed-case detail lines ("Harvest") keep the current section.
+    // A line beneath a standalone sub-label inherits that sub-label and the
+    // open crop scope, so a grazing interval can never surface as a
+    // product-wide harvest period.
+    if (pendingSubLabel !== null) {
+      out.push({
+        crop: scope,
+        statement: line,
+        section,
+        sub_label: pendingSubLabel,
+        ...(scope === null ? { scope_unresolved: true } : {}),
+      });
+      continue;
+    }
     out.push({ crop: null, statement: line, section });
   }
   return out;
+}
+
+/**
+ * A scope heading's exclusion parentheticals ("(EXCEPT MACADAMIA NUTS)").
+ *
+ * CHATEAU's grape scope reads "… NUT TREE CROPS (EXCEPT MACADAMIA NUTS),
+ * OLIVES …". Tokenised whole, that heading CONTAINS the word MACADAMIA, so a
+ * macadamia use would match the grape scope and inherit the grape period —
+ * the leak in the opposite direction. Exclusions are therefore read as
+ * exclusions.
+ */
+const SCOPE_EXCLUSION = /\((?:EXCEPT|EXCLUDING|OTHER\s+THAN|BUT\s+NOT)\s+([^)]*)\)/gi;
+
+function stripScopeExclusions(scope: string): string {
+  return scope.replace(SCOPE_EXCLUSION, " ");
+}
+
+function scopeExclusions(scope: string): string[] {
+  const out: string[] = [];
+  for (const match of scope.matchAll(SCOPE_EXCLUSION)) out.push(match[1]);
+  return out;
+}
+
+/**
+ * Whether a crop falls inside a label scope wording, honouring exclusions.
+ *
+ * Fail-closed: an excluded crop is excluded even though its name appears in
+ * the heading text, and a scope naming no specific crop includes nothing.
+ */
+export function cropScopeIncludes(scope: string, crop: string): boolean {
+  for (const excluded of scopeExclusions(scope)) {
+    if (cropsCorrespond(crop, excluded)) return false;
+  }
+  return cropsCorrespond(crop, stripScopeExclusions(scope));
+}
+
+/**
+ * Whether a parsed statement applies to a crop.
+ *
+ * The single place crop scope is decided, so every reader — evidence
+ * assembly, document extraction, enrichment — answers it identically.
+ */
+export function statementAppliesToCrop(s: LabelStatement, crop: string): boolean {
+  if (s.scope_unresolved) return false;
+  if (s.crop === null) return false;
+  return cropScopeIncludes(s.crop, crop);
+}
+
+/**
+ * Whether a statement is allowed to state a HARVEST withholding period.
+ *
+ * A statement under a grazing or export sub-label governs a different
+ * activity; its interval is real but it is not the harvest withholding
+ * period and must never be served as one.
+ */
+export function statementCanStateHarvestWhp(s: LabelStatement): boolean {
+  if (s.scope_unresolved) return false;
+  if (s.sub_label === undefined) return true;
+  return subLabelKind(s.sub_label) !== "other";
+}
+
+/**
+ * The statement as the label prints it, scope and sub-label included.
+ *
+ * The wording is the legal instruction; the day count is only the scheduling
+ * projection of it, so the wording is preserved whole and never replaced.
+ */
+export function statementVerbatim(s: LabelStatement): string {
+  const parts: string[] = [];
+  if (s.crop !== null) parts.push(s.crop);
+  if (s.sub_label !== undefined) parts.push(s.sub_label);
+  parts.push(s.statement);
+  return parts.join(": ");
 }
 
 const HARVEST_DAYS = /DO\s+NOT\s+HARVEST\s+FOR\s+(\d+)\s*DAYS?\b/i;
@@ -369,7 +653,16 @@ export function whpDaysFromCell(rawCell: string): number | null {
   return whpDaysFromStatement(cell, "withholding");
 }
 
-const RE_ENTRY_CONTEXT = /RE-?ENTER|RE-?ENTRY|DO\s+NOT\s+ALLOW\s+ENTRY/i;
+/**
+ * Wordings that make a statement a re-entry rule.
+ *
+ * `DO NOT ENTER` is included because that is how CHATEAU 80647 states its rule
+ * — "DO NOT enter treated areas until the spray has dried unless wearing
+ * cotton overalls". Requiring the hyphenated "re-enter" missed it entirely, so
+ * a label that states its re-entry rule plainly reported "not stated".
+ */
+const RE_ENTRY_CONTEXT =
+  /RE-?ENTER|RE-?ENTRY|DO\s+NOT\s+ALLOW\s+ENTRY|DO\s+NOT\s+ENTER/i;
 const HOURS = /(\d+)\s*HOURS?\b/i;
 const DAYS = /(\d+)\s*DAYS?\b/i;
 
@@ -821,6 +1114,16 @@ export function mergeLabelEvidenceIntoUses(
     const aiWhp = typeof ai?.withholding_period_days === "number"
       ? ai.withholding_period_days
       : null;
+    // The VERBATIM wording travels with the use whenever the label states a
+    // withholding period, for the same reason the re-entry wording does: the
+    // wording is the legal instruction and the day count is only its
+    // scheduling projection. Carrying the number alone dropped "DO NOT HARVEST
+    // FOR 14 WEEKS AFTER APPLICATION" on the floor, leaving a client able to
+    // compute a date but unable to show the operator what the label says.
+    if (claim.withholding_statement !== undefined) {
+      use.withholding_statement = claim.withholding_statement;
+      provenance.withholding_period = "manufacturer_label";
+    }
     if (claim.withholding_period_days !== undefined) {
       use.withholding_period_days = claim.withholding_period_days;
       provenance.withholding_period = "manufacturer_label";

@@ -701,6 +701,12 @@ export function projectResearch(
         // must not depend on processing order at all.
         rates: rates.map((r) => ({ ...r })),
         withholding_period_days: whpDays(use.whp),
+        // The withholding WORDING, for the same reason as the re-entry wording
+        // below: `whpDays` refuses to invent a number for a period it cannot
+        // parse, and with nowhere to put the words the whole instruction was
+        // dropped. The wording is the legal instruction; the day count is only
+        // its scheduling projection.
+        withholding_statement: (use.whp ?? "").trim() || null,
         re_entry_period_hours: reiHours(use.rei),
         // The SAME defect, in the second path: `reiHours` correctly refuses to
         // invent a number for "until the spray has dried", and without a field

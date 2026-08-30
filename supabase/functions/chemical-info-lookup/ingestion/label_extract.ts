@@ -49,6 +49,9 @@ import {
   isReentryStatement,
   parseLabelStatements,
   reentryHoursFromStatement,
+  statementAppliesToCrop,
+  statementCanStateHarvestWhp,
+  statementVerbatim,
   targetsAreEquivalent,
   targetsCorrespond,
   whpDaysFromCell,
@@ -1460,37 +1463,73 @@ export function applyLabelDocumentExtraction(
   // belongs to the crops it names. Reading an unscoped one as product-wide is
   // how a banana's "NOT REQUIRED" became the grapevine WHP of 0 days.
   const hasCropScopedWhp = statements.some(
-    (s) => s.crop !== null && whpDaysFromStatement(s.statement, s.section) !== null,
+    (s) =>
+      s.crop !== null &&
+      statementCanStateHarvestWhp(s) &&
+      whpDaysFromStatement(s.statement, s.section) !== null,
+  );
+
+  // A statement whose crop scope could NOT be resolved blocks the
+  // product-wide fallback outright. The label plainly scoped it to something;
+  // failing to read that scope is a parser gap, and answering "applies to
+  // everything" would turn that gap into a wrong period on every crop.
+  const hasUnresolvedScope = statements.some(
+    (s) =>
+      s.scope_unresolved === true &&
+      whpDaysFromStatement(s.statement, s.section) !== null,
   );
 
   // Document-side WHP/re-entry readings (strict Stage 4 patterns only).
   const cropWhp = (crop: string): { days: number; statement: string } | null => {
     for (const s of statements) {
-      if (s.crop === null || !cropsCorrespond(crop, s.crop)) continue;
+      // Scope decides applicability — never vertical proximity. A statement
+      // reaches a crop only because its own heading names that crop.
+      if (!statementAppliesToCrop(s, crop)) continue;
+      if (!statementCanStateHarvestWhp(s)) continue;
       const days = whpDaysFromStatement(s.statement, s.section);
-      if (days !== null) return { days, statement: `${s.crop}: ${s.statement}` };
+      if (days !== null) return { days, statement: statementVerbatim(s) };
     }
     // The product-wide fallback exists for labels that state ONE withholding
     // period for the whole product. Where the label speaks per crop and this
     // crop was not among them, the honest answer is "not stated" — never
     // another crop's number.
-    if (hasCropScopedWhp) return null;
+    if (hasCropScopedWhp || hasUnresolvedScope) return null;
     for (const s of statements) {
-      if (s.crop !== null) continue;
+      if (s.crop !== null || s.scope_unresolved) continue;
+      if (!statementCanStateHarvestWhp(s)) continue;
       const days = whpDaysFromStatement(s.statement, s.section);
-      if (days !== null) return { days, statement: s.statement };
+      if (days !== null) return { days, statement: statementVerbatim(s) };
     }
     return null;
   };
-  const productReentry = (): { hours: number; statement: string } | null => {
+  /**
+   * The label's re-entry rule, WHETHER OR NOT it states a number.
+   *
+   * "DO NOT enter treated areas until the spray has dried" is a complete,
+   * binding re-entry instruction with no hour count in it. Returning only
+   * readings that carried a number meant a conditional rule produced nothing
+   * at all, and the app then told the operator "not stated" about a label that
+   * states it plainly — the same wording-vs-number defect as the withholding
+   * period above.
+   *
+   * A statement that DOES state hours is preferred, because it answers both
+   * questions; a conditional one is still returned when that is all the label
+   * gives. The number is never invented from the wording.
+   */
+  const productReentry = (): { hours: number | null; statement: string } | null => {
+    let conditional: { hours: null; statement: string } | null = null;
     for (const s of statements) {
+      // A heading names the topic; it never states the rule. "Precautions:
+      // RE-ENTRY" matches every re-entry pattern and would otherwise be
+      // served to the operator AS the re-entry rule.
+      if (s.is_heading) continue;
       if (!isReentryStatement(s.statement)) continue;
+      const text = s.crop ? `${s.crop}: ${s.statement}` : s.statement;
       const hours = reentryHoursFromStatement(s.statement);
-      if (hours !== null) {
-        return { hours, statement: s.crop ? `${s.crop}: ${s.statement}` : s.statement };
-      }
+      if (hours !== null) return { hours, statement: text };
+      if (conditional === null) conditional = { hours: null, statement: text };
     }
-    return null;
+    return conditional;
   };
   const reentry = productReentry();
 
@@ -1551,11 +1590,20 @@ export function applyLabelDocumentExtraction(
     }
 
     if (reentry) {
-      if (next.re_entry_period_hours === undefined) {
-        next.re_entry_period_hours = reentry.hours;
+      // The wording travels whenever the label speaks about re-entry at all.
+      // Null hours PLUS this text is "conditional re-entry", which is a
+      // different answer from "not stated" and must be rendered as such.
+      if (next.re_entry_statement === undefined) {
+        next.re_entry_statement = reentry.statement;
         if (!next.statements.includes(reentry.statement)) {
           next.statements.push(reentry.statement);
         }
+      }
+      if (reentry.hours === null) {
+        // Conditional rule: wording only. No number is invented, and no
+        // conflict exists because the label asserted no number to disagree.
+      } else if (next.re_entry_period_hours === undefined) {
+        next.re_entry_period_hours = reentry.hours;
       } else if (next.re_entry_period_hours !== reentry.hours) {
         const dup = documentConflicts.some((c) => c.field === "re_entry_period_hours");
         if (!dup) {
