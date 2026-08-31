@@ -599,18 +599,25 @@ class ChemicalReverifyFlowTest {
     // MARK: Current status refresh
 
     @Test
-    fun `confirming a current result writes evidence only`() {
+    fun `a current result produces no write payload at all`() {
+        // Release item 9: a no-change result writes NOTHING.
+        //
+        // `confirmedInput` used to build an evidence-only patch here, so merely
+        // running a check restamped the record's provenance and made it look
+        // freshly attested when nothing about the product had moved. Running a
+        // check is not new information, so the type no longer offers any way to
+        // turn a Current result into a write.
         val stored = savedChemical(intelligence = group11(labelVersion = "2024-06"))
         val result = current(stored, group11(labelVersion = "2026-02"))
 
-        val input = ChemicalReverifyFlow.confirmedInput(stored, result.refreshed!!)
+        // The refreshed evidence is still COMPUTED, so the screen can show what
+        // was consulted — it is simply never persisted.
+        assertEquals(listOf("11"), result.refreshed?.activityGroupCodes)
+        assertEquals("2026-02", result.refreshed?.registration?.labelVersion)
 
-        // Same chemistry, fresher provenance.
-        assertEquals(listOf("11"), input.intelligence?.activityGroupCodes)
-        assertEquals("2026-02", input.intelligence?.registration?.labelVersion)
-        assertEquals(at, input.intelligence?.verification?.verifiedAt)
-        // And no meaningless product change was invented.
-        assertEquals("11", input.chemicalGroup)
+        // And the stored record is untouched by classifying it.
+        assertEquals("2024-06", stored.labelVersion)
+        assertEquals(listOf("11"), stored.activityGroupCodes)
     }
 
     // MARK: Historical immutability
@@ -667,7 +674,7 @@ class ChemicalReverifyFlowTest {
         checkNotNull(frozen)
 
         val result = current(stored, group11(labelVersion = "2026-02"))
-        ChemicalReverifyFlow.confirmedInput(stored, result.refreshed!!)
+        assertNotNull(result.refreshed)
 
         // A freshly confirmed check must not restamp a completed application.
         // `capturedAt` is the one that matters most here: if refreshing evidence

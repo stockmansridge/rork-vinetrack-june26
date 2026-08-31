@@ -18,7 +18,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Adjust
 import androidx.compose.material.icons.filled.Help
-import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
@@ -57,6 +56,7 @@ import com.rork.vinetrack.data.ChemicalInfoService
 import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRate
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateDisplay
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateGroup
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateOption
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateSelection
@@ -134,13 +134,14 @@ internal fun ChemicalMatchFlowSheet(
     onDismiss: () -> Unit,
     onEnterManually: () -> Unit,
     /**
-     * "I already have this one" from the pre-research duplicate decision.
+     * "Yes, check for updates" from the pre-research duplicate decision.
      *
      * Hands the record the operator already owns back to the host so it can be
-     * opened for review/re-verification. Null-safe default closes the flow,
-     * which is still correct — it simply cannot open the record itself.
+     * RE-VERIFIED through its own registration identity. Deliberately not the
+     * edit form: the operator asked whether the stored information is current,
+     * which is a question only a re-check can answer.
      */
-    onReviewExisting: (SavedChemical) -> Unit = {},
+    onCheckForUpdates: (SavedChemical) -> Unit = {},
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
@@ -384,22 +385,24 @@ internal fun ChemicalMatchFlowSheet(
                 // issues a request or writes a record.
                 SameNameDecision(
                     matches = samePrompt,
-                    query = query,
-                    onReviewExisting = { chemical ->
+                    onCheckForUpdates = { chemical ->
                         samePrompt = emptyList()
-                        duplicateDecision = ChemicalStoreMatching.Decision.ReviewExisting(chemical)
-                        onReviewExisting(chemical)
+                        duplicateDecision =
+                            ChemicalStoreMatching.Decision.CheckForUpdates(chemical)
+                        // No lookup is issued here. Re-verification owns the
+                        // identity-keyed re-check, and it writes nothing until
+                        // the operator saves.
+                        onCheckForUpdates(chemical)
                     },
-                    onCreateSeparate = {
+                    onKeepAsIs = {
+                        // Zero research calls, zero writes, and the stored row
+                        // untouched. The operator answered the question; there
+                        // is nothing further to do, so the flow closes rather
+                        // than dropping them back into a search they did not
+                        // ask for.
                         samePrompt = emptyList()
-                        duplicateDecision = ChemicalStoreMatching.Decision.CreateSeparate
-                        runSearch()
-                    },
-                    onCancel = {
-                        // Zero research calls, zero writes. The typed query is
-                        // deliberately kept so backing out costs no input either.
-                        samePrompt = emptyList()
-                        duplicateDecision = null
+                        duplicateDecision = ChemicalStoreMatching.Decision.KeepAsIs
+                        onDismiss()
                     },
                 )
             } else when (step) {
@@ -555,7 +558,6 @@ internal fun ChemicalMatchFlowSheet(
                         // so nothing is displayed that will not be saved and
                         // nothing is saved that was not displayed.
                         val operational = ChemicalVineyardScope.operationalUses(intel.registeredUses)
-                        val exclusion = ChemicalVineyardScope.exclusionNotice(intel.registeredUses)
 
                         ChemicalConflictCard(intel.verification.conflicts)
 
@@ -667,23 +669,15 @@ internal fun ChemicalMatchFlowSheet(
                                 it.kind == ChemicalDataSourceKind.MANUFACTURER_LABEL
                             },
                         )
-                        // Item 2: say plainly which crops this label carries that
-                        // VineTrack is not saving, rather than presenting a
-                        // filtered document as if it were the whole one.
-                        exclusion?.let {
-                            Row(
-                                verticalAlignment = Alignment.Top,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                Icon(
-                                    Icons.Filled.Inventory2,
-                                    contentDescription = null,
-                                    tint = vine.textSecondary,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                                Text(it, fontSize = 11.sp, color = vine.textSecondary)
-                            }
-                        }
+                        // NOTE: no other-crop disclosure here, deliberately.
+                        //
+                        // This label may register macadamias, cereals and
+                        // citrus. None of it is this vineyard's operational
+                        // data, none of it is saved, and listing it in the
+                        // customer review made an operator scroll past crops
+                        // they do not grow to reach the grapevine rate they
+                        // came for. The vineyard-only WRITE boundary is
+                        // unchanged; this is only about what is shown.
 
                         // ---- Default rate decision (item 4) ----
                         defaultSelection?.let { selection ->
@@ -908,84 +902,68 @@ internal fun ChemicalMatchFlowSheet(
 }
 
 /**
- * Item 5: the same-name decision, shown BEFORE any chemical research runs.
+ * The same-name decision, shown BEFORE any chemical research runs.
  *
- * Three answers, and two of them cost nothing at all — no lookup, no write.
- * The Portal asks the same question in the same place for the same reason: a
- * grower who already owns a product almost always means "open that one", and
- * discovering it after a 60-second resolve is a worse answer arriving later.
+ * # One question, two answers
+ *
+ * The operator already owns this product, so the only useful thing to ask is
+ * whether what VineTrack holds is still current. Both answers are cheap: "No"
+ * costs nothing at all, and "Yes" spends the lookup on re-checking the record
+ * they already have rather than on building a second copy of it.
+ *
+ * The old "This is a different product — search the register" escape hatch is
+ * gone. It sat as a peer of the other options and let a duplicate chemical be
+ * created in a single tap, and a duplicated chemical in a resistance context is
+ * a duplicated chemistry — two records that rotate independently and warn
+ * about nothing. A genuinely different registration is still reachable; it is
+ * simply reached by looking at the stored product first.
  */
 @Composable
 private fun SameNameDecision(
     matches: List<SavedChemical>,
-    query: String,
-    onReviewExisting: (SavedChemical) -> Unit,
-    onCreateSeparate: () -> Unit,
-    onCancel: () -> Unit,
+    onCheckForUpdates: (SavedChemical) -> Unit,
+    onKeepAsIs: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    Text(
-        if (matches.size == 1) {
-            "You already have a chemical matching “${query.trim()}”."
-        } else {
-            "You already have ${matches.size} chemicals matching “${query.trim()}”."
-        },
-        fontSize = 13.sp,
-        color = vine.textPrimary,
-    )
-    Text(
-        "Nothing has been looked up yet. Choose what to do before VineTrack " +
-            "searches the register.",
-        fontSize = 11.sp,
-        color = vine.textSecondary,
-    )
-
     matches.forEach { chemical ->
+        Text(
+            ChemicalStoreMatching.sameNameQuestion(chemical.displayName),
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = vine.textPrimary,
+        )
+        val subtitle = listOfNotNull(
+            chemical.activeIngredient.takeIf { it.isNotBlank() },
+            chemical.manufacturer.takeIf { it.isNotBlank() },
+        ).joinToString(" · ")
+        if (subtitle.isNotEmpty()) {
+            Text(subtitle, fontSize = 12.sp, color = vine.textSecondary)
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
                 .background(VineColors.Info.copy(alpha = 0.08f))
-                .clickable { onReviewExisting(chemical) }
                 .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                chemical.displayName,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = vine.textPrimary,
-            )
-            val subtitle = listOfNotNull(
-                chemical.activeIngredient?.takeIf { it.isNotBlank() },
-                chemical.manufacturer?.takeIf { it.isNotBlank() },
-            ).joinToString(" · ")
-            if (subtitle.isNotEmpty()) {
-                Text(subtitle, fontSize = 11.sp, color = vine.textSecondary)
-            }
-            Text(
-                "Review or re-verify the chemical I already have",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                color = VineColors.Info,
-            )
+            Button(
+                onClick = { onCheckForUpdates(chemical) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(ChemicalStoreMatching.CHECK_FOR_UPDATES_ACTION) }
+            OutlinedButton(
+                onClick = onKeepAsIs,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(ChemicalStoreMatching.KEEP_AS_IS_ACTION) }
         }
     }
-
-    HorizontalDivider()
-    OutlinedButton(
-        onClick = onCreateSeparate,
-        modifier = Modifier.fillMaxWidth(),
-    ) { Text("This is a different product — search the register") }
     Text(
-        "Choose this only if your shed genuinely holds two different registered " +
-            "products with similar names.",
+        "Nothing has been looked up and nothing has been changed. Checking for " +
+            "updates re-checks the product you already have — it never adds a " +
+            "second copy, and your saved chemical is only changed if you save it.",
         fontSize = 11.sp,
         color = vine.textSecondary,
     )
-    TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
-        Text("Back")
-    }
 }
 
 /**
@@ -1193,6 +1171,57 @@ private fun DefaultRatesSection(
     )
 }
 
+/**
+ * The confirmation for a label that registers exactly ONE exact rate.
+ *
+ * A radio button would be wrong here. With a single option a radio is either
+ * pre-filled — which reads as "already answered" and is precisely the silent
+ * consent this release removes — or it is an empty circle beside the only
+ * possible answer, which looks broken. An explicit button naming the rate and
+ * what confirming it MEANS ("as this vineyard's default") is one deliberate
+ * tap that cannot be mistaken for decoration.
+ */
+@Composable
+private fun SingleRateConfirmation(
+    option: ChemicalDefaultRateOption,
+    isConfirmed: Boolean,
+    onConfirm: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            option.displayRate,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            color = vine.textPrimary,
+        )
+        if (isConfirmed) ChemicalPill("Your default", VineColors.Success)
+    }
+    option.conditions.forEach { condition ->
+        Text(condition.summary, fontSize = 10.sp, color = vine.textSecondary)
+    }
+    if (isConfirmed) {
+        Text(
+            "This vineyard's default rate is ${option.displayRate}.",
+            fontSize = 11.sp,
+            color = vine.textSecondary,
+        )
+    } else {
+        Button(onClick = onConfirm, modifier = Modifier.fillMaxWidth()) {
+            Text("Use ${option.displayRate} as this vineyard's default")
+        }
+        Text(
+            "The label registers this one rate. Confirm it so VineTrack knows it is " +
+                "the rate you actually use.",
+            fontSize = 11.sp,
+            color = vine.textSecondary,
+        )
+    }
+}
+
 @Composable
 private fun DefaultRateGroupCard(
     group: ChemicalDefaultRateGroup,
@@ -1217,13 +1246,20 @@ private fun DefaultRateGroupCard(
             // invent one by converting from the other basis.
             Text(group.emptyStatement, fontSize = 12.sp, color = vine.textSecondary)
         } else {
-            val inForce = selection.resolvedOption(group.basis)
-            // Item 4: more than one registered rate means the operator has to
-            // choose. A recommendation stays visible and stays pickable, but
-            // it cannot count as their answer.
-            if (selection.requiresExplicitConfirmation(group.basis) &&
-                !selection.isExplicitlyConfirmed(group.basis)
-            ) {
+            val confirmed = selection.confirmedOption(group.basis)
+            // A label printing exactly ONE exact rate still needs a deliberate
+            // tap. Showing "2 L/ha" and treating the display as the answer is
+            // how a vineyard ends up dosing off a number nobody read.
+            val single = group.options.singleOrNull()
+            if (single != null && !single.isLabelRange) {
+                SingleRateConfirmation(
+                    option = single,
+                    isConfirmed = confirmed?.id == single.id,
+                    onConfirm = { onSelect(single) },
+                )
+                return@Column
+            }
+            if (!selection.isExplicitlyConfirmed(group.basis)) {
                 Row(
                     verticalAlignment = Alignment.Top,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1235,18 +1271,21 @@ private fun DefaultRateGroupCard(
                         modifier = Modifier.size(14.dp),
                     )
                     Text(
-                        "The label registers more than one " +
-                            group.basis.label.lowercase() +
-                            (selection.plan.jurisdiction?.let { " rate for ${it.displayName}" }
-                                ?: " rate") +
-                            ". Choose the one this vineyard uses.",
+                        if (group.options.size > 1) {
+                            "The label registers more than one " +
+                                group.basis.label.lowercase() +
+                                (selection.plan.jurisdiction
+                                    ?.let { " rate for ${it.displayName}" } ?: " rate") +
+                                ". Choose the one this vineyard uses."
+                        } else {
+                            "Choose the registered rate this vineyard uses."
+                        },
                         fontSize = 12.sp,
                         color = VineColors.Warning,
                     )
                 }
             }
             group.options.forEach { option ->
-                val isInForce = inForce?.id == option.id
                 val isChosen = selection.selectedIds[group.basis] == option.id
                 Row(
                     modifier = Modifier
@@ -1256,7 +1295,11 @@ private fun DefaultRateGroupCard(
                     verticalAlignment = Alignment.Top,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    RadioButton(selected = isInForce, onClick = { onSelect(option) })
+                    // The radio reflects the operator's OWN choice only. A
+                    // recommendation is badged, never pre-selected: a filled
+                    // control reads as "already answered", and it was exactly
+                    // that appearance which let unconfirmed rates be saved.
+                    RadioButton(selected = isChosen, onClick = { onSelect(option) })
                     Column(
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                         modifier = Modifier.weight(1f).padding(vertical = 8.dp),
@@ -1305,20 +1348,27 @@ private fun DefaultRateGroupCard(
                     }
                 }
             }
-            // Exact-dose entry: only for a label BAND actually in force. The
-            // registered range itself is never narrowed — the record keeps
-            // the label's own bounds however this vineyard doses inside them.
-            if (inForce != null && inForce.isLabelRange) {
-                val bounds = inForce.authorisedBounds
+            // Exact-dose entry: only for a label BAND the operator has
+            // actually chosen. The registered range itself is never narrowed
+            // — `registered_uses` keeps the label's own bounds however this
+            // vineyard doses inside them.
+            if (confirmed != null && confirmed.isLabelRange) {
+                val bounds = confirmed.authorisedBounds
                 val chosen = selection.values[group.basis]
                 if (chosen == null && bounds != null) {
+                    // There is no minimum, maximum or midpoint fallback. The
+                    // old wording — "Leave it blank to use 560" — offered the
+                    // bottom of the band as a default, which is a dose
+                    // decision dressed up as a convenience.
                     Text(
-                        "Any rate from ${formatChemicalNumber(bounds.first)} to " +
-                            "${formatChemicalNumber(bounds.second)} ${inForce.rate.unit} is " +
-                            "registered. Leave it blank to use " +
-                            "${formatChemicalNumber(bounds.first)}.",
+                        "Enter the rate this vineyard normally uses within the registered " +
+                            "range of ${formatChemicalNumber(bounds.first)}–" +
+                            "${formatChemicalNumber(bounds.second)} " +
+                            "${confirmed.rate.unit}${
+                                ChemicalDefaultRateDisplay.basisSuffix(group.basis)
+                            }.",
                         fontSize = 11.sp,
-                        color = vine.textSecondary,
+                        color = VineColors.Warning,
                     )
                 }
                 Row(
@@ -1333,7 +1383,7 @@ private fun DefaultRateGroupCard(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.weight(1f),
                     )
-                    Text(inForce.rate.unit, fontSize = 12.sp, color = vine.textSecondary)
+                    Text(confirmed.rate.unit, fontSize = 12.sp, color = vine.textSecondary)
                     TextButton(onClick = onSetDose) { Text("Set") }
                 }
                 doseError?.let { WarningLine(it) }
@@ -1343,7 +1393,7 @@ private fun DefaultRateGroupCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text(
-                            "The registered rate stays ${inForce.displayRate}.",
+                            "The registered rate stays ${confirmed.displayRate}.",
                             fontSize = 11.sp,
                             color = vine.textSecondary,
                         )

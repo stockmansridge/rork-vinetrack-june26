@@ -106,6 +106,62 @@ object ChemicalReverifyFlow {
         ChemicalReverification.updated(chemical, outcome)
 
     /**
+     * The IN-MEMORY result of accepting an update. Nothing is written.
+     *
+     * # Why a draft exists at all
+     *
+     * "Use updated information" used to call `updateSavedChemical` immediately,
+     * so the moment an operator pressed it the record changed — before they
+     * had seen the merged product, and with no way back except editing every
+     * field by hand. A re-check is a question, and answering a question should
+     * never be a write. The draft carries the merged record to the ordinary
+     * chemical editor, where the operator reviews it and presses Save exactly
+     * once, exactly as they would for any other edit.
+     *
+     * [chemical] preserves every customer-owned commercial field — purchase,
+     * supplier, pack size and unit, price, cost, stock and notes — because
+     * [ChemicalReverification.updated] copies the stored record and replaces
+     * only chemical-intelligence fields.
+     */
+    data class Draft(
+        /** The merged record as it WOULD stand. Never persisted by this type. */
+        val chemical: SavedChemical,
+        /**
+         * The reconciled intelligence the final Save must write.
+         *
+         * Carried explicitly because the editor cannot re-derive it: opened on
+         * the draft, its own "has the chemistry changed?" test compares the
+         * draft against itself, finds no difference, and would omit the
+         * intelligence columns from the write entirely.
+         */
+        val intelligence: ChemicalIntelligence,
+        /**
+         * Bases whose stored default cites a registered rate the refreshed
+         * label no longer carries. The operator must confirm a rate again or
+         * clear the slot before the draft can be saved.
+         */
+        val staleDefaultBases: List<ChemicalDefaultRateBasis>,
+    )
+
+    /**
+     * Build the in-memory draft for an accepted update. Writes nothing.
+     *
+     * Staleness is measured against the REFRESHED grapevine directions: a
+     * default is a claim about a registered direction, so if the direction it
+     * cites has gone, the claim can no longer be shown to hold.
+     */
+    fun draftFor(chemical: SavedChemical, outcome: ChemicalEditOutcome): Draft {
+        val updated = acceptedChemical(chemical, outcome)
+        return Draft(
+            chemical = updated,
+            intelligence = outcome.intelligence,
+            staleDefaultBases = chemical.defaultRates
+                ?.staleBases(outcome.intelligence.registeredUses.viticultural())
+                .orEmpty(),
+        )
+    }
+
+    /**
      * The write payload for an accepted update.
      *
      * Routed through [ChemicalReverification.updated] and then
@@ -122,10 +178,12 @@ object ChemicalReverifyFlow {
         return ChemicalStoreMatching.inputFor(reconciled, reconciled.name, outcome.intelligence)
     }
 
-    /** The write payload for a confirmed no-change result (evidence only). */
-    fun confirmedInput(
-        chemical: SavedChemical,
-        refreshed: ChemicalIntelligence,
-    ): SavedChemicalRepository.ChemicalInput =
-        ChemicalStoreMatching.inputFor(chemical, chemical.name, refreshed)
+    // NOTE: there is deliberately no `confirmedInput` any more.
+    //
+    // It built the write payload for a NO-CHANGE result, refreshing the stored
+    // evidence and check date. Running a check is not new information about a
+    // product: nothing about it moved, so nothing about it may be rewritten.
+    // Storing a fresh "last checked" stamp also made the record look
+    // re-attested when the only thing that had happened was somebody pressing
+    // a button, so a no-change result now writes exactly nothing.
 }

@@ -169,7 +169,14 @@ class ChemicalMatchProjectionTest {
     }
 
     @Test
-    fun `an unnamed band projects its bottom never its top`() {
+    fun `an unnarrowed band projects nothing at all`() {
+        // This REVERSES the earlier rule, which projected the band's BOTTOM.
+        //
+        // Defaulting to the low end looked conservative and was still a dose
+        // decision made on the operator's behalf, written into the very legacy
+        // columns an older client would spray from. `40-60 mL/100 L` states
+        // what the label permits and says nothing about what this vineyard
+        // pours, so nothing is projected until somebody says.
         val range = ChemicalLabelRate(
             basis = ChemicalLabelRateBasis.RANGE_PER_100_LITRES,
             minValue = 40.0,
@@ -185,9 +192,17 @@ class ChemicalMatchProjectionTest {
             formTypeRaw = "Suspension concentrate",
             defaults = defaults,
         )
-        // Liquid product: 40 mL/100 L stored in base mL against a Litres unit.
-        val row = input.rates.single()
-        assertEquals(40.0, row.value, 1e-9)
+        assertTrue(input.rates.isEmpty())
+        assertEquals(0.0, input.ratePerHa, 1e-9)
+
+        // Naming the dose is what produces the projection.
+        val confirmed = defaults.settingValue(40.0, ChemicalDefaultRateBasis.PER_100_LITRES)!!
+        val dosed = ChemicalStoreMatching.inputFor(
+            null, "Band Product", lookupIntel,
+            formTypeRaw = "Suspension concentrate",
+            defaults = confirmed,
+        )
+        assertEquals(40.0, dosed.rates.single().value, 1e-9)
     }
 
     @Test
@@ -198,8 +213,19 @@ class ChemicalMatchProjectionTest {
             unit = "L",
         )
         val lookupIntel = intel(listOf(grapeUse(perHa)))
-        val defaults = ChemicalDefaultRateSelection(
-            ChemicalDefaultRate.plan(lookupIntel.registeredUses.viticultural()),
+        val plan = ChemicalDefaultRate.plan(lookupIntel.registeredUses.viticultural())
+        // A recommendation is not consent, so the projection only happens once
+        // the operator has actually confirmed the rate.
+        val unconfirmed = ChemicalStoreMatching.inputFor(
+            null, "Hectare Product", lookupIntel,
+            formTypeRaw = "Suspension concentrate",
+            defaults = ChemicalDefaultRateSelection(plan),
+        )
+        assertTrue(unconfirmed.rates.isEmpty())
+
+        val defaults = ChemicalDefaultRateSelection(plan).selecting(
+            plan.perHectare.options.first(),
+            ChemicalDefaultRateBasis.PER_HECTARE,
         )
         val input = ChemicalStoreMatching.inputFor(
             null, "Hectare Product", lookupIntel,
@@ -237,7 +263,7 @@ class ChemicalMatchProjectionTest {
         val lookupIntel = intel(listOf(grapeUse(range)))
         val defaults = ChemicalDefaultRateSelection(
             ChemicalDefaultRate.plan(lookupIntel.registeredUses.viticultural()),
-        )
+        ).settingValue(100.0, ChemicalDefaultRateBasis.PER_100_LITRES)!!
         val input = ChemicalStoreMatching.inputFor(
             existing, "Range Product", lookupIntel,
             formTypeRaw = "Wettable powder",
@@ -282,8 +308,10 @@ class ChemicalMatchProjectionTest {
                 labelReference = "https://new.example/label.pdf",
             ),
         )
-        val defaults = ChemicalDefaultRateSelection(
-            ChemicalDefaultRate.plan(newProduct.registeredUses.viticultural()),
+        val newPlan = ChemicalDefaultRate.plan(newProduct.registeredUses.viticultural())
+        val defaults = ChemicalDefaultRateSelection(newPlan).selecting(
+            newPlan.per100Litres.options.first(),
+            ChemicalDefaultRateBasis.PER_100_LITRES,
         )
         val input = ChemicalStoreMatching.inputFor(
             existing, "Product B", newProduct,

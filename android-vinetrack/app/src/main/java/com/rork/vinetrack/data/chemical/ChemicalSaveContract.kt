@@ -87,6 +87,39 @@ enum class ChemicalSaveViolationCode(val raw: String) {
      * taken (the review step), never when merely editing a stored record.
      */
     DEFAULT_RATE_UNCONFIRMED("default_rate_unconfirmed"),
+
+    /**
+     * The label registers a usable grapevine rate and NO basis carries an
+     * operator-confirmed operational default.
+     *
+     * Distinct from [DEFAULT_RATE_UNCONFIRMED], which is about a single basis
+     * with several candidates. This one is the release gate: a product may
+     * enter the Chemical Store only once a human has said what this vineyard
+     * actually pours, even where the label prints exactly one rate and the
+     * screen has been showing it all along. Only ONE basis is required —
+     * plenty of vineyards dose per hectare and never per 100 L.
+     */
+    DEFAULT_RATE_REQUIRED("default_rate_required"),
+
+    /**
+     * A label BAND was chosen as the default and no exact dose was named.
+     *
+     * `560–700 g/ha` states what is permitted; it does not state what this
+     * vineyard pours. There is deliberately no minimum, maximum or midpoint
+     * fallback, so the decision stays unfinished until the operator types the
+     * figure they actually use.
+     */
+    DEFAULT_RATE_EXACT_DOSE_REQUIRED("default_rate_exact_dose_required"),
+
+    /**
+     * A stored default cites a registered rate identity that has vanished from
+     * the refreshed label.
+     *
+     * Never silently repointed: the numbers may look identical while the
+     * direction, condition or withholding period behind them has changed, and
+     * a default is a claim about a DIRECTION rather than about a number.
+     */
+    DEFAULT_RATE_STALE("default_rate_stale"),
 }
 
 /** One unmet requirement, phrased as the next action. */
@@ -236,6 +269,12 @@ object ChemicalSaveContract {
          * start demanding a choice the editor never offered.
          */
         defaults: ChemicalDefaultRateSelection? = null,
+        /**
+         * Bases whose STORED default cites a registered rate identity the
+         * refreshed label no longer carries. Supplied by the re-verification
+         * path; empty everywhere else.
+         */
+        staleDefaultBases: List<ChemicalDefaultRateBasis> = emptyList(),
     ): ChemicalSaveEvaluation {
         val violations = mutableListOf<ChemicalSaveViolation>()
 
@@ -306,20 +345,57 @@ object ChemicalSaveContract {
 
         violations.addAll(rateViolations(viticulturalRates))
 
-        // Item 4: with more than one registered grapevine rate on a basis,
-        // silence is not consent. The recommendation stays on screen and stays
-        // pickable; it simply cannot count as the operator's answer.
-        if (defaults != null) {
-            for (basis in defaults.basesAwaitingConfirmation) {
+        // Release item 3: silence is not consent, at any number of options.
+        // The recommendation stays on screen and stays pickable; it simply
+        // cannot count as the operator's answer.
+        if (defaults != null && defaults.offersAnyChoice) {
+            if (!defaults.hasConfirmedDefault) {
                 violations.add(
                     ChemicalSaveViolation(
-                        code = ChemicalSaveViolationCode.DEFAULT_RATE_UNCONFIRMED,
-                        message = "Choose which registered ${basis.label.lowercase()} rate " +
-                            "this vineyard uses.",
+                        code = ChemicalSaveViolationCode.DEFAULT_RATE_REQUIRED,
+                        message = "Confirm the rate this vineyard uses before saving.",
+                        field = "default_rates",
+                    ),
+                )
+            }
+            // A chosen band with no figure inside it is a half-finished
+            // decision, and it is reported separately so the operator is told
+            // to type a dose rather than to choose a rate they already chose.
+            for (basis in defaults.basesAwaitingExactDose) {
+                val bounds = defaults.confirmedOption(basis)?.authorisedBounds
+                val unit = defaults.confirmedOption(basis)?.rate?.unit.orEmpty()
+                violations.add(
+                    ChemicalSaveViolation(
+                        code = ChemicalSaveViolationCode.DEFAULT_RATE_EXACT_DOSE_REQUIRED,
+                        message = if (bounds != null) {
+                            "Enter the rate this vineyard normally uses within the " +
+                                "registered range of " +
+                                formatChemicalNumber(bounds.first) + "–" +
+                                formatChemicalNumber(bounds.second) +
+                                (if (unit.isNotEmpty()) " $unit" else "") + "."
+                        } else {
+                            "Enter the exact rate this vineyard uses within the " +
+                                "registered range."
+                        },
                         field = "default_rate_${basis.raw}",
                     ),
                 )
             }
+        }
+
+        // A default whose cited registered rate has vanished is not a default
+        // any more. It is never repointed by value or position — the operator
+        // confirms again, or clears it.
+        for (basis in staleDefaultBases) {
+            violations.add(
+                ChemicalSaveViolation(
+                    code = ChemicalSaveViolationCode.DEFAULT_RATE_STALE,
+                    message = "Confirm a rate again — the registered " +
+                        "${basis.label.lowercase()} rate this default was based on is no " +
+                        "longer on the label.",
+                    field = "default_rate_${basis.raw}",
+                ),
+            )
         }
 
         // The shared contract also refuses a BLANK resistance state, because the

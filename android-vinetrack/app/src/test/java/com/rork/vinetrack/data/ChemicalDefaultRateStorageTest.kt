@@ -154,27 +154,21 @@ class ChemicalDefaultRateStorageTest {
     // ---------------------------------------------------------------------
 
     @Test
-    fun `a confirmed band records both bounds and cites its direction`() {
+    fun `an unnarrowed band records no default at all`() {
+        // A band nobody narrowed is a decision that was never finished.
+        //
+        // This REVERSES the earlier shape, which stored the band's own bounds
+        // as though choosing the row were the whole answer. `560-700 g/ha`
+        // states what the label PERMITS; it says nothing about what this
+        // vineyard pours, and there is no minimum, maximum or midpoint
+        // fallback anywhere in this contract.
         val uses = listOf(chateauUse())
         val option = requireNotNull(option(ChemicalDefaultRateBasis.PER_HECTARE, uses))
-        val stored = requireNotNull(
-            confirmedDefaultRate(option, ChemicalDefaultRateBasis.PER_HECTARE, uses),
-        )
-
-        assertEquals(goldenBandKey, stored.optionKey)
-        assertEquals(listOf("rate_v1_chateau"), stored.rateIds)
-        assertEquals("per_hectare", stored.basis)
-        assertEquals("g", stored.unit)
-        // A true label range keeps BOTH bounds. Splitting it into two defaults,
-        // or collapsing it to one number, would misreport the registration.
-        assertEquals(560.0, stored.minValue!!, 1e-9)
-        assertEquals(700.0, stored.maxValue!!, 1e-9)
-        // Confirmed by a human, so the provenance says so.
-        assertEquals("operator", stored.source)
+        assertNull(confirmedDefaultRate(option, ChemicalDefaultRateBasis.PER_HECTARE, uses))
     }
 
     @Test
-    fun `an exact dose inside the band is accepted and stored alongside it`() {
+    fun `an exact dose inside the band is stored as a scalar with both bounds null`() {
         val uses = listOf(chateauUse())
         val option = requireNotNull(option(ChemicalDefaultRateBasis.PER_HECTARE, uses))
         val stored = requireNotNull(
@@ -182,25 +176,42 @@ class ChemicalDefaultRateStorageTest {
                 option, ChemicalDefaultRateBasis.PER_HECTARE, uses, confirmedValue = 620.0,
             ),
         )
+
+        // Shared shape D3: an amount is a scalar OR a range, never both.
+        // Storing 620 alongside 560-700 reads back as an amount that is
+        // simultaneously "exactly 620" and "anywhere in 560-700", and a
+        // consumer has no principled way to choose between them.
         assertEquals(620.0, stored.value!!, 1e-9)
-        // The registered band is NOT rewritten to the operator's figure.
-        assertEquals(560.0, stored.minValue!!, 1e-9)
-        assertEquals(700.0, stored.maxValue!!, 1e-9)
+        assertNull(stored.minValue)
+        assertNull(stored.maxValue)
+
+        // The printed band is NOT lost: `registered_uses` still carries it
+        // verbatim and stays the sole authority on what the label permits.
+        assertEquals(560.0, uses.first().rates.first().minValue!!, 1e-9)
+        assertEquals(700.0, uses.first().rates.first().maxValue!!, 1e-9)
+
+        // IDENTITY is still minted from the LABEL's own amounts, so two
+        // vineyards dosing 620 and 650 inside one printed band are recognised
+        // as having chosen the same registered option.
+        assertEquals(goldenBandKey, stored.optionKey)
+        assertEquals(listOf("rate_v1_chateau"), stored.rateIds)
+        assertEquals("per_hectare", stored.basis)
+        assertEquals("g", stored.unit)
+        assertEquals("operator", stored.source)
     }
 
     @Test
     fun `a dose outside the registered band is refused`() {
         val uses = listOf(chateauUse())
         val option = requireNotNull(option(ChemicalDefaultRateBasis.PER_HECTARE, uses))
-        val stored = requireNotNull(
+        // 900 g/ha is not registered, so nothing is recorded at all - the
+        // unauthorised figure is never written, and the band is not silently
+        // stored in its place either.
+        assertNull(
             confirmedDefaultRate(
                 option, ChemicalDefaultRateBasis.PER_HECTARE, uses, confirmedValue = 900.0,
             ),
         )
-        // 900 g/ha is not registered, so it is not recorded. The band stands.
-        assertNull(stored.value)
-        assertEquals(560.0, stored.minValue!!, 1e-9)
-        assertEquals(700.0, stored.maxValue!!, 1e-9)
     }
 
     /**
@@ -274,8 +285,11 @@ class ChemicalDefaultRateStorageTest {
             listOf("rate_v1_chateau"),
             slotJson["rate_ids"]!!.jsonArray.map { it.jsonPrimitive.content },
         )
-        assertEquals(560.0, slotJson["min_value"]!!.jsonPrimitive.content.toDouble(), 1e-9)
-        assertEquals(700.0, slotJson["max_value"]!!.jsonPrimitive.content.toDouble(), 1e-9)
+        // The confirmed scalar, and NO bounds: `explicitNulls = false` omits
+        // them entirely, which is exactly the scalar shape the server reads.
+        assertEquals(620.0, slotJson["value"]!!.jsonPrimitive.content.toDouble(), 1e-9)
+        assertNull(slotJson["min_value"])
+        assertNull(slotJson["max_value"])
         assertEquals("2024-07", slotJson["label_version"]!!.jsonPrimitive.content)
 
         val decoded = json.decodeFromString(StoredChemicalDefaultRates.serializer(), encoded)
@@ -290,7 +304,9 @@ class ChemicalDefaultRateStorageTest {
         val uses = listOf(chateauUse())
         val option = requireNotNull(option(ChemicalDefaultRateBasis.PER_HECTARE, uses))
         val slot = requireNotNull(
-            confirmedDefaultRate(option, ChemicalDefaultRateBasis.PER_HECTARE, uses),
+            confirmedDefaultRate(
+                option, ChemicalDefaultRateBasis.PER_HECTARE, uses, confirmedValue = 620.0,
+            ),
         )
         val chemical = SavedChemical(
             id = "c1",
@@ -304,6 +320,9 @@ class ChemicalDefaultRateStorageTest {
         val reloaded = json.decodeFromString(SavedChemical.serializer(), encoded)
         assertEquals(goldenBandKey, reloaded.defaultRates?.perHectare?.optionKey)
         assertEquals(listOf("rate_v1_chateau"), reloaded.defaultRates?.perHectare?.rateIds)
+        // The operator's exact dose is what survives the round trip.
+        assertEquals(620.0, reloaded.defaultRates?.perHectare?.value!!, 1e-9)
+        assertNull(reloaded.defaultRates?.perHectare?.minValue)
     }
 
     /**

@@ -54,7 +54,6 @@ import com.rork.vinetrack.data.chemical.ChemicalReverification
 import com.rork.vinetrack.data.chemical.ChemicalReverifyFlow
 import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.ui.AppUiState
-import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.ChemicalConflictCard
 import com.rork.vinetrack.ui.components.ChemicalIdentityView
 import com.rork.vinetrack.ui.components.ChemicalLabelledLine
@@ -118,10 +117,18 @@ private sealed interface ReverifyPhase {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ChemicalReverifySheet(
-    vm: AppViewModel,
     state: AppUiState,
     chemical: SavedChemical,
     onDismiss: () -> Unit,
+    /**
+     * "Use updated information" — hands the IN-MEMORY merged record to the host
+     * so it can be opened in the ordinary chemical editor.
+     *
+     * This sheet writes nothing, ever. The single database update happens
+     * behind the editor's own explicit Save Chemical button, so the operator
+     * reviews the merged product before it replaces the one they had.
+     */
+    onUseUpdatedInformation: (ChemicalReverifyFlow.Draft) -> Unit,
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
@@ -129,7 +136,6 @@ internal fun ChemicalReverifySheet(
     val service = remember { ChemicalInfoService() }
 
     var phase by remember { mutableStateOf<ReverifyPhase>(ReverifyPhase.Checking) }
-    var saving by remember { mutableStateOf(false) }
 
     val countryCode: String = remember(state.selectedVineyardId, state.vineyards) {
         ChemicalRegistration.normaliseCountry(
@@ -195,35 +201,18 @@ internal fun ChemicalReverifySheet(
         }
     }
 
-    /** Persist an accepted update through the reconciled outcome. */
-    fun accept(outcome: ChemicalEditOutcome) {
-        if (saving) return
-        saving = true
-        vm.updateSavedChemical(
-            chemical.id,
-            ChemicalReverifyFlow.acceptedInput(chemical, outcome),
-        ) { ok ->
-            saving = false
-            if (ok) onDismiss()
-        }
-    }
-
-    /** Close a no-change result, storing refreshed evidence when there is any. */
-    fun confirmCurrent(refreshed: ChemicalIntelligence?) {
-        if (refreshed == null) {
-            onDismiss()
-            return
-        }
-        if (saving) return
-        saving = true
-        vm.updateSavedChemical(
-            chemical.id,
-            ChemicalReverifyFlow.confirmedInput(chemical, refreshed),
-        ) { ok ->
-            saving = false
-            if (ok) onDismiss()
-        }
-    }
+    // NOTE: this sheet contains no write of any kind, deliberately.
+    //
+    // It used to hold two. `accept()` called `updateSavedChemical` the instant
+    // the operator pressed the update button — before they had seen the merged
+    // product, and with no way back. `confirmCurrent()` wrote refreshed
+    // evidence for a NO-CHANGE result, so merely running a check restamped the
+    // record's provenance and made it look re-attested when nothing about the
+    // product had moved.
+    //
+    // Both are gone. A re-check is a question; answering a question is not a
+    // write. Accepting an update produces an in-memory draft that the ordinary
+    // editor saves, once, when the operator says so.
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
@@ -351,12 +340,10 @@ internal fun ChemicalReverifySheet(
                         HorizontalDivider()
                         ReverifySectionLabel("Verification details")
                         ChemicalVerificationEvidenceView(refreshed.verification, resolved)
-                        // Be explicit that only provenance moved. A check date is
-                        // not a product change and must not read like one.
                         Text(
-                            "Only the record of when this was last checked and which sources " +
-                                "were consulted has been updated. No chemistry, rate or " +
-                                "registered use was changed.",
+                            "These are the sources the check consulted. Nothing has been " +
+                                "saved — no chemistry, rate or registered use changed, so " +
+                                "your record is untouched.",
                             fontSize = 11.sp,
                             color = vine.textSecondary,
                         )
@@ -366,10 +353,17 @@ internal fun ChemicalReverifySheet(
 
                     HorizontalDivider()
                     Button(
-                        onClick = { confirmCurrent(current.refreshed) },
-                        enabled = !saving,
+                        onClick = onDismiss,
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text(if (current.refreshed == null) "Close" else "Done") }
+                    ) { Text("Keep what I have") }
+                    // A no-change result is not an occasion to write anything,
+                    // including a fresh "last checked" stamp: running a check
+                    // is not new information about the product.
+                    Text(
+                        "Nothing has changed, so nothing has been saved.",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
                 }
 
                 is ReverifyPhase.Changes -> {
@@ -509,12 +503,21 @@ internal fun ChemicalReverifySheet(
 
                     HorizontalDivider()
                     Button(
-                        onClick = { accept(current.outcome) },
-                        enabled = !saving,
+                        onClick = {
+                            onUseUpdatedInformation(
+                                ChemicalReverifyFlow.draftFor(chemical, current.outcome),
+                            )
+                        },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Update Chemical") }
+                    ) { Text("Use updated information") }
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Keep what I have") }
                     Text(
-                        "Updating changes this Chemical Store record only. Completed spray " +
+                        "Nothing has been saved yet. “Use updated information” opens this " +
+                            "chemical for review with the changes applied — they are only " +
+                            "stored when you press Save Chemical there. Completed spray " +
                             "records keep the chemical information that was captured at the " +
                             "time they were applied.",
                         fontSize = 11.sp,

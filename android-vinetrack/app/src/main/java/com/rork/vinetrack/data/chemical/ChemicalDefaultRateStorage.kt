@@ -285,6 +285,13 @@ fun confirmedDefaultRate(
     val rateIds = ChemicalDefaultRateIdentity.rateIdsFor(option, grapevineUses)
     if (rateIds.isEmpty()) return null
 
+    // IDENTITY is minted from the LABEL's own printed amount, never from the
+    // operator's narrowed dose. The key answers "which registered option is
+    // this?", and two vineyards dosing 600 and 650 inside the same printed
+    // 560-700 band have chosen the SAME registered option - minting from the
+    // dose would split one option into one key per vineyard and make the key
+    // useless for recognising a shared choice. This mirrors the Portal, which
+    // likewise passes the OPTION's id and not the amount's.
     val optionKey = ChemicalDefaultRateIdentity.mintOptionKey(
         basis = basis.raw,
         unit = rate.unit,
@@ -294,11 +301,21 @@ fun confirmedDefaultRate(
         rateIds = rateIds,
     )
 
-    // The operator's exact dose is recorded ALONGSIDE the registered figures,
-    // never over them: a band stays a band on the record.
-    val storedValue = confirmedValue
-        ?.takeIf { option.isLabelRange && option.authorises(it) }
-        ?: rate.value
+    // The AMOUNT is a scalar OR a range - never both (shared shape D3).
+    //
+    // An earlier revision stored the confirmed dose in `value` while ALSO
+    // keeping the label's `min_value`/`max_value`, which reads back as an
+    // amount that is simultaneously "exactly 600" and "anywhere in 560-700".
+    // A consumer has no principled way to choose between them. A dose
+    // narrowed from a band therefore persists as a plain scalar with both
+    // bounds null: the printed band is not lost, because `registered_uses`
+    // still carries it verbatim and stays the sole authority on what the
+    // label permits.
+    val narrowed = confirmedValue?.takeIf { option.isLabelRange && option.authorises(it) }
+    val storedValue = narrowed ?: rate.value
+    // A band nobody narrowed produces NO record. There is deliberately no
+    // minimum, maximum or midpoint fallback anywhere in this contract.
+    if (storedValue == null) return null
 
     return StoredChemicalDefaultRate(
         optionKey = optionKey,
@@ -306,8 +323,8 @@ fun confirmedDefaultRate(
         basis = basis.raw,
         unit = rate.unit,
         value = storedValue,
-        minValue = rate.minValue,
-        maxValue = rate.maxValue,
+        minValue = null,
+        maxValue = null,
         source = source,
         selectedAt = selectedAt ?: java.time.Instant.now().toString(),
         labelVersion = labelVersion,
@@ -335,8 +352,10 @@ fun ChemicalDefaultRateSelection.storedDefaultRates(
     if (grapevineUses.isEmpty()) return null
     var stored = StoredChemicalDefaultRates()
     for (basis in ChemicalDefaultRateBasis.entries) {
-        val selectedId = selectedIds[basis] ?: continue
-        val option = plan.group(basis).options.firstOrNull { it.id == selectedId } ?: continue
+        // `confirmedOption` - never `resolvedOption`. The latter falls back to
+        // the recommendation so a review screen can show one, and a
+        // recommendation nobody confirmed must never reach the database.
+        val option = confirmedOption(basis) ?: continue
         stored = stored.withSlot(
             basis,
             confirmedDefaultRate(
@@ -350,3 +369,65 @@ fun ChemicalDefaultRateSelection.storedDefaultRates(
     }
     return stored.takeIf { !it.isEmpty }
 }
+
+/**
+ * The empty v1 contract that CLEARS every recorded default.
+ *
+ * Deliberately not null. Null means "leave whatever is stored alone", and the
+ * REST client's `explicitNulls = false` drops a null column from the write
+ * entirely - so an operator clearing their last default would silently keep
+ * it. An explicit version-1 document with both slots absent is the only way to
+ * say "there is no default here now" in a form the server and the other
+ * clients both read.
+ */
+fun clearedDefaultRates(): StoredChemicalDefaultRates = StoredChemicalDefaultRates()
+
+/**
+ * Whether a stored default still stands against the label as it reads TODAY.
+ *
+ * A default is a claim about a registered DIRECTION, not about a number. Every
+ * `rate_id` it cites must still be present in the refreshed grapevine
+ * directions; if any has gone, the default is stale.
+ *
+ * Deliberately ALL cited ids rather than any: an option merges several
+ * directions stating the same amount, and if one of them has been withdrawn
+ * the operator's choice no longer means what it meant when they made it.
+ *
+ * A default citing nothing at all can never be proven current, so it is stale.
+ */
+fun StoredChemicalDefaultRate.isSupportedBy(
+    grapevineUses: List<ChemicalRegisteredUse>,
+): Boolean {
+    val live = grapevineUses
+        .flatMap { it.rates }
+        .mapNotNull { it.rateId?.trim()?.takeIf(String::isNotEmpty) }
+        .toSet()
+    val cited = ChemicalDefaultRateIdentity.canonicalRateIds(rateIds)
+    if (cited.isEmpty()) return false
+    return cited.all { it in live }
+}
+
+/**
+ * Bases whose stored default cites a registered rate that has VANISHED.
+ *
+ * The refreshed label is the only input, and nothing here picks a replacement:
+ * not by value, not by array position, not "the first new rate". Two
+ * directions can print the same number while carrying different withholding
+ * periods, so a silent repoint would move a compliance fact without telling
+ * anybody. The operator confirms again, or clears the slot.
+ */
+fun StoredChemicalDefaultRates.staleBases(
+    grapevineUses: List<ChemicalRegisteredUse>,
+): List<ChemicalDefaultRateBasis> = ChemicalDefaultRateBasis.entries.filter { basis ->
+    slot(basis)?.let { !it.isSupportedBy(grapevineUses) } == true
+}
+
+/**
+ * The confirmed operational amount a slot records, or null when it records none.
+ *
+ * The scalar shape is the ONLY valid confirmed amount (see D3 above): a slot
+ * still carrying a legacy range with no scalar is a decision that was never
+ * finished, and it must not be read as one.
+ */
+val StoredChemicalDefaultRate.confirmedAmount: Double?
+    get() = value?.takeIf { it.isFinite() && it > 0 }

@@ -542,33 +542,92 @@ data class ChemicalDefaultRateSelection(
             plan.group(basis).requiresChoice && selectedIds[basis] == null
         }
 
-    // ---- Explicit confirmation (item 4) ----
+    // ---- Explicit confirmation (release item 3) ----
+    //
+    // # Why a recommendation can never be an answer
+    //
+    // An earlier revision demanded a tap only when a basis offered MORE THAN
+    // ONE option (`options.size > 1`), on the reasoning that a label printing
+    // a single rate leaves nothing to choose between. That is true about the
+    // LABEL and false about the VINEYARD. Displaying "2 L/ha" and treating the
+    // display as consent means the first spray this product is ever used in
+    // doses off a number no human ever read — the label might be for a
+    // different pack, the parse might have mis-scaled it, and nobody would
+    // find out until the mix was in the tank. Every operational default is now
+    // an act, not an inference: exactly one deliberate tap, however few rates
+    // the label prints.
+
+    /** Whether the label registers anything a default could be held on. */
+    fun offersChoice(basis: ChemicalDefaultRateBasis): Boolean =
+        plan.group(basis).options.isNotEmpty()
+
+    /** True when the label registers at least one usable grapevine rate. */
+    val offersAnyChoice: Boolean
+        get() = ChemicalDefaultRateBasis.entries.any { offersChoice(it) }
 
     /**
      * Whether this basis needs a DELIBERATE choice before the record is saved.
      *
-     * True whenever the label registers more than one distinct grapevine rate
-     * on the basis. A recommendation is a suggestion, not a decision: with two
-     * or more numbers on the label, treating the recommended one as the
-     * operator's answer means a vineyard doses off a rate nobody ever read.
-     *
-     * A single registered rate does NOT require a tap — item 4 permits it to be
-     * selected automatically — but it must still be visible before save, which
-     * is the review screen's job rather than this predicate's.
+     * True whenever the basis offers anything at all. A basis the label states
+     * nothing on is never listed — demanding a choice between no options would
+     * be unanswerable.
      */
     fun requiresExplicitConfirmation(basis: ChemicalDefaultRateBasis): Boolean =
-        plan.group(basis).options.size > 1
+        offersChoice(basis)
 
     /** Whether the operator has actually chosen for this basis themselves. */
     fun isExplicitlyConfirmed(basis: ChemicalDefaultRateBasis): Boolean =
         selectedIds[basis] != null
 
     /**
-     * Bases that register several rates and have no operator decision yet.
+     * The option the operator EXPLICITLY chose. Never a recommendation.
      *
-     * Empty means every multi-rate basis has been answered. A basis the label
-     * states nothing on is never listed — there is nothing to confirm, and
-     * demanding a choice between no options would be unanswerable.
+     * The counterpart to [resolvedOption], which deliberately falls back so a
+     * review screen can show a suggestion. Persistence and every projection
+     * read this one: what gets stored must be what somebody decided.
+     */
+    fun confirmedOption(basis: ChemicalDefaultRateBasis): ChemicalDefaultRateOption? {
+        val id = selectedIds[basis] ?: return null
+        return plan.group(basis).options.firstOrNull { it.id == id }
+    }
+
+    /**
+     * The exact confirmed dose for a basis, in the RATE's own unit.
+     *
+     * An exact label amount confirms as itself. A label BAND confirms only to
+     * the figure the operator typed inside it — there is deliberately no
+     * minimum, maximum or midpoint fallback, because `560–700 g/ha` states
+     * what is permitted and says nothing whatever about what this vineyard
+     * pours. Null means the decision is not finished.
+     */
+    fun confirmedDose(basis: ChemicalDefaultRateBasis): Double? {
+        val option = confirmedOption(basis) ?: return null
+        if (option.isLabelRange) return values[basis]?.takeIf(option::authorises)
+        return option.rate.value
+    }
+
+    /** True when this basis carries a complete, usable confirmed default. */
+    fun isFullyConfirmed(basis: ChemicalDefaultRateBasis): Boolean =
+        confirmedDose(basis) != null
+
+    /**
+     * Bases where a label BAND was chosen but no exact dose was named.
+     *
+     * A half-finished decision, and distinct from "nothing chosen": the
+     * operator has answered which registered rate governs and still owes the
+     * figure inside it.
+     */
+    val basesAwaitingExactDose: List<ChemicalDefaultRateBasis>
+        get() = ChemicalDefaultRateBasis.entries.filter { basis ->
+            confirmedOption(basis)?.isLabelRange == true && confirmedDose(basis) == null
+        }
+
+    /**
+     * Bases that offer a rate and have no operator decision yet.
+     *
+     * Guidance for the review screen. It is NOT the save gate: a product is
+     * not required to hold both a per-hectare and a per-100 L default, because
+     * plenty of vineyards dose one way and never the other.
      */
     val basesAwaitingConfirmation: List<ChemicalDefaultRateBasis>
         get() = ChemicalDefaultRateBasis.entries.filter { basis ->
@@ -576,14 +635,25 @@ data class ChemicalDefaultRateSelection(
         }
 
     /**
-     * True when every basis that needs a deliberate choice has had one.
+     * True when at least one basis carries a complete confirmed default.
+     *
+     * ONE is the requirement, deliberately. Demanding both would block every
+     * product whose label prints only one basis, and demanding neither is what
+     * let unread recommendations reach the spray tank.
+     */
+    val hasConfirmedDefault: Boolean
+        get() = ChemicalDefaultRateBasis.entries.any { isFullyConfirmed(it) }
+
+    /**
+     * True when the default-rate decision is finished.
      *
      * Deliberately true for a product the label registers NO grapevine rate
      * on: that record is incomplete for other reasons the save contract
      * already states, and inventing a default-rate objection on top would tell
      * the operator to choose something that does not exist.
      */
-    val isConfirmed: Boolean get() = basesAwaitingConfirmation.isEmpty()
+    val isConfirmed: Boolean
+        get() = !offersAnyChoice || (hasConfirmedDefault && basesAwaitingExactDose.isEmpty())
 
     /** The rate in force per basis, for a review screen to show before save. */
     val resolvedSummary: List<Pair<ChemicalDefaultRateBasis, ChemicalDefaultRateOption?>>

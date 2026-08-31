@@ -107,9 +107,11 @@ import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_HECTARE
 import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.chemical.ChemicalSnapshotCapture
+import com.rork.vinetrack.data.chemical.ChemicalSprayDefaultHandoff
 import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.chemicalUnitFromBase
+import com.rork.vinetrack.data.model.chemicalUnitToBase
 import com.rork.vinetrack.data.model.resolveSprayTrip
 import com.rork.vinetrack.data.model.sprayOperationTypes
 import com.rork.vinetrack.data.spray.SprayBlockInput
@@ -160,11 +162,29 @@ private class CalcChemLine(
     chemicalId: String,
     selectedRateId: String?,
     basis: SprayCalculator.RateBasis,
+    rateAmount: Double? = null,
+    rateUnit: String? = null,
 ) {
     val uid: String = UUID.randomUUID().toString()
     var chemicalId by mutableStateOf(chemicalId)
     var selectedRateId by mutableStateOf(selectedRateId)
     var basis by mutableStateOf(basis)
+
+    /**
+     * The application rate, expressed in [rateUnit].
+     *
+     * Null means UNRESOLVED: no confirmed default could be safely handed over
+     * and the operator must supply the rate. A deliberate, visible state -
+     * never a silent zero and never a borrowed legacy number.
+     */
+    var rateAmount by mutableStateOf(rateAmount)
+
+    /**
+     * The APPLICATION-RATE unit. Never assume this equals the product's pack
+     * unit: a product stocked in kilograms is routinely dosed in grams/ha.
+     */
+    var rateUnit by mutableStateOf(rateUnit)
+
     var overrideText by mutableStateOf("")
 }
 
@@ -194,8 +214,32 @@ private fun guidedPlanLineFor(
 private fun basisOf(raw: String): SprayCalculator.RateBasis =
     if (raw == CHEMICAL_RATE_PER_100L) SprayCalculator.RateBasis.PER_100L else SprayCalculator.RateBasis.PER_HECTARE
 
-/** Recommended rate for the line in the chemical's display unit. */
+/**
+ * The unit this line's rate is expressed in.
+ *
+ * The line's own unit whenever one was established. Falls back to the product
+ * unit ONLY for a genuinely legacy record, where the legacy columns really
+ * were quoted in the pack unit and remain the best answer available.
+ */
+private fun lineRateUnit(chem: SavedChemical, line: CalcChemLine): String =
+    line.rateUnit ?: chem.unit
+
+/**
+ * The line's recommended rate, expressed in [lineRateUnit].
+ *
+ * # What it will never read
+ *
+ * For a STRUCTURED product: `rates.first()`, `rate_per_ha`, and the first
+ * registered-use rate. Each was a fallback here and each could put a number in
+ * the tank that nobody confirmed - the first row of `rates` is an ordering
+ * accident, and `rate_per_ha` is a legacy column with no link back to a
+ * registered direction. A structured product with no confirmed default has NO
+ * recommended rate, and says so by returning zero rather than by guessing.
+ */
 private fun recommendedRateDisplay(chem: SavedChemical, line: CalcChemLine): Double {
+    line.rateAmount?.takeIf { it > 0 }?.let { return it }
+    // Legacy/manual records only. A structured product never reaches here.
+    if (!ChemicalSprayDefaultHandoff.isLegacyRateRecord(chem)) return 0.0
     chem.rates.firstOrNull { it.id == line.selectedRateId }?.let {
         return chemicalUnitFromBase(chem.unit, it.value)
     }
@@ -205,17 +249,59 @@ private fun recommendedRateDisplay(chem: SavedChemical, line: CalcChemLine): Dou
     }
 }
 
+/**
+ * The line's cost per APPLICATION-RATE unit, or null when it cannot be known.
+ *
+ * Delegates to [ChemicalSprayDefaultHandoff.costPerRateUnit] so the conversion
+ * rule lives in the data layer where it can be asserted on directly, rather
+ * than inside a Composable file no unit test can reach.
+ */
+private fun lineCostPerUnit(chem: SavedChemical, rateUnit: String): Double? =
+    ChemicalSprayDefaultHandoff.costPerRateUnit(chem, rateUnit)
+
 /** Effective rate: manual override (when valid) else the recommended rate. */
 private fun effectiveRateDisplay(chem: SavedChemical, line: CalcChemLine): Double =
     line.overrideText.toDoubleOrNull()?.takeIf { it > 0 } ?: recommendedRateDisplay(chem, line)
 
-/** New chemical line seeded from a saved chemical's first stored rate. */
+/**
+ * A new chemical line for [chem].
+ *
+ * Prefilled ONLY from a safe confirmed default (see
+ * [ChemicalSprayDefaultHandoff]). Everything else - two confirmed bases, an
+ * unnarrowed range, a malformed contract, an unsupported unit - produces an
+ * UNRESOLVED line carrying no amount, because an unresolved line costs one tap
+ * and a wrongly-prefilled line reaches the vineyard.
+ *
+ * A genuinely legacy record keeps its previous seeding behaviour, so an
+ * existing manual chemical stays usable exactly as it was.
+ */
 private fun newLineFor(chem: SavedChemical): CalcChemLine {
-    val first = chem.rates.firstOrNull()
+    ChemicalSprayDefaultHandoff.prefillFor(chem)?.let { prefill ->
+        return CalcChemLine(
+            chemicalId = chem.id,
+            selectedRateId = null,
+            basis = prefill.basis,
+            rateAmount = prefill.rate,
+            rateUnit = prefill.unit,
+        )
+    }
+    if (ChemicalSprayDefaultHandoff.isLegacyRateRecord(chem)) {
+        val first = chem.rates.firstOrNull()
+        return CalcChemLine(
+            chemicalId = chem.id,
+            selectedRateId = first?.id,
+            basis = first?.let { basisOf(it.basis) } ?: SprayCalculator.RateBasis.PER_HECTARE,
+            rateAmount = first?.let { chemicalUnitFromBase(chem.unit, it.value) },
+            rateUnit = first?.let { chem.unit },
+        )
+    }
+    // Structured, but nothing safe to hand over: the operator enters the rate.
     return CalcChemLine(
         chemicalId = chem.id,
-        selectedRateId = first?.id,
-        basis = first?.let { basisOf(it.basis) } ?: SprayCalculator.RateBasis.PER_HECTARE,
+        selectedRateId = null,
+        basis = SprayCalculator.RateBasis.PER_HECTARE,
+        rateAmount = null,
+        rateUnit = null,
     )
 }
 
@@ -293,6 +379,19 @@ fun SprayCalculatorScreen(
     // Chemicals & notes
     val chemLines = remember { mutableStateListOf<CalcChemLine>() }
     var showAddChemicalToList by remember { mutableStateOf(false) }
+    /** Manual fallback from the register flow, for a product the register lacks. */
+    var showManualChemicalEntry by remember { mutableStateOf(false) }
+    /**
+     * Chemical ids present when an add flow opened.
+     *
+     * Non-null means one is running and its result is still to be appended.
+     * The newly created row is identified by DIFFERENCE against this snapshot,
+     * because the create callback reports only success and not the row it
+     * made. Matching by name would append the wrong product whenever two
+     * registrations share one, and taking the first chemical in the store
+     * would append something the operator never chose.
+     */
+    var chemicalIdsBeforeAdd by remember { mutableStateOf<Set<String>?>(null) }
     var notes by remember { mutableStateOf("") }
 
     // Guided flow — Step 3 Target, Step 6 Carrier. Mirrors iOS `SprayCalculatorView`.
@@ -395,13 +494,17 @@ fun SprayCalculatorScreen(
             // Legacy `per_hectare` means WHOLE BLOCK — never treated area.
             productAreaBasis[line.uid] ?: SprayProductRateBasis.WHOLE_BLOCK_AREA
         }
+        // The LINE's rate unit, never the product's inventory unit: the
+        // engine costs and reports in whatever unit it is handed, so passing
+        // "Kg" for a rate quoted in grams misprices and misreports the job.
+        val rateUnit = lineRateUnit(chem, line)
         SprayProductLineInput(
             productId = chem.id,
             name = chem.displayName,
-            unit = chem.unit.toString(),
+            unit = rateUnit,
             basis = basis,
             rate = effectiveRateDisplay(chem, line),
-            costPerUnit = if (canEditCost) chem.costPerUnit else null,
+            costPerUnit = if (canEditCost) lineCostPerUnit(chem, rateUnit) else null,
         )
     }
 
@@ -616,13 +719,20 @@ fun SprayCalculatorScreen(
                 val saved = chem.savedChemicalId?.let { scid -> state.savedChemicals.firstOrNull { it.id == scid } }
                     ?: state.savedChemicals.firstOrNull { it.name.equals(chem.name, ignoreCase = true) }
                     ?: return@forEach
+                // An EXISTING record's rate is already frozen: it is what was
+                // actually applied, and the new default handoff must not
+                // replace it. The stored amount and unit are reinstated exactly
+                // as recorded - the handoff applies to NEW lines and deliberate
+                // product switches only.
                 val wantBasis = if (chem.ratePer100L > 0) CHEMICAL_RATE_PER_100L else CHEMICAL_RATE_PER_HECTARE
-                val rate = saved.rates.firstOrNull { it.basis == wantBasis } ?: saved.rates.firstOrNull()
+                val storedRate = if (chem.ratePer100L > 0) chem.ratePer100L else chem.ratePerHa
                 chemLines.add(
                     CalcChemLine(
                         chemicalId = saved.id,
-                        selectedRateId = rate?.id,
-                        basis = rate?.let { basisOf(it.basis) } ?: basisOf(wantBasis),
+                        selectedRateId = null,
+                        basis = basisOf(wantBasis),
+                        rateAmount = storedRate.takeIf { it > 0 },
+                        rateUnit = chem.unit.takeIf { it.isNotBlank() } ?: saved.unit,
                     ),
                 )
             }
@@ -631,13 +741,16 @@ fun SprayCalculatorScreen(
 
     fun buildLines(): List<SprayCalculator.Line> = chemLines.mapNotNull { line ->
         val chem = state.savedChemicals.firstOrNull { it.id == line.chemicalId } ?: return@mapNotNull null
+        // The persisted `SprayChemical.unit` must match the unit the rate was
+        // actually applied in, so the spray diary reads back as what was done.
+        val rateUnit = lineRateUnit(chem, line)
         SprayCalculator.Line(
             savedChemicalId = chem.id,
             name = chem.displayName,
-            unit = chem.unit,
+            unit = rateUnit,
             basis = line.basis,
             rate = effectiveRateDisplay(chem, line),
-            costPerUnit = if (canEditCost) chem.costPerUnit else null,
+            costPerUnit = if (canEditCost) lineCostPerUnit(chem, rateUnit) else null,
         )
     }
 
@@ -1529,7 +1642,13 @@ fun SprayCalculatorScreen(
                         Text("  Add Chemical", fontWeight = FontWeight.Medium)
                     }
                     Button(
-                        onClick = { showAddChemicalToList = true },
+                        onClick = {
+                            // Snapshot BEFORE the flow opens, so the row it
+                            // creates can be identified by difference.
+                            chemicalIdsBeforeAdd =
+                                state.savedChemicals.map { it.id }.toSet()
+                            showAddChemicalToList = true
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = VineColors.LeafGreen.copy(alpha = 0.12f),
@@ -1858,18 +1977,102 @@ fun SprayCalculatorScreen(
         )
     }
 
-    if (showAddChemicalToList) {
-        // Full Settings chemical form — all fields plus the register search,
-        // matching iOS. `state` is passed so this entry point offers the SAME
-        // register/matching workflow the Chemical Store offers; without it the
-        // research action would silently be missing here.
+    AddChemicalToSprayFlow(
+        vm = vm,
+        state = state,
+        canEditCost = canEditCost,
+        showRegisterFlow = showAddChemicalToList,
+        showManualEntry = showManualChemicalEntry,
+        idsBeforeAdd = chemicalIdsBeforeAdd,
+        onDismissRegisterFlow = { showAddChemicalToList = false },
+        onEnterManually = {
+            showAddChemicalToList = false
+            showManualChemicalEntry = true
+        },
+        onDismissManualEntry = { showManualChemicalEntry = false },
+        onAppend = { created ->
+            chemicalIdsBeforeAdd = null
+            chemLines.add(newLineFor(created))
+            result = null
+        },
+    )
+}
+
+/**
+ * "Add New Chemical to List" — the register flow, its manual fallback, and the
+ * append of whatever it produced.
+ *
+ * Extracted rather than inlined into [SprayCalculatorScreen] because that
+ * composable's generated method node is already close to the JVM back-end's
+ * limit, and adding this block to it broke `compileReleaseKotlin` with
+ * "Couldn't transform method node". Splitting it out is also simply better
+ * shaped: this is one self-contained decision — how a product gets into the
+ * store and onto the spray — and it now reads in one place.
+ */
+@Composable
+private fun AddChemicalToSprayFlow(
+    vm: AppViewModel,
+    state: AppUiState,
+    canEditCost: Boolean,
+    showRegisterFlow: Boolean,
+    showManualEntry: Boolean,
+    /** Chemical ids present when the flow opened; null when none is running. */
+    idsBeforeAdd: Set<String>?,
+    onDismissRegisterFlow: () -> Unit,
+    onEnterManually: () -> Unit,
+    onDismissManualEntry: () -> Unit,
+    onAppend: (SavedChemical) -> Unit,
+) {
+    if (showRegisterFlow) {
+        // The SAME workflow the Chemical Store uses: search the register,
+        // review the grapevine information, confirm the default rate, save.
+        //
+        // This used to open the manual form directly, so a product added
+        // mid-spray skipped the register entirely and entered the store
+        // unverified with an unconfirmed rate - precisely the state the rest
+        // of this release exists to prevent, reached from the screen where it
+        // matters most.
+        ChemicalMatchFlowSheet(
+            vm = vm,
+            state = state,
+            existing = null,
+            prefillQuery = "",
+            onDismiss = onDismissRegisterFlow,
+            onEnterManually = onEnterManually,
+            onCheckForUpdates = { existingChemical ->
+                // Already in the store: append THAT product rather than
+                // creating a second copy of it. Nothing was looked up and
+                // nothing was written.
+                onDismissRegisterFlow()
+                onAppend(existingChemical)
+            },
+        )
+    }
+
+    if (showManualEntry) {
+        // Manual fallback for a product the register genuinely does not list.
         ChemicalFormSheet(
             vm = vm,
             existing = null,
             canViewFinancials = canEditCost,
-            onDismiss = { showAddChemicalToList = false },
+            onDismiss = onDismissManualEntry,
             state = state,
         )
+    }
+
+    // Append the product the add flow just created, by its OWN id.
+    //
+    // Identified by difference against the snapshot because the create
+    // callback reports only success, not the row it made. Matching by name
+    // would append the wrong product whenever two registrations share one,
+    // and taking the first chemical in the store would append something the
+    // operator never chose. Every other piece of the spray draft is left
+    // exactly as it was.
+    LaunchedEffect(state.savedChemicals, idsBeforeAdd) {
+        val before = idsBeforeAdd ?: return@LaunchedEffect
+        val created = state.savedChemicals.firstOrNull { it.id !in before }
+            ?: return@LaunchedEffect
+        onAppend(created)
     }
 }
 
@@ -2318,6 +2521,13 @@ private fun CalcChemicalLineCard(
     val recommended = chem?.let { recommendedRateDisplay(it, line) } ?: 0.0
     val basisSuffix = if (line.basis == SprayCalculator.RateBasis.PER_100L) "/100L" else "/ha"
     val isOverridden = line.overrideText.toDoubleOrNull()?.let { it > 0 } == true
+    // The rate's OWN unit. Displaying the product's inventory unit beside a
+    // confirmed 560 g/ha default prints "560 Kg/ha" - the same number with a
+    // thousandfold different meaning.
+    val rateUnit = chem?.let { lineRateUnit(it, line) } ?: ""
+    // A structured product whose rate nobody confirmed. The line is genuinely
+    // unresolved and says so, rather than showing a borrowed zero.
+    val needsRate = chem != null && recommended <= 0 && !isOverridden
 
     VineyardCard {
         // Header
@@ -2396,10 +2606,20 @@ private fun CalcChemicalLineCard(
                         },
                         onClick = {
                             if (line.chemicalId != saved.id) {
+                                // Switching product A to product B must never
+                                // leave A's rate behind. Amount, unit, basis
+                                // and any override are all cleared, then B's
+                                // own safe default is loaded if it has one -
+                                // otherwise the line is left unresolved for the
+                                // operator. Carrying A's rate onto B is how a
+                                // product gets sprayed at another product's
+                                // rate.
+                                val replacement = newLineFor(saved)
                                 line.chemicalId = saved.id
-                                val first = saved.rates.firstOrNull()
-                                line.selectedRateId = first?.id
-                                line.basis = first?.let { basisOf(it.basis) } ?: SprayCalculator.RateBasis.PER_HECTARE
+                                line.selectedRateId = replacement.selectedRateId
+                                line.basis = replacement.basis
+                                line.rateAmount = replacement.rateAmount
+                                line.rateUnit = replacement.rateUnit
                                 line.overrideText = ""
                                 onChanged()
                             }
@@ -2424,7 +2644,7 @@ private fun CalcChemicalLineCard(
                         val suffix = if (selectedRate.basis == CHEMICAL_RATE_PER_100L) "/100L" else "/ha"
                         "${selectedRate.label.ifBlank { "Rate" }}: ${fmtRate(chemicalUnitFromBase(chem.unit, selectedRate.value))} ${chem.unit}$suffix"
                     }
-                    recommended > 0 -> "Default: ${fmtRate(recommended)} ${chem.unit}$basisSuffix"
+                    recommended > 0 -> "Default: ${fmtRate(recommended)} $rateUnit$basisSuffix"
                     else -> "Select rate"
                 }
                 Row(
@@ -2466,8 +2686,14 @@ private fun CalcChemicalLineCard(
                                     )
                                 },
                                 onClick = {
+                                    // The picked rate's amount and unit are set
+                                    // together, so the line never displays one
+                                    // rate's number beside another's unit.
                                     line.selectedRateId = rate.id
                                     line.basis = SprayCalculator.RateBasis.PER_HECTARE
+                                    line.rateAmount =
+                                        chemicalUnitFromBase(chem.unit, rate.value)
+                                    line.rateUnit = chem.unit
                                     line.overrideText = ""
                                     onChanged()
                                     menu = false
@@ -2487,6 +2713,9 @@ private fun CalcChemicalLineCard(
                                 onClick = {
                                     line.selectedRateId = rate.id
                                     line.basis = SprayCalculator.RateBasis.PER_100L
+                                    line.rateAmount =
+                                        chemicalUnitFromBase(chem.unit, rate.value)
+                                    line.rateUnit = chem.unit
                                     line.overrideText = ""
                                     onChanged()
                                     menu = false
@@ -2530,14 +2759,24 @@ private fun CalcChemicalLineCard(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
                 )
-                Text("${chem.unit}$basisSuffix", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
+                Text("$rateUnit$basisSuffix", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
             }
-            Text(
-                "Recommended: ${fmtRate(recommended)} ${chem.unit}$basisSuffix",
-                fontSize = 11.sp,
-                color = vine.textSecondary,
-                modifier = Modifier.padding(top = 4.dp),
-            )
+            if (needsRate) {
+                Text(
+                    "No confirmed rate for this product. Confirm its rate in the " +
+                        "Chemical Store, or enter the rate for this spray above.",
+                    fontSize = 11.sp,
+                    color = VineColors.Orange,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            } else {
+                Text(
+                    "Recommended: ${fmtRate(recommended)} $rateUnit$basisSuffix",
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
         }
     }
 }

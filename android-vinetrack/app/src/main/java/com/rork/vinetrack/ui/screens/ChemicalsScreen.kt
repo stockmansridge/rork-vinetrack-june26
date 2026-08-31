@@ -57,17 +57,22 @@ import androidx.compose.material3.TopAppBarDefaults
 import com.rork.vinetrack.data.chemical.ChemicalActivityGroup
 import com.rork.vinetrack.data.chemical.ChemicalActivityGroupScheme
 import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateDisplay
 import com.rork.vinetrack.data.chemical.ChemicalEditOutcome
+import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
 import com.rork.vinetrack.data.chemical.ChemicalJurisdictionSuitability
 import com.rork.vinetrack.data.chemical.ChemicalManualEntry
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalReverification
+import com.rork.vinetrack.data.chemical.ChemicalReverifyFlow
 import com.rork.vinetrack.data.chemical.ChemicalSaveContract
 import com.rork.vinetrack.data.chemical.ChemicalSaveViolation
 import com.rork.vinetrack.data.chemical.ChemicalSaveViolationCode
 import com.rork.vinetrack.data.chemical.ChemicalVerificationStatus
 import com.rork.vinetrack.data.chemical.ChemicalVineyardScope
+import com.rork.vinetrack.data.chemical.clearedDefaultRates
 import com.rork.vinetrack.data.chemical.legacyGroupProjection
 import com.rork.vinetrack.data.chemical.viticultural
 import com.rork.vinetrack.ui.components.ChemicalJurisdictionChip
@@ -140,6 +145,14 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
     var matching by remember { mutableStateOf<SavedChemical?>(null) }
     /** Non-null when re-checking an already-identified product. */
     var reverifying by remember { mutableStateOf<SavedChemical?>(null) }
+    /**
+     * The accepted-but-unsaved result of a re-check.
+     *
+     * Non-null means the operator has reviewed differences and chosen to use
+     * them, and the merged record is now open in the ordinary editor awaiting
+     * their explicit Save. Nothing has been written at this point.
+     */
+    var reverifyDraft by remember { mutableStateOf<ChemicalReverifyFlow.Draft?>(null) }
 
     /** The country a re-check would be keyed on, from the vineyard profile. */
     val countryCode: String = remember(state.selectedVineyardId, state.vineyards) {
@@ -364,9 +377,12 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             prefillQuery = "",
             onDismiss = { matchingNew = false },
             onEnterManually = { matchingNew = false; creating = true },
-            // "I already have this one" opens THAT record rather than
-            // researching a second copy of it. No lookup has run at this point.
-            onReviewExisting = { chem -> matchingNew = false; editing = chem },
+            // "Yes, check for updates" RE-VERIFIES the record the operator
+            // already owns. Deliberately not the edit form: they asked whether
+            // the stored information is still current, and only a re-check
+            // against the register can answer that. No lookup has run yet, and
+            // re-verification writes nothing until they save.
+            onCheckForUpdates = { chem -> matchingNew = false; reverifying = chem },
         )
     }
     matching?.let { chem ->
@@ -379,15 +395,35 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             prefillQuery = chem.displayName,
             onDismiss = { matching = null },
             onEnterManually = { matching = null; editing = chem },
-            onReviewExisting = { found -> matching = null; editing = found },
+            onCheckForUpdates = { found -> matching = null; reverifying = found },
         )
     }
     reverifying?.let { chem ->
         ChemicalReverifySheet(
-            vm = vm,
             state = state,
             chemical = chem,
             onDismiss = { reverifying = null },
+            // The re-check itself writes nothing. Accepting an update produces
+            // an in-memory draft that opens in the ordinary editor, where one
+            // explicit Save performs the single database update.
+            onUseUpdatedInformation = { draft ->
+                reverifying = null
+                reverifyDraft = draft
+            },
+        )
+    }
+    reverifyDraft?.let { draft ->
+        ChemicalFormSheet(
+            vm = vm,
+            existing = draft.chemical,
+            canViewFinancials = canViewFinancials,
+            onDismiss = { reverifyDraft = null },
+            state = state,
+            // Carried explicitly: opened on the draft, the editor's own
+            // "has the chemistry changed?" test would compare the draft
+            // against itself and omit the intelligence columns entirely.
+            pendingIntelligence = draft.intelligence,
+            staleDefaultBases = draft.staleDefaultBases,
         )
     }
     if (creating) {
@@ -534,17 +570,53 @@ private fun ChemicalRow(
                         chips.take(3).forEach { ChemChip(it) }
                     }
                 }
-                // Dual rate basis lines.
-                val rateLines = buildList {
-                    // The product's own pack unit (L/kg/mL/g) is canonical — it is a
-                    // label attribute, not a Region & Units value — so only the area
-                    // denominator converts, exactly as iOS does.
-                    chemical.ratePerHaDisplay?.takeIf { it > 0 }
-                        ?.let { add("${trimNum(fmt.sprayRateValue(it))} ${chemical.unit}/${fmt.sprayRateAreaAbbreviation}") }
-                    chemical.ratePer100LDisplay?.takeIf { it > 0 }?.let { add("${trimNum(it)} ${chemical.unit}/100L") }
-                }
-                if (rateLines.isNotEmpty()) {
-                    Text(rateLines.joinToString("  ·  "), fontSize = 13.sp, color = vine.textSecondary)
+                // The OPERATIONAL rate line.
+                //
+                // `default_rates` is the only thing that may be shown as this
+                // vineyard's confirmed rate. The legacy `rates`/`rate_per_ha`
+                // columns are still rendered for a genuinely legacy record,
+                // clearly marked as such, but a structured product with no
+                // confirmed default says so instead of borrowing a number
+                // nobody agreed to. Units come from inside each default slot
+                // — never `chemical.unit`, which is the INVENTORY unit and
+                // would print a 560 g/ha default as "560 Kg/ha".
+                val confirmedLine = ChemicalDefaultRateDisplay.line(chemical)
+                if (confirmedLine != null) {
+                    Text(
+                        confirmedLine,
+                        fontSize = 13.sp,
+                        color = if (ChemicalDefaultRateDisplay.needsConfirmation(chemical)) {
+                            VineColors.Warning
+                        } else {
+                            vine.textSecondary
+                        },
+                        fontWeight = if (ChemicalDefaultRateDisplay.needsConfirmation(chemical)) {
+                            FontWeight.Medium
+                        } else {
+                            FontWeight.Normal
+                        },
+                    )
+                } else {
+                    // Legacy/manual record: no structured intelligence at all,
+                    // so its own stored numbers remain the best answer there is.
+                    val legacyLines = buildList {
+                        chemical.ratePerHaDisplay?.takeIf { it > 0 }
+                            ?.let {
+                                add(
+                                    "${trimNum(fmt.sprayRateValue(it))} " +
+                                        "${chemical.unit}/${fmt.sprayRateAreaAbbreviation}",
+                                )
+                            }
+                        chemical.ratePer100LDisplay?.takeIf { it > 0 }
+                            ?.let { add("${trimNum(it)} ${chemical.unit}/100L") }
+                    }
+                    if (legacyLines.isNotEmpty()) {
+                        Text(
+                            legacyLines.joinToString("  ·  ") + "  ·  manually entered",
+                            fontSize = 13.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
                 }
                 if (canViewFinancials) {
                     val cost = chemical.costPerUnit
@@ -678,12 +750,33 @@ internal fun ChemicalFormSheet(
      * be re-verified — do not have to supply it.
      */
     state: AppUiState? = null,
+    /**
+     * Reconciled intelligence this form MUST write on Save.
+     *
+     * Set only when the form was opened on a re-verification draft. The
+     * editor's own change test compares the draft against itself and finds
+     * nothing, so without this the accepted update would be reviewed and then
+     * silently not saved.
+     */
+    pendingIntelligence: ChemicalIntelligence? = null,
+    /**
+     * Bases whose stored default cites a registered rate the refreshed label
+     * no longer carries. Save is blocked until the operator confirms a rate
+     * again or clears the slot — never silently repointed.
+     */
+    staleDefaultBases: List<ChemicalDefaultRateBasis> = emptyList(),
+    /** Raised when a re-verification started from inside this form is accepted. */
+    onReverifyDraft: (ChemicalReverifyFlow.Draft) -> Unit = {},
 ) {
     val vine = LocalVineColors.current
     val uriHandler = LocalUriHandler.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val isEdit = existing != null
-    var showReverify by remember { mutableStateOf(false) }
+    // The record a re-verification is running against. Usually [existing], but
+    // the register search can surface a DIFFERENT stored product with the same
+    // name, and "check for updates" must then re-verify that one rather than
+    // the record this form happens to be editing.
+    var reverifyTarget by remember { mutableStateOf<SavedChemical?>(null) }
 
     val existingPerHaId = existing?.rates?.firstOrNull { it.basis == CHEMICAL_RATE_PER_HECTARE }?.id
     val existingPer100LId = existing?.rates?.firstOrNull { it.basis == CHEMICAL_RATE_PER_100L }?.id
@@ -716,6 +809,22 @@ internal fun ChemicalFormSheet(
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var ratePerHa by remember { mutableStateOf(existing?.ratePerHaDisplay?.let { formatRate(it) } ?: "") }
     var ratePer100L by remember { mutableStateOf(existing?.ratePer100LDisplay?.let { formatRate(it) } ?: "") }
+    // The CONFIRMED operational default (sql/214) as this form will leave it.
+    //
+    // Held separately from the legacy rate boxes above because the two answer
+    // different questions: those are compatibility numbers, this is the
+    // decision a human made about what the vineyard pours.
+    var defaultRatesDraft by remember(existing?.id) {
+        mutableStateOf(existing?.defaultRates)
+    }
+    // Whether the operator TOUCHED the default in this session.
+    //
+    // Null `defaultRates` on the write means "leave the stored value alone",
+    // so an untouched edit must send null however the draft happens to read.
+    // Without this flag, opening a chemical to fix its price and pressing Save
+    // would rewrite — or silently erase — a rate confirmation made on another
+    // device.
+    var defaultRatesEdited by remember(existing?.id) { mutableStateOf(false) }
     var trackPurchase by remember { mutableStateOf(existing?.purchase != null) }
     var containerSize by remember { mutableStateOf(existing?.purchase?.containerSizeML?.takeIf { it > 0 }?.let { formatRate(it) } ?: "") }
     var containerUnit by remember { mutableStateOf(existing?.purchase?.containerUnit?.takeIf { it in chemicalUnits } ?: (existing?.unit ?: "Litres")) }
@@ -887,6 +996,7 @@ internal fun ChemicalFormSheet(
         // a record that has never been structured keeps its original text and is
         // not blanked by the act of saving it.
         val structured = editOutcome?.intelligence
+            ?: pendingIntelligence
             ?: existing?.storedIntelligence?.takeIf {
                 !ChemicalManualEntry.proposedIntelligence(
                     chemistryDraft,
@@ -938,7 +1048,17 @@ internal fun ChemicalFormSheet(
             // Vineyard-scoped on the way out, exactly like the research path:
             // whichever route a use arrived by, the stored operational set is
             // grapevine directions plus product-level rates and nothing else.
-            intelligence = editOutcome?.intelligence?.let { ChemicalVineyardScope.scoped(it) },
+            // The re-verification draft's reconciled intelligence, when this
+            // form was opened on one. Without the fallback the editor's own
+            // change test compares the draft against itself, finds nothing
+            // moved, and omits the very columns the operator just accepted.
+            intelligence = (editOutcome?.intelligence ?: pendingIntelligence)
+                ?.let { ChemicalVineyardScope.scoped(it) },
+            // Omitted from the write unless the operator actually changed it.
+            // An ordinary edit — a price, a pack size, a note — must never
+            // rewrite or erase a rate confirmation, including one made on
+            // another device.
+            defaultRates = if (defaultRatesEdited) defaultRatesDraft else null,
         )
         val cb: (Boolean) -> Unit = { ok -> saving = false; if (ok) onDismiss() }
         if (isEdit) vm.updateSavedChemical(existing!!.id, input, cb) else vm.createSavedChemical(input, cb)
@@ -953,17 +1073,26 @@ internal fun ChemicalFormSheet(
         )
     }
 
-    if (showReverify && existing != null && state != null) {
-        // Closing this form after a successful re-verification is not cosmetic.
-        // These fields were captured from the record when the sheet opened, so a
-        // Save afterwards would write the pre-check values straight back over the
-        // update the operator just accepted.
-        ChemicalReverifySheet(
-            vm = vm,
-            state = state,
-            chemical = existing,
-            onDismiss = { showReverify = false; onDismiss() },
-        )
+    reverifyTarget?.let { target ->
+        if (state != null) {
+            // Closing this form after a re-verification is not cosmetic. These
+            // fields were captured from the record when the sheet opened, so a
+            // Save afterwards would write the pre-check values straight back
+            // over the update the operator just accepted.
+            ChemicalReverifySheet(
+                state = state,
+                chemical = target,
+                onDismiss = { reverifyTarget = null; onDismiss() },
+                // This form holds field values captured when it opened, so it
+                // closes and hands the draft to the host rather than trying to
+                // merge an update into stale on-screen state.
+                onUseUpdatedInformation = { draft ->
+                    reverifyTarget = null
+                    onReverifyDraft(draft)
+                    onDismiss()
+                },
+            )
+        }
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
@@ -1065,7 +1194,7 @@ internal fun ChemicalFormSheet(
                 }
                 if (ChemicalReverification.isOffered(existing, reverifyCountry)) {
                     OutlinedButton(
-                        onClick = { showReverify = true },
+                        onClick = { reverifyTarget = existing },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Icon(
@@ -1369,11 +1498,23 @@ internal fun ChemicalFormSheet(
             // Same rules, same messages and same order as the iOS editor and
             // the edge function's `save_contract.ts`, because a record one
             // client refuses must not be a record another client writes.
-            val saveEvaluation = remember(name, category, displayIntelligence) {
+            // A stale slot is one whose cited registered rate has vanished from
+            // the refreshed label. Clearing the default resolves it; nothing
+            // here ever picks a replacement.
+            val unresolvedStaleBases = staleDefaultBases.filter {
+                defaultRatesDraft?.slot(it) != null
+            }
+            val saveEvaluation = remember(
+                name,
+                category,
+                displayIntelligence,
+                unresolvedStaleBases,
+            ) {
                 ChemicalSaveContract.evaluate(
                     productName = name,
                     productCategory = category,
                     intelligence = displayIntelligence,
+                    staleDefaultBases = unresolvedStaleBases,
                 )
             }
             // What THIS edit would add, versus what the record arrived with.
@@ -1526,6 +1667,62 @@ internal fun ChemicalFormSheet(
             )
 
             SectionLabel("Rates")
+
+            // A STRUCTURED product's operational rate is its confirmed
+            // default, and only that. The legacy boxes below stay editable for
+            // compatibility but must never be presented as the authority —
+            // `rate_per_ha` has no link back to a registered direction, so a
+            // number typed there proves nothing about what the label permits.
+            val isStructuredRecord = existing != null &&
+                ChemicalDefaultRateDisplay.isStructured(existing)
+            if (isStructuredRecord) {
+                val confirmedSlots = ChemicalDefaultRateDisplay.slotDisplays(defaultRatesDraft)
+                if (confirmedSlots.isNotEmpty()) {
+                    Text(
+                        "Confirmed rate for this vineyard",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = vine.textSecondary,
+                    )
+                    Text(
+                        confirmedSlots.joinToString("  ·  "),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary,
+                    )
+                    TextButton(
+                        onClick = {
+                            // An explicit clear writes an EMPTY v1 contract, not
+                            // a null. Null would be omitted from the request
+                            // entirely and the old default would survive the
+                            // very act of clearing it.
+                            defaultRatesDraft = clearedDefaultRates()
+                            defaultRatesEdited = true
+                        },
+                        contentPadding = PaddingValues(0.dp),
+                    ) { Text("Clear confirmed rate", fontSize = 13.sp) }
+                    Text(
+                        "Clearing asks for the rate to be confirmed again before this " +
+                            "product is used in a spray.",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
+                } else {
+                    Text(
+                        ChemicalDefaultRateDisplay.CONFIRMATION_REQUIRED,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = VineColors.Warning,
+                    )
+                    Text(
+                        "Use “Search the register again” above to review this product's " +
+                            "registered rates and confirm the one this vineyard uses.",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
+                }
+            }
+
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = ratePerHa,
@@ -1547,7 +1744,13 @@ internal fun ChemicalFormSheet(
                 )
             }
             Text(
-                "Enter either or both. The spray calculator lets the operator pick which basis to use per job.",
+                if (isStructuredRecord) {
+                    "Kept for older app versions only. Spray calculations use the " +
+                        "confirmed rate above."
+                } else {
+                    "Enter either or both. The spray calculator lets the operator pick " +
+                        "which basis to use per job."
+                },
                 fontSize = 11.sp,
                 color = vine.textSecondary,
             )
@@ -1655,9 +1858,14 @@ internal fun ChemicalFormSheet(
             // "I could not find it" returns to exactly where they were: this
             // form, with everything they had already typed still in it.
             onEnterManually = { showRegisterSearch = false },
-            // Already-owned record: close this form rather than editing two
-            // records at once. Nothing was looked up and nothing was written.
-            onReviewExisting = { showRegisterSearch = false; onDismiss() },
+            // The register search found a DIFFERENT stored product with this
+            // name. "Check for updates" re-verifies that record; this form
+            // closes rather than leaving two editors open on two records.
+            // Nothing was looked up and nothing was written.
+            onCheckForUpdates = { found ->
+                showRegisterSearch = false
+                reverifyTarget = found
+            },
         )
     }
 }

@@ -234,23 +234,46 @@ class ChemicalParityContractTest {
     }
 
     @Test
-    fun `declining the duplicate decision permits no research and no write`() {
-        // THE acceptance rule for item 5, stated once, in one place.
-        val cancelled = ChemicalStoreMatching.Decision.Cancelled
-        assertFalse(ChemicalStoreMatching.permitsResearch(cancelled))
-        assertFalse(ChemicalStoreMatching.permitsWrite(cancelled))
-
-        val review = ChemicalStoreMatching.Decision.ReviewExisting(stored("1", "Kocide"))
-        assertFalse(ChemicalStoreMatching.permitsResearch(review))
-        assertFalse(ChemicalStoreMatching.permitsWrite(review))
+    fun `declining the duplicate decision performs no research and no write`() {
+        // Required test 8. "No, keep it as it is" must cost exactly nothing:
+        // no search, no structured lookup, no insert, no update.
+        val keep = ChemicalStoreMatching.Decision.KeepAsIs
+        assertFalse(ChemicalStoreMatching.permitsResearch(keep))
+        assertFalse(ChemicalStoreMatching.permitsWrite(keep))
     }
 
     @Test
-    fun `only a deliberate proceed or separate-product decision reaches the network`() {
+    fun `accepting the duplicate decision re-verifies and never inserts`() {
+        // Required test 9. "Yes, check for updates" carries the STORED record,
+        // so re-verification is keyed on the identity the operator already
+        // owns rather than on a fresh brand-name search. This add flow issues
+        // no lookup of its own and writes nothing at all.
+        val existing = stored("1", "Kocide")
+        val check = ChemicalStoreMatching.Decision.CheckForUpdates(existing)
+        assertEquals(existing.id, check.chemical.id)
+        assertFalse(ChemicalStoreMatching.permitsResearch(check))
+        assertFalse(ChemicalStoreMatching.permitsWrite(check))
+    }
+
+    @Test
+    fun `only a deliberate proceed reaches the network`() {
+        // There is deliberately no "this is a different product" decision any
+        // more: it let a second copy of one chemical be created in a single
+        // tap, and a duplicated chemical is a duplicated chemistry.
         assertTrue(ChemicalStoreMatching.permitsResearch(ChemicalStoreMatching.Decision.Proceed))
-        assertTrue(
-            ChemicalStoreMatching.permitsResearch(ChemicalStoreMatching.Decision.CreateSeparate),
+        assertTrue(ChemicalStoreMatching.permitsWrite(ChemicalStoreMatching.Decision.Proceed))
+    }
+
+    @Test
+    fun `the duplicate prompt asks about updating, naming the stored product`() {
+        val question = ChemicalStoreMatching.sameNameQuestion("Kocide Blue Xtra")
+        assertEquals(
+            "“Kocide Blue Xtra” is already in your Chemical Store. " +
+                "Check whether its information is up to date?",
+            question,
         )
+        assertEquals("No, keep it as it is", ChemicalStoreMatching.KEEP_AS_IS_ACTION)
+        assertEquals("Yes, check for updates", ChemicalStoreMatching.CHECK_FOR_UPDATES_ACTION)
     }
 
     @Test
@@ -269,13 +292,29 @@ class ChemicalParityContractTest {
         )
 
     @Test
-    fun `one registered rate needs no tap and is in force immediately`() {
-        // Item 4: a single valid rate MAY be selected automatically. It still
-        // has to be visible before save, which is the review screen's job.
+    fun `a single exact rate still requires one deliberate tap`() {
+        // Required test 1. This REVERSES the previous rule.
+        //
+        // A lone registered rate used to be adopted automatically on the
+        // reasoning that there was nothing to choose between. That is true
+        // about the label and false about the vineyard: showing "2 L/ha" and
+        // treating the display as consent means the first spray doses off a
+        // number nobody read.
         val selection = selectionFor(listOf(rate(2.0)))
-        assertFalse(selection.requiresExplicitConfirmation(ChemicalDefaultRateBasis.PER_100_LITRES))
-        assertTrue(selection.isConfirmed)
+        assertTrue(selection.requiresExplicitConfirmation(ChemicalDefaultRateBasis.PER_100_LITRES))
+        assertFalse(selection.isConfirmed)
+        assertFalse(selection.hasConfirmedDefault)
+        // The recommendation is still SHOWN — it simply is not an answer.
         assertNotNull(selection.resolvedOption(ChemicalDefaultRateBasis.PER_100_LITRES))
+        assertNull(selection.confirmedOption(ChemicalDefaultRateBasis.PER_100_LITRES))
+
+        // One tap completes it.
+        val confirmed = selection.selecting(
+            selection.plan.per100Litres.options.first(),
+            ChemicalDefaultRateBasis.PER_100_LITRES,
+        )
+        assertTrue(confirmed.isConfirmed)
+        assertEquals(2.0, confirmed.confirmedDose(ChemicalDefaultRateBasis.PER_100_LITRES))
     }
 
     @Test
@@ -300,11 +339,29 @@ class ChemicalParityContractTest {
 
     @Test
     fun `a basis the label states nothing on is never awaiting a choice`() {
-        // Demanding a choice between no options would be unanswerable, and
-        // item 4 forbids manufacturing a rate that does not exist.
+        // Demanding a choice between no options would be unanswerable, and the
+        // contract forbids manufacturing a rate that does not exist.
         val selection = selectionFor(listOf(rate(2.0)))
         assertTrue(selection.plan.perHectare.isEmpty)
         assertFalse(selection.requiresExplicitConfirmation(ChemicalDefaultRateBasis.PER_HECTARE))
+
+        // Confirming the ONE basis the label does state is enough. A product is
+        // never required to hold both a per-hectare and a per-100 L default.
+        val confirmed = selection.selecting(
+            selection.plan.per100Litres.options.first(),
+            ChemicalDefaultRateBasis.PER_100_LITRES,
+        )
+        assertTrue(confirmed.isConfirmed)
+    }
+
+    @Test
+    fun `a product the label registers no grapevine rate on demands no default`() {
+        // Nothing to choose from, so there is nothing to confirm — the record
+        // is incomplete for reasons the contract already states elsewhere.
+        val selection = ChemicalDefaultRateSelection(
+            plan = ChemicalDefaultRate.plan(emptyList()),
+        )
+        assertFalse(selection.offersAnyChoice)
         assertTrue(selection.isConfirmed)
     }
 
@@ -321,7 +378,7 @@ class ChemicalParityContractTest {
         )
         assertTrue(
             evaluation.violations.any {
-                it.code == ChemicalSaveViolationCode.DEFAULT_RATE_UNCONFIRMED
+                it.code == ChemicalSaveViolationCode.DEFAULT_RATE_REQUIRED
             },
         )
         assertEquals(
@@ -346,7 +403,7 @@ class ChemicalParityContractTest {
         )
         assertFalse(
             evaluation.violations.any {
-                it.code == ChemicalSaveViolationCode.DEFAULT_RATE_UNCONFIRMED
+                it.code == ChemicalSaveViolationCode.DEFAULT_RATE_REQUIRED
             },
         )
     }
@@ -364,7 +421,7 @@ class ChemicalParityContractTest {
         )
         assertFalse(
             evaluation.violations.any {
-                it.code == ChemicalSaveViolationCode.DEFAULT_RATE_UNCONFIRMED
+                it.code == ChemicalSaveViolationCode.DEFAULT_RATE_REQUIRED
             },
         )
         assertTrue(evaluation.basesAwaitingConfirmation.isEmpty())

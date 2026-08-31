@@ -113,34 +113,56 @@ object ChemicalStoreMatching {
     /**
      * The decision the operator is offered before research begins.
      *
+     * # The question is about UPDATING, not about identity
+     *
+     * An earlier revision offered three answers: review the existing record,
+     * create a different product, or go back. "This is a different product"
+     * has been removed deliberately. A stored product with the SAME normalised
+     * name is either the one the operator means or a record they need to look
+     * at first; offering "different product" as a peer option let a second copy
+     * of the same chemical be created in one tap, and a duplicated chemical in
+     * a resistance context means a duplicated chemistry. If two genuinely
+     * distinct registrations really do share a name, that is reached by
+     * checking the stored one first — not by skipping past it.
+     *
      * Modelled as data rather than as sheet state so the "declining costs
-     * nothing" rule is testable: [Decision.Cancelled] and
-     * [Decision.ReviewExisting] both mean NO research call and NO write.
+     * nothing" rule is testable: [Decision.KeepAsIs] means NO research call and
+     * NO write of any kind.
      */
     sealed interface Decision {
         /** Nothing matched; go straight to the register search. */
         data object Proceed : Decision
 
-        /** Open the record the operator already owns. Never researches. */
-        data class ReviewExisting(val chemical: SavedChemical) : Decision
+        /**
+         * "Yes, check for updates" — re-verify the record already stored.
+         *
+         * Never a second insert. The existing row is re-checked through its
+         * own registration identity, and this add flow issues no lookup of its
+         * own: it hands over to re-verification and closes.
+         */
+        data class CheckForUpdates(val chemical: SavedChemical) : Decision
 
-        /** Deliberately create/search for a separate product. */
-        data object CreateSeparate : Decision
-
-        /** Backed out. Must cost exactly nothing. */
-        data object Cancelled : Decision
+        /**
+         * "No, keep it as it is" — the operator is done.
+         *
+         * Must cost exactly nothing: no search, no structured lookup, no
+         * insert, no update, and the stored row preserved byte for byte.
+         */
+        data object KeepAsIs : Decision
     }
 
     /**
-     * Whether this decision permits a remote chemical lookup to start.
+     * Whether this decision permits a remote chemical lookup FROM THE ADD FLOW.
      *
-     * The acceptance rule in one place: only [Decision.Proceed] and
-     * [Decision.CreateSeparate] may reach the network. Reviewing an existing
-     * record reads what is already stored, and cancelling does nothing at all.
+     * The acceptance rule in one place: only [Decision.Proceed] may reach the
+     * network here. [Decision.CheckForUpdates] is false because this flow hands
+     * over to re-verification and stops — the identity-keyed lookup that
+     * follows belongs to that screen, not to this one, and is a re-check of a
+     * record the operator already owns rather than research for a new one.
      */
     fun permitsResearch(decision: Decision): Boolean = when (decision) {
-        Decision.Proceed, Decision.CreateSeparate -> true
-        is Decision.ReviewExisting, Decision.Cancelled -> false
+        Decision.Proceed -> true
+        is Decision.CheckForUpdates, Decision.KeepAsIs -> false
     }
 
     /**
@@ -148,11 +170,29 @@ object ChemicalStoreMatching {
      *
      * Separate from [permitsResearch] on purpose: "no network" and "no write"
      * are two distinct promises, and the acceptance test checks both.
+     * [Decision.CheckForUpdates] writes nothing HERE — any update is made
+     * later, by the operator, behind re-verification's own explicit Save.
      */
     fun permitsWrite(decision: Decision): Boolean = when (decision) {
-        Decision.Proceed, Decision.CreateSeparate -> true
-        is Decision.ReviewExisting, Decision.Cancelled -> false
+        Decision.Proceed -> true
+        is Decision.CheckForUpdates, Decision.KeepAsIs -> false
     }
+
+    /**
+     * The exact question the operator is asked about a same-name product.
+     *
+     * Pinned here rather than written inline in the sheet so the wording is one
+     * fact both platforms and the tests can agree on.
+     */
+    fun sameNameQuestion(productName: String): String =
+        "“${productName.trim()}” is already in your Chemical Store. " +
+            "Check whether its information is up to date?"
+
+    /** "No, keep it as it is" — dismisses the add flow, writes nothing. */
+    const val KEEP_AS_IS_ACTION: String = "No, keep it as it is"
+
+    /** "Yes, check for updates" — re-verifies the stored record. */
+    const val CHECK_FOR_UPDATES_ACTION: String = "Yes, check for updates"
 
     /**
      * Build the write payload for a confirmed product.
@@ -369,33 +409,45 @@ object ChemicalStoreMatching {
     )
 
     /**
-     * Project the resolved vineyard defaults into the legacy `rates` rows the
-     * Spray Tool reads — one direction only, derived FROM the structured
-     * record, mirroring the iOS `legacyProjection()`.
+     * Project the CONFIRMED vineyard defaults into the legacy `rates` rows old
+     * clients read — one direction only, derived FROM the structured record,
+     * mirroring the iOS `legacyProjection()`.
+     *
+     * # Only a confirmed decision may project
+     *
+     * Returns null when the operator has confirmed nothing, so the caller
+     * leaves whatever the record already held untouched.
+     *
+     * Two fallbacks used to live here and both are gone. `resolvedOption()`
+     * falls back to the RECOMMENDATION, and the `?:` chain below it fell back
+     * to the FIRST convertible label rate. Either one could write a number
+     * into `rates` / `rate_per_ha` that no human had ever agreed to — and
+     * those legacy columns are exactly what an older client, and until this
+     * release the Spray Calculator, would then dose from. A recommendation is
+     * a suggestion; the compatibility columns are an instruction; the two must
+     * never be the same value by default.
+     *
+     * `default_rates` remains authoritative. These rows exist ONLY so an
+     * old-client build still renders something familiar.
      *
      * Row ids are kept stable against [existing] rows on the same basis so a
-     * re-save updates the operational rate instead of duplicating it. When a
-     * basis resolves no default, the first convertible label rate on that
-     * basis still projects (legacy fallback), so a product without grapevine
-     * uses keeps rendering its rate exactly as before.
+     * re-save updates the operational rate instead of duplicating it.
      */
     fun projectedLegacyRates(
         existing: SavedChemical?,
         unit: String,
         intel: ChemicalIntelligence,
         defaults: ChemicalDefaultRateSelection,
-    ): ProjectedLegacyRates {
+    ): ProjectedLegacyRates? {
+        if (!defaults.hasConfirmedDefault) return null
         val rows = mutableListOf<ChemicalRate>()
         var perHaDisplay = 0.0
         for (basis in ChemicalDefaultRateBasis.entries) {
-            val option = defaults.resolvedOption(basis)
-            val display = option?.let {
-                displayValue(it.rate, unit, defaults.resolvedValue(basis))
-            } ?: intel.registeredUses.asSequence()
-                .flatMap { it.rates }
-                .filter { ChemicalDefaultRateBasis.of(it.basis) == basis }
-                .mapNotNull { displayValue(it, unit) }
-                .firstOrNull()
+            // Confirmed only. A scalar confirms as its printed amount; a band
+            // confirms only to the dose the operator typed inside it.
+            val option = defaults.confirmedOption(basis) ?: continue
+            val dose = defaults.confirmedDose(basis) ?: continue
+            val display = displayValue(option.rate, unit, dose)
             if (display == null || display <= 0) continue
             val basisRaw = when (basis) {
                 ChemicalDefaultRateBasis.PER_HECTARE -> CHEMICAL_RATE_PER_HECTARE
@@ -407,8 +459,8 @@ object ChemicalStoreMatching {
             }
             // The label's own CONDITION for the chosen default, so the stored
             // operational rate says which registered condition it came from.
-            val label = option?.let { ChemicalDefaultRate.conditionText(it.rate) }
-                ?.ifEmpty { fallbackLabel } ?: fallbackLabel
+            val label = ChemicalDefaultRate.conditionText(option.rate)
+                .ifEmpty { fallbackLabel }
             rows.add(
                 ChemicalRate(
                     id = existing?.rates?.firstOrNull { it.basis == basisRaw }?.id
