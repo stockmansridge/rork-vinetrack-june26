@@ -316,26 +316,33 @@ extension StoredChemicalDefaultRate {
             return nil
         }
 
-        let rateIDs = ChemicalDefaultRate.rateIDs(for: option, from: grapevineUses)
-        // Every default must be traceable to at least one printed direction.
-        // An untraceable default is exactly the invented provenance this
-        // contract exists to prevent.
-        guard !rateIDs.isEmpty else { return nil }
+        // The identity comes from the SERVER, or the default is not persisted.
+        //
+        // An option the device assembled from `registered_uses` for display has
+        // no server twin, so it stops here rather than being written with an
+        // identity this device invented. That is a real refusal with a visible
+        // consequence: the review screen reports no canonical rate and offers
+        // the corrective actions. A canonical-looking key for a choice the
+        // register never issued would be worse — it would look authoritative on
+        // every other client and match nothing.
+        guard let server = option.server, server.isValid, server.decisionBasis == basis else {
+            return nil
+        }
 
-        let optionKey = ChemicalDefaultRateIdentity.mintOptionKey(
-            basis: basis.rawValue,
-            unit: rate.unit,
-            value: rate.value,
-            minValue: rate.minValue,
-            maxValue: rate.maxValue,
-            rateIDs: rateIDs
-        )
+        // Copied verbatim, in the server's own order. Not re-sorted, not
+        // de-duplicated, not normalised: `option_key` was minted over these
+        // exact bytes, so any tidying here would break the pairing it proves.
+        let optionKey = server.optionKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rateIDs = server.rateIds.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
 
         var stored = StoredChemicalDefaultRate(
             optionKey: optionKey,
             rateIds: rateIDs,
             basis: basis.rawValue,
-            unit: rate.unit,
+            // The LABEL's unit, as the server stated it — never the pack unit.
+            unit: server.unit.trimmingCharacters(in: .whitespacesAndNewlines),
             value: rate.value,
             minValue: rate.minValue,
             maxValue: rate.maxValue,

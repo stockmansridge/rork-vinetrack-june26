@@ -217,6 +217,15 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
     let otherCropUses: [ChemicalRegisteredUse]
     /// True when the label registers this product on grapevines at all.
     let registeredForGrapevine: Bool?
+    /// The server's own canonical default-rate options, carrying the
+    /// `option_key` and `rate_ids` a confirmed default must be persisted with.
+    ///
+    /// `nil` on a pre-`default_rate_options` server. Absent is NOT an
+    /// invitation to rebuild them here: without this block there is no
+    /// canonical option, the review screen fails closed, and the operator is
+    /// offered the corrective actions instead. Re-deriving them on device is
+    /// what produced identities no other client could match.
+    let defaultRateOptions: ChemicalServerDefaultRateOptions?
     /// Uses the resolver researched but could NOT back with authoritative
     /// label evidence (`ai_suggested_uses` wire key).
     ///
@@ -265,6 +274,7 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         case grapevineUses = "grapevine_uses"
         case otherCropUses = "other_crop_uses"
         case registeredForGrapevine = "registered_for_grapevine"
+        case defaultRateOptions = "default_rate_options"
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -314,6 +324,13 @@ nonisolated struct ChemicalStructuredLookup: Codable, Sendable {
         )) ?? []) ?? []
         registeredForGrapevine =
             (try? c.decodeIfPresent(Bool.self, forKey: .registeredForGrapevine)) ?? nil
+        // Additive and tolerant: an older server sends no block at all, and a
+        // malformed block degrades to nil rather than failing the whole lookup.
+        // Individual malformed OPTIONS are discarded whole by `isValid` rather
+        // than repaired — see `ChemicalServerDefaultRateOption`.
+        defaultRateOptions = (try? c.decodeIfPresent(
+            ChemicalServerDefaultRateOptions.self, forKey: .defaultRateOptions
+        )) ?? nil
     }
 
     /// The grapevine uses to lead with, whichever tier supplied them.

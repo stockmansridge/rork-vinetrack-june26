@@ -114,6 +114,27 @@ nonisolated struct ChemicalDefaultRateOption: Sendable, Hashable, Identifiable {
     let rate: ChemicalLabelRate
     /// Every registered use+condition that states this rate.
     let conditions: [ChemicalDefaultRateCondition]
+    /// The SERVER's own option this was built from, carrying the canonical
+    /// `option_key` and the `rate_ids` of every printed direction behind it.
+    ///
+    /// `nil` only for an option the device assembled for DISPLAY from
+    /// `registered_uses` — a legacy or re-verification path. Such an option can
+    /// be shown, but it can never be persisted as a confirmed default, because
+    /// it carries no identity the register issued. That gate lives in
+    /// `StoredChemicalDefaultRate.confirmed`.
+    var server: ChemicalServerDefaultRateOption?
+
+    init(
+        id: String,
+        rate: ChemicalLabelRate,
+        conditions: [ChemicalDefaultRateCondition],
+        server: ChemicalServerDefaultRateOption? = nil
+    ) {
+        self.id = id
+        self.rate = rate
+        self.conditions = conditions
+        self.server = server
+    }
 
     /// `"3 L/100 L"`, or `"100–200 mL/100 L"` for a true label range.
     nonisolated var displayRate: String { rate.displayRate }
@@ -299,6 +320,35 @@ nonisolated enum ChemicalDefaultRate {
         )
     }
 
+    /// Build the plan from the SERVER's canonical options.
+    ///
+    /// This is the path a structured lookup takes. The options, their amounts
+    /// and their identities all come from the response; the device contributes
+    /// only the recommendation step, which is a presentation decision about
+    /// which of the server's options to badge.
+    ///
+    /// An empty or wholly malformed block yields a plan with no options, which
+    /// the rate gate then reports as "no registered grapevine rate" — fail
+    /// closed, never a locally reconstructed substitute.
+    static func plan(
+        serverOptions: ChemicalServerDefaultRateOptions,
+        jurisdiction: ChemicalRateJurisdiction? = nil
+    ) -> ChemicalDefaultRatePlan {
+        ChemicalDefaultRatePlan(
+            per100Litres: group(
+                .per100Litres,
+                options: serverOptions.validOptions(.per100Litres).map { $0.toDomainOption() },
+                jurisdiction: jurisdiction
+            ),
+            perHectare: group(
+                .perHectare,
+                options: serverOptions.validOptions(.perHectare).map { $0.toDomainOption() },
+                jurisdiction: jurisdiction
+            ),
+            jurisdiction: jurisdiction
+        )
+    }
+
     /// Every distinct rate on one basis, with its conditions attached.
     static func options(
         _ basis: ChemicalDefaultRateBasis,
@@ -353,8 +403,15 @@ nonisolated enum ChemicalDefaultRate {
         from grapevineUses: [ChemicalRegisteredUse],
         jurisdiction: ChemicalRateJurisdiction?
     ) -> ChemicalDefaultRateGroup {
-        let all = options(basis, from: grapevineUses)
+        group(basis, options: options(basis, from: grapevineUses), jurisdiction: jurisdiction)
+    }
 
+    /// The recommendation step, over an already-built option list.
+    private static func group(
+        _ basis: ChemicalDefaultRateBasis,
+        options all: [ChemicalDefaultRateOption],
+        jurisdiction: ChemicalRateJurisdiction?
+    ) -> ChemicalDefaultRateGroup {
         guard !all.isEmpty else {
             return ChemicalDefaultRateGroup(
                 basis: basis,

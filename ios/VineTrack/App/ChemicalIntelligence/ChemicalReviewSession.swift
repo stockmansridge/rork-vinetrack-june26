@@ -191,6 +191,16 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// registered for somewhere else.
     var jurisdiction: ChemicalRateJurisdiction?
 
+    /// The SERVER's canonical default-rate options for the product under
+    /// review, when a structured lookup supplied them.
+    ///
+    /// `nil` on the plain edit path, where no fresh lookup has run. A default
+    /// can only be PERSISTED from a server option (see
+    /// `StoredChemicalDefaultRate.confirmed`), so this is what separates "the
+    /// operator may confirm a new default" from "this record can only carry
+    /// forward the default it already had".
+    var serverDefaultRateOptions: ChemicalServerDefaultRateOptions?
+
     /// True when reviewing a looked-up product rather than editing something
     /// already on file.
     let isReviewingLookup: Bool
@@ -421,19 +431,40 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
             for basis in ChemicalDefaultRateBasis.allCases {
                 guard let slot = confirmed.slot(basis) else { continue }
                 let options = ChemicalDefaultRate.options(basis, from: grapevine)
+                // Re-matching a STORED slot to a display option.
+                //
+                // This used to re-mint the option key from the label and
+                // compare the result to `slot.optionKey`. That is the local
+                // identity generation this release removes: a device-side
+                // mirror of the server's hashing only agrees for as long as
+                // nobody edits either side, and when it drifts the stored
+                // default silently stops matching its own option.
+                //
+                // The stored slot already CARRIES the canonical identity, so
+                // nothing needs computing. It is matched on what the operator
+                // can actually see — same unit, and an amount the option still
+                // authorises — and the slot's own `option_key`/`rate_ids` are
+                // then carried forward verbatim, so re-confirming an untouched
+                // record rewrites the identity to exactly what it already was.
+                let storedUnit = slot.unit.trimmingCharacters(in: .whitespacesAndNewlines)
                 let match = options.first { option in
-                    let rateIDs = ChemicalDefaultRate.rateIDs(for: option, from: grapevine)
-                    guard !rateIDs.isEmpty else { return false }
-                    return ChemicalDefaultRateIdentity.mintOptionKey(
-                        basis: basis.rawValue,
-                        unit: option.rate.unit,
-                        value: option.rate.value,
-                        minValue: option.rate.minValue,
-                        maxValue: option.rate.maxValue,
-                        rateIDs: rateIDs
-                    ) == slot.optionKey
+                    guard option.rate.unit.trimmingCharacters(in: .whitespacesAndNewlines)
+                        == storedUnit
+                    else { return false }
+                    guard let stored = slot.value else { return false }
+                    return option.authorises(stored)
                 }
-                guard let match else { continue }
+                guard var match else { continue }
+                // Carry the STORED identity, never a recomputed one.
+                match.server = ChemicalServerDefaultRateOption(
+                    optionKey: slot.optionKey,
+                    rateIds: slot.rateIds,
+                    basis: slot.basis,
+                    unit: slot.unit,
+                    value: match.rate.value,
+                    minValue: match.rate.minValue,
+                    maxValue: match.rate.maxValue
+                )
                 ids[basis] = match.id
                 // The operator's exact dose inside a band, kept only while the
                 // band still authorises it.
@@ -549,8 +580,10 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         selectedDefaultRateIds: [ChemicalDefaultRateBasis: String] = [:],
         defaultRateValues: [ChemicalDefaultRateBasis: Double] = [:],
         jurisdiction: ChemicalRateJurisdiction? = nil,
+        serverDefaultRateOptions: ChemicalServerDefaultRateOptions? = nil,
         baselineViolationCodes: Set<ChemicalSaveViolationCode> = []
     ) {
+        self.serverDefaultRateOptions = serverDefaultRateOptions
         self.isReviewingLookup = isReviewingLookup
         self.baselineViolationCodes = baselineViolationCodes
         self.chemistryDraft = chemistryDraft
@@ -789,7 +822,22 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// The per-basis default-rate decision, built ONLY from authoritative
     /// grapevine rates.
     var defaultRatePlan: ChemicalDefaultRatePlan {
-        ChemicalDefaultRate.plan(grapevineUses: grapevineUses, jurisdiction: jurisdiction)
+        // The SERVER's options when a structured lookup supplied them. Their
+        // `option_key` and `rate_ids` are the register's, so a choice made here
+        // can be persisted with an identity every other client recognises.
+        if let serverDefaultRateOptions {
+            return ChemicalDefaultRate.plan(
+                serverOptions: serverDefaultRateOptions,
+                jurisdiction: jurisdiction
+            )
+        }
+        // The edit path, where no fresh lookup has run. These options are for
+        // DISPLAY: they carry no server identity, so confirming one cannot
+        // create a new stored default. An existing default is still shown and
+        // carried forward — `recoveredDefaults` re-attaches the stored slot's
+        // own identity, so re-saving an untouched record rewrites exactly what
+        // it already had.
+        return ChemicalDefaultRate.plan(grapevineUses: grapevineUses, jurisdiction: jurisdiction)
     }
 
     /// The default in force for a basis: the operator's choice if they made
