@@ -106,8 +106,12 @@ import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_100L
 import com.rork.vinetrack.data.model.CHEMICAL_RATE_PER_HECTARE
 import com.rork.vinetrack.data.model.GrowthStage
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.chemical.ChemicalAddFromSprayRouting
+import com.rork.vinetrack.data.chemical.ChemicalDefaultRateDisplay
+import com.rork.vinetrack.data.chemical.ChemicalReverifyFlow
 import com.rork.vinetrack.data.chemical.ChemicalSnapshotCapture
 import com.rork.vinetrack.data.chemical.ChemicalSprayDefaultHandoff
+import com.rork.vinetrack.data.chemical.ChemicalSprayPrefill
 import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.chemicalUnitFromBase
@@ -1990,6 +1994,11 @@ fun SprayCalculatorScreen(
             showManualChemicalEntry = true
         },
         onDismissManualEntry = { showManualChemicalEntry = false },
+        // Every terminal path that produced no product disarms the snapshot.
+        // Left armed, it would wait indefinitely and then append whatever
+        // chemical some unrelated action created later - a product the
+        // operator never asked to put in this tank.
+        onCancelled = { chemicalIdsBeforeAdd = null },
         onAppend = { created ->
             chemicalIdsBeforeAdd = null
             chemLines.add(newLineFor(created))
@@ -2021,8 +2030,27 @@ private fun AddChemicalToSprayFlow(
     onDismissRegisterFlow: () -> Unit,
     onEnterManually: () -> Unit,
     onDismissManualEntry: () -> Unit,
+    /** A terminal path that created nothing — disarms the pending append. */
+    onCancelled: () -> Unit,
     onAppend: (SavedChemical) -> Unit,
 ) {
+    // Whether this run actually WROTE a new product.
+    //
+    // A successful save and a cancelled search both close the sheet through
+    // `onDismiss`, so without this the dismiss handler cannot tell "finished"
+    // from "backed out" - and would either disarm a legitimate append or leave
+    // the snapshot armed after a cancel.
+    var created by remember { mutableStateOf(false) }
+
+    // The record whose information the operator asked to re-check, and the
+    // accepted draft awaiting an explicit Save. Held here so the duplicate
+    // answer runs the canonical re-verification rather than a local imitation.
+    var reverifying by remember { mutableStateOf<SavedChemical?>(null) }
+    var reverifyDraft by remember { mutableStateOf<ChemicalReverifyFlow.Draft?>(null) }
+
+    // A newly-armed snapshot starts a fresh run.
+    LaunchedEffect(idsBeforeAdd) { if (idsBeforeAdd != null) created = false }
+
     if (showRegisterFlow) {
         // The SAME workflow the Chemical Store uses: search the register,
         // review the grapevine information, confirm the default rate, save.
@@ -2037,15 +2065,70 @@ private fun AddChemicalToSprayFlow(
             state = state,
             existing = null,
             prefillQuery = "",
-            onDismiss = onDismissRegisterFlow,
+            onDismiss = {
+                // "No, keep it as it is" closes through here too, having run
+                // no lookup and written nothing.
+                val outcome = ChemicalAddFromSprayRouting.onRegisterFlowClosed(created)
+                if (outcome.closeRegisterFlow) onDismissRegisterFlow()
+                if (outcome.disarmSnapshot) onCancelled()
+            },
+            onCreated = { created = true },
+            // Deliberately kept armed: this is the one transfer that still
+            // intends to create a product, just through the manual form.
             onEnterManually = onEnterManually,
             onCheckForUpdates = { existingChemical ->
-                // Already in the store: append THAT product rather than
-                // creating a second copy of it. Nothing was looked up and
-                // nothing was written.
-                onDismissRegisterFlow()
-                onAppend(existingChemical)
+                // "Yes, check for updates" is a request to RE-CHECK the stored
+                // record against the register. It used to append that record to
+                // the spray instead, which answered a different question
+                // entirely: the operator asked whether their saved information
+                // was still current and got a spray line, with the stored
+                // information left exactly as stale as it was.
+                //
+                // The canonical re-verification runs instead. Nothing is
+                // appended: the check may end in a database update, and
+                // coupling that decision to a spray-line mutation would make
+                // "I only wanted to look" silently change the tank. The
+                // operator picks the product with "Add Chemical" afterwards.
+                val outcome = ChemicalAddFromSprayRouting.onCheckForUpdates()
+                if (outcome.closeRegisterFlow) onDismissRegisterFlow()
+                if (outcome.disarmSnapshot) onCancelled()
+                if (outcome.openReverify) reverifying = existingChemical
             },
+        )
+    }
+
+    reverifying?.let { target ->
+        // One lookup against the record's own registration identity. This sheet
+        // writes nothing at all - see ChemicalReverifySheet.
+        ChemicalReverifySheet(
+            state = state,
+            chemical = target,
+            onDismiss = {
+                reverifying = null
+                if (ChemicalAddFromSprayRouting.onReverifyClosed().disarmSnapshot) onCancelled()
+            },
+            onUseUpdatedInformation = { draft ->
+                reverifying = null
+                reverifyDraft = draft
+            },
+        )
+    }
+
+    reverifyDraft?.let { draft ->
+        // The accepted update opens in the ordinary editor, against the SAME
+        // saved chemical id. One explicit Save performs the single update; no
+        // second product is ever inserted, and nothing is matched by name.
+        ChemicalFormSheet(
+            vm = vm,
+            existing = draft.chemical,
+            canViewFinancials = canEditCost,
+            onDismiss = { reverifyDraft = null },
+            state = state,
+            // Carried explicitly: opened on the draft, the editor's own "has
+            // anything changed?" test would compare the draft against itself
+            // and omit the very columns the operator just accepted.
+            pendingIntelligence = draft.intelligence,
+            staleDefaultBases = draft.staleDefaultBases,
         )
     }
 
@@ -2055,7 +2138,13 @@ private fun AddChemicalToSprayFlow(
             vm = vm,
             existing = null,
             canViewFinancials = canEditCost,
-            onDismiss = onDismissManualEntry,
+            onDismiss = {
+                onDismissManualEntry()
+                if (ChemicalAddFromSprayRouting.onManualEntryClosed(created).disarmSnapshot) {
+                    onCancelled()
+                }
+            },
+            onCreated = { created = true },
             state = state,
         )
     }
@@ -2069,10 +2158,12 @@ private fun AddChemicalToSprayFlow(
     // operator never chose. Every other piece of the spray draft is left
     // exactly as it was.
     LaunchedEffect(state.savedChemicals, idsBeforeAdd) {
-        val before = idsBeforeAdd ?: return@LaunchedEffect
-        val created = state.savedChemicals.firstOrNull { it.id !in before }
-            ?: return@LaunchedEffect
-        onAppend(created)
+        val newId = ChemicalAddFromSprayRouting.createdId(
+            idsBeforeAdd,
+            state.savedChemicals.map { it.id },
+        ) ?: return@LaunchedEffect
+        val product = state.savedChemicals.firstOrNull { it.id == newId } ?: return@LaunchedEffect
+        onAppend(product)
     }
 }
 
@@ -2634,96 +2725,17 @@ private fun CalcChemicalLineCard(
             Spacer8()
             // Rate picker
             Text("Rate", fontSize = 11.sp, color = vine.textSecondary)
-            Box {
-                var menu by remember { mutableStateOf(false) }
-                val haRates = chem.rates.filter { it.basis == CHEMICAL_RATE_PER_HECTARE }
-                val per100Rates = chem.rates.filter { it.basis == CHEMICAL_RATE_PER_100L }
-                val selectedRate = chem.rates.firstOrNull { it.id == line.selectedRateId }
-                val rateLabel: String = when {
-                    selectedRate != null -> {
-                        val suffix = if (selectedRate.basis == CHEMICAL_RATE_PER_100L) "/100L" else "/ha"
-                        "${selectedRate.label.ifBlank { "Rate" }}: ${fmtRate(chemicalUnitFromBase(chem.unit, selectedRate.value))} ${chem.unit}$suffix"
-                    }
-                    recommended > 0 -> "Default: ${fmtRate(recommended)} $rateUnit$basisSuffix"
-                    else -> "Select rate"
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(vine.appBackground)
-                        .clickable(enabled = chem.rates.isNotEmpty()) { menu = true }
-                        .padding(horizontal = 10.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        rateLabel,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = vine.textPrimary,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                    )
-                    if (chem.rates.isNotEmpty()) {
-                        Icon(Icons.Filled.SwapVert, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(14.dp))
-                    }
-                }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    if (haRates.isNotEmpty()) {
-                        DropdownMenuItem(
-                            text = { Text("PER HECTARE", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary) },
-                            onClick = {},
-                            enabled = false,
-                        )
-                        haRates.forEach { rate ->
-                            DropdownMenuItem(
-                                text = {
-                                    // Product pack unit stays canonical; the area denominator follows the vineyard.
-                                    val region = LocalRegionFormatter.current
-                                    Text(
-                                        "${rate.label.ifBlank { "Rate" }}: ${fmtRate(region.sprayRateValue(chemicalUnitFromBase(chem.unit, rate.value)))} ${chem.unit}/${region.sprayRateAreaAbbreviation}",
-                                        fontSize = 13.sp,
-                                    )
-                                },
-                                onClick = {
-                                    // The picked rate's amount and unit are set
-                                    // together, so the line never displays one
-                                    // rate's number beside another's unit.
-                                    line.selectedRateId = rate.id
-                                    line.basis = SprayCalculator.RateBasis.PER_HECTARE
-                                    line.rateAmount =
-                                        chemicalUnitFromBase(chem.unit, rate.value)
-                                    line.rateUnit = chem.unit
-                                    line.overrideText = ""
-                                    onChanged()
-                                    menu = false
-                                },
-                            )
-                        }
-                    }
-                    if (per100Rates.isNotEmpty()) {
-                        DropdownMenuItem(
-                            text = { Text("PER 100L WATER", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary) },
-                            onClick = {},
-                            enabled = false,
-                        )
-                        per100Rates.forEach { rate ->
-                            DropdownMenuItem(
-                                text = { Text("${rate.label.ifBlank { "Rate" }}: ${fmtRate(chemicalUnitFromBase(chem.unit, rate.value))} ${chem.unit}/100L", fontSize = 13.sp) },
-                                onClick = {
-                                    line.selectedRateId = rate.id
-                                    line.basis = SprayCalculator.RateBasis.PER_100L
-                                    line.rateAmount =
-                                        chemicalUnitFromBase(chem.unit, rate.value)
-                                    line.rateUnit = chem.unit
-                                    line.overrideText = ""
-                                    onChanged()
-                                    menu = false
-                                },
-                            )
-                        }
-                    }
-                }
+            // A STRUCTURED product may only ever offer rates its operator has
+            // confirmed. This picker used to build its options from
+            // `chem.rates` for every product, which quietly reinstated the
+            // whole legacy fallback the handoff exists to remove: the line was
+            // prefilled from `default_rates`, and then the operator could
+            // select an unconfirmed legacy row straight past it - in the pack
+            // unit, so a confirmed 560 g/ha product offered "560 Kg/ha".
+            if (ChemicalSprayDefaultHandoff.isLegacyRateRecord(chem)) {
+                LegacyRatePickerRow(chem, line, recommended, rateUnit, basisSuffix, onChanged)
+            } else {
+                ConfirmedRatePickerRow(chem, line, onChanged)
             }
 
             Spacer8()
@@ -2776,6 +2788,243 @@ private fun CalcChemicalLineCard(
                     color = vine.textSecondary,
                     modifier = Modifier.padding(top = 4.dp),
                 )
+            }
+        }
+    }
+}
+
+/**
+ * The rate options a STRUCTURED product may offer: its confirmed defaults, and
+ * nothing else.
+ *
+ * Built from [ChemicalSprayDefaultHandoff.choicesFor], which reads
+ * `default_rates` alone — never `rates`, never `rate_per_ha`, never the first
+ * registered-use rate, and never converting the confirmed amount or its unit.
+ *
+ * With two confirmed bases both are offered and NEITHER is auto-selected:
+ * per-hectare and per-100 L are different ways of dosing the same spray, and
+ * choosing for the operator would silently decide how the mix is built.
+ */
+@Composable
+private fun ConfirmedRatePickerRow(
+    chem: SavedChemical,
+    line: CalcChemLine,
+    onChanged: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val choices: List<ChemicalSprayPrefill> = remember(chem.id, chem.defaultRates) {
+        ChemicalSprayDefaultHandoff.choicesFor(chem)
+    }
+
+    if (choices.isEmpty()) {
+        // No confirmed rate, and deliberately no legacy row offered instead.
+        // The operator can still spray this product by entering the rate below;
+        // what they cannot do is pick a number nobody confirmed and have it
+        // look like a default.
+        Text(
+            ChemicalDefaultRateDisplay.CONFIRMATION_REQUIRED,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = VineColors.Orange,
+            modifier = Modifier.padding(vertical = 6.dp),
+        )
+        return
+    }
+
+    Box {
+        var menu by remember { mutableStateOf(false) }
+        val selected = choices.firstOrNull {
+            it.basis == line.basis && it.unit == line.rateUnit && it.rate == line.rateAmount
+        }
+        val label = selected?.let { "${fmtRate(it.rate)} ${it.unit}${sprayBasisSuffix(it.basis)}" }
+            ?: "Select rate"
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(vine.appBackground)
+                .clickable { menu = true }
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                label,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = vine.textPrimary,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+            )
+            if (choices.size > 1) {
+                Icon(
+                    Icons.Filled.SwapVert,
+                    contentDescription = null,
+                    tint = vine.textSecondary,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            choices.forEach { choice ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            "${fmtRate(choice.rate)} ${choice.unit}${sprayBasisSuffix(choice.basis)}",
+                            fontSize = 13.sp,
+                        )
+                    },
+                    onClick = {
+                        // Amount, unit and basis are set TOGETHER. Setting the
+                        // number without its unit is the defect this whole
+                        // handoff exists to prevent: it prints a gram rate
+                        // against a kilogram pack unit.
+                        line.rateAmount = choice.rate
+                        line.rateUnit = choice.unit
+                        line.basis = choice.basis
+                        // The legacy rate-row pointer has no meaning for a
+                        // confirmed default and must not be left behind.
+                        line.selectedRateId = null
+                        line.overrideText = ""
+                        onChanged()
+                        menu = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** `"/ha"` or `"/100L"` for a calculator basis. */
+private fun sprayBasisSuffix(basis: SprayCalculator.RateBasis): String =
+    if (basis == SprayCalculator.RateBasis.PER_100L) "/100L" else "/ha"
+
+/**
+ * The pre-structured rate picker, kept for genuinely legacy/manual records.
+ *
+ * Reached ONLY via [ChemicalSprayDefaultHandoff.isLegacyRateRecord] — a record
+ * with no registered uses and no `default_rates` document at all. A structured
+ * product does NOT become legacy merely because its default is empty or
+ * malformed: that product is unresolved, and unresolved must not silently
+ * reopen the legacy columns.
+ */
+@Composable
+private fun LegacyRatePickerRow(
+    chem: SavedChemical,
+    line: CalcChemLine,
+    recommended: Double,
+    rateUnit: String,
+    basisSuffix: String,
+    onChanged: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Box {
+        var menu by remember { mutableStateOf(false) }
+        val haRates = chem.rates.filter { it.basis == CHEMICAL_RATE_PER_HECTARE }
+        val per100Rates = chem.rates.filter { it.basis == CHEMICAL_RATE_PER_100L }
+        val selectedRate = chem.rates.firstOrNull { it.id == line.selectedRateId }
+        val rateLabel: String = when {
+            selectedRate != null -> {
+                val suffix = if (selectedRate.basis == CHEMICAL_RATE_PER_100L) "/100L" else "/ha"
+                "${selectedRate.label.ifBlank { "Rate" }}: ${fmtRate(chemicalUnitFromBase(chem.unit, selectedRate.value))} ${chem.unit}$suffix"
+            }
+            recommended > 0 -> "Default: ${fmtRate(recommended)} $rateUnit$basisSuffix"
+            else -> "Select rate"
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(vine.appBackground)
+                .clickable(enabled = chem.rates.isNotEmpty()) { menu = true }
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                rateLabel,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = vine.textPrimary,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+            )
+            if (chem.rates.isNotEmpty()) {
+                Icon(
+                    Icons.Filled.SwapVert,
+                    contentDescription = null,
+                    tint = vine.textSecondary,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            if (haRates.isNotEmpty()) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            "PER HECTARE",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = vine.textSecondary,
+                        )
+                    },
+                    onClick = {},
+                    enabled = false,
+                )
+                haRates.forEach { rate ->
+                    DropdownMenuItem(
+                        text = {
+                            // Product pack unit stays canonical; the area
+                            // denominator follows the vineyard.
+                            val region = LocalRegionFormatter.current
+                            Text(
+                                "${rate.label.ifBlank { "Rate" }}: ${fmtRate(region.sprayRateValue(chemicalUnitFromBase(chem.unit, rate.value)))} ${chem.unit}/${region.sprayRateAreaAbbreviation}",
+                                fontSize = 13.sp,
+                            )
+                        },
+                        onClick = {
+                            line.selectedRateId = rate.id
+                            line.basis = SprayCalculator.RateBasis.PER_HECTARE
+                            line.rateAmount = chemicalUnitFromBase(chem.unit, rate.value)
+                            line.rateUnit = chem.unit
+                            line.overrideText = ""
+                            onChanged()
+                            menu = false
+                        },
+                    )
+                }
+            }
+            if (per100Rates.isNotEmpty()) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            "PER 100L WATER",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = vine.textSecondary,
+                        )
+                    },
+                    onClick = {},
+                    enabled = false,
+                )
+                per100Rates.forEach { rate ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "${rate.label.ifBlank { "Rate" }}: ${fmtRate(chemicalUnitFromBase(chem.unit, rate.value))} ${chem.unit}/100L",
+                                fontSize = 13.sp,
+                            )
+                        },
+                        onClick = {
+                            line.selectedRateId = rate.id
+                            line.basis = SprayCalculator.RateBasis.PER_100L
+                            line.rateAmount = chemicalUnitFromBase(chem.unit, rate.value)
+                            line.rateUnit = chem.unit
+                            line.overrideText = ""
+                            onChanged()
+                            menu = false
+                        },
+                    )
+                }
             }
         }
     }

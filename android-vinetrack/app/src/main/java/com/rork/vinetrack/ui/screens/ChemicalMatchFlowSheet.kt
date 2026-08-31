@@ -142,6 +142,20 @@ internal fun ChemicalMatchFlowSheet(
      * which is a question only a re-check can answer.
      */
     onCheckForUpdates: (SavedChemical) -> Unit = {},
+    /**
+     * Raised when this flow CREATED a new saved chemical, immediately before it
+     * closes.
+     *
+     * [onDismiss] cannot answer "did anything get written?" — a successful save
+     * and a cancelled search both arrive through it. A caller that must act on
+     * the new product (the Spray Calculator appends it to the open mix) would
+     * otherwise have to infer creation from a side effect, and would go on
+     * waiting for a product after the operator had backed out.
+     *
+     * Deliberately NOT raised when an existing record is updated: no new
+     * product exists, so there is nothing for a caller to pick up.
+     */
+    onCreated: () -> Unit = {},
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
@@ -849,7 +863,10 @@ internal fun ChemicalMatchFlowSheet(
                                     if (existing == null) {
                                         vm.createSavedChemical(input) { ok ->
                                             saving = false
-                                            if (ok) onDismiss()
+                                            if (ok) {
+                                                onCreated()
+                                                onDismiss()
+                                            }
                                         }
                                     } else {
                                         // Legacy cleanup updates the SAME record

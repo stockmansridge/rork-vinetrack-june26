@@ -40,6 +40,24 @@ object ChemicalLookupAdvisory {
     const val REPEAT_HINT_TEXT: String =
         "Repeat lookups are usually faster once the product has been loaded."
 
+    /**
+     * Shown while a RE-VERIFICATION is running.
+     *
+     * A re-check does the same expensive work as a first-add — register query,
+     * label fetch, Directions For Use extraction — but the screen used to say
+     * only "Checking current product information…", which reads like a
+     * sub-second request. An operator who has already saved the product has
+     * even less reason to wait through an unexplained spinner, so they back
+     * out and the product silently never gets re-checked.
+     *
+     * Names what is being read, and states the duration honestly. No
+     * percentage and no estimated finish time: both would be invented, and a
+     * progress bar that stalls at 90% is a worse lie than a slow spinner.
+     */
+    const val CHECKING_TEXT: String =
+        "We're checking the official registration and reading the product label " +
+            "for grapevine uses and rates. This can take a few minutes."
+
     /** The advisory in force for the given activity state. */
     fun text(isSearching: Boolean): String = if (isSearching) SEARCHING_TEXT else IDLE_TEXT
 

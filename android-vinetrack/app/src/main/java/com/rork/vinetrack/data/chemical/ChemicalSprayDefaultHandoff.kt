@@ -45,38 +45,14 @@ data class ChemicalSprayPrefill(
 object ChemicalSprayDefaultHandoff {
 
     /**
-     * The units a spray line may carry.
-     *
-     * Closed on purpose: a unit nothing recognises cannot be costed, converted
-     * or displayed safely, so it produces no prefill at all.
-     */
-    private val supportedUnits: Map<String, String> = mapOf(
-        "l" to "L",
-        "litre" to "L",
-        "litres" to "L",
-        "liter" to "L",
-        "liters" to "L",
-        "ml" to "mL",
-        "millilitre" to "mL",
-        "millilitres" to "mL",
-        "kg" to "kg",
-        "kilogram" to "kg",
-        "kilograms" to "kg",
-        "g" to "g",
-        "gram" to "g",
-        "grams" to "g",
-    )
-
-    /**
      * Canonical spelling of a rate unit, or null when it is not one a line may
      * carry.
      *
-     * Normalises SPELLING AND CASE ONLY. It never converts: `g` stays `g` and
-     * is never restated as `0.001 kg`, because the confirmed amount and its
-     * unit are the operator's decision exactly as they made it.
+     * Delegates to [ChemicalDefaultRateValidity] so the store display and the
+     * spray line agree on what a usable unit is. Two readers with two unit
+     * lists is how a rate becomes displayable but not sprayable.
      */
-    fun canonicalUnit(raw: String?): String? =
-        supportedUnits[raw?.trim()?.lowercase().orEmpty()]
+    fun canonicalUnit(raw: String?): String? = ChemicalDefaultRateValidity.canonicalUnit(raw)
 
     /** The calculator basis a stored slot belongs to. */
     private fun basisOf(basis: ChemicalDefaultRateBasis): SprayCalculator.RateBasis = when (basis) {
@@ -87,19 +63,49 @@ object ChemicalSprayDefaultHandoff {
     /**
      * One slot as a usable prefill, or null when it cannot safely become one.
      *
-     * Null when the slot records no scalar amount — a range shape with
-     * `value == null` is a decision that was never finished, and its bounds
-     * are what the label permits rather than what this vineyard pours.
+     * The whole persisted shape is validated, not merely the number: a row
+     * whose basis, identity, unit, provenance or amount shape is malformed is
+     * not a confirmed rate expressed oddly, it is a row whose meaning cannot
+     * be established. Only the scalar shape prefills — a band is what the
+     * label permits rather than what this vineyard pours.
      */
     fun prefillFor(
         defaults: StoredChemicalDefaultRates?,
         basis: ChemicalDefaultRateBasis,
     ): ChemicalSprayPrefill? {
-        val slot = defaults?.slot(basis) ?: return null
-        val amount = slot.confirmedAmount ?: return null
-        val unit = canonicalUnit(slot.unit) ?: return null
-        return ChemicalSprayPrefill(rate = amount, unit = unit, basis = basisOf(basis))
+        val valid = ChemicalDefaultRateValidity.confirmedScalar(defaults, basis) ?: return null
+        val amount = valid.scalar ?: return null
+        return ChemicalSprayPrefill(rate = amount, unit = valid.unit, basis = basisOf(basis))
     }
+
+    /**
+     * Every confirmed rate this product may offer a spray line, per-hectare
+     * first.
+     *
+     * The ONE source the visible Rate picker builds its options from. It used
+     * to build them from [SavedChemical.rates], which quietly reinstated every
+     * fallback this type exists to remove: `rates` is the legacy array, its
+     * amounts are stored in the PACK unit, and a product stocked in kilograms
+     * therefore offered a confirmed 560 g/ha default as "560 Kg/ha". A picker
+     * that can offer an unconfirmed number makes the prefill rule decorative,
+     * because the operator can simply select past it.
+     *
+     * ```text
+     * one confirmed slot  -> one choice (also the prefill)
+     * two confirmed slots -> two choices, and NO automatic selection
+     * none                -> empty, and the line stays unresolved
+     * ```
+     */
+    fun choicesFor(chemical: SavedChemical): List<ChemicalSprayPrefill> =
+        ChemicalDefaultRateValidity.confirmedScalars(chemical.defaultRates)
+            .mapNotNull { valid ->
+                val amount = valid.scalar ?: return@mapNotNull null
+                ChemicalSprayPrefill(
+                    rate = amount,
+                    unit = valid.unit,
+                    basis = basisOf(valid.basis),
+                )
+            }
 
     /**
      * The prefill for a saved chemical, or null when the operator must choose.
@@ -117,11 +123,8 @@ object ChemicalSprayDefaultHandoff {
      * and per-100 L are different ways of dosing the same spray, and picking
      * one for the operator would silently decide how the mix is built.
      */
-    fun prefillFor(chemical: SavedChemical): ChemicalSprayPrefill? {
-        val defaults = chemical.defaultRates ?: return null
-        val candidates = ChemicalDefaultRateBasis.entries.mapNotNull { prefillFor(defaults, it) }
-        return candidates.singleOrNull()
-    }
+    fun prefillFor(chemical: SavedChemical): ChemicalSprayPrefill? =
+        choicesFor(chemical).singleOrNull()
 
     /**
      * Whether this product must keep the pre-structured `rates`/`rate_per_ha`

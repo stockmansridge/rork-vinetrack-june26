@@ -49,6 +49,7 @@ import com.rork.vinetrack.data.chemical.ChemicalIntelligenceChange
 import com.rork.vinetrack.data.chemical.ChemicalIntelligenceDiff
 import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
 import com.rork.vinetrack.data.chemical.ChemicalJurisdictionSuitability
+import com.rork.vinetrack.data.chemical.ChemicalLookupAdvisory
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalReverification
 import com.rork.vinetrack.data.chemical.ChemicalReverifyFlow
@@ -246,6 +247,17 @@ internal fun ChemicalReverifySheet(
                             color = vine.textPrimary,
                         )
                     }
+                    // The same duration advisory the first-add lookup shows,
+                    // because it is the same work: a re-check queries the
+                    // register and reads the approved label, and an operator
+                    // given no stated duration concludes the app has hung and
+                    // abandons the check.
+                    Text(
+                        ChemicalLookupAdvisory.CHECKING_TEXT,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = VineColors.LeafGreen,
+                    )
                     Text(
                         "Your saved chemical is not changed until you accept an update.",
                         fontSize = 11.sp,

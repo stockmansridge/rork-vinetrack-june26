@@ -767,6 +767,15 @@ internal fun ChemicalFormSheet(
     staleDefaultBases: List<ChemicalDefaultRateBasis> = emptyList(),
     /** Raised when a re-verification started from inside this form is accepted. */
     onReverifyDraft: (ChemicalReverifyFlow.Draft) -> Unit = {},
+    /**
+     * Raised when this form CREATED a new saved chemical, immediately before it
+     * closes.
+     *
+     * [onDismiss] fires for a successful save and for a cancel alike, so a
+     * caller waiting on a new product cannot tell the two apart without this.
+     * Not raised for an update: no new product exists to hand anybody.
+     */
+    onCreated: () -> Unit = {},
 ) {
     val vine = LocalVineColors.current
     val uriHandler = LocalUriHandler.current
@@ -850,12 +859,6 @@ internal fun ChemicalFormSheet(
     // and matching flow Add Chemical uses. There is no second lookup here.
     var showRegisterSearch by remember { mutableStateOf(false) }
     var showChemistryEditor by remember { mutableStateOf(false) }
-    // An approved label can register dozens of crops. A vineyard operator should
-    // not scroll past peaches, tobacco and turf to reach grapevines, so the rest
-    // stay collapsed until asked for. Presentation only — every use is on the
-    // record and every use is saved. Mirrors the iOS editor's
-    // "Other crops on this label" disclosure.
-    var showOtherCropUses by remember { mutableStateOf(false) }
     // The country a manual entry defaults to, from the vineyard profile. Applied
     // only when the record does not already name one, so an imported product's
     // own country is never overwritten on open.
@@ -942,13 +945,29 @@ internal fun ChemicalFormSheet(
         // same reason, but a save path that trusts its own button is a save
         // path that writes whatever a future caller forgets to gate — which is
         // exactly how this form came to accept a name and nothing else.
+        //
+        // The stale-default bases are passed here TOO, computed exactly as the
+        // button computes them. They were previously omitted from this call,
+        // so the button disabled itself over a stale rate while the write
+        // function it guarded evaluated a contract in which that rate was
+        // fine. Any caller reaching save() another way — an IME action, a
+        // future keyboard shortcut, a recomposition race — would have written
+        // a default citing a registered rate the label no longer carries.
+        val unresolvedStaleBases = staleDefaultBases.filter {
+            defaultRatesDraft?.slot(it) != null
+        }
         val gate = ChemicalSaveContract.evaluate(
             productName = trimmedName,
             productCategory = category,
-            intelligence = ChemicalManualEntry.proposedIntelligence(
-                chemistryDraft,
-                existing?.storedIntelligence,
+            // Vineyard-scoped, like the rendered evaluation: the contract must
+            // judge the grapevine record the operator was actually shown.
+            intelligence = ChemicalVineyardScope.scoped(
+                ChemicalManualEntry.proposedIntelligence(
+                    chemistryDraft,
+                    existing?.storedIntelligence,
+                ),
             ),
+            staleDefaultBases = unresolvedStaleBases,
         )
         if (gate.violations.any { it.code !in baselineViolationCodes }) return
         saving = true
@@ -1061,7 +1080,17 @@ internal fun ChemicalFormSheet(
             defaultRates = if (defaultRatesEdited) defaultRatesDraft else null,
         )
         val cb: (Boolean) -> Unit = { ok -> saving = false; if (ok) onDismiss() }
-        if (isEdit) vm.updateSavedChemical(existing!!.id, input, cb) else vm.createSavedChemical(input, cb)
+        if (isEdit) {
+            vm.updateSavedChemical(existing!!.id, input, cb)
+        } else {
+            vm.createSavedChemical(input) { ok ->
+                saving = false
+                if (ok) {
+                    onCreated()
+                    onDismiss()
+                }
+            }
+        }
     }
 
     if (showChemistryEditor) {
@@ -1486,10 +1515,27 @@ internal fun ChemicalFormSheet(
             // through the SAME component the match and re-verify flows use —
             // which is what keeps "Not stated" phrased identically everywhere
             // instead of becoming a second opinion about a missing value.
+            //
+            // VINEYARD-SCOPED before anything reads it. The Chemical Store is a
+            // vineyard record: peaches, citrus, turf and cereals on the same
+            // approved label are not directions this operator may act on, and
+            // an editor that renders them invites exactly the mistake of
+            // reading a macadamia withholding period as a grape one. Scoping
+            // here rather than at each render point means the save contract
+            // below is evaluated against the same grapevine set the operator
+            // was shown — a contract judged on rows the screen never displayed
+            // is a contract about a different record.
+            //
+            // `scoped` keeps product-level rate carriers, which claim no crop
+            // at all, so a label quoting one rate for the whole drum is not
+            // lost. It is idempotent, so re-scoping an already-scoped record
+            // changes nothing.
             val displayIntelligence = remember(chemistryDraft, existing?.id) {
-                ChemicalManualEntry.proposedIntelligence(
-                    chemistryDraft,
-                    existing?.storedIntelligence,
+                ChemicalVineyardScope.scoped(
+                    ChemicalManualEntry.proposedIntelligence(
+                        chemistryDraft,
+                        existing?.storedIntelligence,
+                    ),
                 )
             }
 
@@ -1523,10 +1569,12 @@ internal fun ChemicalFormSheet(
             val carriedOverViolations =
                 ChemicalSaveContract.carriedOverViolations(saveEvaluation, baselineViolationCodes)
 
-            val displayUses = displayIntelligence.registeredUses
+            // Already scoped above; asked again so this render site states its
+            // own rule rather than depending on an upstream one staying true.
+            val displayUses = ChemicalVineyardScope.operationalUses(
+                displayIntelligence.registeredUses,
+            )
             if (displayUses.isNotEmpty()) {
-                val grapevineUses = displayUses.viticultural()
-                val otherUses = displayUses.filterNot { it.isViticultural }
                 // The label-source flag only ever changes the WORDING of a
                 // label-parsed zero-day withholding period ("not required when
                 // used as directed"). It never invents or alters a value, and
@@ -1537,29 +1585,9 @@ internal fun ChemicalFormSheet(
 
                 SectionLabel("Grapevine uses & safety")
                 ChemicalRegisteredUsesView(
-                    grapevineUses,
+                    displayUses,
                     hasManufacturerLabelSource = hasLabelSource,
                 )
-                if (otherUses.isNotEmpty()) {
-                    TextButton(
-                        onClick = { showOtherCropUses = !showOtherCropUses },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            if (showOtherCropUses) {
-                                "Hide other crops on this label"
-                            } else {
-                                "Other crops on this label (${otherUses.size})"
-                            },
-                        )
-                    }
-                    if (showOtherCropUses) {
-                        ChemicalRegisteredUsesView(
-                            otherUses,
-                            hasManufacturerLabelSource = hasLabelSource,
-                        )
-                    }
-                }
                 Text(
                     "Withholding and re-entry periods are shown exactly as the label " +
                         "states them. A period VineTrack could not establish reads " +

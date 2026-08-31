@@ -61,16 +61,19 @@ object ChemicalDefaultRateDisplay {
      * A slot still holding a legacy range with no scalar returns null: an
      * unnarrowed band is a decision that was never finished, and rendering its
      * bounds here would present a permitted span as a confirmed dose.
+     *
+     * The whole persisted shape is validated through
+     * [ChemicalDefaultRateValidity] — the same gate the spray handoff uses, so
+     * a row this store shows as confirmed is exactly a row a spray line may
+     * start from.
      */
     fun slotDisplay(
         defaults: StoredChemicalDefaultRates?,
         basis: ChemicalDefaultRateBasis,
     ): String? {
-        val slot = defaults?.slot(basis) ?: return null
-        val amount = slot.confirmedAmount ?: return null
-        val unit = slot.unit.trim()
-        if (unit.isEmpty()) return null
-        return "${formatChemicalNumber(amount)} $unit${basisSuffix(basis)}"
+        val valid = ChemicalDefaultRateValidity.confirmedScalar(defaults, basis) ?: return null
+        val amount = valid.scalar ?: return null
+        return "${formatChemicalNumber(amount)} ${valid.unit}${basisSuffix(basis)}"
     }
 
     /** Every confirmed slot, per-hectare first, in the order an operator reads. */
