@@ -85,6 +85,16 @@ final class ChemicalLookupCoordinator {
     /// abandons the review.
     var reviewDraft: SavedChemical?
 
+    /// The SERVER's canonical default-rate options for the lookup that produced
+    /// `reviewDraft`, carried untouched to the editor.
+    ///
+    /// Transient on purpose: it belongs to ONE resolved lookup, never to the
+    /// operator's stored record. A degraded hand-off (`lookup == nil`), a
+    /// manual entry, or an existing row opened without researching all leave it
+    /// `nil`, and `nil` means the editor fails closed rather than inventing an
+    /// identity no other client could match.
+    private(set) var reviewDefaultRateOptions: ChemicalServerDefaultRateOptions?
+
     /// The operator asked for the blank manual form instead.
     var showManualEntry: Bool = false
 
@@ -150,6 +160,7 @@ final class ChemicalLookupCoordinator {
     func finishReview() {
         ChemicalLookupTrace.log("review_finished")
         reviewDraft = nil
+        reviewDefaultRateOptions = nil
         showManualEntry = false
         existingToReview = nil
     }
@@ -355,6 +366,9 @@ final class ChemicalLookupCoordinator {
         vineyardId: UUID
     ) {
         ChemicalLookupTrace.log("handoff_executed", lookup == nil ? "degraded" : "resolved")
+        // Assigned from THIS lookup every time, so a degraded hand-off after a
+        // resolved one cannot leave the previous product's options behind.
+        reviewDefaultRateOptions = lookup?.defaultRateOptions
         reviewDraft = ChemicalReviewMerge.reviewChemical(
             lookup: lookup,
             selected: row.result,

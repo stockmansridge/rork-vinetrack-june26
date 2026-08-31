@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// The PERSISTED shape of `saved_chemicals.default_rates` (sql/214).
@@ -102,7 +101,8 @@ nonisolated struct StoredChemicalDefaultRate: Codable, Sendable, Hashable {
     static let sourceOperator: String = "operator"
     static let sourceRecommended: String = "recommended"
 
-    /// Deterministic identity of the grouped choice. See `ChemicalDefaultRateIdentity`.
+    /// Deterministic identity of the grouped choice, minted by the SERVER and
+    /// copied here verbatim. Never computed on device.
     var optionKey: String
     /// Gate D1 `rate_v1_` identities of printed DIRECTIONS. Never UUIDs. At least one.
     var rateIds: [String]
@@ -163,116 +163,21 @@ nonisolated struct StoredChemicalDefaultRate: Codable, Sendable, Hashable {
     }
 }
 
-/// Deterministic identity for a grouped operational choice.
-///
-/// Pure and platform-independent: the same choice yields the same key on the
-/// server, on Android and here. A UUID would change on every write, making the
-/// key useless for recognising that two clients chose the same thing.
-///
-/// Byte-for-byte mirror of `canonicalDefaultOptionInput` / `mintDefaultOptionKey`
-/// in `default_rates.ts`, including the U+001F field separator and U+001E rate
-/// separator. Both are needed: without them two different field splits could
-/// hash alike.
-///
-/// Contains ONLY what makes the choice the choice — basis, label unit, amount
-/// and the supporting direction set. Deliberately absent: `source`,
-/// `selectedAt`, `labelVersion`, UI ordering, recommendation state, the pack
-/// unit, label URL and any cache key. Every one of those can differ between two
-/// clients that made the identical choice.
-nonisolated enum ChemicalDefaultRateIdentity {
-    static let optionIDVersion: String = "default_option_v1"
-
-    private static let unitSeparator: String = "\u{001f}"
-    private static let recordSeparator: String = "\u{001e}"
-
-    /// Canonical rate-id list: trimmed, de-duplicated, sorted.
-    ///
-    /// Sorting is what makes the identity order-independent — a client listing
-    /// the Grapevine Scale direction first must reach the same option as one
-    /// listing European Red Mites first, because they made the same choice.
-    static func canonicalRateIDs(_ ids: [String?]?) -> [String] {
-        let trimmed = (ids ?? [])
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        return Array(Set(trimmed)).sorted()
-    }
-
-    /// Mirror of the Deno `normaliseIdentityText`.
-    static func normaliseText(_ value: String?) -> String {
-        let folded = (value ?? "").precomposedStringWithCompatibilityMapping.lowercased()
-        var out = ""
-        var pendingSpace = false
-        for scalar in folded.unicodeScalars {
-            let isAllowed = (scalar.value >= 97 && scalar.value <= 122)
-                || (scalar.value >= 48 && scalar.value <= 57)
-            if isAllowed {
-                if pendingSpace, !out.isEmpty { out.append(" ") }
-                pendingSpace = false
-                out.unicodeScalars.append(scalar)
-            } else {
-                pendingSpace = true
-            }
-        }
-        return out
-    }
-
-    /// Mirror of the Deno `normaliseIdentityNumber`.
-    ///
-    /// Absent is the literal `-`, distinct from any numeric value: "no upper
-    /// bound" and "an upper bound of zero" must never hash alike.
-    static func normaliseNumber(_ value: Double?) -> String {
-        guard let value, value.isFinite else { return "-" }
-        var fixed = String(format: "%.6f", value)
-        while fixed.hasSuffix("0") { fixed.removeLast() }
-        if fixed.hasSuffix(".") { fixed.removeLast() }
-        return fixed == "-0" ? "0" : fixed
-    }
-
-    /// The exact bytes hashed for an option identity.
-    static func canonicalInput(
-        basis: String,
-        unit: String?,
-        value: Double?,
-        minValue: Double?,
-        maxValue: Double?,
-        rateIDs: [String?]?
-    ) -> String {
-        let ids = canonicalRateIDs(rateIDs).map { normaliseText($0) }.sorted()
-        let joinedIDs = ids.joined(separator: recordSeparator)
-        let fields: [String] = [
-            "v=\(optionIDVersion)",
-            "basis=\(normaliseText(basis).isEmpty ? "-" : normaliseText(basis))",
-            "unit=\(normaliseText(unit).isEmpty ? "-" : normaliseText(unit))",
-            "value=\(normaliseNumber(value))",
-            "min=\(normaliseNumber(minValue))",
-            "max=\(normaliseNumber(maxValue))",
-            "rates=\(joinedIDs.isEmpty ? "-" : joinedIDs)"
-        ]
-        return fields.joined(separator: unitSeparator)
-    }
-
-    /// Mint the deterministic identity of a grouped operational choice.
-    static func mintOptionKey(
-        basis: String,
-        unit: String?,
-        value: Double?,
-        minValue: Double?,
-        maxValue: Double?,
-        rateIDs: [String?]?
-    ) -> String {
-        let input = canonicalInput(
-            basis: basis,
-            unit: unit,
-            value: value,
-            minValue: minValue,
-            maxValue: maxValue,
-            rateIDs: rateIDs
-        )
-        let digest = SHA256.hash(data: Data(input.utf8))
-        let hex = digest.map { String(format: "%02x", $0) }.joined()
-        return "\(optionIDVersion)_\(hex.prefix(32))"
-    }
-}
+// MARK: - Identity minting: deliberately absent
+//
+// There was a `ChemicalDefaultRateIdentity` enum here that hashed basis, unit,
+// amount and rate ids into an `option_key` on device. It is GONE, and nothing
+// may reintroduce it.
+//
+// The server is the only producer of `option_key` and `rate_ids`. Two clients
+// minting "the same" identity independently is exactly how a grower's confirmed
+// dose stopped matching the register: any drift in normalisation, ordering or
+// rounding silently orphans the default. Options now arrive in
+// `default_rate_options` and are copied byte-for-byte — never re-sorted, never
+// de-duplicated, never rebuilt from `registered_uses`.
+//
+// When the server sends no usable option, the correct outcome is to fail closed
+// and ask the operator, not to manufacture a key.
 
 // MARK: - Building a stored default from a confirmed option
 

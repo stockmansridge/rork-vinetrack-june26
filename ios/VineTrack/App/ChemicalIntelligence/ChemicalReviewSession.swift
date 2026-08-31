@@ -308,12 +308,14 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         chemical: SavedChemical?,
         prefill: SavedChemical?,
         fallbackCountry: String,
-        jurisdiction: ChemicalRateJurisdiction? = nil
+        jurisdiction: ChemicalRateJurisdiction? = nil,
+        serverDefaultRateOptions: ChemicalServerDefaultRateOptions? = nil
     ) -> ChemicalReviewSession {
         guard let source = prefill ?? chemical else {
             return ChemicalReviewSession(
                 chemistryDraft: ChemicalManualEntry.draft(from: nil, fallbackCountry: fallbackCountry),
-                jurisdiction: jurisdiction
+                jurisdiction: jurisdiction,
+                serverDefaultRateOptions: serverDefaultRateOptions
             )
         }
 
@@ -392,6 +394,7 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
             selectedDefaultRateIds: recovered.ids,
             defaultRateValues: recovered.values,
             jurisdiction: jurisdiction,
+            serverDefaultRateOptions: serverDefaultRateOptions,
             baselineViolationCodes: baseline
         )
     }
@@ -626,13 +629,23 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// Goes through the SAME `ChemicalReviewMerge` contract as the Add Chemical
     /// flow. Operational data the operator owns — price, pack, stock, notes —
     /// is untouched: re-identifying a product says nothing about what it cost.
-    mutating func apply(reviewed: SavedChemical, fallbackCountry: String) {
+    mutating func apply(
+        reviewed: SavedChemical,
+        serverDefaultRateOptions: ChemicalServerDefaultRateOptions? = nil,
+        fallbackCountry: String
+    ) {
         let previousIdentity = productIdentityKey
         let refreshed = ChemicalReviewSession.make(
             chemical: nil,
             prefill: reviewed,
-            fallbackCountry: fallbackCountry
+            fallbackCountry: fallbackCountry,
+            serverDefaultRateOptions: serverDefaultRateOptions
         )
+        // Replaced wholesale, never merged: these identities belong to the
+        // product just resolved. A re-search that came back degraded clears
+        // them, which fails closed rather than carrying the old product's
+        // register rates onto the new one.
+        self.serverDefaultRateOptions = serverDefaultRateOptions
         // The structured draft carries name, manufacturer, category, country,
         // label link, actives, uses and rates in one assignment — there are no
         // separate copies of those to keep in step.

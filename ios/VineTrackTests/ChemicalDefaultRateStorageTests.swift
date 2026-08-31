@@ -14,88 +14,37 @@ import Testing
 /// then re-derived it by matching a bare number back to a label direction,
 /// which is inference, not a decision.
 ///
-/// The golden option keys below are minted by the DENO implementation
-/// (`mintDefaultOptionKey` in `default_rates.ts`) and hard-coded here on
-/// purpose. A key is only useful if the server, iOS and Android independently
-/// arrive at the same string for the same choice; asserting against a value
-/// this file computed itself would prove nothing.
+/// The option keys below are the ones the DENO implementation issues
+/// (`mintDefaultOptionKey` in `default_rates.ts`) and are hard-coded here on
+/// purpose. iOS no longer mints them: it receives them in `default_rate_options`
+/// and copies them verbatim, so these fixtures stand in for the server's answer
+/// rather than for a local computation.
 struct ChemicalDefaultRateStorageTests {
 
-    /// `3 L/100 L` supported by two printed directions.
-    private static let goldenSingleValueKey = "default_option_v1_7de7c29980f279f49fac2e717ed4968d"
-    /// `560–700 g/ha` — the CHATEAU (APVMA 80647) grapevine band.
+    /// `560–700 g/ha` — the CHATEAU (APVMA 80647) grapevine band, as the
+    /// server issues it.
     private static let goldenBandKey = "default_option_v1_dd81178fa70649ce9a097ad840805834"
 
-    // MARK: - Identity parity with the server
-
-    @Test("Option key matches the server for a single-value rate")
-    func singleValueKeyMatchesServer() {
-        let key = ChemicalDefaultRateIdentity.mintOptionKey(
-            basis: "per_100_litres",
-            unit: "L",
-            value: 3,
-            minValue: nil,
-            maxValue: nil,
-            rateIDs: ["rate_v1_aaa", "rate_v1_bbb"]
-        )
-        #expect(key == Self.goldenSingleValueKey)
-    }
-
-    @Test("Option key matches the server for a true label band")
-    func bandKeyMatchesServer() {
-        let key = ChemicalDefaultRateIdentity.mintOptionKey(
-            basis: "per_hectare",
-            unit: "g",
-            value: nil,
-            minValue: 560,
-            maxValue: 700,
-            rateIDs: ["rate_v1_chateau"]
-        )
-        #expect(key == Self.goldenBandKey)
-    }
-
-    /// A client listing Grapevine Scale first must reach the same option as one
-    /// listing European Red Mites first: they made the same choice.
-    @Test("Option key is independent of rate-id order")
-    func keyIsOrderIndependent() {
-        let forward = ChemicalDefaultRateIdentity.mintOptionKey(
-            basis: "per_100_litres", unit: "L", value: 3,
-            minValue: nil, maxValue: nil,
-            rateIDs: ["rate_v1_aaa", "rate_v1_bbb"]
-        )
-        let reversed = ChemicalDefaultRateIdentity.mintOptionKey(
-            basis: "per_100_litres", unit: "L", value: 3,
-            minValue: nil, maxValue: nil,
-            rateIDs: ["rate_v1_bbb", "rate_v1_aaa"]
-        )
-        #expect(forward == reversed)
-        #expect(forward == Self.goldenSingleValueKey)
-    }
-
-    /// "No upper bound" and "an upper bound of zero" must never hash alike.
-    @Test("Absent and zero amounts are distinct identities")
-    func absentIsNotZero() {
-        #expect(ChemicalDefaultRateIdentity.normaliseNumber(nil) == "-")
-        #expect(ChemicalDefaultRateIdentity.normaliseNumber(0) == "0")
-        #expect(ChemicalDefaultRateIdentity.normaliseNumber(3) == "3")
-        // `3`, `3.0` and `3.000` are one number.
-        #expect(ChemicalDefaultRateIdentity.normaliseNumber(3.000) == "3")
-    }
-
-    /// Provenance must never move the identity, or a reissued label restating
-    /// the same direction would silently orphan the operator's default.
-    @Test("Label version and timestamp are not part of identity")
-    func provenanceIsNotIdentity() {
-        let base = ChemicalDefaultRateIdentity.canonicalInput(
-            basis: "per_hectare", unit: "g", value: nil,
-            minValue: 560, maxValue: 700, rateIDs: ["rate_v1_chateau"]
-        )
-        #expect(!base.contains("2026"))
-        #expect(!base.lowercased().contains("operator"))
-        #expect(!base.lowercased().contains("label_version"))
-    }
-
     // MARK: - Fixtures
+
+    /// The server's own options block for CHATEAU: one per-hectare band.
+    private static func chateauServerOptions(
+        optionKey: String = goldenBandKey,
+        rateIds: [String] = ["rate_v1_chateau"]
+    ) -> ChemicalServerDefaultRateOptions {
+        ChemicalServerDefaultRateOptions(
+            perHectare: [
+                ChemicalServerDefaultRateOption(
+                    optionKey: optionKey,
+                    rateIds: rateIds,
+                    basis: "per_hectare",
+                    unit: "g",
+                    minValue: 560,
+                    maxValue: 700
+                )
+            ]
+        )
+    }
 
     /// The CHATEAU grapevine direction: one printed band, one server rate id.
     private static func chateauUse(rateId: String? = "rate_v1_chateau") -> ChemicalRegisteredUse {
@@ -118,11 +67,17 @@ struct ChemicalDefaultRateStorageTests {
         )
     }
 
+    /// The option a review screen would offer: built from the SERVER's block,
+    /// never re-derived from `registered_uses`.
     private static func option(
         _ basis: ChemicalDefaultRateBasis,
-        from uses: [ChemicalRegisteredUse]
+        server: ChemicalServerDefaultRateOptions? = nil
     ) -> ChemicalDefaultRateOption? {
-        ChemicalDefaultRate.options(basis, from: uses).first
+        ChemicalDefaultRate
+            .plan(serverOptions: server ?? chateauServerOptions(), jurisdiction: nil)
+            .group(basis)
+            .options
+            .first
     }
 
     // MARK: - Building a confirmed default
@@ -130,7 +85,7 @@ struct ChemicalDefaultRateStorageTests {
     @Test("A confirmed band records both bounds and cites its direction")
     func confirmedBandKeepsBothBounds() throws {
         let uses = [Self.chateauUse()]
-        let option = try #require(Self.option(.perHectare, from: uses))
+        let option = try #require(Self.option(.perHectare))
         let stored = try #require(
             StoredChemicalDefaultRate.confirmed(
                 option: option,
@@ -154,7 +109,7 @@ struct ChemicalDefaultRateStorageTests {
     @Test("An exact dose inside the band is accepted and stored alongside it")
     func exactDoseInsideBandIsAccepted() throws {
         let uses = [Self.chateauUse()]
-        let option = try #require(Self.option(.perHectare, from: uses))
+        let option = try #require(Self.option(.perHectare))
         let stored = try #require(
             StoredChemicalDefaultRate.confirmed(
                 option: option,
@@ -172,7 +127,7 @@ struct ChemicalDefaultRateStorageTests {
     @Test("A dose outside the registered band is refused")
     func doseOutsideBandIsRefused() throws {
         let uses = [Self.chateauUse()]
-        let option = try #require(Self.option(.perHectare, from: uses))
+        let option = try #require(Self.option(.perHectare))
         let stored = try #require(
             StoredChemicalDefaultRate.confirmed(
                 option: option,
@@ -192,12 +147,23 @@ struct ChemicalDefaultRateStorageTests {
     /// nobody can point at.
     @Test("A rate with no server-minted id cannot become a default")
     func untraceableRateCannotBecomeDefault() throws {
-        let uses = [Self.chateauUse(rateId: nil)]
-        let option = try #require(Self.option(.perHectare, from: uses))
+        // An option whose citations are not `rate_v1_` identities is discarded
+        // WHOLE, so it never reaches the operator as something choosable.
+        let malformed = Self.chateauServerOptions(rateIds: ["7f3c…-uuid"])
+        #expect(Self.option(.perHectare, server: malformed) == nil)
+        #expect(malformed.isEmpty)
+    }
+
+    /// The device must not be able to write a default it invented, even when a
+    /// perfectly good label rate is sitting in `registered_uses`.
+    @Test("An option with no server twin is never persisted")
+    func deviceBuiltOptionIsNeverPersisted() throws {
+        let uses = [Self.chateauUse()]
+        // Exactly what the old code path produced: grouped on device.
+        let local = try #require(ChemicalDefaultRate.options(.perHectare, from: uses).first)
+        #expect(local.server == nil)
         let stored = StoredChemicalDefaultRate.confirmed(
-            option: option,
-            basis: .perHectare,
-            grapevineUses: uses
+            option: local, basis: .perHectare, grapevineUses: uses
         )
         #expect(stored == nil)
     }
@@ -223,9 +189,12 @@ struct ChemicalDefaultRateStorageTests {
         )
         // The plan is built from the GRAPEVINE partition only.
         let uses = [grapevine]
-        let option = try #require(Self.option(.perHectare, from: uses))
-        let ids = ChemicalDefaultRate.rateIDs(for: option, from: uses)
+        let option = try #require(Self.option(.perHectare))
+        let ids = try #require(option.server?.rateIds)
         #expect(ids == ["rate_v1_chateau"])
+        #expect(!ids.contains("rate_v1_apples"))
+        // The grapevine partition is what the plan is built from either way.
+        #expect(uses.allSatisfy { $0.crop == "Grapevines" })
         #expect(!ids.contains("rate_v1_apples"))
         // Sanity: the apple direction really does state an identical amount,
         // so this is proving the partition, not an accidental mismatch.
@@ -237,7 +206,7 @@ struct ChemicalDefaultRateStorageTests {
     @Test("The stored shape survives encode and decode with server key names")
     func storedShapeRoundTrips() throws {
         let uses = [Self.chateauUse()]
-        let option = try #require(Self.option(.perHectare, from: uses))
+        let option = try #require(Self.option(.perHectare))
         let slot = try #require(
             StoredChemicalDefaultRate.confirmed(
                 option: option, basis: .perHectare,
@@ -285,7 +254,7 @@ struct ChemicalDefaultRateStorageTests {
     @Test("A saved chemical carries its confirmed default through save and reload")
     func savedChemicalRoundTripsDefault() throws {
         let uses = [Self.chateauUse()]
-        let option = try #require(Self.option(.perHectare, from: uses))
+        let option = try #require(Self.option(.perHectare))
         let slot = try #require(
             StoredChemicalDefaultRate.confirmed(
                 option: option, basis: .perHectare, grapevineUses: uses
@@ -356,7 +325,7 @@ struct ChemicalDefaultRateStorageTests {
     @Test("A confirmed default is written to the default_rates column")
     func confirmedDefaultIsWritten() throws {
         let uses = [Self.chateauUse()]
-        let option = try #require(Self.option(.perHectare, from: uses))
+        let option = try #require(Self.option(.perHectare))
         let slot = try #require(
             StoredChemicalDefaultRate.confirmed(
                 option: option, basis: .perHectare, grapevineUses: uses

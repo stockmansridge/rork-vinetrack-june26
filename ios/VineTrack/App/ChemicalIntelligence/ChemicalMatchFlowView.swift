@@ -76,7 +76,8 @@ struct ChemicalMatchFlowView: View {
             // exists to prevent. `prefill:` is what to show.
             EditSavedChemicalSheet(
                 chemical: target.updating ?? existing,
-                prefill: target.draft
+                prefill: target.draft,
+                serverDefaultRateOptions: target.serverDefaultRateOptions
             ) { saved in
                 onSaved?(saved)
                 coordinator.finishReview()
@@ -96,6 +97,11 @@ struct ChemicalMatchFlowView: View {
         let draft: SavedChemical?
         /// The stored record Save must update in place, when there is one.
         let updating: SavedChemical?
+        /// The server's canonical default-rate options, present ONLY when this
+        /// target came from a resolved lookup. `nil` for manual entry and for
+        /// an existing record opened without researching: neither has a fresh
+        /// server answer, so neither may mint a new default identity.
+        let serverDefaultRateOptions: ChemicalServerDefaultRateOptions?
         var id: String { draft?.id.uuidString ?? "manual" }
     }
 
@@ -105,13 +111,21 @@ struct ChemicalMatchFlowView: View {
                 // Checked FIRST: an operator who said "I already have this"
                 // must land on their own record, not on a researched draft.
                 if let owned = coordinator.existingToReview {
-                    return EditorTarget(draft: owned, updating: owned)
+                    return EditorTarget(
+                        draft: owned, updating: owned, serverDefaultRateOptions: nil
+                    )
                 }
                 if let draft = coordinator.reviewDraft {
-                    return EditorTarget(draft: draft, updating: nil)
+                    return EditorTarget(
+                        draft: draft,
+                        updating: nil,
+                        serverDefaultRateOptions: coordinator.reviewDefaultRateOptions
+                    )
                 }
                 if coordinator.showManualEntry {
-                    return EditorTarget(draft: nil, updating: nil)
+                    return EditorTarget(
+                        draft: nil, updating: nil, serverDefaultRateOptions: nil
+                    )
                 }
                 return nil
             },

@@ -289,6 +289,7 @@ struct EditSavedChemicalSheet: View {
     init(
         chemical: SavedChemical?,
         prefill: SavedChemical? = nil,
+        serverDefaultRateOptions: ChemicalServerDefaultRateOptions? = nil,
         onSaved: ((SavedChemical) -> Void)? = nil
     ) {
         self.chemical = chemical
@@ -302,7 +303,8 @@ struct EditSavedChemicalSheet: View {
         _session = State(initialValue: ChemicalReviewSession.make(
             chemical: chemical,
             prefill: prefill,
-            fallbackCountry: ""
+            fallbackCountry: "",
+            serverDefaultRateOptions: serverDefaultRateOptions
         ))
     }
 
@@ -397,7 +399,16 @@ struct EditSavedChemicalSheet: View {
                         initialQuery: session.name,
                         existing: chemical
                     ) { reviewed in
-                        session.apply(reviewed: reviewed, fallbackCountry: resolvedCountry)
+                        // The re-search replaces the product, so it must also
+                        // replace the server options: keeping the previous
+                        // product's identities would attach one product's
+                        // register rates to another.
+                        session.apply(
+                            reviewed: reviewed,
+                            serverDefaultRateOptions: lookupCoordinator
+                                .reviewDefaultRateOptions,
+                            fallbackCountry: resolvedCountry
+                        )
                         lookupCoordinator.finishReview()
                         activeSheet = nil
                     }
