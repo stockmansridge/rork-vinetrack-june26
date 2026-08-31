@@ -124,33 +124,66 @@ fun List<ChemicalDataSource>.strongest(): ChemicalDataSource? = maxByOrNull { it
 @Serializable
 enum class ChemicalVerificationStatus(val raw: String, val label: String) {
     @SerialName("verified")
-    VERIFIED("verified", "Verified"),
+    VERIFIED("verified", "Official label checked"),
 
     @SerialName("partially_verified")
-    PARTIALLY_VERIFIED("partially_verified", "Partially verified"),
+    PARTIALLY_VERIFIED("partially_verified", "Label checked — details unavailable"),
 
     @SerialName("unverified")
-    UNVERIFIED("unverified", "Unverified"),
+    UNVERIFIED("unverified", "Not checked"),
 
     /**
      * A legacy record that has never been put through the match step. It has
      * data, but nobody has yet confirmed WHICH registered product it is.
      */
     @SerialName("needs_match")
-    NEEDS_MATCH("needs_match", "Needs match"),
+    NEEDS_MATCH("needs_match", "Not checked"),
 
     /** Sources disagree. Never silently resolved — a human decides. */
     @SerialName("conflict")
-    CONFLICT("conflict", "Verification conflict"),
+    CONFLICT("conflict", "Review required"),
     ;
 
+    /**
+     * What the operator reads, in terms of what VineTrack actually DID.
+     *
+     * # Why these are not the internal names
+     *
+     * The stored values are unchanged — `raw` is still `verified`,
+     * `partially_verified` and so on, and the server, the database and every
+     * comparison keep working in those terms. Only the wording moved, because
+     * the internal vocabulary was being read as a verdict on the PRODUCT
+     * rather than a description of the CHECK.
+     *
+     * "Partially verified" is the clearest example and is now banned outright:
+     * an operator reads it as "this chemical is partly approved", which is a
+     * statement about chemical safety that VineTrack has no standing to make.
+     * What actually happened is narrower and duller — the official label was
+     * read, and some of its details could not be extracted. So that is what it
+     * now says.
+     *
+     * `needs_match` and `unverified` deliberately share "Not checked". They are
+     * different internal situations (never matched to a registration vs.
+     * matched but unconfirmed) but they are the SAME fact for the operator:
+     * nobody has checked this against an official label. Two different phrases
+     * would imply a distinction they cannot act on differently.
+     *
+     * Nothing here ever says "Ready", "Approved" or "Safe". VineTrack checks
+     * documents; it does not certify products.
+     */
     val detail: String
         get() = when (this) {
-            VERIFIED -> "Product identity and activity groups confirmed against authoritative sources."
-            PARTIALLY_VERIFIED -> "Product identified, but some resistance information is still unconfirmed."
-            UNVERIFIED -> "Entered manually or carried over from an older record. Not confirmed against a label."
-            NEEDS_MATCH -> "Not yet matched to a registered product for this country."
-            CONFLICT -> "Sources disagree. Resolve before relying on this product's resistance information."
+            VERIFIED ->
+                "VineTrack checked the official product registration and label."
+            PARTIALLY_VERIFIED -> PARTIALLY_VERIFIED_SUPPORTING_TEXT
+            UNVERIFIED ->
+                "VineTrack has not checked this product against an official label. " +
+                    "It was entered manually or carried over from an older record."
+            NEEDS_MATCH ->
+                "VineTrack has not checked this product against an official label yet."
+            CONFLICT ->
+                "Official sources disagree about this product. Review it before " +
+                    "relying on its resistance information."
         }
 
     /**
@@ -170,6 +203,17 @@ enum class ChemicalVerificationStatus(val raw: String, val label: String) {
         }
 
     companion object {
+        /**
+         * The sentence shown beneath [PARTIALLY_VERIFIED].
+         *
+         * Pinned as a constant because it must read identically here, on iOS
+         * and in every screen that explains the state — a status whose meaning
+         * is worded three ways is three statuses to the person reading it.
+         */
+        const val PARTIALLY_VERIFIED_SUPPORTING_TEXT: String =
+            "VineTrack checked official product information, but some label " +
+                "details were unavailable."
+
         /** An unknown status degrades to unverified — the only safe direction. */
         fun from(raw: String?): ChemicalVerificationStatus {
             val v = raw?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return UNVERIFIED

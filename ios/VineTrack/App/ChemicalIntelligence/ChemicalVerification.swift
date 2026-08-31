@@ -22,28 +22,58 @@ nonisolated enum ChemicalVerificationStatus: String, Codable, Sendable, CaseIter
     /// resolved — a human decides.
     case conflict
 
+    /// The sentence shown beneath `.partiallyVerified`.
+    ///
+    /// Pinned as a constant because it must read identically here, on Android
+    /// and in every screen that explains the state — a status whose meaning is
+    /// worded three ways is three statuses to the person reading it.
+    nonisolated static let partiallyVerifiedSupportingText =
+        "VineTrack checked official product information, but some label details were unavailable."
+
+    /// What the operator reads, in terms of what VineTrack actually DID.
+    ///
+    /// # Why these are not the internal names
+    ///
+    /// The stored values are unchanged — the raw values are still `verified`,
+    /// `partially_verified` and so on, and the server, the database and every
+    /// comparison keep working in those terms. Only the wording moved, because
+    /// the internal vocabulary was being read as a verdict on the PRODUCT
+    /// rather than a description of the CHECK.
+    ///
+    /// "Partially verified" is the clearest example and is now banned outright:
+    /// an operator reads it as "this chemical is partly approved", which is a
+    /// statement about chemical safety that VineTrack has no standing to make.
+    /// What actually happened is narrower and duller — the official label was
+    /// read, and some of its details could not be extracted.
+    ///
+    /// `.needsMatch` and `.unverified` deliberately share "Not checked". They
+    /// are different internal situations but the SAME fact for the operator:
+    /// nobody has checked this against an official label.
+    ///
+    /// Nothing here ever says "Ready", "Approved" or "Safe". VineTrack checks
+    /// documents; it does not certify products.
     nonisolated var label: String {
         switch self {
-        case .verified: return "Verified"
-        case .partiallyVerified: return "Partially verified"
-        case .unverified: return "Unverified"
-        case .needsMatch: return "Needs match"
-        case .conflict: return "Verification conflict"
+        case .verified: return "Official label checked"
+        case .partiallyVerified: return "Label checked — details unavailable"
+        case .unverified: return "Not checked"
+        case .needsMatch: return "Not checked"
+        case .conflict: return "Review required"
         }
     }
 
     nonisolated var detail: String {
         switch self {
         case .verified:
-            return "Product identity and activity groups confirmed against authoritative sources."
+            return "VineTrack checked the official product registration and label."
         case .partiallyVerified:
-            return "Product identified, but some resistance information is still unconfirmed."
+            return Self.partiallyVerifiedSupportingText
         case .unverified:
-            return "Entered manually or carried over from an older record. Not confirmed against a label."
+            return "VineTrack has not checked this product against an official label. It was entered manually or carried over from an older record."
         case .needsMatch:
-            return "Not yet matched to a registered product for this country."
+            return "VineTrack has not checked this product against an official label yet."
         case .conflict:
-            return "Sources disagree. Resolve before relying on this product's resistance information."
+            return "Official sources disagree about this product. Review it before relying on its resistance information."
         }
     }
 
