@@ -107,6 +107,59 @@ fun chemicalVerificationFilterLabel(status: ChemicalVerificationStatus): String 
     ChemicalVerificationStatus.CONFLICT -> "Review required"
 }
 
+/**
+ * The Chemical Store's customer-facing filters.
+ *
+ * One pill per thing an operator can act on — NOT one per stored status.
+ *
+ * `needs_match` and `unverified` are different internal situations (never
+ * matched to a registration, versus matched but unconfirmed) but they are the
+ * same fact for the person reading the screen: nobody has checked this against
+ * an official label. Rendered per-status they produced two adjacent pills both
+ * reading "Not checked" with different counts — which looks like a bug, and
+ * asks the operator to choose between two options that mean one thing.
+ *
+ * The stored enum is untouched. Each filter names the statuses it covers, so
+ * the persisted values still do the selecting and nothing is rewritten.
+ */
+enum class ChemicalStoreFilter(
+    val label: String,
+    val statuses: List<ChemicalVerificationStatus>,
+) {
+    LABEL_CHECKED("Label checked", listOf(ChemicalVerificationStatus.VERIFIED)),
+    DETAILS_UNAVAILABLE(
+        "Details unavailable",
+        listOf(ChemicalVerificationStatus.PARTIALLY_VERIFIED),
+    ),
+    NOT_CHECKED(
+        "Not checked",
+        listOf(
+            ChemicalVerificationStatus.NEEDS_MATCH,
+            ChemicalVerificationStatus.UNVERIFIED,
+        ),
+    ),
+    REVIEW_REQUIRED("Review required", listOf(ChemicalVerificationStatus.CONFLICT)),
+    ;
+
+    /** Whether a record falls under this filter. */
+    fun matches(status: ChemicalVerificationStatus): Boolean = statuses.contains(status)
+
+    /** The status whose colour represents this filter. */
+    val tintStatus: ChemicalVerificationStatus get() = statuses.first()
+
+    companion object {
+        /**
+         * The statuses counted by the "need attention" banner.
+         *
+         * Deliberately excludes `partially_verified`: an optional label detail
+         * being unavailable is not something the operator can act on, and
+         * counting it would send them to a record with nothing to fix.
+         */
+        val needsAttention: List<ChemicalVerificationStatus> =
+            NOT_CHECKED.statuses + REVIEW_REQUIRED.statuses
+    }
+}
+
 /** Compact trust chip used in lists and pickers. */
 @Composable
 fun ChemicalVerificationBadge(

@@ -41,6 +41,21 @@ object ChemicalLookupAdvisory {
         "Repeat lookups are usually faster once the product has been loaded."
 
     /**
+     * The heading shown while the approved label is being read.
+     *
+     * Names the WORK rather than the system. The review step used to show a
+     * spinner line reading "Looking up product details…" AND this advisory
+     * panel underneath it — two panels for one job, which reads as two separate
+     * things happening and makes an honest wait look like a stall.
+     */
+    const val ENRICHMENT_TITLE: String = "Reading the official product label"
+
+    /** The single supporting sentence beneath [ENRICHMENT_TITLE]. */
+    const val ENRICHMENT_BODY: String =
+        "We're checking grapevine uses, rates and safety information. This can " +
+            "take a few minutes."
+
+    /**
      * Shown while a RE-VERIFICATION is running.
      *
      * A re-check does the same expensive work as a first-add — register query,

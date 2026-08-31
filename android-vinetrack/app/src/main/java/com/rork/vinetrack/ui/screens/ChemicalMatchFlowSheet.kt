@@ -549,21 +549,12 @@ internal fun ChemicalMatchFlowSheet(
                         // warnings and empty authoritative fields must not
                         // render until an answer actually arrives — and a slow
                         // lookup is never treated as a failed one.
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                            )
-                            Text(
-                                "Looking up product details…",
-                                fontSize = 13.sp,
-                                color = vine.textSecondary,
-                            )
-                        }
-                        ChemicalLookupAdvisoryNotice(isSearching = true)
+                        // ONE message. This used to show a spinner line
+                        // ("Looking up product details…") AND the green
+                        // advisory panel underneath, which read as two
+                        // separate things happening and made the wait feel
+                        // like a stall rather than one job in progress.
+                        ChemicalEnrichmentNotice()
                     }
 
                     structuredError?.let { message ->
@@ -1221,6 +1212,56 @@ private fun SearchResultRow(
 }
 
 /**
+ * The ONE thing shown while the label is being read.
+ *
+ * The review step used to render a spinner line ("Looking up product details…")
+ * AND the green advisory panel underneath it. Two panels for one job reads as
+ * two separate things happening, and when neither finishes quickly it looks
+ * like the screen has stalled rather than that one piece of work is running.
+ *
+ * A heading that names the work, a sentence that says what is being read and
+ * how long it can take, and nothing else. No percentage and no estimated
+ * finish: both would be invented, and a progress bar that sticks at 90% is a
+ * worse lie than an honest wait. Cancel stays available above this — it is the
+ * sheet's own dismiss, and is never taken away.
+ */
+@Composable
+private fun ChemicalEnrichmentNotice() {
+    val vine = LocalVineColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(VineColors.BrandTrack.copy(alpha = 0.12f))
+            .padding(horizontal = 12.dp, vertical = 12.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+                color = VineColors.BrandTrack,
+            )
+            Text(
+                ChemicalLookupAdvisory.ENRICHMENT_TITLE,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = VineColors.BrandTrack,
+            )
+        }
+        Text(
+            ChemicalLookupAdvisory.ENRICHMENT_BODY,
+            fontSize = 12.sp,
+            color = vine.textSecondary,
+        )
+    }
+}
+
+/**
  * A2: the bold VineTrack-green advisory that a chemical search can take time.
  *
  * Deliberately NOT a warning — nothing has gone wrong, so no amber or red.
@@ -1370,6 +1411,108 @@ private fun SingleRateConfirmation(
     }
 }
 
+/**
+ * The confirmation for a label that registers exactly ONE band.
+ *
+ * States what the label permits, then asks the one question the operator can
+ * actually answer:
+ *
+ * ```text
+ * Registered label range: 560-700 g/ha
+ * Your vineyard rate:     [        ] g/ha
+ * ```
+ *
+ * The field starts EMPTY. Not 560, not 700, not the midpoint: a range is what
+ * the register permits, and picking a point inside it is a dose decision that
+ * belongs to the person who will pour it. Pre-filling any of the three would
+ * put a number nobody chose in front of an operator who is about to accept it.
+ */
+@Composable
+private fun SingleRangeConfirmation(
+    option: ChemicalDefaultRateOption,
+    basis: ChemicalDefaultRateBasis,
+    doseText: String,
+    doseError: String?,
+    confirmedValue: Double?,
+    onDoseTextChange: (String) -> Unit,
+    onSetDose: () -> Unit,
+    onResetDose: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    val bounds = option.authorisedBounds
+    val suffix = ChemicalDefaultRateDisplay.basisSuffix(basis)
+    val unit = option.rate.unit
+
+    if (bounds != null) {
+        Text(
+            "Registered label range: ${formatChemicalNumber(bounds.first)}–" +
+                "${formatChemicalNumber(bounds.second)} $unit$suffix",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = vine.textPrimary,
+        )
+    }
+    option.conditions.forEach { condition ->
+        Text(condition.summary, fontSize = 10.sp, color = vine.textSecondary)
+    }
+
+    if (confirmedValue != null) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                "Your vineyard rate: ${formatChemicalNumber(confirmedValue)} $unit$suffix",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = vine.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
+            ChemicalPill("Your default", VineColors.Success)
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                // The register's own band is never narrowed by a dose.
+                "The registered rate stays ${option.displayRate}.",
+                fontSize = 11.sp,
+                color = vine.textSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onResetDose) { Text("Change") }
+        }
+        return
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        OutlinedTextField(
+            value = doseText,
+            onValueChange = onDoseTextChange,
+            label = { Text("Your vineyard rate") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            modifier = Modifier.weight(1f),
+        )
+        Text("$unit$suffix", fontSize = 12.sp, color = vine.textSecondary)
+        TextButton(onClick = onSetDose) { Text("Set") }
+    }
+    doseError?.let { WarningLine(it) }
+    if (doseError == null && bounds != null) {
+        Text(
+            "Enter the rate this vineyard normally uses, between " +
+                "${formatChemicalNumber(bounds.first)} and " +
+                "${formatChemicalNumber(bounds.second)} $unit$suffix.",
+            fontSize = 11.sp,
+            color = vine.textSecondary,
+        )
+    }
+}
+
 @Composable
 private fun DefaultRateGroupCard(
     group: ChemicalDefaultRateGroup,
@@ -1404,6 +1547,32 @@ private fun DefaultRateGroupCard(
                     option = single,
                     isConfirmed = confirmed?.id == single.id,
                     onConfirm = { onSelect(single) },
+                )
+                return@Column
+            }
+            // A label registering exactly ONE band — CHATEAU's 560-700 g/ha is
+            // the case in hand — needs no radio at all. There is nothing to
+            // choose BETWEEN; the only open question is the dose, so the range
+            // is stated and the field asked for directly. A lone radio button
+            // in front of the only option is a control that cannot change the
+            // answer, and it hid the actual required input one tap deeper.
+            if (single != null && single.isLabelRange) {
+                SingleRangeConfirmation(
+                    option = single,
+                    basis = group.basis,
+                    doseText = doseText,
+                    doseError = doseError,
+                    confirmedValue = selection.values[group.basis]
+                        ?.takeIf { confirmed?.id == single.id },
+                    onDoseTextChange = {
+                        // Choosing the option and typing the dose are one act
+                        // here, so the row is selected as soon as the operator
+                        // engages with it.
+                        if (confirmed?.id != single.id) onSelect(single)
+                        onDoseTextChange(it)
+                    },
+                    onSetDose = onSetDose,
+                    onResetDose = onResetDose,
                 )
                 return@Column
             }

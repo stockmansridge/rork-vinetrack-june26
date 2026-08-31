@@ -79,7 +79,7 @@ import com.rork.vinetrack.ui.components.ChemicalJurisdictionChip
 import com.rork.vinetrack.ui.components.ChemicalJurisdictionMismatchBanner
 import com.rork.vinetrack.ui.components.ChemicalRegisteredUsesView
 import com.rork.vinetrack.ui.components.ChemicalVerificationBadge
-import com.rork.vinetrack.ui.components.chemicalVerificationFilterLabel
+import com.rork.vinetrack.ui.components.ChemicalStoreFilter
 import com.rork.vinetrack.ui.components.chemicalVerificationTint
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
@@ -139,8 +139,13 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
     var editing by remember { mutableStateOf<SavedChemical?>(null) }
     var pendingDelete by remember { mutableStateOf<SavedChemical?>(null) }
     var search by remember { mutableStateOf("") }
-    /** Null = "All". Filters on the RESOLVED status, never on display text. */
-    var verificationFilter by remember { mutableStateOf<ChemicalVerificationStatus?>(null) }
+    /**
+     * Null = "All". Filters on the RESOLVED status, never on display text.
+     *
+     * A customer-facing filter rather than a raw status: "Not checked" covers
+     * both `needs_match` and `unverified`, which are one fact to an operator.
+     */
+    var verificationFilter by remember { mutableStateOf<ChemicalStoreFilter?>(null) }
     /** Non-null when running the Search → Match → Verify → Confirm wizard. */
     var matchingNew by remember { mutableStateOf(false) }
     var matching by remember { mutableStateOf<SavedChemical?>(null) }
@@ -171,9 +176,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             state.savedChemicals.groupingBy { it.verificationStatus }.eachCount()
         }
     val needsAttentionCount: Int = remember(statusCounts) {
-        (statusCounts[ChemicalVerificationStatus.NEEDS_MATCH] ?: 0) +
-            (statusCounts[ChemicalVerificationStatus.CONFLICT] ?: 0) +
-            (statusCounts[ChemicalVerificationStatus.UNVERIFIED] ?: 0)
+        ChemicalStoreFilter.needsAttention.sumOf { statusCounts[it] ?: 0 }
     }
 
     val filteredChemicals = remember(state.savedChemicals, search, verificationFilter) {
@@ -181,8 +184,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             val matchesSearch = search.isBlank() ||
                 chem.displayName.contains(search.trim(), true) ||
                 chem.manufacturer.contains(search.trim(), true)
-            val matchesStatus = verificationFilter == null ||
-                chem.verificationStatus == verificationFilter
+            val matchesStatus = verificationFilter?.matches(chem.verificationStatus) ?: true
             matchesSearch && matchesStatus
         }
     }
@@ -319,26 +321,21 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                             selected = verificationFilter == null,
                             tint = ChemTint,
                         ) { verificationFilter = null }
-                        // Every state gets its own pill: lumping Conflict in with
-                        // Unverified would hide the one case that needs a human.
-                        listOf(
-                            ChemicalVerificationStatus.VERIFIED,
-                            ChemicalVerificationStatus.PARTIALLY_VERIFIED,
-                            ChemicalVerificationStatus.NEEDS_MATCH,
-                            ChemicalVerificationStatus.CONFLICT,
-                            ChemicalVerificationStatus.UNVERIFIED,
-                        ).forEach { status ->
+                        // One pill per thing the operator can act on. Conflict
+                        // still stands alone — lumping it in with unchecked
+                        // records would hide the one case that needs a human —
+                        // but the two "nobody has checked this" statuses share
+                        // a single pill instead of rendering twice with the
+                        // same label and different counts.
+                        ChemicalStoreFilter.entries.forEach { filter ->
                             VerificationFilterPill(
-                                // The filter reads in the operator's language;
-                                // the underlying enum value is unchanged, so the
-                                // filter still selects on the stored status.
-                                label = chemicalVerificationFilterLabel(status),
-                                count = statusCounts[status] ?: 0,
-                                selected = verificationFilter == status,
-                                tint = chemicalVerificationTint(status),
+                                label = filter.label,
+                                count = filter.statuses.sumOf { statusCounts[it] ?: 0 },
+                                selected = verificationFilter == filter,
+                                tint = chemicalVerificationTint(filter.tintStatus),
                             ) {
                                 verificationFilter =
-                                    if (verificationFilter == status) null else status
+                                    if (verificationFilter == filter) null else filter
                             }
                         }
                     }
