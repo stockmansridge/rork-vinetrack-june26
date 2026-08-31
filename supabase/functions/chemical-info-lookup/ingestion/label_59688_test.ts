@@ -149,6 +149,7 @@ Deno.test("59688 §15.9: the exact corrupt production string is recognised as a 
     rate_ha_text: "",
     whp_text: "",
     comments_text: "",
+    rate_unit_hint: null,
   };
   const binding = bindDfuRows([row], [claim("Grapevines", "Phomopsis Cane and Leaf spot")]);
 

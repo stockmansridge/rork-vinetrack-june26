@@ -38,7 +38,7 @@
 //
 // Every value below is verbatim measured geometry. Do not tidy it.
 
-import type { PdfTextItem } from "../contract.ts";
+import type { PdfTextItem } from "./contract.ts";
 
 /** Measured text-layer items for APVMA 80647, pages 1, 2, 4, 8, 9. */
 export const CHATEAU_80647_ITEMS: PdfTextItem[] = [

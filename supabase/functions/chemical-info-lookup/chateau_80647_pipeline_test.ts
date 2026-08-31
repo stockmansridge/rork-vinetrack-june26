@@ -39,11 +39,15 @@ import { projectGrapevineUses } from "./grapevine_label.ts";
 import type { LabelDocumentDiscovery, LabelEvidence, LabelUseClaim } from "./ingestion/contract.ts";
 
 /** The locked registration identity this product resolves to. */
-const REGISTRATION = {
+const REGISTRATION: {
+  country_code: string;
+  scheme: string;
+  registration_number: string;
+} = {
   country_code: "AU",
   scheme: "apvma",
   registration_number: "80647",
-} as const;
+};
 
 const DOC: LabelDocumentDiscovery = {
   url: "https://elabels.apvma.gov.au/80647ELBL.pdf",

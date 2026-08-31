@@ -1,0 +1,30 @@
+{
+  "//": [
+    "Repository-local Deno configuration for the Supabase Edge Functions.",
+    "",
+    "It exists so a FRESH CHECKOUT resolves backend dependencies identically on",
+    "any machine. Before this file, `npm:unpdf@1.8.1` (the serverless pdf.js",
+    "build used by the label text extractor) resolved against whatever npm",
+    "metadata the developer's machine happened to have, including a",
+    "package-lock.json sitting in a HOME directory above the repository.",
+    "That is not reproducible and is not reviewable.",
+    "",
+    "Two settings do the work:",
+    "  * `lock` pins the resolved npm tree, with integrity hashes, in the",
+    "    committed deno.lock next to this file.",
+    "  * `nodeModulesDir: none` stops Deno inferring an npm project from any",
+    "    package.json ABOVE the repository root, which is exactly how the",
+    "    home-level lockfile leaked into backend runs.",
+    "",
+    "The extractor keeps importing the fully-qualified `npm:unpdf@1.8.1`",
+    "specifier, so the version pin is stated at the import site as well as here."
+  ],
+  "lock": "deno.lock",
+  "nodeModulesDir": "none",
+  "imports": {
+    "unpdf": "npm:unpdf@1.8.1"
+  },
+  "tasks": {
+    "test:backend": "deno test -A supabase/functions/chemical-info-lookup"
+  }
+}

@@ -319,7 +319,7 @@ Deno.test("80647 §5: the conditional re-entry wording never becomes a numeric r
   // The label's re-entry rule is conditional on a state ("until the spray has
   // dried") and on protective clothing. It states no number of hours, so no
   // number may appear.
-  assertEquals(merged.claims[0].reentry_hours ?? null, null);
+  assertEquals(merged.claims[0].re_entry_period_hours ?? null, null);
 
   const page4 = CHATEAU_80647_ITEMS.filter((i) => i.page === 4).map((i) => i.str).join("");
   assert(
