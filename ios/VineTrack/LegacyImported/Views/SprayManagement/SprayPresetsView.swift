@@ -349,13 +349,25 @@ struct EditSavedChemicalSheet: View {
                 productSection
                 // 2. Active Ingredients & Resistance
                 activeIngredientsSection
-                // 3. Default rate — the DECISION, placed before the label
-                // evidence it is taken from. A first add cannot be saved until
-                // it is answered (`session.requiresDefaultRateConfirmation`),
-                // so burying it under a long registered-use list made the one
-                // mandatory question the last thing an operator found.
+                // 3. The registered rate.
+                //
+                // While ADDING a product to the Chemical Store this is a
+                // read-only statement of what the label registers. It used to
+                // be a mandatory confirmation control, which asked an operator
+                // to answer `560–700 g/ha` with no block, growth stage or
+                // carrier volume in front of them. That question belongs to
+                // planning a spray, so it is asked there instead.
+                //
+                // Editing a stored chemical keeps the interactive control: by
+                // then the operator may deliberately record an optional
+                // vineyard default, and removing the only way to do so would
+                // strand every record that already has one.
                 if session.isRegisteredForGrapevine {
-                    defaultRatesSection
+                    if isChemicalStoreSetup {
+                        registeredRateSection
+                    } else {
+                        defaultRatesSection
+                    }
                 }
                 // 4. Grapevine Uses & Rates — the label evidence the decision
                 // above was made from, unedited.
@@ -856,7 +868,7 @@ struct EditSavedChemicalSheet: View {
         } header: {
             Text("Registered grapevine uses (\(targets.count))")
         } footer: {
-            Text("What the register lists this product against on grapevines. Confirm the rate this vineyard doses by in Default Rates above.")
+            Text("What the register lists this product against on grapevines. The rate the label registers is shown above and is saved with this chemical.")
         }
     }
 
@@ -945,6 +957,73 @@ struct EditSavedChemicalSheet: View {
         }
     }
 
+    /// Whether this screen is ADDING a product to the Chemical Store, either
+    /// through a lookup review or as a new manual record.
+    ///
+    /// Setup records what the label says. It does not ask what this vineyard
+    /// pours, because that answer depends on a spray that does not exist yet.
+    private var isChemicalStoreSetup: Bool {
+        prefill != nil || chemical == nil
+    }
+
+    /// What the label registers on grapevines, stated and not asked.
+    ///
+    /// # Why there is no rate control here
+    ///
+    /// A registered rate OR RANGE is enough to save. `560–700 g/ha` is a
+    /// complete, faithful record of the registration; it is only incomplete as
+    /// an answer to "what are you applying?", and that question has a proper
+    /// home in the spray calculator, including when planning a Program Step.
+    ///
+    /// Nothing here selects an endpoint or a midpoint on the operator's
+    /// behalf, and nothing here writes `default_rates`. The band is carried
+    /// through to planning intact so the operator chooses inside it once, with
+    /// the spray in front of them.
+    private var registeredRateSection: some View {
+        Section {
+            if registeredRateLines.isEmpty {
+                Text("No registered grapevine rate was read from this label.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(registeredRateLines, id: \.self) { line in
+                    Text(line)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            // The fail-closed path is untouched: when the label yielded no
+            // usable grapevine rate at all, USABLE_RATE_MISSING still blocks
+            // the save and this is where the operator is told so.
+            ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "rates"))
+        } header: {
+            Text("Registered rate")
+        } footer: {
+            Text("The registered label rate is saved with this chemical. Choose the exact rate being applied when planning each spray.")
+        }
+    }
+
+    /// One line per distinct registered grapevine rate, in label order.
+    ///
+    /// A band is named as a band — `Registered label range: 560–700 g/ha` —
+    /// so it can never be mistaken for a dose somebody chose.
+    private var registeredRateLines: [String] {
+        var seen = Set<String>()
+        var lines: [String] = []
+        for group in session.defaultRatePlan.groups {
+            for option in group.options {
+                let display = option.displayRate
+                guard seen.insert(display).inserted else { continue }
+                lines.append(option.isLabelRange
+                    ? "Registered label range: \(display)"
+                    : "Registered label rate: \(display)")
+            }
+        }
+        return lines
+    }
+
     /// The operator's operational default rate, per basis (task §5–§7).
     ///
     /// # Why this is separate from the registered rates above
@@ -987,13 +1066,11 @@ struct EditSavedChemicalSheet: View {
         var base = "The rate VineTrack will start a spray calculation from. "
             + "Chosen from the registered grapevine rates below — the two bases "
             + "are decided separately and never converted into one another."
-        // Says WHY Save is disabled. This is wording only: the rule itself is
-        // `session.isValid`, so this line can never let a save through or hold
-        // one back on its own.
-        if session.isAwaitingDefaultRateConfirmation {
-            base += " Confirm the rate this vineyard uses before saving — for a "
-                + "label range, enter your own rate from inside it."
-        }
+        // Optional, and said so. Saving is not held back by it: the rule is
+        // `session.isValid`, which asks only for a name and no blocking
+        // violation, and a registered range satisfies that on its own.
+        base += " This is optional — the exact rate being applied is chosen "
+            + "when planning each spray."
         guard session.jurisdiction == nil,
               session.defaultRatePlan.requiresChoice
         else { return base }

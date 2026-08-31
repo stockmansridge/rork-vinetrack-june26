@@ -14,12 +14,19 @@ package com.rork.vinetrack.data.chemical
  * An instruction with no control is worse than silence: silence at least
  * doesn't imply the operator is failing to do something.
  *
- * # Two states, and they are decided by the BACKEND
+ * # Two states, and they are decided by the LABEL
  *
  * ```text
- * canonical options present -> confirm one (this is the normal path)
- * none present              -> fail closed, and offer four real ways out
+ * usable registered grapevine rate or range -> state it, and save
+ * none at all                               -> fail closed, four real ways out
  * ```
+ *
+ * The first state used to be "confirm one", which asked the operator to answer
+ * a band with a single figure while adding a product to a store. There is no
+ * block, growth stage or carrier volume at that moment, so the question had no
+ * honest answer, only whichever endpoint the screen made easiest to tap. A
+ * range is a COMPLETE record of what the label registers, so it is enough to
+ * save, and the exact applied dose is chosen later when planning the spray.
  *
  * The second state is deliberately NOT "let them type a number". A rate typed
  * here would have no `option_key` and no `rate_ids`, so it could never be shown
@@ -66,10 +73,14 @@ object ChemicalRateGate {
     /** The decision for one reviewed product. */
     sealed interface Decision {
         /**
-         * The label yielded canonical rate options. Show the confirmation
-         * control; the operator picks one (and types a dose inside a band).
+         * The label registers a usable grapevine rate or range. It is STATED,
+         * read-only, and the product saves on it.
+         *
+         * No dose is asked for and none is invented: no endpoint, no midpoint,
+         * and no `default_rates` row unless the operator deliberately records
+         * an optional default of their own.
          */
-        data object Confirmable : Decision
+        data object RegisteredRateStated : Decision
 
         /**
          * No canonical option exists, so no label-checked save is possible.
@@ -97,19 +108,46 @@ object ChemicalRateGate {
         selection: ChemicalDefaultRateSelection?,
         grapevineUses: List<ChemicalRegisteredUse>,
     ): Decision {
-        if (grapevineUses.statedUses().isEmpty()) return Decision.NotApplicable
-        if (selection?.offersAnyChoice == true) return Decision.Confirmable
+        val stated = grapevineUses.statedUses()
+        if (stated.isEmpty()) return Decision.NotApplicable
+        // The LABEL decides this, not the presence of minted default-rate
+        // options. A registration can carry a perfectly usable band while the
+        // server minted no `default_rate_options` for it, and refusing that
+        // product would fail closed on a record that is actually complete.
+        if (stated.flatMap { it.rates }.any { ChemicalSaveContract.isUsable(it) }) {
+            return Decision.RegisteredRateStated
+        }
+        // Canonical options exist only where the server read a usable rate, so
+        // they are equally good evidence that one is on the label.
+        if (selection?.offersAnyChoice == true) return Decision.RegisteredRateStated
         return Decision.NoCanonicalRate
+    }
+
+    /**
+     * Whether this product may be saved as a label-checked chemical.
+     *
+     * Only the genuinely rate-less label is refused. A range is not a missing
+     * rate: it is the rate, as the register printed it.
+     */
+    fun permitsSave(decision: Decision): Boolean = when (decision) {
+        Decision.RegisteredRateStated -> true
+        Decision.NotApplicable -> true
+        Decision.NoCanonicalRate -> false
     }
 
     /**
      * Whether the screen may legitimately tell the operator to enter a rate.
      *
-     * True only when a control to do so is actually on screen. This is the rule
-     * the old copy broke, expressed so a test can hold the screen to it.
+     * False on every branch, and the `when` is exhaustive so it stays that way
+     * deliberately rather than by neglect. Setup states what the label
+     * registers and offers no dose field, so no copy here may instruct one:
+     * this is the rule the old dead-end message broke.
      */
-    fun mayInstructRateEntry(decision: Decision): Boolean =
-        decision == Decision.Confirmable
+    fun mayInstructRateEntry(decision: Decision): Boolean = when (decision) {
+        Decision.RegisteredRateStated -> false
+        Decision.NoCanonicalRate -> false
+        Decision.NotApplicable -> false
+    }
 
     /**
      * Whether a string is an identity only the server may issue.

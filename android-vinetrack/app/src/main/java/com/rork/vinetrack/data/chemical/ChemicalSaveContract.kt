@@ -89,25 +89,30 @@ enum class ChemicalSaveViolationCode(val raw: String) {
     DEFAULT_RATE_UNCONFIRMED("default_rate_unconfirmed"),
 
     /**
-     * The label registers a usable grapevine rate and NO basis carries an
-     * operator-confirmed operational default.
+     * RETIRED — never emitted.
      *
-     * Distinct from [DEFAULT_RATE_UNCONFIRMED], which is about a single basis
-     * with several candidates. This one is the release gate: a product may
-     * enter the Chemical Store only once a human has said what this vineyard
-     * actually pours, even where the label prints exactly one rate and the
-     * screen has been showing it all along. Only ONE basis is required —
-     * plenty of vineyards dose per hectare and never per 100 L.
+     * This once blocked the save until a human named the rate this vineyard
+     * doses by. It asked the question in the wrong place: adding a product to
+     * the Chemical Store records what the LABEL says, and the applied dose is
+     * a spray decision taken later against a real block and carrier volume.
+     *
+     * The case retains its raw string so a stored or in-flight code from an
+     * older client still decodes rather than failing to parse. Nothing
+     * produces it, and nothing may start to.
      */
     DEFAULT_RATE_REQUIRED("default_rate_required"),
 
     /**
-     * A label BAND was chosen as the default and no exact dose was named.
+     * RETIRED — never emitted.
      *
-     * `560–700 g/ha` states what is permitted; it does not state what this
-     * vineyard pours. There is deliberately no minimum, maximum or midpoint
-     * fallback, so the decision stays unfinished until the operator types the
-     * figure they actually use.
+     * This demanded a single figure once a label BAND had been chosen. A band
+     * is a complete record of the registration: `560–700 g/ha` is what the
+     * label says, and narrowing it to one number at setup produced whichever
+     * endpoint the screen made easiest to tap.
+     *
+     * Retained, unemitted, so an older client's code still decodes. The rule
+     * it protected survives where it belongs: a dose typed into the spray
+     * calculator must still fall inside the registered band.
      */
     DEFAULT_RATE_EXACT_DOSE_REQUIRED("default_rate_exact_dose_required"),
 

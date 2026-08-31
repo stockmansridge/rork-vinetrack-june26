@@ -156,17 +156,34 @@ class ChemicalRateGateAddendumTest {
     }
 
     @Test
-    fun `2b - a label WITH canonical options shows the confirmation control`() {
-        // The gate must not be vacuously fail-closed: the normal path still
-        // reaches the confirmable branch.
+    fun `2b - a registered band is stated read-only and saves`() {
+        // The gate must not be vacuously fail-closed: a real label reaches the
+        // stated branch, and that branch permits the save.
         val uses = listOf(grapeUse(bandRate(560.0, 700.0)))
-        assertEquals(
-            ChemicalRateGate.Decision.Confirmable,
-            ChemicalRateGate.decide(selectionFor(uses), uses),
-        )
+        val decision = ChemicalRateGate.decide(selectionFor(uses), uses)
+        assertEquals(ChemicalRateGate.Decision.RegisteredRateStated, decision)
+        assertTrue(ChemicalRateGate.permitsSave(decision))
+        // And it asks for no dose, so it may not instruct one either.
+        assertFalse(ChemicalRateGate.mayInstructRateEntry(decision))
+
+        // The screen states the band and says where the dose is chosen.
+        val screen = source(matchFlow)
+        assertTrue(screen.contains("Registered label range: "))
         assertTrue(
-            ChemicalRateGate.mayInstructRateEntry(ChemicalRateGate.Decision.Confirmable),
+            screen.contains(
+                "The registered label rate is saved with this chemical. Choose the exact ",
+            ),
         )
+        // The old setup-time dose question is gone.
+        assertFalse(screen.contains("Your vineyard rate"))
+    }
+
+    @Test
+    fun `2c - a rateless grapevine label is still refused`() {
+        val uses = listOf(ratelessGrapeUse())
+        val decision = ChemicalRateGate.decide(selectionFor(uses), uses)
+        assertEquals(ChemicalRateGate.Decision.NoCanonicalRate, decision)
+        assertFalse(ChemicalRateGate.permitsSave(decision))
     }
 
     // =========================================================================

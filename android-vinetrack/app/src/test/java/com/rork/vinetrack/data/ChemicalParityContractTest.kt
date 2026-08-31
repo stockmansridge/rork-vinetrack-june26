@@ -366,7 +366,7 @@ class ChemicalParityContractTest {
     }
 
     @Test
-    fun `the save contract blocks an unconfirmed multi-rate product`() {
+    fun `the save contract saves an unconfirmed multi-rate product`() {
         val selection = selectionFor(listOf(rate(2.0), rate(3.0)))
         val evaluation = ChemicalSaveContract.evaluate(
             productName = "HORTITROL WINTER OIL",
@@ -376,11 +376,16 @@ class ChemicalParityContractTest {
             ),
             defaults = selection,
         )
-        assertTrue(
+        // Both registered rates are kept, and neither is promoted into a
+        // decision the operator has not taken. The record is complete without
+        // one, so the save is not held back.
+        assertFalse(
             evaluation.violations.any {
                 it.code == ChemicalSaveViolationCode.DEFAULT_RATE_REQUIRED
             },
         )
+        // The screen still knows which basis has an open OPTIONAL choice — it
+        // reports it, it just no longer blocks on it.
         assertEquals(
             listOf(ChemicalDefaultRateBasis.PER_100_LITRES),
             evaluation.basesAwaitingConfirmation,
@@ -388,7 +393,7 @@ class ChemicalParityContractTest {
     }
 
     @Test
-    fun `the save contract passes once the operator has chosen`() {
+    fun `the save contract still passes once the operator has chosen`() {
         val rates = listOf(rate(2.0), rate(3.0))
         val selection = selectionFor(rates)
         val chosen = selection.selecting(

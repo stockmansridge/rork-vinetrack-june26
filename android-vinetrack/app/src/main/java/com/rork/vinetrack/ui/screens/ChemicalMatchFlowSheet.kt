@@ -65,6 +65,7 @@ import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
 import com.rork.vinetrack.data.chemical.ChemicalLookupAdvisory
 import com.rork.vinetrack.data.chemical.ChemicalRateGate
+import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalSaveContract
 import com.rork.vinetrack.data.chemical.ChemicalServerDefaultRateOptions
@@ -215,10 +216,6 @@ internal fun ChemicalMatchFlowSheet(
      * registered label rates themselves.
      */
     var defaultSelection by remember { mutableStateOf<ChemicalDefaultRateSelection?>(null) }
-    /** Operator-typed exact-dose text per basis (label bands only). */
-    var doseTexts by remember { mutableStateOf<Map<ChemicalDefaultRateBasis, String>>(emptyMap()) }
-    /** Rejection message per basis when a typed dose is outside the band. */
-    var doseErrors by remember { mutableStateOf<Map<ChemicalDefaultRateBasis, String>>(emptyMap()) }
 
     /**
      * Country comes from the vineyard profile. The operator already told
@@ -294,8 +291,6 @@ internal fun ChemicalMatchFlowSheet(
         structuredError = null
         lookupFormType = null
         defaultSelection = null
-        doseTexts = emptyMap()
-        doseErrors = emptyMap()
         scope.launch {
             try {
                 // A register candidate carries its registration number;
@@ -381,8 +376,6 @@ internal fun ChemicalMatchFlowSheet(
         identityWarning = null
         lookupFormType = null
         defaultSelection = null
-        doseTexts = emptyMap()
-        doseErrors = emptyMap()
         duplicateOf = null
         step = MatchStep.SEARCH
     }
@@ -690,69 +683,20 @@ internal fun ChemicalMatchFlowSheet(
                         }
                         val blocking = ChemicalSaveContract.blockingViolations(gate, baseline)
 
-                        // ---- Default rate: BEFORE the target list ----
+                        // ---- Registered rate: BEFORE the target list ----
                         //
-                        // The rate is the decision the operator came to make.
-                        // It sat underneath a list that can run to dozens of
-                        // weeds, so the one required action on the screen was
-                        // the last thing they could reach.
+                        // The rate is what the operator came to see. It sat
+                        // underneath a list that can run to dozens of weeds,
+                        // so the most important line on the screen was the
+                        // last thing they could reach.
                         HorizontalDivider()
                         val rateGate = ChemicalRateGate.decide(
                             selection = defaultSelection,
                             grapevineUses = intel.registeredUses.viticultural(),
                         )
                         when (rateGate) {
-                            ChemicalRateGate.Decision.Confirmable -> {
-                                defaultSelection?.let { selection ->
-                                    DefaultRatesSection(
-                                        selection = selection,
-                                        doseTexts = doseTexts,
-                                        doseErrors = doseErrors,
-                                        onSelect = { option, basis ->
-                                            defaultSelection = selection.selecting(option, basis)
-                                            doseTexts = doseTexts - basis
-                                            doseErrors = doseErrors - basis
-                                        },
-                                        onDoseTextChange = { basis, text ->
-                                            doseTexts = doseTexts + (basis to text)
-                                        },
-                                        onSetDose = { basis ->
-                                            val raw = doseTexts[basis].orEmpty().trim()
-                                                .replace(',', '.')
-                                            val option = selection.resolvedOption(basis)
-                                            if (raw.isEmpty()) {
-                                                defaultSelection = selection.clearingValue(basis)
-                                                doseErrors = doseErrors - basis
-                                            } else {
-                                                val updated = raw.toDoubleOrNull()
-                                                    ?.let { selection.settingValue(it, basis) }
-                                                if (updated != null) {
-                                                    defaultSelection = updated
-                                                    doseErrors = doseErrors - basis
-                                                } else {
-                                                    val bounds = option?.authorisedBounds
-                                                    doseErrors = doseErrors + (
-                                                        basis to if (bounds != null) {
-                                                            "The label registers " +
-                                                                formatChemicalNumber(bounds.first) +
-                                                                "–" +
-                                                                formatChemicalNumber(bounds.second) +
-                                                                " ${option.rate.unit}. Enter a rate " +
-                                                                "within it."
-                                                        } else {
-                                                            "Enter a rate the label registers."
-                                                        }
-                                                        )
-                                                }
-                                            }
-                                        },
-                                        onResetDose = { basis ->
-                                            defaultSelection = selection.clearingValue(basis)
-                                            doseTexts = doseTexts - basis
-                                            doseErrors = doseErrors - basis
-                                        },
-                                    )
-                                }
+                            ChemicalRateGate.Decision.RegisteredRateStated -> {
+                                RegisteredRateSection(intel.registeredUses.viticultural())
                             }
 
                             ChemicalRateGate.Decision.NoCanonicalRate -> {
@@ -1319,405 +1263,72 @@ internal fun ChemicalLookupAdvisoryNotice(isSearching: Boolean) {
 }
 
 /**
- * A7: the per-basis vineyard default-rate chooser shown on the Review step.
+ * What the label registers on grapevines, STATED and not asked.
  *
- * Mirrors the iOS "Default Rates" editor section: the registered label rates
- * are the authority and are never edited here — this only records which
- * registered option the vineyard doses by, and (for a label band) the exact
- * authorised figure.
+ * # Why there is no rate control here any more
+ *
+ * This was a per-basis chooser with an exact-dose field, and adding a product
+ * could not be finished until a single figure was typed into it. CHATEAU
+ * registers `560–700 g/ha`; the operator was being asked what they were
+ * applying with no block, growth stage or carrier volume in front of them, and
+ * the only cheap answer was whichever endpoint the screen made easiest to tap.
+ *
+ * A range is a complete record of the registration, so it is enough to save.
+ * The band travels intact on `registered_uses` to the Spray Calculator —
+ * including when planning a Program Step — where the applied dose is chosen
+ * once, against a real spray.
+ *
+ * Nothing here writes `default_rates`, and nothing here mints an `option_key`,
+ * a `rate_id` or a `direction_id`: those are the server's to issue.
  */
 @Composable
-private fun DefaultRatesSection(
-    selection: ChemicalDefaultRateSelection,
-    doseTexts: Map<ChemicalDefaultRateBasis, String>,
-    doseErrors: Map<ChemicalDefaultRateBasis, String>,
-    onSelect: (ChemicalDefaultRateOption, ChemicalDefaultRateBasis) -> Unit,
-    onDoseTextChange: (ChemicalDefaultRateBasis, String) -> Unit,
-    onSetDose: (ChemicalDefaultRateBasis) -> Unit,
-    onResetDose: (ChemicalDefaultRateBasis) -> Unit,
-) {
+private fun RegisteredRateSection(grapevineUses: List<ChemicalRegisteredUse>) {
     val vine = LocalVineColors.current
-    SectionLabel("Default rates")
-    selection.plan.groups.forEach { group ->
-        DefaultRateGroupCard(
-            group = group,
-            selection = selection,
-            doseText = doseTexts[group.basis].orEmpty(),
-            doseError = doseErrors[group.basis],
-            onSelect = { onSelect(it, group.basis) },
-            onDoseTextChange = { onDoseTextChange(group.basis, it) },
-            onSetDose = { onSetDose(group.basis) },
-            onResetDose = { onResetDose(group.basis) },
+    val lines = remember(grapevineUses) { registeredRateLines(grapevineUses) }
+    SectionLabel("Registered rate")
+    if (lines.isEmpty()) {
+        Text(
+            "No registered grapevine rate was read from this label.",
+            fontSize = 13.sp,
+            color = vine.textSecondary,
         )
+    } else {
+        lines.forEach { line ->
+            Text(
+                line,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textPrimary,
+            )
+        }
     }
-    // Pinned copy shared with iOS — including the honest no-state footnote
-    // when the label conditions rates by state and no vineyard state exists
-    // anywhere in the current backend contract (it never guesses one).
     Text(
-        com.rork.vinetrack.data.chemical.ChemicalDefaultRateCopy.footer(selection.plan),
+        "The registered label rate is saved with this chemical. Choose the exact " +
+            "rate being applied when planning each spray.",
         fontSize = 11.sp,
         color = vine.textSecondary,
     )
 }
 
 /**
- * The confirmation for a label that registers exactly ONE exact rate.
+ * One line per distinct usable registered grapevine rate, in label order.
  *
- * A radio button would be wrong here. With a single option a radio is either
- * pre-filled — which reads as "already answered" and is precisely the silent
- * consent this release removes — or it is an empty circle beside the only
- * possible answer, which looks broken. An explicit button naming the rate and
- * what confirming it MEANS ("as this vineyard's default") is one deliberate
- * tap that cannot be mistaken for decoration.
+ * A band is named as a band — `Registered label range: 560–700 g/ha` — so it
+ * can never be read as a dose somebody chose.
  */
-@Composable
-private fun SingleRateConfirmation(
-    option: ChemicalDefaultRateOption,
-    isConfirmed: Boolean,
-    onConfirm: () -> Unit,
-) {
-    val vine = LocalVineColors.current
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(
-            option.displayRate,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Bold,
-            color = vine.textPrimary,
-        )
-        if (isConfirmed) ChemicalPill("Your default", VineColors.Success)
-    }
-    option.conditions.forEach { condition ->
-        Text(condition.summary, fontSize = 10.sp, color = vine.textSecondary)
-    }
-    if (isConfirmed) {
-        Text(
-            "This vineyard's default rate is ${option.displayRate}.",
-            fontSize = 11.sp,
-            color = vine.textSecondary,
-        )
-    } else {
-        Button(onClick = onConfirm, modifier = Modifier.fillMaxWidth()) {
-            Text("Use ${option.displayRate} as this vineyard's default")
-        }
-        Text(
-            "The label registers this one rate. Confirm it so VineTrack knows it is " +
-                "the rate you actually use.",
-            fontSize = 11.sp,
-            color = vine.textSecondary,
-        )
-    }
-}
-
-/**
- * The confirmation for a label that registers exactly ONE band.
- *
- * States what the label permits, then asks the one question the operator can
- * actually answer:
- *
- * ```text
- * Registered label range: 560-700 g/ha
- * Your vineyard rate:     [        ] g/ha
- * ```
- *
- * The field starts EMPTY. Not 560, not 700, not the midpoint: a range is what
- * the register permits, and picking a point inside it is a dose decision that
- * belongs to the person who will pour it. Pre-filling any of the three would
- * put a number nobody chose in front of an operator who is about to accept it.
- */
-@Composable
-private fun SingleRangeConfirmation(
-    option: ChemicalDefaultRateOption,
-    basis: ChemicalDefaultRateBasis,
-    doseText: String,
-    doseError: String?,
-    confirmedValue: Double?,
-    onDoseTextChange: (String) -> Unit,
-    onSetDose: () -> Unit,
-    onResetDose: () -> Unit,
-) {
-    val vine = LocalVineColors.current
-    val bounds = option.authorisedBounds
-    val suffix = ChemicalDefaultRateDisplay.basisSuffix(basis)
-    val unit = option.rate.unit
-
-    if (bounds != null) {
-        Text(
-            "Registered label range: ${formatChemicalNumber(bounds.first)}–" +
-                "${formatChemicalNumber(bounds.second)} $unit$suffix",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = vine.textPrimary,
-        )
-    }
-    option.conditions.forEach { condition ->
-        Text(condition.summary, fontSize = 10.sp, color = vine.textSecondary)
-    }
-
-    if (confirmedValue != null) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                "Your vineyard rate: ${formatChemicalNumber(confirmedValue)} $unit$suffix",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                color = vine.textPrimary,
-                modifier = Modifier.weight(1f),
+private fun registeredRateLines(uses: List<ChemicalRegisteredUse>): List<String> {
+    val lines = LinkedHashSet<String>()
+    uses.flatMap { it.rates }
+        .filter { ChemicalSaveContract.isUsable(it) }
+        .forEach { rate ->
+            val isRange = rate.minValue != null && rate.maxValue != null
+            lines.add(
+                if (isRange) {
+                    "Registered label range: ${rate.displayRate}"
+                } else {
+                    "Registered label rate: ${rate.displayRate}"
+                },
             )
-            ChemicalPill("Your default", VineColors.Success)
         }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                // The register's own band is never narrowed by a dose.
-                "The registered rate stays ${option.displayRate}.",
-                fontSize = 11.sp,
-                color = vine.textSecondary,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(onClick = onResetDose) { Text("Change") }
-        }
-        return
-    }
-
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        OutlinedTextField(
-            value = doseText,
-            onValueChange = onDoseTextChange,
-            label = { Text("Your vineyard rate") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            modifier = Modifier.weight(1f),
-        )
-        Text("$unit$suffix", fontSize = 12.sp, color = vine.textSecondary)
-        TextButton(onClick = onSetDose) { Text("Set") }
-    }
-    doseError?.let { WarningLine(it) }
-    if (doseError == null && bounds != null) {
-        Text(
-            "Enter the rate this vineyard normally uses, between " +
-                "${formatChemicalNumber(bounds.first)} and " +
-                "${formatChemicalNumber(bounds.second)} $unit$suffix.",
-            fontSize = 11.sp,
-            color = vine.textSecondary,
-        )
-    }
-}
-
-@Composable
-private fun DefaultRateGroupCard(
-    group: ChemicalDefaultRateGroup,
-    selection: ChemicalDefaultRateSelection,
-    doseText: String,
-    doseError: String?,
-    onSelect: (ChemicalDefaultRateOption) -> Unit,
-    onDoseTextChange: (String) -> Unit,
-    onSetDose: () -> Unit,
-    onResetDose: () -> Unit,
-) {
-    val vine = LocalVineColors.current
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            group.basis.label.uppercase(),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            color = vine.textSecondary,
-        )
-        if (group.isEmpty) {
-            // The label states nothing on this basis — say that, and never
-            // invent one by converting from the other basis.
-            Text(group.emptyStatement, fontSize = 12.sp, color = vine.textSecondary)
-        } else {
-            val confirmed = selection.confirmedOption(group.basis)
-            // A label printing exactly ONE exact rate still needs a deliberate
-            // tap. Showing "2 L/ha" and treating the display as the answer is
-            // how a vineyard ends up dosing off a number nobody read.
-            val single = group.options.singleOrNull()
-            if (single != null && !single.isLabelRange) {
-                SingleRateConfirmation(
-                    option = single,
-                    isConfirmed = confirmed?.id == single.id,
-                    onConfirm = { onSelect(single) },
-                )
-                return@Column
-            }
-            // A label registering exactly ONE band — CHATEAU's 560-700 g/ha is
-            // the case in hand — needs no radio at all. There is nothing to
-            // choose BETWEEN; the only open question is the dose, so the range
-            // is stated and the field asked for directly. A lone radio button
-            // in front of the only option is a control that cannot change the
-            // answer, and it hid the actual required input one tap deeper.
-            if (single != null && single.isLabelRange) {
-                SingleRangeConfirmation(
-                    option = single,
-                    basis = group.basis,
-                    doseText = doseText,
-                    doseError = doseError,
-                    confirmedValue = selection.values[group.basis]
-                        ?.takeIf { confirmed?.id == single.id },
-                    onDoseTextChange = {
-                        // Choosing the option and typing the dose are one act
-                        // here, so the row is selected as soon as the operator
-                        // engages with it.
-                        if (confirmed?.id != single.id) onSelect(single)
-                        onDoseTextChange(it)
-                    },
-                    onSetDose = onSetDose,
-                    onResetDose = onResetDose,
-                )
-                return@Column
-            }
-            if (!selection.isExplicitlyConfirmed(group.basis)) {
-                Row(
-                    verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Icon(
-                        Icons.Filled.PanTool,
-                        contentDescription = null,
-                        tint = VineColors.Warning,
-                        modifier = Modifier.size(14.dp),
-                    )
-                    Text(
-                        if (group.options.size > 1) {
-                            "The label registers more than one " +
-                                group.basis.label.lowercase() +
-                                (selection.plan.jurisdiction
-                                    ?.let { " rate for ${it.displayName}" } ?: " rate") +
-                                ". Choose the one this vineyard uses."
-                        } else {
-                            "Choose the registered rate this vineyard uses."
-                        },
-                        fontSize = 12.sp,
-                        color = VineColors.Warning,
-                    )
-                }
-            }
-            group.options.forEach { option ->
-                val isChosen = selection.selectedIds[group.basis] == option.id
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { onSelect(option) },
-                    verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    // The radio reflects the operator's OWN choice only. A
-                    // recommendation is badged, never pre-selected: a filled
-                    // control reads as "already answered", and it was exactly
-                    // that appearance which let unconfirmed rates be saved.
-                    RadioButton(selected = isChosen, onClick = { onSelect(option) })
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                        modifier = Modifier.weight(1f).padding(vertical = 8.dp),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text(
-                                option.displayRate,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = vine.textPrimary,
-                            )
-                            if (option.isLabelRange) {
-                                ChemicalPill("label range", VineColors.Olive)
-                            }
-                            if (isChosen) {
-                                // The operator's OWN decision is badged
-                                // differently from a suggestion, so "chosen"
-                                // and "suggested" can never read the same.
-                                ChemicalPill("Your default", VineColors.Success)
-                            } else if (option.id == group.recommendedOptionId) {
-                                group.recommendation.badge?.let {
-                                    ChemicalPill(it, VineColors.Info)
-                                }
-                            }
-                            selection.plan.jurisdiction?.let { j ->
-                                if (!option.appliesIn(j)) {
-                                    ChemicalPill(
-                                        "Not registered for ${j.displayName}",
-                                        VineColors.Warning,
-                                    )
-                                }
-                            }
-                        }
-                        // Every condition keeps its own line — a condition
-                        // detached from its number is not a condition.
-                        option.conditions.forEach { condition ->
-                            Text(
-                                condition.summary,
-                                fontSize = 10.sp,
-                                color = vine.textSecondary,
-                            )
-                        }
-                    }
-                }
-            }
-            // Exact-dose entry: only for a label BAND the operator has
-            // actually chosen. The registered range itself is never narrowed
-            // — `registered_uses` keeps the label's own bounds however this
-            // vineyard doses inside them.
-            if (confirmed != null && confirmed.isLabelRange) {
-                val bounds = confirmed.authorisedBounds
-                val chosen = selection.values[group.basis]
-                if (chosen == null && bounds != null) {
-                    // There is no minimum, maximum or midpoint fallback. The
-                    // old wording — "Leave it blank to use 560" — offered the
-                    // bottom of the band as a default, which is a dose
-                    // decision dressed up as a convenience.
-                    Text(
-                        "Enter the rate this vineyard normally uses within the registered " +
-                            "range of ${formatChemicalNumber(bounds.first)}–" +
-                            "${formatChemicalNumber(bounds.second)} " +
-                            "${confirmed.rate.unit}${
-                                ChemicalDefaultRateDisplay.basisSuffix(group.basis)
-                            }.",
-                        fontSize = 11.sp,
-                        color = VineColors.Warning,
-                    )
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedTextField(
-                        value = doseText,
-                        onValueChange = onDoseTextChange,
-                        label = { Text("This vineyard uses") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(confirmed.rate.unit, fontSize = 12.sp, color = vine.textSecondary)
-                    TextButton(onClick = onSetDose) { Text("Set") }
-                }
-                doseError?.let { WarningLine(it) }
-                if (chosen != null) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            "The registered rate stays ${confirmed.displayRate}.",
-                            fontSize = 11.sp,
-                            color = vine.textSecondary,
-                        )
-                        TextButton(onClick = onResetDose) { Text("Reset") }
-                    }
-                }
-            }
-        }
-    }
+    return lines.toList()
 }

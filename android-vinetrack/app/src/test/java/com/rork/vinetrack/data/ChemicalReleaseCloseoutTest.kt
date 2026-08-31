@@ -154,41 +154,25 @@ class ChemicalReleaseCloseoutTest {
     // =========================================================================
 
     @Test
-    fun `1 - a single exact rate requires an operator tap before first save`() {
+    fun `1 - a single exact registered rate saves without an operator tap`() {
         val uses = listOf(grapeUse(exactRate(2.0)))
         val selection = selectionFor(uses)
 
-        // Nothing confirmed yet, even though the label prints exactly one rate
-        // and the screen has been showing it all along.
+        // Nothing confirmed, and nothing needs to be: the label prints the
+        // rate, and that is what the Chemical Store is recording.
         assertFalse(selection.hasConfirmedDefault)
-        val blocked = ChemicalSaveContract.evaluate(
+        val evaluation = ChemicalSaveContract.evaluate(
             productName = "Example",
             productCategory = "fungicide",
             intelligence = intelligenceFor(uses),
             defaults = selection,
         )
         assertTrue(
-            blocked.violations.any {
-                it.code == ChemicalSaveViolationCode.DEFAULT_RATE_REQUIRED
-            },
+            "a registered rate is enough to save",
+            ChemicalSaveContract.blockingViolations(evaluation, emptySet()).isEmpty(),
         )
-
-        // One deliberate tap completes it.
-        val confirmed = selection.selecting(
-            selection.plan.perHectare.options.first(),
-            ChemicalDefaultRateBasis.PER_HECTARE,
-        )
-        val allowed = ChemicalSaveContract.evaluate(
-            productName = "Example",
-            productCategory = "fungicide",
-            intelligence = intelligenceFor(uses),
-            defaults = confirmed,
-        )
-        assertFalse(
-            allowed.violations.any {
-                it.code == ChemicalSaveViolationCode.DEFAULT_RATE_REQUIRED
-            },
-        )
+        // And an unconfirmed recommendation is still never persisted as one.
+        assertNull(selection.storedDefaultRates(uses))
     }
 
     @Test
@@ -207,46 +191,43 @@ class ChemicalReleaseCloseoutTest {
     }
 
     @Test
-    fun `3 - a range requires an exact in-range dose`() {
+    fun `3 - a registered range saves as a range, and no dose is invented`() {
         val uses = listOf(grapeUse(bandRate(560.0, 700.0)))
         val selection = selectionFor(uses)
-        val chosen = selection.selecting(
-            selection.plan.perHectare.options.first(),
-            ChemicalDefaultRateBasis.PER_HECTARE,
-        )
 
-        // Choosing the band is not finishing the decision.
-        assertNull(chosen.confirmedDose(ChemicalDefaultRateBasis.PER_HECTARE))
-        assertEquals(
-            listOf(ChemicalDefaultRateBasis.PER_HECTARE),
-            chosen.basesAwaitingExactDose,
-        )
+        // 560-700 g/ha is a complete record of the registration. The exact
+        // applied dose is a spray decision, so nothing is demanded here.
         val evaluation = ChemicalSaveContract.evaluate(
             productName = "Example",
             productCategory = "fungicide",
             intelligence = intelligenceFor(uses),
-            defaults = chosen,
+            defaults = selection,
         )
         assertTrue(
-            evaluation.violations.any {
-                it.code == ChemicalSaveViolationCode.DEFAULT_RATE_EXACT_DOSE_REQUIRED
-            },
-        )
-        // And the message names the registered range, never a fallback value.
-        assertTrue(
-            evaluation.violations.any {
-                it.message.contains("560") && it.message.contains("700")
-            },
+            "a registered range is enough to save",
+            ChemicalSaveContract.blockingViolations(evaluation, emptySet()).isEmpty(),
         )
 
-        // A dose outside the band is refused outright.
+        // Choosing the band alone still names no dose and stores none.
+        val chosen = selection.selecting(
+            selection.plan.perHectare.options.first(),
+            ChemicalDefaultRateBasis.PER_HECTARE,
+        )
+        assertNull(chosen.confirmedDose(ChemicalDefaultRateBasis.PER_HECTARE))
+        assertNull(chosen.storedDefaultRates(uses))
+
+        // The authorisation rule is untouched: a dose outside the band is
+        // refused outright, and an in-range one completes an OPTIONAL default.
         assertNull(chosen.settingValue(900.0, ChemicalDefaultRateBasis.PER_HECTARE))
-
-        // An in-range dose completes it.
         val dosed = chosen.settingValue(600.0, ChemicalDefaultRateBasis.PER_HECTARE)
         assertNotNull(dosed)
         assertEquals(600.0, dosed!!.confirmedDose(ChemicalDefaultRateBasis.PER_HECTARE))
         assertTrue(dosed.isConfirmed)
+
+        // And the registered band itself is never narrowed by any of it.
+        val band = uses.flatMap { it.rates }.first()
+        assertEquals(560.0, band.minValue)
+        assertEquals(700.0, band.maxValue)
     }
 
     @Test
@@ -299,7 +280,7 @@ class ChemicalReleaseCloseoutTest {
     }
 
     @Test
-    fun `7 - a new lookup without a confirmed default cannot save`() {
+    fun `7 - a new lookup without a confirmed default can save`() {
         val uses = listOf(grapeUse(exactRate(2.0)))
         val evaluation = ChemicalSaveContract.evaluate(
             productName = "Example",
@@ -307,10 +288,25 @@ class ChemicalReleaseCloseoutTest {
             intelligence = intelligenceFor(uses),
             defaults = selectionFor(uses),
         )
-        // A brand-new chemical has an EMPTY baseline, so this genuinely blocks.
+        // A brand-new chemical has an EMPTY baseline, so nothing is excused
+        // here — this is the real gate, and a registered rate opens it.
+        val blocking = ChemicalSaveContract.blockingViolations(evaluation, emptySet())
+        assertTrue(blocking.isEmpty())
+    }
+
+    @Test
+    fun `7c - a grapevine label with no usable rate still cannot save`() {
+        // The fail-closed path this change must leave exactly as it was.
+        val uses = listOf(ChemicalRegisteredUse(crop = "Grapevines", targetRaw = "Downy mildew"))
+        val evaluation = ChemicalSaveContract.evaluate(
+            productName = "Example",
+            productCategory = "fungicide",
+            intelligence = intelligenceFor(uses),
+            defaults = selectionFor(uses),
+        )
         val blocking = ChemicalSaveContract.blockingViolations(evaluation, emptySet())
         assertTrue(
-            blocking.any { it.code == ChemicalSaveViolationCode.DEFAULT_RATE_REQUIRED },
+            blocking.any { it.code == ChemicalSaveViolationCode.USABLE_RATE_MISSING },
         )
     }
 

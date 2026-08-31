@@ -2,22 +2,30 @@ import Foundation
 import Testing
 @testable import VineTrack
 
-/// A first add must not be saveable until the operator has said what this
-/// vineyard actually pours.
+/// A registered grapevine rate OR RANGE is enough to save a chemical, and no
+/// dose is ever invented on the operator's behalf.
 ///
-/// # The defect these tests exist to prevent
+/// # The two defects these tests hold apart
 ///
-/// CHATEAU registers `560–700 g/ha`. The screen showed that band with the
-/// exact-dose box PREFILLED at 560 and a line reading "leave it blank to use
-/// 560", so the fastest path through the form — read, tap Save — recorded the
-/// bottom of the band as though the grower had chosen it. Nobody chose it. A
-/// vineyard dosing 620 got 560 on every subsequent spray calculation, and the
-/// record claimed an operator decision that never happened.
+/// CHATEAU registers `560–700 g/ha`.
 ///
-/// The correction is one rule in one place: the box starts empty, a band is
-/// only confirmed by a number typed INSIDE it, and `isValid` refuses the save
-/// until then. A recommendation is VineTrack reading the label; a confirmation
-/// is the grower answering it.
+/// The FIRST defect was silent inflation: the screen prefilled the exact-dose
+/// box at 560 and offered "leave it blank to use 560", so read-and-Save wrote
+/// the bottom of the band as though a grower had chosen it. That must never
+/// come back — nothing here may fabricate a default.
+///
+/// The SECOND defect was the over-correction: Save was then blocked until a
+/// single figure was typed. That asked the operator what they were applying
+/// while adding a product to a store, with no block, growth stage or carrier
+/// volume in front of them, and an answer given under that pressure is
+/// whichever endpoint the screen made easiest to tap.
+///
+/// The contract that resolves both: adding a product records WHAT THE LABEL
+/// SAYS. A usable rate or range satisfies the save; the band is persisted
+/// intact on `registered_uses`; `default_rates` stays absent unless the
+/// operator deliberately chose one; and the exact applied dose is chosen later
+/// when planning a spray. A label with no usable grapevine rate at all still
+/// fails closed.
 @MainActor
 struct ChemicalRateConfirmationGateTests {
 
@@ -70,6 +78,33 @@ struct ChemicalRateConfirmationGateTests {
         ],
         "per_100_litres": []
       }
+    }
+    """
+
+    /// A grapevine registration whose rate carries no usable number at all.
+    private static let rateLessLookupJSON = """
+    {
+      "name": "CHATEAU WDG HERBICIDE",
+      "registration_number": "80647",
+      "country_code": "AU",
+      "product_category": "Herbicide",
+      "registered_uses": [
+        {
+          "crop": "Grapevines",
+          "target": "Annual broadleaf weeds",
+          "direction_id": "dir_v1_chateau",
+          "withholding_period_days": 98,
+          "rates": [
+            {
+              "label": "All states",
+              "basis": "other",
+              "unit": "",
+              "raw_text": "See label"
+            }
+          ]
+        }
+      ],
+      "default_rate_options": { "per_hectare": [], "per_100_litres": [] }
     }
     """
 
@@ -154,48 +189,102 @@ struct ChemicalRateConfirmationGateTests {
         // session in any form.
         #expect(session.defaultRateValues[.perHectare] == nil)
         #expect(!session.isDefaultRateConfirmed(for: .perHectare))
-        #expect(!session.isValid)
+        // The refusal rejects the FIGURE, not the product. The registered band
+        // is still a complete record and still saves.
+        #expect(session.isValid)
+        #expect(session.storedDefaultRates == nil)
     }
 
     // MARK: - 3. The Save gate
 
-    @Test("A blank band keeps Save disabled")
-    func blankBandKeepsSaveDisabled() throws {
+    @Test("A registered band alone allows Save")
+    func registeredBandAloneAllowsSave() throws {
         let session = try firstAddSession()
-        #expect(session.requiresDefaultRateConfirmation)
+        // The band is the record. Nothing further is demanded of the operator
+        // at setup, so the gate is open and no rate question is outstanding.
+        #expect(!session.requiresDefaultRateConfirmation)
+        #expect(!session.isAwaitingDefaultRateConfirmation)
         #expect(!session.hasConfirmedDefaultRate)
-        #expect(session.isAwaitingDefaultRateConfirmation)
-        #expect(!session.isValid)
-        // And the block is the RATE question, not some other missing field —
-        // otherwise this test would pass for the wrong reason.
         #expect(session.blockingViolations.isEmpty)
+        #expect(session.isValid)
     }
 
-    @Test("Selecting the band without entering a rate keeps Save disabled")
-    func selectingWithoutValueKeepsSaveDisabled() throws {
+    @Test("Saving on the band alone fabricates no default and keeps 560–700 intact")
+    func savingOnTheBandFabricatesNothing() throws {
+        let session = try firstAddSession()
+
+        // No endpoint, no midpoint, no "starting value" quietly promoted into
+        // a decision. Absence of a default is recorded as absence.
+        #expect(session.storedDefaultRates == nil)
+        #expect(session.defaultRateValues.isEmpty)
+        #expect(session.selectedDefaultRateIds.isEmpty)
+
+        // And the authoritative evidence is untouched and complete.
+        let rates = session.grapevineUses.flatMap(\.rates)
+        let band = try #require(rates.first)
+        #expect(rates.count == 1)
+        #expect(band.minValue == 560)
+        #expect(band.maxValue == 700)
+        #expect(band.unit == "g")
+        #expect(band.rateId == "rate_v1_zeta")
+    }
+
+    @Test("Selecting the band without entering a rate still saves and writes no default")
+    func selectingWithoutValueStillSaves() throws {
         var session = try firstAddSession()
         let option = try #require(session.defaultRatePlan.group(.perHectare).options.first)
 
         session.selectDefaultRate(option, for: .perHectare)
         #expect(session.selectedDefaultRateIds[.perHectare] == Self.optionKey)
-        // A band with no number names no dose. Picking the row is not an answer.
+        // A band with no number names no dose, so it is not persisted as one —
+        // but it does not hold the product out of the store either.
         #expect(session.defaultRateValues[.perHectare] == nil)
         #expect(!session.isDefaultRateConfirmed(for: .perHectare))
-        #expect(!session.isValid)
+        #expect(session.storedDefaultRates == nil)
+        #expect(session.isValid)
     }
 
-    @Test("Entering 600 confirms the rate and enables Save")
-    func enteringRateEnablesSave() throws {
+    @Test("Entering 600 records an optional vineyard default")
+    func enteringRateRecordsOptionalDefault() throws {
         var session = try firstAddSession()
-        #expect(!session.isValid)
+        // Already saveable. The figure is an addition, never a release.
+        #expect(session.isValid)
 
         #expect(session.setDefaultRateValue(600, for: .perHectare))
 
         #expect(session.isDefaultRateConfirmed(for: .perHectare))
         #expect(session.hasConfirmedDefaultRate)
-        #expect(!session.isAwaitingDefaultRateConfirmation)
         #expect(session.blockingViolations.isEmpty)
         #expect(session.isValid)
+    }
+
+    /// The fail-closed path, which this change must leave exactly as it was.
+    @Test("A grapevine label with no usable rate still blocks Save")
+    func noUsableRateStillBlocksSave() throws {
+        let coordinator = ChemicalLookupCoordinator()
+        coordinator.handOff(
+            row(),
+            lookup: try decode(Self.rateLessLookupJSON),
+            country: "AU",
+            existing: nil,
+            vineyardId: Self.vineyardId
+        )
+        let draft = try #require(coordinator.reviewDraft)
+        var session = ChemicalReviewSession.make(
+            chemical: nil,
+            prefill: draft,
+            fallbackCountry: "AU",
+            serverDefaultRateOptions: coordinator.reviewDefaultRateOptions
+        )
+        if session.chemistryDraft.productCategory.trimmingCharacters(in: .whitespaces).isEmpty {
+            session.chemistryDraft.productCategory = ProductCategory.herbicide.rawValue
+        }
+
+        // Blocked, and blocked for the RATE reason — not incidentally by some
+        // other missing field.
+        #expect(session.blockingViolations.contains { $0.code == .usableRateMissing })
+        #expect(!session.isValid)
+        #expect(session.storedDefaultRates == nil)
     }
 
     // MARK: - 4. What the confirmation persists
@@ -234,8 +323,11 @@ struct ChemicalRateConfirmationGateTests {
         _ = session.setDefaultRateValue(600, for: .perHectare)
 
         #expect(!session.isDefaultRateConfirmed(for: .perHectare))
-        #expect(!session.isValid)
         #expect(session.storedDefaultRates == nil)
+        // Saving is still allowed — on the registered band, which is what the
+        // record actually holds. What must never happen is a persisted default
+        // citing an identity no register ever issued.
+        #expect(session.isValid)
     }
 
     // MARK: - 5. Who the gate does NOT apply to
