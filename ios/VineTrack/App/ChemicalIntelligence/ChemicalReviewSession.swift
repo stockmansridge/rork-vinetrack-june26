@@ -957,6 +957,74 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         return stored.isEmpty ? nil : stored
     }
 
+    // MARK: - The first-add rate confirmation gate
+
+    /// Whether the operator has EXPLICITLY confirmed a default on this basis.
+    ///
+    /// # Why "in force" is not the same as "confirmed"
+    ///
+    /// `resolvedDefaultOption` falls back to the recommendation so a screen has
+    /// something to show. A recommendation is VineTrack's reading of the label,
+    /// not the grower's decision, and a first add that saves one has recorded a
+    /// dose nobody chose. So three things must all be true:
+    ///
+    /// ```text
+    /// selected     the operator picked this option, not the badge
+    /// server       the option carries the register's own identity
+    /// resolved     a band additionally needs the exact dose typed inside it
+    /// ```
+    ///
+    /// A band with no number is UNRESOLVED, not "the bottom of the band":
+    /// `560–700 g/ha` names no dose, and choosing 560 on the operator's behalf
+    /// is exactly the silent under-application this gate exists to stop.
+    func isDefaultRateConfirmed(for basis: ChemicalDefaultRateBasis) -> Bool {
+        guard let selectedId = selectedDefaultRateIds[basis] else { return false }
+        let group = defaultRatePlan.group(basis)
+        guard let option = group.options.first(where: { $0.id == selectedId }) else { return false }
+        // A device-assembled option carries no register identity and can never
+        // be persisted, so confirming one would enable a Save that then wrote
+        // no default at all.
+        guard let server = option.server, server.isValid, server.decisionBasis == basis else {
+            return false
+        }
+        if option.isLabelRange {
+            guard let value = defaultRateValues[basis] else { return false }
+            return option.authorises(value)
+        }
+        return option.startingValue != nil
+    }
+
+    /// True once at least one basis carries a confirmed, persistable default.
+    var hasConfirmedDefaultRate: Bool {
+        ChemicalDefaultRateBasis.allCases.contains { isDefaultRateConfirmed(for: $0) }
+    }
+
+    /// True when THIS save must not proceed without a confirmed default rate.
+    ///
+    /// Scoped deliberately to a first add from the register: a looked-up
+    /// product with grapevine uses is exactly the case where the label states
+    /// the rate, the operator is looking at it, and letting them save without
+    /// answering produces a chemical whose spray calculations start from a
+    /// number nobody chose.
+    ///
+    /// Everything else is exempt, for reasons that are not softness:
+    ///
+    /// ```text
+    /// manual entry      never went near the register; there is nothing
+    ///                   canonical to confirm and no server option to offer
+    /// existing record   already saved. Blocking a price or note edit behind a
+    ///                   rate question would strand the record unrepairable
+    /// no grapevine use  nothing to dose by; the label says so plainly
+    /// ```
+    var requiresDefaultRateConfirmation: Bool {
+        isReviewingLookup && isRegisteredForGrapevine
+    }
+
+    /// True when the gate is currently blocking Save.
+    var isAwaitingDefaultRateConfirmation: Bool {
+        requiresDefaultRateConfirmation && !hasConfirmedDefaultRate
+    }
+
     /// Bases the operator still has to answer before a default exists.
     var basesAwaitingDefaultChoice: [ChemicalDefaultRateBasis] {
         ChemicalDefaultRateBasis.allCases.filter { basis in
@@ -1153,9 +1221,16 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
     /// The resistance state this record will persist.
     var resistanceState: ChemicalResistanceState { saveEvaluation.resistanceState }
 
+    /// The ONE rule the Save button asks.
+    ///
+    /// The rate-confirmation gate lives HERE rather than in the view, so there
+    /// can be no second, view-only opinion about whether this record may be
+    /// saved — a screen that disabled Save on its own would leave every other
+    /// caller of `isValid` writing the record the gate refused.
     var isValid: Bool {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        return blockingViolations.isEmpty
+        guard blockingViolations.isEmpty else { return false }
+        return !isAwaitingDefaultRateConfirmation
     }
 
     // MARK: - Formatting

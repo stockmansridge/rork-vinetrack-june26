@@ -234,8 +234,18 @@ struct ChemicalExactDoseField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            if let bounds {
+                // The label's own band, named as the label's — so the empty box
+                // beneath it reads as a question about THIS vineyard rather
+                // than as a number somebody forgot to finish typing.
+                Text("Registered label range: \(numberText(bounds.min))\u{2013}\(numberText(bounds.max)) \(unit)\(option.rate.basis.suffix)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             HStack(spacing: 8) {
-                Text("This vineyard uses")
+                Text("Your vineyard rate")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 TextField(placeholder, text: $text)
@@ -275,11 +285,6 @@ struct ChemicalExactDoseField: View {
                         .buttonStyle(.borderless)
                 }
                 .fixedSize(horizontal: false, vertical: true)
-            } else if let bounds {
-                Text("Any rate from \(numberText(bounds.min)) to \(numberText(bounds.max)) \(unit) is registered. Leave it blank to use \(numberText(bounds.min)).")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.vertical, 2)
@@ -287,9 +292,13 @@ struct ChemicalExactDoseField: View {
         .onChange(of: value) { _, _ in syncFromValue() }
     }
 
-    private var placeholder: String {
-        bounds.map { numberText($0.min) } ?? ""
-    }
+    /// Never a bound, never the midpoint.
+    ///
+    /// Showing `560` here was a suggestion dressed as an empty field: an
+    /// operator who tapped past it saved the bottom of the band as though they
+    /// had chosen it. The box starts genuinely blank and stays blank until a
+    /// human types the rate this vineyard pours.
+    private var placeholder: String { "Enter rate" }
 
     private func syncFromValue() {
         guard !isFocused else { return }

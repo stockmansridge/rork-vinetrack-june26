@@ -342,20 +342,22 @@ struct EditSavedChemicalSheet: View {
                 productSection
                 // 2. Active Ingredients & Resistance
                 activeIngredientsSection
-                // 3. Grapevine Uses & Rates — the most important section
+                // 3. Default rate — the DECISION, placed before the label
+                // evidence it is taken from. A first add cannot be saved until
+                // it is answered (`session.requiresDefaultRateConfirmation`),
+                // so burying it under a long registered-use list made the one
+                // mandatory question the last thing an operator found.
+                if session.isRegisteredForGrapevine {
+                    defaultRatesSection
+                }
+                // 4. Grapevine Uses & Rates — the label evidence the decision
+                // above was made from, unedited.
                 registeredUsesSection
                 if showsProductRates {
                     productRatesSection
                 }
                 if !session.hasStructuredUses {
                     legacyUseSection
-                }
-                // 3b. Default rates — the operator's own decision, taken from
-                // the authoritative grapevine rates immediately above it. The
-                // Portal workflow is: rates displayed → accept or choose a
-                // default → save, so the decision sits between the two.
-                if session.isRegisteredForGrapevine {
-                    defaultRatesSection
                 }
                 // 4. Labels & References
                 labelsSection
@@ -851,9 +853,16 @@ struct EditSavedChemicalSheet: View {
     }
 
     private var defaultRatesFooter: String {
-        let base = "The rate VineTrack will start a spray calculation from. "
-            + "Chosen from the registered grapevine rates above — the two bases "
+        var base = "The rate VineTrack will start a spray calculation from. "
+            + "Chosen from the registered grapevine rates below — the two bases "
             + "are decided separately and never converted into one another."
+        // Says WHY Save is disabled. This is wording only: the rule itself is
+        // `session.isValid`, so this line can never let a save through or hold
+        // one back on its own.
+        if session.isAwaitingDefaultRateConfirmation {
+            base += " Confirm the rate this vineyard uses before saving — for a "
+                + "label range, enter your own rate from inside it."
+        }
         guard session.jurisdiction == nil,
               session.defaultRatePlan.requiresChoice
         else { return base }
