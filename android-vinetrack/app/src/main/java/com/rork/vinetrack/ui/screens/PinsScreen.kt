@@ -124,6 +124,7 @@ import com.rork.vinetrack.ui.PinSyncState
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.KeepScreenAwake
 import com.rork.vinetrack.ui.components.compassTrueHeading
+import com.rork.vinetrack.ui.components.AutoPhotoPromptSheet
 import com.rork.vinetrack.ui.components.rememberCompassHeading
 import com.rork.vinetrack.ui.components.EmptyState
 import com.rork.vinetrack.ui.components.StatusBadge
@@ -1390,81 +1391,6 @@ private fun QuickPinDuplicateSheet(
                     colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                 ) {
                     Text("Create anyway")
-                }
-            }
-        }
-    }
-}
-
-/**
- * Optional "Add a photo?" prompt shown after a successful quick pin when the
- * auto-photo preference is on. Counts down from 3s and auto-skips on zero
- * (iOS AutoPhotoConfirmSheet parity). Skip / Take Photo are explicit actions.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AutoPhotoPromptSheet(
-    onSkip: () -> Unit,
-    onTakePhoto: () -> Unit,
-) {
-    val vine = LocalVineColors.current
-    val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
-    var remaining by remember { mutableStateOf(3) }
-    var responded by remember { mutableStateOf(false) }
-
-    // 3 \u2192 0 countdown; auto-skips when it reaches zero unless already answered.
-    LaunchedEffect(Unit) {
-        for (value in 2 downTo 0) {
-            delay(1000)
-            remaining = value
-        }
-        delay(1000)
-        if (!responded) {
-            responded = true
-            onSkip()
-        }
-    }
-
-    ModalBottomSheet(onDismissRequest = { if (!responded) { responded = true; onSkip() } }, sheetState = sheetState, containerColor = vine.cardBackground) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(VineColors.Primary.copy(alpha = 0.14f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Filled.PhotoCamera, contentDescription = null, tint = VineColors.Primary, modifier = Modifier.size(28.dp))
-            }
-            Text("Add a photo?", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
-            Text(
-                "Auto-skipping in ${remaining}s",
-                fontSize = 14.sp,
-                color = vine.textSecondary,
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                OutlinedButton(
-                    onClick = { if (!responded) { responded = true; onSkip() } },
-                    modifier = Modifier.weight(1f),
-                ) { Text("Skip") }
-                Button(
-                    onClick = { if (!responded) { responded = true; onTakePhoto() } },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
-                ) {
-                    Icon(Icons.Filled.PhotoCamera, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.size(6.dp))
-                    Text("Take Photo")
                 }
             }
         }

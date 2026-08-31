@@ -23,6 +23,9 @@ struct UnifiedPinComposerView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(CustomPinTypeService.self) private var customPinService
+    // The app's ONE location service — reused here for the blue current
+    // location dot and the opening camera. No second GPS source exists.
+    @Environment(LocationService.self) private var locationService
 
     /// Called after a successful save so the caller can jump to the Pins tab.
     var onSaved: () -> Void = {}
@@ -56,6 +59,37 @@ struct UnifiedPinComposerView: View {
     @State private var showFullMap = false
     @State private var rowFilter = ""
 
+    // Manual-map camera. Each map is framed ONCE, from the priority below;
+    // later GPS fixes never re-centre it, so the moment the operator pans,
+    // zooms or drops a pin the camera is theirs.
+    @State private var inlineCamera: MapCameraPosition = .automatic
+    @State private var didFrameInlineCamera = false
+    @State private var fullScreenCamera: MapCameraPosition = .automatic
+    @State private var didFrameFullScreenCamera = false
+    /// True while the draft pin is under the finger. Map interaction is
+    /// suspended for the duration so the drag moves the PIN, never the map.
+    @State private var isDraggingPin = false
+
+    // Photo capture for the pin this composer just created. The pin is
+    // created FIRST and its id held here, so ignoring, dismissing or
+    // cancelling the photo question can never lose it.
+    @State private var pendingPhotoPinId: UUID?
+    @State private var showAutoPhotoConfirm = false
+    @State private var showPhotoPicker = false
+    @State private var pendingShowPicker = false
+    /// Set the instant a pin is created, so no timeout, dismissal or photo
+    /// callback can ever run the save a second time.
+    @State private var hasCreatedPin = false
+    /// Set when the composer closes, so the prompt's timeout and its
+    /// dismissal handler cannot both finish the flow.
+    @State private var didFinish = false
+
+    /// Gesture coordinate spaces for the two manual maps. Named (not
+    /// `.local`) so a drag started on the pin converts against the exact map
+    /// that hosts it.
+    private let inlineMapSpace = "unifiedPinInlineMap"
+    private let fullMapSpace = "unifiedPinFullMap"
+
     private var selectedPaddock: Paddock? {
         store.paddocks.first { $0.id == selectedPaddockId }
     }
@@ -77,9 +111,52 @@ struct UnifiedPinComposerView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             customPinService.store = store
+            // Ask once, through the EXISTING service. A refusal is fine —
+            // manual placement never depends on a fix, it just loses the dot.
+            if locationService.authorizationStatus == .notDetermined {
+                locationService.requestPermission()
+            }
+            locationService.startUpdating()
+            frameCamerasIfNeeded()
             if let vineyardId = store.selectedVineyardId {
                 await customPinService.refresh(vineyardId: vineyardId)
             }
+        }
+        // A late first fix may still frame the map, but only while the
+        // operator has not taken control — `didFrame…` latches on tap, drag,
+        // pan and zoom.
+        .onChange(of: locationService.location?.timestamp) { _, _ in
+            frameCamerasIfNeeded()
+        }
+        .sheet(isPresented: $showPhotoPicker, onDismiss: { finishSave() }) {
+            // Cancelling the camera keeps the pin exactly as saved.
+            CameraImagePicker { data in
+                attachPhoto(data: data)
+            }
+            .ignoresSafeArea()
+        }
+        .sheet(isPresented: $showAutoPhotoConfirm, onDismiss: {
+            if pendingShowPicker {
+                pendingShowPicker = false
+                showPhotoPicker = true
+            } else {
+                // Skip, swipe-dismiss and the 3s timeout are the same
+                // answer: the pin is already saved, finish without a photo.
+                pendingPhotoPinId = nil
+                finishSave()
+            }
+        }) {
+            // The EXISTING 3-second prompt — same countdown, same wording.
+            AutoPhotoConfirmSheet(
+                onConfirm: {
+                    pendingShowPicker = true
+                    showAutoPhotoConfirm = false
+                },
+                onCancel: {
+                    pendingShowPicker = false
+                    showAutoPhotoConfirm = false
+                }
+            )
         }
         .sheet(isPresented: $showGrowthPicker) {
             // The EXISTING E-L growth-stage picker — same images, labels,
@@ -282,23 +359,29 @@ struct UnifiedPinComposerView: View {
     private var pointPicker: some View {
         VStack(alignment: .leading, spacing: 8) {
             MapReader { proxy in
-                Map(initialPosition: .region(initialRegion)) {
+                Map(position: $inlineCamera, interactionModes: isDraggingPin ? [] : .all) {
+                    // The normal blue current-location dot, from the app's
+                    // existing location service. Visually distinct from the
+                    // draft pin, and simply absent when permission is denied.
+                    UserAnnotation()
                     if let tappedCoordinate {
                         Annotation("", coordinate: tappedCoordinate) {
-                            Image(systemName: "mappin.circle.fill")
-                                .font(.title2)
-                                .foregroundStyle(.white, VineyardTheme.primary)
+                            draftPinMarker(proxy: proxy, space: inlineMapSpace)
                         }
                     }
                 }
                 .mapStyle(.hybrid)
                 .onTapGesture { position in
                     if let coordinate = proxy.convert(position, from: .local) {
-                        tappedCoordinate = coordinate
-                        validationMessage = nil
+                        placeDraftPin(at: coordinate)
                     }
                 }
+                .onMapCameraChange { _ in
+                    // Any pan or zoom hands the camera to the operator.
+                    didFrameInlineCamera = true
+                }
             }
+            .coordinateSpace(.named(inlineMapSpace))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipShape(.rect(cornerRadius: 10))
             .overlay(alignment: .topTrailing) {
@@ -308,9 +391,56 @@ struct UnifiedPinComposerView: View {
         }
     }
 
+    /// The draft pin itself — tap-placed, then DRAGGABLE.
+    ///
+    /// The drag converts through the same `MapProxy` the tap uses, so both
+    /// placement gestures always agree, and it publishes on every
+    /// `onChanged` rather than only at drag-end: the block/row label is
+    /// re-resolved live as the pin crosses row lines.
+    private func draftPinMarker(proxy: MapProxy, space: String) -> some View {
+        Image(systemName: "mappin.circle.fill")
+            .font(.system(size: 30, weight: .semibold))
+            .foregroundStyle(.white, VineyardTheme.primary)
+            .shadow(color: .black.opacity(0.35), radius: isDraggingPin ? 7 : 2, y: 1)
+            .scaleEffect(isDraggingPin ? 1.22 : 1.0)
+            .animation(.snappy(duration: 0.15), value: isDraggingPin)
+            .contentShape(.circle)
+            .gesture(
+                // minimumDistance 0 claims the touch the instant it lands on
+                // the pin, which is what stops the map panning underneath it.
+                DragGesture(minimumDistance: 0, coordinateSpace: .named(space))
+                    .onChanged { value in
+                        isDraggingPin = true
+                        if let moved = proxy.convert(value.location, from: .named(space)) {
+                            placeDraftPin(at: moved)
+                        }
+                    }
+                    .onEnded { value in
+                        if let moved = proxy.convert(value.location, from: .named(space)) {
+                            placeDraftPin(at: moved)
+                        }
+                        isDraggingPin = false
+                    }
+            )
+            .accessibilityLabel("Dropped pin — drag to move it")
+    }
+
+    /// The single entry point for every placement gesture on either map, so
+    /// the inline and full-screen maps always share one coordinate.
+    private func placeDraftPin(at coordinate: CLLocationCoordinate2D) {
+        tappedCoordinate = coordinate
+        validationMessage = nil
+        // A placed pin is the operator's frame of reference from here on.
+        didFrameInlineCamera = true
+        didFrameFullScreenCamera = true
+    }
+
     /// Expand control floated over the inline map's corner.
     private var mapExpandButton: some View {
         Button {
+            // The full-screen map opens on the SHARED coordinate state, so it
+            // always picks up wherever the pin currently is.
+            frameFullScreenCameraOnOpen()
             showFullMap = true
         } label: {
             Image(systemName: "arrow.up.left.and.arrow.down.right")
@@ -362,24 +492,33 @@ struct UnifiedPinComposerView: View {
                 // Over-zoom: a tiny minimum camera distance lets the user zoom
                 // well past the normal framing — the imagery upsamples (softens)
                 // rather than disappearing.
-                Map(initialPosition: .region(fullScreenRegion), bounds: MapCameraBounds(minimumDistance: 10)) {
+                Map(
+                    position: $fullScreenCamera,
+                    bounds: MapCameraBounds(minimumDistance: 10),
+                    interactionModes: isDraggingPin ? [] : .all
+                ) {
+                    UserAnnotation()
                     if let tappedCoordinate {
                         Annotation("", coordinate: tappedCoordinate) {
-                            Image(systemName: "mappin.circle.fill")
-                                .font(.title2)
-                                .foregroundStyle(.white, VineyardTheme.primary)
+                            draftPinMarker(proxy: proxy, space: fullMapSpace)
                         }
                     }
                 }
                 .mapStyle(.hybrid)
+                .mapControls {
+                    MapUserLocationButton()
+                }
                 .onTapGesture { position in
                     if let coordinate = proxy.convert(position, from: .local) {
-                        tappedCoordinate = coordinate
-                        validationMessage = nil
+                        placeDraftPin(at: coordinate)
                     }
+                }
+                .onMapCameraChange { _ in
+                    didFrameFullScreenCamera = true
                 }
                 .ignoresSafeArea()
             }
+            .coordinateSpace(.named(fullMapSpace))
 
             VStack {
                 HStack {
@@ -432,35 +571,67 @@ struct UnifiedPinComposerView: View {
         }
     }
 
-    /// Full-screen map framing: tightly on the dropped pin when one exists,
-    /// otherwise the same start region as the inline map.
-    private var fullScreenRegion: MKCoordinateRegion {
+    /// Where a manual map should OPEN, in the agreed priority order:
+    ///
+    /// 1. the pin already dropped in this composer,
+    /// 2. the operator's current device location,
+    /// 3. the mapped vineyard / selected block,
+    /// 4. the existing wide fallback.
+    ///
+    /// Returns nil while none of 1–3 is known yet, which is what lets a late
+    /// first GPS fix still frame the map instead of stranding it on the
+    /// fallback.
+    private func openingRegion(span: CLLocationDegrees) -> MKCoordinateRegion? {
         if let tappedCoordinate {
             return MKCoordinateRegion(
                 center: tappedCoordinate,
-                span: MKCoordinateSpan(latitudeDelta: 0.0015, longitudeDelta: 0.0015)
+                span: MKCoordinateSpan(latitudeDelta: span, longitudeDelta: span)
             )
         }
-        return initialRegion
-    }
-
-    private var initialRegion: MKCoordinateRegion {
-        if let tappedCoordinate {
+        if let device = locationService.location?.coordinate, CLLocationCoordinate2DIsValid(device) {
             return MKCoordinateRegion(
-                center: tappedCoordinate,
-                span: MKCoordinateSpan(latitudeDelta: 0.004, longitudeDelta: 0.004)
+                center: device,
+                span: MKCoordinateSpan(latitudeDelta: span, longitudeDelta: span)
             )
         }
         if let paddock = selectedPaddock ?? store.paddocks.first(where: { !$0.polygonPoints.isEmpty }) {
             return MKCoordinateRegion(
                 center: paddock.polygonPoints.centroid,
-                span: MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
+                span: MKCoordinateSpan(latitudeDelta: span * 2, longitudeDelta: span * 2)
             )
         }
-        return MKCoordinateRegion(
+        return nil
+    }
+
+    /// The existing wide fallback, used only when nothing better is known.
+    private var fallbackRegion: MKCoordinateRegion {
+        MKCoordinateRegion(
             center: CLLocationCoordinate2D(latitude: -34.9, longitude: 138.6),
             span: MKCoordinateSpan(latitudeDelta: 40, longitudeDelta: 40)
         )
+    }
+
+    /// Frame each map at most ONCE. After that the camera belongs to the
+    /// operator: a pan, a zoom, a tap or a pin drag latches the flag, and a
+    /// moving GPS fix never pulls the view back.
+    private func frameCamerasIfNeeded() {
+        if !didFrameInlineCamera, let region = openingRegion(span: 0.004) {
+            didFrameInlineCamera = true
+            inlineCamera = .region(region)
+        }
+        if !didFrameFullScreenCamera, let region = openingRegion(span: 0.0015) {
+            didFrameFullScreenCamera = true
+            fullScreenCamera = .region(region)
+        }
+    }
+
+    /// Framing for the full-screen map at the moment it is opened. It starts
+    /// from the shared coordinate state, so it always opens on whatever the
+    /// inline map is showing.
+    private func frameFullScreenCameraOnOpen() {
+        didFrameFullScreenCamera = false
+        fullScreenCamera = .region(openingRegion(span: 0.0015) ?? fallbackRegion)
+        didFrameFullScreenCamera = true
     }
 
     /// Full-width tappable block cards — generous touch area with a clear
@@ -980,6 +1151,10 @@ struct UnifiedPinComposerView: View {
     }
 
     private func save() async {
+        // The pin is created exactly once. Every later path — the photo
+        // prompt's Skip, its 3s timeout, a swipe-dismiss, a cancelled camera
+        // — runs AFTER this point and can never re-enter it.
+        guard !hasCreatedPin else { return }
         let marker = markerCoordinate()
         let canonical = ManualIssueContract.canonicalSegments(Array(selectedSegments))
         if let error = UnifiedPinContract.validationError(
@@ -1002,8 +1177,10 @@ struct UnifiedPinComposerView: View {
         customPinService.store = store
 
         let coordinate = CLLocationCoordinate2D(latitude: marker.latitude, longitude: marker.longitude)
-        // One-shot canonical placement for a manually dropped point; row and
-        // block methods carry the explicit block with no speculated snapping.
+        // Resolved AGAIN here, from the final coordinate, through the same
+        // canonical resolver the live preview label uses. A pin dragged from
+        // row 69 to row 70 after the label was drawn therefore cannot be
+        // stored against the row it merely used to be near.
         let attachment: PinAttachmentResolver.Attachment? =
             method == UnifiedPinContract.scopePoint ? resolvedAttachment(for: coordinate) : nil
         let containmentBlock: UUID? = method == UnifiedPinContract.scopePoint
@@ -1034,7 +1211,7 @@ struct UnifiedPinComposerView: View {
             if let rowSegments {
                 await customPinService.queueRowSegments(pinId: pin.id, segments: rowSegments)
             }
-            finishSave()
+            promptForPhoto(pinId: pin.id)
         } else if let button = selectedStandard {
             // Repair / Growth: the EXISTING pin create path stays
             // authoritative — never routed through a Manual Issue RPC.
@@ -1059,7 +1236,7 @@ struct UnifiedPinComposerView: View {
                 // queued + retried until the pin insert reaches the server.
                 await customPinService.queueRowSegments(pinId: pin.id, segments: rowSegments)
             }
-            finishSave()
+            promptForPhoto(pinId: pin.id)
         } else if let type = selectedCustom {
             guard let vineyardId = store.selectedVineyardId else {
                 validationMessage = "Could not create pin — no vineyard selected."
@@ -1086,7 +1263,7 @@ struct UnifiedPinComposerView: View {
             )
             let saved = await customPinService.createCustomPin(params)
             if saved {
-                finishSave()
+                promptForPhoto(pinId: params.id)
             } else if let message = customPinService.errorMessage {
                 validationMessage = message
                 customPinService.errorMessage = nil
@@ -1094,7 +1271,37 @@ struct UnifiedPinComposerView: View {
         }
     }
 
+    // MARK: - Photo
+
+    /// Ask the photo question for the pin that was JUST created.
+    ///
+    /// This runs for every save out of this composer — Repair, Growth,
+    /// Growth Stage and Custom, on the map, row and block methods alike —
+    /// and deliberately does NOT consult `settings.autoPhotoPrompt`. That
+    /// preference still governs the ordinary quick Repair/Growth taps
+    /// elsewhere; it is untouched here.
+    private func promptForPhoto(pinId: UUID) {
+        hasCreatedPin = true
+        pendingPhotoPinId = pinId
+        pendingShowPicker = false
+        showAutoPhotoConfirm = true
+    }
+
+    /// Attach the captured photo to the exact pin this composer created.
+    /// A cancelled camera returns nil and the pin simply keeps no photo.
+    private func attachPhoto(data: Data?) {
+        defer { pendingPhotoPinId = nil }
+        guard let data, let pinId = pendingPhotoPinId else { return }
+        guard var pin = store.pins.first(where: { $0.id == pinId }) else { return }
+        pin.photoData = data
+        store.updatePin(pin)
+    }
+
+    /// Leave the composer once the photo question is fully resolved. Guarded
+    /// so the timeout, a dismissal and a photo callback cannot each dismiss.
     private func finishSave() {
+        guard !didFinish else { return }
+        didFinish = true
         dismiss()
         onSaved()
     }

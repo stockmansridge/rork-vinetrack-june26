@@ -1,6 +1,10 @@
 package com.rork.vinetrack.ui.screens
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -64,29 +68,35 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.CameraPositionState
 import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.GoogleMapComposable
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapType
 import com.google.maps.android.compose.MapUiSettings
 import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
+import com.rork.vinetrack.data.LocationTracker
 import com.rork.vinetrack.data.PinPlacement
 import com.rork.vinetrack.data.model.CustomPinCreateParams
 import com.rork.vinetrack.data.model.CustomPinType
@@ -99,11 +109,15 @@ import com.rork.vinetrack.data.model.PaddockRow
 import com.rork.vinetrack.data.model.UnifiedPinContract
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.components.AutoPhotoPromptSheet
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.components.MapMyLocationButton
+import com.rork.vinetrack.ui.components.hasDeviceLocationPermission
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import java.time.Instant
 import java.util.UUID
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 /**
@@ -168,12 +182,67 @@ fun UnifiedPinComposerScreen(
 
     LaunchedEffect(Unit) { vm.refreshCustomPinTypes() }
 
-    // Hardware/gesture back steps backwards through the flow.
+    // Hardware/gesture back steps backwards through the flow. Stepping back
+    // never clears the location or the chosen type — both are held above
+    // this `when`, so adjusting the pin and returning finds the type still
+    // selected.
     BackHandler {
         when (step) {
             0 -> onBack()
             else -> step -= 1
         }
+    }
+
+    // The pin this composer just created, waiting on the photo question. Only
+    // its id is held: the pin is saved FIRST, so ignoring the question,
+    // swiping it away or cancelling the picker can never lose it.
+    var photoPinId by remember { mutableStateOf<String?>(null) }
+    var showAutoPhoto by remember { mutableStateOf(false) }
+    // Latches the instant a pin is created. Together with [finished] below it
+    // makes the whole save single-shot: no timeout, dismissal or photo
+    // callback can create or finish a second time.
+    var pinCreated by remember { mutableStateOf(false) }
+    var finished by remember { mutableStateOf(false) }
+
+    fun finish() {
+        if (finished) return
+        finished = true
+        photoPinId = null
+        onSaved()
+    }
+
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri: Uri? ->
+        val pin = photoPinId?.let { id -> state.pins.firstOrNull { it.id == id } }
+        if (uri != null && pin != null) {
+            // The EXISTING upload / pending-photo queue, attached to the exact
+            // pin just created.
+            vm.attachQuickPinPhoto(pin, uri) { ok ->
+                scope.launch {
+                    snackbarHostState.showSnackbar(if (ok) "Photo added to pin" else "Couldn't add the photo")
+                }
+            }
+        }
+        // A cancelled picker ends exactly like a successful one: the pin is
+        // already saved, it simply keeps no photo.
+        finish()
+    }
+
+    /**
+     * Ask the photo question for the pin that was just created.
+     *
+     * This runs for EVERY save out of this composer — Repair, Growth, Growth
+     * Stage and Custom, across the map, row and block methods — and
+     * deliberately does not consult the auto-photo preference. That setting
+     * still governs the ordinary quick Repair/Growth taps elsewhere and is
+     * left untouched.
+     */
+    fun promptForPhoto(pinId: String) {
+        pinCreated = true
+        photoPinId = pinId
+        saving = false
+        showAutoPhoto = true
     }
 
     fun markerCoordinate(): ManualIssueLatLng? = when (method) {
@@ -205,6 +274,9 @@ fun UnifiedPinComposerScreen(
     }
 
     fun save() {
+        // Single-shot: the pin is created once and the photo question runs
+        // after it, never instead of it.
+        if (pinCreated) return
         val chosen = selection
         val marker = markerCoordinate()
         val canonical = ManualIssueContract.canonicalSegments(segments.toList())
@@ -223,9 +295,10 @@ fun UnifiedPinComposerScreen(
         validationMessage = null
         saving = true
 
-        // One-shot canonical placement for a manually dropped point: block by
-        // containment + row snapping. Row/block methods carry the explicit
-        // block; no snapping is speculated for them.
+        // Resolved AGAIN here from the FINAL marker coordinate, through the
+        // same canonical resolver the live preview label uses. A pin dragged
+        // from row 69 to row 70 after the label was drawn therefore cannot be
+        // stored against the row it merely used to be near.
         val placement = if (method == UnifiedPinContract.SCOPE_POINT) {
             PinPlacement.resolve(
                 paddocks = state.paddocks,
@@ -266,11 +339,10 @@ fun UnifiedPinComposerScreen(
                     locationScope = method,
                     segments = rowSegments,
                     growthStageCode = chosen.stage.code,
+                    onCreatedPin = { pin -> promptForPhoto(pin.id) },
                 ) { ok ->
                     saving = false
-                    if (ok) {
-                        onSaved()
-                    } else {
+                    if (!ok) {
                         scope.launch { snackbarHostState.showSnackbar("Couldn't save the pin. Please try again.") }
                     }
                 }
@@ -293,11 +365,10 @@ fun UnifiedPinComposerScreen(
                     placement = placement,
                     locationScope = method,
                     segments = rowSegments,
+                    onCreatedPin = { pin -> promptForPhoto(pin.id) },
                 ) { ok ->
                     saving = false
-                    if (ok) {
-                        onSaved()
-                    } else {
+                    if (!ok) {
                         scope.launch { snackbarHostState.showSnackbar("Couldn't save the pin. Please try again.") }
                     }
                 }
@@ -308,9 +379,10 @@ fun UnifiedPinComposerScreen(
                     validationMessage = "No vineyard selected."
                     return
                 }
+                val customPinId = UUID.randomUUID().toString()
                 vm.createCustomPin(
                     CustomPinCreateParams(
-                        id = UUID.randomUUID().toString(),
+                        id = customPinId,
                         vineyardId = vineyardId,
                         title = chosen.type.name,
                         locationScope = method,
@@ -329,7 +401,7 @@ fun UnifiedPinComposerScreen(
                 ) { ok, message ->
                     saving = false
                     if (ok) {
-                        onSaved()
+                        promptForPhoto(customPinId)
                     } else {
                         scope.launch { snackbarHostState.showSnackbar(message ?: "Couldn't save the pin.") }
                     }
@@ -506,6 +578,25 @@ fun UnifiedPinComposerScreen(
             },
         )
     }
+
+    // The photo question, shown after EVERY manual-composer save. Skip, a
+    // swipe-dismiss and the 3s timeout are the same answer: keep the pin,
+    // no photo, finish. The shared sheet owns the countdown so this flow and
+    // the quick-pin flow can never drift apart.
+    if (showAutoPhoto) {
+        AutoPhotoPromptSheet(
+            onSkip = {
+                showAutoPhoto = false
+                finish()
+            },
+            onTakePhoto = {
+                showAutoPhoto = false
+                photoPicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            },
+        )
+    }
 }
 
 /** What the user picked on the Repair / Growth / Custom tabs. */
@@ -616,9 +707,16 @@ private fun LocationStep(
     onContinue: () -> Unit,
 ) {
     val vine = LocalVineColors.current
+    val context = LocalContext.current
     val selectedPaddock = state.paddocks.firstOrNull { it.id == paddockId }
     var fullScreenMap by remember { mutableStateOf(false) }
     var rowFilter by remember { mutableStateOf("") }
+
+    // The app's EXISTING location plumbing — the same tracker and permission
+    // check every other VineTrack map uses. No second GPS source is created.
+    val tracker = remember { LocationTracker(context) }
+    var hasLocationPerm by remember { mutableStateOf(hasDeviceLocationPermission(context)) }
+    var locationMessage by remember { mutableStateOf<String?>(null) }
 
     // Shared camera start for the inline and full-screen maps.
     val mapStart = tapped ?: state.paddocks.firstOrNull { !it.polygonPoints.isNullOrEmpty() }
@@ -628,6 +726,24 @@ private fun LocationStep(
         }
     val camera = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(mapStart ?: LatLng(-34.9, 138.6), if (mapStart != null) 16f else 5f)
+    }
+
+    // Opening camera priority: an already-dropped pin, then the device's
+    // current location, then the mapped block, then the wide fallback (the
+    // last two are already applied above). This runs ONCE and then latches:
+    // GPS movement never drags the camera back off what the operator is
+    // looking at.
+    var cameraFramed by remember { mutableStateOf(tapped != null) }
+    LaunchedEffect(tapped != null) { if (tapped != null) cameraFramed = true }
+    LaunchedEffect(Unit) {
+        if (cameraFramed || !tracker.hasPermission) return@LaunchedEffect
+        val fix = tracker.currentLocation()
+        if (fix != null && !cameraFramed) {
+            cameraFramed = true
+            runCatching {
+                camera.animate(CameraUpdateFactory.newLatLngZoom(LatLng(fix.latitude, fix.longitude), 17f))
+            }
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -646,25 +762,48 @@ private fun LocationStep(
                     if (!fullScreenMap) {
                         GoogleMap(
                             cameraPositionState = camera,
-                            properties = MapProperties(mapType = MapType.HYBRID),
-                            uiSettings = MapUiSettings(zoomControlsEnabled = false),
+                            // The normal blue current-location dot. Absent, not
+                            // broken, when the operator has denied location —
+                            // manual placement never depends on a fix.
+                            properties = MapProperties(
+                                mapType = MapType.HYBRID,
+                                isMyLocationEnabled = hasLocationPerm,
+                            ),
+                            uiSettings = MapUiSettings(
+                                zoomControlsEnabled = false,
+                                // Our own control sits beside the expand button.
+                                myLocationButtonEnabled = false,
+                            ),
                             onMapClick = { onTap(it) },
                             modifier = Modifier.matchParentSize(),
                         ) {
-                            tapped?.let { Marker(state = MarkerState(position = it)) }
+                            tapped?.let { DraftPinMarker(position = it, onMove = onTap) }
                         }
                     }
-                    ComposerMapIconButton(
-                        icon = Icons.Filled.Fullscreen,
-                        contentDescription = "Full-screen map",
-                        onClick = { fullScreenMap = true },
+                    Row(
                         modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
-                    )
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        MapMyLocationButton(
+                            camera = camera,
+                            onMessage = { locationMessage = it },
+                            contentDescription = "Centre on my location",
+                            onPermissionGranted = { hasLocationPerm = true },
+                        )
+                        ComposerMapIconButton(
+                            icon = Icons.Filled.Fullscreen,
+                            contentDescription = "Full-screen map",
+                            onClick = { fullScreenMap = true },
+                        )
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 // Canonical snapping preview — the same one-shot resolution the
                 // save uses, so the label always matches what gets stored.
                 PlacementPreviewLabel(state = state, tapped = tapped)
+                locationMessage?.let {
+                    Text(it, fontSize = 12.sp, color = vine.textSecondary)
+                }
             }
             UnifiedPinContract.SCOPE_ROW -> {
                 // Row-first: every mapped row in the vineyard is listed under
@@ -807,11 +946,45 @@ private fun LocationStep(
             onTap = onTap,
             initialPosition = camera.position,
             onSyncCamera = { camera.position = it },
+            hasLocationPermission = hasLocationPerm,
+            onPermissionGranted = { hasLocationPerm = true },
             validationMessage = validationMessage,
             onContinue = onContinue,
             onClose = { fullScreenMap = false },
         )
     }
+}
+
+/**
+ * The draft pin: tap-placed, then DRAGGABLE.
+ *
+ * [position] is the composer's single shared coordinate, so the inline and
+ * full-screen maps always show the pin in the same place. Drags are
+ * published on every position change rather than only at drag-end, which is
+ * what makes the block/row label re-resolve while the pin is still moving.
+ */
+@Composable
+@GoogleMapComposable
+private fun DraftPinMarker(position: LatLng, onMove: (LatLng) -> Unit) {
+    val markerState = remember { MarkerState(position = position) }
+    val latestOnMove by rememberUpdatedState(onMove)
+    // A tap elsewhere (or the other map) moves the marker to match.
+    LaunchedEffect(position) {
+        if (markerState.position != position) markerState.position = position
+    }
+    // Continuous drag publication. `drop(1)` skips the value the marker was
+    // created with, so composing the marker never re-reports a placement.
+    LaunchedEffect(markerState) {
+        snapshotFlow { markerState.position }
+            .drop(1)
+            .collect { latestOnMove(it) }
+    }
+    Marker(
+        state = markerState,
+        draggable = true,
+        title = "Dropped pin",
+        snippet = "Drag to move",
+    )
 }
 
 /**
@@ -993,11 +1166,16 @@ private fun FullScreenPinMap(
     onTap: (LatLng) -> Unit,
     initialPosition: CameraPosition,
     onSyncCamera: (CameraPosition) -> Unit,
+    hasLocationPermission: Boolean,
+    onPermissionGranted: () -> Unit,
     validationMessage: String?,
     onContinue: () -> Unit,
     onClose: () -> Unit,
 ) {
+    // Opens on the inline map's camera, so the pin never jumps between the
+    // two views — they share one coordinate and one starting frame.
     val fullCamera = remember { CameraPositionState(position = initialPosition) }
+    var locationMessage by remember { mutableStateOf<String?>(null) }
     val close = {
         onSyncCamera(fullCamera.position)
         onClose()
@@ -1009,22 +1187,38 @@ private fun FullScreenPinMap(
         Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
             GoogleMap(
                 cameraPositionState = fullCamera,
-                properties = MapProperties(mapType = MapType.HYBRID),
-                uiSettings = MapUiSettings(zoomControlsEnabled = true),
+                properties = MapProperties(
+                    mapType = MapType.HYBRID,
+                    isMyLocationEnabled = hasLocationPermission,
+                ),
+                uiSettings = MapUiSettings(
+                    zoomControlsEnabled = true,
+                    myLocationButtonEnabled = false,
+                ),
                 onMapClick = onTap,
                 modifier = Modifier.fillMaxSize(),
             ) {
-                tapped?.let { Marker(state = MarkerState(position = it)) }
+                tapped?.let { DraftPinMarker(position = it, onMove = onTap) }
             }
-            ComposerMapIconButton(
-                icon = Icons.Filled.FullscreenExit,
-                contentDescription = "Exit full-screen map",
-                onClick = close,
+            Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .statusBarsPadding()
                     .padding(12.dp),
-            )
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                MapMyLocationButton(
+                    camera = fullCamera,
+                    onMessage = { locationMessage = it },
+                    contentDescription = "Centre on my location",
+                    onPermissionGranted = onPermissionGranted,
+                )
+                ComposerMapIconButton(
+                    icon = Icons.Filled.FullscreenExit,
+                    contentDescription = "Exit full-screen map",
+                    onClick = close,
+                )
+            }
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -1044,6 +1238,9 @@ private fun FullScreenPinMap(
                     PlacementPreviewLabel(state = state, tapped = tapped, onDark = true)
                     validationMessage?.let {
                         Text(it, fontSize = 13.sp, color = Color(0xFFFF8A80))
+                    }
+                    locationMessage?.let {
+                        Text(it, fontSize = 12.sp, color = Color.White.copy(alpha = 0.8f))
                     }
                 }
                 Button(
