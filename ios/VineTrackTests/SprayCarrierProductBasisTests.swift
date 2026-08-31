@@ -20,13 +20,29 @@ import Testing
 /// rate" is ever invented to make a hectare workflow work.
 struct SprayCarrierProductBasisTests {
 
-    private let geometry = SprayApplicationGeometry(
-        grossAreaHectares: 10,
-        totalRowLengthMetres: 25_000,
-        uniformRowSpacingMetres: 3,
-        source: .mappedRows,
-        unresolvedBlocks: []
-    )
+    /// 10 ha of mapped rows, 25,000 m of row at 3 m spacing.
+    ///
+    /// Built through the canonical resolver rather than asserted into
+    /// existence, so the fixture is exactly what production would resolve for
+    /// a fully mapped block: `.mappedRows`, authoritative, nothing unresolved.
+    private let geometry = SprayGeometryResolver.resolve([
+        SprayBlockInput(
+            blockId: "b1",
+            blockName: "Carrier basis fixture",
+            grossAreaHectares: 10,
+            mappedRowLengthMetres: 25_000,
+            rowSpacingMetres: 3
+        )
+    ])
+
+    @Test("The shared fixture resolves to the geometry these tests assume")
+    func fixtureGeometryIsAsExpected() {
+        #expect(geometry.grossAreaHectares == 10)
+        #expect(geometry.totalRowLengthMetres == 25_000)
+        #expect(geometry.uniformRowSpacingMetres == 3)
+        #expect(geometry.source == .mappedRows)
+        #expect(geometry.unresolvedBlocks.isEmpty)
+    }
 
     // MARK: - 11, 12. Both carrier bases are valid for a per-100 L label
 
