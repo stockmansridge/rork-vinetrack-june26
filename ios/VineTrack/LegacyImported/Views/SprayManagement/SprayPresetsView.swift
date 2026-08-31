@@ -278,6 +278,13 @@ struct EditSavedChemicalSheet: View {
     /// so the rest stay collapsed until asked for. Presentation only — every
     /// use is still on the record and still saved.
     @State private var showsNonVineyardUses: Bool = false
+    /// Whether the lookup-review use summary is showing every target.
+    ///
+    /// A register reply can carry forty grapevine targets. Reviewing a lookup
+    /// is a decision about the PRODUCT and its rate, so the targets are
+    /// evidence rather than the task, and the first five are enough to
+    /// recognise the label by.
+    @State private var showsAllReviewedUses: Bool = false
     @State private var deleteCoordinator = ChemicalDeleteCoordinator()
     /// The lookup session for "search the register again".
     ///
@@ -707,7 +714,24 @@ struct EditSavedChemicalSheet: View {
     /// editable numbers, reading `0` while the real 2.5 kg/ha lived one screen
     /// deeper. They are gone: a registered use carries its rate WITH the basis
     /// the label quotes it against, and two scalars cannot express that.
+    @ViewBuilder
     private var registeredUsesSection: some View {
+        // Reviewing a lookup is not authoring. The uses arrived from the
+        // register seconds ago and the operator has nothing to correct in them
+        // yet; drawing forty full editors — each with its own Change, remove,
+        // "Add Rate For This Use", withholding period and "No registered rate
+        // captured" line — buried the one question that actually blocks the
+        // save, which is the default rate above.
+        if session.isReviewingLookup {
+            reviewedUsesSummarySection
+        } else {
+            editableRegisteredUsesSection
+        }
+    }
+
+    /// The authoring form: manual entry, and editing a record already on file.
+    /// Unchanged behaviour — every registered use stays fully editable here.
+    private var editableRegisteredUsesSection: some View {
         Section {
             ForEach($session.chemistryDraft.uses) { $use in
                 if use.isViticultural {
@@ -737,7 +761,13 @@ struct EditSavedChemicalSheet: View {
                     .font(.subheadline)
                 }
             }
-            ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "rates"))
+            // The missing-rate notice belongs to Default Rates, which owns the
+            // rate decision. It is repeated here ONLY when that section is off
+            // screen (no grapevine registration), so it is shown exactly once
+            // and never lost.
+            if !defaultRatesSectionIsVisible {
+                ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "rates"))
+            }
             ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "registered_uses"))
 
             // Valid label rates whose governing condition the label never
@@ -760,6 +790,103 @@ struct EditSavedChemicalSheet: View {
                 ? "A use is a crop and a target the product is registered against, with the rate as the label states it and any withholding or re-entry period. The basis is kept exactly as printed — a per-100 L rate is never restated per hectare. Grapevine uses are shown first; the label's other crops are kept in full under “Other crops”."
                 : "A use is a crop and a target the product is registered against, with the rate as the label states it and any withholding or re-entry period. The basis is kept exactly as printed — a per-100 L rate is never restated per hectare.")
         }
+    }
+
+    /// The lookup-review summary: what the register says this product is
+    /// registered against on grapevines, and nothing more.
+    ///
+    /// Read-only on purpose. The rate decision lives in Default Rates above,
+    /// and repeating a rate control per target is what produced two different
+    /// places to answer the same mandatory question.
+    private var reviewedUsesSummarySection: some View {
+        let targets = reviewedGrapevineTargets
+        let visible = showsAllReviewedUses ? targets : Array(targets.prefix(5))
+        return Section {
+            if targets.isEmpty {
+                Text("No grapevine target was named on the label.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                // The crop, stated ONCE. It was previously repeated as a full
+                // "Crop: Grapevine" field on every single use.
+                Text("Grapevine")
+                    .font(.subheadline.weight(.semibold))
+                ForEach(visible, id: \.self) { target in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: 5))
+                            .foregroundStyle(.tertiary)
+                        Text(target)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                if targets.count > 5 {
+                    Button(showsAllReviewedUses
+                        ? "Show fewer"
+                        : "Show all \(targets.count) uses") {
+                        showsAllReviewedUses.toggle()
+                    }
+                    .font(.callout)
+                }
+            }
+            if nonVineyardUseCount > 0 {
+                DisclosureGroup(isExpanded: $showsNonVineyardUses) {
+                    // Read-only too: still on the record, still saved, but not
+                    // something to edit while confirming a lookup.
+                    ForEach(session.chemistryDraft.uses.filter { !$0.isViticultural }) { use in
+                        Text(reviewedOtherCropSummary(use))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } label: {
+                    Label(
+                        "Other crops on this label (\(nonVineyardUseCount))",
+                        systemImage: "list.bullet.rectangle"
+                    )
+                    .font(.subheadline)
+                }
+            }
+            if !defaultRatesSectionIsVisible {
+                ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "rates"))
+            }
+            ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "registered_uses"))
+        } header: {
+            Text("Registered grapevine uses (\(targets.count))")
+        } footer: {
+            Text("What the register lists this product against on grapevines. Confirm the rate this vineyard doses by in Default Rates above.")
+        }
+    }
+
+    /// Grapevine target names, deduplicated case-insensitively, in label order.
+    ///
+    /// A register reply routinely states the same target several times under
+    /// different conditions. Those are different RATES, not different targets,
+    /// and listing "Powdery mildew" six times said nothing six times.
+    private var reviewedGrapevineTargets: [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for use in session.chemistryDraft.uses where use.isViticultural {
+            let target = use.targetRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !target.isEmpty else { continue }
+            guard seen.insert(target.lowercased()).inserted else { continue }
+            ordered.append(target)
+        }
+        return ordered
+    }
+
+    private func reviewedOtherCropSummary(_ use: ChemicalManualUseDraft) -> String {
+        let crop = use.crop.trimmingCharacters(in: .whitespacesAndNewlines)
+        let target = use.targetRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return [crop, target].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
+    }
+
+    /// Whether the Default Rates section is on screen. It owns the missing-rate
+    /// notice whenever it is, so the notice is never drawn twice.
+    private var defaultRatesSectionIsVisible: Bool {
+        session.isRegisteredForGrapevine
     }
 
     private var vineyardUseCount: Int {
@@ -845,6 +972,10 @@ struct EditSavedChemicalSheet: View {
                     session.clearDefaultRateValue(for: basis)
                 }
             )
+            // The rate gate lives with the rate decision. It used to sit under
+            // the registered-use list, which is where an operator looked for a
+            // control that was never there.
+            ChemicalSaveIssueNotice(issues: session.saveIssues(forField: "rates"))
         } header: {
             Text("Default Rates")
         } footer: {

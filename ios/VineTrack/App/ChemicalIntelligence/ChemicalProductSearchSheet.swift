@@ -235,7 +235,16 @@ struct ChemicalProductSearchSheet: View {
                         } label: {
                             resultRow(row)
                         }
+                        // A search result is the one thing on this screen the
+                        // operator MUST act on, and as an unbordered Form row it
+                        // did not read as actionable at all. `.plain` keeps the
+                        // card's own typography instead of tinting every line of
+                        // product identity blue.
+                        .buttonStyle(.plain)
                         .disabled(coordinator.isResolving)
+                        .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                     }
                 } header: {
                     Text(tier.label)
@@ -273,7 +282,43 @@ struct ChemicalProductSearchSheet: View {
     /// gone wrong once.
     private func resultRow(_ row: ChemicalSearchRow) -> some View {
         let summary = ChemicalCandidateSummary(result: row.result, country: countryCode)
-        return VStack(alignment: .leading, spacing: 4) {
+        return HStack(alignment: .top, spacing: 12) {
+            resultIdentity(row, summary: summary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            // States the affordance in words. A chevron alone was read as
+            // "expand for more detail" rather than "choose this product".
+            HStack(spacing: 4) {
+                Text("Select")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.accentColor, in: Capsule())
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
+        .padding(13)
+        .background(
+            Color(.secondarySystemBackground),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.accentColor.opacity(0.45), lineWidth: 1)
+        }
+        // The whole card is the target, not just the text inside it.
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// The product identity text, unchanged — this is what the operator
+    /// compares against the drum in their hand.
+    private func resultIdentity(
+        _ row: ChemicalSearchRow,
+        summary: ChemicalCandidateSummary
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(summary.name)
                     .font(.body.weight(.medium))
