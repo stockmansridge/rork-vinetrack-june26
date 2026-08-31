@@ -476,12 +476,30 @@ class ChemicalReleaseCloseoutTest {
     }
 
     @Test
-    fun `16b - a structured product with no confirmed default says so`() {
+    fun `16b - no confirmed default falls back to the registered label rate`() {
         val unconfirmed = chemical(
             ratePerHa = 2.0,
             rates = listOf(ChemicalRate(id = "r1", label = "Per Ha", value = 2000.0, basis = "per_hectare")),
             registeredUses = listOf(grapeUse(exactRate(2.0))),
         )
+        // A usable registered grapevine rate is a complete record of what the
+        // label permits — the same rule that admitted the save — so the card
+        // states the LABEL's figure, clearly named as such, instead of
+        // demanding a confirmation for a record with nothing wrong with it.
+        // Still never the legacy `rates` row or `rate_per_ha` (which here
+        // disagree, at 2000 and 2), and nothing is written to default_rates.
+        assertEquals(
+            "Registered label rate: 2 L/ha",
+            ChemicalDefaultRateDisplay.line(unconfirmed),
+        )
+        assertFalse(ChemicalDefaultRateDisplay.needsConfirmation(unconfirmed))
+    }
+
+    @Test
+    fun `16b2 - structured with NO usable registered rate still says so`() {
+        // The genuinely unfinished case keeps its prompt: registered uses
+        // exist but none carries a rate a calculation could use.
+        val unconfirmed = chemical(registeredUses = listOf(grapeUse()))
         assertEquals(
             ChemicalDefaultRateDisplay.CONFIRMATION_REQUIRED,
             ChemicalDefaultRateDisplay.line(unconfirmed),

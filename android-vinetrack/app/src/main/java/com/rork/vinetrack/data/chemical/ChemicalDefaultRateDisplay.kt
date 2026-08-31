@@ -84,13 +84,65 @@ object ChemicalDefaultRateDisplay {
         )
 
     /**
+     * The distinct USABLE registered grapevine rates, one line each, in label
+     * order:
+     *
+     * ```text
+     * "Registered label range: 560–700 g/ha"
+     * "Registered label rate: 2 L/ha"
+     * ```
+     *
+     * A band is always NAMED as a band so it can never be read as a dose
+     * somebody chose. Usability is [ChemicalSaveContract.isUsable] — the same
+     * rule that admitted the record to the store — so this line exists exactly
+     * when the save contract's rate requirement was met from `registered_uses`.
+     * Purely a projection for display: nothing here writes `default_rates`,
+     * mints an `option_key`, `rate_id` or `direction_id`, or alters the stored
+     * uses in any way.
+     */
+    fun registeredRateSummaries(uses: List<ChemicalRegisteredUse>?): List<String> {
+        val lines = LinkedHashSet<String>()
+        uses.orEmpty().viticultural()
+            .flatMap { it.rates }
+            .filter { ChemicalSaveContract.isUsable(it) }
+            .forEach { rate ->
+                val isRange = rate.minValue != null && rate.maxValue != null
+                lines.add(
+                    if (isRange) {
+                        "Registered label range: ${rate.displayRate}"
+                    } else {
+                        "Registered label rate: ${rate.displayRate}"
+                    },
+                )
+            }
+        return lines.toList()
+    }
+
+    /**
+     * The registered-rate line a store card falls back to when no optional
+     * default was confirmed. First usable registered grapevine rate, in label
+     * order; null when the registration carries no usable rate.
+     */
+    fun registeredRateLine(chemical: SavedChemical): String? =
+        registeredRateSummaries(chemical.registeredUses).firstOrNull()
+
+    /**
      * The operational rate line for a Chemical Store row.
      *
      * ```text
-     * confirmed default(s)          -> "2 L/ha"  |  "2 L/ha · 150 g/100 L"
-     * structured, nothing confirmed -> "Rate confirmation required"
-     * legacy/manual record          -> null (the caller keeps its legacy line)
+     * confirmed default(s)             -> "2 L/ha"  |  "2 L/ha · 150 g/100 L"
+     * usable registered rate or range  -> "Registered label range: 560–700 g/ha"
+     * structured, no usable rate       -> "Rate confirmation required"
+     * legacy/manual record             -> null (the caller keeps its legacy line)
      * ```
+     *
+     * A confirmed optional default always wins. Without one, a usable
+     * registered grapevine rate is a complete, saveable record of what the
+     * label permits (the same rule that enabled the save), so it is what the
+     * card states — clearly named as the LABEL's figure, never presented as a
+     * confirmed vineyard dose. "Rate confirmation required" survives only for
+     * the genuinely unfinished case: structured intelligence with no usable
+     * registered rate at all.
      *
      * Never the first `rates` row, and never `rate_per_ha`: neither can be
      * shown to be a decision anybody made.
@@ -98,17 +150,76 @@ object ChemicalDefaultRateDisplay {
     fun line(chemical: SavedChemical): String? {
         val confirmed = slotDisplays(chemical.defaultRates)
         if (confirmed.isNotEmpty()) return confirmed.joinToString(" · ")
+        registeredRateLine(chemical)?.let { return it }
         if (isStructured(chemical)) return CONFIRMATION_REQUIRED
         return null
     }
 
     /**
-     * True when this product's operational rate still needs confirming.
+     * True when this product's operational rate still needs the operator's
+     * attention.
      *
-     * Drives the store's own prompt, and is deliberately false for a legacy
-     * record: nothing about an old manual chemical is unfinished, it simply
-     * predates the structured contract.
+     * False for a confirmed default, false for a legacy record (nothing about
+     * an old manual chemical is unfinished, it simply predates the structured
+     * contract) — and false when the registration itself states a usable
+     * grapevine rate or range. That record is complete as saved: the exact
+     * dose is a spray-time decision, and painting the card amber for it told
+     * the operator something was wrong when nothing was.
      */
     fun needsConfirmation(chemical: SavedChemical): Boolean =
-        isStructured(chemical) && slotDisplays(chemical.defaultRates).isEmpty()
+        isStructured(chemical) &&
+            slotDisplays(chemical.defaultRates).isEmpty() &&
+            registeredRateLine(chemical) == null
+}
+
+/**
+ * The compact registered-use review: crop once, target names only.
+ *
+ * The register publishes one printed label direction as one row per target, so
+ * a single grapevine direction arrives as dozens of uses that differ only in
+ * `target_raw`. The review used to render the full crop/rate/WHP/re-entry/
+ * restrictions block for every one of them — pages of the same legal text —
+ * which buried the rate the operator came to read. This projection is what the
+ * compact review shows instead; the COMPLETE `registered_uses` data is stored
+ * unchanged and remains one tap away where detail is needed.
+ *
+ * Pure selection logic, kept out of the composable so both review surfaces and
+ * the tests consult one rule.
+ */
+object ChemicalRegisteredUseCompactDisplay {
+
+    /** How many targets the collapsed review shows. */
+    const val COLLAPSED_TARGET_COUNT: Int = 5
+
+    /** The crop, stated ONCE above the target list. */
+    const val CROP_LABEL: String = "Grapevine"
+
+    const val SHOW_FEWER_LABEL: String = "Show fewer"
+
+    /** Shown in place of a target the label left blank. */
+    const val TARGET_NOT_STATED: String = "Target not stated"
+
+    /**
+     * Target names in label order, deduplicated case-insensitively — the
+     * register routinely lists "Powdery mildew" and "Powdery Mildew" as
+     * separate rows. The FIRST spelling wins so the list reads as the label
+     * printed it.
+     */
+    fun dedupedTargets(uses: List<ChemicalRegisteredUse>): List<String> {
+        val seen = mutableSetOf<String>()
+        val out = mutableListOf<String>()
+        for (use in uses) {
+            val name = use.targetRaw.trim().ifEmpty { TARGET_NOT_STATED }
+            if (seen.add(name.lowercase())) out.add(name)
+        }
+        return out
+    }
+
+    /** The collapsed selection: the first [COLLAPSED_TARGET_COUNT], in order. */
+    fun collapsedTargets(targets: List<String>): List<String> =
+        targets.take(COLLAPSED_TARGET_COUNT)
+
+    fun heading(targetCount: Int): String = "Registered grapevine uses ($targetCount)"
+
+    fun showAllLabel(targetCount: Int): String = "Show all $targetCount uses"
 }

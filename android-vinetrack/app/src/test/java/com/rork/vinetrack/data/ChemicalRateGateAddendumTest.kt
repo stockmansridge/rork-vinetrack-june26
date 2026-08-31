@@ -166,9 +166,20 @@ class ChemicalRateGateAddendumTest {
         // And it asks for no dose, so it may not instruct one either.
         assertFalse(ChemicalRateGate.mayInstructRateEntry(decision))
 
-        // The screen states the band and says where the dose is chosen.
+        // The screen states the band and says where the dose is chosen. The
+        // band wording itself lives in ONE place — the shared display
+        // projection the Chemical Store card also renders — and the review
+        // delegates to it, so the two surfaces can never phrase the same
+        // registration differently.
         val screen = source(matchFlow)
-        assertTrue(screen.contains("Registered label range: "))
+        assertTrue(
+            "the review must state the band through the shared projection",
+            screen.contains("ChemicalDefaultRateDisplay.registeredRateSummaries("),
+        )
+        val display = source(
+            "src/main/java/com/rork/vinetrack/data/chemical/ChemicalDefaultRateDisplay.kt",
+        )
+        assertTrue(display.contains("Registered label range: "))
         assertTrue(
             screen.contains(
                 "The registered label rate is saved with this chemical. Choose the exact ",

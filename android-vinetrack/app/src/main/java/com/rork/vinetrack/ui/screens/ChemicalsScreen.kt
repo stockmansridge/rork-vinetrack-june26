@@ -56,7 +56,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import com.rork.vinetrack.data.chemical.ChemicalActivityGroup
 import com.rork.vinetrack.data.chemical.ChemicalActivityGroupScheme
-import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateDisplay
 import com.rork.vinetrack.data.chemical.ChemicalEditOutcome
@@ -77,7 +76,7 @@ import com.rork.vinetrack.data.chemical.legacyGroupProjection
 import com.rork.vinetrack.data.chemical.viticultural
 import com.rork.vinetrack.ui.components.ChemicalJurisdictionChip
 import com.rork.vinetrack.ui.components.ChemicalJurisdictionMismatchBanner
-import com.rork.vinetrack.ui.components.ChemicalRegisteredUsesView
+import com.rork.vinetrack.ui.components.ChemicalCompactRegisteredUsesView
 import com.rork.vinetrack.ui.components.ChemicalVerificationBadge
 import com.rork.vinetrack.ui.components.ChemicalStoreFilter
 import com.rork.vinetrack.ui.components.chemicalVerificationTint
@@ -1579,27 +1578,22 @@ internal fun ChemicalFormSheet(
                 displayIntelligence.registeredUses,
             )
             if (displayUses.isNotEmpty()) {
-                // The label-source flag only ever changes the WORDING of a
-                // label-parsed zero-day withholding period ("not required when
-                // used as directed"). It never invents or alters a value, and
-                // it fails closed to a plain day count.
-                val hasLabelSource = displayIntelligence.verification.sources.any {
-                    it.kind == ChemicalDataSourceKind.MANUFACTURER_LABEL
-                }
-
                 SectionLabel("Grapevine uses & safety")
-                ChemicalRegisteredUsesView(
-                    displayUses,
-                    hasManufacturerLabelSource = hasLabelSource,
-                )
-                Text(
-                    "Withholding and re-entry periods are shown exactly as the label " +
-                        "states them. A period VineTrack could not establish reads " +
-                        "“Not stated” — it is never treated as zero. Edit these under " +
-                        "“Edit chemistry & identity” above.",
-                    fontSize = 11.sp,
-                    color = vine.textSecondary,
-                )
+                // The registered rate, stated ONCE at the top — then the
+                // compact target list. The full per-target crop/rate/WHP/
+                // re-entry/restrictions cards repeated the same printed
+                // direction dozens of times; the COMPLETE registered_uses
+                // data is stored unchanged.
+                ChemicalDefaultRateDisplay.registeredRateSummaries(displayUses)
+                    .forEach { line ->
+                        Text(
+                            line,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = vine.textPrimary,
+                        )
+                    }
+                ChemicalCompactRegisteredUsesView(displayUses)
             }
 
             SectionLabel("Details")
@@ -1740,18 +1734,40 @@ internal fun ChemicalFormSheet(
                         color = vine.textSecondary,
                     )
                 } else {
-                    Text(
-                        ChemicalDefaultRateDisplay.CONFIRMATION_REQUIRED,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = VineColors.Warning,
-                    )
-                    Text(
-                        "Use “Search the register again” above to review this product's " +
-                            "registered rates and confirm the one this vineyard uses.",
-                        fontSize = 11.sp,
-                        color = vine.textSecondary,
-                    )
+                    // A usable registered grapevine rate or range is a complete
+                    // record of what the label permits: state it plainly. The
+                    // confirmation prompt survives only when the registration
+                    // carries no usable rate at all.
+                    val registeredLine = existing?.let {
+                        ChemicalDefaultRateDisplay.registeredRateLine(it)
+                    }
+                    if (registeredLine != null) {
+                        Text(
+                            registeredLine,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = vine.textPrimary,
+                        )
+                        Text(
+                            "The registered label rate is saved with this chemical. Choose " +
+                                "the exact rate being applied when planning each spray.",
+                            fontSize = 11.sp,
+                            color = vine.textSecondary,
+                        )
+                    } else {
+                        Text(
+                            ChemicalDefaultRateDisplay.CONFIRMATION_REQUIRED,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = VineColors.Warning,
+                        )
+                        Text(
+                            "Use “Search the register again” above to review this product's " +
+                                "registered rates and confirm the one this vineyard uses.",
+                            fontSize = 11.sp,
+                            color = vine.textSecondary,
+                        )
+                    }
                 }
             }
 

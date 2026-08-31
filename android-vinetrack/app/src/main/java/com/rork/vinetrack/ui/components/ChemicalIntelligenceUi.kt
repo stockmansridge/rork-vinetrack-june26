@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +50,7 @@ import com.rork.vinetrack.data.chemical.ChemicalLabelRate
 import com.rork.vinetrack.data.chemical.ChemicalProvenanceBadge
 import com.rork.vinetrack.data.chemical.ChemicalProvenanceTier
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
+import com.rork.vinetrack.data.chemical.ChemicalRegisteredUseCompactDisplay
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalUseProvenanceFact
 import com.rork.vinetrack.data.chemical.ChemicalWithholdingDisplay
@@ -684,6 +687,84 @@ fun ChemicalRegisteredUsesView(
             }
             // Registered uses are never inferred from activity group: if no grape
             // use was confirmed, say so rather than implying approval.
+            if (uses.none { it.isViticultural }) {
+                GrapeNotVerifiedLabel()
+            }
+        }
+    }
+}
+
+/**
+ * Compact, read-only registered-use review — crop once, target names only.
+ *
+ * One printed label direction arrives from the register as one row per target,
+ * so a single grapevine direction can be dozens of uses differing only in
+ * `target_raw`. The full [ChemicalRegisteredUsesView] repeats the crop, rate,
+ * withholding, re-entry and restrictions block for each of them, which is
+ * right for a detailed audit and wrong for a review: pages of identical legal
+ * text between the operator and the Save button. This mirrors the working iOS
+ * presentation — the heading counts the targets, "Grapevine" is stated once,
+ * the first five targets show, and the rest sit behind "Show all N uses".
+ *
+ * Display only. The COMPLETE `registered_uses` data — every rate, period and
+ * restriction — is saved unchanged; nothing here trims what is stored.
+ */
+@Composable
+fun ChemicalCompactRegisteredUsesView(
+    uses: List<ChemicalRegisteredUse>,
+    modifier: Modifier = Modifier,
+) {
+    val vine = LocalVineColors.current
+    val targets = remember(uses) { ChemicalRegisteredUseCompactDisplay.dedupedTargets(uses) }
+    var expanded by remember(uses) { mutableStateOf(false) }
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (uses.isEmpty()) {
+            GrapeNotVerifiedLabel()
+            Text(
+                "No registered uses were confirmed for this product. Check the label before applying.",
+                fontSize = 11.sp,
+                color = vine.textSecondary,
+            )
+        } else {
+            Text(
+                ChemicalRegisteredUseCompactDisplay.heading(targets.size),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textSecondary,
+            )
+            // The crop, once. Never per target: every one of these rows is the
+            // same grapevine registration.
+            Text(
+                ChemicalRegisteredUseCompactDisplay.CROP_LABEL,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textPrimary,
+            )
+            val visible = if (expanded) {
+                targets
+            } else {
+                ChemicalRegisteredUseCompactDisplay.collapsedTargets(targets)
+            }
+            visible.forEach { target ->
+                Text("• $target", fontSize = 12.sp, color = vine.textSecondary)
+            }
+            if (targets.size > ChemicalRegisteredUseCompactDisplay.COLLAPSED_TARGET_COUNT) {
+                TextButton(
+                    onClick = { expanded = !expanded },
+                    contentPadding = PaddingValues(0.dp),
+                ) {
+                    Text(
+                        if (expanded) {
+                            ChemicalRegisteredUseCompactDisplay.SHOW_FEWER_LABEL
+                        } else {
+                            ChemicalRegisteredUseCompactDisplay.showAllLabel(targets.size)
+                        },
+                        fontSize = 13.sp,
+                    )
+                }
+            }
+            // Registered uses are never inferred from activity group: if no
+            // grape use was confirmed, say so rather than implying approval.
             if (uses.none { it.isViticultural }) {
                 GrapeNotVerifiedLabel()
             }

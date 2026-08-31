@@ -54,7 +54,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.ChemicalInfoService
-import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRate
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateDisplay
@@ -80,10 +79,9 @@ import com.rork.vinetrack.ui.components.ChemicalActiveIngredientRow
 import com.rork.vinetrack.ui.components.ChemicalConflictCard
 import com.rork.vinetrack.ui.components.ChemicalGroupSummaryLine
 import com.rork.vinetrack.ui.components.ChemicalIdentityView
-import com.rork.vinetrack.ui.components.ChemicalLabelRatesView
+import com.rork.vinetrack.ui.components.ChemicalCompactRegisteredUsesView
 import com.rork.vinetrack.ui.components.ChemicalLabelledLine
 import com.rork.vinetrack.ui.components.ChemicalPill
-import com.rork.vinetrack.ui.components.ChemicalRegisteredUsesView
 import com.rork.vinetrack.ui.components.ChemicalVerificationBadge
 import com.rork.vinetrack.ui.components.ChemicalVerificationEvidenceView
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
@@ -722,25 +720,19 @@ internal fun ChemicalMatchFlowSheet(
                             SaveBlockedNotice(blocking.map { it.message })
                         }
 
-                        // ---- Grapevine use, rates and compliance ----
-                        if (operational.any { it.rates.isNotEmpty() }) {
-                            HorizontalDivider()
-                            ChemicalLabelRatesView(operational)
-                        }
-
+                        // ---- Grapevine use targets, compact ----
+                        //
+                        // The registered rate is stated ONCE, in the Registered
+                        // rate section above. The label-rates block that used to
+                        // repeat it here is gone, and so are the full per-target
+                        // crop/rate/WHP/re-entry/restrictions cards: one printed
+                        // direction arrives as dozens of rows differing only in
+                        // target, and rendering the same legal text for each
+                        // buried the decision the operator came to make. The
+                        // compact list shows target names only — the COMPLETE
+                        // registered_uses data is saved unchanged.
                         HorizontalDivider()
-                        SectionLabel("Registered grapevine uses")
-                        // The label-source flag only ever changes the WORDING of
-                        // a label-parsed zero-day withholding period ("not
-                        // required when used as directed"); it never invents or
-                        // alters a value. Derived from the payload's own cited
-                        // sources.
-                        ChemicalRegisteredUsesView(
-                            operational,
-                            hasManufacturerLabelSource = intel.verification.sources.any {
-                                it.kind == ChemicalDataSourceKind.MANUFACTURER_LABEL
-                            },
-                        )
+                        ChemicalCompactRegisteredUsesView(operational)
                         // NOTE: no other-crop disclosure here, deliberately.
                         //
                         // This label may register macadamias, cereals and
@@ -1314,21 +1306,9 @@ private fun RegisteredRateSection(grapevineUses: List<ChemicalRegisteredUse>) {
  * One line per distinct usable registered grapevine rate, in label order.
  *
  * A band is named as a band — `Registered label range: 560–700 g/ha` — so it
- * can never be read as a dose somebody chose.
+ * can never be read as a dose somebody chose. Delegates to the shared
+ * projection so this review and the Chemical Store card state the SAME line
+ * from the same rule.
  */
-private fun registeredRateLines(uses: List<ChemicalRegisteredUse>): List<String> {
-    val lines = LinkedHashSet<String>()
-    uses.flatMap { it.rates }
-        .filter { ChemicalSaveContract.isUsable(it) }
-        .forEach { rate ->
-            val isRange = rate.minValue != null && rate.maxValue != null
-            lines.add(
-                if (isRange) {
-                    "Registered label range: ${rate.displayRate}"
-                } else {
-                    "Registered label rate: ${rate.displayRate}"
-                },
-            )
-        }
-    return lines.toList()
-}
+private fun registeredRateLines(uses: List<ChemicalRegisteredUse>): List<String> =
+    ChemicalDefaultRateDisplay.registeredRateSummaries(uses)
