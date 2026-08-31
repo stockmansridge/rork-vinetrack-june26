@@ -149,31 +149,160 @@ enum TripRowSequencePlanner {
     /// and direction across all selected paddocks. Returns paths expressed as
     /// real row numbers (e.g. `68.5`, `69.5`, …), matching what `Trip.rowSequence`
     /// expects.
+    ///
+    /// Every produced value is a member of `availablePaths(in:)` — the pattern
+    /// walks *indices into that set*, so it can never invent a path above or
+    /// below the selection, and never fabricates paths through row-number gaps
+    /// in a non-contiguous multi-block selection.
     static func generateSequence(
         paddocks: [Paddock],
         pattern: TrackingPattern,
         startPath: Double,
         directionHigherFirst: Bool
     ) -> [Double] {
-        let n = combinedTotalRows(in: paddocks)
-        guard n > 0 else { return [] }
+        guard combinedTotalRows(in: paddocks) > 0 else { return [] }
+        return plannedSequence(
+            paths: availablePaths(in: paddocks),
+            pattern: pattern,
+            startPath: startPath,
+            higherFirst: directionHigherFirst
+        )
+    }
+
+    /// The authoritative planner. `paths` is the universe of valid paths; the
+    /// returned sequence is drawn entirely from it.
+    ///
+    /// Patterns operate on *indices* into the direction-ordered, start-rotated
+    /// universe rather than on arithmetic over path values, so `startPath + 5`
+    /// can never name a path that does not exist.
+    static func plannedSequence(
+        paths: [Double],
+        pattern: TrackingPattern,
+        startPath: Double,
+        higherFirst: Bool
+    ) -> [Double] {
+        guard pattern != .freeDrive, !paths.isEmpty else { return [] }
+
+        // Every Second Row already planned against the explicit valid path set;
+        // that behaviour is preserved verbatim.
         if pattern == .everySecondRow {
             return everySecondRowSequence(
-                paths: availablePaths(in: paddocks),
+                paths: paths,
                 startPath: startPath,
-                higherFirst: directionHigherFirst
+                higherFirst: higherFirst
             )
         }
-        let numbers = selectedRowNumbers(in: paddocks)
-        let minRow = numbers.first ?? 1
-        let offset = Double(minRow - 1)
-        let localStartRow = max(1, min(Int((startPath - offset) + 0.5), n))
-        let raw = pattern.generateSequence(
-            startRow: localStartRow,
-            totalRows: n,
-            reversed: !directionHigherFirst
-        )
-        return raw.map { $0 + offset }
+
+        let ordered = orderedTraversal(paths: paths, startPath: startPath, higherFirst: higherFirst)
+        guard !ordered.isEmpty else { return [] }
+
+        switch pattern {
+        case .sequential, .custom:
+            return ordered
+        case .upAndBack:
+            return ordered.flatMap { [$0, $0] }
+        case .fiveThree:
+            return indexed(ordered, by: fiveThreeIndices(count: ordered.count))
+        case .twoRowUpBack:
+            return indexed(ordered, by: twoRowUpBackIndices(count: ordered.count))
+        case .everySecondRow, .freeDrive:
+            return ordered
+        }
+    }
+
+    /// The valid path universe ordered by traversal direction and rotated so
+    /// the selected start path is first.
+    ///
+    /// `higherFirst` mirrors the picker: `true` = "Lower to higher" (ascending),
+    /// `false` = "Higher to lower" (descending). Rotation — rather than
+    /// clamping — is what preserves full coverage from a mid-block start.
+    static func orderedTraversal(
+        paths: [Double],
+        startPath: Double,
+        higherFirst: Bool
+    ) -> [Double] {
+        guard !paths.isEmpty else { return [] }
+        let sorted = higherFirst ? paths.sorted() : paths.sorted(by: >)
+        guard let idx = nearestIndex(in: sorted, to: startPath) else { return sorted }
+        return Array(sorted[idx...]) + Array(sorted[..<idx])
+    }
+
+    /// Index of the path closest to `value`. The start path is clamped/snapped
+    /// before it reaches here; this is the final guarantee that traversal
+    /// begins on a real member of the universe.
+    private static func nearestIndex(in ordered: [Double], to value: Double) -> Int? {
+        guard let first = ordered.first else { return nil }
+        var best = 0
+        var bestDelta = abs(first - value)
+        for (i, p) in ordered.enumerated() {
+            let delta = abs(p - value)
+            if delta < bestDelta {
+                best = i
+                bestDelta = delta
+            }
+        }
+        return best
+    }
+
+    private static func indexed(_ ordered: [Double], by indices: [Int]) -> [Double] {
+        indices.compactMap { $0 >= 0 && $0 < ordered.count ? ordered[$0] : nil }
+    }
+
+    /// 3/5 pattern in index space: startup 0, +3, +1, +5, +2 then alternating
+    /// +5 / -3, finally sweeping up whatever the walk missed.
+    private static func fiveThreeIndices(count: Int) -> [Int] {
+        guard count > 0 else { return [] }
+        var indices: [Int] = []
+        var visited = Set<Int>()
+
+        for offset in [0, 3, 1, 5, 2] where offset < count && !visited.contains(offset) {
+            indices.append(offset)
+            visited.insert(offset)
+        }
+
+        if var current = indices.last {
+            var usePlusFive = true
+            while true {
+                let next = usePlusFive ? current + 5 : current - 3
+                if next < 0 || next >= count || visited.contains(next) { break }
+                indices.append(next)
+                visited.insert(next)
+                current = next
+                usePlusFive.toggle()
+            }
+        }
+
+        for i in 0..<count where !visited.contains(i) { indices.append(i) }
+        return indices
+    }
+
+    /// 2 Row Up & Back in index space: out on every 4th path from offset 1,
+    /// back on every 4th from offset 3, then the remainder in traversal order.
+    private static func twoRowUpBackIndices(count: Int) -> [Int] {
+        guard count > 0 else { return [] }
+        var indices: [Int] = []
+        var visited = Set<Int>()
+
+        var i = 1
+        while i < count {
+            indices.append(i)
+            visited.insert(i)
+            i += 4
+        }
+
+        var back: [Int] = []
+        i = 3
+        while i < count {
+            back.append(i)
+            i += 4
+        }
+        for j in back.reversed() where !visited.contains(j) {
+            indices.append(j)
+            visited.insert(j)
+        }
+
+        for k in 0..<count where !visited.contains(k) { indices.append(k) }
+        return indices
     }
 
     /// Every Second Row, parity-preserving sequence across the combined paths.

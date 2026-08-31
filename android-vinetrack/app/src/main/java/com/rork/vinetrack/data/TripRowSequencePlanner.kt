@@ -337,25 +337,159 @@ object TripRowSequencePlanner {
         startPath: Double,
         directionHigherFirst: Boolean,
     ): List<Double> {
-        val n = combinedTotalRows(paddocks)
-        if (n <= 0) return emptyList()
+        if (combinedTotalRows(paddocks) <= 0) return emptyList()
+        return plannedSequence(
+            paths = availablePaths(paddocks),
+            pattern = pattern,
+            startPath = startPath,
+            higherFirst = directionHigherFirst,
+        )
+    }
+
+    /**
+     * The authoritative planner. [paths] is the universe of valid paths; the
+     * returned sequence is drawn entirely from it.
+     *
+     * Patterns operate on *indices* into the direction-ordered, start-rotated
+     * universe rather than on arithmetic over path values, so `startPath + 5`
+     * can never name a path that does not exist. Mirrors the iOS
+     * `TripRowSequencePlanner.plannedSequence` rule for rule.
+     */
+    fun plannedSequence(
+        paths: List<Double>,
+        pattern: TrackingPattern,
+        startPath: Double,
+        higherFirst: Boolean,
+    ): List<Double> {
+        if (pattern == TrackingPattern.FREE_DRIVE || paths.isEmpty()) return emptyList()
+
+        // Every Second Row already planned against the explicit valid path set;
+        // that behaviour is preserved verbatim.
         if (pattern == TrackingPattern.EVERY_SECOND_ROW) {
             return everySecondRowSequence(
-                paths = availablePaths(paddocks),
+                paths = paths,
                 startPath = startPath,
-                higherFirst = directionHigherFirst,
+                higherFirst = higherFirst,
             )
         }
-        val numbers = selectedRowNumbers(paddocks)
-        val minRow = numbers.firstOrNull() ?: 1
-        val offset = (minRow - 1).toDouble()
-        val localStartRow = maxOf(1, minOf(((startPath - offset) + 0.5).toInt(), n))
-        val raw = pattern.generateSequence(
-            startRow = localStartRow,
-            totalRows = n,
-            reversed = !directionHigherFirst,
-        )
-        return raw.map { it + offset }
+
+        val ordered = orderedTraversal(paths, startPath, higherFirst)
+        if (ordered.isEmpty()) return emptyList()
+
+        return when (pattern) {
+            TrackingPattern.SEQUENTIAL, TrackingPattern.CUSTOM -> ordered
+            TrackingPattern.UP_AND_BACK -> ordered.flatMap { listOf(it, it) }
+            TrackingPattern.FIVE_THREE -> indexed(ordered, fiveThreeIndices(ordered.size))
+            TrackingPattern.TWO_ROW_UP_BACK -> indexed(ordered, twoRowUpBackIndices(ordered.size))
+            TrackingPattern.EVERY_SECOND_ROW, TrackingPattern.FREE_DRIVE -> ordered
+        }
+    }
+
+    /**
+     * The valid path universe ordered by traversal direction and rotated so the
+     * selected start path is first.
+     *
+     * [higherFirst] mirrors the picker: `true` = "Lower to higher" (ascending),
+     * `false` = "Higher to lower" (descending). Rotation — rather than clamping
+     * — is what preserves full coverage from a mid-block start.
+     */
+    fun orderedTraversal(
+        paths: List<Double>,
+        startPath: Double,
+        higherFirst: Boolean,
+    ): List<Double> {
+        if (paths.isEmpty()) return emptyList()
+        val sorted = if (higherFirst) paths.sorted() else paths.sortedDescending()
+        val idx = nearestIndex(sorted, startPath)
+        return sorted.subList(idx, sorted.size) + sorted.subList(0, idx)
+    }
+
+    /**
+     * Index of the path closest to [value]. The start path is clamped/snapped
+     * before it reaches here; this is the final guarantee that traversal begins
+     * on a real member of the universe.
+     */
+    private fun nearestIndex(ordered: List<Double>, value: Double): Int {
+        var best = 0
+        var bestDelta = abs(ordered[0] - value)
+        for (i in ordered.indices) {
+            val delta = abs(ordered[i] - value)
+            if (delta < bestDelta) {
+                best = i
+                bestDelta = delta
+            }
+        }
+        return best
+    }
+
+    private fun indexed(ordered: List<Double>, indices: List<Int>): List<Double> =
+        indices.mapNotNull { ordered.getOrNull(it) }
+
+    /**
+     * 3/5 pattern in index space: startup 0, +3, +1, +5, +2 then alternating
+     * +5 / -3, finally sweeping up whatever the walk missed.
+     */
+    private fun fiveThreeIndices(count: Int): List<Int> {
+        if (count <= 0) return emptyList()
+        val indices = mutableListOf<Int>()
+        val visited = mutableSetOf<Int>()
+
+        for (offset in listOf(0, 3, 1, 5, 2)) {
+            if (offset < count && !visited.contains(offset)) {
+                indices.add(offset)
+                visited.add(offset)
+            }
+        }
+
+        val seed: Int? = indices.lastOrNull()
+        if (seed != null) {
+            var current: Int = seed
+            var usePlusFive = true
+            while (true) {
+                val next = if (usePlusFive) current + 5 else current - 3
+                if (next < 0 || next >= count || visited.contains(next)) break
+                indices.add(next)
+                visited.add(next)
+                current = next
+                usePlusFive = !usePlusFive
+            }
+        }
+
+        for (i in 0 until count) if (!visited.contains(i)) indices.add(i)
+        return indices
+    }
+
+    /**
+     * 2 Row Up & Back in index space: out on every 4th path from offset 1, back
+     * on every 4th from offset 3, then the remainder in traversal order.
+     */
+    private fun twoRowUpBackIndices(count: Int): List<Int> {
+        if (count <= 0) return emptyList()
+        val indices = mutableListOf<Int>()
+        val visited = mutableSetOf<Int>()
+
+        var i = 1
+        while (i < count) {
+            indices.add(i)
+            visited.add(i)
+            i += 4
+        }
+
+        val back = mutableListOf<Int>()
+        i = 3
+        while (i < count) {
+            back.add(i)
+            i += 4
+        }
+        for (j in back.reversed()) {
+            if (!visited.contains(j)) {
+                indices.add(j)
+                visited.add(j)
+            }
+        }
+
+        for (k in 0 until count) if (!visited.contains(k)) indices.add(k)
+        return indices
     }
 
     /** Every Second Row, parity-preserving sequence across the combined paths. */
