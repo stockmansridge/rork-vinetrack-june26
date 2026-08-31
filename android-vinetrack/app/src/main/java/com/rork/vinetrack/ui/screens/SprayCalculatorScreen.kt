@@ -137,7 +137,9 @@ import com.rork.vinetrack.data.spray.SprayProductRateBasis
 import com.rork.vinetrack.data.spray.SprayTarget
 import com.rork.vinetrack.data.spray.SprayVineyardProfile
 import com.rork.vinetrack.ui.LocalRegionFormatter
+import com.rork.vinetrack.data.spray.SprayApplicationMode
 import com.rork.vinetrack.data.spray.SprayApplicationPlan
+import com.rork.vinetrack.data.spray.SprayGuidedTankBuilder
 import com.rork.vinetrack.data.spray.SprayProductLineResult
 import com.rork.vinetrack.ui.components.GuidedBlockerBanner
 import com.rork.vinetrack.ui.components.GuidedCalculatedPanel
@@ -509,6 +511,13 @@ fun SprayCalculatorScreen(
             basis = basis,
             rate = effectiveRateDisplay(chem, line),
             costPerUnit = if (canEditCost) lineCostPerUnit(chem, rateUnit) else null,
+            // Explicit ONLY when the label itself decides (per-100 L) or the
+            // operator answered the Whole Block / Treated Band question for
+            // THIS line. A banded pass with an unanswered area-rated line is
+            // an unconfirmed default, and the flow blocks on it rather than
+            // freezing a guess into a compliance record.
+            isAreaBasisExplicit = line.basis == SprayCalculator.RateBasis.PER_100L ||
+                productAreaBasis[line.uid] != null,
         )
     }
 
@@ -714,6 +723,12 @@ fun SprayCalculatorScreen(
                 }
             }
         }
+        // A banded job's band width rides back in from the persisted snapshot,
+        // so reopening the job reproduces the SAME treated area it was saved
+        // with instead of silently reverting to a whole-block calculation.
+        r.applicationGeometry?.bandWidthTotalMetres?.takeIf { it > 0 }?.let { metres ->
+            bandWidthText = fmtRate(metres)
+        }
         r.tanks?.firstOrNull()?.let { tank ->
             if (tank.sprayRatePerHa > 0) {
                 sprayRateText = fmtNum(tank.sprayRatePerHa, 0)
@@ -730,15 +745,21 @@ fun SprayCalculatorScreen(
                 // product switches only.
                 val wantBasis = if (chem.ratePer100L > 0) CHEMICAL_RATE_PER_100L else CHEMICAL_RATE_PER_HECTARE
                 val storedRate = if (chem.ratePer100L > 0) chem.ratePer100L else chem.ratePerHa
-                chemLines.add(
-                    CalcChemLine(
-                        chemicalId = saved.id,
-                        selectedRateId = null,
-                        basis = basisOf(wantBasis),
-                        rateAmount = storedRate.takeIf { it > 0 },
-                        rateUnit = chem.unit.takeIf { it.isNotBlank() } ?: saved.unit,
-                    ),
+                val restored = CalcChemLine(
+                    chemicalId = saved.id,
+                    selectedRateId = null,
+                    basis = basisOf(wantBasis),
+                    rateAmount = storedRate.takeIf { it > 0 },
+                    rateUnit = chem.unit.takeIf { it.isNotBlank() } ?: saved.unit,
                 )
+                chemLines.add(restored)
+                // Reinstate the area basis this line was ACTUALLY calculated
+                // on, so a treated-band quantity reopens as treated-band —
+                // never silently restated against gross hectares. Legacy lines
+                // with no stored basis stay unanswered and the flow asks again.
+                SprayProductRateBasis.legacy(chem.rateBasis)
+                    ?.takeIf { it.isAreaBased }
+                    ?.let { productAreaBasis[restored.uid] = it }
             }
         }
     }
@@ -761,6 +782,25 @@ fun SprayCalculatorScreen(
     /** Validate the form and compute the tank mix. Returns null after setting an error. */
     fun runCalculation(): SprayCalculator.Result? {
         errorMessage = null
+        // A BANDED pass is calculated by the guided plan and nothing else. The
+        // legacy engine multiplies every area rate by GROSS hectares, so a
+        // treated-band product routed through it would persist a whole-block
+        // quantity. The review result below is a pure PROJECTION of the same
+        // plan the Products step and Review displayed — preview, review and
+        // persisted tanks are one calculation by construction.
+        if (guidedFlow.mode == SprayApplicationMode.BANDED) {
+            guidedFlow.firstBlocker?.let { blocker ->
+                errorMessage = blocker.message
+                return null
+            }
+            if (tankCapacity <= 0) {
+                errorMessage = "Select spray equipment with a tank capacity."
+                return null
+            }
+            val computed = SprayGuidedTankBuilder.reviewResult(guidedPlan)
+            result = computed
+            return computed
+        }
         if (selectedPaddockIds.isEmpty()) {
             errorMessage = "Select at least one block."
             return null
@@ -797,6 +837,22 @@ fun SprayCalculatorScreen(
     fun buildInput(): SprayRecordRepository.SprayInput {
         val r = result!!
         val iso = Instant.now().toString()
+        // Chemical Intelligence frozen at save time (sql/194). The store is
+        // read HERE, once, so the historical line keeps today's chemistry
+        // even after the product is re-classified tomorrow.
+        val lineSnapshots = chemLines.mapNotNull { line ->
+            ChemicalSnapshotCapture
+                .captureForNewApplication(
+                    savedChemicalId = line.chemicalId,
+                    productName = null,
+                    library = state.savedChemicals,
+                    // Stamped with the record's own instant, so the
+                    // chemistry and the application share one clock.
+                    capturedAt = iso,
+                )
+                .snapshot
+                ?.let { line.chemicalId to it }
+        }.toMap()
         return SprayRecordRepository.SprayInput(
             date = iso,
             startTime = iso,
@@ -818,32 +874,31 @@ fun SprayCalculatorScreen(
             // Job-originated completion: the record fulfils this spray job.
             sprayJobId = originSprayJobId,
             isTemplate = false,
-            // Each product line carries the area basis the operator chose for
-            // THAT line, keyed by saved-chemical id so a banded treated-band
-            // quantity reloads as a treated-band one.
-            tanks = SprayCalculator.buildTanks(
-                result = r,
-                chosenSprayRate = chosenRate,
-                rateBases = chemLines.mapNotNull { line ->
-                    productAreaBasis[line.uid]?.let { line.chemicalId to it }
-                }.toMap(),
-                // Chemical Intelligence frozen at save time (sql/194). The store is
-                // read HERE, once, so the historical line keeps today's chemistry
-                // even after the product is re-classified tomorrow.
-                snapshots = chemLines.mapNotNull { line ->
-                    ChemicalSnapshotCapture
-                        .captureForNewApplication(
-                            savedChemicalId = line.chemicalId,
-                            productName = null,
-                            library = state.savedChemicals,
-                            // Stamped with the record's own instant, so the
-                            // chemistry and the application share one clock.
-                            capturedAt = iso,
-                        )
-                        .snapshot
-                        ?.let { line.chemicalId to it }
-                }.toMap(),
-            ),
+            // A banded job persists the guided plan's own tank quantities —
+            // the SAME `tankSplit` / `quantityPerFullTank` / `quantityInLastTank`
+            // the preview and review displayed, each line stamped with the
+            // basis it was ACTUALLY calculated on. The legacy result never
+            // touches a banded save. Whole-block and foliar jobs keep the
+            // established builder unchanged.
+            tanks = if (guidedFlow.mode == SprayApplicationMode.BANDED) {
+                SprayGuidedTankBuilder.build(
+                    plan = guidedPlan,
+                    chosenSprayRate = chosenRate,
+                    snapshots = lineSnapshots,
+                )
+            } else {
+                // Each product line carries the area basis the operator chose
+                // for THAT line, keyed by saved-chemical id so a banded
+                // treated-band quantity reloads as a treated-band one.
+                SprayCalculator.buildTanks(
+                    result = r,
+                    chosenSprayRate = chosenRate,
+                    rateBases = chemLines.mapNotNull { line ->
+                        productAreaBasis[line.uid]?.let { line.chemicalId to it }
+                    }.toMap(),
+                    snapshots = lineSnapshots,
+                )
+            },
             // Projection of the SAME plan the Review step displayed. The 17
             // sql/191 + sql/192 columns are never populated from UI state.
             applicationGeometry = guidedFlow.snapshot,
@@ -904,7 +959,17 @@ fun SprayCalculatorScreen(
         }
     }
 
-    val formIsValid = selectedPaddockIds.isNotEmpty() && selectedEquipment != null && chemLines.isNotEmpty()
+    /**
+     * True while a banded pass still has an area-rated product whose Whole
+     * Block / Treated Band question is unanswered. Review, Create and Save are
+     * all blocked on it — gross and treated hectares differ by several times,
+     * so an unconfirmed default must never reach a compliance record.
+     */
+    val bandedBasisUndecided = guidedFlow.mode == SprayApplicationMode.BANDED &&
+        guidedProducts.any { it.needsAreaBasisDecision }
+
+    val formIsValid = selectedPaddockIds.isNotEmpty() && selectedEquipment != null &&
+        chemLines.isNotEmpty() && !bandedBasisUndecided
 
     // ── Spray Tank Mixing review step ────────────────────────────────────────
     val reviewResult = result
