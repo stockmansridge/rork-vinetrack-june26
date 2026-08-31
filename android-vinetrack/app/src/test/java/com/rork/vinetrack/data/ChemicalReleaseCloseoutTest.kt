@@ -10,6 +10,8 @@ import com.rork.vinetrack.data.chemical.ChemicalLabelRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
 import com.rork.vinetrack.data.chemical.ChemicalSaveContract
 import com.rork.vinetrack.data.chemical.ChemicalSaveViolationCode
+import com.rork.vinetrack.data.chemical.ChemicalServerDefaultRateOption
+import com.rork.vinetrack.data.chemical.ChemicalServerDefaultRateOptions
 import com.rork.vinetrack.data.chemical.ChemicalSprayDefaultHandoff
 import com.rork.vinetrack.data.chemical.ChemicalStoreMatching
 import com.rork.vinetrack.data.chemical.StoredChemicalDefaultRate
@@ -76,6 +78,33 @@ class ChemicalReleaseCloseoutTest {
 
     private fun selectionFor(uses: List<ChemicalRegisteredUse>) =
         ChemicalDefaultRateSelection(plan = ChemicalDefaultRate.plan(uses))
+
+    /**
+     * A selection built from the SERVER's canonical options.
+     *
+     * Required by any test that PERSISTS: a default now carries the register's
+     * own `option_key` and `rate_ids`, and an option the device assembled from
+     * `registered_uses` is deliberately refused at the storage boundary.
+     */
+    private fun serverSelectionFor(
+        options: ChemicalServerDefaultRateOptions,
+    ) = ChemicalDefaultRateSelection(plan = ChemicalDefaultRate.plan(options))
+
+    /** The CHATEAU band, 560–700 g/ha, as the server sends it. */
+    private fun bandServerOptions(
+        rateIds: List<String> = listOf("rate_v1_band"),
+    ) = ChemicalServerDefaultRateOptions(
+        perHectare = listOf(
+            ChemicalServerDefaultRateOption(
+                optionKey = "default_option_v1_band",
+                rateIds = rateIds,
+                basis = "per_hectare",
+                unit = "g",
+                minValue = 560.0,
+                maxValue = 700.0,
+            ),
+        ),
+    )
 
     private fun intelligenceFor(uses: List<ChemicalRegisteredUse>) = ChemicalIntelligence(
         registeredUses = uses,
@@ -242,7 +271,7 @@ class ChemicalReleaseCloseoutTest {
         // both. Storing 600 alongside 560-700 reads as an amount that is
         // simultaneously "exactly 600" and "anywhere in 560-700".
         val uses = listOf(grapeUse(bandRate(560.0, 700.0)))
-        val dosed = selectionFor(uses).let {
+        val dosed = serverSelectionFor(bandServerOptions()).let {
             it.selecting(it.plan.perHectare.options.first(), ChemicalDefaultRateBasis.PER_HECTARE)
         }.settingValue(600.0, ChemicalDefaultRateBasis.PER_HECTARE)!!
 

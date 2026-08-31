@@ -7,6 +7,7 @@ import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalProvenanceMapSerializer
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
+import com.rork.vinetrack.data.chemical.ChemicalServerDefaultRateOptions
 import com.rork.vinetrack.data.chemical.ChemicalVerification
 import io.ktor.client.request.headers
 import io.ktor.client.request.post
@@ -119,6 +120,19 @@ class ChemicalInfoService {
         @SerialName("activity_groups") val activityGroups: List<String> = emptyList(),
         @SerialName("registered_uses") val registeredUses: List<ChemicalRegisteredUse> = emptyList(),
         @SerialName("label_rate_bases") val labelRateBases: List<String> = emptyList(),
+        /**
+         * The server's own canonical default-rate options, carrying the
+         * `option_key` and `rate_ids` a confirmed default must be persisted
+         * with.
+         *
+         * Absent on a pre-`default_rate_options` server. Absent is NOT an
+         * invitation to rebuild them here: without this block there is no
+         * canonical option, the review screen fails closed, and the operator
+         * is offered the corrective actions instead. Re-deriving them on
+         * device is what produced identities no other client could match.
+         */
+        @SerialName("default_rate_options")
+        val defaultRateOptions: ChemicalServerDefaultRateOptions? = null,
         /**
          * Per-field evidence tiers recorded by the resolver (`field_provenance`
          * at top level; each registered use additionally carries its own

@@ -2,8 +2,8 @@ package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRate
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateBasis
-import com.rork.vinetrack.data.chemical.ChemicalDefaultRateIdentity
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateOption
+import com.rork.vinetrack.data.chemical.ChemicalServerDefaultRateOption
 import com.rork.vinetrack.data.chemical.ChemicalLabelRate
 import com.rork.vinetrack.data.chemical.ChemicalLabelRateBasis
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
@@ -57,69 +57,132 @@ class ChemicalDefaultRateStorageTest {
     // ---------------------------------------------------------------------
 
     @Test
-    fun `option key matches the server for a single-value rate`() {
-        val key = ChemicalDefaultRateIdentity.mintOptionKey(
-            basis = "per_100_litres",
-            unit = "L",
-            value = 3.0,
-            minValue = null,
-            maxValue = null,
-            rateIds = listOf("rate_v1_aaa", "rate_v1_bbb"),
+    fun `no main source can mint a canonical identity`() {
+        // The strongest form of this guarantee is that the code to do it no
+        // longer exists. The minting helpers were deleted outright rather than
+        // left unused, because an available minting function is one call site
+        // away from being used again.
+        val root = listOf(
+            File("src/main/java"),
+            File("app/src/main/java"),
+            File("android-vinetrack/app/src/main/java"),
+        ).first { it.isDirectory }
+        val offenders = root.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .filter { file ->
+                val code = file.readText()
+                    .replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), "")
+                    .lines()
+                    .filterNot { it.trimStart().startsWith("//") }
+                    .joinToString("\n")
+                code.contains("mintOptionKey")
+            }
+            .map { it.name }
+            .toList()
+        assertEquals(
+            "Android must never mint a canonical option key: $offenders",
+            emptyList<String>(),
+            offenders,
         )
-        assertEquals(goldenSingleValueKey, key)
     }
 
     @Test
-    fun `option key matches the server for a true label band`() {
-        val key = ChemicalDefaultRateIdentity.mintOptionKey(
-            basis = "per_hectare",
-            unit = "g",
-            value = null,
-            minValue = 560.0,
-            maxValue = 700.0,
-            rateIds = listOf("rate_v1_chateau"),
+    fun `the server option key reaches storage byte for byte`() {
+        val stored = requireNotNull(
+            confirmedDefaultRate(
+                option = chateauOption(),
+                basis = ChemicalDefaultRateBasis.PER_HECTARE,
+                grapevineUses = listOf(chateauUse()),
+                confirmedValue = 620.0,
+            ),
         )
-        assertEquals(goldenBandKey, key)
+        assertEquals(goldenBandKey, stored.optionKey)
     }
 
-    /**
-     * A client listing Grapevine Scale first must reach the same option as one
-     * listing European Red Mites first: they made the same choice.
-     */
     @Test
-    fun `option key is independent of rate id order`() {
-        val forward = ChemicalDefaultRateIdentity.mintOptionKey(
-            "per_100_litres", "L", 3.0, null, null, listOf("rate_v1_aaa", "rate_v1_bbb"),
+    fun `the server rate ids reach storage in the server's own order`() {
+        // Deliberately NOT re-sorted or de-duplicated on the way through: the
+        // server minted `option_key` over these exact bytes, so tidying them
+        // here would break the pairing the key exists to prove.
+        val serverOrder = listOf("rate_v1_bbb", "rate_v1_aaa")
+        val stored = requireNotNull(
+            confirmedDefaultRate(
+                option = ChemicalServerDefaultRateOption(
+                    optionKey = goldenSingleValueKey,
+                    rateIds = serverOrder,
+                    basis = "per_100_litres",
+                    unit = "L",
+                    value = 3.0,
+                ).toDomainOption(),
+                basis = ChemicalDefaultRateBasis.PER_100_LITRES,
+                grapevineUses = listOf(chateauUse()),
+            ),
         )
-        val reversed = ChemicalDefaultRateIdentity.mintOptionKey(
-            "per_100_litres", "L", 3.0, null, null, listOf("rate_v1_bbb", "rate_v1_aaa"),
-        )
-        assertEquals(forward, reversed)
-        assertEquals(goldenSingleValueKey, forward)
+        assertEquals(serverOrder, stored.rateIds)
+        assertEquals(goldenSingleValueKey, stored.optionKey)
     }
 
-    /** "No upper bound" and "an upper bound of zero" must never hash alike. */
     @Test
-    fun `absent and zero amounts are distinct identities`() {
-        assertEquals("-", ChemicalDefaultRateIdentity.normaliseNumber(null))
-        assertEquals("0", ChemicalDefaultRateIdentity.normaliseNumber(0.0))
-        assertEquals("3", ChemicalDefaultRateIdentity.normaliseNumber(3.0))
-        // `3`, `3.0` and `3.000` are one number.
-        assertEquals("3", ChemicalDefaultRateIdentity.normaliseNumber(3.000))
+    fun `an option with no server twin can never be persisted`() {
+        // An option the device assembled from `registered_uses` for display
+        // carries no identity the register issued, so it stops at the
+        // persistence boundary rather than being written with an invented one.
+        val uses = listOf(chateauUse())
+        val displayOnly = requireNotNull(
+            ChemicalDefaultRate.options(ChemicalDefaultRateBasis.PER_HECTARE, uses).firstOrNull(),
+        )
+        assertNull(displayOnly.server)
+        assertNull(
+            confirmedDefaultRate(
+                displayOnly, ChemicalDefaultRateBasis.PER_HECTARE, uses, confirmedValue = 620.0,
+            ),
+        )
     }
 
-    /**
-     * Provenance must never move the identity, or a reissued label restating the
-     * same direction would silently orphan the operator's default.
-     */
     @Test
-    fun `label version and timestamp are not part of identity`() {
-        val input = ChemicalDefaultRateIdentity.canonicalInput(
-            "per_hectare", "g", null, 560.0, 700.0, listOf("rate_v1_chateau"),
+    fun `a malformed server option is rejected rather than repaired`() {
+        val uses = listOf(chateauUse())
+        fun refuses(label: String, option: ChemicalServerDefaultRateOption) {
+            assertFalse("$label must not validate", option.isValid)
+            assertNull(
+                "$label must not persist",
+                confirmedDefaultRate(
+                    option.toDomainOption(),
+                    ChemicalDefaultRateBasis.PER_HECTARE,
+                    uses,
+                    confirmedValue = 620.0,
+                ),
+            )
+        }
+        val good = chateauServerOption()
+        refuses("an empty citation list", good.copy(rateIds = emptyList()))
+        refuses("a UUID citation", good.copy(rateIds = listOf("8f14e45f-ceea-467a")))
+        refuses("an unminted option key", good.copy(optionKey = "option-42"))
+        refuses("a bare prefix key", good.copy(optionKey = "default_option_v1_"))
+        refuses("a blank unit", good.copy(unit = " "))
+        refuses("an unknown basis", good.copy(basis = "per_vine"))
+        refuses("an inverted band", good.copy(minValue = 700.0, maxValue = 560.0))
+        refuses("a lone bound", good.copy(maxValue = null))
+        refuses(
+            "a scalar carrying bounds",
+            good.copy(value = 620.0, minValue = 560.0, maxValue = 700.0),
         )
-        assertFalse(input.contains("2026"))
-        assertFalse(input.lowercase().contains("operator"))
-        assertFalse(input.lowercase().contains("label_version"))
+    }
+
+    @Test
+    fun `a server option filed under the wrong basis is refused`() {
+        // A per-100 L option sitting in the per-hectare slot would be applied
+        // per hectare.
+        val misfiled = chateauServerOption().copy(basis = "per_100_litres")
+        assertTrue(misfiled.isValid)
+        assertNull(
+            confirmedDefaultRate(
+                misfiled.toDomainOption(),
+                ChemicalDefaultRateBasis.PER_HECTARE,
+                listOf(chateauUse()),
+                confirmedValue = 620.0,
+            ),
+        )
     }
 
     // ---------------------------------------------------------------------
@@ -144,10 +207,39 @@ class ChemicalDefaultRateStorageTest {
         directionId = "dir_v1_chateau",
     )
 
+    /** The CHATEAU option exactly as the server sends it. */
+    private fun chateauServerOption(
+        optionKey: String = goldenBandKey,
+        rateIds: List<String> = listOf("rate_v1_chateau"),
+    ) = ChemicalServerDefaultRateOption(
+        optionKey = optionKey,
+        rateIds = rateIds,
+        basis = "per_hectare",
+        unit = "g",
+        minValue = 560.0,
+        maxValue = 700.0,
+        directionIds = listOf("dir_v1_chateau"),
+        targets = listOf("Annual broadleaf weeds"),
+        conditions = listOf("All states"),
+        crops = listOf("Grapevines"),
+    )
+
+    /** The domain option the picker renders, carrying the server's identity. */
+    private fun chateauOption(): ChemicalDefaultRateOption =
+        chateauServerOption().toDomainOption()
+
+    /**
+     * The option under test.
+     *
+     * Now built from the SERVER's block rather than re-grouped from
+     * [ChemicalRegisteredUse]s: the register issues the identity, so a test
+     * that assembled one locally would be exercising a path the app no longer
+     * has.
+     */
     private fun option(
-        basis: ChemicalDefaultRateBasis,
-        uses: List<ChemicalRegisteredUse>,
-    ): ChemicalDefaultRateOption? = ChemicalDefaultRate.options(basis, uses).firstOrNull()
+        @Suppress("UNUSED_PARAMETER") basis: ChemicalDefaultRateBasis,
+        @Suppress("UNUSED_PARAMETER") uses: List<ChemicalRegisteredUse>,
+    ): ChemicalDefaultRateOption? = chateauOption()
 
     // ---------------------------------------------------------------------
     // Building a confirmed default
@@ -222,8 +314,12 @@ class ChemicalDefaultRateStorageTest {
     @Test
     fun `a rate with no server-minted id cannot become a default`() {
         val uses = listOf(chateauUse(rateId = null))
-        val option = requireNotNull(option(ChemicalDefaultRateBasis.PER_HECTARE, uses))
-        assertNull(confirmedDefaultRate(option, ChemicalDefaultRateBasis.PER_HECTARE, uses))
+        val option = chateauServerOption(rateIds = emptyList()).toDomainOption()
+        assertNull(
+            confirmedDefaultRate(
+                option, ChemicalDefaultRateBasis.PER_HECTARE, uses, confirmedValue = 620.0,
+            ),
+        )
     }
 
     /**
@@ -247,10 +343,20 @@ class ChemicalDefaultRateStorageTest {
                 ),
             ),
         )
-        // The plan is built from the GRAPEVINE partition only.
+        // The SERVER builds its options from the grapevine partition, so an
+        // apple direction never appears among the citations that reach
+        // storage. The device no longer re-derives this set at all — which is
+        // what makes the partition impossible to get wrong here.
         val uses = listOf(grapevine)
-        val option = requireNotNull(option(ChemicalDefaultRateBasis.PER_HECTARE, uses))
-        val ids = ChemicalDefaultRateIdentity.rateIdsFor(option, uses)
+        val stored = requireNotNull(
+            confirmedDefaultRate(
+                chateauOption(),
+                ChemicalDefaultRateBasis.PER_HECTARE,
+                uses,
+                confirmedValue = 620.0,
+            ),
+        )
+        val ids = stored.rateIds
         assertEquals(listOf("rate_v1_chateau"), ids)
         assertFalse(ids.contains("rate_v1_apples"))
         // Sanity: the apple direction really does state an identical amount, so

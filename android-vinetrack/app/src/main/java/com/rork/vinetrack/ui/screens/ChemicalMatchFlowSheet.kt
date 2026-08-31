@@ -67,6 +67,7 @@ import com.rork.vinetrack.data.chemical.ChemicalLookupAdvisory
 import com.rork.vinetrack.data.chemical.ChemicalRateGate
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalSaveContract
+import com.rork.vinetrack.data.chemical.ChemicalServerDefaultRateOptions
 import com.rork.vinetrack.data.chemical.ChemicalStoreMatching
 import com.rork.vinetrack.data.chemical.ChemicalVineyardScope
 import com.rork.vinetrack.data.chemical.formatChemicalNumber
@@ -335,9 +336,19 @@ internal fun ChemicalMatchFlowSheet(
                 // Vineyard state is not recorded on Android profiles, so the
                 // jurisdiction step is skipped — a weaker answer, never a
                 // wrong one. The only-registered-rate rule still recommends.
+                //
+                // The options come from the SERVER's `default_rate_options`,
+                // never from re-grouping `registered_uses` here. The device
+                // contributes only the recommendation badge; the amounts and
+                // the `option_key`/`rate_ids` identities are the register's.
+                //
+                // A server that sends no block yields an empty plan, and the
+                // rate gate then offers the corrective actions. That is the
+                // intended fail-closed outcome, not a gap to fill locally.
                 defaultSelection = ChemicalDefaultRateSelection(
                     plan = ChemicalDefaultRate.plan(
-                        grapevineUses = intel.registeredUses.viticultural(),
+                        serverOptions = lookup.defaultRateOptions
+                            ?: ChemicalServerDefaultRateOptions(),
                         jurisdiction = null,
                     ),
                 )
