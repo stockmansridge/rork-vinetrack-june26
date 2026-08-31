@@ -34,8 +34,9 @@ struct RainAndForecastView: View {
 
     private var hasLocation: Bool { latitude != nil && longitude != nil }
 
-    /// Region-aware formatter for display dates. With AU defaults this
-    /// produces dd/MM/yyyy and is unit-agnostic for rainfall (kept in mm).
+    /// Region-aware formatter for display dates and rainfall. With AU defaults
+    /// this produces dd/MM/yyyy and millimetres; vineyards set to inches
+    /// (Region & Units → Rainfall) see converted values everywhere on this page.
     private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     var body: some View {
@@ -92,7 +93,7 @@ struct RainAndForecastView: View {
 
     private var statusTitle: String {
         if let mm = todayMm, mm > 0 {
-            return String(format: "Rain recorded today: %.1f mm", mm)
+            return "Rain recorded today: \(fmt.formatRainfall(mm: mm))"
         }
         if rain24h >= 1 {
             return "Rain expected in next 24h"
@@ -109,8 +110,7 @@ struct RainAndForecastView: View {
     private var statusSubtitle: String {
         if !hasLocation { return "Set vineyard location to enable forecast." }
         if !hasLoadedForecast { return "Loading forecast…" }
-        return String(format: "Today %.1f mm · 24h %.1f mm · 7d %.1f mm",
-                      todayMm ?? 0, rain24h, rain7d)
+        return "Today \(fmt.formatRainfall(mm: todayMm ?? 0)) · 24h \(fmt.formatRainfall(mm: rain24h)) · 7d \(fmt.formatRainfall(mm: rain7d))"
     }
 
     private var statusIcon: String {
@@ -136,15 +136,15 @@ struct RainAndForecastView: View {
                         icon: "cloud.rain",
                         tint: .blue)
             summaryTile(title: "Next 24h",
-                        value: hasLoadedForecast ? String(format: "%.1f mm", rain24h) : "—",
+                        value: hasLoadedForecast ? fmt.formatRainfall(mm: rain24h) : "—",
                         icon: "clock",
                         tint: .teal)
             summaryTile(title: "Next 48h",
-                        value: hasLoadedForecast ? String(format: "%.1f mm", rain48h) : "—",
+                        value: hasLoadedForecast ? fmt.formatRainfall(mm: rain48h) : "—",
                         icon: "calendar.badge.clock",
                         tint: .indigo)
             summaryTile(title: "Next 7 days",
-                        value: hasLoadedForecast ? String(format: "%.1f mm", rain7d) : "—",
+                        value: hasLoadedForecast ? fmt.formatRainfall(mm: rain7d) : "—",
                         icon: "calendar",
                         tint: .purple)
         }
@@ -255,7 +255,7 @@ struct RainAndForecastView: View {
                 .frame(minWidth: 70, alignment: .trailing)
             }
 
-            Text(String(format: "%.1f mm", day.forecastRainMm))
+            Text(fmt.formatRainfall(mm: day.forecastRainMm))
                 .font(.subheadline.weight(.semibold))
                 .monospacedDigit()
                 .foregroundStyle(day.forecastRainMm >= 1 ? .primary : .secondary)
@@ -343,7 +343,7 @@ struct RainAndForecastView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .lineLimit(1)
-            Text(String(format: "%.1f mm", day.rainfallMm ?? 0))
+            Text(fmt.formatRainfall(mm: day.rainfallMm ?? 0))
                 .font(.subheadline.weight(.semibold))
                 .monospacedDigit()
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -358,7 +358,7 @@ struct RainAndForecastView: View {
             Text("\(rainDays.count) rain day\(rainDays.count == 1 ? "" : "s")")
                 .font(.footnote.weight(.semibold))
             Spacer()
-            Text(String(format: "%.1f mm total", total))
+            Text("\(fmt.formatRainfall(mm: total)) total")
                 .font(.footnote.weight(.semibold))
                 .monospacedDigit()
         }
@@ -517,8 +517,8 @@ struct RainAndForecastView: View {
 
     private func formatMm(_ mm: Double?) -> String {
         guard let mm = mm else { return "—" }
-        if mm <= 0 { return "0 mm" }
-        return String(format: "%.1f mm", mm)
+        if mm <= 0 { return "0 \(fmt.rainfallUnitAbbreviation)" }
+        return fmt.formatRainfall(mm: mm)
     }
 
     private func dayLabel(_ date: Date) -> String {

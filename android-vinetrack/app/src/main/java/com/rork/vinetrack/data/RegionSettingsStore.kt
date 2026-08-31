@@ -32,6 +32,11 @@ data class RegionSettings(
      * back to the regional default (AU/NZ → Baumé, everywhere else → Brix).
      */
     val sugarMeasurementUnit: String = "",
+    /**
+     * Rainfall display unit (sql/216 — `millimetres` | `inches`). Rainfall
+     * records are ALWAYS stored in millimetres; this only changes display.
+     */
+    val rainfallUnit: String = RainfallUnit.Millimetres.raw,
 ) {
     /** Resolved sugar unit: explicit preference, else the regional default. */
     val sugarUnit: SugarMeasurementUnit
@@ -89,6 +94,12 @@ enum class FuelUnit(val raw: String, val label: String) {
     companion object { fun from(v: String?): FuelUnit = entries.firstOrNull { it.raw == v } ?: Litres }
 }
 
+enum class RainfallUnit(val raw: String, val label: String) {
+    Millimetres("millimetres", "Millimetres (mm)"),
+    Inches("inches", "Inches (in)");
+    companion object { fun from(v: String?): RainfallUnit = entries.firstOrNull { it.raw == v } ?: Millimetres }
+}
+
 enum class SprayRateAreaUnit(val raw: String, val label: String) {
     Hectare("hectare", "Per Hectare (/ha)"),
     Acre("acre", "Per Acre (/ac)");
@@ -134,12 +145,12 @@ enum class RegionCountry(val code: String, val displayName: String) {
 
     val recommendedPreset: RegionSettings
         get() = when (this) {
-            Australia -> RegionSettings(countryCode = code, currencyCode = "AUD", areaUnit = AreaUnit.Hectares.raw, volumeUnit = VolumeUnit.Litres.raw, distanceUnit = DistanceSystem.Metric.raw, fuelUnit = FuelUnit.Litres.raw, sprayRateAreaUnit = SprayRateAreaUnit.Hectare.raw, dateFormat = RegionDateFormat.DayMonthYear.raw, terminologyRegion = TerminologyRegion.AuNz.raw, sugarMeasurementUnit = SugarMeasurementUnit.Baume.raw)
-            NewZealand -> RegionSettings(countryCode = code, currencyCode = "NZD", areaUnit = AreaUnit.Hectares.raw, volumeUnit = VolumeUnit.Litres.raw, distanceUnit = DistanceSystem.Metric.raw, fuelUnit = FuelUnit.Litres.raw, sprayRateAreaUnit = SprayRateAreaUnit.Hectare.raw, dateFormat = RegionDateFormat.DayMonthYear.raw, terminologyRegion = TerminologyRegion.AuNz.raw, sugarMeasurementUnit = SugarMeasurementUnit.Baume.raw)
-            UnitedStates -> RegionSettings(countryCode = code, currencyCode = "USD", areaUnit = AreaUnit.Acres.raw, volumeUnit = VolumeUnit.Gallons.raw, distanceUnit = DistanceSystem.Imperial.raw, fuelUnit = FuelUnit.Gallons.raw, sprayRateAreaUnit = SprayRateAreaUnit.Acre.raw, dateFormat = RegionDateFormat.MonthDayYear.raw, terminologyRegion = TerminologyRegion.Us.raw, sugarMeasurementUnit = SugarMeasurementUnit.Brix.raw)
-            Canada -> RegionSettings(countryCode = code, currencyCode = "CAD", areaUnit = AreaUnit.Hectares.raw, volumeUnit = VolumeUnit.Litres.raw, distanceUnit = DistanceSystem.Metric.raw, fuelUnit = FuelUnit.Litres.raw, sprayRateAreaUnit = SprayRateAreaUnit.Hectare.raw, dateFormat = RegionDateFormat.IsoYearMonthDay.raw, terminologyRegion = TerminologyRegion.Us.raw, sugarMeasurementUnit = SugarMeasurementUnit.Brix.raw)
-            UnitedKingdom -> RegionSettings(countryCode = code, currencyCode = "GBP", areaUnit = AreaUnit.Hectares.raw, volumeUnit = VolumeUnit.Litres.raw, distanceUnit = DistanceSystem.Metric.raw, fuelUnit = FuelUnit.Litres.raw, sprayRateAreaUnit = SprayRateAreaUnit.Hectare.raw, dateFormat = RegionDateFormat.DayMonthYear.raw, terminologyRegion = TerminologyRegion.Uk.raw, sugarMeasurementUnit = SugarMeasurementUnit.Brix.raw)
-            SouthAfrica -> RegionSettings(countryCode = code, currencyCode = "ZAR", areaUnit = AreaUnit.Hectares.raw, volumeUnit = VolumeUnit.Litres.raw, distanceUnit = DistanceSystem.Metric.raw, fuelUnit = FuelUnit.Litres.raw, sprayRateAreaUnit = SprayRateAreaUnit.Hectare.raw, dateFormat = RegionDateFormat.DayMonthYear.raw, terminologyRegion = TerminologyRegion.Za.raw, sugarMeasurementUnit = SugarMeasurementUnit.Brix.raw)
+            Australia -> RegionSettings(countryCode = code, currencyCode = "AUD", areaUnit = AreaUnit.Hectares.raw, volumeUnit = VolumeUnit.Litres.raw, distanceUnit = DistanceSystem.Metric.raw, fuelUnit = FuelUnit.Litres.raw, sprayRateAreaUnit = SprayRateAreaUnit.Hectare.raw, dateFormat = RegionDateFormat.DayMonthYear.raw, terminologyRegion = TerminologyRegion.AuNz.raw, sugarMeasurementUnit = SugarMeasurementUnit.Baume.raw, rainfallUnit = RainfallUnit.Millimetres.raw)
+            NewZealand -> RegionSettings(countryCode = code, currencyCode = "NZD", areaUnit = AreaUnit.Hectares.raw, volumeUnit = VolumeUnit.Litres.raw, distanceUnit = DistanceSystem.Metric.raw, fuelUnit = FuelUnit.Litres.raw, sprayRateAreaUnit = SprayRateAreaUnit.Hectare.raw, dateFormat = RegionDateFormat.DayMonthYear.raw, terminologyRegion = TerminologyRegion.AuNz.raw, sugarMeasurementUnit = SugarMeasurementUnit.Baume.raw, rainfallUnit = RainfallUnit.Millimetres.raw)
+            UnitedStates -> RegionSettings(countryCode = code, currencyCode = "USD", areaUnit = AreaUnit.Acres.raw, volumeUnit = VolumeUnit.Gallons.raw, distanceUnit = DistanceSystem.Imperial.raw, fuelUnit = FuelUnit.Gallons.raw, sprayRateAreaUnit = SprayRateAreaUnit.Acre.raw, dateFormat = RegionDateFormat.MonthDayYear.raw, terminologyRegion = TerminologyRegion.Us.raw, sugarMeasurementUnit = SugarMeasurementUnit.Brix.raw, rainfallUnit = RainfallUnit.Inches.raw)
+            Canada -> RegionSettings(countryCode = code, currencyCode = "CAD", areaUnit = AreaUnit.Hectares.raw, volumeUnit = VolumeUnit.Litres.raw, distanceUnit = DistanceSystem.Metric.raw, fuelUnit = FuelUnit.Litres.raw, sprayRateAreaUnit = SprayRateAreaUnit.Hectare.raw, dateFormat = RegionDateFormat.IsoYearMonthDay.raw, terminologyRegion = TerminologyRegion.Us.raw, sugarMeasurementUnit = SugarMeasurementUnit.Brix.raw, rainfallUnit = RainfallUnit.Millimetres.raw)
+            UnitedKingdom -> RegionSettings(countryCode = code, currencyCode = "GBP", areaUnit = AreaUnit.Hectares.raw, volumeUnit = VolumeUnit.Litres.raw, distanceUnit = DistanceSystem.Metric.raw, fuelUnit = FuelUnit.Litres.raw, sprayRateAreaUnit = SprayRateAreaUnit.Hectare.raw, dateFormat = RegionDateFormat.DayMonthYear.raw, terminologyRegion = TerminologyRegion.Uk.raw, sugarMeasurementUnit = SugarMeasurementUnit.Brix.raw, rainfallUnit = RainfallUnit.Millimetres.raw)
+            SouthAfrica -> RegionSettings(countryCode = code, currencyCode = "ZAR", areaUnit = AreaUnit.Hectares.raw, volumeUnit = VolumeUnit.Litres.raw, distanceUnit = DistanceSystem.Metric.raw, fuelUnit = FuelUnit.Litres.raw, sprayRateAreaUnit = SprayRateAreaUnit.Hectare.raw, dateFormat = RegionDateFormat.DayMonthYear.raw, terminologyRegion = TerminologyRegion.Za.raw, sugarMeasurementUnit = SugarMeasurementUnit.Brix.raw, rainfallUnit = RainfallUnit.Millimetres.raw)
         }
 
     companion object { fun from(v: String?): RegionCountry = entries.firstOrNull { it.code == v } ?: Australia }
@@ -170,6 +181,7 @@ class RegionSettingsStore(context: Context) {
             dateFormat = prefs.getString("${k}date_format", d.dateFormat) ?: d.dateFormat,
             terminologyRegion = prefs.getString("${k}terminology", d.terminologyRegion) ?: d.terminologyRegion,
             sugarMeasurementUnit = prefs.getString("${k}sugar_unit", d.sugarMeasurementUnit) ?: d.sugarMeasurementUnit,
+            rainfallUnit = prefs.getString("${k}rainfall_unit", d.rainfallUnit) ?: d.rainfallUnit,
         )
     }
 
@@ -187,6 +199,7 @@ class RegionSettingsStore(context: Context) {
             putString("${k}date_format", s.dateFormat)
             putString("${k}terminology", s.terminologyRegion)
             putString("${k}sugar_unit", s.sugarMeasurementUnit)
+            putString("${k}rainfall_unit", s.rainfallUnit)
         }
     }
 

@@ -42,6 +42,10 @@ nonisolated struct OrganizationRegionSettings: Codable, Sendable, Equatable {
     /// the resolved unit then falls back to the country default
     /// (AU/NZ → Baumé, everywhere else → Brix).
     var sugarMeasurementUnit: String
+    /// Rainfall display unit raw value — see `RainfallUnit`
+    /// ("millimetres" | "inches", sql/216). Rainfall records are always
+    /// stored in millimetres; this only affects display and formatting.
+    var rainfallUnit: String
 
     // MARK: - Australian defaults (current production behaviour)
 
@@ -56,7 +60,8 @@ nonisolated struct OrganizationRegionSettings: Codable, Sendable, Equatable {
         sprayRateAreaUnit: SprayRateAreaUnit.hectare.rawValue,
         dateFormat: RegionDateFormat.dayMonthYear.rawValue,
         terminologyRegion: TerminologyRegion.auNz.rawValue,
-        sugarMeasurementUnit: ""
+        sugarMeasurementUnit: "",
+        rainfallUnit: RainfallUnit.millimetres.rawValue
     )
 
     init(
@@ -70,7 +75,8 @@ nonisolated struct OrganizationRegionSettings: Codable, Sendable, Equatable {
         sprayRateAreaUnit: String = SprayRateAreaUnit.hectare.rawValue,
         dateFormat: String = RegionDateFormat.dayMonthYear.rawValue,
         terminologyRegion: String = TerminologyRegion.auNz.rawValue,
-        sugarMeasurementUnit: String = ""
+        sugarMeasurementUnit: String = "",
+        rainfallUnit: String = RainfallUnit.millimetres.rawValue
     ) {
         self.countryCode = countryCode
         self.currencyCode = currencyCode
@@ -83,6 +89,7 @@ nonisolated struct OrganizationRegionSettings: Codable, Sendable, Equatable {
         self.dateFormat = dateFormat
         self.terminologyRegion = terminologyRegion
         self.sugarMeasurementUnit = sugarMeasurementUnit
+        self.rainfallUnit = rainfallUnit
     }
 
     /// Tolerant decoder: any missing/null field falls back to the AU default,
@@ -101,6 +108,7 @@ nonisolated struct OrganizationRegionSettings: Codable, Sendable, Equatable {
         dateFormat = (try? c.decodeIfPresent(String.self, forKey: .dateFormat))?.flatMap { $0.isEmpty ? nil : $0 } ?? d.dateFormat
         terminologyRegion = (try? c.decodeIfPresent(String.self, forKey: .terminologyRegion))?.flatMap { $0.isEmpty ? nil : $0 } ?? d.terminologyRegion
         sugarMeasurementUnit = (try? c.decodeIfPresent(String.self, forKey: .sugarMeasurementUnit)) ?? ""
+        rainfallUnit = (try? c.decodeIfPresent(String.self, forKey: .rainfallUnit))?.flatMap { $0.isEmpty ? nil : $0 } ?? d.rainfallUnit
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -115,6 +123,7 @@ nonisolated struct OrganizationRegionSettings: Codable, Sendable, Equatable {
         case dateFormat = "date_format"
         case terminologyRegion = "terminology_region"
         case sugarMeasurementUnit = "sugar_measurement_unit"
+        case rainfallUnit = "rainfall_unit"
     }
 }
 
@@ -128,6 +137,7 @@ nonisolated extension OrganizationRegionSettings {
     var sprayRateArea: SprayRateAreaUnit { SprayRateAreaUnit(rawValue: sprayRateAreaUnit) ?? .hectare }
     var dateStyle: RegionDateFormat { RegionDateFormat(rawValue: dateFormat) ?? .dayMonthYear }
     var terminology: TerminologyRegion { TerminologyRegion(rawValue: terminologyRegion) ?? .auNz }
+    var rainfall: RainfallUnit { RainfallUnit(rawValue: rainfallUnit) ?? .millimetres }
 
     /// Resolved grape sugar measurement: the explicit vineyard preference when
     /// set, otherwise the regional default for the vineyard's country.
@@ -177,6 +187,28 @@ nonisolated enum FuelUnit: String, Codable, Sendable, CaseIterable {
         switch self {
         case .litres: "L"
         case .gallons: "gal"
+        }
+    }
+}
+
+/// Rainfall display units (sql/216 — `vineyards.rainfall_unit`). Rainfall
+/// records are ALWAYS stored in millimetres; this preference only changes how
+/// they are displayed, never the stored values.
+nonisolated enum RainfallUnit: String, Codable, Sendable, CaseIterable {
+    case millimetres
+    case inches
+
+    var abbreviation: String {
+        switch self {
+        case .millimetres: "mm"
+        case .inches: "in"
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .millimetres: "Millimetres (mm)"
+        case .inches: "Inches (in)"
         }
     }
 }

@@ -54,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.PersistedRainfallRepository
+import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.RainDay
 import com.rork.vinetrack.data.RainForecastBundle
 import com.rork.vinetrack.data.RainForecastRepository
@@ -63,6 +64,7 @@ import com.rork.vinetrack.data.WillyWeatherRepository
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.regionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import kotlinx.coroutines.launch
@@ -400,6 +402,7 @@ private fun StatusBanner(
     hasLocation: Boolean,
     hasLoaded: Boolean,
 ) {
+    val fmt = regionFormatter
     val tint = when {
         (todayMm ?: 0.0) > 0 || rain24h >= 5 -> VineColors.Info
         rain24h >= 1 || rain48h >= 1 -> VineColors.Cyan
@@ -413,7 +416,7 @@ private fun StatusBanner(
         else -> Icons.Filled.WbSunny
     }
     val title = when {
-        todayMm != null && todayMm > 0 -> "Rain recorded today: %.1f mm".format(todayMm)
+        todayMm != null && todayMm > 0 -> "Rain recorded today: ${fmt.formatRainfall(todayMm)}"
         rain24h >= 1 -> "Rain expected in next 24h"
         rain48h >= 1 -> "Rain possible in next 48h"
         rain7d >= 1 -> "Rain possible this week"
@@ -422,7 +425,7 @@ private fun StatusBanner(
     val subtitle = when {
         !hasLocation -> "Set vineyard location to enable forecast."
         !hasLoaded -> "Loading forecast…"
-        else -> "Today %.1f mm · 24h %.1f mm · 7d %.1f mm".format(todayMm ?: 0.0, rain24h, rain7d)
+        else -> "Today ${fmt.formatRainfall(todayMm ?: 0.0)} · 24h ${fmt.formatRainfall(rain24h)} · 7d ${fmt.formatRainfall(rain7d)}"
     }
 
     Row(
@@ -453,14 +456,15 @@ private fun ForecastSummaryGrid(
     rain7d: Double,
     hasLoaded: Boolean,
 ) {
+    val fmt = regionFormatter
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            SummaryTile("Today so far", formatMm(todayMm), Icons.Filled.WaterDrop, VineColors.Info, Modifier.weight(1f))
-            SummaryTile("Next 24h", if (hasLoaded) "%.1f mm".format(rain24h) else "—", Icons.Filled.Grain, VineColors.Cyan, Modifier.weight(1f))
+            SummaryTile("Today so far", formatMm(fmt, todayMm), Icons.Filled.WaterDrop, VineColors.Info, Modifier.weight(1f))
+            SummaryTile("Next 24h", if (hasLoaded) fmt.formatRainfall(rain24h) else "—", Icons.Filled.Grain, VineColors.Cyan, Modifier.weight(1f))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            SummaryTile("Next 48h", if (hasLoaded) "%.1f mm".format(rain48h) else "—", Icons.Filled.Cloud, VineColors.Indigo, Modifier.weight(1f))
-            SummaryTile("Next 7 days", if (hasLoaded) "%.1f mm".format(rain7d) else "—", Icons.Filled.CalendarMonth, VineColors.Primary, Modifier.weight(1f))
+            SummaryTile("Next 48h", if (hasLoaded) fmt.formatRainfall(rain48h) else "—", Icons.Filled.Cloud, VineColors.Indigo, Modifier.weight(1f))
+            SummaryTile("Next 7 days", if (hasLoaded) fmt.formatRainfall(rain7d) else "—", Icons.Filled.CalendarMonth, VineColors.Primary, Modifier.weight(1f))
         }
     }
 }
@@ -560,7 +564,7 @@ private fun ForecastRow(day: RainDay, warningThresholdKmh: Double, cautionThresh
             }
         }
         Text(
-            "%.1f mm".format(day.rainMm),
+            regionFormatter.formatRainfall(day.rainMm),
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
             color = if (day.rainMm >= 1) vine.textPrimary else vine.textSecondary,
@@ -585,6 +589,7 @@ private fun RainfallHistorySection(
     hasLoaded: Boolean,
 ) {
     val vine = LocalVineColors.current
+    val fmt = regionFormatter
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
             Text("Recent rainfall", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, modifier = Modifier.weight(1f))
@@ -617,7 +622,7 @@ private fun RainfallHistorySection(
                     ) {
                         Text(displayDateKey(day.dateKey), fontSize = 14.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
                         Text(prettySource(day.source), fontSize = 12.sp, color = vine.textSecondary, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 1)
-                        Text("%.1f mm".format(day.rainMm), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                        Text(fmt.formatRainfall(day.rainMm), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.End)
                     }
                     if (index < rainDays.lastIndex) {
                         HorizontalDivider(color = vine.cardBorder, modifier = Modifier.padding(start = 12.dp))
@@ -630,7 +635,7 @@ private fun RainfallHistorySection(
                         "${rainDays.size} rain day${if (rainDays.size == 1) "" else "s"}",
                         fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, modifier = Modifier.weight(1f),
                     )
-                    Text("%.1f mm total".format(total), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Text("${fmt.formatRainfall(total)} total", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                 }
             }
         }
@@ -758,10 +763,11 @@ private fun prettySource(source: String?): String = when (source) {
     else -> source.replaceFirstChar { it.uppercase() }
 }
 
-private fun formatMm(mm: Double?): String {
+/** Region-aware "today so far" value: "—" when unknown, "0 mm"/"0 in" when dry. */
+private fun formatMm(fmt: RegionFormatter, mm: Double?): String {
     if (mm == null) return "—"
-    if (mm <= 0) return "0 mm"
-    return "%.1f mm".format(mm)
+    if (mm <= 0) return "0 ${fmt.rainfallUnitAbbreviation}"
+    return fmt.formatRainfall(mm)
 }
 
 private fun dayLabel(epochMs: Long): String {

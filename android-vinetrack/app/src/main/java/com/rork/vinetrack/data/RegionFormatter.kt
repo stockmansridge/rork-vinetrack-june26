@@ -31,6 +31,7 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
     private val fuel: FuelUnit get() = FuelUnit.from(settings.fuelUnit)
     private val distance: DistanceSystem get() = DistanceSystem.from(settings.distanceUnit)
     private val sprayRateArea: SprayRateAreaUnit get() = SprayRateAreaUnit.from(settings.sprayRateAreaUnit)
+    private val rainfall: RainfallUnit get() = RainfallUnit.from(settings.rainfallUnit)
 
     /** US and Canada use US liquid gallons; UK/other imperial markets use imperial gallons. */
     private val usesUSGallon: Boolean
@@ -170,6 +171,33 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
     /** Fuel consumption rate per engine hour (canonical L/hr → gal/hr for imperial). */
     fun formatFuelRatePerHour(litresPerHour: Double, fractionDigits: Int = 1): String =
         "${number(fuelValue(litresPerHour), fractionDigits)} $fuelUnitAbbreviation/hr"
+
+    // MARK: - Rainfall (input: millimetres)
+
+    /**
+     * Converts a canonical millimetre rainfall value into the configured
+     * display unit. Rainfall records are always STORED in millimetres
+     * (sql/216); this is display-only. Mirrors iOS `rainfallValue(mm:)`.
+     */
+    fun rainfallValue(mm: Double): Double = when (rainfall) {
+        RainfallUnit.Millimetres -> mm
+        RainfallUnit.Inches -> mm / MM_PER_INCH
+    }
+
+    val rainfallUnitAbbreviation: String get() = when (rainfall) {
+        RainfallUnit.Millimetres -> "mm"
+        RainfallUnit.Inches -> "in"
+    }
+
+    /**
+     * e.g. "12.5 mm" (AU) or "0.49 in" (US). Millimetres keep the historical
+     * one-decimal display; inches use two decimals because 1 mm ≈ 0.04 in.
+     * Mirrors iOS `formatRainfall(mm:)`.
+     */
+    fun formatRainfall(mm: Double, fractionDigits: Int? = null): String {
+        val digits = fractionDigits ?: if (rainfall == RainfallUnit.Inches) 2 else 1
+        return "${number(rainfallValue(mm), digits)} $rainfallUnitAbbreviation"
+    }
 
     // MARK: - Distance (input: metres)
 
@@ -452,6 +480,7 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
         private const val IMPERIAL_GALLONS_PER_LITRE = 0.219969157
         private const val FEET_PER_METRE = 3.280839895
         private const val MILES_PER_KM = 0.621371192
+        private const val MM_PER_INCH = 25.4
 
         /** Convenience formatter matching current production (AU) behaviour. */
         val australian = RegionFormatter(RegionSettings.defaults)

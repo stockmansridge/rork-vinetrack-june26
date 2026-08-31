@@ -371,6 +371,33 @@ class RegionFormatterTest {
         assertEquals(9.75, fmt.sprayRateToCanonical(9.75), 1e-9)
     }
 
+    // ---------------------------------------------------------- rainfall
+
+    @Test
+    fun `rainfall stays millimetres for australia byte for byte`() {
+        // The historical Rain & Forecast rendering was "%.1f mm" — AU output
+        // must not change at all.
+        assertEquals("12.5 mm", RegionFormatter(au).formatRainfall(12.5))
+        assertEquals("mm", RegionFormatter(au).rainfallUnitAbbreviation)
+    }
+
+    @Test
+    fun `rainfall converts to inches for the united states`() {
+        // 12.5 mm / 25.4 = 0.4921... -> 0.49 in (inches show two decimals
+        // because 1 mm is only ~0.04 in).
+        assertEquals("0.49 in", RegionFormatter(us).formatRainfall(12.5))
+        assertEquals("in", RegionFormatter(us).rainfallUnitAbbreviation)
+        assertEquals(1.0, RegionFormatter(us).rainfallValue(25.4), 1e-9)
+    }
+
+    @Test
+    fun `rainfall defaults to millimetres when the setting is absent`() {
+        // Canada, UK etc. keep mm; a blank/unknown raw value also resolves
+        // to mm so pre-migration vineyards are unaffected.
+        assertEquals("12.5 mm", RegionFormatter(ca).formatRainfall(12.5))
+        assertEquals("12.5 mm", RegionFormatter(RegionSettings(rainfallUnit = "")).formatRainfall(12.5))
+    }
+
     // ------------------------------------------------------- temperature
 
     @Test

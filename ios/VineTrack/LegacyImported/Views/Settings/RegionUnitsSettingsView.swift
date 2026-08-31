@@ -30,6 +30,7 @@ struct RegionUnitsSettingsView: View {
     @State private var dateFormat: RegionDateFormat = .dayMonthYear
     @State private var terminologyRegion: TerminologyRegion = .auNz
     @State private var sugarUnit: SugarMeasurementUnit = .baume
+    @State private var rainfallUnit: RainfallUnit = .millimetres
 
     @State private var isSaving: Bool = false
     @State private var isRefreshing: Bool = false
@@ -148,6 +149,10 @@ struct RegionUnitsSettingsView: View {
                 Text("Per Hectare (/ha)").tag(SprayRateAreaUnit.hectare)
                 Text("Per Acre (/ac)").tag(SprayRateAreaUnit.acre)
             }
+            Picker("Rainfall", selection: $rainfallUnit) {
+                Text("Millimetres (mm)").tag(RainfallUnit.millimetres)
+                Text("Inches (in)").tag(RainfallUnit.inches)
+            }
             Picker("Grape sugar measurement", selection: $sugarUnit) {
                 Text("Brix (°Bx)").tag(SugarMeasurementUnit.brix)
                 Text("Baumé (°Bé)").tag(SugarMeasurementUnit.baume)
@@ -226,6 +231,7 @@ struct RegionUnitsSettingsView: View {
         dateFormat = preset.dateFormat
         terminologyRegion = preset.terminologyRegion
         sugarUnit = SugarMeasurementUnit.regionalDefault(countryCode: country.rawValue)
+        rainfallUnit = preset.rainfallUnit
         pendingCountry = nil
     }
 
@@ -249,6 +255,7 @@ struct RegionUnitsSettingsView: View {
         dateFormat = region.dateStyle
         terminologyRegion = region.terminology
         sugarUnit = region.sugarUnit
+        rainfallUnit = region.rainfall
     }
 
     /// Pull the authoritative server values directly when the screen opens, so
@@ -290,7 +297,8 @@ struct RegionUnitsSettingsView: View {
             sprayRateAreaUnit: sprayRateAreaUnit.rawValue,
             dateFormat: dateFormat.rawValue,
             terminologyRegion: terminologyRegion.rawValue,
-            sugarMeasurementUnit: sugarUnit.rawValue
+            sugarMeasurementUnit: sugarUnit.rawValue,
+            rainfallUnit: rainfallUnit.rawValue
         )
 
         do {
@@ -338,22 +346,23 @@ nonisolated enum RegionCountry: String, CaseIterable, Identifiable, Sendable {
         let sprayRateAreaUnit: SprayRateAreaUnit
         let dateFormat: RegionDateFormat
         let terminologyRegion: TerminologyRegion
+        let rainfallUnit: RainfallUnit
     }
 
     var recommendedPreset: Preset {
         switch self {
         case .australia:
-            Preset(currencyCode: "AUD", areaUnit: .hectares, volumeUnit: .litres, distanceUnit: .metric, fuelUnit: .litres, sprayRateAreaUnit: .hectare, dateFormat: .dayMonthYear, terminologyRegion: .auNz)
+            Preset(currencyCode: "AUD", areaUnit: .hectares, volumeUnit: .litres, distanceUnit: .metric, fuelUnit: .litres, sprayRateAreaUnit: .hectare, dateFormat: .dayMonthYear, terminologyRegion: .auNz, rainfallUnit: .millimetres)
         case .newZealand:
-            Preset(currencyCode: "NZD", areaUnit: .hectares, volumeUnit: .litres, distanceUnit: .metric, fuelUnit: .litres, sprayRateAreaUnit: .hectare, dateFormat: .dayMonthYear, terminologyRegion: .auNz)
+            Preset(currencyCode: "NZD", areaUnit: .hectares, volumeUnit: .litres, distanceUnit: .metric, fuelUnit: .litres, sprayRateAreaUnit: .hectare, dateFormat: .dayMonthYear, terminologyRegion: .auNz, rainfallUnit: .millimetres)
         case .unitedStates:
-            Preset(currencyCode: "USD", areaUnit: .acres, volumeUnit: .gallons, distanceUnit: .imperial, fuelUnit: .gallons, sprayRateAreaUnit: .acre, dateFormat: .monthDayYear, terminologyRegion: .us)
+            Preset(currencyCode: "USD", areaUnit: .acres, volumeUnit: .gallons, distanceUnit: .imperial, fuelUnit: .gallons, sprayRateAreaUnit: .acre, dateFormat: .monthDayYear, terminologyRegion: .us, rainfallUnit: .inches)
         case .canada:
-            Preset(currencyCode: "CAD", areaUnit: .hectares, volumeUnit: .litres, distanceUnit: .metric, fuelUnit: .litres, sprayRateAreaUnit: .hectare, dateFormat: .isoYearMonthDay, terminologyRegion: .us)
+            Preset(currencyCode: "CAD", areaUnit: .hectares, volumeUnit: .litres, distanceUnit: .metric, fuelUnit: .litres, sprayRateAreaUnit: .hectare, dateFormat: .isoYearMonthDay, terminologyRegion: .us, rainfallUnit: .millimetres)
         case .unitedKingdom:
-            Preset(currencyCode: "GBP", areaUnit: .hectares, volumeUnit: .litres, distanceUnit: .metric, fuelUnit: .litres, sprayRateAreaUnit: .hectare, dateFormat: .dayMonthYear, terminologyRegion: .uk)
+            Preset(currencyCode: "GBP", areaUnit: .hectares, volumeUnit: .litres, distanceUnit: .metric, fuelUnit: .litres, sprayRateAreaUnit: .hectare, dateFormat: .dayMonthYear, terminologyRegion: .uk, rainfallUnit: .millimetres)
         case .southAfrica:
-            Preset(currencyCode: "ZAR", areaUnit: .hectares, volumeUnit: .litres, distanceUnit: .metric, fuelUnit: .litres, sprayRateAreaUnit: .hectare, dateFormat: .dayMonthYear, terminologyRegion: .za)
+            Preset(currencyCode: "ZAR", areaUnit: .hectares, volumeUnit: .litres, distanceUnit: .metric, fuelUnit: .litres, sprayRateAreaUnit: .hectare, dateFormat: .dayMonthYear, terminologyRegion: .za, rainfallUnit: .millimetres)
         }
     }
 }

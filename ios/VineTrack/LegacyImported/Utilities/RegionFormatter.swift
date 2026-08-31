@@ -32,6 +32,7 @@ nonisolated struct RegionFormatter: Sendable {
     private static let imperialGallonsPerLitre = 0.219969157
     private static let feetPerMetre = 3.280839895
     private static let milesPerKilometre = 0.621371192
+    private static let millimetresPerInch = 25.4
 
     // MARK: - Area (input: hectares)
 
@@ -110,6 +111,27 @@ nonisolated struct RegionFormatter: Sendable {
     /// US vs imperial gallon depending on the organisation's country.
     private var gallonsPerLitre: Double {
         settings.usesUSGallon ? Self.usGallonsPerLitre : Self.imperialGallonsPerLitre
+    }
+
+    // MARK: - Rainfall (input: millimetres)
+
+    /// Converts a canonical millimetre rainfall value into the configured
+    /// display unit. Rainfall records are always STORED in millimetres
+    /// (sql/216); this is display-only.
+    func rainfallValue(mm: Double) -> Double {
+        switch settings.rainfall {
+        case .millimetres: mm
+        case .inches: mm / Self.millimetresPerInch
+        }
+    }
+
+    var rainfallUnitAbbreviation: String { settings.rainfall.abbreviation }
+
+    /// e.g. "12.5 mm" (AU) or "0.49 in" (US). Millimetres keep the historical
+    /// one-decimal display; inches use two decimals because 1 mm ≈ 0.04 in.
+    func formatRainfall(mm: Double, fractionDigits: Int? = nil) -> String {
+        let digits = fractionDigits ?? (settings.rainfall == .inches ? 2 : 1)
+        return "\(Self.number(rainfallValue(mm: mm), fractionDigits: digits)) \(rainfallUnitAbbreviation)"
     }
 
     // MARK: - Distance (input: metres)
