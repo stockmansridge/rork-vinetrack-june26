@@ -288,7 +288,14 @@ data class ChemicalVerification(
         actives: List<ChemicalActiveIngredient>,
         hasRegistration: Boolean,
     ): ChemicalVerificationStatus {
-        if (conflicts.isNotEmpty()) return ChemicalVerificationStatus.CONFLICT
+        // Legacy-code artefacts are not disagreements. A record whose only
+        // "conflict" is HRAC 14 against its own legacy HRAC E is a correctly
+        // classified product, and calling it Review required sends an operator
+        // to resolve a difference that does not exist. A genuine disagreement —
+        // a source calling flumioxazin Group 2 — still lands here.
+        if (ChemicalConflictReconciliation.customerVisible(conflicts).isNotEmpty()) {
+            return ChemicalVerificationStatus.CONFLICT
+        }
         if (actives.isEmpty()) {
             return if (status == ChemicalVerificationStatus.NEEDS_MATCH) {
                 ChemicalVerificationStatus.NEEDS_MATCH

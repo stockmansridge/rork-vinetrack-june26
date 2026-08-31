@@ -334,10 +334,18 @@ object ChemicalSaveContract {
         if (viticultural.isNotEmpty() && usable.isEmpty()) {
             // Research identified the product and the grapevine use but produced
             // no rate. This must not save as though ready.
+            //
+            // The message deliberately does NOT say "enter the rate from the
+            // label". There is no control on the review screen that could turn
+            // a typed number into a canonical selection — it would carry no
+            // option_key and no rate_ids — so that instruction named an action
+            // the screen cannot offer and left the operator at a dead end with
+            // a disabled Save. It now states the situation, and the screen
+            // shows the four real ways forward beside it.
             violations.add(
                 ChemicalSaveViolation(
                     code = ChemicalSaveViolationCode.USABLE_RATE_MISSING,
-                    message = "Rate not found — enter the rate from the label before saving.",
+                    message = ChemicalRateGate.NO_CANONICAL_RATE_MESSAGE,
                     field = "rates",
                 ),
             )

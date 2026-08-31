@@ -224,9 +224,16 @@ struct ChemicalSaveContractTests {
         #expect(!evaluation.isSatisfied)
         #expect(codes(evaluation).contains(.usableRateMissing))
         #expect(!evaluation.hasUsableViticulturalRate)
-        // The message tells the operator exactly what to do.
+        // The message states the situation rather than naming an action the
+        // screen cannot offer: there is no control here that could turn a typed
+        // number into a canonical selection, so instructing rate entry left the
+        // operator at a dead end with a disabled Save.
         #expect(evaluation.violations.first { $0.code == .usableRateMissing }?.message
-            == "Rate not found — enter the rate from the label before saving.")
+            == "VineTrack could not read a registered grapevine rate from this label, so this product cannot yet be added as a label-checked chemical.")
+        #expect(
+            evaluation.violations.first { $0.code == .usableRateMissing }?
+                .message.localizedCaseInsensitiveContains("enter the rate") != true
+        )
     }
 
     @Test("Verbatim wording is NOT a usable rate")

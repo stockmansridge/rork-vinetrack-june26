@@ -79,6 +79,7 @@ import com.rork.vinetrack.ui.components.ChemicalJurisdictionChip
 import com.rork.vinetrack.ui.components.ChemicalJurisdictionMismatchBanner
 import com.rork.vinetrack.ui.components.ChemicalRegisteredUsesView
 import com.rork.vinetrack.ui.components.ChemicalVerificationBadge
+import com.rork.vinetrack.ui.components.chemicalVerificationFilterLabel
 import com.rork.vinetrack.ui.components.chemicalVerificationTint
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
@@ -290,10 +291,13 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                                 modifier = Modifier.size(16.dp),
                             )
                             Text(
+                                // "needs verification" reads as a verdict on the
+                                // chemical. What is actually true is duller: these
+                                // records need someone to look at them.
                                 if (needsAttentionCount == 1) {
-                                    "1 chemical needs verification"
+                                    "1 chemical needs attention"
                                 } else {
-                                    "$needsAttentionCount chemicals need verification"
+                                    "$needsAttentionCount chemicals need attention"
                                 },
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium,
@@ -325,7 +329,10 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                             ChemicalVerificationStatus.UNVERIFIED,
                         ).forEach { status ->
                             VerificationFilterPill(
-                                label = status.label,
+                                // The filter reads in the operator's language;
+                                // the underlying enum value is unchanged, so the
+                                // filter still selects on the stored status.
+                                label = chemicalVerificationFilterLabel(status),
                                 count = statusCounts[status] ?: 0,
                                 selected = verificationFilter == status,
                                 tint = chemicalVerificationTint(status),

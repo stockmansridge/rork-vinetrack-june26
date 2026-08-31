@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import com.rork.vinetrack.data.chemical.ChemicalConflictReconciliation
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -84,6 +85,26 @@ fun chemicalVerificationTint(status: ChemicalVerificationStatus): Color = when (
     ChemicalVerificationStatus.NEEDS_MATCH -> VineColors.Warning
     ChemicalVerificationStatus.CONFLICT -> VineColors.Destructive
     ChemicalVerificationStatus.UNVERIFIED -> VineColors.Stone
+}
+
+/**
+ * The Chemical Store filter's wording for a stored status.
+ *
+ * Shorter than [ChemicalVerificationStatus.label] because a filter pill sits in
+ * a horizontal row beside its count and has to stay readable at a glance — but
+ * it says the same thing, and it never reintroduces "Partially verified".
+ *
+ * `NEEDS_MATCH` and `UNVERIFIED` deliberately share "Not checked": they are
+ * different internal situations but the same fact for an operator, so they read
+ * alike while remaining separate filters over separate counts. The underlying
+ * enum and the database values are untouched.
+ */
+fun chemicalVerificationFilterLabel(status: ChemicalVerificationStatus): String = when (status) {
+    ChemicalVerificationStatus.VERIFIED -> "Label checked"
+    ChemicalVerificationStatus.PARTIALLY_VERIFIED -> "Details unavailable"
+    ChemicalVerificationStatus.NEEDS_MATCH -> "Not checked"
+    ChemicalVerificationStatus.UNVERIFIED -> "Not checked"
+    ChemicalVerificationStatus.CONFLICT -> "Review required"
 }
 
 /** Compact trust chip used in lists and pickers. */
@@ -287,9 +308,16 @@ fun ChemicalPill(text: String, tint: Color, modifier: Modifier = Modifier) {
 /** Surfaces a source disagreement in full, without picking a winner. */
 @Composable
 fun ChemicalConflictCard(
-    conflicts: List<ChemicalVerificationConflict>,
+    rawConflicts: List<ChemicalVerificationConflict>,
     modifier: Modifier = Modifier,
 ) {
+    // Filtered at the ONE place every screen renders a conflict, so a legacy
+    // code artefact cannot resurface on whichever screen forgot to ask.
+    // HRAC 14 against its own legacy HRAC E is the same classification twice,
+    // not two sources disagreeing.
+    val conflicts = remember(rawConflicts) {
+        ChemicalConflictReconciliation.customerVisible(rawConflicts)
+    }
     if (conflicts.isEmpty()) return
     val vine = LocalVineColors.current
     Column(

@@ -356,14 +356,23 @@ class ChemicalSaveContractTest {
         assertFalse(evaluation.isSatisfied)
         assertTrue(codes(evaluation).contains(ChemicalSaveViolationCode.USABLE_RATE_MISSING))
         assertFalse(evaluation.hasUsableViticulturalRate)
-        // The message tells the operator exactly what to do — and is the same
-        // sentence, character for character, that iOS shows.
+        // The message states the SITUATION rather than naming an action the
+        // screen cannot offer — and is the same sentence, character for
+        // character, that iOS shows.
+        //
+        // It used to read "Rate not found — enter the rate from the label
+        // before saving" while the screen showed no rate control at all and
+        // kept Save disabled. A rate typed there could not have been canonical
+        // anyway: it would carry no option_key and no rate_ids.
+        val message = evaluation.violations
+            .first { it.code == ChemicalSaveViolationCode.USABLE_RATE_MISSING }
+            .message
         assertEquals(
-            "Rate not found — enter the rate from the label before saving.",
-            evaluation.violations
-                .first { it.code == ChemicalSaveViolationCode.USABLE_RATE_MISSING }
-                .message,
+            "VineTrack could not read a registered grapevine rate from this label, " +
+                "so this product cannot yet be added as a label-checked chemical.",
+            message,
         )
+        assertFalse(message.contains("enter the rate", ignoreCase = true))
     }
 
     @Test

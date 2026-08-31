@@ -136,6 +136,21 @@ nonisolated struct ChemicalSaveEvaluation: Sendable, Hashable {
 ///   tell a blank from "no concern".
 nonisolated enum ChemicalSaveContract {
 
+    /// Shown when the label yielded no canonical grapevine rate option.
+    ///
+    /// States the SITUATION rather than naming an action the screen cannot
+    /// offer. The previous wording — "Rate not found — enter the rate from the
+    /// label before saving" — appeared beside no rate control and a disabled
+    /// Save, so it described a way forward that did not exist. A rate typed at
+    /// that point could never have been canonical anyway: it would carry no
+    /// `option_key` and no `rate_ids`, so nothing could show it corresponded to
+    /// a printed direction.
+    ///
+    /// Kept character-for-character in step with the Android
+    /// `ChemicalRateGate.NO_CANONICAL_RATE_MESSAGE`.
+    static let noCanonicalRateMessage =
+        "VineTrack could not read a registered grapevine rate from this label, so this product cannot yet be added as a label-checked chemical."
+
     /// Rate bases a calculation can actually run on.
     private static let calculableBases: Set<ChemicalLabelRateBasis> = [
         .per100Litres, .perHectare, .rangePer100Litres, .rangePerHectare
@@ -238,9 +253,18 @@ nonisolated enum ChemicalSaveContract {
         if !viticultural.isEmpty, usable.isEmpty {
             // The §11 case: research identified the product and the grapevine
             // use but produced no rate. This must not save as though ready.
+            //
+            // The message deliberately does NOT say "enter the rate from the
+            // label". A rate typed at this point would carry no `option_key`
+            // and no `rate_ids`, so nothing could ever show it corresponded to
+            // a printed direction — it would be a guess wearing the appearance
+            // of a label-checked rate. The old wording therefore named an
+            // action the screen cannot honestly offer, leaving the operator at
+            // a dead end with a disabled Save. Kept character-for-character in
+            // step with the Android `ChemicalRateGate.NO_CANONICAL_RATE_MESSAGE`.
             violations.append(.init(
                 code: .usableRateMissing,
-                message: "Rate not found — enter the rate from the label before saving.",
+                message: Self.noCanonicalRateMessage,
                 field: "rates"
             ))
         }

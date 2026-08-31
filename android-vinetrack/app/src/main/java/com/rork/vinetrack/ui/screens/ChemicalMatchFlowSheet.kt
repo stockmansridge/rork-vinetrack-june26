@@ -45,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -63,6 +64,7 @@ import com.rork.vinetrack.data.chemical.ChemicalDefaultRateSelection
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalJurisdiction
 import com.rork.vinetrack.data.chemical.ChemicalLookupAdvisory
+import com.rork.vinetrack.data.chemical.ChemicalRateGate
 import com.rork.vinetrack.data.chemical.ChemicalRegistration
 import com.rork.vinetrack.data.chemical.ChemicalSaveContract
 import com.rork.vinetrack.data.chemical.ChemicalStoreMatching
@@ -158,6 +160,7 @@ internal fun ChemicalMatchFlowSheet(
     onCreated: () -> Unit = {},
 ) {
     val vine = LocalVineColors.current
+    val uriHandler = LocalUriHandler.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     val service = remember { ChemicalInfoService() }
@@ -664,6 +667,115 @@ internal fun ChemicalMatchFlowSheet(
                             )
                         }
 
+                        // ---- The save contract, measured BEFORE anything is
+                        // rendered that depends on it ----
+                        //
+                        // Evaluated here rather than beside the Save button so
+                        // the reason a save is blocked can be shown next to the
+                        // control that fixes it. It used to be computed after
+                        // the entire registered-use list, which is why the
+                        // explanation appeared only at the very bottom: an
+                        // operator had to scroll past every target to find out
+                        // why Add to Chemical Store was greyed out.
+                        val gate = ChemicalSaveContract.evaluate(
+                            productName = productName,
+                            productCategory = intel.productCategory,
+                            intelligence = ChemicalVineyardScope.scoped(intel),
+                            defaults = defaultSelection,
+                        )
+                        val baseline = remember(existing?.id, countryCode) {
+                            ChemicalSaveContract.baselineViolationCodes(existing, countryCode)
+                        }
+                        val blocking = ChemicalSaveContract.blockingViolations(gate, baseline)
+
+                        // ---- Default rate: BEFORE the target list ----
+                        //
+                        // The rate is the decision the operator came to make.
+                        // It sat underneath a list that can run to dozens of
+                        // weeds, so the one required action on the screen was
+                        // the last thing they could reach.
+                        HorizontalDivider()
+                        val rateGate = ChemicalRateGate.decide(
+                            selection = defaultSelection,
+                            grapevineUses = intel.registeredUses.viticultural(),
+                        )
+                        when (rateGate) {
+                            ChemicalRateGate.Decision.Confirmable -> {
+                                defaultSelection?.let { selection ->
+                                    DefaultRatesSection(
+                                        selection = selection,
+                                        doseTexts = doseTexts,
+                                        doseErrors = doseErrors,
+                                        onSelect = { option, basis ->
+                                            defaultSelection = selection.selecting(option, basis)
+                                            doseTexts = doseTexts - basis
+                                            doseErrors = doseErrors - basis
+                                        },
+                                        onDoseTextChange = { basis, text ->
+                                            doseTexts = doseTexts + (basis to text)
+                                        },
+                                        onSetDose = { basis ->
+                                            val raw = doseTexts[basis].orEmpty().trim()
+                                                .replace(',', '.')
+                                            val option = selection.resolvedOption(basis)
+                                            if (raw.isEmpty()) {
+                                                defaultSelection = selection.clearingValue(basis)
+                                                doseErrors = doseErrors - basis
+                                            } else {
+                                                val updated = raw.toDoubleOrNull()
+                                                    ?.let { selection.settingValue(it, basis) }
+                                                if (updated != null) {
+                                                    defaultSelection = updated
+                                                    doseErrors = doseErrors - basis
+                                                } else {
+                                                    val bounds = option?.authorisedBounds
+                                                    doseErrors = doseErrors + (
+                                                        basis to if (bounds != null) {
+                                                            "The label registers " +
+                                                                formatChemicalNumber(bounds.first) +
+                                                                "–" +
+                                                                formatChemicalNumber(bounds.second) +
+                                                                " ${option.rate.unit}. Enter a rate " +
+                                                                "within it."
+                                                        } else {
+                                                            "Enter a rate the label registers."
+                                                        }
+                                                        )
+                                                }
+                                            }
+                                        },
+                                        onResetDose = { basis ->
+                                            defaultSelection = selection.clearingValue(basis)
+                                            doseTexts = doseTexts - basis
+                                            doseErrors = doseErrors - basis
+                                        },
+                                    )
+                                }
+                            }
+
+                            ChemicalRateGate.Decision.NoCanonicalRate -> {
+                                NoCanonicalRatePanel(
+                                    onRetry = { selected?.let { loadStructured(it) } },
+                                    labelUrl = intel.registration?.let {
+                                        it.regulatorLabelUrl
+                                            ?: it.labelReference
+                                            ?: it.primaryLabelUrl
+                                    },
+                                    onOpenLabel = { url -> uriHandler.openUri(url) },
+                                    onEnterManually = onEnterManually,
+                                    onChangeProduct = { changeProduct() },
+                                )
+                            }
+
+                            ChemicalRateGate.Decision.NotApplicable -> Unit
+                        }
+
+                        // The blocking reasons sit HERE, beside the control
+                        // that resolves them, not after the target list.
+                        if (blocking.isNotEmpty()) {
+                            SaveBlockedNotice(blocking.map { it.message })
+                        }
+
                         // ---- Grapevine use, rates and compliance ----
                         if (operational.any { it.rates.isNotEmpty() }) {
                             HorizontalDivider()
@@ -693,61 +805,6 @@ internal fun ChemicalMatchFlowSheet(
                         // came for. The vineyard-only WRITE boundary is
                         // unchanged; this is only about what is shown.
 
-                        // ---- Default rate decision (item 4) ----
-                        defaultSelection?.let { selection ->
-                            if (intel.registeredUses.viticultural().isNotEmpty()) {
-                                HorizontalDivider()
-                                DefaultRatesSection(
-                                    selection = selection,
-                                    doseTexts = doseTexts,
-                                    doseErrors = doseErrors,
-                                    onSelect = { option, basis ->
-                                        defaultSelection = selection.selecting(option, basis)
-                                        doseTexts = doseTexts - basis
-                                        doseErrors = doseErrors - basis
-                                    },
-                                    onDoseTextChange = { basis, text ->
-                                        doseTexts = doseTexts + (basis to text)
-                                    },
-                                    onSetDose = { basis ->
-                                        val raw = doseTexts[basis].orEmpty().trim()
-                                            .replace(',', '.')
-                                        val option = selection.resolvedOption(basis)
-                                        if (raw.isEmpty()) {
-                                            defaultSelection = selection.clearingValue(basis)
-                                            doseErrors = doseErrors - basis
-                                        } else {
-                                            val updated = raw.toDoubleOrNull()
-                                                ?.let { selection.settingValue(it, basis) }
-                                            if (updated != null) {
-                                                defaultSelection = updated
-                                                doseErrors = doseErrors - basis
-                                            } else {
-                                                val bounds = option?.authorisedBounds
-                                                doseErrors = doseErrors + (
-                                                    basis to if (bounds != null) {
-                                                        "The label registers " +
-                                                            formatChemicalNumber(bounds.first) +
-                                                            "–" +
-                                                            formatChemicalNumber(bounds.second) +
-                                                            " ${option.rate.unit}. Enter a rate " +
-                                                            "within it."
-                                                    } else {
-                                                        "Enter a rate the label registers."
-                                                    }
-                                                    )
-                                            }
-                                        }
-                                    },
-                                    onResetDose = { basis ->
-                                        defaultSelection = selection.clearingValue(basis)
-                                        doseTexts = doseTexts - basis
-                                        doseErrors = doseErrors - basis
-                                    },
-                                )
-                            }
-                        }
-
                         // ---- Documents and evidence ----
                         HorizontalDivider()
                         SectionLabel("Documents and evidence")
@@ -771,20 +828,10 @@ internal fun ChemicalMatchFlowSheet(
                         Text(resolved.detail, fontSize = 11.sp, color = vine.textSecondary)
 
                         // ---- Save ----
+                        // `gate`, `baseline` and `blocking` were measured before
+                        // the Default rate section so the explanation could be
+                        // rendered beside the control that fixes it.
                         HorizontalDivider()
-                        // The contract decides, evaluated against exactly what
-                        // will be written (vineyard-scoped) and including the
-                        // operator's default-rate decision.
-                        val gate = ChemicalSaveContract.evaluate(
-                            productName = productName,
-                            productCategory = intel.productCategory,
-                            intelligence = ChemicalVineyardScope.scoped(intel),
-                            defaults = defaultSelection,
-                        )
-                        val baseline = remember(existing?.id, countryCode) {
-                            ChemicalSaveContract.baselineViolationCodes(existing, countryCode)
-                        }
-                        val blocking = ChemicalSaveContract.blockingViolations(gate, baseline)
 
                         duplicateOf?.let { dup ->
                             Column(
@@ -828,10 +875,6 @@ internal fun ChemicalMatchFlowSheet(
                                     modifier = Modifier.fillMaxWidth(),
                                 ) { Text("Update existing record") }
                             }
-                        }
-
-                        if (blocking.isNotEmpty()) {
-                            SaveBlockedNotice(blocking.map { it.message })
                         }
 
                         if (duplicateOf == null) {
@@ -894,13 +937,12 @@ internal fun ChemicalMatchFlowSheet(
                             TextButton(onClick = { changeProduct() }) { Text("Change Product") }
                             TextButton(onClick = onEnterManually) { Text("Enter Manually") }
                         }
-                        Text(
-                            "The structured record is saved in full. The older Active Ingredient " +
-                                "and Chemical Group fields are kept in step with it for " +
-                                "compatibility.",
-                            fontSize = 11.sp,
-                            color = vine.textSecondary,
-                        )
+                        // NOTE: the sentence about legacy Active Ingredient and
+                        // Chemical Group columns being "kept in step for
+                        // compatibility" was removed from here deliberately. It
+                        // described VineTrack's storage layout, which is not a
+                        // fact an operator can act on, and it occupied the space
+                        // where the actual outcome of pressing Save belongs.
                     }
                 }
             }
@@ -989,6 +1031,84 @@ private fun SameNameDecision(
  * Shown instead of a disabled button with no explanation: an operator who
  * cannot save deserves to know precisely which registered fact is missing.
  */
+/**
+ * The fail-closed rate panel: what happened, and four real ways forward.
+ *
+ * # Why this exists
+ *
+ * When the label yields no canonical rate option, the product genuinely cannot
+ * be added as a label-checked chemical. The screen used to say so and stop —
+ * a disabled Save, an instruction to "enter the rate from the label", and no
+ * field to enter it into. Every route out of that state required the operator
+ * to guess that backing out and starting again was allowed.
+ *
+ * Each action below is a real move, and none of them writes anything:
+ *
+ * ```text
+ * Retry label details  re-runs enrichment for the SAME registration
+ * Open official label  opens the eLabel so they can read it themselves
+ * Enter manually       leaves the structured flow, plainly Not checked
+ * Change product       returns to register selection, discarding the draft
+ * ```
+ *
+ * There is deliberately no rate field. A number typed here would carry no
+ * `option_key` and no `rate_ids`, so nothing could ever show it corresponded to
+ * a printed direction — it would be an operator's guess wearing the appearance
+ * of a label-checked rate.
+ */
+@Composable
+private fun NoCanonicalRatePanel(
+    onRetry: () -> Unit,
+    labelUrl: String?,
+    onOpenLabel: (String) -> Unit,
+    onEnterManually: () -> Unit,
+    onChangeProduct: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(VineColors.Warning.copy(alpha = 0.10f))
+            .padding(12.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        SectionLabel("Default rate")
+        Text(
+            ChemicalRateGate.NO_CANONICAL_RATE_MESSAGE,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = VineColors.Warning,
+        )
+        Text(
+            ChemicalRateGate.MANUAL_FALLBACK_NOTICE,
+            fontSize = 11.sp,
+            color = vine.textSecondary,
+        )
+        // Retry first: a label that failed to parse once often succeeds on a
+        // second pass, and it is the only action that keeps the operator on
+        // the product they already chose.
+        Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
+            Text(ChemicalRateGate.ACTION_RETRY)
+        }
+        labelUrl?.takeIf { it.isNotBlank() }?.let { url ->
+            OutlinedButton(
+                onClick = { onOpenLabel(url) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(ChemicalRateGate.ACTION_OPEN_LABEL) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = onEnterManually) {
+                Text(ChemicalRateGate.ACTION_ENTER_MANUALLY)
+            }
+            TextButton(onClick = onChangeProduct) {
+                Text(ChemicalRateGate.ACTION_CHANGE_PRODUCT)
+            }
+        }
+    }
+}
+
 @Composable
 private fun SaveBlockedNotice(messages: List<String>) {
     val vine = LocalVineColors.current
