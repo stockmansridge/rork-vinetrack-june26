@@ -69,6 +69,17 @@ struct UnifiedPinComposerView: View {
     /// True while the draft pin is under the finger. Map interaction is
     /// suspended for the duration so the drag moves the PIN, never the map.
     @State private var isDraggingPin = false
+    /// The pin's screen point at the instant the drag began, captured via
+    /// `MapProxy.convert(_:to:)` in the MAP's own context (reliable), so the
+    /// drag only ever needs `value.translation` — absolute gesture locations
+    /// from inside an annotation's hosting view resolve the named space
+    /// inconsistently and were the source of the top-left ghost pin.
+    @State private var dragAnchorPoint: CGPoint?
+    /// Where the single drag-overlay pin is drawn (container coordinates).
+    @State private var dragPinScreenPoint: CGPoint?
+    /// Live coordinate under the finger while dragging — drives the row
+    /// preview label only; the placement itself commits on drag end.
+    @State private var draggedPreviewCoordinate: CLLocationCoordinate2D?
 
     // Photo capture for the pin this composer just created. The pin is
     // created FIRST and its id held here, so ignoring, dismissing or
@@ -360,10 +371,10 @@ struct UnifiedPinComposerView: View {
         VStack(alignment: .leading, spacing: 8) {
             MapReader { proxy in
                 Map(position: $inlineCamera, interactionModes: isDraggingPin ? [] : .all) {
-                    // The normal blue current-location dot, from the app's
-                    // existing location service. Visually distinct from the
-                    // draft pin, and simply absent when permission is denied.
-                    UserAnnotation()
+                    // The blue current-location dot, from the app's existing
+                    // location service. Visually distinct from the draft pin,
+                    // and simply absent when permission is denied.
+                    currentLocationContent
                     if let tappedCoordinate {
                         Annotation("", coordinate: tappedCoordinate) {
                             draftPinMarker(proxy: proxy, space: inlineMapSpace)
@@ -384,6 +395,7 @@ struct UnifiedPinComposerView: View {
             .coordinateSpace(.named(inlineMapSpace))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipShape(.rect(cornerRadius: 10))
+            .overlay { dragOverlayPin }
             .overlay(alignment: .topTrailing) {
                 mapExpandButton
             }
@@ -391,34 +403,98 @@ struct UnifiedPinComposerView: View {
         }
     }
 
-    /// The draft pin itself — tap-placed, then DRAGGABLE.
-    ///
-    /// The drag converts through the same `MapProxy` the tap uses, so both
-    /// placement gestures always agree, and it publishes on every
-    /// `onChanged` rather than only at drag-end: the block/row label is
-    /// re-resolved live as the pin crosses row lines.
-    private func draftPinMarker(proxy: MapProxy, space: String) -> some View {
+    /// The draft pin's shared visual — used by the map annotation at rest
+    /// and by the drag overlay while the finger is down.
+    private func pinImage(dragging: Bool) -> some View {
         Image(systemName: "mappin.circle.fill")
             .font(.system(size: 30, weight: .semibold))
             .foregroundStyle(.white, VineyardTheme.primary)
-            .shadow(color: .black.opacity(0.35), radius: isDraggingPin ? 7 : 2, y: 1)
-            .scaleEffect(isDraggingPin ? 1.22 : 1.0)
+            .shadow(color: .black.opacity(0.35), radius: dragging ? 7 : 2, y: 1)
+            .scaleEffect(dragging ? 1.22 : 1.0)
+    }
+
+    /// The blue current-location dot, driven by the app's ONE LocationService
+    /// fix. `UserAnnotation()` depends on the Map's own internal tracking,
+    /// which does not reliably render in this composer; this draws the same
+    /// visual from the fix the rest of the app already trusts.
+    @MapContentBuilder
+    private var currentLocationContent: some MapContent {
+        if let device = locationService.location?.coordinate, CLLocationCoordinate2DIsValid(device) {
+            Annotation("", coordinate: device) {
+                ZStack {
+                    Circle().fill(Color.blue.opacity(0.22)).frame(width: 36, height: 36)
+                    Circle().fill(.white).frame(width: 19, height: 19)
+                    Circle().fill(.blue).frame(width: 13, height: 13)
+                }
+                // Never intercept a placement tap under the dot.
+                .allowsHitTesting(false)
+            }
+            .annotationTitles(.hidden)
+        }
+    }
+
+    /// The ONE visible pin while dragging — drawn in the map container's own
+    /// coordinate space at the anchored finger offset. The map annotation
+    /// underneath stays at its pre-drag coordinate (hidden), so it is never
+    /// recreated mid-drag and no second pin can appear.
+    @ViewBuilder
+    private var dragOverlayPin: some View {
+        if isDraggingPin, let point = dragPinScreenPoint {
+            pinImage(dragging: true)
+                .position(point)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// The draft pin itself — tap-placed, then DRAGGABLE.
+    ///
+    /// The drag is translation-based: the pin's screen point is anchored ONCE
+    /// at drag start (converted in the map's own context, where the named
+    /// space always resolves) and every update applies `value.translation`
+    /// to that anchor. Absolute `value.location` is never used — from inside
+    /// an annotation's hosting view it intermittently failed to resolve the
+    /// named space, collapsing to points near (0,0): that was both the ghost
+    /// pin at the top-left and the “outside mapped blocks” label flicker.
+    /// The preview label re-resolves live from the dragged coordinate; the
+    /// placement commits on drag end.
+    private func draftPinMarker(proxy: MapProxy, space: String) -> some View {
+        pinImage(dragging: isDraggingPin)
+            // While dragging, the overlay pin is the visible one.
+            .opacity(isDraggingPin ? 0 : 1)
             .animation(.snappy(duration: 0.15), value: isDraggingPin)
             .contentShape(.circle)
             .gesture(
                 // minimumDistance 0 claims the touch the instant it lands on
                 // the pin, which is what stops the map panning underneath it.
-                DragGesture(minimumDistance: 0, coordinateSpace: .named(space))
+                DragGesture(minimumDistance: 0)
                     .onChanged { value in
+                        if dragAnchorPoint == nil, let tappedCoordinate {
+                            dragAnchorPoint = proxy.convert(tappedCoordinate, to: .named(space))
+                        }
+                        guard let anchor = dragAnchorPoint else { return }
                         isDraggingPin = true
-                        if let moved = proxy.convert(value.location, from: .named(space)) {
-                            placeDraftPin(at: moved)
+                        let point = CGPoint(
+                            x: anchor.x + value.translation.width,
+                            y: anchor.y + value.translation.height
+                        )
+                        dragPinScreenPoint = point
+                        if let moved = proxy.convert(point, from: .named(space)) {
+                            draggedPreviewCoordinate = moved
                         }
                     }
                     .onEnded { value in
-                        if let moved = proxy.convert(value.location, from: .named(space)) {
-                            placeDraftPin(at: moved)
+                        if let anchor = dragAnchorPoint {
+                            let point = CGPoint(
+                                x: anchor.x + value.translation.width,
+                                y: anchor.y + value.translation.height
+                            )
+                            if let moved = proxy.convert(point, from: .named(space)) {
+                                placeDraftPin(at: moved)
+                            }
                         }
+                        dragAnchorPoint = nil
+                        dragPinScreenPoint = nil
+                        draggedPreviewCoordinate = nil
                         isDraggingPin = false
                     }
             )
@@ -459,9 +535,11 @@ struct UnifiedPinComposerView: View {
     @ViewBuilder
     private func placementPreviewLabel(onDark: Bool) -> some View {
         let tint: Color = onDark ? .white.opacity(0.92) : Color.secondary
-        if let tappedCoordinate {
-            let attachment = resolvedAttachment(for: tappedCoordinate)
-            let block = RowGuidance.paddock(for: tappedCoordinate, in: store.paddocks)
+        // While dragging, resolve from the live dragged coordinate ONLY — one
+        // source, one resolver, so the label can't flicker between answers.
+        if let coordinate = draggedPreviewCoordinate ?? tappedCoordinate {
+            let attachment = resolvedAttachment(for: coordinate)
+            let block = RowGuidance.paddock(for: coordinate, in: store.paddocks)
             if let block, attachment.snappedToRow, let row = attachment.pinRowNumber {
                 Label("\(block.name) · on row \(row)", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
                     .font(.footnote)
@@ -497,7 +575,7 @@ struct UnifiedPinComposerView: View {
                     bounds: MapCameraBounds(minimumDistance: 10),
                     interactionModes: isDraggingPin ? [] : .all
                 ) {
-                    UserAnnotation()
+                    currentLocationContent
                     if let tappedCoordinate {
                         Annotation("", coordinate: tappedCoordinate) {
                             draftPinMarker(proxy: proxy, space: fullMapSpace)
@@ -519,6 +597,7 @@ struct UnifiedPinComposerView: View {
                 .ignoresSafeArea()
             }
             .coordinateSpace(.named(fullMapSpace))
+            .overlay { dragOverlayPin }
 
             VStack {
                 HStack {
