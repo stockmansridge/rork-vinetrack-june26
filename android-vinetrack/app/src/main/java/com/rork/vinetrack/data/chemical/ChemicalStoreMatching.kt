@@ -67,27 +67,21 @@ object ChemicalStoreMatching {
         raw.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
 
     /**
-     * Whether two product names are the same or materially matching.
+     * Whether two product names denote the same saved product.
      *
-     * Exact match after normalisation, or one name being a whole-token prefix
-     * of the other — which is how `"Kocide Blue"` finds the stored
-     * `"Kocide Blue Xtra"`. Deliberately NOT a fuzzy/edit-distance test: this
-     * decision only ever OFFERS a choice, and a false positive that pushes an
-     * operator toward the wrong existing record is worse than asking twice.
+     * EXACT equality after normalisation — never substring, prefix or
+     * edit-distance. An earlier revision let a whole-token prefix match so
+     * `"Kocide Blue"` would find `"Kocide Blue Xtra"`, but those are two
+     * different registrations with different labels, and offering the wrong
+     * one invites an operator to skip the register check for a product they
+     * do not actually own. Asking twice is cheap; adopting the wrong record
+     * is a spray-diary error.
      */
-    fun namesMateriallyMatch(a: String, b: String): Boolean {
+    fun namesMatch(a: String, b: String): Boolean {
         val left = normalisedName(a)
         val right = normalisedName(b)
         if (left.isEmpty() || right.isEmpty()) return false
-        if (left == right) return true
-        val leftTokens = left.split(' ')
-        val rightTokens = right.split(' ')
-        val shorter = if (leftTokens.size <= rightTokens.size) leftTokens else rightTokens
-        val longer = if (leftTokens.size <= rightTokens.size) rightTokens else leftTokens
-        // A single token is too weak to claim a match on its own: "Blue" must
-        // not adopt "Blue Shield".
-        if (shorter.size < 2) return false
-        return longer.take(shorter.size) == shorter
+        return left == right
     }
 
     /**
@@ -98,8 +92,11 @@ object ChemicalStoreMatching {
      * and the operator's wait before telling them they already owned the
      * product, and left a half-finished record on screen if they backed out.
      *
-     * Ordered so an exact name match leads, because that is the record the
-     * operator is most likely to have meant.
+     * Only ACTIVE chemicals are considered: an archived product is one the
+     * operator has deliberately retired, and resurrecting it as a duplicate
+     * candidate would undo that decision without being asked.
+     *
+     * Every match is an exact name match, so the result needs no ranking.
      */
     fun findByProductName(
         chemicals: List<SavedChemical>,
@@ -108,9 +105,9 @@ object ChemicalStoreMatching {
     ): List<SavedChemical> {
         val normalisedQuery = normalisedName(query)
         if (normalisedQuery.isEmpty()) return emptyList()
-        return chemicals
-            .filter { it.id != excludingId && namesMateriallyMatch(it.displayName, query) }
-            .sortedByDescending { normalisedName(it.displayName) == normalisedQuery }
+        return chemicals.filter {
+            it.isActive && it.id != excludingId && namesMatch(it.displayName, query)
+        }
     }
 
     /**

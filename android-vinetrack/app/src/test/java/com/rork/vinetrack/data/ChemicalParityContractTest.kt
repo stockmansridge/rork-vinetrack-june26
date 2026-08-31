@@ -174,38 +174,51 @@ class ChemicalParityContractTest {
     @Test
     fun `the same product typed three ways is one product`() {
         assertTrue(
-            ChemicalStoreMatching.namesMateriallyMatch("Kocide Blue Xtra", "KOCIDE BLUE XTRA"),
+            ChemicalStoreMatching.namesMatch("Kocide Blue Xtra", "KOCIDE BLUE XTRA"),
         )
         assertTrue(
-            ChemicalStoreMatching.namesMateriallyMatch("Kocide-Blue  Xtra", "Kocide Blue Xtra"),
+            ChemicalStoreMatching.namesMatch("Kocide-Blue  Xtra", "Kocide Blue Xtra"),
         )
     }
 
     @Test
-    fun `a whole-token prefix matches, so a shorter typed name finds the record`() {
-        assertTrue(ChemicalStoreMatching.namesMateriallyMatch("Kocide Blue", "Kocide Blue Xtra"))
+    fun `a prefix is NOT a match, because it is a different registration`() {
+        // "Kocide Blue" and "Kocide Blue Xtra" are two products with two labels.
+        // Offering the stored one would invite the operator to skip the register
+        // check for a product they do not own.
+        assertFalse(ChemicalStoreMatching.namesMatch("Kocide Blue", "Kocide Blue Xtra"))
     }
 
     @Test
     fun `a single token is too weak to claim a match`() {
         // "Blue" must not adopt "Blue Shield": this decision only ever offers a
         // choice, and a false positive pushes an operator at the wrong record.
-        assertFalse(ChemicalStoreMatching.namesMateriallyMatch("Blue", "Blue Shield"))
+        assertFalse(ChemicalStoreMatching.namesMatch("Blue", "Blue Shield"))
     }
 
     @Test
     fun `pack sizes are not stripped, because they can be different registrations`() {
-        assertFalse(ChemicalStoreMatching.namesMateriallyMatch("Product 5 L", "Product 20 L"))
+        assertFalse(ChemicalStoreMatching.namesMatch("Product 5 L", "Product 20 L"))
     }
 
     @Test
-    fun `an exact name match leads the offered records`() {
+    fun `an archived chemical is never offered as a duplicate`() {
+        // Archiving is a deliberate retirement. Resurrecting the row as a
+        // duplicate candidate would undo that decision without asking.
+        val chemicals = listOf(stored("1", "Kocide Blue Xtra").copy(isActive = false))
+        assertTrue(
+            ChemicalStoreMatching.findByProductName(chemicals, "Kocide Blue Xtra").isEmpty(),
+        )
+    }
+
+    @Test
+    fun `only the exactly-named record is offered, not its longer sibling`() {
         val chemicals = listOf(
             stored("1", "Kocide Blue Xtra"),
             stored("2", "Kocide Blue"),
         )
         val found = ChemicalStoreMatching.findByProductName(chemicals, "Kocide Blue")
-        assertEquals(2, found.size)
+        assertEquals(1, found.size)
         assertEquals("Kocide Blue", found.first().displayName)
     }
 

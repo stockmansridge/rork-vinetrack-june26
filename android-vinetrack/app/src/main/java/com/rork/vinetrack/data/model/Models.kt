@@ -2,6 +2,7 @@ package com.rork.vinetrack.data.model
 
 import com.rork.vinetrack.data.chemical.ChemicalActiveIngredient
 import com.rork.vinetrack.data.chemical.ChemicalDataSource
+import com.rork.vinetrack.data.chemical.ChemicalDataSourceKind
 import com.rork.vinetrack.data.chemical.ChemicalIntelligence
 import com.rork.vinetrack.data.chemical.ChemicalLineSnapshot
 import com.rork.vinetrack.data.chemical.ChemicalRegisteredUse
@@ -1908,20 +1909,17 @@ data class SavedChemical(
     @SerialName("registered_product_name") val registeredProductName: String? = null,
     /** The REGULATOR's approved label (APVMA eLabels and equivalents). */
     @SerialName("label_reference") val labelReference: String? = null,
-    /**
-     * The registrant/manufacturer-hosted LABEL document (sql/215).
-     *
-     * A separate durable column, never the regulator's field wearing a
-     * different name. Absent from rows written before sql/215 and from servers
-     * that predate it, which is why it is nullable with a default — decoding
-     * stays tolerant and no existing record changes shape.
-     */
-    @SerialName("manufacturer_label_url") val manufacturerLabelUrl: String? = null,
-    /**
-     * The registrant's PRODUCT INFORMATION page (sql/215). Marketing material:
-     * never a label, never a rate source, and never shown as either.
-     */
-    @SerialName("manufacturer_product_url") val manufacturerProductUrl: String? = null,
+    // NOTE: there are deliberately NO `manufacturer_label_url` /
+    // `manufacturer_product_url` / `regulator_label_url` fields here. Those are
+    // sql/215 columns and sql/215 is NOT applied for this release, so naming
+    // them in a saved-chemical DATABASE DTO makes PostgREST reject the whole
+    // write. The three link CONCEPTS still survive without three columns:
+    //   - regulator label  -> `label_reference` (mirrored to `label_url`)
+    //   - manufacturer page-> `product_url`
+    //   - manufacturer LABEL -> a `verification_sources` entry whose kind is
+    //     `manufacturer_label`, carrying the URL in `reference`.
+    // The lookup WIRE model (ChemicalRegistration) may still carry all three;
+    // only the database row may not.
     @SerialName("label_version") val labelVersion: String? = null,
     @SerialName("verification_status") val verificationStatusRaw: String? = null,
     @SerialName("verification_sources") val verificationSources: List<ChemicalDataSource>? = null,
@@ -2010,9 +2008,21 @@ data class SavedChemical(
                         // so a saved chemical reopens with the same documents
                         // the lookup found rather than losing the
                         // manufacturer's label on the first save.
-                        manufacturerLabelUrl = manufacturerLabelUrl,
+                        //
+                        // The manufacturer label has no column (sql/215 is not
+                        // applied), so it is recovered from the evidence that
+                        // DID persist. Reading it back from `verification_
+                        // sources` is not a workaround: that entry is the
+                        // record of which document was actually read, which is
+                        // exactly what a manufacturer label is.
+                        manufacturerLabelUrl = verificationSources
+                            ?.firstOrNull {
+                                it.kind == ChemicalDataSourceKind.MANUFACTURER_LABEL &&
+                                    !it.reference.isNullOrBlank()
+                            }
+                            ?.reference,
                         regulatorLabelUrl = labelReference,
-                        manufacturerProductUrl = manufacturerProductUrl,
+                        manufacturerProductUrl = productUrl.takeIf { it.isNotBlank() },
                         labelVersion = labelVersion,
                     )
                 } else {

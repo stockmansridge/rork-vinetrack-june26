@@ -57,26 +57,20 @@ nonisolated enum ChemicalStoreMatching {
             .joined(separator: " ")
     }
 
-    /// Whether two product names are the same or materially matching.
+    /// Whether two product names denote the same saved product.
     ///
-    /// Exact match after normalisation, or one name being a whole-token prefix
-    /// of the other — which is how `"Kocide Blue"` finds the stored
-    /// `"Kocide Blue Xtra"`. Deliberately NOT a fuzzy/edit-distance test: this
-    /// decision only ever OFFERS a choice, and a false positive that pushes an
-    /// operator toward the wrong existing record is worse than asking twice.
-    static func namesMateriallyMatch(_ a: String, _ b: String) -> Bool {
+    /// EXACT equality after normalisation — never substring, prefix or
+    /// edit-distance. An earlier revision let a whole-token prefix match so
+    /// `"Kocide Blue"` would find `"Kocide Blue Xtra"`, but those are two
+    /// different registrations with different labels, and offering the wrong
+    /// one invites an operator to skip the register check for a product they
+    /// do not actually own. Asking twice is cheap; adopting the wrong record
+    /// is a spray-diary error.
+    static func namesMatch(_ a: String, _ b: String) -> Bool {
         let left = normalisedName(a)
         let right = normalisedName(b)
         guard !left.isEmpty, !right.isEmpty else { return false }
-        if left == right { return true }
-        let leftTokens = left.split(separator: " ").map(String.init)
-        let rightTokens = right.split(separator: " ").map(String.init)
-        let shorter = leftTokens.count <= rightTokens.count ? leftTokens : rightTokens
-        let longer = leftTokens.count <= rightTokens.count ? rightTokens : leftTokens
-        // A single token is too weak to claim a match on its own: "Blue" must
-        // not adopt "Blue Shield".
-        guard shorter.count >= 2 else { return false }
-        return Array(longer.prefix(shorter.count)) == shorter
+        return left == right
     }
 
     /// Existing chemicals whose name is the same or materially matching.
@@ -86,8 +80,11 @@ nonisolated enum ChemicalStoreMatching {
     /// call and the operator's wait before telling them they already owned the
     /// product, and left a half-finished record on screen if they backed out.
     ///
-    /// Ordered so an exact name match leads, because that is the record the
-    /// operator is most likely to have meant.
+    /// Only ACTIVE chemicals are considered: an archived product is one the
+    /// operator has deliberately retired, and resurrecting it as a duplicate
+    /// candidate would undo that decision without being asked.
+    ///
+    /// Every match is an exact name match, so the result needs no ranking.
     static func findByProductName(
         in chemicals: [SavedChemical],
         query: String,
@@ -95,17 +92,9 @@ nonisolated enum ChemicalStoreMatching {
     ) -> [SavedChemical] {
         let normalisedQuery = normalisedName(query)
         guard !normalisedQuery.isEmpty else { return [] }
-        let matches = chemicals.filter {
-            $0.id != excludingId && namesMateriallyMatch($0.name, query)
+        return chemicals.filter {
+            $0.isActive && $0.id != excludingId && namesMatch($0.name, query)
         }
-        // Exact name matches lead. Written as a stable partition rather than a
-        // `sorted` predicate because "exact before inexact" is not a strict
-        // weak ordering, and an unstable sort would reorder equal records
-        // between redraws — which on this screen means the row an operator was
-        // reaching for moves under their thumb.
-        let exact = matches.filter { normalisedName($0.name) == normalisedQuery }
-        let partial = matches.filter { normalisedName($0.name) != normalisedQuery }
-        return exact + partial
     }
 
     /// The decision the operator is offered before research begins.
