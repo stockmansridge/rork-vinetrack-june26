@@ -999,31 +999,31 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
         ChemicalDefaultRateBasis.allCases.contains { isDefaultRateConfirmed(for: $0) }
     }
 
-    /// True when THIS save must not proceed without a confirmed default rate.
+    /// Whether Chemical Store setup asks for a default rate at all.
     ///
-    /// Scoped deliberately to a first add from the register: a looked-up
-    /// product with grapevine uses is exactly the case where the label states
-    /// the rate, the operator is looking at it, and letting them save without
-    /// answering produces a chemical whose spray calculations start from a
-    /// number nobody chose.
+    /// It does not, and this is deliberately `false`.
     ///
-    /// Everything else is exempt, for reasons that are not softness:
+    /// # Why the first-add gate was wrong
     ///
-    /// ```text
-    /// manual entry      never went near the register; there is nothing
-    ///                   canonical to confirm and no server option to offer
-    /// existing record   already saved. Blocking a price or note edit behind a
-    ///                   rate question would strand the record unrepairable
-    /// no grapevine use  nothing to dose by; the label says so plainly
-    /// ```
-    var requiresDefaultRateConfirmation: Bool {
-        isReviewingLookup && isRegisteredForGrapevine
-    }
+    /// Adding a product to the Chemical Store records WHAT THE LABEL SAYS. It
+    /// is not the moment a dose is chosen, because at that moment there is no
+    /// spray: no block, no growth stage, no disease pressure, no carrier
+    /// volume. Demanding an exact number there forced the operator to invent
+    /// one — and a `560–700 g/ha` band answered under duress is answered with
+    /// whichever endpoint the screen made easiest, which is precisely the
+    /// silent under-application the gate claimed to prevent.
+    ///
+    /// The dose is chosen when the spray is planned, against the registered
+    /// range carried on the record, in the Spray Calculator — including when
+    /// planning from a Program Step. A default rate remains available as an
+    /// OPTIONAL convenience; nothing requires one.
+    ///
+    /// A label with no usable grapevine rate is a different question entirely
+    /// and still fails closed, through `blockingViolations`.
+    var requiresDefaultRateConfirmation: Bool { false }
 
-    /// True when the gate is currently blocking Save.
-    var isAwaitingDefaultRateConfirmation: Bool {
-        requiresDefaultRateConfirmation && !hasConfirmedDefaultRate
-    }
+    /// True when the gate is currently blocking Save. Never, by construction.
+    var isAwaitingDefaultRateConfirmation: Bool { false }
 
     /// Bases the operator still has to answer before a default exists.
     var basesAwaitingDefaultChoice: [ChemicalDefaultRateBasis] {
@@ -1223,14 +1223,19 @@ nonisolated struct ChemicalReviewSession: Sendable, Hashable {
 
     /// The ONE rule the Save button asks.
     ///
-    /// The rate-confirmation gate lives HERE rather than in the view, so there
-    /// can be no second, view-only opinion about whether this record may be
-    /// saved — a screen that disabled Save on its own would leave every other
-    /// caller of `isValid` writing the record the gate refused.
+    /// A usable registered grapevine rate or RANGE is sufficient. The record
+    /// stores what the label states; it does not store a dose nobody has had
+    /// cause to choose yet.
+    ///
+    /// This lives HERE rather than in the view, so there can be no second,
+    /// view-only opinion about whether this record may be saved — a screen
+    /// that disabled Save on its own would leave every other caller of
+    /// `isValid` writing the record that screen refused. The fail-closed case
+    /// (no usable grapevine rate at all) is unchanged: it arrives through
+    /// `blockingViolations`.
     var isValid: Bool {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        guard blockingViolations.isEmpty else { return false }
-        return !isAwaitingDefaultRateConfirmation
+        return blockingViolations.isEmpty
     }
 
     // MARK: - Formatting

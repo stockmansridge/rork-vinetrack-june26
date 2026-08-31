@@ -353,43 +353,24 @@ object ChemicalSaveContract {
 
         violations.addAll(rateViolations(viticulturalRates))
 
-        // Release item 3: silence is not consent, at any number of options.
-        // The recommendation stays on screen and stays pickable; it simply
-        // cannot count as the operator's answer.
-        if (defaults != null && defaults.offersAnyChoice) {
-            if (!defaults.hasConfirmedDefault) {
-                violations.add(
-                    ChemicalSaveViolation(
-                        code = ChemicalSaveViolationCode.DEFAULT_RATE_REQUIRED,
-                        message = "Confirm the rate this vineyard uses before saving.",
-                        field = "default_rates",
-                    ),
-                )
-            }
-            // A chosen band with no figure inside it is a half-finished
-            // decision, and it is reported separately so the operator is told
-            // to type a dose rather than to choose a rate they already chose.
-            for (basis in defaults.basesAwaitingExactDose) {
-                val bounds = defaults.confirmedOption(basis)?.authorisedBounds
-                val unit = defaults.confirmedOption(basis)?.rate?.unit.orEmpty()
-                violations.add(
-                    ChemicalSaveViolation(
-                        code = ChemicalSaveViolationCode.DEFAULT_RATE_EXACT_DOSE_REQUIRED,
-                        message = if (bounds != null) {
-                            "Enter the rate this vineyard normally uses within the " +
-                                "registered range of " +
-                                formatChemicalNumber(bounds.first) + "–" +
-                                formatChemicalNumber(bounds.second) +
-                                (if (unit.isNotEmpty()) " $unit" else "") + "."
-                        } else {
-                            "Enter the exact rate this vineyard uses within the " +
-                                "registered range."
-                        },
-                        field = "default_rate_${basis.raw}",
-                    ),
-                )
-            }
-        }
+        // NO default-rate violation is raised here, and that is the contract.
+        //
+        // Adding a product to the Chemical Store records WHAT THE LABEL SAYS.
+        // The dose is a spray decision, taken later against a real block,
+        // growth stage and carrier volume — in the Spray Calculator, including
+        // when planning from a Program Step. Requiring an exact figure at setup
+        // forced the operator to answer a band with no spray in front of them,
+        // and an answer given under that pressure is whichever endpoint the
+        // screen made easiest to tap.
+        //
+        // So a usable registered rate OR RANGE is sufficient to save. The
+        // authoritative range is persisted in full on `registered_uses`, and
+        // `default_rates` stays absent unless the operator deliberately chose
+        // an optional default. Nothing here converts a band into a number.
+        //
+        // The genuinely unusable case is unaffected: USABLE_RATE_MISSING above
+        // still fails closed when the grapevine registration carries no usable
+        // rate at all.
 
         // A default whose cited registered rate has vanished is not a default
         // any more. It is never repointed by value or position — the operator
