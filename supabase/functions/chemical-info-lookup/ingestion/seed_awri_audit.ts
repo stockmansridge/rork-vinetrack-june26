@@ -467,7 +467,7 @@ export function auditDeterministicMatches(input: AuditInput): AuditResult {
 
     // ---- Structural tier re-verification -----------------------------------
     const registerName = (live?.fpname ?? matched?.registered_product_name ?? "").trim();
-    const holderName = (live?.sname ?? matched?.registrant ?? "") ?? "";
+    const holderName = live?.sname ?? matched?.registrant ?? "";
     const awriNorm = normaliseNameLoose(res.awri_product_name);
     const awriTokens = awriNorm ? awriNorm.split(" ") : [];
     const registerNorm = normaliseNameLoose(registerName);
