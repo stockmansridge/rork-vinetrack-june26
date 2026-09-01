@@ -11,6 +11,7 @@ import Testing
 ///     winter pruning happened) — never the vintage, never the device clock,
 ///   * vintage year        = the season-start resolver (sql/119), unchanged,
 ///   * so 2 Aug 2026 → "2026 Winter Pruning · Vintage 2027".
+@MainActor
 struct PruningSeasonAssignmentTests {
 
     private static let calendar: Calendar = {

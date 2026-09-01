@@ -239,38 +239,46 @@ final class PaddockSyncService {
             metadata.resetAllLastSync()
             let fetchStartedAt = Date()
             let remote = try await repository.fetchAllPaddocks(vineyardId: vineyardId)
-            var upserts = 0
             var deletes = 0
             var preservedPending = 0
             let remoteIds = Set(remote.map { $0.id })
             let pendingUpsertIds = Set(metadata.pendingUpserts.keys)
             let pendingDeleteIds = Set(metadata.pendingDeletes.keys)
+            let pendingIds = pendingUpsertIds.union(pendingDeleteIds)
+            var batchUpserts: [Paddock] = []
+            var remoteDeletes: [UUID] = []
             for backendPaddock in remote {
                 // NEVER silently discard offline block work: a block with an
                 // unpushed local edit (or a queued local delete) is left
                 // exactly as it is — the normal sync will push it and resolve
                 // the conflict via last-write-wins.
-                if pendingUpsertIds.contains(backendPaddock.id) || pendingDeleteIds.contains(backendPaddock.id) {
+                if pendingIds.contains(backendPaddock.id) {
                     preservedPending += 1
                     continue
                 }
                 if backendPaddock.deletedAt != nil {
-                    store.applyRemotePaddockDelete(backendPaddock.id)
-                    metadata.clearDirty([backendPaddock.id])
-                    metadata.clearDeleted([backendPaddock.id])
-                    deletes += 1
+                    remoteDeletes.append(backendPaddock.id)
                 } else {
-                    let mapped = backendPaddock.toPaddock()
-                    store.applyRemotePaddockUpsert(mapped)
-                    metadata.clearDirty([backendPaddock.id])
-                    upserts += 1
+                    batchUpserts.append(backendPaddock.toPaddock())
                 }
             }
+            // Durable batch apply — the same guarantee as normal sync
+            // recovery: one atomic write for every refreshed row, and a
+            // persistence failure THROWS so Force Refresh reports failure
+            // instead of a refresh that never landed on disk.
+            try store.applyRemotePaddockUpsertsBatch(batchUpserts)
+            metadata.clearDirty(batchUpserts.map { $0.id })
+            let upserts = batchUpserts.count
+            for paddockId in remoteDeletes {
+                store.applyRemotePaddockDelete(paddockId)
+                metadata.clearDirty([paddockId])
+                metadata.clearDeleted([paddockId])
+                deletes += 1
+            }
             // Sweep hard-deleted local paddocks (no longer present remotely).
-            let pendingLocalCreates = pendingUpsertIds
             for local in store.paddocks where local.vineyardId == vineyardId {
                 if remoteIds.contains(local.id) { continue }
-                if pendingLocalCreates.contains(local.id) { continue }
+                if pendingUpsertIds.contains(local.id) { continue }
                 store.applyRemotePaddockDelete(local.id)
                 metadata.clearDirty([local.id])
                 metadata.clearDeleted([local.id])
@@ -281,6 +289,19 @@ final class PaddockSyncService {
                 print("[PaddockSync] force refresh preserved \(preservedPending) block(s) with pending local changes")
             }
             #endif
+            // Durable success gate — persisted-ID parity with the server:
+            // every active server block (except those intentionally preserved
+            // for pending local work) must be readable back FROM DISK before
+            // Force Refresh reports success or stores a watermark.
+            let liveRemoteIds = Set(remote.filter { $0.deletedAt == nil }.map { $0.id })
+            let requiredIds = liveRemoteIds.subtracting(pendingIds)
+            let unpersisted = requiredIds.subtracting(store.persistedPaddockIds(for: vineyardId))
+            guard unpersisted.isEmpty else {
+                throw PaddockSyncError.hydrationIncomplete(
+                    vineyardId: vineyardId,
+                    missingCount: unpersisted.count
+                )
+            }
             GrapeVarietyCanonicalization.run(store: store)
             // Server-derived watermark (see `sync`): the newest server
             // `updated_at` seen, falling back to an overlapped client time
@@ -350,7 +371,26 @@ final class PaddockSyncService {
             // cache. `store.paddocks` holds only the selected vineyard, so
             // building the lookup from it would misclassify another
             // vineyard's pending edit as an orphan and discard it.
-            let byId = Dictionary(store.allCachedPaddocks().map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            //
+            // This read can itself DISCOVER a corrupt cache — AFTER
+            // `reclaimOrphans` was decided. The explicit outcome keeps a
+            // failed load from masquerading as an ordinary empty cache: with
+            // no cache, a pending entry's payload being unfindable proves
+            // nothing, so NOTHING may be reclaimed or cleared. Stop with a
+            // recoverable failure; the read already flagged recovery, so the
+            // next sync enters the pull-first recovery flow with the
+            // complete pending queue intact.
+            let completeCache: [Paddock]
+            switch store.allCachedPaddocksOutcome() {
+            case .loaded(let cache):
+                completeCache = cache
+            case .corrupted:
+                #if DEBUG
+                print("[PaddockSync] block cache decode failure discovered DURING push — preserving the complete pending queue and failing recoverably; next sync runs recovery")
+                #endif
+                throw PaddockSyncError.cacheUnreadableDuringPush(vineyardId: vineyardId)
+            }
+            let byId = Dictionary(completeCache.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendPaddockUpsert] = []
             var pushedIds: [UUID] = []
             var orphans: [UUID] = []

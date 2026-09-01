@@ -181,7 +181,7 @@ struct PruningActivityReportTests {
     func filters() {
         let rows = Self.build([
             Self.entry(day: 1, worker: "Sam", notes: "wet morning"),
-            Self.entry(day: 5, paddock: Self.blockB, worker: "Ana", workTaskId: Self.taskId),
+            Self.entry(paddock: Self.blockB, day: 5, worker: "Ana", workTaskId: Self.taskId),
             Self.entry(day: 9, worker: "Sam", reversedAt: Self.date(2026, 7, 10))
         ])
 
@@ -223,7 +223,7 @@ struct PruningActivityReportTests {
     func search() {
         let rows = Self.build([
             Self.entry(day: 1, worker: "Sam", notes: "wet morning"),
-            Self.entry(day: 5, paddock: Self.blockB, worker: "Ana", workTaskId: Self.taskId)
+            Self.entry(paddock: Self.blockB, day: 5, worker: "Ana", workTaskId: Self.taskId)
         ])
 
         func hits(_ needle: String) -> Int {

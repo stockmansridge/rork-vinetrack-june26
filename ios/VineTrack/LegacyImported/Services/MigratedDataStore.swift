@@ -914,22 +914,45 @@ final class MigratedDataStore {
         persistence.save(all, key: Keys.paddocks)
     }
 
+    /// Explicit outcome of reading the shared multi-vineyard block cache.
+    /// Callers whose safety depends on distinguishing "cache is empty" from
+    /// "cache could not be read" (the block sync's push path) MUST use the
+    /// outcome variants — a corrupt cache read as an ordinary empty array
+    /// would let every pending entry be misclassified as an orphan.
+    enum PaddockCacheReadOutcome {
+        /// The cache was read successfully (a missing file — fresh install —
+        /// is a genuinely empty cache).
+        case loaded([Paddock])
+        /// The persisted cache exists but failed to decode. It has been
+        /// quarantined and a server recovery flagged for the next block sync.
+        case corrupted
+    }
+
     /// Load the shared multi-vineyard paddock cache from disk, distinguishing
     /// a missing file (fresh install — genuinely empty) from a corrupt one.
     /// On decode failure the corrupt payload is quarantined for diagnostics
     /// (so a subsequent save cannot overwrite the evidence with an empty or
     /// partial array), the failure is logged with its key and underlying
     /// error, and a full server recovery is flagged for the next block sync.
-    private func loadAllPaddocksFromDisk() -> [Paddock] {
+    private func loadAllPaddocksFromDiskOutcome() -> PaddockCacheReadOutcome {
         let outcome: PersistenceStore.LoadOutcome<[Paddock]> = persistence.loadOutcome(key: Keys.paddocks)
         switch outcome {
         case .decoded(let all):
-            return all
+            return .loaded(all)
         case .missing:
-            return []
+            return .loaded([])
         case .failed(let error):
             PaddockCacheRecovery.noteDecodeFailure(key: Keys.paddocks, error: error)
             persistence.quarantine(key: Keys.paddocks)
+            return .corrupted
+        }
+    }
+
+    private func loadAllPaddocksFromDisk() -> [Paddock] {
+        switch loadAllPaddocksFromDiskOutcome() {
+        case .loaded(let all):
+            return all
+        case .corrupted:
             return []
         }
     }
@@ -950,11 +973,31 @@ final class MigratedDataStore {
     /// pending edit for a NON-selected vineyard is never misclassified as an
     /// orphan (and discarded) while a different vineyard syncs.
     func allCachedPaddocks() -> [Paddock] {
-        let all = loadAllPaddocksFromDisk()
-        guard let selected = selectedVineyardId else { return all }
-        var merged = all.filter { $0.vineyardId != selected }
-        merged.append(contentsOf: paddocks)
-        return merged
+        switch allCachedPaddocksOutcome() {
+        case .loaded(let merged):
+            return merged
+        case .corrupted:
+            // Legacy behaviour for callers that can tolerate it: the disk
+            // view is unavailable, only the in-memory slice remains. Safety-
+            // critical callers use `allCachedPaddocksOutcome()` instead.
+            return paddocks
+        }
+    }
+
+    /// Outcome-reporting variant of `allCachedPaddocks()`. The block sync's
+    /// push path uses this so a decode failure FIRST discovered by this very
+    /// read is surfaced explicitly — never silently returned as an empty
+    /// cache against which pending records would be reclaimed as orphans.
+    func allCachedPaddocksOutcome() -> PaddockCacheReadOutcome {
+        switch loadAllPaddocksFromDiskOutcome() {
+        case .corrupted:
+            return .corrupted
+        case .loaded(let all):
+            guard let selected = selectedVineyardId else { return .loaded(all) }
+            var merged = all.filter { $0.vineyardId != selected }
+            merged.append(contentsOf: paddocks)
+            return .loaded(merged)
+        }
     }
 
     /// Block ids for a vineyard read FRESH from the persisted cache — never

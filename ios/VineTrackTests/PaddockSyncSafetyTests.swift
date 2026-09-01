@@ -322,6 +322,57 @@ struct PaddockSyncSafetyTests {
         #expect(env.metadata.pendingUpserts[lostEditId] == nil)
     }
 
+    @Test("A decode failure first discovered during push never reclaims pending work and fails recoverably")
+    func decodeFailureDiscoveredDuringPushPreservesPendingQueue() async throws {
+        let env = makeEnv()
+        let vineyardA = UUID()
+        env.store.selectedVineyardId = vineyardA
+        let serverBlockA = backendPaddock(vineyardId: vineyardA, name: "Server block A")
+        env.repo.serverRows = [serverBlockA]
+
+        // Pending metadata for vineyard B whose payload lives ONLY in the
+        // shared cache file (about to be corrupted).
+        let pendingB = UUID()
+        env.service.markPaddockDirty(pendingB)
+        SyncIssueCenter.shared.clearIssues([pendingB])
+
+        // Corrupt the shared cache WITHOUT pre-tripping the detection — the
+        // failure must be discovered by the push's own cache read, i.e.
+        // AFTER `reclaimOrphans` was already decided for this sync.
+        let cacheURL = env.directory.appendingPathComponent("vinetrack_paddocks.json")
+        try Data("{definitely-not-json".utf8).write(to: cacheURL)
+        #expect(!PaddockCacheRecovery.isRecoveryPending())
+        let originalWatermark = Date(timeIntervalSinceNow: -300)
+        env.metadata.setLastSync(originalWatermark, for: vineyardA)
+
+        // A NORMAL sync for vineyard A discovers the corruption during push.
+        await env.service.sync(vineyardId: vineyardA)
+
+        guard case .failure = env.service.syncStatus else {
+            Issue.record("Expected a recoverable failure when the cache read fails during push, got \(env.service.syncStatus)")
+            return
+        }
+        // B's pending entry was NOT cleared as an orphan…
+        #expect(env.metadata.pendingUpserts[pendingB] != nil)
+        // …no watermark advanced, nothing was uploaded…
+        #expect(env.metadata.lastSync(for: vineyardA) == originalWatermark)
+        #expect(env.repo.upserted.isEmpty)
+        // …the corrupt file was quarantined, and recovery is armed.
+        #expect(!FileManager.default.fileExists(atPath: cacheURL.path))
+        #expect(PaddockCacheRecovery.isRecoveryPending())
+
+        // The FOLLOWING sync hydrates safely through the recovery flow.
+        await env.service.sync(vineyardId: vineyardA)
+
+        #expect(env.service.syncStatus == .success)
+        #expect(env.store.paddocks.map { $0.id } == [serverBlockA.id])
+        #expect(env.store.persistedPaddockIds(for: vineyardA).contains(serverBlockA.id))
+        // B's pending entry is still preserved and surfaced — never silently
+        // cleared while its payload is unrecoverable.
+        #expect(env.metadata.pendingUpserts[pendingB] != nil)
+        #expect(SyncIssueCenter.shared.issues[pendingB] != nil)
+    }
+
     // MARK: - 4. Durable persistence before success
 
     @Test("Recovered blocks are readable back from disk after a successful sync")
@@ -384,6 +435,28 @@ struct PaddockSyncSafetyTests {
         #expect(result.error == nil)
         #expect(env.store.paddocks.first { $0.id == localEdit.id }?.name == "Offline local edit")
         #expect(env.metadata.pendingUpserts[localEdit.id] != nil)
+    }
+
+    @Test("Force Refresh reports failure when the refreshed cache cannot be persisted")
+    func forceRefreshPersistenceFailureReportsFailure() async throws {
+        let env = makeEnv()
+        let vineyard = UUID()
+        env.store.selectedVineyardId = vineyard
+        env.repo.serverRows = [backendPaddock(vineyardId: vineyard, name: "Server block")]
+        // Destroy the storage directory so the atomic batch write cannot land.
+        try FileManager.default.removeItem(at: env.directory)
+
+        let result = await env.service.forceRepullAllPaddocks(vineyardId: vineyard)
+
+        // A failed ForceRefreshResult — never a claimed refresh that was not
+        // actually on disk.
+        #expect(result.error != nil)
+        guard case .failure = env.service.syncStatus else {
+            Issue.record("Expected sync status failure when the refreshed cache cannot be persisted, got \(env.service.syncStatus)")
+            return
+        }
+        // No successful watermark was stored.
+        #expect(env.metadata.lastSync(for: vineyard) == nil)
     }
 
     // MARK: - 6. Watermark race
