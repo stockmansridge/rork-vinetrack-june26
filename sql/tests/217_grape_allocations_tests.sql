@@ -1,7 +1,9 @@
 -- =====================================================================
 -- 217_grape_allocations_tests.sql — rollback-only verification
 -- =====================================================================
--- Run in the Supabase SQL editor AFTER applying sql/217_grape_allocations.sql.
+-- Run in the Supabase SQL editor AFTER applying sql/217_grape_allocations.sql
+-- AND sql/218_grape_allocation_costs_write.sql (218 re-points the price
+-- write gate from costs:read to the dedicated costs:write scope).
 -- Everything runs inside ONE transaction that is ROLLED BACK at the end.
 --
 -- Test map
@@ -20,8 +22,9 @@
 --       idempotency_required
 --   T7  PATCH: expected_updated_at required; stale token → conflict;
 --       partial update semantics; blocks replaced wholesale
---   T8  Scopes: read-only key cannot write; write key WITHOUT costs:read
---       cannot set price_per_tonne; write key WITH costs:read can
+--   T8  Scopes: read-only key cannot write; write key with costs:read but
+--       WITHOUT costs:write cannot set price_per_tonne (read disclosure
+--       never authorises a financial write); write key WITH costs:write can
 --   T9  Contract totals: two contracts at different $/t sum individually
 --       (never an averaged $/t) via get_grape_allocation_financials
 --   T10 All fixtures discarded by the final ROLLBACK
@@ -46,9 +49,9 @@ declare
   v2 uuid := gen_random_uuid();          -- other vineyard (isolation)
   b1 uuid := gen_random_uuid();
   b2 uuid := gen_random_uuid();
-  i1 uuid := gen_random_uuid();          -- write + costs:read
+  i1 uuid := gen_random_uuid();          -- write + costs:read + costs:write
   i2 uuid := gen_random_uuid();          -- read only
-  i4 uuid := gen_random_uuid();          -- write WITHOUT costs:read
+  i4 uuid := gen_random_uuid();          -- write + costs:read, NO costs:write
   k1 text := 'vt_test_' || repeat('e5', 24);
   k2 text := 'vt_test_' || repeat('f6', 24);
   k4 text := 'vt_test_' || repeat('a7', 24);
@@ -98,8 +101,10 @@ begin
   values (i1, 'grape_allocations:write', u_owner),
          (i1, 'grape_allocations:read', u_owner),
          (i1, 'costs:read', u_owner),
+         (i1, 'costs:write', u_owner),
          (i2, 'grape_allocations:read', u_owner),
-         (i4, 'grape_allocations:write', u_owner);
+         (i4, 'grape_allocations:write', u_owner),
+         (i4, 'costs:read', u_owner);
 
   -- ---- T1. Objects ---------------------------------------------------------
   if to_regclass('public.grape_allocations') is null then raise exception 'T1: grape_allocations missing'; end if;
@@ -289,7 +294,13 @@ begin
     'vintage', 2027, 'allocation_type', 'external', 'variety_name', 'Merlot',
     'purchaser_name', 'T217 Winery D', 'quantity_tonnes', 2, 'price_per_tonne', 3000));
   if (r->>'ok')::boolean or r->>'error' <> 'validation_failed' then
-    raise exception 'T8: price without costs:read must be validation_failed: %', r;
+    raise exception 'T8: price with costs:read but WITHOUT costs:write must be validation_failed: %', r;
+  end if;
+  if not exists (
+    select 1 from jsonb_array_elements(r->'details') d
+    where d->>'field' = 'price_per_tonne' and d->>'issue' like '%costs:write%'
+  ) then
+    raise exception 'T8: rejection must name the costs:write scope: %', r;
   end if;
 
   r := public.integration_api_create_grape_allocation(k4, v1, 'idem-ga-nc2', jsonb_build_object(
