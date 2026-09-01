@@ -1012,7 +1012,6 @@ extension MigratedDataStore {
         apply(remote.dateFormat, to: \.dateFormat)
         apply(remote.terminologyRegion, to: \.terminologyRegion)
         apply(remote.sugarMeasurementUnit, to: \.sugarMeasurementUnit)
-        apply(remote.rainfallUnit, to: \.rainfallUnit)
 
         if changed {
             s.regionSettings = region

@@ -392,10 +392,18 @@ class RegionFormatterTest {
 
     @Test
     fun `rainfall defaults to millimetres when the setting is absent`() {
-        // Canada, UK etc. keep mm; a blank/unknown raw value also resolves
-        // to mm so pre-migration vineyards are unaffected.
+        // Canada, UK etc. keep mm; default settings (metric distance) also
+        // resolve to mm so pre-existing vineyards are unaffected.
         assertEquals("12.5 mm", RegionFormatter(ca).formatRainfall(12.5))
-        assertEquals("12.5 mm", RegionFormatter(RegionSettings(rainfallUnit = "")).formatRainfall(12.5))
+        assertEquals("12.5 mm", RegionFormatter(RegionSettings()).formatRainfall(12.5))
+    }
+
+    @Test
+    fun `rainfall unit is derived from the distance setting alone`() {
+        // There is no independently stored rainfall preference — imperial
+        // distance means inches, metric distance means millimetres.
+        assertEquals("in", RegionFormatter(RegionSettings(distanceUnit = DistanceSystem.Imperial.raw)).rainfallUnitAbbreviation)
+        assertEquals("mm", RegionFormatter(RegionSettings(distanceUnit = DistanceSystem.Metric.raw)).rainfallUnitAbbreviation)
     }
 
     // ------------------------------------------------------- temperature

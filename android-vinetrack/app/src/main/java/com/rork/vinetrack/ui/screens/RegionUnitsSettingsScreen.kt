@@ -40,7 +40,6 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.AreaUnit
 import com.rork.vinetrack.data.DistanceSystem
 import com.rork.vinetrack.data.FuelUnit
-import com.rork.vinetrack.data.RainfallUnit
 import com.rork.vinetrack.data.RegionCountry
 import com.rork.vinetrack.data.RegionCurrency
 import com.rork.vinetrack.data.RegionDateFormat
@@ -244,12 +243,6 @@ fun RegionUnitsSettingsScreen(
                 RowDividerThin(vine.cardBorder)
                 OptionRow("Spray Rate Area", SprayRateAreaUnit.entries.map { it.raw to it.label }, working.sprayRateAreaUnit, canEdit) { raw ->
                     edit { w -> w.copy(sprayRateAreaUnit = raw) }
-                }
-                RowDividerThin(vine.cardBorder)
-                // Rainfall records are always stored in millimetres (sql/216);
-                // this only changes how the weather pages display them.
-                OptionRow("Rainfall", RainfallUnit.entries.map { it.raw to it.label }, working.rainfallUnit, canEdit) { raw ->
-                    edit { w -> w.copy(rainfallUnit = raw) }
                 }
                 RowDividerThin(vine.cardBorder)
                 // Shows the resolved unit (explicit preference or regional default);

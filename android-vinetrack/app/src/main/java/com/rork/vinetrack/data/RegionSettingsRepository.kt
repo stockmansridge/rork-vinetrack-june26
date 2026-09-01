@@ -42,7 +42,6 @@ class RegionSettingsRepository(private val session: SessionStore) {
         @SerialName("p_date_format") val dateFormat: String?,
         @SerialName("p_terminology_region") val terminologyRegion: String?,
         @SerialName("p_sugar_measurement_unit") val sugarMeasurementUnit: String?,
-        @SerialName("p_rainfall_unit") val rainfallUnit: String?,
     )
 
     @Serializable
@@ -58,7 +57,6 @@ class RegionSettingsRepository(private val session: SessionStore) {
         @SerialName("date_format") val dateFormat: String? = null,
         @SerialName("terminology_region") val terminologyRegion: String? = null,
         @SerialName("sugar_measurement_unit") val sugarMeasurementUnit: String? = null,
-        @SerialName("rainfall_unit") val rainfallUnit: String? = null,
     )
 
     /** Merge a server row onto the AU defaults, keeping defaults for null/blank. */
@@ -77,7 +75,6 @@ class RegionSettingsRepository(private val session: SessionStore) {
             dateFormat = s(dateFormat, d.dateFormat),
             terminologyRegion = s(terminologyRegion, d.terminologyRegion),
             sugarMeasurementUnit = sugarMeasurementUnit?.takeIf { it.isNotBlank() } ?: "",
-            rainfallUnit = s(rainfallUnit, d.rainfallUnit),
         )
     }
 
@@ -112,7 +109,6 @@ class RegionSettingsRepository(private val session: SessionStore) {
                     dateFormat = s.dateFormat,
                     terminologyRegion = s.terminologyRegion,
                     sugarMeasurementUnit = s.sugarMeasurementUnit.takeIf { it.isNotBlank() },
-                    rainfallUnit = s.rainfallUnit.takeIf { it.isNotBlank() },
                 )
             )
         }

@@ -111,9 +111,6 @@ nonisolated struct BackendVineyardRegionSettings: Codable, Sendable {
     /// "brix" | "baume" (sql/180). Nil means "no explicit preference" — the
     /// client falls back to the regional default (AU/NZ → Baumé, else Brix).
     let sugarMeasurementUnit: String?
-    /// "millimetres" | "inches" (sql/216). Nil means "no explicit preference"
-    /// — the client falls back to millimetres.
-    let rainfallUnit: String?
 
     enum CodingKeys: String, CodingKey {
         case vineyardId = "vineyard_id"
@@ -128,7 +125,6 @@ nonisolated struct BackendVineyardRegionSettings: Codable, Sendable {
         case dateFormat = "date_format"
         case terminologyRegion = "terminology_region"
         case sugarMeasurementUnit = "sugar_measurement_unit"
-        case rainfallUnit = "rainfall_unit"
     }
 
     init(
@@ -143,8 +139,7 @@ nonisolated struct BackendVineyardRegionSettings: Codable, Sendable {
         sprayRateAreaUnit: String?,
         dateFormat: String?,
         terminologyRegion: String?,
-        sugarMeasurementUnit: String? = nil,
-        rainfallUnit: String? = nil
+        sugarMeasurementUnit: String? = nil
     ) {
         self.vineyardId = vineyardId
         self.countryCode = countryCode
@@ -158,15 +153,13 @@ nonisolated struct BackendVineyardRegionSettings: Codable, Sendable {
         self.dateFormat = dateFormat
         self.terminologyRegion = terminologyRegion
         self.sugarMeasurementUnit = sugarMeasurementUnit
-        self.rainfallUnit = rainfallUnit
     }
 
     /// True when the server has no region values at all — used to decide
     /// whether a one-time local→server backfill is warranted.
     var isAllNull: Bool {
         [countryCode, currencyCode, timezone, areaUnit, volumeUnit, distanceUnit,
-         fuelUnit, sprayRateAreaUnit, dateFormat, terminologyRegion, sugarMeasurementUnit,
-         rainfallUnit]
+         fuelUnit, sprayRateAreaUnit, dateFormat, terminologyRegion, sugarMeasurementUnit]
             .allSatisfy { ($0 ?? "").trimmingCharacters(in: .whitespaces).isEmpty }
     }
 }
