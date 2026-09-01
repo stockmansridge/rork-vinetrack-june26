@@ -164,6 +164,11 @@ struct HomeAlertsCard: View {
 struct AlertsInfoSheet: View {
         @Environment(\.dismiss) private var dismiss
         @Environment(AlertService.self) private var alertService
+        @Environment(MigratedDataStore.self) private var store
+
+        /// Region-aware formatter so threshold values display in the
+        /// vineyard's configured rainfall unit. Thresholds are stored in mm.
+        private var fmt: RegionFormatter { store.settings.regionFormatter }
 
         var body: some View {
             NavigationStack {
@@ -236,11 +241,11 @@ struct AlertsInfoSheet: View {
                     }
                     if let prefs = alertService.preferences {
                         Section("Current thresholds") {
-                            thresholdRow("Rain", value: String(format: "≥ %.1f mm/day", prefs.rainAlertThresholdMm), enabled: prefs.weatherAlertsEnabled)
+                            thresholdRow("Rain", value: "≥ \(fmt.formatRainfall(mm: prefs.rainAlertThresholdMm))/day", enabled: prefs.weatherAlertsEnabled)
                             thresholdRow("Wind", value: String(format: "≥ %.0f km/h", prefs.windAlertThresholdKmh), enabled: prefs.weatherAlertsEnabled)
                             thresholdRow("Frost", value: String(format: "≤ %.1f°C", prefs.frostAlertThresholdC), enabled: prefs.weatherAlertsEnabled)
                             thresholdRow("Heat", value: String(format: "≥ %.1f°C", prefs.heatAlertThresholdC), enabled: prefs.weatherAlertsEnabled)
-                            thresholdRow("Irrigation deficit", value: String(format: "≥ %.1f mm", prefs.irrigationDeficitThresholdMm), enabled: prefs.irrigationAlertsEnabled)
+                            thresholdRow("Irrigation deficit", value: "≥ \(fmt.formatRainfall(mm: prefs.irrigationDeficitThresholdMm))", enabled: prefs.irrigationAlertsEnabled)
                             thresholdRow("Aged pins", value: "≥ \(prefs.agedPinDays) days", enabled: prefs.agedPinAlertsEnabled)
                             thresholdRow("Forecast window", value: "\(prefs.irrigationForecastDays) days", enabled: prefs.weatherAlertsEnabled || prefs.irrigationAlertsEnabled)
                         }

@@ -702,7 +702,7 @@ struct DiseaseRiskAdvisorView: View {
             let wet = window.filter { $0.isWetHour }.count
             let measured = window.contains { $0.isWetnessMeasured }
             return [
-                BreakdownItem(label: "Rain past 48h", value: String(format: "%.1f mm", rain)),
+                BreakdownItem(label: "Rain past 48h", value: store.settings.regionFormatter.formatRainfall(mm: rain)),
                 BreakdownItem(label: "Min temperature", value: String(format: "%.1f°C", minTemp)),
                 BreakdownItem(label: "Wet hours", value: "\(wet) h"),
                 BreakdownItem(label: "Wetness source", value: measured ? "Measured" : "Estimated")

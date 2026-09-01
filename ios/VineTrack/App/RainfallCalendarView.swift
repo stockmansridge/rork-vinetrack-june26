@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Compact calendar/table view of daily rainfall (mm) for a year.
+/// Compact calendar/table view of daily rainfall for a year, shown in the
+/// vineyard's configured rainfall unit (mm or inches).
 struct RainfallCalendarView: View {
     @Environment(MigratedDataStore.self) private var store
 
@@ -27,9 +28,13 @@ struct RainfallCalendarView: View {
 
     private var currentYear: Int { Calendar.current.component(.year, from: Date()) }
 
-    /// Region-aware formatter for display dates. Rainfall amounts stay in mm;
-    /// only date formatting follows the configured region.
+    /// Region-aware formatter for display dates and rainfall amounts. Values
+    /// are stored in millimetres and converted for display when the vineyard
+    /// is set to inches (Region & Units → Rainfall).
     private var fmt: RegionFormatter { store.settings.regionFormatter }
+
+    /// `true` when this vineyard displays rainfall in inches.
+    private var usesInches: Bool { fmt.settings.rainfall == .inches }
 
     var body: some View {
         ScrollView {
@@ -48,7 +53,7 @@ struct RainfallCalendarView: View {
                         .foregroundStyle(.orange)
                 }
                 legend
-                Text("mm")
+                Text(fmt.rainfallUnitAbbreviation)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -430,6 +435,12 @@ struct RainfallCalendarView: View {
     }
 
     private func formatMm(_ mm: Double) -> String {
+        if usesInches {
+            // Inches are small numbers (1 mm ≈ 0.04 in) so two decimals,
+            // clamped to keep the fixed-width cell aligned: 0.24, 3.94.
+            let inches = max(0, min(fmt.rainfallValue(mm: mm), 9.99))
+            return String(format: "%.2f", inches)
+        }
         // Mirrors the reference style: 05.9, 00.0
         let clamped = max(0, min(mm, 99.9))
         return String(format: "%04.1f", clamped)
@@ -501,17 +512,18 @@ struct RainfallCalendarView: View {
     }
 
     private func annualCard(_ annual: RainfallAnnualSummary) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            statRow("Year total to date", value: mmString(annual.totalMm) + " mm")
+        let unit = fmt.rainfallUnitAbbreviation
+        return VStack(alignment: .leading, spacing: 6) {
+            statRow("Year total to date", value: mmString(annual.totalMm) + " " + unit)
             statRow("Rain days (year)", value: "\(annual.rainDays)")
             if let m = annual.wettestMonth, let mm = annual.wettestMonthMm {
-                statRow("Wettest month", value: "\(monthAbbrev(m)) (\(mmShort(mm)) mm)")
+                statRow("Wettest month", value: "\(monthAbbrev(m)) (\(mmShort(mm)) \(unit))")
             }
             if let m = annual.driestMonth, let mm = annual.driestMonthMm {
-                statRow("Driest month", value: "\(monthAbbrev(m)) (\(mmShort(mm)) mm)")
+                statRow("Driest month", value: "\(monthAbbrev(m)) (\(mmShort(mm)) \(unit))")
             }
             if let date = annual.wettestDay, let mm = annual.wettestDayMm {
-                statRow("Wettest day", value: "\(formattedDate(date)) (\(mmShort(mm)) mm)")
+                statRow("Wettest day", value: "\(formattedDate(date)) (\(mmShort(mm)) \(unit))")
             }
             statRow("Av. Year total", value: "—")
         }
@@ -532,11 +544,13 @@ struct RainfallCalendarView: View {
         }
     }
 
+    /// Rainfall amount converted to the display unit, without the unit label.
+    /// Millimetres keep one decimal; inches use two (1 mm ≈ 0.04 in).
     private func mmString(_ mm: Double) -> String {
-        String(format: "%.1f", mm)
+        String(format: usesInches ? "%.2f" : "%.1f", fmt.rainfallValue(mm: mm))
     }
     private func mmShort(_ mm: Double) -> String {
-        String(format: "%.1f", mm)
+        mmString(mm)
     }
     private func formattedDate(_ date: Date) -> String {
         fmt.formatDate(date)

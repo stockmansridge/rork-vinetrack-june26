@@ -53,6 +53,10 @@ struct HomeRainSummaryCard: View {
         store.settings.vineyardLongitude ?? store.paddockCentroidLongitude
     }
 
+    /// Region-aware formatter so rainfall follows the vineyard's configured
+    /// unit (Region & Units → Rainfall): mm by default, inches when set.
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
     var body: some View {
         NavigationLink {
             RainAndForecastView()
@@ -116,9 +120,9 @@ struct HomeRainSummaryCard: View {
     private var todayLine: String {
         guard let mm = todayMm else { return "Rain data unavailable" }
         if mm <= 0 {
-            return "Today's rain: 0 mm"
+            return "Today's rain: 0 \(fmt.rainfallUnitAbbreviation)"
         }
-        return String(format: "Today's rain: %.1f mm", mm)
+        return "Today's rain: \(fmt.formatRainfall(mm: mm))"
     }
 
     private var subtitleLine: String? {
@@ -136,7 +140,7 @@ struct HomeRainSummaryCard: View {
 
     private var forecastLine: String {
         guard hasLoadedForecast else { return "Loading 7-day rain forecast…" }
-        return Self.summarize(days: forecastDays)
+        return Self.summarize(days: forecastDays, fmt: fmt)
     }
 
     // MARK: - Refresh
@@ -343,8 +347,9 @@ struct HomeRainSummaryCard: View {
     // MARK: - Forecast summary
 
     /// Build a short, scannable summary of meaningful rain in the next 7 days.
-    /// Ignores tiny amounts (<1 mm) unless nothing else is forecast.
-    static func summarize(days: [ForecastDay]) -> String {
+    /// Ignores tiny amounts (<1 mm canonical) unless nothing else is forecast.
+    /// Amounts render in the vineyard's configured rainfall unit.
+    static func summarize(days: [ForecastDay], fmt: RegionFormatter = .australian) -> String {
         guard !days.isEmpty else { return "Rain forecast unavailable" }
         let threshold = 1.0
         let meaningful = days.filter { $0.forecastRainMm >= threshold }
@@ -356,16 +361,9 @@ struct HomeRainSummaryCard: View {
         let first = meaningful.first!
         let largest = meaningful.max(by: { $0.forecastRainMm < $1.forecastRainMm }) ?? first
         if largest.date != first.date, largest.forecastRainMm >= first.forecastRainMm + 2 {
-            return String(
-                format: "Forecast: %.1f mm %@ · %.1f mm %@",
-                first.forecastRainMm, relativeDay(first.date),
-                largest.forecastRainMm, relativeDay(largest.date)
-            )
+            return "Forecast: \(fmt.formatRainfall(mm: first.forecastRainMm)) \(relativeDay(first.date)) · \(fmt.formatRainfall(mm: largest.forecastRainMm)) \(relativeDay(largest.date))"
         }
-        return String(
-            format: "Forecast: %.1f mm %@",
-            first.forecastRainMm, relativeDay(first.date)
-        )
+        return "Forecast: \(fmt.formatRainfall(mm: first.forecastRainMm)) \(relativeDay(first.date))"
     }
 
     private static func relativeDay(_ date: Date) -> String {

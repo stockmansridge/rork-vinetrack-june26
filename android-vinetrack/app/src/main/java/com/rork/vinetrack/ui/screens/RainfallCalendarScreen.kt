@@ -50,10 +50,13 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.PersistedRainfallDay
 import com.rork.vinetrack.data.PersistedRainfallRepository
 import com.rork.vinetrack.data.RainForecastRepository
+import com.rork.vinetrack.data.RainfallUnit
+import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.YearlyRainfall
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.BackNavIcon
+import com.rork.vinetrack.ui.regionFormatter
 import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import kotlinx.coroutines.launch
@@ -64,8 +67,9 @@ import kotlin.math.min
 
 /**
  * Rainfall Calendar page, mirroring the iOS `RainfallCalendarView`. Shows a
- * compact table of daily rainfall (mm) for a selected year — 31 day-rows by 12
- * month-columns — plus a per-month and annual summary. Data comes from the free
+ * compact table of daily rainfall for a selected year — 31 day-rows by 12
+ * month-columns — plus a per-month and annual summary, in the vineyard's
+ * configured rainfall unit (mm or inches). Data comes from the free
  * Open-Meteo archive + recent forecast (no API key, nothing persisted).
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -359,6 +363,7 @@ private fun CalendarTable(year: Int, daily: Map<String, Double>) {
 @Composable
 private fun RainCell(year: Int, month: Int, day: Int, daily: Map<String, Double>) {
     val vine = LocalVineColors.current
+    val fmt = regionFormatter
     val valid = isValidDate(year, month, day)
     val key = if (valid) dateKey(year, month, day) else null
     val mm = key?.let { daily[it] }
@@ -378,7 +383,7 @@ private fun RainCell(year: Int, month: Int, day: Int, daily: Map<String, Double>
         when {
             !valid -> {}
             mm != null -> Text(
-                formatMmCell(mm),
+                formatMmCell(fmt, mm),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Medium,
                 color = vine.textPrimary.copy(alpha = if (mm >= 10) 1f else 0.85f),
@@ -392,6 +397,7 @@ private fun RainCell(year: Int, month: Int, day: Int, daily: Map<String, Double>
 @Composable
 private fun SummarySection(year: Int, daily: Map<String, Double>) {
     val vine = LocalVineColors.current
+    val fmt = regionFormatter
     val months = remember(year, daily) { (1..12).map { monthSummary(year, it, daily) } }
     val annualTotal = months.sumOf { it.totalMm }
     val annualRainDays = months.sumOf { it.rainDays }
@@ -423,14 +429,14 @@ private fun SummarySection(year: Int, daily: Map<String, Double>) {
                         )
                     }
                 }
-                SummaryRow("TOTALS", months) { mmString(it.totalMm) }
+                SummaryRow("TOTALS", months) { mmString(fmt, it.totalMm) }
                 SummaryRow("Rain days", months) { "${it.rainDays}" }
                 SummaryRow("Wettest day", months) {
                     val d = it.wettestDay
                     val mm = it.wettestDayMm
-                    if (d == null || mm == null) "—" else "$d (${mmString(mm)})"
+                    if (d == null || mm == null) "—" else "$d (${mmString(fmt, mm)})"
                 }
-                SummaryRow("Average", months) { mmString(it.averageMm) }
+                SummaryRow("Average", months) { mmString(fmt, it.averageMm) }
             }
         }
 
@@ -442,20 +448,21 @@ private fun SummarySection(year: Int, daily: Map<String, Double>) {
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            StatRow("Year total to date", "${mmString(annualTotal)} mm")
+            val unit = fmt.rainfallUnitAbbreviation
+            StatRow("Year total to date", "${mmString(fmt, annualTotal)} $unit")
             StatRow("Rain days (year)", "$annualRainDays")
             if (wettestMonth != null) {
-                StatRow("Wettest month", "${monthAbbrev(wettestMonth.month)} (${mmString(wettestMonth.totalMm)} mm)")
+                StatRow("Wettest month", "${monthAbbrev(wettestMonth.month)} (${mmString(fmt, wettestMonth.totalMm)} $unit)")
             }
             val driestMonth = months.filter { it.measuredDays > 0 }.minByOrNull { it.totalMm }
             if (driestMonth != null) {
-                StatRow("Driest month", "${monthAbbrev(driestMonth.month)} (${mmString(driestMonth.totalMm)} mm)")
+                StatRow("Driest month", "${monthAbbrev(driestMonth.month)} (${mmString(fmt, driestMonth.totalMm)} $unit)")
             }
             val wettestDayMonth = months.filter { it.wettestDayMm != null }.maxByOrNull { it.wettestDayMm ?: 0.0 }
             if (wettestDayMonth?.wettestDay != null && wettestDayMonth.wettestDayMm != null) {
                 StatRow(
                     "Wettest day",
-                    "${wettestDayMonth.wettestDay} ${monthAbbrev(wettestDayMonth.month)} (${mmString(wettestDayMonth.wettestDayMm)} mm)",
+                    "${wettestDayMonth.wettestDay} ${monthAbbrev(wettestDayMonth.month)} (${mmString(fmt, wettestDayMonth.wettestDayMm)} $unit)",
                 )
             }
             StatRow("Av. Year total", "—")
@@ -499,6 +506,7 @@ private fun StatRow(label: String, value: String) {
 @Composable
 private fun Legend() {
     val vine = LocalVineColors.current
+    val fmt = regionFormatter
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -506,11 +514,11 @@ private fun Legend() {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             Box(modifier = Modifier.size(10.dp).clip(RoundedCornerShape(2.dp)).background(VineColors.Info.copy(alpha = 0.5f)))
-            Text("Rain (mm)", fontSize = 11.sp, color = vine.textSecondary)
+            Text("Rain (${fmt.rainfallUnitAbbreviation})", fontSize = 11.sp, color = vine.textSecondary)
         }
         Text("Blank / ---- = no data", fontSize = 11.sp, color = vine.textSecondary)
         Box(modifier = Modifier.weight(1f))
-        Text("mm", fontSize = 11.sp, color = vine.textSecondary)
+        Text(fmt.rainfallUnitAbbreviation, fontSize = 11.sp, color = vine.textSecondary)
     }
 }
 
@@ -595,9 +603,24 @@ private fun todayKey(): String {
 private fun monthAbbrev(month: Int): String =
     DateFormatSymbols(Locale.getDefault()).shortMonths[month - 1]
 
-private fun formatMmCell(mm: Double): String {
+/** `true` when this vineyard displays rainfall in inches. */
+private fun usesInches(fmt: RegionFormatter): Boolean =
+    RainfallUnit.from(fmt.settings.rainfallUnit) == RainfallUnit.Inches
+
+/**
+ * Fixed-width calendar cell value in the display unit. Millimetres keep the
+ * reference zero-padded one-decimal style (05.9); inches are small numbers
+ * (1 mm ≈ 0.04 in) so two decimals, clamped to preserve cell alignment.
+ */
+private fun formatMmCell(fmt: RegionFormatter, mm: Double): String {
+    if (usesInches(fmt)) {
+        val inches = fmt.rainfallValue(mm).coerceIn(0.0, 9.99)
+        return "%.2f".format(Locale.US, inches)
+    }
     val clamped = mm.coerceIn(0.0, 99.9)
     return "%04.1f".format(clamped)
 }
 
-private fun mmString(mm: Double): String = "%.1f".format(mm)
+/** Rainfall amount converted to the display unit, without the unit label. */
+private fun mmString(fmt: RegionFormatter, mm: Double): String =
+    "%.${if (usesInches(fmt)) 2 else 1}f".format(Locale.US, fmt.rainfallValue(mm))
