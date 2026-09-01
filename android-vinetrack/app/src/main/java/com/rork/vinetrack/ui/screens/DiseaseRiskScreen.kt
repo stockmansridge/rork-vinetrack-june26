@@ -66,7 +66,9 @@ import com.rork.vinetrack.data.WillyWeatherRepository
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.computeDailyDiseaseScores
 import com.rork.vinetrack.ui.AppUiState
+import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.ui.main.ToolRoute
+import com.rork.vinetrack.ui.regionFormatter
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -319,13 +321,13 @@ private fun iconFor(model: DiseaseModel): ImageVector = when (model) {
     DiseaseModel.BOTRYTIS -> Icons.Filled.BugReport
 }
 
-private fun driverText(model: DiseaseModel): String = when (model) {
+private fun driverText(model: DiseaseModel, fmt: RegionFormatter): String = when (model) {
     DiseaseModel.DOWNY_MILDEW ->
         "Drivers: rainfall over the past 48h, minimum temperature, and wet hours."
     DiseaseModel.POWDERY_MILDEW ->
-        "Drivers: extended periods of 21–30°C with humidity ≥ 60% over the past 3 days."
+        "Drivers: extended periods of ${fmt.formatTemperatureRange(21.0, 30.0)} with humidity ≥ 60% over the past 3 days."
     DiseaseModel.BOTRYTIS ->
-        "Drivers: wet hours in the 15–25°C window over the past 36h."
+        "Drivers: wet hours in the ${fmt.formatTemperatureRange(15.0, 25.0)} window over the past 36h."
 }
 
 private fun nextStepText(label: String): String = when (label) {
@@ -487,7 +489,7 @@ private fun DetailCard(assessment: DiseaseRiskAssessment, lastUpdated: Long?) {
             Text(level.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = level.color)
         }
         Box(Modifier.height(8.dp))
-        Text(driverText(assessment.model), fontSize = 12.sp, color = vine.textSecondary)
+        Text(driverText(assessment.model, regionFormatter), fontSize = 12.sp, color = vine.textSecondary)
         Box(Modifier.height(6.dp))
         Text("Current assessment: ${level.label}. ${assessment.summary}", fontSize = 12.sp, color = vine.textPrimary)
 
@@ -698,8 +700,8 @@ private fun AboutDialog(onDismiss: () -> Unit) {
                     fontSize = 13.sp, color = vine.textSecondary,
                 )
                 AboutBlock("Downy mildew", "Risk uses rainfall, temperature and wetness over the past 48 hours.")
-                AboutBlock("Powdery mildew", "Risk uses favourable temperature (21–30°C) and humidity (≥ 60%) periods over the past 3 days. Leaf wetness is not used.")
-                AboutBlock("Botrytis", "Risk uses wet hours within the 15–25°C window over the past 36 hours.")
+                AboutBlock("Powdery mildew", "Risk uses favourable temperature (${regionFormatter.formatTemperatureRange(21.0, 30.0)}) and humidity (≥ 60%) periods over the past 3 days. Leaf wetness is not used.")
+                AboutBlock("Botrytis", "Risk uses wet hours within the ${regionFormatter.formatTemperatureRange(15.0, 25.0)} window over the past 36 hours.")
                 AboutBlock("Wetness source", "Wetness may be measured from a Davis WeatherLink leaf wetness sensor when available, or estimated from rainfall, humidity and dew-point spread.")
                 AboutBlock("Important", "This tool does not recommend chemicals or claim that infection has occurred. Always inspect the vineyard and follow local agronomic advice and product labels.")
             }

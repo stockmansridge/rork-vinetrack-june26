@@ -567,13 +567,14 @@ struct DiseaseRiskAdvisorView: View {
     }
 
     private func driverText(for a: DiseaseRiskAssessment) -> String {
+        let fmt = store.settings.regionFormatter
         switch a.model {
         case .downyMildew:
             return "Drivers: rainfall over the past 48h, minimum temperature, and wet hours."
         case .powderyMildew:
-            return "Drivers: extended periods of 21–30°C with humidity ≥ 60% over the past 3 days."
+            return "Drivers: extended periods of \(fmt.formatTemperatureRange(minCelsius: 21, maxCelsius: 30)) with humidity ≥ 60% over the past 3 days."
         case .botrytis:
-            return "Drivers: wet hours in the 15–25°C window over the past 36h."
+            return "Drivers: wet hours in the \(fmt.formatTemperatureRange(minCelsius: 15, maxCelsius: 25)) window over the past 36h."
         }
     }
 
@@ -693,6 +694,7 @@ struct DiseaseRiskAdvisorView: View {
 
     private func breakdown(for model: DiseaseModel) -> [BreakdownItem] {
         guard !hours.isEmpty else { return [] }
+        let fmt = store.settings.regionFormatter
         let now = Date()
         switch model {
         case .downyMildew:
@@ -702,8 +704,8 @@ struct DiseaseRiskAdvisorView: View {
             let wet = window.filter { $0.isWetHour }.count
             let measured = window.contains { $0.isWetnessMeasured }
             return [
-                BreakdownItem(label: "Rain past 48h", value: store.settings.regionFormatter.formatRainfall(mm: rain)),
-                BreakdownItem(label: "Min temperature", value: String(format: "%.1f°C", minTemp)),
+                BreakdownItem(label: "Rain past 48h", value: fmt.formatRainfall(mm: rain)),
+                BreakdownItem(label: "Min temperature", value: fmt.formatTemperature(celsius: minTemp)),
                 BreakdownItem(label: "Wet hours", value: "\(wet) h"),
                 BreakdownItem(label: "Wetness source", value: measured ? "Measured" : "Estimated")
             ]
@@ -724,7 +726,7 @@ struct DiseaseRiskAdvisorView: View {
             }
             return [
                 BreakdownItem(label: "Days with 6+ favourable hours", value: "\(favourableDays) of last 3"),
-                BreakdownItem(label: "Favourable temperature", value: "21–30°C"),
+                BreakdownItem(label: "Favourable temperature", value: fmt.formatTemperatureRange(minCelsius: 21, maxCelsius: 30)),
                 BreakdownItem(label: "RH threshold", value: "≥ 60%")
             ]
         case .botrytis:
@@ -732,8 +734,8 @@ struct DiseaseRiskAdvisorView: View {
             let qualifying = window.filter { $0.isWetHour && $0.temperatureC >= 15 && $0.temperatureC <= 25 }
             let measured = window.contains { $0.isWetnessMeasured }
             return [
-                BreakdownItem(label: "Wet hours past 36h", value: "\(qualifying.count) h (15–25°C)"),
-                BreakdownItem(label: "Favourable temperature", value: "15–25°C"),
+                BreakdownItem(label: "Wet hours past 36h", value: "\(qualifying.count) h (\(fmt.formatTemperatureRange(minCelsius: 15, maxCelsius: 25)))"),
+                BreakdownItem(label: "Favourable temperature", value: fmt.formatTemperatureRange(minCelsius: 15, maxCelsius: 25)),
                 BreakdownItem(label: "Wetness source", value: measured ? "Measured" : "Estimated")
             ]
         }
@@ -823,9 +825,9 @@ struct DiseaseRiskAdvisorView: View {
                 infoBlock(title: "Downy mildew",
                           body: "Risk uses rainfall, temperature and wetness over the past 48 hours.")
                 infoBlock(title: "Powdery mildew",
-                          body: "Risk uses favourable temperature (21–30°C) and humidity (≥ 60%) periods over the past 3 days. Leaf wetness is not used.")
+                          body: "Risk uses favourable temperature (\(store.settings.regionFormatter.formatTemperatureRange(minCelsius: 21, maxCelsius: 30))) and humidity (≥ 60%) periods over the past 3 days. Leaf wetness is not used.")
                 infoBlock(title: "Botrytis",
-                          body: "Risk uses wet hours within the 15–25°C window over the past 36 hours.")
+                          body: "Risk uses wet hours within the \(store.settings.regionFormatter.formatTemperatureRange(minCelsius: 15, maxCelsius: 25)) window over the past 36 hours.")
                 infoBlock(title: "Wetness source",
                           body: "Wetness may be measured from a Davis WeatherLink leaf wetness sensor when available, or estimated from rainfall, humidity and dew-point spread.")
                 infoBlock(title: "Important",

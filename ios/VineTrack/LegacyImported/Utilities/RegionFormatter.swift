@@ -170,15 +170,61 @@ nonisolated struct RegionFormatter: Sendable {
         }
     }
 
+    /// Converts a canonical km/h speed into the configured display unit.
+    /// Weather wind (and any other speed) follows the Metric/Imperial Distance
+    /// setting, matching the Portal: metric → km/h, imperial → mph. Raw values
+    /// stay km/h everywhere — this is display-only.
+    func speedValue(kmh: Double) -> Double {
+        switch settings.distance {
+        case .metric: kmh
+        case .imperial: kmh * Self.milesPerKilometre
+        }
+    }
+
+    var speedUnitAbbreviation: String {
+        switch settings.distance {
+        case .metric: "km/h"
+        case .imperial: "mph"
+        }
+    }
+
     /// Speed input is km/h (canonical). Converts to mph for imperial.
     func formatSpeed(kmh: Double, fractionDigits: Int = 1) -> String {
+        "\(Self.number(speedValue(kmh: kmh), fractionDigits: fractionDigits)) \(speedUnitAbbreviation)"
+    }
+
+    // MARK: - Temperature (input: Celsius)
+    //
+    // Weather temperature display follows the shared Metric/Imperial Distance
+    // setting, matching the Portal contract: km → °C, mi → °F. There is NO
+    // separate temperature unit setting or column — raw observations, GDD/BEDD
+    // models and disease-risk thresholds all remain defined and STORED in
+    // Celsius. This is display-only, mirroring Android `formatTemperature`.
+
+    /// Converts a canonical Celsius value into the configured display unit.
+    func temperatureValue(celsius: Double) -> Double {
         switch settings.distance {
-        case .metric:
-            return "\(Self.number(kmh, fractionDigits: fractionDigits)) km/h"
-        case .imperial:
-            let mph = kmh * Self.milesPerKilometre
-            return "\(Self.number(mph, fractionDigits: fractionDigits)) mph"
+        case .metric: celsius
+        case .imperial: celsius * 9.0 / 5.0 + 32.0
         }
+    }
+
+    var temperatureUnitAbbreviation: String {
+        switch settings.distance {
+        case .metric: "°C"
+        case .imperial: "°F"
+        }
+    }
+
+    /// e.g. "21.5°C" (metric) or "70.7°F" (imperial).
+    func formatTemperature(celsius: Double, fractionDigits: Int = 1) -> String {
+        "\(Self.number(temperatureValue(celsius: celsius), fractionDigits: fractionDigits))\(temperatureUnitAbbreviation)"
+    }
+
+    /// Whole-degree Celsius range like "21–30°C" → "70–86°F", for disease-model
+    /// threshold captions. The underlying model thresholds stay in Celsius.
+    func formatTemperatureRange(minCelsius: Double, maxCelsius: Double) -> String {
+        "\(Int(temperatureValue(celsius: minCelsius).rounded()))–\(Int(temperatureValue(celsius: maxCelsius).rounded()))\(temperatureUnitAbbreviation)"
     }
 
     // MARK: - Duration (input: seconds)

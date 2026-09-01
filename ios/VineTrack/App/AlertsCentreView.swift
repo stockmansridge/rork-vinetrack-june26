@@ -186,6 +186,7 @@ private enum AlertPushDestination: Identifiable, Hashable {
 }
 
 private struct AlertRow: View {
+    @Environment(MigratedDataStore.self) private var store
     let item: AlertWithStatus
 
     var body: some View {
@@ -279,7 +280,7 @@ private struct AlertRow: View {
             return SourceBadge(
                 icon: "thermometer.sun",
                 label: "Temp + RH model",
-                help: "Powdery risk is driven by 21–30°C hours and humidity ≥ 60%."
+                help: "Powdery risk is driven by \(store.settings.regionFormatter.formatTemperatureRange(minCelsius: 21, maxCelsius: 30)) hours and humidity ≥ 60%."
             )
         default:
             return nil

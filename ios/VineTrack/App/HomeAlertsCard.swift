@@ -242,9 +242,9 @@ struct AlertsInfoSheet: View {
                     if let prefs = alertService.preferences {
                         Section("Current thresholds") {
                             thresholdRow("Rain", value: "≥ \(fmt.formatRainfall(mm: prefs.rainAlertThresholdMm))/day", enabled: prefs.weatherAlertsEnabled)
-                            thresholdRow("Wind", value: String(format: "≥ %.0f km/h", prefs.windAlertThresholdKmh), enabled: prefs.weatherAlertsEnabled)
-                            thresholdRow("Frost", value: String(format: "≤ %.1f°C", prefs.frostAlertThresholdC), enabled: prefs.weatherAlertsEnabled)
-                            thresholdRow("Heat", value: String(format: "≥ %.1f°C", prefs.heatAlertThresholdC), enabled: prefs.weatherAlertsEnabled)
+                            thresholdRow("Wind", value: "≥ \(fmt.formatSpeed(kmh: prefs.windAlertThresholdKmh, fractionDigits: 0))", enabled: prefs.weatherAlertsEnabled)
+                            thresholdRow("Frost", value: "≤ \(fmt.formatTemperature(celsius: prefs.frostAlertThresholdC))", enabled: prefs.weatherAlertsEnabled)
+                            thresholdRow("Heat", value: "≥ \(fmt.formatTemperature(celsius: prefs.heatAlertThresholdC))", enabled: prefs.weatherAlertsEnabled)
                             thresholdRow("Irrigation deficit", value: "≥ \(fmt.formatRainfall(mm: prefs.irrigationDeficitThresholdMm))", enabled: prefs.irrigationAlertsEnabled)
                             thresholdRow("Aged pins", value: "≥ \(prefs.agedPinDays) days", enabled: prefs.agedPinAlertsEnabled)
                             thresholdRow("Forecast window", value: "\(prefs.irrigationForecastDays) days", enabled: prefs.weatherAlertsEnabled || prefs.irrigationAlertsEnabled)

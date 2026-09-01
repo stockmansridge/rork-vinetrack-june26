@@ -459,7 +459,7 @@ struct RainAndForecastView: View {
         let icon = warning.level == .high ? "wind" : "wind"
         let title = warning.level == .high ? "High wind warning" : "Spray caution: high wind forecast"
         let subtitle: String = {
-            let speed = String(format: "%.0f km/h", warning.maxKmh)
+            let speed = fmt.formatSpeed(kmh: warning.maxKmh, fractionDigits: 0)
             switch warning.level {
             case .high:
                 return "Wind forecast up to \(speed) \(warning.timeframe.lowercased()). Wind is above the recommended spray limit — consider delaying spray operations."
@@ -481,8 +481,7 @@ struct RainAndForecastView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(String(format: "Limit: %.0f km/h · Caution: %.0f km/h",
-                            windWarningThresholdKmh, windCautionThresholdKmh))
+                Text("Limit: \(fmt.formatSpeed(kmh: windWarningThresholdKmh, fractionDigits: 0)) · Caution: \(fmt.formatSpeed(kmh: windCautionThresholdKmh, fractionDigits: 0))")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

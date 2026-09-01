@@ -218,11 +218,25 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
         }
     }
 
-    /** Speed input is km/h (canonical); converts to mph for imperial. */
-    fun formatSpeed(kmh: Double, fractionDigits: Int = 1): String = when (distance) {
-        DistanceSystem.Metric -> "${number(kmh, fractionDigits)} km/h"
-        DistanceSystem.Imperial -> "${number(kmh * MILES_PER_KM, fractionDigits)} mph"
+    /**
+     * Converts a canonical km/h speed into the configured display unit.
+     * Weather wind (and any other speed) follows the Metric/Imperial Distance
+     * setting, matching the Portal: metric → km/h, imperial → mph. Raw values
+     * stay km/h everywhere — this is display-only.
+     */
+    fun speedValue(kmh: Double): Double = when (distance) {
+        DistanceSystem.Metric -> kmh
+        DistanceSystem.Imperial -> kmh * MILES_PER_KM
     }
+
+    val speedUnitAbbreviation: String get() = when (distance) {
+        DistanceSystem.Metric -> "km/h"
+        DistanceSystem.Imperial -> "mph"
+    }
+
+    /** Speed input is km/h (canonical); converts to mph for imperial. */
+    fun formatSpeed(kmh: Double, fractionDigits: Int = 1): String =
+        "${number(speedValue(kmh), fractionDigits)} $speedUnitAbbreviation"
 
     // MARK: - Currency
 
@@ -462,23 +476,35 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
         DateFormatSymbols(currencyLocale).months.getOrNull(month - 1)
             ?.takeIf { it.isNotBlank() } ?: month.toString()
 
-    // MARK: - Temperature
+    // MARK: - Temperature (input: Celsius)
     //
-    // Temperature is deliberately NOT region-converted. The Region & Units
-    // contract (sql/099) has no temperature unit, and iOS `RegionFormatter`
-    // has no temperature conversion either — GDD/BEDD models, disease-risk
-    // thresholds and spray records are all defined in Celsius. Converting on
-    // Android alone would make the same vineyard read differently on the two
-    // platforms, which is the very bug this layer exists to prevent.
-    //
-    // Celsius is therefore canonical AND displayed. If Fahrenheit display is
-    // ever wanted it must be added to the shared backend contract and to iOS
-    // first; `RegionFormatterTest` pins the current behaviour so an accidental
-    // one-sided change fails the build.
+    // Weather temperature display follows the shared Metric/Imperial Distance
+    // setting, matching the Portal contract: km → °C, mi → °F. There is NO
+    // separate temperature unit setting or column — raw observations, GDD/BEDD
+    // models and disease-risk thresholds all remain defined and STORED in
+    // Celsius. This is display-only, mirroring iOS `formatTemperature`.
 
-    /** Canonical Celsius display, identical in every region (see note above). */
+    /** Converts a canonical Celsius value into the configured display unit. */
+    fun temperatureValue(celsius: Double): Double = when (distance) {
+        DistanceSystem.Metric -> celsius
+        DistanceSystem.Imperial -> celsius * 9.0 / 5.0 + 32.0
+    }
+
+    val temperatureUnitAbbreviation: String get() = when (distance) {
+        DistanceSystem.Metric -> "°C"
+        DistanceSystem.Imperial -> "°F"
+    }
+
+    /** e.g. "21.5°C" (metric) or "70.7°F" (imperial). */
     fun formatTemperature(celsius: Double, fractionDigits: Int = 1): String =
-        "${number(celsius, fractionDigits)}°C"
+        "${number(temperatureValue(celsius), fractionDigits)}$temperatureUnitAbbreviation"
+
+    /**
+     * Whole-degree Celsius range like "21–30°C" → "70–86°F", for disease-model
+     * threshold captions. The underlying model thresholds stay in Celsius.
+     */
+    fun formatTemperatureRange(minCelsius: Double, maxCelsius: Double): String =
+        "${temperatureValue(minCelsius).roundToInt()}–${temperatureValue(maxCelsius).roundToInt()}$temperatureUnitAbbreviation"
 
     // MARK: - Terminology
 

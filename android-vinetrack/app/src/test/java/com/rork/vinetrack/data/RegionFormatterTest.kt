@@ -391,6 +391,12 @@ class RegionFormatterTest {
     }
 
     @Test
+    fun `rainfall 25 point 4 mm reads exactly one inch under imperial`() {
+        assertEquals("25.4 mm", RegionFormatter(au).formatRainfall(25.4))
+        assertEquals("1.00 in", RegionFormatter(us).formatRainfall(25.4))
+    }
+
+    @Test
     fun `rainfall defaults to millimetres when the setting is absent`() {
         // Canada, UK etc. keep mm; default settings (metric distance) also
         // resolve to mm so pre-existing vineyards are unaffected.
@@ -409,14 +415,60 @@ class RegionFormatterTest {
     // ------------------------------------------------------- temperature
 
     @Test
-    fun `temperature is NOT region converted and matches ios`() {
-        // Deliberate: the Region & Units contract (sql/099) has no temperature
-        // unit and iOS performs no temperature conversion. GDD/BEDD models and
-        // disease-risk thresholds are defined in Celsius. Converting on Android
-        // alone would make one vineyard read differently on the two platforms.
+    fun `temperature stays celsius under metric distance`() {
+        // AU and UK presets use metric distance, so weather stays °C — the
+        // historical rendering is unchanged for them.
         assertEquals("21.5\u00b0C", RegionFormatter(au).formatTemperature(21.5))
-        assertEquals("21.5\u00b0C", RegionFormatter(us).formatTemperature(21.5))
+        assertEquals("20.0\u00b0C", RegionFormatter(au).formatTemperature(20.0))
         assertEquals("21.5\u00b0C", RegionFormatter(uk).formatTemperature(21.5))
+    }
+
+    @Test
+    fun `temperature converts to fahrenheit under imperial distance`() {
+        // Weather display follows the shared Metric/Imperial Distance setting
+        // (matching the Portal): mi → °F. Raw values remain Celsius — only the
+        // display converts, mirroring iOS `formatTemperature`.
+        assertEquals("68.0\u00b0F", RegionFormatter(us).formatTemperature(20.0))
+        assertEquals("32.0\u00b0F", RegionFormatter(us).formatTemperature(0.0))
+        assertEquals("°F", RegionFormatter(us).temperatureUnitAbbreviation)
+        assertEquals(68.0, RegionFormatter(us).temperatureValue(20.0), 1e-9)
+        assertEquals(20.0, RegionFormatter(au).temperatureValue(20.0), 1e-9)
+        assertEquals("70–86°F", RegionFormatter(us).formatTemperatureRange(21.0, 30.0))
+        assertEquals("21–30°C", RegionFormatter(au).formatTemperatureRange(21.0, 30.0))
+    }
+
+    // ---------------------------------------------------------------- wind
+
+    @Test
+    fun `wind speed stays km per hour under metric distance`() {
+        assertEquals("10.0 km/h", RegionFormatter(au).formatSpeed(10.0))
+        assertEquals("km/h", RegionFormatter(au).speedUnitAbbreviation)
+    }
+
+    @Test
+    fun `wind speed converts to mph under imperial distance`() {
+        // 10 km/h * 0.621371192 = 6.21... → "6.2 mph".
+        assertEquals("6.2 mph", RegionFormatter(us).formatSpeed(10.0))
+        assertEquals("mph", RegionFormatter(us).speedUnitAbbreviation)
+        assertEquals(6.21371192, RegionFormatter(us).speedValue(10.0), 1e-6)
+    }
+
+    @Test
+    fun `distance setting alone drives all three weather displays`() {
+        // Same canonical inputs; ONLY distanceUnit differs. No stored value is
+        // rebased — metric value functions are pure identities.
+        val metric = RegionSettings(distanceUnit = DistanceSystem.Metric.raw)
+        val imperial = metric.copy(distanceUnit = DistanceSystem.Imperial.raw)
+        assertEquals("25.4 mm", RegionFormatter(metric).formatRainfall(25.4))
+        assertEquals("1.00 in", RegionFormatter(imperial).formatRainfall(25.4))
+        assertEquals("20.0\u00b0C", RegionFormatter(metric).formatTemperature(20.0))
+        assertEquals("68.0\u00b0F", RegionFormatter(imperial).formatTemperature(20.0))
+        assertEquals("10.0 km/h", RegionFormatter(metric).formatSpeed(10.0))
+        assertEquals("6.2 mph", RegionFormatter(imperial).formatSpeed(10.0))
+        // Canonical passthrough under metric proves conversion is display-only.
+        assertEquals(25.4, RegionFormatter(metric).rainfallValue(25.4), 1e-9)
+        assertEquals(20.0, RegionFormatter(metric).temperatureValue(20.0), 1e-9)
+        assertEquals(10.0, RegionFormatter(metric).speedValue(10.0), 1e-9)
     }
 
     // ---------------------------------------------------------- currency

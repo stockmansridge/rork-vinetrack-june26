@@ -558,7 +558,7 @@ private fun ForecastRow(day: RainDay, warningThresholdKmh: Double, cautionThresh
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Icon(Icons.Filled.Air, contentDescription = null, tint = windTint(wind, warningThresholdKmh, cautionThresholdKmh), modifier = Modifier.size(13.dp))
-                    Text("${wind.roundToInt()} km/h", fontSize = 13.sp, color = windTint(wind, warningThresholdKmh, cautionThresholdKmh))
+                    Text(regionFormatter.formatSpeed(wind, 0), fontSize = 13.sp, color = windTint(wind, warningThresholdKmh, cautionThresholdKmh))
                 }
                 Text("Forecast wind", fontSize = 10.sp, color = vine.textSecondary)
             }
@@ -662,9 +662,10 @@ private fun resolveWindWarning(days: List<RainDay>, warningKmh: Double, cautionK
 @Composable
 private fun WindWarningBanner(warning: WindWarning, warningThresholdKmh: Double, cautionThresholdKmh: Double) {
     val vine = LocalVineColors.current
+    val fmt = regionFormatter
     val tint = if (warning.isHigh) VineColors.Destructive else VineColors.Orange
     val title = if (warning.isHigh) "High wind warning" else "Spray caution: high wind forecast"
-    val speed = "${warning.maxKmh.roundToInt()} km/h"
+    val speed = fmt.formatSpeed(warning.maxKmh, 0)
     val subtitle = if (warning.isHigh) {
         "Wind forecast up to $speed ${warning.timeframe.lowercase()}. Wind is above the recommended spray limit — consider delaying spray operations."
     } else {
@@ -685,7 +686,7 @@ private fun WindWarningBanner(warning: WindWarning, warningThresholdKmh: Double,
             Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
             Text(subtitle, fontSize = 12.sp, color = vine.textSecondary)
             Text(
-                "Limit: ${warningThresholdKmh.roundToInt()} km/h · Caution: ${cautionThresholdKmh.roundToInt()} km/h",
+                "Limit: ${fmt.formatSpeed(warningThresholdKmh, 0)} · Caution: ${fmt.formatSpeed(cautionThresholdKmh, 0)}",
                 fontSize = 10.sp, color = vine.textSecondary,
             )
         }
