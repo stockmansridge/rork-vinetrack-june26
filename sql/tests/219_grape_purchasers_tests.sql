@@ -13,7 +13,7 @@
 --       soft delete via RPC (never hard delete)
 --   T3  API purchaser CRUD: POST creates with provenance; idempotent
 --       replay; PATCH requires expected_updated_at, stale token conflicts;
---       read-only key cannot write (insufficient_scope)
+--       read-only key cannot write (scope_not_granted)
 --   T4  API allocation + purchaser_id: snapshot copied onto the
 --       allocation; purchaser_id mutually exclusive with explicit fields;
 --       cross-vineyard purchaser rejected; own_use + purchaser_id rejected
@@ -221,7 +221,7 @@ begin
 
   -- Read-only key cannot write.
   r := public.integration_api_create_grape_purchaser(k2, v1, 'idem-gp-3', jsonb_build_object('winery_name', 'Nope'));
-  if (r->>'error') is distinct from 'insufficient_scope' then raise exception 'T3: read-only key wrote a purchaser: %', r; end if;
+  if (r->>'ok')::boolean or (r->>'error') is distinct from 'scope_not_granted' then raise exception 'T3: read-only key wrote a purchaser: %', r; end if;
   raise notice 'T3 passed';
 
   -- ---- T4. Allocation + purchaser_id ------------------------------------------
