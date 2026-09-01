@@ -312,7 +312,8 @@ struct PlanJobProvenanceIntegrityTests {
                 library: [herbicide]
             )
         )
-        let frozen = try #require(try #require(job.chemicalLines.first).chemicalSnapshot)
+        let jobLine = try #require(job.chemicalLines.first)
+        let frozen = try #require(jobLine.chemicalSnapshot)
 
         // Frozen on the job as HRAC, not as a bare "9".
         let jobGroups = ResistanceEventSource.groups(from: frozen)
@@ -320,7 +321,7 @@ struct PlanJobProvenanceIntegrityTests {
 
         // Through completion...
         let completed = try #require(
-            complete(line: try #require(job.chemicalLines.first), library: [herbicide], at: later)
+            complete(line: jobLine, library: [herbicide], at: later)
         )
         #expect(ResistanceEventSource.groups(from: completed).codes == ["HRAC:9"])
 
@@ -339,7 +340,8 @@ struct PlanJobProvenanceIntegrityTests {
         let job = try roundTrip(
             insert(position([plannedProduct(dmi, groups: ["3"])]), library: [dmi])
         )
-        let frozenAtCreation = try #require(try #require(job.chemicalLines.first).chemicalSnapshot)
+        let creationLine = try #require(job.chemicalLines.first)
+        let frozenAtCreation = try #require(creationLine.chemicalSnapshot)
 
         // Months later the SAME product is legitimately re-verified to FRAC 11.
         let reverified = chemical(
@@ -357,17 +359,15 @@ struct PlanJobProvenanceIntegrityTests {
         let reread = try roundTrip(
             insert(position([plannedProduct(dmi, groups: ["3"])]), library: [dmi])
         )
-        #expect(
-            ResistanceEventSource
-                .groups(from: try #require(try #require(reread.chemicalLines.first).chemicalSnapshot))
-                .codes == ["FRAC:3"]
-        )
+        let rereadLine = try #require(reread.chemicalLines.first)
+        let rereadSnapshot = try #require(rereadLine.chemicalSnapshot)
+        #expect(ResistanceEventSource.groups(from: rereadSnapshot).codes == ["FRAC:3"])
 
         // Completion AFTER the correction correctly records TODAY's chemistry —
         // that is the separate, deliberate rule: an application freezes what was
         // actually applied, not what was planned months earlier.
         let completed = try #require(
-            complete(line: try #require(job.chemicalLines.first), library: [reverified], at: later)
+            complete(line: creationLine, library: [reverified], at: later)
         )
         #expect(ResistanceEventSource.groups(from: completed).codes == ["FRAC:11"])
         #expect(completed.capturedAt == later)
@@ -424,7 +424,8 @@ struct PlanJobProvenanceIntegrityTests {
                 library: [unverified]
             )
         )
-        let frozen = try #require(try #require(job.chemicalLines.first).chemicalSnapshot)
+        let jobLine = try #require(job.chemicalLines.first)
+        let frozen = try #require(jobLine.chemicalSnapshot)
         // The caveat is frozen with the chemistry. A job built on shaky chemistry
         // must never read as verified later just because it was written down.
         #expect(frozen.verificationStatus != .verified)
@@ -506,11 +507,9 @@ struct PlanJobProvenanceIntegrityTests {
         #expect(reloaded.resistancePositionId == job.resistancePositionId)
         #expect(reloaded.resistancePlanSourceRevision == job.resistancePlanSourceRevision)
         #expect(reloaded.resistancePositionSnapshot?.products.map(\.groupCodes) == [["3"]])
-        #expect(
-            ResistanceEventSource
-                .groups(from: try #require(try #require(reloaded.chemicalLines.first).chemicalSnapshot))
-                .codes == ["FRAC:3"]
-        )
+        let reloadedLine = try #require(reloaded.chemicalLines.first)
+        let reloadedSnapshot = try #require(reloadedLine.chemicalSnapshot)
+        #expect(ResistanceEventSource.groups(from: reloadedSnapshot).codes == ["FRAC:3"])
     }
 
     @Test func aMalformedLineCostsItsSnapshotNeverTheWholeJob() throws {
@@ -542,8 +541,9 @@ struct PlanJobProvenanceIntegrityTests {
     @Test func completionCreatesTheNormalImmutableSnapshotAndLinksTheJob() throws {
         let payload = insert(position([plannedProduct(dmi, groups: ["3"])]), library: [dmi])
         let job = try roundTrip(payload)
+        let jobLine = try #require(job.chemicalLines.first)
         let completed = try #require(
-            complete(line: try #require(job.chemicalLines.first), library: [dmi], at: later)
+            complete(line: jobLine, library: [dmi], at: later)
         )
         let saved = record(
             lines: [SprayChemical(name: "Example DMI", savedChemicalId: dmiId, chemicalSnapshot: completed)],
@@ -603,8 +603,9 @@ struct PlanJobProvenanceIntegrityTests {
         let job = try roundTrip(
             insert(position([plannedProduct(dmi, groups: ["3"])]), library: [dmi])
         )
+        let jobLine = try #require(job.chemicalLines.first)
         let completed = try #require(
-            complete(line: try #require(job.chemicalLines.first), library: [dmi], at: later)
+            complete(line: jobLine, library: [dmi], at: later)
         )
         let history = record(
             lines: [SprayChemical(name: "Example DMI", savedChemicalId: dmiId, chemicalSnapshot: completed)],
@@ -665,8 +666,9 @@ struct PlanJobProvenanceIntegrityTests {
         let job = try roundTrip(
             insert(position([plannedProduct(coformulation, groups: ["3", "7"])]), library: [coformulation])
         )
+        let jobLine = try #require(job.chemicalLines.first)
         let completed = try #require(
-            complete(line: try #require(job.chemicalLines.first), library: [coformulation], at: later)
+            complete(line: jobLine, library: [coformulation], at: later)
         )
         let products = ResistanceEventSource.productLines(
             from: record(lines: [

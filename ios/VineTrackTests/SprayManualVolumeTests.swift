@@ -125,7 +125,7 @@ struct SprayManualVolumeTests {
     func manualIgnoresStaleCanopy() {
         var stale = inputs(totalLitres: 400, blocks: [block()])
         stale.isCanopyConfirmed = true
-        stale.canopy = SprayCanopySelection()
+        stale.canopy = SprayCanopySelection.prefilled(size: .medium, density: .low)
         stale.sprayVolumeChoice = .useRecommended
 
         let flow = SprayGuidedFlow(inputs: stale)
@@ -196,7 +196,7 @@ struct SprayManualVolumeTests {
     @Test("Total water is reported as entered, not as rate × area")
     func referenceReportsTotalAsEntered() {
         let flow = SprayGuidedFlow(inputs: inputs(totalLitres: 400, blocks: [block()]))
-        let reference = SprayCalculationReference.make(flow: flow)
+        let reference = SprayCalculationReferenceBuilder.make(flow: flow)
 
         let total = try? #require(reference.water.first { $0.id == "totalWater" })
         #expect(total?.value == "400 L")
@@ -216,7 +216,7 @@ struct SprayManualVolumeTests {
     @Test("Manual contributes no canopy or sprayer-selection reference lines")
     func referenceOmitsCanopySections() {
         let flow = SprayGuidedFlow(inputs: inputs(totalLitres: 400, blocks: [block()]))
-        let reference = SprayCalculationReference.make(flow: flow)
+        let reference = SprayCalculationReferenceBuilder.make(flow: flow)
 
         #expect(reference.canopy.isEmpty)
         #expect(reference.volume.isEmpty)
@@ -237,7 +237,7 @@ struct SprayManualVolumeTests {
         let flow = SprayGuidedFlow(
             inputs: inputs(totalLitres: 400, blocks: [block()], products: [product])
         )
-        let reference = SprayCalculationReference.make(flow: flow)
+        let reference = SprayCalculationReferenceBuilder.make(flow: flow)
         let productReference = try? #require(reference.products.first)
 
         let cf = try? #require(productReference?.lines.first { $0.id == "cf" })

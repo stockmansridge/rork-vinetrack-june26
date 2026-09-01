@@ -207,7 +207,7 @@ struct SprayProgramStepEditingTests {
         draft.equipmentId = nil
         draft.tractorId = nil
         draft.growthStageCode = nil
-        draft.targetText = ""
+        draft.targets = []
 
         let object = try encoded(draft.portalPayload(updatedBy: nil))
         for key in ["equipment_id", "tractor_id", "growth_stage_code", "target"] {
@@ -487,7 +487,7 @@ struct SprayProgramStepEditingTests {
         var draft = SprayProgramStepDraft(step: try portalStep())
         draft.products[0].replaceProduct(with: sprayOil(), seedRate: nil)
         draft.growthStageCode = "EL4"
-        draft.targetText = "Powdery Mildew"
+        draft.targets = [SprayTargetTag(.powderyMildew)]
 
         let saved = row.applying(draft.portalPayload(updatedBy: nil))
         let step = SprayProgramStep(
@@ -514,7 +514,7 @@ struct SprayProgramStepEditingTests {
         let base = try portalStep()
         var draft = SprayProgramStepDraft(step: base)
         draft.name = "Dormancy (revised)"
-        draft.targetText = "Botrytis"
+        draft.targets = [SprayTargetTag(.botrytis)]
 
         let projected = draft.projectedStep(base: base)
 
@@ -617,7 +617,7 @@ struct SprayProgramStepEditingTests {
     func localTargetsFollowTheWording() {
         let step = localStep()
         var draft = SprayProgramStepDraft(step: step)
-        draft.targetText = "Powdery Mildew · Botrytis"
+        draft.targets = [SprayTargetTag(.powderyMildew), SprayTargetTag(.botrytis)]
 
         let updated = draft.applied(to: step.record)
         #expect(updated.applicationGeometry?.targets == [.powderyMildew, .botrytis])
@@ -643,7 +643,7 @@ struct SprayProgramStepEditingTests {
         let draft = SprayProgramStepDraft(step: try portalStep())
 
         // "Phomopsis" has no typed case. It must still be stored and shown.
-        #expect(draft.targetText == "Phomopsis · Powdery Mildew")
+        #expect(draft.targetDisplay == "Phomopsis · Powdery Mildew")
         #expect(draft.recognisedTargets == [.powderyMildew])
         #expect(draft.portalPayload(updatedBy: nil).target == "Phomopsis · Powdery Mildew")
     }
