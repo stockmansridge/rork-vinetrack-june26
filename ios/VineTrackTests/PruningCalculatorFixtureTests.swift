@@ -138,7 +138,7 @@ struct PruningCalculatorFixtureTests {
     @Test func rowRefs_manualFallbackOnlyWhenNoConfiguredRows() {
         let rows = PruningCalculator.rowRefs(paddock: Self.blockB, setup: Self.setupB)
         #expect(rows.map(\.number) == [1, 2, 3, 4])
-        #expect(rows.allSatisfy(\.isFallback))
+        #expect(rows.allSatisfy { $0.isFallback })
         #expect(abs((rows.first?.vines ?? 0) - 100.0) < 1e-6)
     }
 

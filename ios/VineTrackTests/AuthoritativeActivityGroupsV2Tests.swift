@@ -54,7 +54,7 @@ struct AuthoritativeActivityGroupsV2Tests {
             let code = AuthoritativeActivityGroups.group(forActiveNamed: active)?.code
             #expect(code != nil, "\(active) lost its classification")
             #expect(
-                code?.allSatisfy(\.isNumber) == true,
+                code?.allSatisfy { $0.isNumber } == true,
                 "\(active) still carries a legacy alphabetical code \"\(code ?? "")\" — current Australian labels print numbers"
             )
         }

@@ -16,13 +16,14 @@ struct SprayCalculationContractTests {
     private var areaHectares: Double { rowLength * spacing / 10_000 }
 
     private var geometry: SprayApplicationGeometry {
-        SprayApplicationGeometry(
-            grossAreaHectares: areaHectares,
-            totalRowLengthMetres: rowLength,
-            uniformRowSpacingMetres: spacing,
-            source: .mappedRows,
-            unresolvedBlocks: []
-        )
+        SprayGeometryResolver.resolve([
+            SprayBlockInput(
+                blockId: "contract-block",
+                grossAreaHectares: areaHectares,
+                mappedRowLengthMetres: rowLength,
+                rowSpacingMetres: spacing
+            )
+        ])
     }
 
     private func isClose(_ lhs: Double?, _ rhs: Double, tolerance: Double = 0.000_001) -> Bool {

@@ -299,7 +299,7 @@ struct ChemicalReviewHydrationTests {
         // The three vineyard uses the label prints, and therefore no false
         // empty state.
         #expect(session.chemistryDraft.uses.count == 3)
-        #expect(session.chemistryDraft.uses.allSatisfy(\.isViticultural))
+        #expect(session.chemistryDraft.uses.allSatisfy { $0.isViticultural })
         #expect(session.hasStructuredUses)
     }
 

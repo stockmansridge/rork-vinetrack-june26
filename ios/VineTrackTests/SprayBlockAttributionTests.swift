@@ -33,8 +33,7 @@ struct SprayBlockAttributionTests {
     // MARK: - Fixtures
 
     private func paddock(id: UUID, name: String) -> Paddock {
-        var block = Paddock(vineyardId: vineyardId, name: name, rowWidth: 3.2)
-        block.id = id
+        var block = Paddock(id: id, vineyardId: vineyardId, name: name, rowWidth: 3.2)
         block.rowLengthOverride = 10_000
         return block
     }
@@ -273,8 +272,7 @@ struct SprayBlockAttributionTests {
     }
 
     @Test func nameCollisionAcrossVineyardsCannotMoveHistory() {
-        var otherVineyard = Paddock(vineyardId: UUID(), name: "Home Block")
-        otherVineyard.id = ghostBlockId
+        let otherVineyard = Paddock(id: ghostBlockId, vineyardId: UUID(), name: "Home Block")
 
         let stored = [
             SprayApplicationBlockSnapshot(blockId: blockAId.uuidString, blockName: "Home Block")

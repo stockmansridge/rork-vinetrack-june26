@@ -81,9 +81,9 @@ struct ChemicalEditorRoundTripTests {
         let use = try #require(draft.uses.first { $0.isViticultural })
 
         #expect(use.rates.count == 2)
-        #expect(use.rates.allSatisfy(\.conditionIsAmbiguous))
+        #expect(use.rates.allSatisfy { $0.conditionIsAmbiguous })
         // Nothing has been resolved yet, so both still need an answer.
-        #expect(use.rates.allSatisfy(\.needsConditionChoice))
+        #expect(use.rates.allSatisfy { $0.needsConditionChoice })
     }
 
     @Test("Saving without resolving the condition PRESERVES the ambiguity")
@@ -96,7 +96,7 @@ struct ChemicalEditorRoundTripTests {
         let use = try grapeUse(restored)
 
         #expect(use.rates.count == 2, "both rates must survive")
-        #expect(use.rates.allSatisfy(\.conditionIsAmbiguous),
+        #expect(use.rates.allSatisfy { $0.conditionIsAmbiguous },
                 "opening and saving a record must not confirm what the label never stated")
         #expect(use.hasAmbiguousRateCondition)
     }
@@ -114,7 +114,7 @@ struct ChemicalEditorRoundTripTests {
         let use = try grapeUse(persist(draft))
 
         #expect(use.rates.contains { $0.value == 2.5 })
-        #expect(use.rates.allSatisfy(\.conditionIsAmbiguous),
+        #expect(use.rates.allSatisfy { $0.conditionIsAmbiguous },
                 "changing a number must not resolve a condition")
     }
 
@@ -128,7 +128,7 @@ struct ChemicalEditorRoundTripTests {
 
         draft.uses[0].rates[0].unit = "mL"
         let use = try grapeUse(persist(draft))
-        #expect(use.rates.allSatisfy(\.conditionIsAmbiguous),
+        #expect(use.rates.allSatisfy { $0.conditionIsAmbiguous },
                 "changing a unit must not resolve a condition")
     }
 
@@ -142,7 +142,7 @@ struct ChemicalEditorRoundTripTests {
 
         draft.uses[0].rates[0].basis = .perHectare
         let use = try grapeUse(persist(draft))
-        #expect(use.rates.allSatisfy(\.conditionIsAmbiguous))
+        #expect(use.rates.allSatisfy { $0.conditionIsAmbiguous })
     }
 
     @Test("Naming the condition CLEARS the ambiguity for that rate only")
@@ -272,7 +272,7 @@ struct ChemicalEditorRoundTripTests {
         #expect(restored.activeIngredients.count == 2)
         #expect(restored.activeIngredients.map(\.activityGroup?.code) == ["3", "11"])
         // Concentrations survive too — they are part of label identity.
-        #expect(restored.activeIngredients.allSatisfy(\.hasConcentration))
+        #expect(restored.activeIngredients.allSatisfy { $0.hasConcentration })
     }
 
     @Test("An explicit not-applicable active keeps not-applicable")
@@ -434,7 +434,7 @@ struct ChemicalEditorRoundTripTests {
         // one anonymous banner at the foot of the form.
         let useIssues = session.saveIssues(forField: "registered_uses")
         #expect(useIssues.contains { $0.violation.code == .grapevineUseMissing })
-        #expect(useIssues.allSatisfy(\.isCarriedOver))
+        #expect(useIssues.allSatisfy { $0.isCarriedOver })
     }
 
     @Test("A NEW fault on a legacy record still blocks")

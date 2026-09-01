@@ -176,7 +176,8 @@ struct ChemicalRateConfirmationGateTests {
     )
     func boundsAreInclusive(_ value: Double) throws {
         var session = try firstAddSession()
-        #expect(session.setDefaultRateValue(value, for: .perHectare))
+        let accepted = session.setDefaultRateValue(value, for: .perHectare)
+        #expect(accepted)
         #expect(session.defaultRateValues[.perHectare] == value)
         #expect(session.isDefaultRateConfirmed(for: .perHectare))
     }
@@ -184,7 +185,8 @@ struct ChemicalRateConfirmationGateTests {
     @Test("A rate outside the band is refused and records nothing", arguments: [559.0, 701.0])
     func outsideTheBandIsRefused(_ value: Double) throws {
         var session = try firstAddSession()
-        #expect(!session.setDefaultRateValue(value, for: .perHectare))
+        let accepted = session.setDefaultRateValue(value, for: .perHectare)
+        #expect(!accepted)
         // Refused means unchanged: an off-label figure never lands in the
         // session in any form.
         #expect(session.defaultRateValues[.perHectare] == nil)
@@ -250,7 +252,8 @@ struct ChemicalRateConfirmationGateTests {
         // Already saveable. The figure is an addition, never a release.
         #expect(session.isValid)
 
-        #expect(session.setDefaultRateValue(600, for: .perHectare))
+        let accepted = session.setDefaultRateValue(600, for: .perHectare)
+        #expect(accepted)
 
         #expect(session.isDefaultRateConfirmed(for: .perHectare))
         #expect(session.hasConfirmedDefaultRate)
@@ -292,7 +295,8 @@ struct ChemicalRateConfirmationGateTests {
     @Test("The confirmed default keeps the server's key and rate id order")
     func confirmedDefaultKeepsServerIdentity() throws {
         var session = try firstAddSession()
-        #expect(session.setDefaultRateValue(600, for: .perHectare))
+        let accepted = session.setDefaultRateValue(600, for: .perHectare)
+        #expect(accepted)
 
         let stored = try #require(session.storedDefaultRates?.perHectare)
         #expect(stored.optionKey == Self.optionKey)

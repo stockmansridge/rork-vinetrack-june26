@@ -176,7 +176,8 @@ struct ChemicalCustomerFlowTests {
         let basis = ChemicalDefaultRateBasis.per100Litres
         let option = try #require(session.resolvedDefaultOption(for: basis))
         session.selectDefaultRate(option, for: basis)
-        #expect(session.setDefaultRateValue(150, for: basis))
+        let accepted = session.setDefaultRateValue(150, for: basis)
+        #expect(accepted)
         #expect(session.defaultRateValues[basis] == 150)
 
         // The operator realises it is the wrong drum and picks VICOL instead.
@@ -214,7 +215,8 @@ struct ChemicalCustomerFlowTests {
         let basis = ChemicalDefaultRateBasis.per100Litres
         let option = try #require(session.resolvedDefaultOption(for: basis))
         session.selectDefaultRate(option, for: basis)
-        #expect(session.setDefaultRateValue(150, for: basis))
+        let accepted = session.setDefaultRateValue(150, for: basis)
+        #expect(accepted)
 
         // Same registration, re-verified. The band still authorises 150.
         session.apply(reviewed: try draft(Self.thiovitJSON), fallbackCountry: "AU")
@@ -285,26 +287,34 @@ struct ChemicalCustomerFlowTests {
     func inRangeDoseAccepted() throws {
         var session = try thiovitSession()
         let basis = ChemicalDefaultRateBasis.per100Litres
-        #expect(session.setDefaultRateValue(150, for: basis))
+        let acceptedMid = session.setDefaultRateValue(150, for: basis)
+        #expect(acceptedMid)
         #expect(session.resolvedDefaultValue(for: basis) == 150)
         // Both ends are registered rates in their own right.
-        #expect(session.setDefaultRateValue(100, for: basis))
-        #expect(session.setDefaultRateValue(200, for: basis))
+        let acceptedFloor = session.setDefaultRateValue(100, for: basis)
+        #expect(acceptedFloor)
+        let acceptedCeiling = session.setDefaultRateValue(200, for: basis)
+        #expect(acceptedCeiling)
     }
 
     @Test("A dose OUTSIDE the band is refused and changes nothing")
     func outOfRangeDoseRefused() throws {
         var session = try thiovitSession()
         let basis = ChemicalDefaultRateBasis.per100Litres
-        #expect(session.setDefaultRateValue(150, for: basis))
+        let accepted = session.setDefaultRateValue(150, for: basis)
+        #expect(accepted)
 
         // 600 is a real Thiovit rate — for WINE grapes, under a different
         // direction. It is not registered for this one, and the band is the
         // authority on what may be applied.
-        #expect(!session.setDefaultRateValue(600, for: basis))
-        #expect(!session.setDefaultRateValue(99, for: basis))
-        #expect(!session.setDefaultRateValue(0, for: basis))
-        #expect(!session.setDefaultRateValue(-5, for: basis))
+        let refusedAbove = session.setDefaultRateValue(600, for: basis)
+        #expect(!refusedAbove)
+        let refusedBelow = session.setDefaultRateValue(99, for: basis)
+        #expect(!refusedBelow)
+        let refusedZero = session.setDefaultRateValue(0, for: basis)
+        #expect(!refusedZero)
+        let refusedNegative = session.setDefaultRateValue(-5, for: basis)
+        #expect(!refusedNegative)
         // The earlier, valid decision is untouched by a refused one.
         #expect(session.resolvedDefaultValue(for: basis) == 150)
     }
@@ -313,7 +323,8 @@ struct ChemicalCustomerFlowTests {
     func doseDoesNotMutateLabelRange() throws {
         var session = try thiovitSession()
         let before = session.grapevineUses.flatMap(\.rates)
-        #expect(session.setDefaultRateValue(150, for: .per100Litres))
+        let accepted = session.setDefaultRateValue(150, for: .per100Litres)
+        #expect(accepted)
         let after = session.grapevineUses.flatMap(\.rates)
 
         // The label evidence is byte-for-byte what it was. Narrowing the
@@ -335,7 +346,8 @@ struct ChemicalCustomerFlowTests {
 
         // Before: the bottom of the band.
         let atFloor = session.per100LitreRateDisplay
-        #expect(session.setDefaultRateValue(150, for: basis))
+        let accepted = session.setDefaultRateValue(150, for: basis)
+        #expect(accepted)
         let atChosen = session.per100LitreRateDisplay
 
         #expect(atFloor != atChosen)
@@ -349,7 +361,8 @@ struct ChemicalCustomerFlowTests {
     func clearingDoseReturnsToFloor() throws {
         var session = try thiovitSession()
         let basis = ChemicalDefaultRateBasis.per100Litres
-        #expect(session.setDefaultRateValue(150, for: basis))
+        let accepted = session.setDefaultRateValue(150, for: basis)
+        #expect(accepted)
         session.clearDefaultRateValue(for: basis)
         #expect(session.defaultRateValues[basis] == nil)
         #expect(session.resolvedDefaultValue(for: basis) == 100)
@@ -359,7 +372,8 @@ struct ChemicalCustomerFlowTests {
     func doseSurvivesRoundTrip() throws {
         var session = try thiovitSession()
         let basis = ChemicalDefaultRateBasis.per100Litres
-        #expect(session.setDefaultRateValue(150, for: basis))
+        let accepted = session.setDefaultRateValue(150, for: basis)
+        #expect(accepted)
 
         // The decision persists through the legacy projection the Spray Tool
         // reads, and is RECOVERED by matching the band that authorises it —
@@ -377,7 +391,8 @@ struct ChemicalCustomerFlowTests {
         var session = try thiovitSession()
         let basis = ChemicalDefaultRateBasis.per100Litres
         let option = try #require(session.resolvedDefaultOption(for: basis))
-        #expect(session.setDefaultRateValue(150, for: basis))
+        let accepted = session.setDefaultRateValue(150, for: basis)
+        #expect(accepted)
         #expect(session.defaultRateValues[basis] == 150)
 
         // Re-selecting is a fresh decision about which registered rate applies;

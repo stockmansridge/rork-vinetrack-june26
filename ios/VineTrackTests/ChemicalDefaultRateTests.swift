@@ -249,7 +249,7 @@ struct ChemicalDefaultRateTests {
 
         #expect(session.isRegisteredForGrapevine)
         #expect(session.grapevineUses.count == 2)
-        #expect(session.grapevineUses.allSatisfy(\.isViticultural))
+        #expect(session.grapevineUses.allSatisfy { $0.isViticultural })
 
         // The crops a vineyard operator must NOT have to scroll past.
         let normalCrops = Set(session.grapevineUses.map { $0.crop.uppercased() })
