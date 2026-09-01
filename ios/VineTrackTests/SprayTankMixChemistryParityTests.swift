@@ -36,20 +36,21 @@ struct SprayTankMixChemistryParityTests {
     }
 
     private var geometry: SprayApplicationGeometry {
-        SprayApplicationGeometry(
-            grossAreaHectares: 0.49,
-            totalRowLengthMetres: 1_750,
-            uniformRowSpacingMetres: 2.8,
-            source: .mappedRows,
-            unresolvedBlocks: []
-        )
+        SprayGeometryResolver.resolve([
+            SprayBlockInput(
+                blockId: "cab-franc",
+                grossAreaHectares: 0.49,
+                mappedRowLengthMetres: 1_750,
+                rowSpacingMetres: 2.8
+            )
+        ])
     }
 
     /// 175 L, the device's recommended-rate total for this block.
-    private var carrier: SprayCarrierVolume {
+    private var carrier: SprayCarrierVolume? {
         SprayCarrierVolumeCalculator.per100Metres(
-            dilute: 10,
-            applied: 10,
+            appliedLitresPer100Metres: 10,
+            diluteLitresPer100Metres: 10,
             geometry: geometry
         )
     }
@@ -57,7 +58,8 @@ struct SprayTankMixChemistryParityTests {
     /// Builds the ONE plan Products, Review, Tank Mixing and the persisted
     /// tanks must all read \u2014 the structured rate resolved the same way the
     /// guided Products card resolves it, never through `chemical.rates`.
-    private func plan(tankCapacityLitres: Double = 200) -> SprayApplicationPlan {
+    private func plan(tankCapacityLitres: Double = 200) throws -> SprayApplicationPlan {
+        let carrier = try #require(self.carrier)
         let chemical = dithane()
         let rate = SprayRegisteredUseRates.vineyardRates(for: chemical).first { $0.basis == .per100Litres }!
         let baseRate = rate.seed.seedableValue!
@@ -107,7 +109,7 @@ struct SprayTankMixChemistryParityTests {
 
     @Test("150 g/100 L over 175 L resolves to 262.5 g total")
     func dithaneTotalMatchesDeviceCase() throws {
-        let result = plan()
+        let result = try plan()
         let line = try #require(result.productLines.first)
         #expect(!line.isUnresolved)
         let total = try #require(line.totalQuantity)
@@ -118,7 +120,7 @@ struct SprayTankMixChemistryParityTests {
 
     @Test("The plan's product line is what Tank Mixing and the tanks both read")
     func planLineIsTheOnlyChemistrySource() throws {
-        let result = plan()
+        let result = try plan()
         let line = try #require(result.productLines.first)
         // Review, Tank Mixing and the persisted `SprayChemical` all trace back
         // to this SAME `totalQuantity` \u2014 there is no second number anywhere
@@ -134,7 +136,7 @@ struct SprayTankMixChemistryParityTests {
     func singlePartialTankCarriesTheWholeAmount() throws {
         // Tank capacity exceeds the 175 L job, so there is exactly one
         // (partial) tank.
-        let result = plan(tankCapacityLitres: 1_000)
+        let result = try plan(tankCapacityLitres: 1_000)
         #expect(result.tankSplit.totalTanks == 1)
         #expect(result.tankSplit.fullTankCount == 0)
         #expect(abs(result.tankSplit.lastTankLitres - 175) < tolerance)
@@ -150,7 +152,7 @@ struct SprayTankMixChemistryParityTests {
     @Test("Multi-tank split sums back to the authoritative total")
     func multiTankSplitSumsToTotal() throws {
         // 175 L job, 60 L tanks: two full tanks (120 L) and a 55 L last tank.
-        let result = plan(tankCapacityLitres: 60)
+        let result = try plan(tankCapacityLitres: 60)
         #expect(result.tankSplit.fullTankCount == 2)
         #expect(abs(result.tankSplit.lastTankLitres - 55) < tolerance)
         #expect(result.tankSplit.totalTanks == 3)
@@ -168,7 +170,7 @@ struct SprayTankMixChemistryParityTests {
     func zeroFullTanksMeansNoFullTankRow() throws {
         // The whole 175 L job fits in one tank \u2014 there must be nothing for a
         // \"Full tank\" row to show, because no full tank exists.
-        let result = plan(tankCapacityLitres: 1_000)
+        let result = try plan(tankCapacityLitres: 1_000)
         #expect(result.tankSplit.fullTankCount == 0)
     }
 
@@ -183,8 +185,8 @@ struct SprayTankMixChemistryParityTests {
         // Re-verification replaced the registered use entirely \u2014 a different
         // target, a different rate, a different id.
         let reverified = SavedChemical(
-            vineyardId: original.vineyardId,
             id: original.id,
+            vineyardId: original.vineyardId,
             name: original.name,
             unit: original.unit,
             chemicalIntelligence: ChemicalIntelligence(registeredUses: [
@@ -215,8 +217,8 @@ struct SprayTankMixChemistryParityTests {
         // Re-verification confirmed the SAME registered use and rate \u2014 only
         // cosmetic fields moved.
         let reverified = SavedChemical(
-            vineyardId: original.vineyardId,
             id: original.id,
+            vineyardId: original.vineyardId,
             name: original.name,
             unit: original.unit,
             manufacturer: "Corteva",

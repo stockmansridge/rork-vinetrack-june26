@@ -120,11 +120,14 @@ struct SprayEditChemicalRegisteredRateDisplayTests {
     @Test("Converting a stored per-100 L rate to a draft and back displays the same figure")
     func roundTripPreservesDisplay() {
         let original = ChemicalLabelRate(basis: .per100Litres, value: 300, unit: "g")
-        let draft = ChemicalManualEntry.draft(
-            from: ChemicalIntelligence(registeredUses: [
+        let chemical = SavedChemical(
+            vineyardId: UUID(),
+            name: "STORED FUNGICIDE",
+            chemicalIntelligence: ChemicalIntelligence(registeredUses: [
                 ChemicalRegisteredUse(crop: "GRAPEVINE", targetRaw: "PHOMOPSIS CANE", rates: [original])
             ])
         )
+        let draft = ChemicalManualEntry.draft(from: chemical, fallbackCountry: "AU")
         let use = draft.uses.first { $0.targetRaw == "PHOMOPSIS CANE" }
         let rate = use?.rates.first
         #expect(rate.flatMap { ChemicalManualEntry.displayRate(for: $0) } == "300 g/100 L")

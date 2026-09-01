@@ -80,7 +80,7 @@ struct SprayTargetTaggingTests {
 
         #expect(tags.count == 2)
         #expect(tags.map(\.label) == ["Eutypa Dieback", "Botryosphaeria Dieback"])
-        #expect(tags.allSatisfy(\.isCustom))
+        #expect(tags.allSatisfy { $0.isCustom })
         #expect(tags.map(\.identifier) == ["eutypa_dieback", "botryosphaeria_dieback"])
     }
 
