@@ -275,6 +275,18 @@ nonisolated struct RegionFormatter: Sendable {
         return f.string(from: date)
     }
 
+    /// Two-digit-year variant of `formatDate` for tight UI (e.g. the completion
+    /// date under a pruning row's tick): "01/09/26" (DD/MM/YYYY), "09/01/26"
+    /// (MM/DD/YYYY) or "26-09-01" (YYYY-MM-DD). Field order still follows the
+    /// vineyard's saved date setting — never the device locale.
+    func formatDateShort(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.timeZone = settings.resolvedTimeZone
+        f.locale = Locale(identifier: "en_\(settings.countryCode.uppercased())")
+        f.dateFormat = settings.dateStyle.shortDateFormatTemplate
+        return f.string(from: date)
+    }
+
     func formatDateTime(_ date: Date, includeSeconds: Bool = false) -> String {
         let f = DateFormatter()
         f.timeZone = settings.resolvedTimeZone

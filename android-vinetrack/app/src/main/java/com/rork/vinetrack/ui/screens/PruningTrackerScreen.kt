@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.SyncProblem
+import com.rork.vinetrack.ui.regionFormatter
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -1636,6 +1637,23 @@ private fun PruningBlockDetail(
         else metrics.completed - PruningCalculator.completedSegments(listOf(editing), rows)
     }
 
+    // The day each fully-completed row was FINISHED — the latest entry date
+    // across its four quarters, rendered in the vineyard's short regional date
+    // format and shown under the row's tick. Only rows completed by saved
+    // entries get a date; a mere selection never does.
+    val fmtRegion = regionFormatter
+    val rowCompletionDates: Map<String, String> = remember(blockEntries, rows, lockedSegments, fmtRegion) {
+        val segmentDates = PruningCalculator.segmentCompletionDates(blockEntries, rows)
+        buildMap {
+            for (row in rows) {
+                val segments = (1..4).map { row.segment(it) }
+                if (!segments.all { lockedSegments.contains(it) }) continue
+                val latest = segments.mapNotNull { segmentDates[it] }.maxOrNull() ?: continue
+                put(row.key, fmtRegion.formatDateShort(latest))
+            }
+        }
+    }
+
     fun beginEdit(entry: PruningEntry) {
         editingEntry = entry
         selected = PruningCalculator.completedSegments(listOf(entry), rows)
@@ -1772,6 +1790,7 @@ private fun PruningBlockDetail(
                         completed = lockedSegments,
                         skipped = metrics.skipped,
                         selected = selected,
+                        completionDate = rowCompletionDates[row.key],
                         onToggle = { segment ->
                             selected = if (selected.contains(segment)) selected - segment else selected + segment
                         },
@@ -2123,6 +2142,7 @@ private fun PruningRowLine(
     completed: Set<PruningSegment>,
     skipped: Set<PruningSegment>,
     selected: Set<PruningSegment>,
+    completionDate: String?,
     onToggle: (PruningSegment) -> Unit,
     onToggleRow: () -> Unit,
 ) {
@@ -2180,13 +2200,23 @@ private fun PruningRowLine(
                 }
             }
         }
-        IconButton(onClick = onToggleRow, modifier = Modifier.size(28.dp)) {
-            Icon(
-                Icons.Filled.CheckCircle,
-                contentDescription = "Select all of row ${row.label}",
-                tint = if (rowDone) VineColors.LeafGreen else vine.textSecondary.copy(alpha = 0.5f),
-                modifier = Modifier.size(18.dp),
-            )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            IconButton(onClick = onToggleRow, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    Icons.Filled.CheckCircle,
+                    contentDescription = "Select all of row ${row.label}",
+                    tint = if (rowDone) VineColors.LeafGreen else vine.textSecondary.copy(alpha = 0.5f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+            if (completionDate != null) {
+                Text(
+                    completionDate,
+                    fontSize = 9.sp,
+                    color = vine.textSecondary,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
     }
 }

@@ -611,6 +611,35 @@ object PruningCalculator {
     }
 
     /**
+     * Latest entry date (ISO `yyyy-MM-dd`) that touched each quarter,
+     * canonicalised onto the block's rows exactly like [completedSegments].
+     * A row tile's completion date is the max over its four quarters — the
+     * day the row was actually FINISHED, even when its quarters were recorded
+     * across several days or entries. ISO dates compare lexicographically, so
+     * a plain string max is the latest calendar day. Mirrors the iOS
+     * `PruningCalculator.segmentCompletionDates`.
+     */
+    fun segmentCompletionDates(entries: List<PruningEntry>, rows: List<PruningRowRef>): Map<PruningSegment, String> {
+        val byId = HashMap<String, PruningRowRef>()
+        val byNumber = HashMap<Int, PruningRowRef>()
+        for (ref in rows) {
+            ref.rowId?.let { byId[it.lowercase()] = ref }
+            byNumber.putIfAbsent(ref.number, ref)
+        }
+        val dates = HashMap<PruningSegment, String>()
+        for (entry in entries) {
+            if (entry.date.isBlank()) continue
+            for (segment in entry.segments) {
+                val ref = (if (segment.rowId != null) byId[segment.rowId.lowercase()] else byNumber[segment.row]) ?: continue
+                val canonical = ref.segment(segment.quarter)
+                val existing = dates[canonical]
+                if (existing == null || entry.date > existing) dates[canonical] = entry.date
+            }
+        }
+        return dates
+    }
+
+    /**
      * Average row equivalents per day-with-entries over the most recent
      * [lastDays] working days. Days without entries (e.g. rain days) never
      * count against the rate.

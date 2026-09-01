@@ -378,6 +378,33 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
      */
     fun formatDate(epochMs: Long): String = dateFormatter(dateTemplate).format(Date(epochMs))
 
+    /** Two-digit-year variant of [dateTemplate] — same field order, tighter. */
+    private val shortDateTemplate: String
+        get() = when (RegionDateFormat.from(settings.dateFormat)) {
+            RegionDateFormat.DayMonthYear -> "dd/MM/yy"
+            RegionDateFormat.MonthDayYear -> "MM/dd/yy"
+            RegionDateFormat.IsoYearMonthDay -> "yy-MM-dd"
+        }
+
+    /**
+     * Two-digit-year variant of [formatDate] for tight UI (e.g. the completion
+     * date under a pruning row's tick): "01/09/26" (DD/MM/YYYY), "09/01/26"
+     * (MM/DD/YYYY) or "26-09-01" (YYYY-MM-DD). Field order still follows the
+     * vineyard's saved `dateFormat` — never the device locale.
+     */
+    fun formatDateShort(epochMs: Long): String = dateFormatter(shortDateTemplate).format(Date(epochMs))
+
+    /**
+     * [formatDateShort] for an ISO `yyyy-MM-dd` date string (no time part).
+     * Parsing and rendering share [resolvedTimeZone], so the calendar day can
+     * never shift. An unparseable value is returned untouched rather than
+     * crashing a list over one bad record.
+     */
+    fun formatDateShort(isoDate: String): String {
+        val parsed = runCatching { dateFormatter("yyyy-MM-dd").parse(isoDate) }.getOrNull() ?: return isoDate
+        return dateFormatter(shortDateTemplate).format(parsed)
+    }
+
     /**
      * Month-name date whose field ORDER still follows the vineyard's saved
      * `dateFormat`: "5 Mar 2026" (DD/MM/YYYY), "Mar 5, 2026" (MM/DD/YYYY) or

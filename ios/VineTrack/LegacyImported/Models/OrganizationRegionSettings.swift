@@ -239,6 +239,16 @@ nonisolated enum RegionDateFormat: String, Codable, Sendable, CaseIterable {
         case .isoYearMonthDay: "yyyy-MM-dd"
         }
     }
+
+    /// Two-digit-year variant of `dateFormatTemplate` for tight UI (e.g. the
+    /// completion date under a pruning row's tick). Same field order.
+    var shortDateFormatTemplate: String {
+        switch self {
+        case .dayMonthYear: "dd/MM/yy"
+        case .monthDayYear: "MM/dd/yy"
+        case .isoYearMonthDay: "yy-MM-dd"
+        }
+    }
 }
 
 /// Grape sugar measurement units (sql/180 — `vineyards.sugar_measurement_unit`

@@ -546,6 +546,36 @@ nonisolated enum PruningCalculator {
         return set
     }
 
+    /// Latest entry date that touched each quarter, canonicalised onto the
+    /// block's rows exactly like `completedSegments`. A row tile's completion
+    /// date is the max over its four quarters — the day the row was actually
+    /// FINISHED, even when its quarters were recorded across several days or
+    /// entries. Mirrors the Android `PruningCalculator.segmentCompletionDates`.
+    static func segmentCompletionDates(entries: [PruningEntry], rows: [PruningRowRef]) -> [PruningSegment: Date] {
+        var byId: [String: PruningRowRef] = [:]
+        var byNumber: [Int: PruningRowRef] = [:]
+        for ref in rows {
+            if let rowId = ref.rowId { byId[rowId.uuidString.lowercased()] = ref }
+            if byNumber[ref.number] == nil { byNumber[ref.number] = ref }
+        }
+        var dates: [PruningSegment: Date] = [:]
+        for entry in entries {
+            for segment in entry.segments {
+                let ref: PruningRowRef?
+                if let rowId = segment.rowId {
+                    ref = byId[rowId.uuidString.lowercased()]
+                } else {
+                    ref = byNumber[segment.row]
+                }
+                guard let ref else { continue }
+                let canonical = ref.segment(quarter: segment.quarter)
+                if let existing = dates[canonical], existing >= entry.date { continue }
+                dates[canonical] = entry.date
+            }
+        }
+        return dates
+    }
+
     /// Quarters marked SKIPPED (out of rotation), canonicalised onto the
     /// block's rows exactly like `completedSegments`.
     ///

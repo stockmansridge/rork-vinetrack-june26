@@ -47,6 +47,19 @@ struct PruningBlockDetailView: View {
         editingEntry == nil ? metrics.completed : metrics.completed.subtracting(editingSegments)
     }
 
+    /// Vineyard regional formatter — drives the short completion date shown
+    /// under each finished row's tick.
+    private var regionFmt: RegionFormatter { store.settings.regionFormatter }
+
+    /// The day this row was FINISHED — the latest entry date across its four
+    /// quarters. Only rows fully completed by SAVED entries get a date; a mere
+    /// selection never does.
+    private func rowCompletionDate(_ row: PruningRowRef, dates: [PruningSegment: Date]) -> Date? {
+        let segments = (1...4).map { row.segment(quarter: $0) }
+        guard segments.allSatisfy({ lockedSegments.contains($0) }) else { return nil }
+        return segments.compactMap { dates[$0] }.max()
+    }
+
     /// Quarters inside the rows the user selected that are ALREADY complete and
     /// therefore excluded from this save.
     ///
@@ -449,8 +462,9 @@ struct PruningBlockDetailView: View {
             }
 
             VStack(spacing: 6) {
+                let completionDates = PruningCalculator.segmentCompletionDates(entries: entries, rows: rows)
                 ForEach(rows) { row in
-                    rowLine(row)
+                    rowLine(row, completionDates: completionDates)
                 }
             }
         }
@@ -526,7 +540,7 @@ struct PruningBlockDetailView: View {
         }
     }
 
-    private func rowLine(_ row: PruningRowRef) -> some View {
+    private func rowLine(_ row: PruningRowRef, completionDates: [PruningSegment: Date]) -> some View {
         HStack(spacing: 8) {
             Text(row.label)
                 .font(.caption.weight(.semibold))
@@ -540,15 +554,24 @@ struct PruningBlockDetailView: View {
                 }
             }
 
-            Button {
-                toggleWholeRow(row)
-            } label: {
-                Image(systemName: rowFullySelectedOrDone(row) ? "checkmark.circle.fill" : "circle.dashed")
-                    .font(.subheadline)
-                    .foregroundStyle(rowFullySelectedOrDone(row) ? VineyardTheme.leafGreen : Color.secondary)
+            VStack(spacing: 2) {
+                Button {
+                    toggleWholeRow(row)
+                } label: {
+                    Image(systemName: rowFullySelectedOrDone(row) ? "checkmark.circle.fill" : "circle.dashed")
+                        .font(.subheadline)
+                        .foregroundStyle(rowFullySelectedOrDone(row) ? VineyardTheme.leafGreen : Color.secondary)
+                }
+                .accessibilityLabel("Select all of row \(row.label)")
+                if let completed = rowCompletionDate(row, dates: completionDates) {
+                    Text(regionFmt.formatDateShort(completed))
+                        .font(.system(size: 8))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
             }
             .frame(width: 30)
-            .accessibilityLabel("Select all of row \(row.label)")
         }
         .frame(minHeight: 34)
     }
