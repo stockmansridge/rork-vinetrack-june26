@@ -1637,19 +1637,17 @@ private fun PruningBlockDetail(
         else metrics.completed - PruningCalculator.completedSegments(listOf(editing), rows)
     }
 
-    // The day each fully-completed row was FINISHED — the latest entry date
-    // across its four quarters, rendered in the vineyard's short regional date
-    // format and shown under the row's tick. Only rows completed by saved
-    // entries get a date; a mere selection never does.
+    // The day each COMPLETED QUARTER was finished, rendered in the vineyard's
+    // short regional date format and shown inside the quarter chip — per
+    // quarter, exactly like the portal's pruning tracker, because quarters of
+    // one row are routinely finished on different days. Only quarters locked
+    // by saved entries get a date; a mere selection never does.
     val fmtRegion = regionFormatter
-    val rowCompletionDates: Map<String, String> = remember(blockEntries, rows, lockedSegments, fmtRegion) {
+    val quarterCompletionDates: Map<PruningSegment, String> = remember(blockEntries, rows, lockedSegments, fmtRegion) {
         val segmentDates = PruningCalculator.segmentCompletionDates(blockEntries, rows)
         buildMap {
-            for (row in rows) {
-                val segments = (1..4).map { row.segment(it) }
-                if (!segments.all { lockedSegments.contains(it) }) continue
-                val latest = segments.mapNotNull { segmentDates[it] }.maxOrNull() ?: continue
-                put(row.key, fmtRegion.formatDateShort(latest))
+            for ((segment, date) in segmentDates) {
+                if (lockedSegments.contains(segment)) put(segment, fmtRegion.formatDateShort(date))
             }
         }
     }
@@ -1790,7 +1788,7 @@ private fun PruningBlockDetail(
                         completed = lockedSegments,
                         skipped = metrics.skipped,
                         selected = selected,
-                        completionDate = rowCompletionDates[row.key],
+                        completionDates = quarterCompletionDates,
                         onToggle = { segment ->
                             selected = if (selected.contains(segment)) selected - segment else selected + segment
                         },
@@ -2142,7 +2140,7 @@ private fun PruningRowLine(
     completed: Set<PruningSegment>,
     skipped: Set<PruningSegment>,
     selected: Set<PruningSegment>,
-    completionDate: String?,
+    completionDates: Map<PruningSegment, String>,
     onToggle: (PruningSegment) -> Unit,
     onToggleRow: () -> Unit,
 ) {
@@ -2177,7 +2175,7 @@ private fun PruningRowLine(
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .height(28.dp)
+                        .height(34.dp)
                         .clip(RoundedCornerShape(5.dp))
                         .background(
                             when {
@@ -2190,33 +2188,45 @@ private fun PruningRowLine(
                         .then(if (!isDone) Modifier.clickable { onToggle(segment) } else Modifier),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (isSkipped) {
-                        Icon(Icons.Filled.Remove, contentDescription = "Row ${segment.row}, quarter ${segment.quarter}, skipped", tint = Color.White, modifier = Modifier.size(12.dp))
-                    } else if (isDone) {
-                        Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
+                    if (isDone) {
+                        // Completed quarter: tick (or skipped dash) with THIS
+                        // quarter's own completion date beneath it — portal
+                        // parity; dates are per quarter, never per row.
+                        val quarterDate = completionDates[segment]
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                if (isSkipped) Icons.Filled.Remove else Icons.Filled.Check,
+                                contentDescription = "Row ${segment.row}, quarter ${segment.quarter}, " +
+                                    (if (isSkipped) "skipped" else "pruned") +
+                                    (if (quarterDate != null) " on $quarterDate" else ""),
+                                tint = Color.White,
+                                modifier = Modifier.size(11.dp),
+                            )
+                            if (quarterDate != null) {
+                                Text(
+                                    quarterDate,
+                                    fontSize = 7.sp,
+                                    lineHeight = 8.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
+                        }
                     } else if (isSelected) {
                         Icon(Icons.Filled.ContentCut, contentDescription = null, tint = Color.White, modifier = Modifier.size(11.dp))
                     }
                 }
             }
         }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            IconButton(onClick = onToggleRow, modifier = Modifier.size(28.dp)) {
-                Icon(
-                    Icons.Filled.CheckCircle,
-                    contentDescription = "Select all of row ${row.label}",
-                    tint = if (rowDone) VineColors.LeafGreen else vine.textSecondary.copy(alpha = 0.5f),
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-            if (completionDate != null) {
-                Text(
-                    completionDate,
-                    fontSize = 9.sp,
-                    color = vine.textSecondary,
-                    textAlign = TextAlign.Center,
-                )
-            }
+        IconButton(onClick = onToggleRow, modifier = Modifier.size(28.dp)) {
+            Icon(
+                Icons.Filled.CheckCircle,
+                contentDescription = "Select all of row ${row.label}",
+                tint = if (rowDone) VineColors.LeafGreen else vine.textSecondary.copy(alpha = 0.5f),
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }

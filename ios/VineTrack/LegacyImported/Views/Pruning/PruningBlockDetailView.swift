@@ -48,17 +48,9 @@ struct PruningBlockDetailView: View {
     }
 
     /// Vineyard regional formatter — drives the short completion date shown
-    /// under each finished row's tick.
+    /// inside each finished quarter chip (portal parity: dates are per
+    /// quarter, never per row).
     private var regionFmt: RegionFormatter { store.settings.regionFormatter }
-
-    /// The day this row was FINISHED — the latest entry date across its four
-    /// quarters. Only rows fully completed by SAVED entries get a date; a mere
-    /// selection never does.
-    private func rowCompletionDate(_ row: PruningRowRef, dates: [PruningSegment: Date]) -> Date? {
-        let segments = (1...4).map { row.segment(quarter: $0) }
-        guard segments.allSatisfy({ lockedSegments.contains($0) }) else { return nil }
-        return segments.compactMap { dates[$0] }.max()
-    }
 
     /// Quarters inside the rows the user selected that are ALREADY complete and
     /// therefore excluded from this save.
@@ -550,33 +542,29 @@ struct PruningBlockDetailView: View {
 
             HStack(spacing: 3) {
                 ForEach(1...4, id: \.self) { quarter in
-                    quarterCell(segment: row.segment(quarter: quarter))
+                    let segment = row.segment(quarter: quarter)
+                    quarterCell(segment: segment, completionDate: completionDates[segment])
                 }
             }
 
-            VStack(spacing: 2) {
-                Button {
-                    toggleWholeRow(row)
-                } label: {
-                    Image(systemName: rowFullySelectedOrDone(row) ? "checkmark.circle.fill" : "circle.dashed")
-                        .font(.subheadline)
-                        .foregroundStyle(rowFullySelectedOrDone(row) ? VineyardTheme.leafGreen : Color.secondary)
-                }
-                .accessibilityLabel("Select all of row \(row.label)")
-                if let completed = rowCompletionDate(row, dates: completionDates) {
-                    Text(regionFmt.formatDateShort(completed))
-                        .font(.system(size: 8))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                }
+            Button {
+                toggleWholeRow(row)
+            } label: {
+                Image(systemName: rowFullySelectedOrDone(row) ? "checkmark.circle.fill" : "circle.dashed")
+                    .font(.subheadline)
+                    .foregroundStyle(rowFullySelectedOrDone(row) ? VineyardTheme.leafGreen : Color.secondary)
             }
+            .accessibilityLabel("Select all of row \(row.label)")
             .frame(width: 30)
         }
-        .frame(minHeight: 34)
+        .frame(minHeight: 38)
     }
 
-    private func quarterCell(segment: PruningSegment) -> some View {
+    /// One quarter chip. A COMPLETED quarter shows its own completion date
+    /// under the tick — per quarter, exactly like the portal's pruning
+    /// tracker — because quarters of one row are routinely finished on
+    /// different days.
+    private func quarterCell(segment: PruningSegment, completionDate: Date?) -> some View {
         let isDone = lockedSegments.contains(segment)
         // A skipped quarter is COMPLETE and locked exactly like a pruned one —
         // it just reads as out of rotation rather than as work done, so the two
@@ -598,14 +586,18 @@ struct PruningBlockDetailView: View {
                             ? skippedTint
                             : (isDone ? VineyardTheme.leafGreen : (isSelected ? Color.blue : Color(.systemGray5)))
                     )
-                if isSkipped {
-                    Image(systemName: "minus")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white)
-                } else if isDone {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white)
+                if isDone {
+                    VStack(spacing: 1) {
+                        Image(systemName: isSkipped ? "minus" : "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                        if let completionDate {
+                            Text(regionFmt.formatDateShort(completionDate))
+                                .font(.system(size: 7, weight: .semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
+                        }
+                    }
+                    .foregroundStyle(.white)
                 } else if isSelected {
                     Image(systemName: "scissors")
                         .font(.system(size: 9, weight: .bold))
@@ -613,13 +605,14 @@ struct PruningBlockDetailView: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 28)
+            .frame(height: 32)
         }
         .buttonStyle(.plain)
         .disabled(isDone)
         .accessibilityLabel(
             "Row \(segment.row), quarter \(segment.quarter)"
                 + (isSkipped ? ", skipped" : isDone ? ", pruned" : isSelected ? ", selected" : "")
+                + (isDone && completionDate != nil ? ", on \(regionFmt.formatDateShort(completionDate!))" : "")
         )
     }
 
