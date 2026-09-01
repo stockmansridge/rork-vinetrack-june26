@@ -7,6 +7,7 @@ struct YieldHubView: View {
     @Environment(HistoricalYieldRecordSyncService.self) private var historicalYieldSync
     @Environment(PickingRecordSyncService.self) private var pickingRecordSync
     @Environment(PruningYieldSettingsSyncService.self) private var pruningYieldSettingsSync
+    @Environment(GrapeAllocationService.self) private var grapeAllocationService
     @State private var showRecordActualSheet: Bool = false
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
@@ -91,6 +92,19 @@ struct YieldHubView: View {
                             title: "Yield Reports",
                             subtitle: "Compare estimates and harvest results",
                             detail: yieldReportsDetail
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    NavigationLink {
+                        GrapeAllocationView()
+                    } label: {
+                        hubOption(
+                            icon: "shippingbox.fill",
+                            iconGradient: [.blue, .cyan],
+                            title: "Grape Allocation",
+                            subtitle: "Allocate estimated tonnes to own use & buyers",
+                            detail: grapeAllocationDetail
                         )
                     }
                     .buttonStyle(.plain)
@@ -244,5 +258,11 @@ struct YieldHubView: View {
     private var determinationDetail: String? {
         guard let latest = store.latestDeterminationOverall else { return nil }
         return "Latest: \(fmt.formatYieldPerArea(perHectare: latest.yieldTonnesPerHa, fractionDigits: 1))"
+    }
+
+    private var grapeAllocationDetail: String? {
+        let count = grapeAllocationService.allocations.count
+        guard count > 0 else { return nil }
+        return "\(count) allocation\(count == 1 ? "" : "s")"
     }
 }

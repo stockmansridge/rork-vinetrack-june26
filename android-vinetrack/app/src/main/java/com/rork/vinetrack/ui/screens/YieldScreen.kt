@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LocalShipping
 import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Scale
 import androidx.compose.material.icons.filled.Spa
@@ -136,7 +137,7 @@ import java.util.UUID
  * Mirrors the iOS source-of-truth contract via the shared block_results payload.
  */
 /** Top-level destinations within the Yields surface, mirroring the iOS hub. */
-private enum class YieldDestination { HUB, REPORTS, DETERMINATION, DAMAGE, ESTIMATION, SETTINGS, PICKING_LOG }
+private enum class YieldDestination { HUB, REPORTS, DETERMINATION, DAMAGE, ESTIMATION, SETTINGS, PICKING_LOG, ALLOCATION }
 
 @Composable
 fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifier, onBack: (() -> Unit)? = null) {
@@ -169,6 +170,7 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
             destination == YieldDestination.ESTIMATION -> "estimation"
             destination == YieldDestination.SETTINGS -> "settings"
             destination == YieldDestination.PICKING_LOG -> "pickinglog"
+            destination == YieldDestination.ALLOCATION -> "allocation"
             else -> "hub"
         },
         transitionSpec = { fadeIn() togetherWith fadeOut() },
@@ -224,6 +226,11 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
                 onAdd = { creatingDetailed = true; creating = true },
                 onEdit = { editingPick = it },
             )
+            "allocation" -> GrapeAllocationScreen(
+                vm = vm,
+                state = state,
+                onBack = { destination = YieldDestination.HUB },
+            )
             else -> YieldHubView(
                 state = state,
                 varietySummaries = varietySummaries,
@@ -235,6 +242,7 @@ fun YieldScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modifi
                 onReports = { destination = YieldDestination.REPORTS },
                 onDamage = { destination = YieldDestination.DAMAGE },
                 onSettings = { destination = YieldDestination.SETTINGS },
+                onAllocation = { destination = YieldDestination.ALLOCATION },
             )
         }
     }
@@ -315,6 +323,7 @@ private fun YieldHubView(
     onReports: () -> Unit,
     onDamage: () -> Unit,
     onSettings: () -> Unit,
+    onAllocation: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
@@ -415,6 +424,15 @@ private fun YieldHubView(
                 subtitle = "Compare estimates and harvest results",
                 detail = records.size.takeIf { it > 0 }?.let { "$it record${if (it == 1) "" else "s"}" },
                 onClick = onReports,
+            )
+            YieldHubOptionRow(
+                icon = Icons.Filled.LocalShipping,
+                gradient = listOf(VineColors.Info, VineColors.Indigo),
+                title = "Grape Allocation",
+                subtitle = "Allocate estimated tonnes to own use & buyers",
+                detail = state.grapeAllocations.size.takeIf { it > 0 }
+                    ?.let { "$it allocation${if (it == 1) "" else "s"}" },
+                onClick = onAllocation,
             )
             YieldHubOptionRow(
                 icon = Icons.Filled.Scale,

@@ -2648,6 +2648,121 @@ function mapYieldRecord(row: YieldRecordRow) {
 }
 
 // ---------------------------------------------------------------------------
+// Grape allocations (public.grape_allocations + grape_allocation_blocks,
+// sql/217 — own-use and external commitments per vintage/variety, optional
+// per-block split).
+//
+// price_per_tonne lives in the owner/manager companion table
+// grape_allocation_financials (sql/187 privacy pattern) and is ADDITIVE on
+// GET only: it requires grape_allocations:read AND costs:read and is
+// OMITTED (never nulled) without financial access. contract_value is a
+// documented derivation: quantity_tonnes x that contract's price — totals
+// are sums of individual contract values, never an averaged $/t.
+// ---------------------------------------------------------------------------
+interface GrapeAllocationRow {
+  id: string; vineyard_id: string;
+  vintage: number; allocation_type: string;
+  variety_name: string; variety_key: string | null;
+  destination_name: string | null; quantity_tonnes: number; notes: string | null;
+  purchaser_name: string | null; contact_name: string | null; contact_email: string | null;
+  contact_phone: string | null; contact_address: string | null;
+  origin: string; external_id: string | null;
+  created_at: string; updated_at: string;
+}
+
+interface GrapeAllocationBlockRow {
+  allocation_id: string; paddock_id: string; paddock_name: string;
+  quantity_tonnes: number | null;
+}
+
+const GRAPE_ALLOCATION_COLUMNS =
+  "id, vineyard_id, vintage, allocation_type, variety_name, variety_key, destination_name, " +
+  "quantity_tonnes, notes, purchaser_name, contact_name, contact_email, contact_phone, " +
+  "contact_address, origin, external_id, created_at, updated_at";
+
+/** Fetch the block splits for a page of allocations in one query. */
+async function fetchGrapeAllocationBlocks(
+  db: SupabaseClient, allocationIds: string[],
+): Promise<Map<string, GrapeAllocationBlockRow[]>> {
+  const byAllocation = new Map<string, GrapeAllocationBlockRow[]>();
+  if (allocationIds.length === 0) return byAllocation;
+  const { data, error } = await db.from("grape_allocation_blocks")
+    .select("allocation_id, paddock_id, paddock_name, quantity_tonnes")
+    .in("allocation_id", allocationIds)
+    .order("paddock_name", { ascending: true })
+    .order("paddock_id", { ascending: true });
+  if (error) {
+    console.error("[vinetrack-api] grape allocation blocks query failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  for (const row of (data ?? []) as unknown as GrapeAllocationBlockRow[]) {
+    const list = byAllocation.get(row.allocation_id) ?? [];
+    list.push(row);
+    byAllocation.set(row.allocation_id, list);
+  }
+  return byAllocation;
+}
+
+/** Fetch companion prices for a page of allocations (costs:read only). */
+async function fetchGrapeAllocationPrices(
+  db: SupabaseClient, allocationIds: string[],
+): Promise<Map<string, number | null>> {
+  const prices = new Map<string, number | null>();
+  if (allocationIds.length === 0) return prices;
+  const { data, error } = await db.from("grape_allocation_financials")
+    .select("allocation_id, price_per_tonne")
+    .in("allocation_id", allocationIds);
+  if (error) {
+    console.error("[vinetrack-api] grape allocation financials query failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  for (const row of (data ?? []) as unknown as { allocation_id: string; price_per_tonne: number | null }[]) {
+    prices.set(row.allocation_id, row.price_per_tonne);
+  }
+  return prices;
+}
+
+function mapGrapeAllocation(
+  row: GrapeAllocationRow,
+  blocks: GrapeAllocationBlockRow[],
+  profile: AuthProfile,
+  prices: Map<string, number | null> | null,
+) {
+  const base: Record<string, unknown> = {
+    id: row.id,
+    vineyard_id: row.vineyard_id,
+    vintage: row.vintage,
+    allocation_type: row.allocation_type,
+    variety_name: row.variety_name,
+    variety_key: row.variety_key,
+    destination_name: row.destination_name,
+    quantity_tonnes: row.quantity_tonnes,
+    notes: row.notes,
+    purchaser_name: row.purchaser_name,
+    contact_name: row.contact_name,
+    contact_email: row.contact_email,
+    contact_phone: row.contact_phone,
+    contact_address: row.contact_address,
+    blocks: blocks.map((b) => ({
+      block_id: b.paddock_id,
+      name: b.paddock_name,
+      quantity_tonnes: b.quantity_tonnes,
+    })),
+    origin: row.origin,
+    external_id: row.external_id ?? null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+  if (hasScope(profile, "costs:read") && prices !== null) {
+    const price = prices.get(row.id) ?? null;
+    base.price_per_tonne = price;
+    // Derived: quantity_tonnes x this contract's price (documented).
+    base.contract_value = price !== null ? round3(row.quantity_tonnes * price) : null;
+  }
+  return base;
+}
+
+// ---------------------------------------------------------------------------
 // Pins (public.pins, sql/004 + 013/035/041/169/170; canonical placement
 // resolution via the public.pin_placements view, sql/171).
 //
@@ -3303,6 +3418,73 @@ async function handleYieldRecordGet(
   await validateVineyardRequest(db, key, "yield:read", record.vineyard_id, true);
 
   return jsonResponse(req, ctx, { data: mapYieldRecord(record) }, 200);
+}
+
+async function handleGrapeAllocationList(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string,
+  profile: AuthProfile, url: URL,
+): Promise<Response> {
+  const args = await prepareCollection(ctx, db, key, url, "grape_allocations:read", ["vintage"], true);
+
+  const vintageRaw = url.searchParams.get("vintage");
+  let vintage: number | null = null;
+  if (vintageRaw !== null) {
+    if (!/^\d{4}$/.test(vintageRaw)) throw new ApiError("invalid_request");
+    vintage = Number(vintageRaw);
+  }
+
+  const dateFilter = applyDateRange(args.fromDate, args.toDate, "created_at");
+  const { rows, nextCursor } = await pagedList<GrapeAllocationRow>(
+    db, "grape_allocations", GRAPE_ALLOCATION_COLUMNS, args.limit, args.cursor, false,
+    (q) => {
+      q = q.eq("vineyard_id", args.vineyardId);
+      q = dateFilter(q);
+      if (vintage !== null) q = q.eq("vintage", vintage);
+      return q;
+    },
+  );
+
+  const ids = rows.map((r) => r.id);
+  const blocks = await fetchGrapeAllocationBlocks(db, ids);
+  const prices = hasScope(profile, "costs:read") ? await fetchGrapeAllocationPrices(db, ids) : null;
+
+  return jsonResponse(req, ctx, {
+    data: rows.map((r) => mapGrapeAllocation(r, blocks.get(r.id) ?? [], profile, prices)),
+    pagination: { next_cursor: nextCursor },
+  }, 200);
+}
+
+async function handleGrapeAllocationGet(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string,
+  profile: AuthProfile, url: URL, allocationId: string,
+): Promise<Response> {
+  enforceAllowedParams(url, []);
+  if (!UUID_RE.test(allocationId)) throw new ApiError("invalid_request");
+
+  const { data, error } = await db.from("grape_allocations")
+    .select(GRAPE_ALLOCATION_COLUMNS)
+    .eq("id", allocationId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) {
+    console.error("[vinetrack-api] grape allocation fetch failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  if (!data) {
+    requireScope(profile, "grape_allocations:read");
+    throw new ApiError("resource_not_found");
+  }
+
+  const record = data as unknown as GrapeAllocationRow;
+  ctx.vineyardId = record.vineyard_id;
+  await validateVineyardRequest(db, key, "grape_allocations:read", record.vineyard_id, true);
+
+  const blocks = await fetchGrapeAllocationBlocks(db, [record.id]);
+  const prices = hasScope(profile, "costs:read") ? await fetchGrapeAllocationPrices(db, [record.id]) : null;
+
+  return jsonResponse(req, ctx, {
+    data: mapGrapeAllocation(record, blocks.get(record.id) ?? [], profile, prices),
+  }, 200);
 }
 
 // ---------------------------------------------------------------------------
@@ -4311,6 +4493,12 @@ const WRITE_RESOURCES: Record<string, WriteSpec> = {
     updateIdParam: "p_yield_record_id",
     idLabel: "yield_record_id",
   },
+  "grape-allocations": {
+    createRpc: "integration_api_create_grape_allocation",
+    updateRpc: "integration_api_update_grape_allocation",
+    updateIdParam: "p_grape_allocation_id",
+    idLabel: "grape_allocation_id",
+  },
 };
 
 async function readJsonBody(req: Request): Promise<Record<string, unknown>> {
@@ -4451,6 +4639,8 @@ type Route =
   | { name: "growth_stage_get"; id: string }
   | { name: "yield_records_list" }
   | { name: "yield_record_get"; id: string }
+  | { name: "grape_allocations_list" }
+  | { name: "grape_allocation_get"; id: string }
   | { name: "pins_list" }
   | { name: "pin_get"; id: string }
   | { name: "weather" }
@@ -4471,6 +4661,7 @@ const RESOURCE_ROUTES: Record<string, { list: Route["name"]; get: Route["name"];
   "irrigation-records": { list: "irrigation_list", get: "irrigation_get", idLabel: "irrigation_record_id" },
   "growth-stages": { list: "growth_stages_list", get: "growth_stage_get", idLabel: "growth_stage_id" },
   "yield-records": { list: "yield_records_list", get: "yield_record_get", idLabel: "yield_record_id" },
+  "grape-allocations": { list: "grape_allocations_list", get: "grape_allocation_get", idLabel: "grape_allocation_id" },
   "pins": { list: "pins_list", get: "pin_get", idLabel: "pin_id" },
 };
 
@@ -4645,6 +4836,12 @@ Deno.serve(async (req: Request) => {
         break;
       case "yield_record_get":
         response = await handleYieldRecordGet(req, ctx, db, key, profile, url, (route as { id: string }).id);
+        break;
+      case "grape_allocations_list":
+        response = await handleGrapeAllocationList(req, ctx, db, key, profile, url);
+        break;
+      case "grape_allocation_get":
+        response = await handleGrapeAllocationGet(req, ctx, db, key, profile, url, (route as { id: string }).id);
         break;
       case "pins_list":
         response = await handlePinList(req, ctx, db, key, profile, url);

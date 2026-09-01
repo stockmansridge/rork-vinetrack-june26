@@ -101,6 +101,7 @@ import com.rork.vinetrack.data.ProfileRepository
 import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.PickingRecordCreateSync
 import com.rork.vinetrack.data.PickingRecordDeleteSync
+import com.rork.vinetrack.data.GrapeAllocationRepository
 import com.rork.vinetrack.data.PickingRecordRepository
 import com.rork.vinetrack.data.YieldSamplingSettingsRepository
 import com.rork.vinetrack.data.model.PickingFinancialRow
@@ -222,6 +223,7 @@ import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
+import com.rork.vinetrack.data.model.GrapeAllocation
 import com.rork.vinetrack.data.model.PickingRecord
 import com.rork.vinetrack.data.model.PruningYieldInputFormat
 import com.rork.vinetrack.data.model.PruningYieldSettings
@@ -510,6 +512,12 @@ data class AppUiState(
     val damageRecords: List<DamageRecord> = emptyList(),
     /** Working yield-estimation sessions for the selected vineyard (Stage Q). */
     val yieldSessions: List<YieldEstimationSession> = emptyList(),
+    /** Grape allocations (sql/217) for the selected vineyard, blocks merged. */
+    val grapeAllocations: List<GrapeAllocation> = emptyList(),
+    /** true when the sql/217 financials RPC returned (owner/manager). */
+    val grapeAllocationFinancialAccess: Boolean = false,
+    val grapeAllocationBusy: Boolean = false,
+    val grapeAllocationError: String? = null,
     val yieldSessionBusy: Boolean = false,
     val yieldSessionError: String? = null,
     /**
@@ -856,6 +864,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val paddockRepo = PaddockRepository(session)
     private val yieldRepo = YieldRepository(session)
     private val pickingRepo = PickingRecordRepository(session)
+    private val grapeAllocationRepo = GrapeAllocationRepository(session)
     private val yieldSamplingRepo = YieldSamplingSettingsRepository(session)
     private val pruningYieldSettingsRepo = PruningYieldSettingsRepository(session)
     private val cloneRootstockRepo = CloneRootstockRepository(session)
@@ -5021,7 +5030,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reportClientTelemetry()
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList()) }
         loadedLogoKey = null
         // Apply the cached region settings instantly so units/currency render
         // correctly on first paint, then refresh from the backend below.
@@ -12041,6 +12050,114 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 yieldCreateSync.enqueue(optimistic, now)
                 _ui.update { it.copy(yieldBusy = false, yieldError = "Yield record saved offline — will sync when connection is available.") }
                 onResult(true)
+            }
+        }
+    }
+
+    /**
+     * Load the selected vineyard's grape allocations (sql/217): base rows +
+     * block splits, then the owner/manager money merge via
+     * `get_grape_allocation_financials`. Lower roles get 42501 from that RPC
+     * — swallowed here, so their rows simply never carry a price and the UI
+     * renders no money.
+     */
+    fun refreshGrapeAllocations() {
+        val vineyardId = _ui.value.selectedVineyardId ?: return
+        _ui.update { it.copy(grapeAllocationBusy = true, grapeAllocationError = null) }
+        viewModelScope.launch {
+            try {
+                val rows = grapeAllocationRepo.listAllocations(vineyardId)
+                val blocks = grapeAllocationRepo.listBlocks(vineyardId).groupBy { it.allocationId }
+                var merged = rows.map { row ->
+                    row.copy(blocks = blocks[row.id].orEmpty().sortedBy { it.paddockName.lowercase() })
+                }
+                var financialAccess = false
+                try {
+                    val prices = grapeAllocationRepo.listFinancials(vineyardId)
+                        .associate { it.allocationId to it.pricePerTonne }
+                    merged = merged.map { it.copy(pricePerTonne = prices[it.id]) }
+                    financialAccess = true
+                } catch (_: Exception) {
+                    // Owner/manager-only RPC — lower roles legitimately land here.
+                }
+                _ui.update {
+                    it.copy(
+                        grapeAllocations = merged,
+                        grapeAllocationFinancialAccess = financialAccess,
+                        grapeAllocationBusy = false,
+                    )
+                }
+            } catch (e: BackendError.Unauthorized) {
+                signOut()
+            } catch (e: Exception) {
+                _ui.update {
+                    it.copy(
+                        grapeAllocationBusy = false,
+                        grapeAllocationError = "Couldn't load grape allocations. Check your connection and try again.",
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Create-or-update one grape allocation + its wholesale-replaced block
+     * split (sql/217). Online-only in Phase 1; the optimistic row is rolled
+     * back on failure. The server routing trigger keeps money off the base
+     * row regardless of what this client sends.
+     */
+    fun saveGrapeAllocation(allocation: GrapeAllocation, onResult: (Boolean) -> Unit) {
+        val now = java.time.Instant.now().toString()
+        val previous = _ui.value.grapeAllocations
+        val stored = if (_ui.value.grapeAllocationFinancialAccess) allocation
+        else allocation.copy(pricePerTonne = null)
+        _ui.update { st ->
+            val existing = st.grapeAllocations.any { it.id == allocation.id }
+            st.copy(
+                grapeAllocations = if (existing) {
+                    st.grapeAllocations.map { if (it.id == allocation.id) stored else it }
+                } else {
+                    listOf(stored) + st.grapeAllocations
+                },
+                grapeAllocationError = null,
+            )
+        }
+        viewModelScope.launch {
+            try {
+                grapeAllocationRepo.upsertAllocation(allocation, now)
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: Exception) {
+                _ui.update {
+                    it.copy(
+                        grapeAllocations = previous,
+                        grapeAllocationError = "Couldn't save the allocation. Check your connection and try again.",
+                    )
+                }
+                onResult(false)
+            }
+        }
+    }
+
+    /** Soft-delete one grape allocation (sql/217 RPC). */
+    fun deleteGrapeAllocation(id: String, onResult: (Boolean) -> Unit = {}) {
+        val previous = _ui.value.grapeAllocations
+        _ui.update { st -> st.copy(grapeAllocations = st.grapeAllocations.filterNot { it.id == id }, grapeAllocationError = null) }
+        viewModelScope.launch {
+            try {
+                grapeAllocationRepo.softDeleteAllocation(id)
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: Exception) {
+                _ui.update {
+                    it.copy(
+                        grapeAllocations = previous,
+                        grapeAllocationError = "Couldn't delete the allocation. Check your connection and try again.",
+                    )
+                }
+                onResult(false)
             }
         }
     }
