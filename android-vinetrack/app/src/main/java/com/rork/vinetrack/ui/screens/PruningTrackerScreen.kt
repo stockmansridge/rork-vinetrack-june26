@@ -78,6 +78,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -1621,6 +1623,9 @@ private fun PruningBlockDetail(
 
     var selected by remember(paddock.id) { mutableStateOf(setOf<PruningSegment>()) }
     var showEntrySheet by remember { mutableStateOf(false) }
+    /** Which bottom-bar action opened the entry sheet. Both open the SAME form
+     * and share one save, confirmation, offline queue and sync path. */
+    var entryLaunchMode by remember { mutableStateOf(PruningEntryLaunchMode.RECORD) }
     var showSetupSheet by remember { mutableStateOf(false) }
     var rangeFromIndex by remember(paddock.id) { mutableStateOf(0) }
     var rangeToIndex by remember(paddock.id) { mutableStateOf(0) }
@@ -1688,38 +1693,19 @@ private fun PruningBlockDetail(
         },
         bottomBar = {
             if (selected.isNotEmpty() || editingEntry != null) {
-                Surface(color = vine.cardBackground, shadowElevation = 8.dp) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .navigationBarsPadding()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "${fmt(selected.size / 4.0)} row equivalents",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = vine.textPrimary,
-                            )
-                            Text(
-                                "${selected.size} quarters · ~${PruningCalculator.vines(selected, rows)} vines",
-                                fontSize = 12.sp,
-                                color = vine.textSecondary,
-                            )
-                        }
-                        Button(
-                            onClick = { showEntrySheet = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
-                        ) {
-                            Text(
-                                if (editingEntry == null) "Record Pruning" else "Save Changes",
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                    }
-                }
+                PruningSelectionBar(
+                    selectedCount = selected.size,
+                    vines = PruningCalculator.vines(selected, rows),
+                    isEditing = editingEntry != null,
+                    onRecord = {
+                        entryLaunchMode = PruningEntryLaunchMode.RECORD
+                        showEntrySheet = true
+                    },
+                    onMarkSkipped = {
+                        entryLaunchMode = PruningEntryLaunchMode.SKIP
+                        showEntrySheet = true
+                    },
+                )
             }
         },
     ) { padding ->
@@ -1840,6 +1826,7 @@ private fun PruningBlockDetail(
             },
             seasonStartMonth = seasonStartMonth,
             seasonStartDay = seasonStartDay,
+            launchMode = entryLaunchMode,
             onDismiss = { showEntrySheet = false },
             onSave = { entry, taskDraft ->
                 onAddEntry(entry, taskDraft)
@@ -2395,6 +2382,104 @@ data class PruningEditLabourLine(
     val hourlyRate: Double?,
 )
 
+/**
+ * Bottom action bar for the block detail screen.
+ *
+ * While creating, it offers TWO equally visible actions: recording pruning and
+ * taking rows out of rotation are different decisions, so skipping is no longer
+ * hidden inside the Record Pruning form. Both open the SAME form and share one
+ * save, confirmation, offline queue and sync path.
+ *
+ * While editing, only "Save Changes" is shown — a saved record's kind is fixed,
+ * so no conversion between pruned and skipped is offered.
+ */
+@Composable
+private fun PruningSelectionBar(
+    selectedCount: Int,
+    vines: Int,
+    isEditing: Boolean,
+    onRecord: () -> Unit,
+    onMarkSkipped: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val vine = LocalVineColors.current
+    Surface(color = vine.cardBackground, shadowElevation = 8.dp, modifier = modifier) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "${fmt(selectedCount / 4.0)} row equivalents",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = vine.textPrimary,
+                    )
+                    Text(
+                        "$selectedCount quarters · ~$vines vines",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                    )
+                }
+                if (isEditing) {
+                    Button(
+                        onClick = onRecord,
+                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Review and save the edited pruning entry"
+                        },
+                    ) {
+                        Text("Save Changes", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    }
+                }
+            }
+            if (!isEditing) {
+                // Equal weights on their own full-width row so neither action
+                // truncates on narrow screens.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = onMarkSkipped,
+                        modifier = Modifier
+                            .weight(1f)
+                            .semantics {
+                                contentDescription =
+                                    "Mark the selected rows as skipped. Opens the same form with skipped mode on; the sections count as complete and record no pruning work, labour or cost"
+                            },
+                    ) {
+                        Text("Mark Skipped", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    }
+                    Button(
+                        onClick = onRecord,
+                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
+                        modifier = Modifier
+                            .weight(1f)
+                            .semantics {
+                                contentDescription =
+                                    "Record pruning for the selected quarters. Opens the pruning form to enter crew, hours and method"
+                            },
+                    ) {
+                        Text("Record Pruning", fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Which selection action opened the pruning entry sheet for a NEW entry.
+ * Both actions open the SAME form and reuse one save, confirmation, offline
+ * queue and sync path; only the initial state of the skip toggle differs.
+ */
+private enum class PruningEntryLaunchMode { RECORD, SKIP }
+
 /** Work Task creation request captured in the Record Pruning sheet — every
  * other task value (date, block, crew, times) is reused from the pruning
  * entry itself so nothing is entered twice. [labour] carries one costing line
@@ -2530,6 +2615,12 @@ private fun PruningEntrySheet(
     linkedTaskLines: List<WorkTaskLabourLine> = emptyList(),
     seasonStartMonth: Int = 7,
     seasonStartDay: Int = 1,
+    /** Which bottom-bar action opened this form for a NEW entry. Both actions
+     * open the SAME form and share one save, confirmation, offline queue and
+     * sync path — the mode only seeds the skip toggle, which the user can
+     * still change before confirming. Ignored on an edit, where a saved
+     * record's kind is fixed. */
+    launchMode: PruningEntryLaunchMode = PruningEntryLaunchMode.RECORD,
     onSaveEdit: (PruningEntry, PruningEditTaskAction) -> Unit = { _, _ -> },
 ) {
     val vine = LocalVineColors.current
@@ -2565,7 +2656,12 @@ private fun PruningEntrySheet(
      * would invent work that never happened), so on an edit it is preloaded
      * from the record and locked. The server refuses both conversions too.
      */
-    var markSkipped by remember { mutableStateOf(existingEntry?.isSkipped == true) }
+    var markSkipped by remember {
+        mutableStateOf(
+            if (existingEntry != null) existingEntry.isSkipped
+            else launchMode == PruningEntryLaunchMode.SKIP
+        )
+    }
     var showSkipConfirm by remember { mutableStateOf(false) }
     /** Stable ids of the linked task's live lines when the editor opened —
      * lines missing from the saved set soft-delete through the normal flow. */
@@ -2723,7 +2819,7 @@ private fun PruningEntrySheet(
             // labour field is filled in, not after.
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Mark as skipped", fontSize = 14.sp, color = vine.textPrimary)
+                    Text("Mark selected rows as skipped", fontSize = 14.sp, color = vine.textPrimary)
                     Text(
                         "Out of pruning rotation — counts as complete, records no work",
                         fontSize = 11.sp,

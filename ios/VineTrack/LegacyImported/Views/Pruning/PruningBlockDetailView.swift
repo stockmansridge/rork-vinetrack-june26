@@ -15,6 +15,10 @@ struct PruningBlockDetailView: View {
 
     @State private var selectedSegments: Set<PruningSegment> = []
     @State private var showEntrySheet: Bool = false
+    /// Which action opened the entry sheet. Both actions open the SAME form
+    /// (one save, one sync path) — this only decides the initial state of the
+    /// skip toggle, which the user can still change before confirming.
+    @State private var entryLaunchMode: PruningEntryLaunchMode = .record
     @State private var showSetupSheet: Bool = false
     @State private var rangeFromIndex: Int = 0
     @State private var rangeToIndex: Int = 0
@@ -125,7 +129,8 @@ struct PruningBlockDetailView: View {
                 defaultMethod: setup?.method ?? .spur,
                 defaultWorker: setup?.crew ?? "",
                 existingEntry: editingEntry,
-                alreadyCompleteInSelectedRows: alreadyCompleteInSelectedRows
+                alreadyCompleteInSelectedRows: alreadyCompleteInSelectedRows,
+                launchMode: entryLaunchMode
             ) {
                 selectedSegments.removeAll()
                 editingEntry = nil
@@ -656,30 +661,101 @@ struct PruningBlockDetailView: View {
     // MARK: Selection bar
 
     private var selectionBar: some View {
-        let rowEq = Double(selectedSegments.count) / 4.0
-        let vines = PruningCalculator.vines(for: selectedSegments, rows: rows)
-        return HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("\(rowEq.formatted(.number.precision(.fractionLength(0...2)))) row equivalents")
-                    .font(.subheadline.weight(.semibold))
-                Text("\(selectedSegments.count) quarters · ~\(vines.formatted()) vines")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        Group {
+            if editingEntry == nil {
+                // Two equally visible actions: recording pruning and taking
+                // rows out of rotation are different decisions, so skipping is
+                // no longer hidden inside the Record Pruning form.
+                // `ViewThatFits` keeps both readable on the smallest iPhones:
+                // side by side when they fit, stacked underneath when not —
+                // never truncated.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        selectionSummary
+                        Spacer(minLength: 8)
+                        recordPruningButton
+                        markSkippedButton
+                    }
+                    VStack(alignment: .leading, spacing: 10) {
+                        selectionSummary
+                        HStack(spacing: 10) {
+                            recordPruningButton.frame(maxWidth: .infinity)
+                            markSkippedButton.frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+            } else {
+                // Editing keeps exactly one action. A saved record's kind is
+                // fixed — converting between pruned and skipped stays
+                // impossible, here and in the form.
+                HStack(spacing: 12) {
+                    selectionSummary
+                    Spacer(minLength: 8)
+                    saveChangesButton
+                }
             }
-            Spacer()
-            Button {
-                showEntrySheet = true
-            } label: {
-                Text(editingEntry == nil ? "Record Pruning" : "Save Changes")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 4)
-            }
-            .buttonStyle(.borderedProminent)
-            .accessibilityLabel(editingEntry == nil ? "Record pruning for the selected quarters" : "Review and save the edited pruning entry")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.thinMaterial)
+    }
+
+    private var selectionSummary: some View {
+        let rowEq = Double(selectedSegments.count) / 4.0
+        let vines = PruningCalculator.vines(for: selectedSegments, rows: rows)
+        return VStack(alignment: .leading, spacing: 1) {
+            Text("\(rowEq.formatted(.number.precision(.fractionLength(0...2)))) row equivalents")
+                .font(.subheadline.weight(.semibold))
+            Text("\(selectedSegments.count) quarters · ~\(vines.formatted()) vines")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var recordPruningButton: some View {
+        Button {
+            entryLaunchMode = .record
+            showEntrySheet = true
+        } label: {
+            Text("Record Pruning")
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .padding(.horizontal, 4)
+        }
+        .buttonStyle(.borderedProminent)
+        .accessibilityLabel("Record pruning for the selected quarters")
+        .accessibilityHint("Opens the pruning form to enter crew, hours and method")
+    }
+
+    private var markSkippedButton: some View {
+        Button {
+            entryLaunchMode = .skip
+            showEntrySheet = true
+        } label: {
+            Text("Mark Skipped")
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .padding(.horizontal, 4)
+        }
+        .buttonStyle(.bordered)
+        .tint(skippedTint)
+        .accessibilityLabel("Mark the selected rows as skipped")
+        .accessibilityHint("Opens the same form with skipped mode on. The selected sections count as complete and record no pruning work, labour or cost")
+    }
+
+    private var saveChangesButton: some View {
+        Button {
+            entryLaunchMode = .record
+            showEntrySheet = true
+        } label: {
+            Text("Save Changes")
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .padding(.horizontal, 4)
+        }
+        .buttonStyle(.borderedProminent)
+        .accessibilityLabel("Review and save the edited pruning entry")
     }
 
     // MARK: History
@@ -813,6 +889,16 @@ struct PruningBlockDetailView: View {
 
 // MARK: - Entry sheet
 
+/// Which selection-bar action opened `PruningEntrySheet` for a NEW entry.
+/// Both actions open the SAME form and share one save, confirmation, offline
+/// queue and sync path — the mode only decides the initial state of the skip
+/// toggle, which the user can still change before confirming. Ignored on an
+/// edit, where a saved record's kind is fixed.
+private enum PruningEntryLaunchMode {
+    case record
+    case skip
+}
+
 /// Editable labour-line draft for the Record Pruning sheet. The id is minted
 /// once when the row is added and becomes the `work_task_labour_lines` row id,
 /// so offline replay and retries can never create a duplicate line.
@@ -858,6 +944,9 @@ private struct PruningEntrySheet: View {
     /// Quarters inside the selected rows that are already complete and will be
     /// left alone. Surfaced as a notice rather than silently dropped.
     let alreadyCompleteInSelectedRows: Int
+    /// Which action opened this form for a NEW entry — see
+    /// `PruningEntryLaunchMode`.
+    var launchMode: PruningEntryLaunchMode = .record
     let onSaved: () -> Void
 
     @State private var date: Date = Date()
@@ -1021,8 +1110,9 @@ private struct PruningEntrySheet: View {
     @ViewBuilder
     private var skipSection: some View {
         Section {
-            Toggle("Mark as skipped", isOn: $markSkipped.animation(.easeInOut(duration: 0.2)))
+            Toggle("Mark selected rows as skipped", isOn: $markSkipped.animation(.easeInOut(duration: 0.2)))
                 .disabled(isEditing)
+                .accessibilityHint("Skipped rows count as complete in pruning progress and record no worker, labour, cost or Work Task")
             if alreadyCompleteInSelectedRows > 0 {
                 Label(
                     "Some selected sections are already complete. Only the remaining sections will be marked as skipped.",
@@ -1273,6 +1363,10 @@ private struct PruningEntrySheet: View {
                 } else {
                     method = defaultMethod
                     worker = defaultWorker
+                    // The launch mode only seeds the toggle: the user can
+                    // still switch between recording and skipping right here
+                    // before confirming.
+                    markSkipped = launchMode == .skip
                 }
             }
             .confirmationDialog(
