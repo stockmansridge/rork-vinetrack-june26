@@ -84,6 +84,15 @@ final class PersistenceStore {
         try? data.write(to: url, options: [.atomic])
     }
 
+    /// Durable variant of `save`: encoding and disk-write failures THROW
+    /// instead of being silently ignored. Used for payloads (like the block
+    /// cache) whose sync must not report success — or advance a watermark —
+    /// until the data is verifiably on disk.
+    func saveOrThrow<T: Encodable>(_ value: T, key: String) throws {
+        let data = try encoder.encode(value)
+        try data.write(to: fileURL(for: key), options: [.atomic])
+    }
+
     func remove(key: String) {
         let url = fileURL(for: key)
         try? FileManager.default.removeItem(at: url)
@@ -97,16 +106,24 @@ final class PersistenceStore {
         let url = fileURL(for: key)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let stamp = Int(Date().timeIntervalSince1970)
-        let destination = directory.appendingPathComponent("\(key).corrupt-\(stamp).json")
+        let unique = UUID().uuidString.prefix(8)
+        let destination = directory.appendingPathComponent("\(key).corrupt-\(stamp)-\(unique).json")
         do {
             try FileManager.default.moveItem(at: url, to: destination)
             logger.error("Quarantined corrupt payload for key '\(key, privacy: .public)' at \(destination.lastPathComponent, privacy: .public)")
             return destination
         } catch {
-            // Moving failed (e.g. destination exists) — remove so a fresh save
-            // can proceed; the decode error was already logged.
-            try? FileManager.default.removeItem(at: url)
-            return nil
+            // Moving failed. NEVER delete the original — it may hold the only
+            // copy of still-recoverable data. Try to at least copy the
+            // evidence aside; if that also fails, leave the file in place.
+            do {
+                try FileManager.default.copyItem(at: url, to: destination)
+                logger.error("Quarantine move failed for key '\(key, privacy: .public)'; copied evidence to \(destination.lastPathComponent, privacy: .public) and retained the original")
+                return destination
+            } catch {
+                logger.error("Quarantine FAILED for key '\(key, privacy: .public)': \(String(describing: error), privacy: .public). Corrupt file retained in place for possible recovery.")
+                return nil
+            }
         }
     }
 }

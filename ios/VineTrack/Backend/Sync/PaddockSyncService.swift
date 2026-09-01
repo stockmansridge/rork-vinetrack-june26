@@ -144,6 +144,14 @@ final class PaddockSyncService {
         await sync(vineyardId: vineyardId)
     }
 
+    /// Fallback watermark overlap for vineyards with NO server rows: without
+    /// any server timestamp to derive a safe watermark from, store "pull
+    /// started minus this overlap" so a row created during the sync window
+    /// (or under moderate clock skew) is still caught by the next
+    /// incremental pull. Existing-row edits never rely on this — they use
+    /// server-derived `updated_at` watermarks.
+    private static let emptyVineyardWatermarkOverlap: TimeInterval = 120
+
     func sync(vineyardId: UUID) async {
         guard usesInjectedRepository || SupabaseClientProvider.shared.isConfigured else {
             errorMessage = "Supabase not configured"
@@ -151,30 +159,46 @@ final class PaddockSyncService {
             return
         }
         // A paddock-cache decode failure was detected since the last sync:
-        // the local cache can no longer be trusted, so drop every watermark
-        // and let this sync re-pull authoritative server data in full.
+        // the local cache can no longer be trusted. Enter explicit RECOVERY
+        // MODE for this sync: drop every watermark so the pull is full,
+        // hydrate the authoritative server cache BEFORE any push processing,
+        // and forbid the push from reclaiming "orphans" — with an emptied
+        // cache, a pending entry's payload being unfindable is expected, not
+        // proof the record never existed.
+        var recoveryMode = false
         if PaddockCacheRecovery.consumePendingRecovery() {
             metadata.resetAllLastSync()
+            recoveryMode = true
             #if DEBUG
-            print("[PaddockSync] decode-failure recovery: reset all lastSync watermarks before syncing")
+            print("[PaddockSync] decode-failure recovery: reset all lastSync watermarks; entering recovery mode (pull-first, no orphan reclaim)")
             #endif
         }
         syncStatus = .syncing
         errorMessage = nil
         do {
-            if pendingPullFirstAfterVarietyRepair {
+            let watermark: Date?
+            if recoveryMode {
+                _ = try await pullRemotePaddocks(vineyardId: vineyardId)
+                try await pushLocalPaddocks(vineyardId: vineyardId, reclaimOrphans: false)
+                watermark = try await pullRemotePaddocks(vineyardId: vineyardId)
+            } else if pendingPullFirstAfterVarietyRepair {
                 // First sync after the variety-repair migration: pull the
                 // canonicalised server rows BEFORE pushing anything local,
                 // so we don't clobber the repaired `variety_allocations`.
                 pendingPullFirstAfterVarietyRepair = false
-                try await pullRemotePaddocks(vineyardId: vineyardId)
+                _ = try await pullRemotePaddocks(vineyardId: vineyardId)
                 try await pushLocalPaddocks(vineyardId: vineyardId)
-                try await pullRemotePaddocks(vineyardId: vineyardId)
+                watermark = try await pullRemotePaddocks(vineyardId: vineyardId)
             } else {
                 try await pushLocalPaddocks(vineyardId: vineyardId)
-                try await pullRemotePaddocks(vineyardId: vineyardId)
+                watermark = try await pullRemotePaddocks(vineyardId: vineyardId)
             }
-            metadata.setLastSync(Date(), for: vineyardId)
+            // Server-derived (or safely overlapped) watermark — never the
+            // bare client clock at completion time, which could skip an
+            // existing row edited between the query and this line.
+            if let watermark {
+                metadata.setLastSync(watermark, for: vineyardId)
+            }
             lastSyncDate = Date()
             syncStatus = .success
         } catch {
@@ -200,7 +224,7 @@ final class PaddockSyncService {
     /// canonicalisation repair) and we need authoritative server data.
     @discardableResult
     func forceRepullAllPaddocks(vineyardId: UUID) async -> ForceRefreshResult {
-        guard let store, SupabaseClientProvider.shared.isConfigured else {
+        guard let store, usesInjectedRepository || SupabaseClientProvider.shared.isConfigured else {
             return ForceRefreshResult(
                 vineyardId: vineyardId,
                 pulled: 0,
@@ -213,18 +237,29 @@ final class PaddockSyncService {
         errorMessage = nil
         do {
             metadata.resetAllLastSync()
+            let fetchStartedAt = Date()
             let remote = try await repository.fetchAllPaddocks(vineyardId: vineyardId)
             var upserts = 0
             var deletes = 0
+            var preservedPending = 0
             let remoteIds = Set(remote.map { $0.id })
+            let pendingUpsertIds = Set(metadata.pendingUpserts.keys)
+            let pendingDeleteIds = Set(metadata.pendingDeletes.keys)
             for backendPaddock in remote {
+                // NEVER silently discard offline block work: a block with an
+                // unpushed local edit (or a queued local delete) is left
+                // exactly as it is — the normal sync will push it and resolve
+                // the conflict via last-write-wins.
+                if pendingUpsertIds.contains(backendPaddock.id) || pendingDeleteIds.contains(backendPaddock.id) {
+                    preservedPending += 1
+                    continue
+                }
                 if backendPaddock.deletedAt != nil {
                     store.applyRemotePaddockDelete(backendPaddock.id)
                     metadata.clearDirty([backendPaddock.id])
                     metadata.clearDeleted([backendPaddock.id])
                     deletes += 1
                 } else {
-                    // Force-apply: ignore pending dirty so the server row wins.
                     let mapped = backendPaddock.toPaddock()
                     store.applyRemotePaddockUpsert(mapped)
                     metadata.clearDirty([backendPaddock.id])
@@ -232,7 +267,7 @@ final class PaddockSyncService {
                 }
             }
             // Sweep hard-deleted local paddocks (no longer present remotely).
-            let pendingLocalCreates = Set(metadata.pendingUpserts.keys)
+            let pendingLocalCreates = pendingUpsertIds
             for local in store.paddocks where local.vineyardId == vineyardId {
                 if remoteIds.contains(local.id) { continue }
                 if pendingLocalCreates.contains(local.id) { continue }
@@ -241,8 +276,20 @@ final class PaddockSyncService {
                 metadata.clearDeleted([local.id])
                 deletes += 1
             }
+            #if DEBUG
+            if preservedPending > 0 {
+                print("[PaddockSync] force refresh preserved \(preservedPending) block(s) with pending local changes")
+            }
+            #endif
             GrapeVarietyCanonicalization.run(store: store)
-            metadata.setLastSync(Date(), for: vineyardId)
+            // Server-derived watermark (see `sync`): the newest server
+            // `updated_at` seen, falling back to an overlapped client time
+            // only when the vineyard has no server rows at all.
+            let serverMax = remote.compactMap { $0.updatedAt }.max()
+            metadata.setLastSync(
+                serverMax ?? fetchStartedAt.addingTimeInterval(-Self.emptyVineyardWatermarkOverlap),
+                for: vineyardId
+            )
             lastSyncDate = Date()
             syncStatus = .success
             return ForceRefreshResult(
@@ -294,24 +341,62 @@ final class PaddockSyncService {
 
     // MARK: - Push
 
-    func pushLocalPaddocks(vineyardId: UUID) async throws {
+    func pushLocalPaddocks(vineyardId: UUID, reclaimOrphans: Bool = true) async throws {
         guard let store else { return }
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
-            let byId = Dictionary(store.paddocks.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            // Pending entries are looked up in the COMPLETE multi-vineyard
+            // cache. `store.paddocks` holds only the selected vineyard, so
+            // building the lookup from it would misclassify another
+            // vineyard's pending edit as an orphan and discard it.
+            let byId = Dictionary(store.allCachedPaddocks().map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendPaddockUpsert] = []
             var pushedIds: [UUID] = []
             var orphans: [UUID] = []
+            var unrecoverable: [UUID] = []
             for (paddockId, ts) in dirty {
-                // Queue entries whose local block no longer exists can never
-                // upload — reclaim them instead of retrying them forever.
-                guard let paddock = byId[paddockId] else { orphans.append(paddockId); continue }
+                guard let paddock = byId[paddockId] else {
+                    // Absent from the complete cache. Normally that proves the
+                    // entry can never upload (reclaim it) — but in recovery
+                    // mode the payload may have been inside the quarantined
+                    // cache file, so it is preserved and surfaced instead of
+                    // silently cleared.
+                    if reclaimOrphans {
+                        orphans.append(paddockId)
+                    } else {
+                        unrecoverable.append(paddockId)
+                    }
+                    continue
+                }
+                // Entries belonging to OTHER vineyards stay queued untouched;
+                // they upload when their own vineyard syncs.
+                guard paddock.vineyardId == vineyardId else { continue }
                 payloads.append(BackendPaddock.upsert(from: paddock, createdBy: createdBy, clientUpdatedAt: ts))
                 pushedIds.append(paddockId)
             }
             metadata.clearDirty(orphans)
             SyncIssueCenter.shared.clearIssues(orphans)
+            for paddockId in unrecoverable {
+                // Diagnostic, never a silent success: the pending change's
+                // only payload may have lived in the corrupt cache file.
+                SyncIssueCenter.shared.recordFailure(
+                    id: paddockId,
+                    entity: "Blocks",
+                    detail: SyncFailureDetail(
+                        kind: .permanent,
+                        reasonCode: "recovery_payload_missing",
+                        friendlyMessage: "A pending block change could not be recovered from the damaged local cache.",
+                        technicalDetail: "Pending block \(paddockId.uuidString) has no payload in the local cache after a cache decode failure. The original data may be in the quarantined cache file."
+                    ),
+                    queuedAt: dirty[paddockId],
+                    payloadKeys: [],
+                    vineyardId: vineyardId
+                )
+                #if DEBUG
+                print("[PaddockSync] recovery: pending block \(paddockId) payload not recoverable — preserved and surfaced, not reclaimed")
+                #endif
+            }
             let result = await SyncQueuePush.run(
                 entity: "Blocks",
                 ids: pushedIds,
@@ -362,37 +447,52 @@ final class PaddockSyncService {
 
     // MARK: - Pull
 
-    func pullRemotePaddocks(vineyardId: UUID) async throws {
-        guard let store else { return }
+    /// Pull remote paddocks and reconcile the local cache. Returns the SAFE
+    /// watermark the caller should store as `lastSync` — derived from server
+    /// `updated_at` timestamps so an existing row edited between the query
+    /// and sync completion can never be skipped by the next incremental
+    /// pull. Returns nil when no safe value exists (keep the old watermark).
+    @discardableResult
+    func pullRemotePaddocks(vineyardId: UUID) async throws -> Date? {
+        guard let store else { return nil }
+        let pullStartedAt = Date()
         let lastSync = metadata.lastSync(for: vineyardId)
         let remote = try await repository.fetchPaddocks(vineyardId: vineyardId, since: lastSync)
+        // Watermark candidates are SERVER timestamps only — mixing in the
+        // client clock could overshoot server time and skip rows.
+        var watermarkCandidates: [Date] = remote.compactMap { $0.updatedAt }
 
-        // Initial sync: push any local paddocks that don't yet exist remotely.
-        // Previously this only ran when `remote.isEmpty`, which missed the
-        // partial-remote case where some local paddocks were already pushed
-        // but others (or newer fields) were never persisted to Supabase.
+        // Initial sync (or a recovery-reset watermark): ONLY records known to
+        // be pending local creations may be uploaded. A nil watermark can be
+        // caused by a recovery reset, so an arbitrary cached row missing
+        // remotely is NOT evidence it is new — it may have been hard-deleted
+        // on the server, and re-uploading it would resurrect it. Such rows
+        // are swept by the delete reconciliation below instead.
         if lastSync == nil {
             let remoteIds = Set(remote.map { $0.id })
+            let pendingCreations = metadata.pendingUpserts
             let localForVineyard = store.paddocks.filter { $0.vineyardId == vineyardId }
-            let missing = localForVineyard.filter { !remoteIds.contains($0.id) }
+            let missing = localForVineyard.filter {
+                !remoteIds.contains($0.id) && pendingCreations[$0.id] != nil
+            }
             if !missing.isEmpty {
-                let now = Date()
                 let createdBy = auth?.userId
                 let payloads = missing.map {
-                    BackendPaddock.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now)
+                    BackendPaddock.upsert(
+                        from: $0,
+                        createdBy: createdBy,
+                        clientUpdatedAt: pendingCreations[$0.id] ?? Date()
+                    )
                 }
-                do {
-                    try await repository.upsertPaddocks(payloads)
-                    #if DEBUG
-                    print("[PaddockSync] initial seed pushed \(payloads.count) local paddock(s) missing remotely")
-                    #endif
-                } catch {
-                    #if DEBUG
-                    print("[PaddockSync] initial seed push failed: \(error.localizedDescription)")
-                    #endif
-                }
+                // A failed seed upload MUST fail the sync: the watermark and
+                // the pending queue stay intact and success is never claimed
+                // before authoritative id reconciliation.
+                try await repository.upsertPaddocks(payloads)
+                metadata.clearDirty(missing.map { $0.id })
+                #if DEBUG
+                print("[PaddockSync] initial seed pushed \(payloads.count) pending local creation(s) missing remotely")
+                #endif
             }
-            if remote.isEmpty { return }
         }
 
         for backendPaddock in remote {
@@ -427,23 +527,48 @@ final class PaddockSyncService {
             print("[PaddockSync] consistency recovery: \(missingLocally.count) active server block(s) missing locally for vineyard \(vineyardId) — performing full re-fetch")
             #endif
             let allRemote = try await repository.fetchAllPaddocks(vineyardId: vineyardId)
+            watermarkCandidates.append(contentsOf: allRemote.compactMap { $0.updatedAt })
+            var recovered: [Paddock] = []
+            var lostPendingEdits: [UUID] = []
             for backendPaddock in allRemote
             where backendPaddock.deletedAt == nil && missingLocally.contains(backendPaddock.id) {
                 // Server-authoritative for rows the local cache lost. Rows
                 // that still exist locally with pending edits are untouched
                 // (they're not in `missingLocally`), and pending local
                 // creations are unknown to the server so they stay queued.
-                store.applyRemotePaddockUpsert(backendPaddock.toPaddock())
-                metadata.clearDirty([backendPaddock.id])
+                recovered.append(backendPaddock.toPaddock())
+                if metadata.pendingUpserts[backendPaddock.id] != nil {
+                    lostPendingEdits.append(backendPaddock.id)
+                }
+            }
+            // Batch, durable apply: one atomic write for all recovered rows.
+            // A persistence failure throws — the sync then neither advances
+            // its watermark nor reports success.
+            try store.applyRemotePaddockUpsertsBatch(recovered)
+            metadata.clearDirty(recovered.map { $0.id })
+            for paddockId in lostPendingEdits {
+                // The block was marked dirty but its local payload is gone —
+                // the pending edit could NOT be recovered. The server version
+                // was restored; surface that honestly instead of silently
+                // claiming the pending work survived.
+                SyncIssueCenter.shared.recordFailure(
+                    id: paddockId,
+                    entity: "Blocks",
+                    detail: SyncFailureDetail(
+                        kind: .permanent,
+                        reasonCode: "recovery_pending_edit_lost",
+                        friendlyMessage: "A pending block edit was lost with the damaged local cache; the server version was restored.",
+                        technicalDetail: "Block \(paddockId.uuidString) had a queued local edit but no local payload during cache recovery. The server row was re-applied; the unpushed edit may be in the quarantined cache file."
+                    ),
+                    queuedAt: nil,
+                    payloadKeys: [],
+                    vineyardId: vineyardId
+                )
+                #if DEBUG
+                print("[PaddockSync] recovery: pending edit for block \(paddockId) was lost — server version restored, diagnostic surfaced")
+                #endif
             }
             didRecover = true
-            let stillMissing = liveRemoteIds.subtracting(store.cachedPaddockIds(for: vineyardId))
-            guard stillMissing.isEmpty else {
-                throw PaddockSyncError.hydrationIncomplete(
-                    vineyardId: vineyardId,
-                    missingCount: stillMissing.count
-                )
-            }
         }
 
         // 2. Delete reconciliation — only AFTER recovery, so a missing local
@@ -479,6 +604,20 @@ final class PaddockSyncService {
         }
         #endif
 
+        // 3. Durable success gate: every active server block must be readable
+        // back FROM DISK, not merely present in the selected vineyard's
+        // in-memory array. If any is missing (including after a silent write
+        // failure), throw so `sync` neither advances the `lastSync`
+        // watermark nor reports success.
+        let persistedIds = store.persistedPaddockIds(for: vineyardId)
+        let unpersisted = liveRemoteIds.subtracting(persistedIds)
+        guard unpersisted.isEmpty else {
+            throw PaddockSyncError.hydrationIncomplete(
+                vineyardId: vineyardId,
+                missingCount: unpersisted.count
+            )
+        }
+
         // After a pull, re-run the local grape variety canonicalisation
         // pass. Pulled paddocks may carry repaired `variety_allocations`
         // from the server (deterministic ids + backfilled names) which
@@ -487,6 +626,23 @@ final class PaddockSyncService {
         if !remote.isEmpty || didRecover {
             GrapeVarietyCanonicalization.run(store: store)
         }
+
+        // Safe watermark: the newest SERVER `updated_at` seen this pull,
+        // never regressing below the previous watermark. When nothing was
+        // pulled the previous watermark is simply kept (nothing changed).
+        // Only a vineyard with no server rows at all falls back to an
+        // overlapped client timestamp — new rows there are additionally
+        // protected by the id-consistency recovery pass above.
+        let serverMax = watermarkCandidates.max()
+        if let lastSync {
+            if let serverMax { return max(lastSync, serverMax) }
+            return lastSync
+        }
+        if let serverMax { return serverMax }
+        if idRows.isEmpty {
+            return pullStartedAt.addingTimeInterval(-Self.emptyVineyardWatermarkOverlap)
+        }
+        return nil
     }
 
     private func applyRemote(_ backendPaddock: BackendPaddock, vineyardId: UUID, store: MigratedDataStore) {

@@ -944,6 +944,57 @@ final class MigratedDataStore {
         return Set(loadAllPaddocksFromDisk().filter { $0.vineyardId == vineyardId }.map { $0.id })
     }
 
+    /// The COMPLETE multi-vineyard block view: the persisted shared cache
+    /// merged with the (possibly newer) in-memory slice for the selected
+    /// vineyard. The block sync uses this to look up pending records so a
+    /// pending edit for a NON-selected vineyard is never misclassified as an
+    /// orphan (and discarded) while a different vineyard syncs.
+    func allCachedPaddocks() -> [Paddock] {
+        let all = loadAllPaddocksFromDisk()
+        guard let selected = selectedVineyardId else { return all }
+        var merged = all.filter { $0.vineyardId != selected }
+        merged.append(contentsOf: paddocks)
+        return merged
+    }
+
+    /// Block ids for a vineyard read FRESH from the persisted cache — never
+    /// from memory. Used as the block sync's durable success gate: a block
+    /// only counts as synced once it can be read back from disk.
+    func persistedPaddockIds(for vineyardId: UUID) -> Set<UUID> {
+        Set(loadAllPaddocksFromDisk().filter { $0.vineyardId == vineyardId }.map { $0.id })
+    }
+
+    /// Apply a batch of remote paddock upserts DURABLY: merge every row into
+    /// the shared multi-vineyard cache, write the file once atomically, and
+    /// throw when encoding or the disk write fails so the block sync can
+    /// refuse to advance its watermark or report success. Does NOT trigger
+    /// `onPaddockChanged` (these rows came from the server).
+    func applyRemotePaddockUpsertsBatch(_ incoming: [Paddock]) throws {
+        guard !incoming.isEmpty else { return }
+        var all: [Paddock] = loadAllPaddocksFromDisk()
+        if let selected = selectedVineyardId {
+            // The in-memory slice for the selected vineyard is authoritative
+            // over its persisted copy (same rule as `savePaddocksToDisk`).
+            all.removeAll { $0.vineyardId == selected }
+            all.append(contentsOf: paddocks)
+        }
+        for paddock in incoming {
+            if let idx = all.firstIndex(where: { $0.id == paddock.id }) {
+                all[idx] = paddock
+            } else {
+                all.append(paddock)
+            }
+            if selectedVineyardId == paddock.vineyardId {
+                if let memIdx = paddocks.firstIndex(where: { $0.id == paddock.id }) {
+                    paddocks[memIdx] = paddock
+                } else {
+                    paddocks.append(paddock)
+                }
+            }
+        }
+        try persistence.saveOrThrow(all, key: Keys.paddocks)
+    }
+
     func addPaddock(_ paddock: Paddock) {
         guard let vineyardId = selectedVineyardId else { return }
         var item = paddock

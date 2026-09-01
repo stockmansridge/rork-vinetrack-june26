@@ -292,8 +292,12 @@ struct PaddockCacheRecoveryTests {
         await env.service.sync(vineyardId: vineyard)
         #expect(env.service.syncStatus == .success)
         #expect(Set(env.store.paddocks.map { $0.id }) == Set([blockA.id, blockB.id]))
+        // The watermark is server-derived and never regresses. Here the
+        // recovered rows' server `updated_at` predates the existing
+        // watermark, so it is preserved rather than advanced by the client
+        // clock (which could skip rows edited during the sync window).
         let advanced = env.metadata.lastSync(for: vineyard)
-        #expect(advanced != nil && advanced! > originalWatermark)
+        #expect(advanced != nil && advanced! >= originalWatermark)
     }
 
     // MARK: - Persistence diagnostics
