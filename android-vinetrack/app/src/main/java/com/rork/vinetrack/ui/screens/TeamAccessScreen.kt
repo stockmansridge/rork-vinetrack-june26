@@ -334,12 +334,10 @@ private fun InviteMemberDialog(
     var email by remember { mutableStateOf("") }
     var role by remember { mutableStateOf(TeamRole.Operator) }
     var categoryId by remember { mutableStateOf<String?>(null) }
-    val requiresWorkerType = role == TeamRole.Operator
     val emailValid = email.contains("@") && email.contains(".")
 
-    LaunchedEffect(role) {
-        if (role != TeamRole.Operator) categoryId = null
-    }
+    // Role and Default Worker Type are independent — changing the role never
+    // clears the selection. Only a reload that removes the selected type does.
     LaunchedEffect(categories.map { it.id }) {
         if (categoryId != null && categories.none { it.id == categoryId }) categoryId = null
     }
@@ -368,33 +366,31 @@ private fun InviteMemberDialog(
                 RolePicker(selected = role, onSelect = { role = it })
                 Text("Some features and values are hidden based on the assigned role.", fontSize = 11.sp, color = vine.textSecondary)
 
-                if (requiresWorkerType) {
-                    Text("Worker Type", fontWeight = FontWeight.SemiBold)
-                    if (categories.isEmpty()) {
-                        Text(
-                            "No worker types are configured for this vineyard. Add one in Vineyard Settings before inviting an operator.",
-                            fontSize = 12.sp,
-                            color = vine.textSecondary,
-                        )
-                    } else {
-                        OperatorCategoryPicker(
-                            categories = categories,
-                            selected = categoryId,
-                            onSelect = { categoryId = it },
-                        )
-                        Text(
-                            "A worker type is required for operator invitations and must belong to this vineyard.",
-                            fontSize = 11.sp,
-                            color = vine.textSecondary,
-                        )
-                    }
+                Text("Default Worker Type (Optional)", fontWeight = FontWeight.SemiBold)
+                if (categories.isEmpty()) {
+                    Text(
+                        "No worker types are configured for this vineyard. You can add one in Vineyard Settings.",
+                        fontSize = 12.sp,
+                        color = vine.textSecondary,
+                    )
+                } else {
+                    OperatorCategoryPicker(
+                        categories = categories,
+                        selected = categoryId,
+                        onSelect = { categoryId = it },
+                    )
+                    Text(
+                        "Optional for every role. Used as the member's default worker type for labour costing, and can be changed later in Team & Access.",
+                        fontSize = 11.sp,
+                        color = vine.textSecondary,
+                    )
                 }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onInvite(email.trim(), role, if (requiresWorkerType) categoryId else null) },
-                enabled = emailValid && !busy && (!requiresWorkerType || (categories.isNotEmpty() && categoryId != null)),
+                onClick = { onInvite(email.trim(), role, categoryId) },
+                enabled = emailValid && !busy,
             ) {
                 Text("Send")
             }

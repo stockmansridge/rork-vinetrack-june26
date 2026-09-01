@@ -28,7 +28,6 @@ struct BackendInviteMemberSheet: View {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    private var requiresWorkerType: Bool { role == .operator }
 
     var body: some View {
         NavigationStack {
@@ -60,24 +59,22 @@ struct BackendInviteMemberSheet: View {
                     Text("Some features and values are hidden based on the assigned role.")
                 }
 
-                if requiresWorkerType {
-                    Section {
-                        if vineyardOperatorCategories.isEmpty {
-                            Text("No worker types are configured for this vineyard. Add one in Vineyard Settings before inviting an operator.")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Picker("Worker Type", selection: $operatorCategoryId) {
-                                Text("Select worker type").tag(UUID?.none)
-                                ForEach(vineyardOperatorCategories) { cat in
-                                    Text(cat.name).tag(UUID?.some(cat.id))
-                                }
+                Section {
+                    if vineyardOperatorCategories.isEmpty {
+                        Text("No worker types are configured for this vineyard. You can add one in Vineyard Settings.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Picker("Worker Type", selection: $operatorCategoryId) {
+                            Text("None").tag(UUID?.none)
+                            ForEach(vineyardOperatorCategories) { cat in
+                                Text(cat.name).tag(UUID?.some(cat.id))
                             }
                         }
-                    } header: {
-                        Text("Worker Type")
-                    } footer: {
-                        Text("A worker type is required for operator invitations and must belong to this vineyard.")
                     }
+                } header: {
+                    Text("Default Worker Type (Optional)")
+                } footer: {
+                    Text("Optional for every role. Used as the member's default worker type for labour costing, and can be changed later in Team & Access.")
                 }
 
                 Section {
@@ -132,11 +129,6 @@ struct BackendInviteMemberSheet: View {
                 }
             }
         }
-        .onChange(of: role) { _, newRole in
-            if newRole != .operator {
-                operatorCategoryId = nil
-            }
-        }
         .onChange(of: vineyardOperatorCategories.map(\.id)) { _, categoryIDs in
             if let selected = operatorCategoryId, !categoryIDs.contains(selected) {
                 operatorCategoryId = nil
@@ -153,14 +145,6 @@ struct BackendInviteMemberSheet: View {
             errorMessage = "Please enter a valid email"
             return
         }
-        if requiresWorkerType && vineyardOperatorCategories.isEmpty {
-            errorMessage = "No worker types are configured for this vineyard. Add one in Vineyard Settings before inviting an operator."
-            return
-        }
-        if requiresWorkerType && operatorCategoryId == nil {
-            errorMessage = "Select a worker type before inviting an operator."
-            return
-        }
         if let selected = operatorCategoryId, !vineyardOperatorCategories.contains(where: { $0.id == selected }) {
             operatorCategoryId = nil
             errorMessage = "This worker type is no longer available for this vineyard. Select another worker type and try again."
@@ -171,11 +155,14 @@ struct BackendInviteMemberSheet: View {
         isSending = true
         defer { isSending = false }
         do {
+            // The Default Worker Type is optional and independent of the
+            // selected role — send the selected UUID (or nil) for every role.
+            // The server validates it belongs to this vineyard (sql/220).
             let invitation = try await teamRepository.inviteMember(
                 vineyardId: vineyardId,
                 email: trimmed,
                 role: role,
-                operatorCategoryId: requiresWorkerType ? operatorCategoryId : nil,
+                operatorCategoryId: operatorCategoryId,
                 expiresAt: nil
             )
             // Best-effort email notification — never fatal. The invite is

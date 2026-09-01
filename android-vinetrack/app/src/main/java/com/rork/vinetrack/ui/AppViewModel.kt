@@ -10230,17 +10230,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Invite a member by email + role (owner/manager only, enforced server-side). */
     fun inviteMember(email: String, role: String, operatorCategoryId: String?, onResult: (Boolean) -> Unit) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
-        val isOperator = role.equals("operator", ignoreCase = true)
+        // The Default Worker Type is optional and independent of the invited
+        // role: when selected, its UUID is sent for EVERY role; when not, null
+        // is sent. A stale selection (deleted / other vineyard) is rejected
+        // here with an error — never silently replaced with null.
         val validCategoryIds = _ui.value.operatorCategories
             .filter { it.vineyardId == vineyardId && it.deletedAt == null }
             .map { it.id }
-        val resolvedCategoryId = if (isOperator) operatorCategoryId else null
-        if (isOperator && validCategoryIds.isEmpty()) {
-            _ui.update { it.copy(teamError = "No worker types are configured for this vineyard. Add one in Vineyard Settings before inviting an operator.") }
-            onResult(false)
-            return
-        }
-        if (isOperator && resolvedCategoryId !in validCategoryIds) {
+        if (operatorCategoryId != null && operatorCategoryId !in validCategoryIds) {
             _ui.update { it.copy(teamError = "This worker type is no longer available for this vineyard. Select another worker type and try again.") }
             onResult(false)
             return
@@ -10248,7 +10245,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _ui.update { it.copy(teamBusy = true, teamError = null, teamNotice = null) }
             try {
-                val invitation = teamRepo.inviteMember(vineyardId, email, role, resolvedCategoryId)
+                val invitation = teamRepo.inviteMember(vineyardId, email, role, operatorCategoryId)
                 loadPendingInvitations()
                 val emailStatus = teamRepo.sendInvitationEmail(
                     invitationId = invitation.id,
