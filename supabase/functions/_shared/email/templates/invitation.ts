@@ -53,7 +53,7 @@ export function renderInvitationEmail(input: InvitationTemplateInput): string {
     ${sectionHeading("How to accept")}
     ${orderedSteps([
       `Download or open the <strong>VineTrack</strong> app on your phone.`,
-      `Sign in (or create an account) using <strong>${email}</strong>.`,
+      `If you&rsquo;re new to VineTrack, create an account using <strong>${email}</strong>. If you already have a VineTrack account using this email address, sign in as normal.`,
       `Your pending invitation for <strong>${vineyard}</strong> will appear &mdash; tap <strong>Accept</strong> to join the team.`,
     ])}
     ${primaryButton("Open VineTrack", VINETRACK_WEBSITE_URL)}
