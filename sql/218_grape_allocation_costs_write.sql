@@ -24,9 +24,20 @@
 --
 --   DB enforcement remains authoritative regardless of scopes: the routing
 --   trigger (grape_allocations_route_financials) only routes a price written
---   by an owner/manager (or the security-definer API path), and the
+--   by an owner/manager (or the validated API path), and the
 --   grape_allocation_financials companion table stays readable by
 --   owner/manager only. costs:write can never bypass that.
+--
+--   HARDENING (test T5 finding): sql/217's trigger identified the API path
+--   only by `auth.uid() is null`, i.e. by AMBIENT JWT state. If the RPC ever
+--   runs in a session that happens to carry a user JWT, the price would be
+--   silently dropped instead of routed. Both RPCs now mark their
+--   grape_allocations write with a transaction-local flag
+--   (vinetrack.integration_financial_write = 'on') that the trigger honours
+--   explicitly, making API financial routing deterministic regardless of
+--   caller context. The flag is set only inside these security-definer RPCs
+--   (after full key/scope validation) and cleared immediately after the
+--   write; PostgREST clients cannot set it themselves.
 -- ===========================================================================
 
 -- A. Catalogue: the dedicated financial write scope. Sensitive, never implied.
@@ -41,6 +52,52 @@ update public.integration_scope_catalog
 update public.integration_scope_catalog
    set description = 'Create/update grape allocations (setting price_per_tonne additionally requires costs:write)'
  where scope = 'grape_allocations:write';
+
+-- ===========================================================================
+-- C. Routing trigger hardening — honour the explicit API-write flag.
+--    Body otherwise identical to sql/217 section D.
+-- ===========================================================================
+create or replace function public.grape_allocations_route_financials()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_financial_editor boolean;
+begin
+  v_financial_editor :=
+       coalesce(current_setting('vinetrack.integration_financial_write', true), '') = 'on'
+    or auth.uid() is null
+    or public.has_vineyard_role(new.vineyard_id, array['owner','manager']);
+
+  if v_financial_editor then
+    if new.allocation_type <> 'external' then
+      -- Own Use never has a price.
+      delete from public.grape_allocation_financials
+       where allocation_id = new.id;
+    elsif new.price_per_tonne is not null then
+      insert into public.grape_allocation_financials
+        (allocation_id, vineyard_id, price_per_tonne, updated_by, updated_at)
+      values
+        (new.id, new.vineyard_id, new.price_per_tonne, auth.uid(), now())
+      on conflict (allocation_id) do update
+        set price_per_tonne = excluded.price_per_tonne,
+            updated_by      = excluded.updated_by,
+            updated_at      = now();
+    else
+      -- External with an explicit NULL price from a financial editor:
+      -- price cleared.
+      delete from public.grape_allocation_financials
+       where allocation_id = new.id;
+    end if;
+  end if;
+
+  -- The base row never stores the price.
+  new.price_per_tonne := null;
+  return new;
+end;
+$$;
 
 -- ===========================================================================
 -- I. POST /v1/grape-allocations
@@ -245,6 +302,8 @@ begin
   end if;
   v_idem_id := (v_idem->>'id')::uuid;
 
+  -- Mark this validated API write for the routing trigger (see header).
+  perform set_config('vinetrack.integration_financial_write', 'on', true);
   begin
     insert into public.grape_allocations (
       id, vineyard_id, vintage, allocation_type,
@@ -262,9 +321,11 @@ begin
       now()
     );
   exception when unique_violation then
+    perform set_config('vinetrack.integration_financial_write', '', true);
     return jsonb_build_object('ok', false, 'error', 'conflict',
       'details', jsonb_build_array(jsonb_build_object('field', 'external_id', 'issue', 'already used by this integration for another grape allocation')));
   end;
+  perform set_config('vinetrack.integration_financial_write', '', true);
 
   insert into public.grape_allocation_blocks (allocation_id, vineyard_id, paddock_id, paddock_name, quantity_tonnes)
   select v_id, p_vineyard_id, (b->>'block_id')::uuid,
@@ -502,6 +563,8 @@ begin
     from jsonb_array_elements(v_blocks) b;
   end if;
 
+  -- Mark this validated API write for the routing trigger (see header).
+  perform set_config('vinetrack.integration_financial_write', 'on', true);
   begin
     update public.grape_allocations set
       vintage = v_row.vintage, allocation_type = v_row.allocation_type,
@@ -519,9 +582,11 @@ begin
       sync_version = sync_version + 1
     where id = v_row.id;
   exception when unique_violation then
+    perform set_config('vinetrack.integration_financial_write', '', true);
     return jsonb_build_object('ok', false, 'error', 'conflict',
       'details', jsonb_build_array(jsonb_build_object('field', 'external_id', 'issue', 'already used by this integration for another grape allocation')));
   end;
+  perform set_config('vinetrack.integration_financial_write', '', true);
 
   perform public._integration_audit(v_client, 'api.write.updated', v_row.vineyard_id,
     jsonb_build_object('resource_type', 'grape_allocation', 'resource_id', v_row.id,

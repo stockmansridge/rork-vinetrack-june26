@@ -188,6 +188,12 @@ begin
   select count(*) into n from public.grape_allocation_blocks where vineyard_id = v1;
   if n <> 0 then raise exception 'T4: stranger read another vineyard''s block splits'; end if;
   perform set_config('role', 'postgres', true);
+  -- Clear the leaked stranger JWT claims before the API tests: in production
+  -- the gateway invokes these RPCs over its service-role connection where no
+  -- user JWT exists (auth.uid() is null). Leaving the stranger claims set
+  -- made the routing trigger treat the T5 API write as a non-financial
+  -- editor and silently drop the price.
+  perform set_config('request.jwt.claims', '', true);
   raise notice 'T4 passed';
 
   -- ---- T5. API create -----------------------------------------------------------
