@@ -125,6 +125,16 @@ nonisolated struct RegionFormatter: Sendable {
         }
     }
 
+    /// Inverse of `rainfallValue(mm:)`: converts a user-entered display-unit
+    /// rainfall value (mm or in) back to canonical millimetres for storage.
+    /// Threshold editors must save through this so the backend always holds mm.
+    func rainfallMm(fromDisplay value: Double) -> Double {
+        switch settings.rainfall {
+        case .millimetres: value
+        case .inches: value * Self.millimetresPerInch
+        }
+    }
+
     var rainfallUnitAbbreviation: String { settings.rainfall.abbreviation }
 
     /// e.g. "12.5 mm" (AU) or "0.49 in" (US). Millimetres keep the historical
@@ -181,6 +191,15 @@ nonisolated struct RegionFormatter: Sendable {
         }
     }
 
+    /// Inverse of `speedValue(kmh:)`: converts a user-entered display-unit
+    /// speed (km/h or mph) back to canonical km/h for storage.
+    func speedKmh(fromDisplay value: Double) -> Double {
+        switch settings.distance {
+        case .metric: value
+        case .imperial: value / Self.milesPerKilometre
+        }
+    }
+
     var speedUnitAbbreviation: String {
         switch settings.distance {
         case .metric: "km/h"
@@ -206,6 +225,15 @@ nonisolated struct RegionFormatter: Sendable {
         switch settings.distance {
         case .metric: celsius
         case .imperial: celsius * 9.0 / 5.0 + 32.0
+        }
+    }
+
+    /// Inverse of `temperatureValue(celsius:)`: converts a user-entered
+    /// display-unit temperature (°C or °F) back to canonical Celsius.
+    func celsius(fromDisplay value: Double) -> Double {
+        switch settings.distance {
+        case .metric: value
+        case .imperial: (value - 32.0) * 5.0 / 9.0
         }
     }
 

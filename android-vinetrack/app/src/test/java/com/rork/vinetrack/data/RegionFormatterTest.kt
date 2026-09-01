@@ -471,6 +471,37 @@ class RegionFormatterTest {
         assertEquals(10.0, RegionFormatter(metric).speedValue(10.0), 1e-9)
     }
 
+    @Test
+    fun `alert threshold editing converts display input back to canonical`() {
+        // Alert Settings editors accept the display unit; the inverse helpers
+        // convert back to the canonical stored unit (mm / km/h / °C).
+        val fmt = RegionFormatter(us)
+        assertEquals(25.4, fmt.rainfallMm(1.0), 1e-9)            // "1.00 in" → 25.4 mm
+        assertEquals(10.0, fmt.speedKmh(6.21371192), 1e-6)       // mph → km/h
+        assertEquals(10.0, fmt.speedKmh(6.2), 0.05)              // "6.2 mph" ≈ 10 km/h
+        assertEquals(20.0, fmt.celsius(68.0), 1e-9)              // "68°F" → 20°C
+        assertEquals(0.0, fmt.celsius(32.0), 1e-9)
+        // Metric editors are pure identities — no conversion applied.
+        val metricFmt = RegionFormatter(au)
+        assertEquals(25.4, metricFmt.rainfallMm(25.4), 1e-9)
+        assertEquals(10.0, metricFmt.speedKmh(10.0), 1e-9)
+        assertEquals(20.0, metricFmt.celsius(20.0), 1e-9)
+    }
+
+    @Test
+    fun `switching metric and imperial does not mutate the stored threshold`() {
+        // Populate-editor → save round trip is lossless under BOTH unit
+        // systems, so flipping Metric ↔ Imperial never rebases stored values.
+        val metric = RegionFormatter(RegionSettings(distanceUnit = DistanceSystem.Metric.raw))
+        val imperial = RegionFormatter(RegionSettings(distanceUnit = DistanceSystem.Imperial.raw))
+        for (fmt in listOf(metric, imperial)) {
+            assertEquals(25.4, fmt.rainfallMm(fmt.rainfallValue(25.4)), 1e-9)
+            assertEquals(10.0, fmt.speedKmh(fmt.speedValue(10.0)), 1e-9)
+            assertEquals(20.0, fmt.celsius(fmt.temperatureValue(20.0)), 1e-9)
+            assertEquals(-2.0, fmt.celsius(fmt.temperatureValue(-2.0)), 1e-9)
+        }
+    }
+
     // ---------------------------------------------------------- currency
 
     @Test

@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.model.AlertPreferences
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.regionFormatter
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -158,10 +159,23 @@ fun AlertSettingsScreen(
                     draft = prefs.copy(weatherAlertsEnabled = it)
                 }
                 val wEnabled = canEdit && prefs.weatherAlertsEnabled
-                NumberRow("Rain (mm)", prefs.rainAlertThresholdMm, wEnabled) { draft = prefs.copy(rainAlertThresholdMm = it) }
-                NumberRow("Wind (km/h)", prefs.windAlertThresholdKmh, wEnabled) { draft = prefs.copy(windAlertThresholdKmh = it) }
-                NumberRow("Frost below (\u00B0C)", prefs.frostAlertThresholdC, wEnabled) { draft = prefs.copy(frostAlertThresholdC = it) }
-                NumberRow("Heat above (\u00B0C)", prefs.heatAlertThresholdC, wEnabled) { draft = prefs.copy(heatAlertThresholdC = it) }
+                // Thresholds are STORED canonically (mm / km/h / °C); the editor
+                // presents and accepts the vineyard's display unit and converts
+                // back through RegionFormatter — switching Metric/Imperial never
+                // mutates the stored value.
+                val fmt = regionFormatter
+                NumberRow("Rain (${fmt.rainfallUnitAbbreviation})", fmt.rainfallValue(prefs.rainAlertThresholdMm), wEnabled) {
+                    draft = prefs.copy(rainAlertThresholdMm = fmt.rainfallMm(it))
+                }
+                NumberRow("Wind (${fmt.speedUnitAbbreviation})", fmt.speedValue(prefs.windAlertThresholdKmh), wEnabled) {
+                    draft = prefs.copy(windAlertThresholdKmh = fmt.speedKmh(it))
+                }
+                NumberRow("Frost below (${fmt.temperatureUnitAbbreviation})", fmt.temperatureValue(prefs.frostAlertThresholdC), wEnabled) {
+                    draft = prefs.copy(frostAlertThresholdC = fmt.celsius(it))
+                }
+                NumberRow("Heat above (${fmt.temperatureUnitAbbreviation})", fmt.temperatureValue(prefs.heatAlertThresholdC), wEnabled) {
+                    draft = prefs.copy(heatAlertThresholdC = fmt.celsius(it))
+                }
             }
 
             // Spray

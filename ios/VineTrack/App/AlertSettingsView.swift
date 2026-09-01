@@ -46,6 +46,7 @@ struct AlertSettingsView: View {
             get: { draft ?? prefs },
             set: { draft = $0 }
         )
+        let fmt = store.settings.regionFormatter
 
         Section {
             Toggle("Aged pin alerts", isOn: binding.agedPinAlertsEnabled)
@@ -90,36 +91,68 @@ struct AlertSettingsView: View {
             Toggle("Weather alerts", isOn: binding.weatherAlertsEnabled)
                 .disabled(!canEdit)
             HStack {
-                Text("Rain (mm)")
+                Text("Rain (\(fmt.rainfallUnitAbbreviation))")
                 Spacer()
-                TextField("mm", value: binding.rainAlertThresholdMm, format: .number.precision(.fractionLength(0...1)))
+                TextField(
+                    fmt.rainfallUnitAbbreviation,
+                    value: displayBinding(
+                        binding.rainAlertThresholdMm,
+                        toDisplay: { fmt.rainfallValue(mm: $0) },
+                        toCanonical: { fmt.rainfallMm(fromDisplay: $0) }
+                    ),
+                    format: .number.precision(.fractionLength(0...2))
+                )
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
                     .frame(width: 80)
                     .disabled(!canEdit || !binding.wrappedValue.weatherAlertsEnabled)
             }
             HStack {
-                Text("Wind (km/h)")
+                Text("Wind (\(fmt.speedUnitAbbreviation))")
                 Spacer()
-                TextField("km/h", value: binding.windAlertThresholdKmh, format: .number.precision(.fractionLength(0...1)))
+                TextField(
+                    fmt.speedUnitAbbreviation,
+                    value: displayBinding(
+                        binding.windAlertThresholdKmh,
+                        toDisplay: { fmt.speedValue(kmh: $0) },
+                        toCanonical: { fmt.speedKmh(fromDisplay: $0) }
+                    ),
+                    format: .number.precision(.fractionLength(0...1))
+                )
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
                     .frame(width: 80)
                     .disabled(!canEdit || !binding.wrappedValue.weatherAlertsEnabled)
             }
             HStack {
-                Text("Frost below (°C)")
+                Text("Frost below (\(fmt.temperatureUnitAbbreviation))")
                 Spacer()
-                TextField("°C", value: binding.frostAlertThresholdC, format: .number.precision(.fractionLength(0...1)))
+                TextField(
+                    fmt.temperatureUnitAbbreviation,
+                    value: displayBinding(
+                        binding.frostAlertThresholdC,
+                        toDisplay: { fmt.temperatureValue(celsius: $0) },
+                        toCanonical: { fmt.celsius(fromDisplay: $0) }
+                    ),
+                    format: .number.precision(.fractionLength(0...1))
+                )
                     .keyboardType(.numbersAndPunctuation)
                     .multilineTextAlignment(.trailing)
                     .frame(width: 80)
                     .disabled(!canEdit || !binding.wrappedValue.weatherAlertsEnabled)
             }
             HStack {
-                Text("Heat above (°C)")
+                Text("Heat above (\(fmt.temperatureUnitAbbreviation))")
                 Spacer()
-                TextField("°C", value: binding.heatAlertThresholdC, format: .number.precision(.fractionLength(0...1)))
+                TextField(
+                    fmt.temperatureUnitAbbreviation,
+                    value: displayBinding(
+                        binding.heatAlertThresholdC,
+                        toDisplay: { fmt.temperatureValue(celsius: $0) },
+                        toCanonical: { fmt.celsius(fromDisplay: $0) }
+                    ),
+                    format: .number.precision(.fractionLength(0...1))
+                )
                     .keyboardType(.decimalPad)
                     .multilineTextAlignment(.trailing)
                     .frame(width: 80)
@@ -202,6 +235,20 @@ struct AlertSettingsView: View {
                     .foregroundStyle(.tint)
             }
         }
+    }
+
+    /// Presents a canonical stored value (mm / km/h / °C) in the vineyard's
+    /// display unit and converts edits back to canonical before they touch the
+    /// draft — the stored `BackendAlertPreferences` value never changes unit.
+    private func displayBinding(
+        _ source: Binding<Double>,
+        toDisplay: @escaping (Double) -> Double,
+        toCanonical: @escaping (Double) -> Double
+    ) -> Binding<Double> {
+        Binding(
+            get: { toDisplay(source.wrappedValue) },
+            set: { source.wrappedValue = toCanonical($0) }
+        )
     }
 
     private func save() async {

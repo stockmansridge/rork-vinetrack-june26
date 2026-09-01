@@ -55,4 +55,31 @@ struct RegionFormatterWeatherParityTests {
         #expect(abs(imperial.speedValue(kmh: 10) - 6.21371192) < 1e-6)
         #expect(abs(imperial.rainfallValue(mm: 25.4) - 1.0) < 1e-9)
     }
+
+    /// Alert Settings threshold editors: the user types the display unit and
+    /// the inverse helpers convert it back to canonical mm / km/h / °C. Editing
+    /// "1.00 in" saves 25.4 mm, "6.2 mph" ≈ 10 km/h, "68°F" saves 20°C.
+    @Test func editingDisplayValuesSavesCanonically() {
+        #expect(abs(imperial.rainfallMm(fromDisplay: 1.0) - 25.4) < 1e-9)
+        #expect(abs(imperial.speedKmh(fromDisplay: 6.21371192) - 10.0) < 1e-6)
+        #expect(abs(imperial.speedKmh(fromDisplay: 6.2) - 10.0) < 0.05)
+        #expect(abs(imperial.celsius(fromDisplay: 68) - 20.0) < 1e-9)
+        #expect(abs(imperial.celsius(fromDisplay: 32) - 0.0) < 1e-9)
+        // Metric editors are pure identities — no conversion applied.
+        #expect(metric.rainfallMm(fromDisplay: 25.4) == 25.4)
+        #expect(metric.speedKmh(fromDisplay: 10) == 10)
+        #expect(metric.celsius(fromDisplay: 20) == 20)
+    }
+
+    /// Populate-editor → save round trip: presenting a canonical threshold in
+    /// either unit system and converting it straight back never mutates the
+    /// stored value, so switching Metric ↔ Imperial is lossless.
+    @Test func unitSwitchDoesNotMutateStoredThreshold() {
+        for fmt in [metric, imperial] {
+            #expect(abs(fmt.rainfallMm(fromDisplay: fmt.rainfallValue(mm: 25.4)) - 25.4) < 1e-9)
+            #expect(abs(fmt.speedKmh(fromDisplay: fmt.speedValue(kmh: 10)) - 10.0) < 1e-9)
+            #expect(abs(fmt.celsius(fromDisplay: fmt.temperatureValue(celsius: 20)) - 20.0) < 1e-9)
+            #expect(abs(fmt.celsius(fromDisplay: fmt.temperatureValue(celsius: -2)) - (-2.0)) < 1e-9)
+        }
+    }
 }

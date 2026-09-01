@@ -184,6 +184,17 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
         RainfallUnit.Inches -> mm / MM_PER_INCH
     }
 
+    /**
+     * Inverse of [rainfallValue]: converts a user-entered display-unit
+     * rainfall value (mm or in) back to canonical millimetres for storage.
+     * Threshold editors must save through this so the backend always holds mm.
+     * Mirrors iOS `rainfallMm(fromDisplay:)`.
+     */
+    fun rainfallMm(display: Double): Double = when (rainfall) {
+        RainfallUnit.Millimetres -> display
+        RainfallUnit.Inches -> display * MM_PER_INCH
+    }
+
     val rainfallUnitAbbreviation: String get() = when (rainfall) {
         RainfallUnit.Millimetres -> "mm"
         RainfallUnit.Inches -> "in"
@@ -227,6 +238,16 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
     fun speedValue(kmh: Double): Double = when (distance) {
         DistanceSystem.Metric -> kmh
         DistanceSystem.Imperial -> kmh * MILES_PER_KM
+    }
+
+    /**
+     * Inverse of [speedValue]: converts a user-entered display-unit speed
+     * (km/h or mph) back to canonical km/h for storage. Mirrors iOS
+     * `speedKmh(fromDisplay:)`.
+     */
+    fun speedKmh(display: Double): Double = when (distance) {
+        DistanceSystem.Metric -> display
+        DistanceSystem.Imperial -> display / MILES_PER_KM
     }
 
     val speedUnitAbbreviation: String get() = when (distance) {
@@ -488,6 +509,16 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
     fun temperatureValue(celsius: Double): Double = when (distance) {
         DistanceSystem.Metric -> celsius
         DistanceSystem.Imperial -> celsius * 9.0 / 5.0 + 32.0
+    }
+
+    /**
+     * Inverse of [temperatureValue]: converts a user-entered display-unit
+     * temperature (°C or °F) back to canonical Celsius. Mirrors iOS
+     * `celsius(fromDisplay:)`.
+     */
+    fun celsius(display: Double): Double = when (distance) {
+        DistanceSystem.Metric -> display
+        DistanceSystem.Imperial -> (display - 32.0) * 5.0 / 9.0
     }
 
     val temperatureUnitAbbreviation: String get() = when (distance) {
