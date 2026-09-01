@@ -2664,6 +2664,7 @@ interface GrapeAllocationRow {
   vintage: number; allocation_type: string;
   variety_name: string; variety_key: string | null;
   destination_name: string | null; quantity_tonnes: number; notes: string | null;
+  purchaser_id: string | null;
   purchaser_name: string | null; contact_name: string | null; contact_email: string | null;
   contact_phone: string | null; contact_address: string | null;
   origin: string; external_id: string | null;
@@ -2677,7 +2678,7 @@ interface GrapeAllocationBlockRow {
 
 const GRAPE_ALLOCATION_COLUMNS =
   "id, vineyard_id, vintage, allocation_type, variety_name, variety_key, destination_name, " +
-  "quantity_tonnes, notes, purchaser_name, contact_name, contact_email, contact_phone, " +
+  "quantity_tonnes, notes, purchaser_id, purchaser_name, contact_name, contact_email, contact_phone, " +
   "contact_address, origin, external_id, created_at, updated_at";
 
 /** Fetch the block splits for a page of allocations in one query. */
@@ -2738,6 +2739,7 @@ function mapGrapeAllocation(
     destination_name: row.destination_name,
     quantity_tonnes: row.quantity_tonnes,
     notes: row.notes,
+    purchaser_id: row.purchaser_id,
     purchaser_name: row.purchaser_name,
     contact_name: row.contact_name,
     contact_email: row.contact_email,
@@ -3485,6 +3487,86 @@ async function handleGrapeAllocationGet(
   return jsonResponse(req, ctx, {
     data: mapGrapeAllocation(record, blocks.get(record.id) ?? [], profile, prices),
   }, 200);
+}
+
+// ---------------------------------------------------------------------------
+// Grape purchasers (public.grape_purchasers, sql/219 — small reusable
+// vineyard winery contact book; deliberately NOT a CRM and contains no
+// financial data). Allocations snapshot purchaser details at write time;
+// this resource is only the CURRENT contact book.
+// ---------------------------------------------------------------------------
+interface GrapePurchaserRow {
+  id: string; vineyard_id: string;
+  winery_name: string;
+  contact_name: string | null; contact_email: string | null;
+  contact_phone: string | null; contact_address: string | null;
+  origin: string; external_id: string | null;
+  created_at: string; updated_at: string;
+}
+
+const GRAPE_PURCHASER_COLUMNS =
+  "id, vineyard_id, winery_name, contact_name, contact_email, contact_phone, " +
+  "contact_address, origin, external_id, created_at, updated_at";
+
+function mapGrapePurchaser(row: GrapePurchaserRow) {
+  return {
+    id: row.id,
+    vineyard_id: row.vineyard_id,
+    winery_name: row.winery_name,
+    contact_name: row.contact_name,
+    contact_email: row.contact_email,
+    contact_phone: row.contact_phone,
+    contact_address: row.contact_address,
+    origin: row.origin,
+    external_id: row.external_id ?? null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+async function handleGrapePurchaserList(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string, url: URL,
+): Promise<Response> {
+  const args = await prepareCollection(ctx, db, key, url, "grape_purchasers:read", [], true);
+
+  const dateFilter = applyDateRange(args.fromDate, args.toDate, "created_at");
+  const { rows, nextCursor } = await pagedList<GrapePurchaserRow>(
+    db, "grape_purchasers", GRAPE_PURCHASER_COLUMNS, args.limit, args.cursor, false,
+    (q) => dateFilter(q.eq("vineyard_id", args.vineyardId)),
+  );
+
+  return jsonResponse(req, ctx, {
+    data: rows.map(mapGrapePurchaser),
+    pagination: { next_cursor: nextCursor },
+  }, 200);
+}
+
+async function handleGrapePurchaserGet(
+  req: Request, ctx: RequestContext, db: SupabaseClient, key: string,
+  profile: AuthProfile, url: URL, purchaserId: string,
+): Promise<Response> {
+  enforceAllowedParams(url, []);
+  if (!UUID_RE.test(purchaserId)) throw new ApiError("invalid_request");
+
+  const { data, error } = await db.from("grape_purchasers")
+    .select(GRAPE_PURCHASER_COLUMNS)
+    .eq("id", purchaserId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (error) {
+    console.error("[vinetrack-api] grape purchaser fetch failed:", error.message);
+    throw new ApiError("internal_error");
+  }
+  if (!data) {
+    requireScope(profile, "grape_purchasers:read");
+    throw new ApiError("resource_not_found");
+  }
+
+  const record = data as unknown as GrapePurchaserRow;
+  ctx.vineyardId = record.vineyard_id;
+  await validateVineyardRequest(db, key, "grape_purchasers:read", record.vineyard_id, true);
+
+  return jsonResponse(req, ctx, { data: mapGrapePurchaser(record) }, 200);
 }
 
 // ---------------------------------------------------------------------------
@@ -4499,6 +4581,12 @@ const WRITE_RESOURCES: Record<string, WriteSpec> = {
     updateIdParam: "p_grape_allocation_id",
     idLabel: "grape_allocation_id",
   },
+  "grape-purchasers": {
+    createRpc: "integration_api_create_grape_purchaser",
+    updateRpc: "integration_api_update_grape_purchaser",
+    updateIdParam: "p_grape_purchaser_id",
+    idLabel: "grape_purchaser_id",
+  },
 };
 
 async function readJsonBody(req: Request): Promise<Record<string, unknown>> {
@@ -4641,6 +4729,8 @@ type Route =
   | { name: "yield_record_get"; id: string }
   | { name: "grape_allocations_list" }
   | { name: "grape_allocation_get"; id: string }
+  | { name: "grape_purchasers_list" }
+  | { name: "grape_purchaser_get"; id: string }
   | { name: "pins_list" }
   | { name: "pin_get"; id: string }
   | { name: "weather" }
@@ -4662,6 +4752,7 @@ const RESOURCE_ROUTES: Record<string, { list: Route["name"]; get: Route["name"];
   "growth-stages": { list: "growth_stages_list", get: "growth_stage_get", idLabel: "growth_stage_id" },
   "yield-records": { list: "yield_records_list", get: "yield_record_get", idLabel: "yield_record_id" },
   "grape-allocations": { list: "grape_allocations_list", get: "grape_allocation_get", idLabel: "grape_allocation_id" },
+  "grape-purchasers": { list: "grape_purchasers_list", get: "grape_purchaser_get", idLabel: "grape_purchaser_id" },
   "pins": { list: "pins_list", get: "pin_get", idLabel: "pin_id" },
 };
 
@@ -4842,6 +4933,12 @@ Deno.serve(async (req: Request) => {
         break;
       case "grape_allocation_get":
         response = await handleGrapeAllocationGet(req, ctx, db, key, profile, url, (route as { id: string }).id);
+        break;
+      case "grape_purchasers_list":
+        response = await handleGrapePurchaserList(req, ctx, db, key, url);
+        break;
+      case "grape_purchaser_get":
+        response = await handleGrapePurchaserGet(req, ctx, db, key, profile, url, (route as { id: string }).id);
         break;
       case "pins_list":
         response = await handlePinList(req, ctx, db, key, profile, url);

@@ -34,6 +34,15 @@ data class GrapeAllocation(
     @SerialName("destination_name") val destinationName: String? = null,
     @SerialName("quantity_tonnes") val quantityTonnes: Double = 0.0,
     val notes: String? = null,
+    /**
+     * Link to a saved [GrapePurchaser] (sql/219). Optional: legacy
+     * allocations carry only the snapshot fields below.
+     */
+    @SerialName("purchaser_id") val purchaserId: String? = null,
+    /**
+     * Historical SNAPSHOT of the purchaser details at commitment time —
+     * later edits to the saved purchaser never rewrite these.
+     */
     @SerialName("purchaser_name") val purchaserName: String? = null,
     @SerialName("contact_name") val contactName: String? = null,
     @SerialName("contact_email") val contactEmail: String? = null,
@@ -78,6 +87,104 @@ data class GrapeAllocationBlock(
     /** Tonnes assigned to this block; null = unspecified split. */
     @SerialName("quantity_tonnes") val quantityTonnes: Double? = null,
 )
+
+/**
+ * A saved vineyard purchaser (`public.grape_purchasers`, sql/219): a small
+ * reusable winery contact book entry — deliberately NOT a CRM (no tags,
+ * history, reminders or documents) and never carries financial data.
+ *
+ * Allocations keep their own SNAPSHOT of these details: selecting a
+ * purchaser copies the current values onto the allocation, and later edits
+ * to this record never rewrite old allocation snapshots.
+ */
+@Serializable
+data class GrapePurchaser(
+    val id: String,
+    @SerialName("vineyard_id") val vineyardId: String,
+    /** Winery / purchaser name — the only required field. */
+    @SerialName("winery_name") val wineryName: String = "",
+    @SerialName("contact_name") val contactName: String? = null,
+    @SerialName("contact_email") val contactEmail: String? = null,
+    @SerialName("contact_phone") val contactPhone: String? = null,
+    @SerialName("contact_address") val contactAddress: String? = null,
+    @SerialName("updated_at") val updatedAt: String? = null,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+)
+
+/**
+ * Pure form rules for the Grape Allocation editor, shared contract with iOS
+ * (`GrapeAllocationFormLogic.swift`) so both platforms pin the same
+ * behaviour:
+ *
+ *  * Block assignment is ADDITIVE (add block → tonnes → remove) and the
+ *    assigned total must never exceed the committed quantity.
+ *  * Selecting a saved purchaser SNAPSHOTS its current details onto the
+ *    allocation; later purchaser edits never rewrite old snapshots.
+ *  * Own Use can never carry a purchaser link or purchaser/contact data.
+ */
+object GrapeAllocationFormLogic {
+
+    /** Tolerance below which an over-assignment is floating-point noise. */
+    const val ASSIGNMENT_TOLERANCE = 0.0005
+
+    data class BlockAssignmentSummary(
+        /** Sum of the explicit per-block tonnes. */
+        val assignedTonnes: Double,
+        /** Committed quantity not yet assigned to a block (never negative). */
+        val unassignedTonnes: Double,
+        /** true when assigned tonnes exceed the committed quantity. */
+        val exceedsQuantity: Boolean,
+    )
+
+    /**
+     * Assigned / unassigned split for the "Assigned X of Y · Unassigned Z"
+     * line. [blockTonnes] carries one entry per block row (null = the row
+     * has no tonnes entered yet).
+     */
+    fun blockAssignmentSummary(quantityTonnes: Double, blockTonnes: List<Double?>): BlockAssignmentSummary {
+        val assigned = blockTonnes.filterNotNull().sum()
+        return BlockAssignmentSummary(
+            assignedTonnes = assigned,
+            unassignedTonnes = (quantityTonnes - assigned).coerceAtLeast(0.0),
+            exceedsQuantity = assigned > quantityTonnes + ASSIGNMENT_TOLERANCE,
+        )
+    }
+
+    /**
+     * Copies the purchaser's CURRENT details onto an external allocation as
+     * a point-in-time snapshot and links `purchaserId`. Own Use allocations
+     * are returned unchanged — they can never carry a purchaser.
+     */
+    fun applyPurchaserSnapshot(allocation: GrapeAllocation, purchaser: GrapePurchaser): GrapeAllocation {
+        if (!allocation.isExternal) return allocation
+        return allocation.copy(
+            purchaserId = purchaser.id,
+            purchaserName = purchaser.wineryName,
+            contactName = purchaser.contactName,
+            contactEmail = purchaser.contactEmail,
+            contactPhone = purchaser.contactPhone,
+            contactAddress = purchaser.contactAddress,
+        )
+    }
+
+    /**
+     * Enforces the Own Use rule client-side (the DB constraint is
+     * authoritative): strips the purchaser link, snapshot fields and price
+     * from non-external allocations.
+     */
+    fun sanitized(allocation: GrapeAllocation): GrapeAllocation {
+        if (allocation.isExternal) return allocation
+        return allocation.copy(
+            purchaserId = null,
+            purchaserName = null,
+            contactName = null,
+            contactEmail = null,
+            contactPhone = null,
+            contactAddress = null,
+            pricePerTonne = null,
+        )
+    }
+}
 
 /**
  * Owner/manager row from `get_grape_allocation_financials` (42501 for every

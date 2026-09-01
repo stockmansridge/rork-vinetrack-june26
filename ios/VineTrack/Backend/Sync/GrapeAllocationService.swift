@@ -13,8 +13,11 @@ import Observation
 @MainActor
 final class GrapeAllocationService {
     private let repository = SupabaseGrapeAllocationRepository()
+    private let purchaserRepository = SupabaseGrapePurchaserRepository()
 
     private(set) var allocations: [GrapeAllocation] = []
+    /// Saved purchaser book for the vineyard (sql/219), sorted by name.
+    private(set) var purchasers: [GrapePurchaser] = []
     /// true when the server actually returned financials (owner/manager).
     private(set) var hasFinancialAccess: Bool = false
     private(set) var isLoading: Bool = false
@@ -27,8 +30,18 @@ final class GrapeAllocationService {
         do {
             async let rowsTask = repository.fetch(vineyardId: vineyardId)
             async let blocksTask = repository.fetchBlocks(vineyardId: vineyardId)
+            async let purchasersTask = purchaserRepository.fetch(vineyardId: vineyardId)
             let rows = try await rowsTask
             let blockRows = try await blocksTask
+            // Purchaser book is additive (sql/219) — never fail the whole
+            // allocation load over it.
+            let purchaserRows: [BackendGrapePurchaser]
+            do {
+                purchaserRows = try await purchasersTask
+            } catch {
+                purchaserRows = []
+                print("[GrapeAllocationService] purchaser load failed: \(error)")
+            }
 
             let blocksByAllocation = Dictionary(grouping: blockRows, by: \.allocationId)
             var merged: [GrapeAllocation] = rows
@@ -53,6 +66,10 @@ final class GrapeAllocationService {
             }
 
             allocations = merged
+            purchasers = purchaserRows
+                .filter { $0.deletedAt == nil }
+                .map { $0.toGrapePurchaser() }
+                .sorted { $0.wineryName.localizedCaseInsensitiveCompare($1.wineryName) == .orderedAscending }
             loadedVineyardId = vineyardId
             lastError = nil
         } catch {
@@ -89,5 +106,18 @@ final class GrapeAllocationService {
     func delete(id: UUID) async throws {
         try await repository.softDelete(id: id)
         allocations.removeAll { $0.id == id }
+    }
+
+    /// Create-or-update one saved purchaser. Editing the purchaser never
+    /// rewrites existing allocation snapshots — they keep their own copy.
+    func savePurchaser(_ purchaser: GrapePurchaser, createdBy: UUID?) async throws {
+        let upsert = BackendGrapePurchaser.upsert(from: purchaser, createdBy: createdBy, clientUpdatedAt: Date())
+        try await purchaserRepository.upsert(upsert)
+        if let index = purchasers.firstIndex(where: { $0.id == purchaser.id }) {
+            purchasers[index] = purchaser
+        } else {
+            purchasers.append(purchaser)
+        }
+        purchasers.sort { $0.wineryName.localizedCaseInsensitiveCompare($1.wineryName) == .orderedAscending }
     }
 }

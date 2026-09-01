@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -68,6 +69,9 @@ import com.rork.vinetrack.data.YieldVintageReport
 import com.rork.vinetrack.data.model.GrapeAllocation
 import com.rork.vinetrack.data.model.GrapeAllocationBlock
 import com.rork.vinetrack.data.model.GrapeAllocationCalculator
+import com.rork.vinetrack.data.model.GrapeAllocationFormLogic
+import com.rork.vinetrack.data.model.GrapePurchaser
+import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.TeamRole
 import com.rork.vinetrack.data.model.canonicalVarietyName
 import com.rork.vinetrack.ui.AppUiState
@@ -491,19 +495,27 @@ private fun GrapeAllocationEditor(
     var priceText by rememberSaveable { mutableStateOf(existing?.pricePerTonne?.let { fmtNumber(it) } ?: "") }
     var varietyMenuOpen by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
-    // paddockId -> tonnes text for selected blocks.
-    var selectedBlocks by remember {
-        mutableStateOf<Map<String, String>>(
-            existing?.blocks?.associate { b ->
-                b.paddockId to (b.quantityTonnes?.let { q -> fmtNumber(q) } ?: "")
-            } ?: emptyMap(),
+    var purchaserId by rememberSaveable { mutableStateOf(existing?.purchaserId) }
+    var purchaserMenuOpen by remember { mutableStateOf(false) }
+    var purchaserFormOpen by remember { mutableStateOf(false) }
+    var purchaserFormExisting by remember { mutableStateOf<GrapePurchaser?>(null) }
+    // Additive block-assignment rows: block dropdown + tonnes + remove.
+    var blockRows by remember {
+        mutableStateOf<List<GrapeBlockRowDraft>>(
+            existing?.blocks?.map { b ->
+                GrapeBlockRowDraft(b.id, b.paddockId, b.quantityTonnes?.let { q -> fmtNumber(q) } ?: "")
+            } ?: emptyList(),
         )
     }
 
     val isExternal = allocationType == GrapeAllocation.TYPE_EXTERNAL
     val tonnes = tonnesText.replace(",", ".").toDoubleOrNull()
+    val assignment = GrapeAllocationFormLogic.blockAssignmentSummary(
+        tonnes ?: 0.0,
+        blockRows.filter { it.paddockId != null }.map { it.tonnesText.replace(",", ".").toDoubleOrNull() },
+    )
     val canSave = (tonnes ?: 0.0) > 0.0 && varietyName.isNotBlank() &&
-        (!isExternal || purchaser.isNotBlank()) && !saving
+        (!isExternal || purchaser.isNotBlank()) && !assignment.exceedsQuantity && !saving
 
     val varietyOptions = remember(state.paddocks) {
         val seen = HashSet<String>()
@@ -519,6 +531,34 @@ private fun GrapeAllocationEditor(
     val vintageOptions = remember(state.grapeAllocations, currentVintage, defaultVintage, vintage) {
         (state.grapeAllocations.map { it.vintage } + listOf(currentVintage, currentVintage + 1, defaultVintage, vintage))
             .filter { it > 0 }.distinct().sortedDescending()
+    }
+
+    // Blocks compatible with the chosen variety — falls back to ALL blocks
+    // when no variety is chosen or nothing matches (a block without variety
+    // data must never be unselectable).
+    val compatiblePaddocks = remember(state.paddocks, varietyName) {
+        if (varietyName.isBlank()) {
+            state.paddocks
+        } else {
+            val canonical = canonicalVarietyName(varietyName.trim())
+            val matching = state.paddocks.filter { paddock ->
+                paddock.varietyAllocations.orEmpty().any {
+                    canonicalVarietyName(it.displayName.orEmpty()) == canonical
+                }
+            }
+            matching.ifEmpty { state.paddocks }
+        }
+    }
+    val selectedPurchaser = state.grapePurchasers.firstOrNull { it.id == purchaserId }
+
+    /** Copies the purchaser's CURRENT details into the snapshot fields. */
+    fun applyPurchaser(p: GrapePurchaser) {
+        purchaserId = p.id
+        purchaser = p.wineryName
+        contactName = p.contactName.orEmpty()
+        contactEmail = p.contactEmail.orEmpty()
+        contactPhone = p.contactPhone.orEmpty()
+        contactAddress = p.contactAddress.orEmpty()
     }
 
     Scaffold(
@@ -571,13 +611,18 @@ private fun GrapeAllocationEditor(
                 }
             }
 
+            // Variety is SELECTED from the vineyard's configured varieties —
+            // never free text. A legacy value still displays, but any change
+            // goes through the configured list.
             ExposedDropdownMenuBox(expanded = varietyMenuOpen, onExpandedChange = { varietyMenuOpen = it }) {
                 OutlinedTextField(
                     value = varietyName,
-                    onValueChange = { varietyName = it; varietyKey = null; varietyId = null },
+                    onValueChange = {},
+                    readOnly = true,
                     label = { Text("Variety") },
+                    placeholder = { Text("Select\u2026") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = varietyMenuOpen) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryEditable),
+                    modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
                     singleLine = true,
                 )
                 ExposedDropdownMenu(expanded = varietyMenuOpen, onDismissRequest = { varietyMenuOpen = false }) {
@@ -600,6 +645,9 @@ private fun GrapeAllocationEditor(
                 onValueChange = { tonnesText = it },
                 label = { Text("Tonnes") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                trailingIcon = {
+                    FieldInfoIcon("Quantity", "Total tonnes committed under this allocation.")
+                },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
@@ -613,6 +661,52 @@ private fun GrapeAllocationEditor(
 
             if (isExternal) {
                 SectionHeader("Purchaser")
+                ExposedDropdownMenuBox(expanded = purchaserMenuOpen, onExpandedChange = { purchaserMenuOpen = it }) {
+                    OutlinedTextField(
+                        value = selectedPurchaser?.wineryName ?: "",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Saved purchaser") },
+                        placeholder = { Text("Select\u2026") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = purchaserMenuOpen) },
+                        supportingText = {
+                            Text("Details are saved as a snapshot on this commitment — later edits to the saved purchaser never change existing allocations.")
+                        },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                        singleLine = true,
+                    )
+                    ExposedDropdownMenu(expanded = purchaserMenuOpen, onDismissRequest = { purchaserMenuOpen = false }) {
+                        state.grapePurchasers.forEach { p ->
+                            DropdownMenuItem(
+                                text = { Text(p.wineryName) },
+                                onClick = {
+                                    applyPurchaser(p)
+                                    purchaserMenuOpen = false
+                                },
+                            )
+                        }
+                        if (purchaserId != null) {
+                            DropdownMenuItem(
+                                text = { Text("Unlink saved purchaser") },
+                                onClick = { purchaserId = null; purchaserMenuOpen = false },
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("+ New Purchaser") },
+                            onClick = {
+                                purchaserFormExisting = null
+                                purchaserFormOpen = true
+                                purchaserMenuOpen = false
+                            },
+                        )
+                    }
+                }
+                if (selectedPurchaser != null) {
+                    TextButton(onClick = {
+                        purchaserFormExisting = selectedPurchaser
+                        purchaserFormOpen = true
+                    }) { Text("Edit Purchaser") }
+                }
                 OutlinedTextField(purchaser, { purchaser = it }, label = { Text("Purchaser name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(contactName, { contactName = it }, label = { Text("Contact person") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(
@@ -635,6 +729,12 @@ private fun GrapeAllocationEditor(
                         label = { Text("Price per tonne (${state.regionFormatter.currencySymbol})") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         supportingText = { Text("Visible to Owner and Manager only.") },
+                        trailingIcon = {
+                            FieldInfoIcon(
+                                "Price per tonne",
+                                "Agreed price for this individual commitment. Contract value is calculated from quantity \u00d7 price per tonne.",
+                            )
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                     )
@@ -648,28 +748,48 @@ private fun GrapeAllocationEditor(
                 }
             }
 
-            SectionHeader("Block Allocation (optional)")
-            state.paddocks.forEach { paddock ->
-                val isSelected = selectedBlocks.containsKey(paddock.id)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = isSelected,
-                        onCheckedChange = { checked ->
-                            selectedBlocks = if (checked) selectedBlocks + (paddock.id to "")
-                            else selectedBlocks - paddock.id
-                        },
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SectionHeader("Block allocations (optional)")
+                FieldInfoIcon(
+                    "Block allocations",
+                    "Optionally nominate which blocks will supply this commitment. Enter the tonnes expected from each block. Assigned tonnes cannot exceed the committed quantity.",
+                )
+            }
+            blockRows.forEach { row ->
+                val usedElsewhere = blockRows.filter { it.id != row.id }.mapNotNull { it.paddockId }.toSet()
+                BlockAssignmentRow(
+                    row = row,
+                    availablePaddocks = compatiblePaddocks.filter { it.id !in usedElsewhere },
+                    allPaddocks = state.paddocks,
+                    onPaddockSelected = { paddockId ->
+                        blockRows = blockRows.map { if (it.id == row.id) it.copy(paddockId = paddockId) else it }
+                    },
+                    onTonnesChange = { text ->
+                        blockRows = blockRows.map { if (it.id == row.id) it.copy(tonnesText = text) else it }
+                    },
+                    onRemove = { blockRows = blockRows.filterNot { it.id == row.id } },
+                )
+            }
+            TextButton(onClick = {
+                blockRows = blockRows + GrapeBlockRowDraft(UUID.randomUUID().toString(), null, "")
+            }) {
+                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Add block")
+            }
+            if (blockRows.isNotEmpty() && (tonnes ?: 0.0) > 0.0) {
+                Text(
+                    "Assigned ${tonnesText(assignment.assignedTonnes)} of ${tonnesText(tonnes ?: 0.0)} \u00b7 Unassigned ${tonnesText(assignment.unassignedTonnes)}",
+                    fontSize = 12.sp,
+                    color = if (assignment.exceedsQuantity) VineColors.Destructive else vine.textSecondary,
+                )
+                if (assignment.exceedsQuantity) {
+                    Text(
+                        "Assigned tonnes exceed the committed quantity.",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = VineColors.Destructive,
                     )
-                    Text(paddock.name, fontSize = 13.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
-                    if (isSelected) {
-                        OutlinedTextField(
-                            value = selectedBlocks[paddock.id].orEmpty(),
-                            onValueChange = { selectedBlocks = selectedBlocks + (paddock.id to it) },
-                            label = { Text("t") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.width(110.dp),
-                            singleLine = true,
-                        )
-                    }
                 }
             }
 
@@ -687,9 +807,12 @@ private fun GrapeAllocationEditor(
                     saving = true
                     val paddockById = state.paddocks.associateBy { it.id }
                     val existingBlockIds = existing?.blocks?.associate { it.paddockId to it.id }.orEmpty()
-                    val blocks = selectedBlocks.mapNotNull { (paddockId, raw) ->
+                    val seenPaddocks = HashSet<String>()
+                    val blocks = blockRows.mapNotNull { rowDraft ->
+                        val paddockId = rowDraft.paddockId ?: return@mapNotNull null
                         val paddock = paddockById[paddockId] ?: return@mapNotNull null
-                        val quantity = raw.replace(",", ".").toDoubleOrNull()?.takeIf { it > 0 }
+                        if (!seenPaddocks.add(paddockId)) return@mapNotNull null
+                        val quantity = rowDraft.tonnesText.replace(",", ".").toDoubleOrNull()?.takeIf { it > 0 }
                         GrapeAllocationBlock(
                             id = existingBlockIds[paddockId] ?: UUID.randomUUID().toString(),
                             allocationId = existing?.id ?: "",
@@ -711,6 +834,7 @@ private fun GrapeAllocationEditor(
                         destinationName = destination.trim().ifEmpty { null },
                         quantityTonnes = tonnes ?: 0.0,
                         notes = notes.trim().ifEmpty { null },
+                        purchaserId = if (isExternal) purchaserId else null,
                         purchaserName = if (isExternal) purchaser.trim().ifEmpty { null } else null,
                         contactName = if (isExternal) contactName.trim().ifEmpty { null } else null,
                         contactEmail = if (isExternal) contactEmail.trim().ifEmpty { null } else null,
@@ -735,6 +859,178 @@ private fun GrapeAllocationEditor(
             }
         }
     }
+
+    if (purchaserFormOpen) {
+        GrapePurchaserFormDialog(
+            existing = purchaserFormExisting,
+            vineyardId = state.selectedVineyardId.orEmpty(),
+            onSave = { p ->
+                vm.saveGrapePurchaser(p) { ok ->
+                    if (ok) applyPurchaser(p)
+                }
+                purchaserFormOpen = false
+            },
+            onDismiss = { purchaserFormOpen = false },
+        )
+    }
+}
+
+/** One additive block-assignment row draft: block dropdown + tonnes + remove. */
+private data class GrapeBlockRowDraft(
+    val id: String,
+    val paddockId: String?,
+    val tonnesText: String,
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BlockAssignmentRow(
+    row: GrapeBlockRowDraft,
+    availablePaddocks: List<Paddock>,
+    allPaddocks: List<Paddock>,
+    onPaddockSelected: (String) -> Unit,
+    onTonnesChange: (String) -> Unit,
+    onRemove: () -> Unit,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ExposedDropdownMenuBox(
+            expanded = menuOpen,
+            onExpandedChange = { menuOpen = it },
+            modifier = Modifier.weight(1f),
+        ) {
+            OutlinedTextField(
+                value = allPaddocks.firstOrNull { it.id == row.paddockId }?.name ?: "",
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Block") },
+                placeholder = { Text("Select\u2026") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = menuOpen) },
+                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                singleLine = true,
+            )
+            ExposedDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                availablePaddocks.forEach { paddock ->
+                    DropdownMenuItem(
+                        text = { Text(paddock.name) },
+                        onClick = {
+                            onPaddockSelected(paddock.id)
+                            menuOpen = false
+                        },
+                    )
+                }
+            }
+        }
+        OutlinedTextField(
+            value = row.tonnesText,
+            onValueChange = onTonnesChange,
+            label = { Text("Tonnes") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            modifier = Modifier.width(100.dp),
+            singleLine = true,
+        )
+        IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
+            Icon(
+                Icons.Filled.Delete,
+                contentDescription = "Remove block row",
+                tint = VineColors.Destructive,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Small, unobtrusive inline help affordance: an info glyph opening a native
+ * dialog with a short explanation. Mirrors the iOS `FieldInfoButton`.
+ */
+@Composable
+private fun FieldInfoIcon(title: String, message: String) {
+    val vine = LocalVineColors.current
+    var open by remember { mutableStateOf(false) }
+    IconButton(onClick = { open = true }, modifier = Modifier.size(28.dp)) {
+        Icon(
+            Icons.Filled.Info,
+            contentDescription = "$title help",
+            tint = vine.textSecondary,
+            modifier = Modifier.size(16.dp),
+        )
+    }
+    if (open) {
+        AlertDialog(
+            onDismissRequest = { open = false },
+            title = { Text(title) },
+            text = { Text(message) },
+            confirmButton = { TextButton(onClick = { open = false }) { Text("OK") } },
+        )
+    }
+}
+
+/**
+ * Simple add / edit form for one saved purchaser (sql/219): winery name +
+ * optional contact details. Deliberately NOT a CRM. Editing a purchaser
+ * never rewrites the snapshots already stored on existing allocations.
+ */
+@Composable
+private fun GrapePurchaserFormDialog(
+    existing: GrapePurchaser?,
+    vineyardId: String,
+    onSave: (GrapePurchaser) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val vine = LocalVineColors.current
+    var winery by remember { mutableStateOf(existing?.wineryName ?: "") }
+    var contactName by remember { mutableStateOf(existing?.contactName ?: "") }
+    var contactEmail by remember { mutableStateOf(existing?.contactEmail ?: "") }
+    var contactPhone by remember { mutableStateOf(existing?.contactPhone ?: "") }
+    var contactAddress by remember { mutableStateOf(existing?.contactAddress ?: "") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (existing == null) "New Purchaser" else "Edit Purchaser") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(winery, { winery = it }, label = { Text("Winery / purchaser name") }, singleLine = true)
+                OutlinedTextField(contactName, { contactName = it }, label = { Text("Contact name (optional)") }, singleLine = true)
+                OutlinedTextField(
+                    contactEmail, { contactEmail = it }, label = { Text("Email (optional)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), singleLine = true,
+                )
+                OutlinedTextField(
+                    contactPhone, { contactPhone = it }, label = { Text("Phone (optional)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), singleLine = true,
+                )
+                OutlinedTextField(contactAddress, { contactAddress = it }, label = { Text("Address (optional)") }, singleLine = true)
+                Text(
+                    "Saved for reuse across allocations. Existing allocations keep the details they were created with.",
+                    fontSize = 11.sp,
+                    color = vine.textSecondary,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = winery.isNotBlank(),
+                onClick = {
+                    onSave(
+                        GrapePurchaser(
+                            id = existing?.id ?: UUID.randomUUID().toString(),
+                            vineyardId = existing?.vineyardId ?: vineyardId,
+                            wineryName = winery.trim(),
+                            contactName = contactName.trim().ifEmpty { null },
+                            contactEmail = contactEmail.trim().ifEmpty { null },
+                            contactPhone = contactPhone.trim().ifEmpty { null },
+                            contactAddress = contactAddress.trim().ifEmpty { null },
+                            updatedAt = existing?.updatedAt,
+                        ),
+                    )
+                },
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 private fun tonnesText(tonnes: Double): String = String.format(Locale.US, "%.2f t", tonnes)

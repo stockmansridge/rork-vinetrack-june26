@@ -4,6 +4,7 @@ import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.GrapeAllocation
 import com.rork.vinetrack.data.model.GrapeAllocationBlock
 import com.rork.vinetrack.data.model.GrapeAllocationFinancialRow
+import com.rork.vinetrack.data.model.GrapePurchaser
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -45,6 +46,7 @@ class GrapeAllocationRepository(private val session: SessionStore) {
         @SerialName("destination_name") val destinationName: String?,
         @SerialName("quantity_tonnes") val quantityTonnes: Double,
         val notes: String?,
+        @SerialName("purchaser_id") val purchaserId: String?,
         @SerialName("purchaser_name") val purchaserName: String?,
         @SerialName("contact_name") val contactName: String?,
         @SerialName("contact_email") val contactEmail: String?,
@@ -63,6 +65,19 @@ class GrapeAllocationRepository(private val session: SessionStore) {
         @SerialName("paddock_id") val paddockId: String,
         @SerialName("paddock_name") val paddockName: String,
         @SerialName("quantity_tonnes") val quantityTonnes: Double?,
+    )
+
+    @Serializable
+    private data class PurchaserUpsert(
+        val id: String,
+        @SerialName("vineyard_id") val vineyardId: String,
+        @SerialName("winery_name") val wineryName: String,
+        @SerialName("contact_name") val contactName: String?,
+        @SerialName("contact_email") val contactEmail: String?,
+        @SerialName("contact_phone") val contactPhone: String?,
+        @SerialName("contact_address") val contactAddress: String?,
+        @SerialName("created_by") val createdBy: String? = null,
+        @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
 
     @Serializable
@@ -140,6 +155,7 @@ class GrapeAllocationRepository(private val session: SessionStore) {
             destinationName = allocation.destinationName,
             quantityTonnes = allocation.quantityTonnes,
             notes = allocation.notes,
+            purchaserId = if (allocation.isExternal) allocation.purchaserId else null,
             purchaserName = if (allocation.isExternal) allocation.purchaserName else null,
             contactName = if (allocation.isExternal) allocation.contactName else null,
             contactEmail = if (allocation.isExternal) allocation.contactEmail else null,
@@ -194,6 +210,57 @@ class GrapeAllocationRepository(private val session: SessionStore) {
             }
         }
     }
+
+    /** Saved purchaser book for the vineyard (sql/219), live rows only. */
+    suspend fun listPurchasers(vineyardId: String): List<GrapePurchaser> =
+        withContext(Dispatchers.IO) {
+            requireConfig()
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val response = SupabaseClient.http.get(
+                SupabaseClient.restUrl(
+                    "grape_purchasers?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=winery_name.asc",
+                ),
+            ) { authHeaders(token) }
+            when {
+                response.status.isSuccess() -> response.body()
+                response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+                else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            }
+        }
+
+    /**
+     * Create-or-update one saved purchaser. Editing a purchaser never
+     * rewrites existing allocation snapshots — they keep their own copy.
+     */
+    suspend fun upsertPurchaser(purchaser: GrapePurchaser, clientUpdatedAt: String): Unit =
+        withContext(Dispatchers.IO) {
+            requireConfig()
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val body = PurchaserUpsert(
+                id = purchaser.id,
+                vineyardId = purchaser.vineyardId,
+                wineryName = purchaser.wineryName,
+                contactName = purchaser.contactName,
+                contactEmail = purchaser.contactEmail,
+                contactPhone = purchaser.contactPhone,
+                contactAddress = purchaser.contactAddress,
+                createdBy = session.userId,
+                clientUpdatedAt = clientUpdatedAt,
+            )
+            val response = SupabaseClient.http.post(
+                SupabaseClient.restUrl("grape_purchasers?on_conflict=id"),
+            ) {
+                authHeaders(token)
+                headers { append("Prefer", "resolution=merge-duplicates,return=minimal") }
+                contentType(ContentType.Application.Json)
+                setBody(listOf(body))
+            }
+            when {
+                response.status.isSuccess() -> Unit
+                response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+                else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            }
+        }
 
     suspend fun softDeleteAllocation(id: String): Unit = withContext(Dispatchers.IO) {
         requireConfig()

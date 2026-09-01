@@ -59,6 +59,11 @@ nonisolated struct GrapeAllocation: Codable, Identifiable, Sendable, Hashable {
     var quantityTonnes: Double
     var notes: String?
     // External (Sale / Commitment) only — always nil for Own Use.
+    /// Link to a saved `GrapePurchaser` (sql/219). Optional: legacy
+    /// allocations carry only the snapshot fields below.
+    var purchaserId: UUID?
+    /// Historical SNAPSHOT of the purchaser details at commitment time —
+    /// later edits to the saved purchaser never rewrite these.
     var purchaserName: String?
     var contactName: String?
     var contactEmail: String?
@@ -81,6 +86,7 @@ nonisolated struct GrapeAllocation: Codable, Identifiable, Sendable, Hashable {
         destinationName: String? = nil,
         quantityTonnes: Double,
         notes: String? = nil,
+        purchaserId: UUID? = nil,
         purchaserName: String? = nil,
         contactName: String? = nil,
         contactEmail: String? = nil,
@@ -100,6 +106,7 @@ nonisolated struct GrapeAllocation: Codable, Identifiable, Sendable, Hashable {
         self.destinationName = destinationName
         self.quantityTonnes = quantityTonnes
         self.notes = notes
+        self.purchaserId = purchaserId
         self.purchaserName = purchaserName
         self.contactName = contactName
         self.contactEmail = contactEmail

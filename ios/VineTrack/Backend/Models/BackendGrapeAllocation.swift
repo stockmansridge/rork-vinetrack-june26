@@ -14,6 +14,7 @@ nonisolated struct BackendGrapeAllocation: Codable, Sendable, Identifiable {
     let destinationName: String?
     let quantityTonnes: Double?
     let notes: String?
+    let purchaserId: UUID?
     let purchaserName: String?
     let contactName: String?
     let contactEmail: String?
@@ -36,6 +37,7 @@ nonisolated struct BackendGrapeAllocation: Codable, Sendable, Identifiable {
         case destinationName = "destination_name"
         case quantityTonnes = "quantity_tonnes"
         case notes
+        case purchaserId = "purchaser_id"
         case purchaserName = "purchaser_name"
         case contactName = "contact_name"
         case contactEmail = "contact_email"
@@ -65,6 +67,7 @@ nonisolated struct BackendGrapeAllocationUpsert: Encodable, Sendable {
     let destinationName: String?
     let quantityTonnes: Double
     let notes: String?
+    let purchaserId: UUID?
     let purchaserName: String?
     let contactName: String?
     let contactEmail: String?
@@ -85,6 +88,7 @@ nonisolated struct BackendGrapeAllocationUpsert: Encodable, Sendable {
         case destinationName = "destination_name"
         case quantityTonnes = "quantity_tonnes"
         case notes
+        case purchaserId = "purchaser_id"
         case purchaserName = "purchaser_name"
         case contactName = "contact_name"
         case contactEmail = "contact_email"
@@ -109,6 +113,7 @@ nonisolated struct BackendGrapeAllocationUpsert: Encodable, Sendable {
         try c.encode(destinationName, forKey: .destinationName)
         try c.encode(quantityTonnes, forKey: .quantityTonnes)
         try c.encode(notes, forKey: .notes)
+        try c.encode(purchaserId, forKey: .purchaserId)
         try c.encode(purchaserName, forKey: .purchaserName)
         try c.encode(contactName, forKey: .contactName)
         try c.encode(contactEmail, forKey: .contactEmail)
@@ -197,6 +202,7 @@ extension BackendGrapeAllocation {
             destinationName: allocation.destinationName,
             quantityTonnes: allocation.quantityTonnes,
             notes: allocation.notes,
+            purchaserId: isExternal ? allocation.purchaserId : nil,
             purchaserName: isExternal ? allocation.purchaserName : nil,
             contactName: isExternal ? allocation.contactName : nil,
             contactEmail: isExternal ? allocation.contactEmail : nil,
@@ -220,6 +226,7 @@ extension BackendGrapeAllocation {
             destinationName: destinationName,
             quantityTonnes: quantityTonnes ?? 0,
             notes: notes,
+            purchaserId: purchaserId,
             purchaserName: purchaserName,
             contactName: contactName,
             contactEmail: contactEmail,

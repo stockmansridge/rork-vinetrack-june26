@@ -224,6 +224,7 @@ import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import com.rork.vinetrack.data.model.GrapeAllocation
+import com.rork.vinetrack.data.model.GrapePurchaser
 import com.rork.vinetrack.data.model.PickingRecord
 import com.rork.vinetrack.data.model.PruningYieldInputFormat
 import com.rork.vinetrack.data.model.PruningYieldSettings
@@ -514,6 +515,8 @@ data class AppUiState(
     val yieldSessions: List<YieldEstimationSession> = emptyList(),
     /** Grape allocations (sql/217) for the selected vineyard, blocks merged. */
     val grapeAllocations: List<GrapeAllocation> = emptyList(),
+    /** Saved purchaser book (sql/219) for the selected vineyard, name-sorted. */
+    val grapePurchasers: List<GrapePurchaser> = emptyList(),
     /** true when the sql/217 financials RPC returned (owner/manager). */
     val grapeAllocationFinancialAccess: Boolean = false,
     val grapeAllocationBusy: Boolean = false,
@@ -5030,7 +5033,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reportClientTelemetry()
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
-        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList()) }
+        _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), machines = emptyList(), workTasks = emptyList(), members = emptyList(), operatorCategories = emptyList(), vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, growthStageImages = emptyList()) }
         loadedLogoKey = null
         // Apply the cached region settings instantly so units/currency render
         // correctly on first paint, then refresh from the backend below.
@@ -12068,6 +12071,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val rows = grapeAllocationRepo.listAllocations(vineyardId)
                 val blocks = grapeAllocationRepo.listBlocks(vineyardId).groupBy { it.allocationId }
+                // Purchaser book is additive (sql/219) — never fail the
+                // whole allocation load over it.
+                val purchasers = runCatching {
+                    grapeAllocationRepo.listPurchasers(vineyardId)
+                        .filter { it.deletedAt == null }
+                        .sortedBy { it.wineryName.lowercase() }
+                }.getOrDefault(emptyList())
                 var merged = rows.map { row ->
                     row.copy(blocks = blocks[row.id].orEmpty().sortedBy { it.paddockName.lowercase() })
                 }
@@ -12083,6 +12093,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update {
                     it.copy(
                         grapeAllocations = merged,
+                        grapePurchasers = purchasers,
                         grapeAllocationFinancialAccess = financialAccess,
                         grapeAllocationBusy = false,
                     )
@@ -12134,6 +12145,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         grapeAllocations = previous,
                         grapeAllocationError = "Couldn't save the allocation. Check your connection and try again.",
                     )
+                }
+                onResult(false)
+            }
+        }
+    }
+
+    /**
+     * Create-or-update one saved purchaser (sql/219). Editing a purchaser
+     * never rewrites existing allocation snapshots — they keep their own
+     * copy of the details they were created with.
+     */
+    fun saveGrapePurchaser(purchaser: GrapePurchaser, onResult: (Boolean) -> Unit) {
+        val now = java.time.Instant.now().toString()
+        viewModelScope.launch {
+            try {
+                grapeAllocationRepo.upsertPurchaser(purchaser, now)
+                _ui.update { st ->
+                    val existing = st.grapePurchasers.any { it.id == purchaser.id }
+                    val updated = if (existing) {
+                        st.grapePurchasers.map { if (it.id == purchaser.id) purchaser else it }
+                    } else {
+                        st.grapePurchasers + purchaser
+                    }
+                    st.copy(grapePurchasers = updated.sortedBy { it.wineryName.lowercase() })
+                }
+                onResult(true)
+            } catch (e: BackendError.Unauthorized) {
+                signOut(); onResult(false)
+            } catch (e: Exception) {
+                _ui.update {
+                    it.copy(grapeAllocationError = "Couldn't save the purchaser. Check your connection and try again.")
                 }
                 onResult(false)
             }

@@ -482,10 +482,24 @@ struct GrapeAllocationEditorView: View {
     @State private var contactPhone: String = ""
     @State private var contactAddress: String = ""
     @State private var priceText: String = ""
-    @State private var selectedBlocks: [UUID: String] = [:]
+    @State private var purchaserId: UUID?
+    @State private var purchaserFormContext: PurchaserFormContext?
+    @State private var blockRows: [BlockRowDraft] = []
     @State private var isSaving: Bool = false
     @State private var saveError: String?
     @State private var didLoad: Bool = false
+
+    /// One additive block-assignment row: block dropdown + tonnes + remove.
+    private struct BlockRowDraft: Identifiable {
+        let id: UUID
+        var paddockId: UUID?
+        var tonnesText: String
+    }
+
+    private struct PurchaserFormContext: Identifiable {
+        let id = UUID()
+        let existing: GrapePurchaser?
+    }
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
     private var canViewFinancials: Bool { accessControl?.canViewFinancials ?? false }
@@ -529,9 +543,37 @@ struct GrapeAllocationEditorView: View {
         Double(priceText.replacingOccurrences(of: ",", with: "."))
     }
 
+    /// Blocks compatible with the chosen variety — falls back to ALL blocks
+    /// when no variety is chosen or nothing matches (a block without variety
+    /// data must never be unselectable).
+    private var compatiblePaddocks: [Paddock] {
+        let canonical = PickingYieldAggregator.normalisedVariety(varietyName)
+        guard !canonical.isEmpty else { return store.paddocks }
+        let matching = store.paddocks.filter { paddock in
+            paddock.varietyAllocations.contains {
+                PickingYieldAggregator.normalisedVariety($0.name ?? "") == canonical
+            }
+        }
+        return matching.isEmpty ? store.paddocks : matching
+    }
+
+    private var blockAssignment: GrapeAllocationFormLogic.BlockAssignmentSummary {
+        GrapeAllocationFormLogic.blockAssignmentSummary(
+            quantityTonnes: quantityTonnes ?? 0,
+            blockTonnes: blockRows
+                .filter { $0.paddockId != nil }
+                .map { Double($0.tonnesText.replacingOccurrences(of: ",", with: ".")) }
+        )
+    }
+
+    private var selectedPurchaser: GrapePurchaser? {
+        purchaserId.flatMap { id in allocationService.purchasers.first { $0.id == id } }
+    }
+
     private var canSave: Bool {
         guard let tonnes = quantityTonnes, tonnes > 0 else { return false }
         guard !varietyName.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        guard !blockAssignment.exceedsQuantity else { return false }
         if allocationType == .external {
             return !purchaserName.trimmingCharacters(in: .whitespaces).isEmpty
         }
@@ -557,8 +599,12 @@ struct GrapeAllocationEditorView: View {
 
                     varietyPicker
 
-                    HStack {
+                    HStack(spacing: 6) {
                         Text("Tonnes")
+                        FieldInfoButton(
+                            title: "Quantity",
+                            message: "Total tonnes committed under this allocation."
+                        )
                         Spacer()
                         TextField("0.0", text: $quantityText)
                             .keyboardType(.decimalPad)
@@ -574,7 +620,8 @@ struct GrapeAllocationEditorView: View {
                 }
 
                 if allocationType == .external {
-                    Section("Purchaser") {
+                    Section {
+                        purchaserPicker
                         TextField("Purchaser name", text: $purchaserName)
                         TextField("Contact person", text: $contactName)
                         TextField("Email", text: $contactEmail)
@@ -583,12 +630,20 @@ struct GrapeAllocationEditorView: View {
                         TextField("Phone", text: $contactPhone)
                             .keyboardType(.phonePad)
                         TextField("Address", text: $contactAddress)
+                    } header: {
+                        Text("Purchaser")
+                    } footer: {
+                        Text("Details are saved as a snapshot on this commitment — later edits to the saved purchaser never change existing allocations.")
                     }
 
                     if canViewFinancials {
                         Section {
-                            HStack {
+                            HStack(spacing: 6) {
                                 Text("Price per tonne")
+                                FieldInfoButton(
+                                    title: "Price per tonne",
+                                    message: "Agreed price for this individual commitment. Contract value is calculated from quantity × price per tonne."
+                                )
                                 Spacer()
                                 Text(fmt.currencyCode)
                                     .foregroundStyle(.secondary)
@@ -615,13 +670,25 @@ struct GrapeAllocationEditorView: View {
                 }
 
                 Section {
-                    ForEach(store.paddocks) { paddock in
-                        blockRow(paddock)
+                    ForEach($blockRows) { $row in
+                        blockRowView($row)
+                    }
+                    Button {
+                        blockRows.append(BlockRowDraft(id: UUID(), paddockId: nil, tonnesText: ""))
+                    } label: {
+                        Label("Add block", systemImage: "plus")
+                    }
+                    if !blockRows.isEmpty, let tonnes = quantityTonnes, tonnes > 0 {
+                        assignmentSummary(tonnes)
                     }
                 } header: {
-                    Text("Block Allocation (optional)")
-                } footer: {
-                    Text("Assign this allocation to one or more blocks, optionally with tonnes per block.")
+                    HStack(spacing: 6) {
+                        Text("Block allocations (optional)")
+                        FieldInfoButton(
+                            title: "Block allocations",
+                            message: "Optionally nominate which blocks will supply this commitment. Enter the tonnes expected from each block. Assigned tonnes cannot exceed the committed quantity."
+                        )
+                    }
                 }
 
                 Section("Notes") {
@@ -649,7 +716,125 @@ struct GrapeAllocationEditorView: View {
                 }
             }
             .onAppear { loadExisting() }
+            .sheet(item: $purchaserFormContext) { context in
+                GrapePurchaserFormView(existing: context.existing) { saved in
+                    selectPurchaser(saved)
+                }
+            }
         }
+    }
+
+    // MARK: - Purchaser picker
+
+    private var purchaserPicker: some View {
+        HStack {
+            Menu {
+                ForEach(allocationService.purchasers) { purchaser in
+                    Button(purchaser.wineryName) { selectPurchaser(purchaser) }
+                }
+                if purchaserId != nil {
+                    Button("Unlink saved purchaser") { purchaserId = nil }
+                }
+                Divider()
+                Button {
+                    purchaserFormContext = PurchaserFormContext(existing: nil)
+                } label: {
+                    Label("New Purchaser", systemImage: "plus")
+                }
+            } label: {
+                HStack {
+                    Text("Saved purchaser")
+                        .foregroundStyle(Color.primary)
+                    Spacer()
+                    Text(selectedPurchaser?.wineryName ?? "Select\u{2026}")
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if selectedPurchaser != nil {
+                Button("Edit") {
+                    purchaserFormContext = PurchaserFormContext(existing: selectedPurchaser)
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    /// Copies the purchaser's CURRENT details into the snapshot fields —
+    /// exactly what gets stored on the allocation.
+    private func selectPurchaser(_ purchaser: GrapePurchaser) {
+        purchaserId = purchaser.id
+        purchaserName = purchaser.wineryName
+        contactName = purchaser.contactName ?? ""
+        contactEmail = purchaser.contactEmail ?? ""
+        contactPhone = purchaser.contactPhone ?? ""
+        contactAddress = purchaser.contactAddress ?? ""
+    }
+
+    // MARK: - Block assignment rows
+
+    private func blockRowView(_ row: Binding<BlockRowDraft>) -> some View {
+        HStack {
+            Menu {
+                ForEach(availablePaddocks(for: row.wrappedValue)) { paddock in
+                    Button(paddock.name) { row.wrappedValue.paddockId = paddock.id }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(paddockName(row.wrappedValue.paddockId) ?? "Select block\u{2026}")
+                        .foregroundStyle(row.wrappedValue.paddockId == nil ? Color.secondary : Color.primary)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            TextField("Tonnes", text: row.tonnesText)
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: 80)
+            Button {
+                blockRows.removeAll { $0.id == row.wrappedValue.id }
+            } label: {
+                Image(systemName: "minus.circle.fill")
+                    .foregroundStyle(.red)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Remove block row")
+        }
+    }
+
+    /// Variety-compatible blocks not already used by another row (the row's
+    /// own selection stays available).
+    private func availablePaddocks(for row: BlockRowDraft) -> [Paddock] {
+        let used = Set(blockRows.filter { $0.id != row.id }.compactMap(\.paddockId))
+        return compatiblePaddocks.filter { !used.contains($0.id) }
+    }
+
+    private func paddockName(_ id: UUID?) -> String? {
+        guard let id else { return nil }
+        return store.paddocks.first { $0.id == id }?.name
+    }
+
+    @ViewBuilder
+    private func assignmentSummary(_ tonnes: Double) -> some View {
+        let summary = blockAssignment
+        Text("Assigned \(tonnesLabel(summary.assignedTonnes)) of \(tonnesLabel(tonnes)) \u{00B7} Unassigned \(tonnesLabel(summary.unassignedTonnes))")
+            .font(.caption)
+            .foregroundStyle(summary.exceedsQuantity ? Color.red : Color.secondary)
+        if summary.exceedsQuantity {
+            Text("Assigned tonnes exceed the committed quantity.")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.red)
+        }
+    }
+
+    private func tonnesLabel(_ tonnes: Double) -> String {
+        String(format: "%.1f t", tonnes)
     }
 
     private var varietyPicker: some View {
@@ -676,38 +861,6 @@ struct GrapeAllocationEditorView: View {
         }
     }
 
-    @ViewBuilder
-    private func blockRow(_ paddock: Paddock) -> some View {
-        let isSelected = selectedBlocks[paddock.id] != nil
-        HStack {
-            Button {
-                if isSelected {
-                    selectedBlocks.removeValue(forKey: paddock.id)
-                } else {
-                    selectedBlocks[paddock.id] = ""
-                }
-            } label: {
-                HStack {
-                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(isSelected ? VineyardTheme.leafGreen : .secondary)
-                    Text(paddock.name)
-                        .foregroundStyle(.primary)
-                }
-            }
-            .buttonStyle(.plain)
-            Spacer()
-            if isSelected {
-                TextField("t (optional)", text: Binding(
-                    get: { selectedBlocks[paddock.id] ?? "" },
-                    set: { selectedBlocks[paddock.id] = $0 }
-                ))
-                .keyboardType(.decimalPad)
-                .multilineTextAlignment(.trailing)
-                .frame(maxWidth: 90)
-            }
-        }
-    }
-
     private func loadExisting() {
         guard !didLoad else { return }
         didLoad = true
@@ -725,11 +878,16 @@ struct GrapeAllocationEditorView: View {
         contactEmail = existing.contactEmail ?? ""
         contactPhone = existing.contactPhone ?? ""
         contactAddress = existing.contactAddress ?? ""
+        purchaserId = existing.purchaserId
         if let price = existing.pricePerTonne {
             priceText = String(format: "%g", price)
         }
-        for block in existing.blocks {
-            selectedBlocks[block.paddockId] = block.quantityTonnes.map { String(format: "%g", $0) } ?? ""
+        blockRows = existing.blocks.map { block in
+            BlockRowDraft(
+                id: block.id,
+                paddockId: block.paddockId,
+                tonnesText: block.quantityTonnes.map { String(format: "%g", $0) } ?? ""
+            )
         }
     }
 
@@ -740,9 +898,11 @@ struct GrapeAllocationEditorView: View {
             (existing?.blocks ?? []).map { ($0.paddockId, $0.id) },
             uniquingKeysWith: { a, _ in a }
         )
-        let blocks: [GrapeAllocationBlock] = selectedBlocks.compactMap { paddockId, tonnesRaw in
-            guard let paddock = paddockById[paddockId] else { return nil }
-            let blockTonnes = Double(tonnesRaw.replacingOccurrences(of: ",", with: "."))
+        var seenPaddocks: Set<UUID> = []
+        let blocks: [GrapeAllocationBlock] = blockRows.compactMap { row in
+            guard let paddockId = row.paddockId, let paddock = paddockById[paddockId] else { return nil }
+            guard seenPaddocks.insert(paddockId).inserted else { return nil }
+            let blockTonnes = Double(row.tonnesText.replacingOccurrences(of: ",", with: "."))
             return GrapeAllocationBlock(
                 id: existingBlockIds[paddockId] ?? UUID(),
                 paddockId: paddockId,
@@ -764,6 +924,7 @@ struct GrapeAllocationEditorView: View {
             destinationName: destinationName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : destinationName.trimmingCharacters(in: .whitespaces),
             quantityTonnes: tonnes,
             notes: notes.trimmingCharacters(in: .whitespaces).isEmpty ? nil : notes.trimmingCharacters(in: .whitespaces),
+            purchaserId: isExternal ? purchaserId : nil,
             purchaserName: isExternal && !purchaserName.trimmingCharacters(in: .whitespaces).isEmpty ? purchaserName.trimmingCharacters(in: .whitespaces) : nil,
             contactName: isExternal && !contactName.trimmingCharacters(in: .whitespaces).isEmpty ? contactName.trimmingCharacters(in: .whitespaces) : nil,
             contactEmail: isExternal && !contactEmail.trimmingCharacters(in: .whitespaces).isEmpty ? contactEmail.trimmingCharacters(in: .whitespaces) : nil,
